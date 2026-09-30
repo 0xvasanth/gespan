@@ -1,0 +1,25 @@
+src/app/model/updateWatch.test.ts
+  s_e8b299e01cca39::t_b58f46af4683e0 1-112
+src/app/model/updater.ts
+  s_e8b299e01cca39::t_dcd6fce8a0522a 4-8,13,45-107,234-236
+src/app/shell/SidebarUpdate.tsx
+  s_e8b299e01cca39::t_b1feceba6ad976 7,70-87
+src/app/shell/SidebarUpdateAutoCheck.test.ts
+  s_e8b299e01cca39::t_7a43187fd9e78c 1-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "84f81f3f06ec097715bdaccc8d30e0ddbe738186",
+  "prompts": {},
+  "sessions": {
+    "s_e8b299e01cca39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a5876488-b577-4b24-8f4a-12a642a966a6",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
