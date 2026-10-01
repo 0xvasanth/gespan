@@ -1,0 +1,45 @@
+src/features/inbox/model/inboxTransitions.test.ts
+  s_5159324f480575::t_0231f6322c2121 1-239
+CHANGELOG.md
+  s_5159324f480575::t_74feb0b4148291 10-13
+src/features/inbox/model/inboxTransitions.ts
+  s_5159324f480575::t_9dd721c23c1c11 1-136
+src/app/App.tsx
+  s_5159324f480575::t_008c1a486c3b7b 7347,9516
+  s_5159324f480575::t_7a7accefb832d4 7348-7351,7353
+src/features/inbox/hooks/useInboxUnseen.ts
+  s_5159324f480575::t_7a7accefb832d4 56-59,148-154,164,166,189-190,246-247,250-256,261,352-368
+  s_5159324f480575::t_4b59ec2d382452 55
+src/features/sessions/model/sessionWorkItem.test.ts
+  s_5159324f480575::t_0f2d06f6765d5a 76-104
+src/features/automations/ui/AutomationsView.test.ts
+  s_5159324f480575::t_a3d1d1fbf021bb 12-13,100-126
+src/features/sessions/model/sessionWorkItem.ts
+  s_5159324f480575::t_efe81ab29ef657 125-126
+src/features/automations/model/automationEvents.ts
+  s_5159324f480575::t_c32aa14139884e 12-15,34-36,39-59,62-68,105-123,127-129,137-146,152-156,165,171-175,182-193,197,201-208,210,226-233,243,246-251,263-269,300-301
+src/features/automations/ui/AutomationsView.tsx
+  s_5159324f480575::t_a3d1d1fbf021bb 1679
+  s_5159324f480575::t_91451c45c2ba6f 1689-1695,1697-1698
+src/features/inbox/hooks/useInboxUnseen.test.ts
+  s_5159324f480575::t_33b0d6c737786a 269-381
+src/features/automations/model/automationEvents.test.ts
+  s_5159324f480575::t_a4fc1081587f17 7,437-621,625-639,648-649,651-652,655-748
+  s_5159324f480575::t_a636b2c9af9ce7 622-624,640-647,650,653-654
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a78e9660a4c7c147681549d878faf39296a25a21",
+  "prompts": {},
+  "sessions": {
+    "s_5159324f480575": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec391ac0-95ac-4732-a16a-9ff8c2cb204b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
