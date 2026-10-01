@@ -1,0 +1,25 @@
+CHANGELOG.md
+  s_5159324f480575::t_3afd89567dd8ae 10-13
+src/features/automations/model/automationTemplates.test.ts
+  s_5159324f480575::t_3edb633163aa0a 3-7,46-143
+  s_5159324f480575::t_87ec7911de6ce8 2
+src/features/automations/model/automationTemplates.ts
+  s_5159324f480575::t_fccf208335fdc4 268-324
+  s_5159324f480575::t_2f153d9876b3f5 266-267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6c7e4f46c4bfc65cdbd847a517866e6f0d1d57c",
+  "prompts": {},
+  "sessions": {
+    "s_5159324f480575": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec391ac0-95ac-4732-a16a-9ff8c2cb204b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
