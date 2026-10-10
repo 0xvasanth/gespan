@@ -1,0 +1,39 @@
+src/features/sessions/ui/Composer.tsx
+  s_e8b299e01cca39::t_fda9701cf3ca53 140,142,2423-2432,2567-2584
+  s_e8b299e01cca39::t_3d7f2060317d34 124-128,133,135,1280,1600-1611
+  s_e8b299e01cca39::t_7651bfc4d96f58 1612-1613,2585-2586
+src/features/sessions/model/followUp.ts
+  s_e8b299e01cca39::t_6fef49af309504 1-48,53-70,78
+src/features/sessions/model/session.ts
+  s_e8b299e01cca39::t_091d7f52c97d7f 17
+  s_e8b299e01cca39::t_38171aac8c2cfc 99-100
+src/features/sessions/model/followUp.test.ts
+  s_e8b299e01cca39::t_b118bf3d2fd61f 1-110,113-157,171-188
+src/app/App.tsx
+  s_e8b299e01cca39::t_f43d81fa8e14b4 475
+  s_e8b299e01cca39::t_5077fa85f15867 7030-7034,7037-7039
+src/features/settings/ui/SettingsView.tsx
+  s_e8b299e01cca39::t_9ed7c7ad49af7a 1082
+src/features/settings/model/settings.ts
+  s_e8b299e01cca39::t_e9ad44dbffc4b8 1132-1136
+  s_e8b299e01cca39::t_e4ea649f3934b9 613-618,621-622
+src/features/settings/model/settings.test.ts
+  s_e8b299e01cca39::t_f8c3095a83a6b9 441-451
+  s_e8b299e01cca39::t_735642448b3d38 75-81,85-87,92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7fea8bd528f247ac429154ddfa558a1e9bf750b1",
+  "prompts": {},
+  "sessions": {
+    "s_e8b299e01cca39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a5876488-b577-4b24-8f4a-12a642a966a6",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
