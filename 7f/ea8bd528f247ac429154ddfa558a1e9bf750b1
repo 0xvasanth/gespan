@@ -2,16 +2,22 @@ src/features/sessions/ui/Composer.tsx
   s_e8b299e01cca39::t_fda9701cf3ca53 140,142,2423-2432,2567-2584
   s_e8b299e01cca39::t_3d7f2060317d34 124-128,133,135,1280,1600-1611
   s_e8b299e01cca39::t_7651bfc4d96f58 1612-1613,2585-2586
+  s_e8b299e01cca39::t_375d98356c5c7a 1432
+  s_e8b299e01cca39::t_a6ea9fad081331 1283,1287-1290
 src/features/sessions/model/followUp.ts
   s_e8b299e01cca39::t_6fef49af309504 1-48,53-70,78
+  s_e8b299e01cca39::t_0281561539a5ce 49-52,71-77
 src/features/sessions/model/session.ts
   s_e8b299e01cca39::t_091d7f52c97d7f 17
   s_e8b299e01cca39::t_38171aac8c2cfc 99-100
 src/features/sessions/model/followUp.test.ts
   s_e8b299e01cca39::t_b118bf3d2fd61f 1-110,113-157,171-188
+  s_e8b299e01cca39::t_31fc302853e638 158-170
+  s_e8b299e01cca39::t_6e3e2408d99af1 111-112
 src/app/App.tsx
   s_e8b299e01cca39::t_f43d81fa8e14b4 475
   s_e8b299e01cca39::t_5077fa85f15867 7030-7034,7037-7039
+  s_e8b299e01cca39::t_3ef279500904c9 7035-7036
 src/features/settings/ui/SettingsView.tsx
   s_e8b299e01cca39::t_9ed7c7ad49af7a 1082
 src/features/settings/model/settings.ts
