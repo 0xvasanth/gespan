@@ -345,6 +345,7 @@ import {
   refreshHarnessCatalogs,
   registerBuiltinHarnesses,
   promoteLastAssistantToPlan,
+  promoteProposedPlan,
   respondHarnessApproval,
   respondHarnessQuestion,
   keepHarnessQuestionOpen,
@@ -8516,7 +8517,9 @@ function Workspace({
                     )
                   : intent === "plan" && !nativePlanSeen && !providerFailed
                     ? promoteLastAssistantToPlan(stopped, planEventKey)
-                    : stopped;
+                    : current.harness === "codex" && !providerFailed
+                      ? promoteProposedPlan(stopped, planEventKey)
+                      : stopped;
               return approvedPlan && intent === "build"
                 ? withPlanStatus(
                     finalized,
