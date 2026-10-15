@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Change markers on the diff editor's scrollbar line up with their changes when long lines wrap. Markers follow the rendered line heights, including removed lines, so the scrollbar thumb covers a marker while its change is on screen, and clicking a marker scrolls to its change.
 
+### Fixed
+
+- Right-clicking an empty part of a MonoCode window no longer opens a native menu offering only **Reload**, which read like an action on the clicked item. Reload stays in the View menu (**⌘⇧R / Ctrl+Shift+R**), and text fields, editors, terminals, selected text, links, and media keep their native menus.
+
 ## [0.13.0] - 2026-10-12
 
 ### Added
