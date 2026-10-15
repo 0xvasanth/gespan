@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Selecting the **whole last paragraph** of a reply, such as by triple-clicking it, shows the Add to chat and Add to notes menu instead of nothing. Such a selection ends at the start of the action row below the reply, which no longer counts as leaving the reply when it picks up none of the row's text.
 
+### Fixed
+
+- Change markers on the diff editor's scrollbar line up with their changes when long lines wrap. Markers follow the rendered line heights, including removed lines, so the scrollbar thumb covers a marker while its change is on screen, and clicking a marker scrolls to its change.
+
 ## [0.13.0] - 2026-10-12
 
 ### Added
