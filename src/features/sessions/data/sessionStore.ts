@@ -597,6 +597,12 @@ export function findMonoTranscript(
 }
 
 export async function getSession(sessionId: string): Promise<Session | null> {
+  const session = await readSession(sessionId);
+  return session ? repairSession(session) : null;
+}
+
+/** Read the saved conversation without waiting for optional provider-log repairs. */
+export async function readSession(sessionId: string): Promise<Session | null> {
   const record = await invoke<SessionRecord | null>(
     isMonoSession(sessionId) ? "mono_session_get" : "session_get",
     {
@@ -606,6 +612,15 @@ export async function getSession(sessionId: string): Promise<Session | null> {
   if (!record) return null;
   const session = recordToSession(record);
   if (session.monoTranscript) monoSavedBlocks.set(sessionId, session.blocks);
+  return session;
+}
+
+/** A progressive caller publishes the repair against current state before persisting. */
+export async function repairSession(
+  source: Session,
+  { persist = true }: { persist?: boolean } = {},
+): Promise<Session> {
+  const session = { ...source };
   if (session.harness === "claude" && session.providerSessionId) {
     const toolIds = shellPlaceholderIds(session.blocks);
     if (toolIds.length) {
@@ -618,7 +633,7 @@ export async function getSession(sessionId: string): Promise<Session | null> {
         const blocks = backfillClaudeShellCommands(session.blocks, commands);
         if (blocks !== session.blocks) {
           session.blocks = blocks;
-          await upsertSession(session);
+          if (persist) await upsertSession(session);
         }
       } catch {
         // A missing or unreadable Claude transcript must not block the session.
@@ -634,7 +649,7 @@ export async function getSession(sessionId: string): Promise<Session | null> {
       session.blocks = blocks;
       // A failed write must not cost the reader the session. The repair stays
       // in memory and the next load retries it.
-      await upsertSession(session).catch(() => undefined);
+      if (persist) await upsertSession(session).catch(() => undefined);
     }
   }
   if (session.harness !== "omp" || !session.providerSessionId) {
@@ -652,13 +667,31 @@ export async function getSession(sessionId: string): Promise<Session | null> {
       // Persist before exposing the restored session to a new live turn.
       // Re-reading the source on later loads allows partial repairs to retry;
       // deterministic IDs ensure already repaired transcripts are not written.
-      await upsertSession(session);
+      if (persist) await upsertSession(session);
     }
   } catch {
     // Source logs may be absent/unreadable. Even a failed write must not stop
     // restore; the recovered in-memory boundaries can still be displayed.
   }
   return session;
+}
+
+/** Never let a delayed repair replace a newer stream, edit, or provider binding. */
+export function applySessionRepair(
+  current: Session,
+  source: Session,
+  repaired: Session,
+): Session {
+  if (
+    current.id !== source.id ||
+    current.blocks !== source.blocks ||
+    current.harness !== source.harness ||
+    current.providerSessionId !== source.providerSessionId ||
+    current.providerAccountId !== source.providerAccountId ||
+    repaired.blocks === source.blocks
+  )
+    return current;
+  return { ...current, blocks: repaired.blocks };
 }
 
 export function backfillClaudeShellCommands(

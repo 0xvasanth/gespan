@@ -1379,8 +1379,8 @@ html.has-user-accent .user-message-bubble[data-draft="true"] {
 
 /*
  * After a send, the live turn fills the transcript viewport so the prompt sits
- * at the top. Switching tabs keeps this. Closing the tab drops it, so opening
- * that conversation again uses the true bottom (latest reply on the composer).
+ * at the top, then follows the reply when it outgrows the viewport. A pooled
+ * transcript keeps this spacing across tab switches, including after a run ends.
  */
 .transcript-turn-anchor {
   min-height: var(--transcript-viewport, 0px);
@@ -1742,6 +1742,12 @@ header[data-tauri-drag-region] button {
 }
 
 .agent-markdown [data-streamdown="code-block"] {
+  /* Streamdown sets inline content-visibility:auto with a 200px estimate.
+     WebKit can use that estimate during a streaming commit, then shrink the
+     scroll range on the next frame. Loaded transcript turns already use real
+     heights; their code fences must do the same, including nested fences. */
+  content-visibility: visible !important;
+  contain-intrinsic-size: none !important;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;

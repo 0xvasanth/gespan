@@ -7,11 +7,15 @@ import {
   type ReactElement,
 } from "react";
 import { createPortal } from "react-dom";
+import { estimateRetainedBytes } from "../data/sessionCache";
 
 /** Transcripts kept mounted after their pane closes, so a revisit skips the rebuild. */
 export const TRANSCRIPT_POOL_LIMIT = 12;
+// Count alone lets twelve code-heavy conversations retain enormous DOM trees.
+export const TRANSCRIPT_POOL_NODE_LIMIT = 20_000;
+export const TRANSCRIPT_POOL_DATA_LIMIT = 16 * 1024 * 1024;
 
-type PooledProps = { visible?: boolean; parked?: boolean };
+type PooledProps = { visible?: boolean; parked?: boolean; blocks?: object[] };
 
 export type TranscriptPoolEntry = {
   id: string;
@@ -19,6 +23,8 @@ export type TranscriptPoolEntry = {
   element: ReactElement<PooledProps>;
   onMouseDown?: () => void;
   host: HTMLElement | null;
+  retainedNodes: number;
+  retainedBytes: number;
 };
 
 /**
@@ -32,7 +38,11 @@ export class TranscriptPool {
   private listeners = new Set<() => void>();
   private snapshot: TranscriptPoolEntry[] = [];
 
-  constructor(private readonly limit = TRANSCRIPT_POOL_LIMIT) {}
+  constructor(
+    private readonly limit = TRANSCRIPT_POOL_LIMIT,
+    private readonly nodeLimit = TRANSCRIPT_POOL_NODE_LIMIT,
+    private readonly dataLimit = TRANSCRIPT_POOL_DATA_LIMIT,
+  ) {}
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -62,7 +72,15 @@ export class TranscriptPool {
       return;
     // Re-inserting keeps the map in least-recently-shown order.
     this.entries.delete(id);
-    this.entries.set(id, { id, container, element, onMouseDown, host });
+    this.entries.set(id, {
+      id,
+      container,
+      element,
+      onMouseDown,
+      host,
+      retainedNodes: 0,
+      retainedBytes: 0,
+    });
     this.emit();
   }
 
@@ -70,24 +88,49 @@ export class TranscriptPool {
     const entry = this.entries.get(id);
     if (!entry || entry.host !== host) return;
     entry.container.remove();
-    this.entries.set(id, {
+    const parked = {
       ...entry,
       host: null,
       onMouseDown: undefined,
+      retainedNodes: countNodes(entry.container, this.nodeLimit),
+      retainedBytes: entry.element.props.blocks
+        ? estimateRetainedBytes(entry.element.props.blocks)
+        : 0,
       element: cloneElement(entry.element, { visible: false, parked: true }),
-    });
+    };
+    if (
+      parked.retainedNodes > this.nodeLimit ||
+      parked.retainedBytes > this.dataLimit
+    ) {
+      // One oversized conversation must not evict all the inexpensive ones.
+      this.entries.delete(id);
+    } else this.entries.set(id, parked);
     this.trim();
     this.emit();
   }
 
   private trim() {
     let parked = 0;
-    for (const entry of this.entries.values()) if (!entry.host) parked += 1;
+    let nodes = 0;
+    let bytes = 0;
+    for (const entry of this.entries.values()) {
+      if (entry.host) continue;
+      parked += 1;
+      nodes += entry.retainedNodes;
+      bytes += entry.retainedBytes;
+    }
     for (const entry of [...this.entries.values()]) {
-      if (parked <= this.limit) break;
+      if (
+        parked <= this.limit &&
+        nodes <= this.nodeLimit &&
+        bytes <= this.dataLimit
+      )
+        break;
       if (entry.host) continue;
       this.entries.delete(entry.id);
       parked -= 1;
+      nodes -= entry.retainedNodes;
+      bytes -= entry.retainedBytes;
     }
   }
 
@@ -95,6 +138,14 @@ export class TranscriptPool {
     this.snapshot = [...this.entries.values()];
     for (const listener of this.listeners) listener();
   }
+}
+
+/** Bounded traversal, including text nodes; no layout or serialized DOM copy. */
+function countNodes(container: HTMLElement, limit: number): number {
+  const walker = document.createTreeWalker(container);
+  let count = 0;
+  while (count <= limit && walker.nextNode()) count++;
+  return count;
 }
 
 function sameElement(

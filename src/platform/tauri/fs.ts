@@ -208,8 +208,16 @@ export type GitDiffIndex = {
   headPushed: boolean;
 };
 
+const pendingDiffIndexes = new Map<string, Promise<GitDiffIndex>>();
+
 export function gitDiffIndex(cwd: string): Promise<GitDiffIndex> {
-  return invoke<GitDiffIndex>("git_diff_index", { cwd });
+  const pending = pendingDiffIndexes.get(cwd);
+  if (pending) return pending;
+  const request = invoke<GitDiffIndex>("git_diff_index", { cwd }).finally(() => {
+    if (pendingDiffIndexes.get(cwd) === request) pendingDiffIndexes.delete(cwd);
+  });
+  pendingDiffIndexes.set(cwd, request);
+  return request;
 }
 
 /** File list and counts only, for diff content views that do not need sync data. */
@@ -441,6 +449,9 @@ const GIT_CHANGED = "monocode-git-changed";
 
 /** Tell git UIs (diff pane, branch picker) to reload after a local git mutation. */
 export function notifyGitChanged() {
+  // A request started before a mutation may finish after it. New readers
+  // need a fresh index; the older promise can still serve its original caller.
+  pendingDiffIndexes.clear();
   window.dispatchEvent(new Event(GIT_CHANGED));
 }
 

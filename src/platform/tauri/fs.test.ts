@@ -3,6 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   gitCommit,
+  gitDiffIndex,
+  notifyGitChanged,
+  type GitDiffIndex,
   gitHeadMessage,
   isCheckoutBlockedByChanges,
   listSkills,
@@ -145,4 +148,66 @@ describe("gitHeadMessage", () => {
     await expect(gitHeadMessage("/repo")).resolves.toBe("Subject\n\nBody");
     expect(invoke).toHaveBeenCalledWith("git_head_message", { cwd: "/repo" });
   });
+});
+
+describe("concurrent Git index reads", () => {
+  it("shares one request per checkout and releases it after completion", async () => {
+    vi.mocked(invoke).mockReset();
+    let finish!: (value: GitDiffIndex) => void;
+    vi.mocked(invoke).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const first = gitDiffIndex("/coalesced");
+    const second = gitDiffIndex("/coalesced");
+    expect(second).toBe(first);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const result = { files: [] } as unknown as GitDiffIndex;
+    finish(result);
+    await expect(second).resolves.toBe(result);
+    vi.mocked(invoke).mockResolvedValueOnce(result);
+    expect(gitDiffIndex("/coalesced")).not.toBe(first);
+    await gitDiffIndex("/coalesced");
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not mix worktrees and allows retries after failure", async () => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("Disk unavailable"));
+    await expect(gitDiffIndex("/failed-index")).rejects.toThrow(
+      "Disk unavailable",
+    );
+    vi.mocked(invoke).mockResolvedValue({ files: [] });
+    const a = gitDiffIndex("/failed-index");
+    const b = gitDiffIndex("/another-index");
+    expect(a).not.toBe(b);
+    await Promise.all([a, b]);
+    expect(invoke).toHaveBeenCalledTimes(3);
+  });
+});
+
+it("does not reuse a pre-mutation index for new readers", async () => {
+  vi.mocked(invoke).mockReset();
+  vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+  try {
+    let finish!: (index: unknown) => void;
+    vi.mocked(invoke).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const old = gitDiffIndex("/mutating");
+    notifyGitChanged();
+    vi.mocked(invoke).mockResolvedValueOnce({ files: ["new"] });
+    const fresh = gitDiffIndex("/mutating");
+    expect(fresh).not.toBe(old);
+    finish({ files: ["old"] });
+    await expect(fresh).resolves.toEqual({ files: ["new"] });
+    await expect(old).resolves.toEqual({ files: ["old"] });
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

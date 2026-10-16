@@ -21,6 +21,7 @@ function Probe({
   id: string;
   visible?: boolean;
   parked?: boolean;
+  blocks?: object[];
 }) {
   const [instance] = useState(() => Math.random());
   useEffect(() => {
@@ -226,4 +227,53 @@ describe("transcript pool", () => {
     );
     expect(probe("a")?.parentElement).toBe(container);
   });
+});
+
+it("bounds parked DOM across many small chats, without evicting the visible one", () => {
+  const pool = new TranscriptPool(12, 4);
+  for (const id of ["a", "b", "c", "d"]) render(pool, id);
+  const entries = pool.getSnapshot();
+  expect(
+    entries
+      .filter((entry) => !entry.host)
+      .reduce((sum, entry) => sum + entry.retainedNodes, 0),
+  ).toBeLessThanOrEqual(4);
+  expect(probe("d")).not.toBeNull();
+  expect(unmounts).toContain("a");
+});
+
+it("does not let one oversized DOM evict the other warm transcripts", () => {
+  const pool = new TranscriptPool(12, 10);
+  render(pool, "small");
+  render(pool, "large");
+  for (let i = 0; i < 20; i++)
+    probe("large")!.append(document.createElement("span"));
+  render(pool, "next");
+  expect(pool.getSnapshot().map((entry) => entry.id)).toEqual([
+    "small",
+    "next",
+  ]);
+  expect(unmounts).toEqual(["large"]);
+  render(pool, "small");
+  expect(mounts.filter((id) => id === "small")).toHaveLength(1);
+});
+
+it("evicts oversized transcript data even when its visible DOM is small", () => {
+  const pool = new TranscriptPool(12, 100, 1000);
+  render(pool, "large");
+  const entry = pool.getSnapshot()[0];
+  act(() =>
+    pool.show(
+      "large",
+      entry.host!,
+      createElement(Probe, {
+        id: "large",
+        visible: true,
+        blocks: [{ text: "x".repeat(1000) }],
+      }),
+    ),
+  );
+  render(pool, "next");
+  expect(pool.getSnapshot().map((entry) => entry.id)).toEqual(["next"]);
+  expect(unmounts).toContain("large");
 });

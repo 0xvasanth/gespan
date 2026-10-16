@@ -8,12 +8,16 @@ const estimatedBytes = new WeakMap<object, number>();
 
 /** Conservative retained-size estimate without allocating a serialized copy. */
 export function estimateSessionCacheBytes(session: Session): number {
-  const known = estimatedBytes.get(session);
+  return estimateRetainedBytes(session);
+}
+
+export function estimateRetainedBytes(value: object): number {
+  const known = estimatedBytes.get(value);
   if (known != null) return known;
 
   let bytes = 0;
   const seen = new WeakSet<object>();
-  const pending: unknown[] = [session];
+  const pending: unknown[] = [value];
   while (pending.length > 0) {
     const value = pending.pop();
     if (typeof value === "string") {
@@ -42,7 +46,7 @@ export function estimateSessionCacheBytes(session: Session): number {
     for (const item of values) pending.push(item);
   }
 
-  estimatedBytes.set(session, bytes);
+  estimatedBytes.set(value, bytes);
   return bytes;
 }
 

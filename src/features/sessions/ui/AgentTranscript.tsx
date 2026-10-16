@@ -95,6 +95,7 @@ import {
   type TurnMetrics,
 } from "../model/session";
 import { HarnessIcon } from "./HarnessIcon";
+import { TranscriptPacing, TranscriptVisibility } from "./transcriptVisibility";
 import {
   innerScrollerTakes,
   useLockOverscroll,
@@ -381,9 +382,8 @@ function AgentTranscriptComponent({
   const toggleWork = useCallback((turnId: string, currentlyOpen: boolean) => {
     setOpenWork((open) => ({ ...open, [turnId]: !currentlyOpen }));
   }, []);
-  // Stretch the last turn after a send while this tab stays open. Closing
-  // the tab is a new visit: the remount uses the true transcript height so
-  // the latest reply sits near the composer instead of a hole of empty space.
+  // Keep prompt spacing for this transcript's lifetime, including while it
+  // is parked in the pool. A cold historical mount uses its natural height.
   const [anchorTurn, setAnchorTurn] = useState(!!busy);
   // Parking detaches the scroller, which drops its scroll offset.
   const restoreScroll = useRef(false);
@@ -394,8 +394,6 @@ function AgentTranscriptComponent({
       restoreScroll.current = true;
       setSearchCurrent(null);
       setSearchQuery("");
-    } else if (anchorTurn !== !!busy) {
-      setAnchorTurn(!!busy);
     }
   }
   const { selection, dismissSelection } = useTranscriptSelection(
@@ -1686,8 +1684,23 @@ function TranscriptContent({
 
 // Keep hidden panes' local state, and catch up with current props on activation.
 export const AgentTranscript = memo(
-  AgentTranscriptComponent,
-  (previous, next) => previous.visible === false && next.visible === false,
+  function VisibleTranscript(props: Props) {
+    return (
+      <TranscriptVisibility.Provider value={props.visible ?? true}>
+        <TranscriptPacing.Provider value={!props.bottomAligned}>
+          <AgentTranscriptComponent {...props} />
+        </TranscriptPacing.Provider>
+      </TranscriptVisibility.Provider>
+    );
+  },
+  (previous, next) => {
+    if (previous.visible === false && next.visible === false) return true;
+    const keys = Object.keys(next) as (keyof Props)[];
+    return (
+      keys.length === Object.keys(previous).length &&
+      keys.every((key) => Object.is(previous[key], next[key]))
+    );
+  },
 );
 
 /** "Today", "Yesterday" or the date, in bold, with the time beside it. */

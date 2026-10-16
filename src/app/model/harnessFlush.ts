@@ -8,6 +8,7 @@ export type ScheduledFlush = { kind: "raf" | "timeout"; id: number };
  * Just under two 60Hz frames, so frame jitter can't halve the rate.
  */
 export const FOREGROUND_FLUSH_MS = 30;
+export const BACKGROUND_FLUSH_MS = 250;
 
 export function cancelScheduledFlush(handle: ScheduledFlush | null) {
   if (!handle) return;
@@ -21,7 +22,7 @@ export function scheduleHarnessFlush(
   foreground: boolean,
 ): ScheduledFlush {
   if (document.hidden || !foreground) {
-    return { kind: "timeout", id: window.setTimeout(run, 100) };
+    return { kind: "timeout", id: window.setTimeout(run, BACKGROUND_FLUSH_MS) };
   }
   return { kind: "raf", id: requestAnimationFrame(run) };
 }
@@ -49,7 +50,12 @@ export class HarnessEventQueue {
       event.type === "approval.requested" ||
       event.type === "approval.resolved" ||
       event.type === "question.asked" ||
-      event.type === "question.resolved"
+      event.type === "question.updated" ||
+      event.type === "question.resolved" ||
+      event.type === "session.ended" ||
+      event.type === "session.error" ||
+      event.type === "turn.ready" ||
+      event.type === "usage.limited"
     ) {
       // Deliver the preceding output too, preserving this session's ordering.
       this.flushMatching((id) => id === sessionId);

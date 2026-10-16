@@ -114,7 +114,7 @@ export function AgentTabView({
   const model = findModel(session.model)?.name ?? session.model;
   return (
     <div data-agent-tab className="flex h-full min-h-0 flex-col">
-      <div className="@container relative min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1">
         <AgentTranscript
           blocks={session.blocks}
           busy={session.busy}

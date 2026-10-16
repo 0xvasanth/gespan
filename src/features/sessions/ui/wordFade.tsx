@@ -2,22 +2,15 @@ import type { Element, ElementContent, Root } from "hast";
 import { useEffect, useReducer, useRef, useState } from "react";
 
 /*
- * Streaming prose. Tokens land in uneven bursts. By default each burst goes
- * on screen as it arrives, so layout is always the real reply, and its words
- * fade in over a time that follows the stream cadance
- * veil): a fast stream gets short fades, a slow one long fades, and either
- * way consecutive bursts overlap into one rolling edge instead of popping in
- * clause by clause. The fade itself is `.word-fading [data-word-fade]` in
- * index.css.
- *
- * The older paced reveal, which lets text out a word at a time at a steady
- * rate, stays available behind `localStorage["monocode.pacedReveal"] = "1"`.
+ * Smooth uneven provider bursts locally, independently of app-shell updates.
+ * Already loaded text appears immediately. The unpaced fallback remains
+ * available with localStorage["monocode.pacedReveal"] = "0".
  */
 
 /** How long one word takes to fade in while paced. */
 export const WORD_FADE_MS = 320;
 
-/** Opt back into the paced word-at-a-time reveal. */
+/** Set to "0" to disable the paced word-at-a-time reveal. */
 export const PACED_REVEAL_KEY = "monocode.pacedReveal";
 
 /**
@@ -34,10 +27,14 @@ const CADENCE_GAP_CAP_MS = 1000;
 const CADENCE_FADE_EASE = "cubic-bezier(0.33, 0.53, 0.67, 1)";
 
 export function pacedRevealPreferred(): boolean {
+  if (typeof window === "undefined") return false;
   try {
-    return localStorage.getItem(PACED_REVEAL_KEY) === "1";
+    return (
+      !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches &&
+      localStorage.getItem(PACED_REVEAL_KEY) !== "0"
+    );
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -99,6 +96,9 @@ const REVEAL_CATCHUP_S = 0.22;
  * caught up to it. Past this the stream has paused on it, so it shows as is.
  */
 const REVEAL_HOLD_MS = 150;
+// Parsing is CPU work, unlike compositor word fades. Cap commits on high
+// refresh displays; advance by elapsed time when the main thread stalls.
+export const REVEAL_FRAME_MS = 30;
 
 /**
  * Where to stop revealing `text` for a reveal that has reached `at`: the end
@@ -133,6 +133,7 @@ export function useStreamedText(
   text: string,
   streaming: boolean,
   revealOnMount = streaming,
+  active = true,
 ): { text: string; revealing: boolean } {
   const [mountReveal, setMountReveal] = useState(revealOnMount);
   // Output already there when it opens is shown whole, half-written word too.
@@ -148,14 +149,14 @@ export function useStreamedText(
   }, [mountReveal]);
 
   useEffect(() => {
-    if (!behind) return;
+    if (!behind || !active) return;
     const timer = window.setTimeout(() => setHeldText(text), REVEAL_HOLD_MS);
     return () => window.clearTimeout(timer);
-  }, [behind, text]);
+  }, [active, behind, text]);
 
   return {
-    text: behind ? text.slice(0, end) : text,
-    revealing: behind || mountReveal,
+    text: behind && active ? text.slice(0, end) : text,
+    revealing: active && (behind || mountReveal),
   };
 }
 
@@ -168,20 +169,30 @@ export function usePacedText(
   text: string,
   streaming: boolean,
   revealOnMount = streaming,
+  active = true,
 ): { text: string; revealing: boolean } {
   const shown = useRef(revealOnMount ? 0 : text.length);
   const pacing = useRef(streaming || revealOnMount);
   const latest = useRef({ text, streaming });
   latest.current = { text, streaming };
   const [, rerender] = useReducer((n: number) => n + 1, 0);
+  const wasActive = useRef(active);
 
   if (streaming) pacing.current = true;
+  // Unseen output is history on activation, never a reveal backlog.
+  if (
+    !active ||
+    !wasActive.current ||
+    (typeof document !== "undefined" && document.hidden)
+  )
+    shown.current = text.length;
+  wasActive.current = active;
   if (!pacing.current) shown.current = text.length;
   shown.current = Math.min(shown.current, text.length);
   const behind = shown.current < text.length;
 
   useEffect(() => {
-    if (!pacing.current) return;
+    if (!active || !pacing.current) return;
     if (!behind) {
       if (!streaming) pacing.current = false;
       return;
@@ -190,13 +201,32 @@ export function usePacedText(
     let last = performance.now();
     let heldText = "";
     let heldAt = 0;
-    let frame = requestAnimationFrame(function tick(now) {
+    let frame = 0;
+    const finishHidden = () => {
+      if (!document.hidden) return;
+      cancelAnimationFrame(frame);
+      shown.current = latest.current.text.length;
+      rerender();
+    };
+    const tick = (now: number) => {
       const { text, streaming } = latest.current;
-      const dt = Math.min(0.05, (now - last) / 1000);
+      if (document.hidden) {
+        finishHidden();
+        return;
+      }
+      const elapsed = now - last;
+      if (elapsed < REVEAL_FRAME_MS) {
+        frame = requestAnimationFrame(tick);
+        return;
+      }
+      const dt = elapsed / 1000;
       last = now;
       const backlog = text.length - position;
-      const speed = Math.max(REVEAL_MIN_CPS, backlog / REVEAL_CATCHUP_S);
-      position = Math.min(text.length, position + speed * dt);
+      const advance = Math.max(
+        REVEAL_MIN_CPS * dt,
+        backlog * (1 - Math.exp(-dt / REVEAL_CATCHUP_S)),
+      );
+      position = Math.min(text.length, position + advance);
       const end = revealEnd(text, position, streaming);
       if (end > shown.current) {
         shown.current = end;
@@ -215,10 +245,15 @@ export function usePacedText(
         }
       }
       if (shown.current < text.length) frame = requestAnimationFrame(tick);
-    });
-    return () => cancelAnimationFrame(frame);
+    };
+    frame = requestAnimationFrame(tick);
+    document.addEventListener("visibilitychange", finishHidden);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("visibilitychange", finishHidden);
+    };
     // Incoming chunks update the target without restarting the reveal clock.
-  }, [streaming, behind]);
+  }, [active, streaming, behind]);
 
   return {
     text: behind ? text.slice(0, shown.current) : text,
@@ -298,6 +333,21 @@ export function rehypeWordFade() {
         );
 
     const walk = (parent: Root | Element) => {
+      // Streamdown memoizes prose elements by source position and className,
+      // ignoring changes to their children. Mark every ancestor while the
+      // plugin is active so removing the spans updates those elements in
+      // place, rather than remounting entire lists and their code/media.
+      if (parent.type === "element") {
+        const classes = parent.properties.className;
+        parent.properties.className = [
+          ...(Array.isArray(classes)
+            ? classes
+            : classes
+              ? [String(classes)]
+              : []),
+          "word-fade-content",
+        ];
+      }
       const children: Array<Root["children"][number]> = [];
       for (const child of parent.children) {
         if (child.type === "text") children.push(...wrap(child.value));

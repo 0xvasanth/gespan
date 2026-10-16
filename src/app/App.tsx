@@ -497,6 +497,9 @@ import {
   discardDraftSessionRecord,
   deleteSession,
   getSession,
+  readSession,
+  repairSession,
+  applySessionRepair,
   listLinkedSessions,
   listSessionsByProject,
   persistFingerprint,
@@ -4412,7 +4415,7 @@ function Workspace({
       if (pending) return pending;
 
       const epoch = sessionLoadEpochs.current.get(sessionId) ?? 0;
-      const loading = getSession(sessionId)
+      const loading = readSession(sessionId)
         .then((loaded) => {
           if (
             !loaded ||
@@ -4473,6 +4476,26 @@ function Workspace({
         const next = [...sessionsRef.current, restored];
         sessionsRef.current = next;
         setSessions(next);
+        // Provider log reads (old shell labels, subagent trails, interjections)
+        // must not sit between the hotkey and the saved conversation. Apply
+        // them later only if this transcript has not advanced in the meantime.
+        void repairSession(restored, { persist: false })
+          .then((repaired) => {
+            if (repaired.blocks === restored.blocks) return;
+            updateSessionState(sessionsRef, setSessions, (current) => {
+              let changed = false;
+              const next = current.map((session) => {
+                if (session.id !== restored.id) return session;
+                const repairedSession = applySessionRepair(
+                  session, restored, repaired,
+                );
+                changed ||= repairedSession !== session;
+                return repairedSession;
+              });
+              return changed ? next : current;
+            });
+          })
+          .catch(() => undefined);
       }
       return restored;
     },

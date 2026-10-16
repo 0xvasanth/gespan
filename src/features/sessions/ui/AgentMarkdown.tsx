@@ -59,8 +59,9 @@ import {
   useWordFading,
   WORD_FADE_MS,
 } from "./wordFade";
-import { isFenceBlock, parseStreamingMarkdown } from "./streamingMarkdown";
+import { parseStreamingMarkdown } from "./streamingMarkdown";
 import { HighlightedCodeBlock } from "./HighlightedCodeBlock";
+import { TranscriptPacing, TranscriptVisibility } from "./transcriptVisibility";
 
 const MERMAID_BASE_CONFIG = {
   startOnLoad: false,
@@ -139,7 +140,6 @@ const FileOpenContext = createContext<{
 const RemoteMediaContext = createContext(false);
 /** Show local images and videos a reply links to, rather than the links. */
 const LocalMediaContext = createContext(false);
-const MarkdownFadeContext = createContext(false);
 
 const REVEAL_LABEL = IS_MAC
   ? "Reveal in Finder"
@@ -534,14 +534,11 @@ const MARKDOWN_COMPONENTS = {
  * comes from the block inside it.
  */
 function DirectionalBlock({ dir, ...props }: BlockProps) {
-  const fading = useContext(MarkdownFadeContext);
-  // Streamdown retains a parsed prose tree after the fade plugin changes.
-  // Remount prose to remove its word spans, but keep literal fences mounted:
-  // rebuilding all their highlighted tokens at fade-end causes a long frame.
-  const fence = isFenceBlock(props.content);
-  const block = (
-    <Block key={fence ? "code" : fading ? "fade" : "plain"} {...props} />
-  );
+  // The word-fade plugin marks changed ancestors for Streamdown's memoized
+  // elements, so removing its spans can reconcile the existing block.
+  // A fade-end key change also tears down nested code/media in lists and can
+  // briefly collapse the reply, clamping the transcript's scroll position.
+  const block = <Block {...props} />;
   return dir ? (
     <div dir={dir} className="agent-markdown-block">
       {block}
@@ -597,10 +594,12 @@ export const AgentMarkdown = memo(function AgentMarkdown({
     [cwd],
   );
   const remoteMedia = !!allowRemoteMedia;
+  const visible = useContext(TranscriptVisibility);
+  const pace = useContext(TranscriptPacing);
   // Read once: switching reveal hooks while mounted would break hook order.
-  const [pacedReveal] = useState(pacedRevealPreferred);
+  const [pacedReveal] = useState(() => pace && pacedRevealPreferred());
   const useReveal = pacedReveal ? usePacedText : useStreamedText;
-  const paced = useReveal(text, !!streaming, revealOnMount);
+  const paced = useReveal(text, !!streaming, revealOnMount, visible);
   const cadence = useCadenceFade(paced.text);
   const fadeMs = pacedReveal ? WORD_FADE_MS : cadence.durationMs;
   const fading = useWordFading(!!streaming || paced.revealing, fadeMs);
@@ -671,26 +670,24 @@ export const AgentMarkdown = memo(function AgentMarkdown({
       <LocalMediaContext.Provider value={!!localMedia}>
         <FileOpenContext.Provider value={fileOpen}>
           <>
-            <MarkdownFadeContext.Provider value={fading}>
-              {/* Streamdown takes no style; a contents box passes the fade timing down. */}
-              <div className="contents" style={fadeStyle}>
-                <Streamdown
-                  BlockComponent={DirectionalBlock}
-                  className={`agent-markdown min-w-0 font-sans text-sm leading-6 ${fading ? "word-fading" : ""} ${className ?? ""}`}
-                  components={MARKDOWN_COMPONENTS}
-                  controls={false}
-                  dir="auto"
-                  isAnimating={!!streaming || paced.revealing}
-                  parseIncompleteMarkdown={false}
-                  parseMarkdownIntoBlocksFn={parseStreamingMarkdown}
-                  plugins={MARKDOWN_PLUGINS}
-                  remarkPlugins={remarkPlugins}
-                  rehypePlugins={rehypePlugins}
-                >
-                  {paced.text}
-                </Streamdown>
-              </div>
-            </MarkdownFadeContext.Provider>
+            {/* Streamdown takes no style; a contents box passes the fade timing down. */}
+            <div className="contents" style={fadeStyle}>
+              <Streamdown
+                BlockComponent={DirectionalBlock}
+                className={`agent-markdown min-w-0 font-sans text-sm leading-6 ${fading ? "word-fading" : ""} ${className ?? ""}`}
+                components={MARKDOWN_COMPONENTS}
+                controls={false}
+                dir="auto"
+                isAnimating={!!streaming || paced.revealing}
+                parseIncompleteMarkdown={false}
+                parseMarkdownIntoBlocksFn={parseStreamingMarkdown}
+                plugins={MARKDOWN_PLUGINS}
+                remarkPlugins={remarkPlugins}
+                rehypePlugins={rehypePlugins}
+              >
+                {paced.text}
+              </Streamdown>
+            </div>
             {fileMenu ? (
               <ExplorerMenu
                 x={fileMenu.x}
