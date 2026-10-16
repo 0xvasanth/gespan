@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Loader } from "../../../shared/ui/icons";
 import {
   gitCommitFileDiff,
@@ -6,12 +6,14 @@ import {
   type GitChangedFile,
 } from "../../../platform/tauri/fs";
 import { forEachConcurrent } from "../../../shared/lib/concurrent";
-import { buildUnifiedFile, type UnifiedFileDiff } from "../model/unifiedDiff";
+import type { UnifiedFileDiff } from "../model/unifiedDiff";
+import { prepareUnifiedDiff } from "../model/diffWorker";
 import { UnifiedDiffView, type UnifiedDiffFileModel } from "./UnifiedDiffView";
 
 type Props = {
   cwd: string;
   sha: string;
+  visible?: boolean;
 };
 
 type LoadedDiff = {
@@ -23,12 +25,14 @@ type LoadedDiff = {
 
 const DIFF_LOAD_CONCURRENCY = 4;
 
-export function CommitDiff({ cwd, sha }: Props) {
+export function CommitDiff({ cwd, sha, visible = true }: Props) {
   const [files, setFiles] = useState<GitChangedFile[] | null>(null);
   const [diffs, setDiffs] = useState<Map<string, LoadedDiff>>(new Map());
   const [error, setError] = useState<string | null>(null);
+  const loadedScope = useRef("");
 
   useEffect(() => {
+    if (!visible) return;
     if (!cwd || cwd === "~" || !sha) {
       setFiles([]);
       setDiffs(new Map());
@@ -37,8 +41,13 @@ export function CommitDiff({ cwd, sha }: Props) {
 
     let disposed = false;
     let generation = 0;
-    setFiles(null);
-    setDiffs(new Map());
+    const controller = new AbortController();
+    const scope = `${cwd}\0${sha}`;
+    if (loadedScope.current !== scope) {
+      loadedScope.current = scope;
+      setFiles(null);
+      setDiffs(new Map());
+    }
 
     const run = () => {
       const current = ++generation;
@@ -46,18 +55,27 @@ export function CommitDiff({ cwd, sha }: Props) {
         .then(async (listed) => {
           if (disposed || current !== generation) return;
           setFiles(listed);
-          setDiffs(new Map());
+          const retained = new Set(listed.map((file) => file.relative));
+          setDiffs(
+            (existing) =>
+              new Map([...existing].filter(([id]) => retained.has(id))),
+          );
           setError(null);
           await forEachConcurrent(
             listed,
             DIFF_LOAD_CONCURRENCY,
-            async (file) => {
+            async (file, index) => {
               let loaded: LoadedDiff;
               try {
                 const diff = await gitCommitFileDiff(cwd, sha, file.relative);
                 const unified =
                   !diff.binary && !diff.tooLarge
-                    ? buildUnifiedFile(diff.original, diff.current)
+                    ? await prepareUnifiedDiff(
+                        diff.original,
+                        diff.current,
+                        controller.signal,
+                        index === 0 ? 0 : 1,
+                      )
                     : null;
                 loaded = {
                   binary: diff.binary,
@@ -93,8 +111,9 @@ export function CommitDiff({ cwd, sha }: Props) {
     run();
     return () => {
       disposed = true;
+      controller.abort();
     };
-  }, [cwd, sha]);
+  }, [cwd, sha, visible]);
 
   const models = useMemo<UnifiedDiffFileModel[]>(() => {
     if (!files) return [];

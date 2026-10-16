@@ -277,3 +277,30 @@ it("evicts oversized transcript data even when its visible DOM is small", () => 
   expect(pool.getSnapshot().map((entry) => entry.id)).toEqual(["next"]);
   expect(unmounts).toContain("large");
 });
+
+it("keeps six heavy revisits warm and reduces parked memory during pressure", () => {
+  const pool = new TranscriptPool();
+  const ids = Array.from({ length: 6 }, (_, index) => `heavy-${index}`);
+  for (const id of ids) {
+    render(pool, id);
+    const fragment = document.createDocumentFragment();
+    for (let token = 0; token < 5000; token++) {
+      const span = document.createElement("span");
+      span.textContent = `token${token}`;
+      fragment.append(span);
+    }
+    probe(id)!.append(fragment);
+  }
+  for (const id of ids) render(pool, id);
+  expect(mounts).toHaveLength(6);
+  expect(unmounts).toHaveLength(0);
+  act(() => pool.setResourcePressure(true));
+  expect(
+    pool
+      .getSnapshot()
+      .filter((entry) => !entry.host)
+      .reduce((count, entry) => count + entry.retainedNodes, 0),
+  ).toBeLessThanOrEqual(20_000);
+  expect(probe(ids[5])).not.toBeNull();
+  expect(unmounts.length).toBeGreaterThan(0);
+});

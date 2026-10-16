@@ -30,7 +30,7 @@ import {
   pickAttachments,
   revokeAttachment,
 } from "../model/attachments";
-import { resizeComposer } from "../model/composerResize";
+import { resizeComposer, restoreComposerSize } from "../model/composerResize";
 import {
   isFileReferenceText,
   messageFilesFromClipboard,
@@ -901,7 +901,7 @@ export function Composer({
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !enabled) return;
-    resizeComposer(el);
+    restoreComposerSize(el);
     if (el.scrollHeight !== 0) return;
     const frame = requestAnimationFrame(() => {
       if (ref.current === el) resizeComposer(el);
@@ -1155,7 +1155,10 @@ export function Composer({
       )
     )
       return;
-    ref.current?.focus();
+    // Pane activation already positions the composer. Native focus scrolling
+    // otherwise walks the entire workspace and can move transcript ancestors.
+    if (ref.current && document.activeElement !== ref.current)
+      ref.current.focus({ preventScroll: true });
   }, [disabled, focused, question, busy, focusToken]);
 
   const fileDrag = useFileDrop({

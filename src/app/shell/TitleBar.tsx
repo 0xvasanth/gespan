@@ -660,52 +660,51 @@ function TitleBarComponent({
   onSelectProject,
 }: Props) {
   const tabIds = tabs.map((tab) => tab.id);
-  const { displayed, setTabNode, finishMotion } = useTabCloseMotion(tabs);
+  const { displayed, tabNodeRef, finishMotion } = useTabCloseMotion(tabs);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
   const paneDropArmed = useRef(false);
-  const externalTabDrop = useMemo<ReorderExternalDrop<string> | undefined>(
-    () => {
-      // A sideways drag sags, so only a deliberate pull below the tab bar
-      // targets a pane. Once armed it stays armed until the pointer is back
-      // over the tabs.
-      const pulledBelowTabs = (event: PointerEvent) => {
-        const bottom = tabStripRef.current?.getBoundingClientRect().bottom ?? 0;
-        if (event.clientY <= bottom) paneDropArmed.current = false;
-        else if (event.clientY >= bottom + PANE_DROP_PULL)
-          paneDropArmed.current = true;
-        return paneDropArmed.current;
-      };
-      return onPlaceOnPane
-        ? {
-            onMove: (tabId, event) => {
-              if (tabId === activeId || !pulledBelowTabs(event)) {
-                setExternalPaneDrop(null);
-                return false;
-              }
-              const over = paneDropFromPoint(event.clientX, event.clientY);
-              setExternalPaneDrop({
-                fromId: tabId,
-                overId: over?.id ?? null,
-                edge: over?.edge ?? "left",
-              });
-              return over != null;
-            },
-            onDrop: (tabId, event) => {
-              if (tabId === activeId || !pulledBelowTabs(event)) return false;
-              const over = paneDropFromPoint(event.clientX, event.clientY);
-              if (!over) return false;
-              onPlaceOnPane(tabId, over.id, over.edge);
-              return true;
-            },
-            onEnd: () => {
-              paneDropArmed.current = false;
+  const externalTabDrop = useMemo<
+    ReorderExternalDrop<string> | undefined
+  >(() => {
+    // A sideways drag sags, so only a deliberate pull below the tab bar
+    // targets a pane. Once armed it stays armed until the pointer is back
+    // over the tabs.
+    const pulledBelowTabs = (event: PointerEvent) => {
+      const bottom = tabStripRef.current?.getBoundingClientRect().bottom ?? 0;
+      if (event.clientY <= bottom) paneDropArmed.current = false;
+      else if (event.clientY >= bottom + PANE_DROP_PULL)
+        paneDropArmed.current = true;
+      return paneDropArmed.current;
+    };
+    return onPlaceOnPane
+      ? {
+          onMove: (tabId, event) => {
+            if (tabId === activeId || !pulledBelowTabs(event)) {
               setExternalPaneDrop(null);
-            },
-          }
-        : undefined;
-    },
-    [activeId, onPlaceOnPane],
-  );
+              return false;
+            }
+            const over = paneDropFromPoint(event.clientX, event.clientY);
+            setExternalPaneDrop({
+              fromId: tabId,
+              overId: over?.id ?? null,
+              edge: over?.edge ?? "left",
+            });
+            return over != null;
+          },
+          onDrop: (tabId, event) => {
+            if (tabId === activeId || !pulledBelowTabs(event)) return false;
+            const over = paneDropFromPoint(event.clientX, event.clientY);
+            if (!over) return false;
+            onPlaceOnPane(tabId, over.id, over.edge);
+            return true;
+          },
+          onEnd: () => {
+            paneDropArmed.current = false;
+            setExternalPaneDrop(null);
+          },
+        }
+      : undefined;
+  }, [activeId, onPlaceOnPane]);
   const sortable = useAnimatedReorder(tabIds, onReorder, "x", externalTabDrop);
   const paneToTabDrop = useExternalTitleTabDrop();
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
@@ -1069,9 +1068,7 @@ function TitleBarComponent({
                 const tab = entry.item;
                 const shell = (
                   <div
-                    ref={(el) => {
-                      if (!entry.closing) setTabNode(tab.id, el);
-                    }}
+                    ref={entry.closing ? undefined : tabNodeRef(tab.id)}
                     className={
                       entry.closing || entry.opening
                         ? "relative flex h-full w-full min-w-0 overflow-hidden items-center"

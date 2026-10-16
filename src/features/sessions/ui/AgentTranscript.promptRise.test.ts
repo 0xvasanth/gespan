@@ -27,12 +27,12 @@ const second: Block[] = [
   { id: "u2", role: "user", text: "Next" },
 ];
 
-function render(blocks: Block[], busy = true) {
-  act(() =>
+async function render(blocks: Block[], busy = true) {
+  await act(async () => {
     root.render(
       createElement(AgentTranscript, { blocks, busy, visible: true }),
-    ),
-  );
+    );
+  });
 }
 
 beforeEach(() => {
@@ -81,8 +81,8 @@ function risenPrompts() {
 }
 
 describe("prompt rise in the chat layout", () => {
-  it("rises the first prompt of a fresh session from the upper screen", () => {
-    render(first);
+  it("rises the first prompt of a fresh session from the upper screen", async () => {
+    await render(first);
 
     expect(risenPrompts()).toEqual(["u1"]);
     const [rise] = animate.mock.calls[0];
@@ -91,9 +91,9 @@ describe("prompt rise in the chat layout", () => {
     expect(fade).toEqual([{ opacity: 0 }, { opacity: 1 }]);
   });
 
-  it("holds the rest of the turn until the prompt settles", () => {
+  it("holds the rest of the turn until the prompt settles", async () => {
     vi.useFakeTimers();
-    render(first);
+    await render(first);
     const turn = container.querySelector<HTMLElement>(".transcript-turn")!;
     expect(turn.dataset.promptRise).toBe("rising");
 
@@ -106,31 +106,31 @@ describe("prompt rise in the chat layout", () => {
     vi.useRealTimers();
   });
 
-  it("rises each newly sent prompt", () => {
-    render(first, false);
-    render(second);
+  it("rises each newly sent prompt", async () => {
+    await render(first, false);
+    await render(second);
 
     expect(risenPrompts()).toEqual(["u2"]);
   });
 
-  it("does not replay an existing conversation on mount", () => {
-    render(second);
+  it("does not replay an existing conversation on mount", async () => {
+    await render(second);
 
     expect(animate).not.toHaveBeenCalled();
   });
 
-  it("stays still in the full-width layout", () => {
+  it("stays still in the full-width layout", async () => {
     appearance.layout = "full";
-    render(first);
-    render(second);
+    await render(first);
+    await render(second);
 
     expect(animate).not.toHaveBeenCalled();
   });
 
-  it("stays still when prompts are not anchored to the top", () => {
+  it("stays still when prompts are not anchored to the top", async () => {
     appearance.anchor = false;
-    render(first);
-    render(second);
+    await render(first);
+    await render(second);
 
     expect(animate).not.toHaveBeenCalled();
   });

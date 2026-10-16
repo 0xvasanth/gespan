@@ -58,9 +58,11 @@ afterEach(() => {
   host.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 it("regroups only the changing live turn, including after a tab revisit", async () => {
+  vi.useFakeTimers();
   const blocks: Block[] = Array.from({ length: 20 }, (_, index): Block[] => [
     { id: `u${index}`, role: "user", text: `Question ${index}` },
     { id: `a${index}`, role: "assistant", text: `Answer ${index}` },
@@ -74,6 +76,11 @@ it("regroups only the changing live turn, including after a tab revisit", async 
       }),
     ),
   );
+  expect(host.querySelectorAll("[data-transcript-turn]")).toHaveLength(3);
+  for (let index = 0; index < 20; index++)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
   expect(host.querySelectorAll("[data-transcript-turn]")).toHaveLength(20);
   vi.mocked(activity.groupTurnItems).mockClear();
   vi.mocked(activity.groupTurns).mockClear();

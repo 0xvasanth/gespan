@@ -4,6 +4,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   gitCommit,
   gitDiffIndex,
+  gitDiffStats,
+  gitDiffFiles,
   notifyGitChanged,
   type GitDiffIndex,
   gitHeadMessage,
@@ -188,7 +190,7 @@ describe("concurrent Git index reads", () => {
   });
 });
 
-it("does not reuse a pre-mutation index for new readers", async () => {
+it("refreshes pre-mutation indexes for both original and new readers", async () => {
   vi.mocked(invoke).mockReset();
   vi.stubGlobal("window", { dispatchEvent: vi.fn() });
   try {
@@ -201,12 +203,55 @@ it("does not reuse a pre-mutation index for new readers", async () => {
     );
     const old = gitDiffIndex("/mutating");
     notifyGitChanged();
-    vi.mocked(invoke).mockResolvedValueOnce({ files: ["new"] });
+    vi.mocked(invoke).mockResolvedValue({ files: ["new"] });
     const fresh = gitDiffIndex("/mutating");
     expect(fresh).not.toBe(old);
     finish({ files: ["old"] });
     await expect(fresh).resolves.toEqual({ files: ["new"] });
-    await expect(old).resolves.toEqual({ files: ["old"] });
+    await expect(old).resolves.toEqual({ files: ["new"] });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("coalesces stats and file reads separately without mixing checkouts", async () => {
+  vi.mocked(invoke).mockReset();
+  vi.mocked(invoke).mockResolvedValue({ files: [] });
+  const stats = gitDiffStats("/stats-a");
+  const files = gitDiffFiles("/stats-a");
+  expect(gitDiffStats("/stats-a")).toBe(stats);
+  expect(gitDiffFiles("/stats-a")).toBe(files);
+  expect(stats).not.toBe(files);
+  const other = gitDiffStats("/stats-b");
+  expect(other).not.toBe(stats);
+  await Promise.all([stats, files, other]);
+  expect(invoke).toHaveBeenCalledTimes(3);
+});
+
+it("does not publish a stale failure after a mutation", async () => {
+  vi.mocked(invoke).mockReset();
+  vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+  try {
+    let fail!: (error: Error) => void;
+    vi.mocked(invoke).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          fail = reject;
+        }),
+    );
+    const old = gitDiffStats("/failed-mutation");
+    notifyGitChanged();
+    vi.mocked(invoke).mockResolvedValue({
+      files: 1,
+      additions: 2,
+      deletions: 3,
+    });
+    fail(new Error("old checkout unavailable"));
+    await expect(old).resolves.toEqual({
+      files: 1,
+      additions: 2,
+      deletions: 3,
+    });
   } finally {
     vi.unstubAllGlobals();
   }

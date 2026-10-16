@@ -1,5 +1,7 @@
 import type { Element, ElementContent, Root } from "hast";
 import { useEffect, useReducer, useRef, useState } from "react";
+import { loadPacedReveal } from "../../settings/model/displayPrefs";
+export { PACED_REVEAL_KEY } from "../../settings/model/displayPrefs";
 
 /*
  * Smooth uneven provider bursts locally, independently of app-shell updates.
@@ -9,9 +11,6 @@ import { useEffect, useReducer, useRef, useState } from "react";
 
 /** How long one word takes to fade in while paced. */
 export const WORD_FADE_MS = 320;
-
-/** Set to "0" to disable the paced word-at-a-time reveal. */
-export const PACED_REVEAL_KEY = "monocode.pacedReveal";
 
 /**
  * Fade length tracks an average of the gaps between bursts: three gaps long,
@@ -31,7 +30,7 @@ export function pacedRevealPreferred(): boolean {
   try {
     return (
       !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches &&
-      localStorage.getItem(PACED_REVEAL_KEY) !== "0"
+      loadPacedReveal()
     );
   } catch {
     return true;

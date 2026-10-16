@@ -8,11 +8,15 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { estimateRetainedBytes } from "../data/sessionCache";
+import { detachedHistoryNodes } from "./useMeasuredHistory";
 
 /** Transcripts kept mounted after their pane closes, so a revisit skips the rebuild. */
 export const TRANSCRIPT_POOL_LIMIT = 12;
 // Count alone lets twelve code-heavy conversations retain enormous DOM trees.
-export const TRANSCRIPT_POOL_NODE_LIMIT = 20_000;
+// Six code-heavy histories fit without cycling through eviction on each visit.
+// Sustained pressure reduces only parked entries; visible content stays intact.
+export const TRANSCRIPT_POOL_NODE_LIMIT = 80_000;
+const PRESSURED_NODE_LIMIT = 20_000;
 export const TRANSCRIPT_POOL_DATA_LIMIT = 16 * 1024 * 1024;
 
 type PooledProps = { visible?: boolean; parked?: boolean; blocks?: object[] };
@@ -37,6 +41,20 @@ export class TranscriptPool {
   private entries = new Map<string, TranscriptPoolEntry>();
   private listeners = new Set<() => void>();
   private snapshot: TranscriptPoolEntry[] = [];
+  private pressured = false;
+
+  private get nodeBudget() {
+    return this.pressured
+      ? Math.min(this.nodeLimit, PRESSURED_NODE_LIMIT)
+      : this.nodeLimit;
+  }
+
+  setResourcePressure = (pressured: boolean) => {
+    if (this.pressured === pressured) return;
+    this.pressured = pressured;
+    this.trim();
+    this.emit();
+  };
 
   constructor(
     private readonly limit = TRANSCRIPT_POOL_LIMIT,
@@ -92,14 +110,16 @@ export class TranscriptPool {
       ...entry,
       host: null,
       onMouseDown: undefined,
-      retainedNodes: countNodes(entry.container, this.nodeLimit),
+      retainedNodes:
+        countNodes(entry.container, this.nodeBudget) +
+        detachedHistoryNodes(entry.container),
       retainedBytes: entry.element.props.blocks
         ? estimateRetainedBytes(entry.element.props.blocks)
         : 0,
       element: cloneElement(entry.element, { visible: false, parked: true }),
     };
     if (
-      parked.retainedNodes > this.nodeLimit ||
+      parked.retainedNodes > this.nodeBudget ||
       parked.retainedBytes > this.dataLimit
     ) {
       // One oversized conversation must not evict all the inexpensive ones.
@@ -122,7 +142,7 @@ export class TranscriptPool {
     for (const entry of [...this.entries.values()]) {
       if (
         parked <= this.limit &&
-        nodes <= this.nodeLimit &&
+        nodes <= this.nodeBudget &&
         bytes <= this.dataLimit
       )
         break;

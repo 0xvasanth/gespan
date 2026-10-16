@@ -27,7 +27,10 @@ import {
   type Components,
 } from "streamdown";
 import type { PluggableList } from "unified";
-import { ExplorerMenu, type ExplorerMenuItem } from "../../files/ui/ExplorerMenu";
+import {
+  ExplorerMenu,
+  type ExplorerMenuItem,
+} from "../../files/ui/ExplorerMenu";
 import { FileActionError } from "../../files/ui/FileActionError";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
 import { boundedCode } from "../../files/editor/codeHighlightPlugin";
@@ -44,7 +47,10 @@ import { useColorScheme } from "../../../shared/hooks/useColorScheme";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
 import { copyText } from "../../../platform/tauri/clipboard";
 import { openPathWithDefaultApp, revealPath } from "../../../platform/tauri/fs";
-import { INBOX_MEDIA_PREFIXES, isInboxMediaUrl } from "../../inbox/model/inboxMedia";
+import {
+  INBOX_MEDIA_PREFIXES,
+  isInboxMediaUrl,
+} from "../../inbox/model/inboxMedia";
 import { isNoteImagePath } from "../../notes";
 import { IS_MAC, IS_WIN } from "../../../platform/tauri/platform";
 import { InboxMedia } from "../../inbox/ui/InboxMedia";
@@ -62,6 +68,11 @@ import {
 import { parseStreamingMarkdown } from "./streamingMarkdown";
 import { HighlightedCodeBlock } from "./HighlightedCodeBlock";
 import { TranscriptPacing, TranscriptVisibility } from "./transcriptVisibility";
+import { usePacedReveal } from "../../settings/model/displayPrefs";
+import {
+  useStreamPresentation,
+  type StreamMeasurement,
+} from "../model/streamingPerformance";
 
 const MERMAID_BASE_CONFIG = {
   startOnLoad: false,
@@ -234,7 +245,9 @@ const LANGUAGE_FILE_NAMES: Record<string, string> = {
 const PLAINTEXT_FENCE_LANGUAGES = new Set(["text", "plaintext", "txt", ""]);
 
 function highlightLanguageFor(language: string): string {
-  return PLAINTEXT_FENCE_LANGUAGES.has(language.toLowerCase()) ? "js" : language;
+  return PLAINTEXT_FENCE_LANGUAGES.has(language.toLowerCase())
+    ? "js"
+    : language;
 }
 
 type MarkdownLinkProps = ComponentProps<"a"> & { node?: unknown };
@@ -550,6 +563,7 @@ function DirectionalBlock({ dir, ...props }: BlockProps) {
 
 export const AgentMarkdown = memo(function AgentMarkdown({
   text,
+  measurement,
   streaming,
   revealOnMount,
   className,
@@ -560,6 +574,7 @@ export const AgentMarkdown = memo(function AgentMarkdown({
   hardBreaks,
 }: {
   text: string;
+  measurement?: StreamMeasurement;
   streaming?: boolean;
   /** Pace newly arrived output even if it finished before its first paint. */
   revealOnMount?: boolean;
@@ -596,10 +611,23 @@ export const AgentMarkdown = memo(function AgentMarkdown({
   const remoteMedia = !!allowRemoteMedia;
   const visible = useContext(TranscriptVisibility);
   const pace = useContext(TranscriptPacing);
-  // Read once: switching reveal hooks while mounted would break hook order.
-  const [pacedReveal] = useState(() => pace && pacedRevealPreferred());
-  const useReveal = pacedReveal ? usePacedText : useStreamedText;
-  const paced = useReveal(text, !!streaming, revealOnMount, visible);
+  const pacingEnabled = usePacedReveal();
+  const pacedReveal = pace && pacingEnabled && pacedRevealPreferred();
+  // Both hooks keep their identity when the preference changes during a reply.
+  const smooth = usePacedText(
+    text,
+    !!streaming,
+    revealOnMount,
+    visible && pacedReveal,
+  );
+  const immediate = useStreamedText(
+    text,
+    !!streaming,
+    revealOnMount,
+    visible && !pacedReveal,
+  );
+  const paced = pacedReveal ? smooth : immediate;
+  useStreamPresentation(measurement, text.length, paced.text.length, visible);
   const cadence = useCadenceFade(paced.text);
   const fadeMs = pacedReveal ? WORD_FADE_MS : cadence.durationMs;
   const fading = useWordFading(!!streaming || paced.revealing, fadeMs);

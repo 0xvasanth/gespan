@@ -18,7 +18,13 @@ import { acceptQuickLaunch } from "./model/quickLaunchSession";
 import { useWorkspaceNavigation } from "./hooks/useWorkspaceNavigation";
 import { useIdleSessionDetach } from "./hooks/useIdleSessionDetach";
 import { HarnessEventQueue } from "./model/harnessFlush";
+import { noteStreamApplied } from "../features/sessions/model/streamingPerformance";
 import { updateSessionState } from "./model/sessionState";
+import { beginTabSwitch, commitTabSwitch } from "./model/navigationPerformance";
+import {
+  SessionStateContext,
+  useWorkspaceSessionState,
+} from "../features/sessions/model/sessionStateStore";
 import {
   handleAgentApp,
   canAccessAgentAppProject,
@@ -87,6 +93,7 @@ import {
 import { useStableValue } from "../shared/hooks/useStableValue";
 import { Sidebar } from "./shell/Sidebar";
 import { ApprovalToasts } from "../features/sessions/ui/ApprovalToasts";
+import { ResourcePressureNotice } from "../features/notifications/ui/ResourcePressureNotice";
 import { HarnessUpdateNotice } from "../features/providers/ui/HarnessUpdateNotice";
 import { WhatsNewDialog } from "./shell/WhatsNewDialog";
 import { ProviderSignInDialog } from "../features/sessions/ui/ProviderSignInDialog";
@@ -1077,9 +1084,10 @@ function Workspace({
     const tab = newTab(session.id);
     return { session, tab };
   });
-  const [sessions, setSessions] = useState<Session[]>(
-    () => windowTransfer?.sessions ?? resumed?.sessions ?? [seed.session],
-  );
+  const { sessions, setSessions, sessionsRef, store: sessionState } =
+    useWorkspaceSessionState(
+      () => windowTransfer?.sessions ?? resumed?.sessions ?? [seed.session],
+    );
   const [sessionDeleteDialog, setSessionDeleteDialog] = useState<{
     title: string;
     unusedWorktree: string;
@@ -1360,8 +1368,6 @@ function Workspace({
   /** Project whose listing failed, so the error cannot leak to another one. */
   const [historyErrorCwd, setHistoryErrorCwd] = useState<string | null>(null);
 
-  const sessionsRef = useRef(sessions);
-  sessionsRef.current = sessions;
   const linkedSessionUpdatesRef = useRef<
     ReadonlyMap<string, LinkedSessionUpdate>
   >(new Map());
@@ -1380,6 +1386,7 @@ function Workspace({
   projectTerminalFocusedRef.current = projectTerminalFocused;
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
+  useLayoutEffect(() => commitTabSwitch(activeTabId), [activeTabId]);
 
   useLayoutEffect(() => {
     const migration = detachMonoTabs(
@@ -1604,7 +1611,7 @@ function Workspace({
   const activeSessionPrefetch = useRef<Promise<Session | null> | null>(null);
   const [transcriptPool] = useState(() => new TranscriptPool());
   // Visible output advances per frame; hidden streams keep their own cadence.
-  const [harnessEvents] = useState(
+  const [harnessEvents] = useState<HarnessEventQueue>(
     () =>
       new HarnessEventQueue(
         (sessionId) => {
@@ -1629,13 +1636,22 @@ function Workspace({
         },
         (batches) => {
           const previous = sessionsRef.current;
-          const next = updateSessionState(
-            sessionsRef,
-            setSessions,
+          const textOnly = [...batches.values()].every((events) =>
+            events.every(
+              (event) => event.type === "message.delta" || event.type === "reasoning.delta",
+            ),
+          );
+          const next = sessionState.update(
             (current) => {
               const updated = current.map((session) => {
                 const events = batches.get(session.id);
-                return events ? applyHarnessEvents(session, events) : session;
+                if (!events) return session;
+                const updated = applyHarnessEvents(session, events);
+                noteStreamApplied(
+                  session.blocks, updated.blocks, events,
+                  harnessEvents.isForeground(session.id),
+                );
+                return updated;
               });
               return updated.some(
                 (session, index) => session !== current[index],
@@ -1643,8 +1659,9 @@ function Workspace({
                 ? updated
                 : current;
             },
+            textOnly,
           );
-          if (next !== previous) syncDockBadge(next);
+          if (!textOnly && next !== previous) syncDockBadge(next);
         },
       ),
   );
@@ -2385,83 +2402,94 @@ function Workspace({
   }, []);
 
   useEffect(() => {
-    const liveIds = new Set(sessions.map((session) => session.id));
-    const visibleIds = openSessionIds(tabsRef.current);
-    for (const session of sessions) {
-      if (
-        removingSessionIds.current.has(session.id) ||
-        switchingWorktrees.current.has(session.id)
-      )
-        continue;
-      const previouslyObserved = observedSessions.current.get(session.id);
-      if (previouslyObserved === session) continue;
-      observedSessions.current.set(session.id, session);
-      const queueChanged =
-        previouslyObserved?.queuedMessages !== session.queuedMessages ||
-        previouslyObserved?.queueStatus !== session.queueStatus;
-      const parked = !visibleIds.has(session.id);
-      const newlyBound =
-        !!session.providerSessionId &&
-        lastBoundProvider.current.get(session.id) !== session.providerSessionId;
-      const lastUserId = lastUserBlockId(session);
-      const newUserTurn =
-        !!lastUserId &&
-        lastPersistedUserBlock.current.get(session.id) !== lastUserId;
-      if (newlyBound && session.providerSessionId) {
-        lastBoundProvider.current.set(session.id, session.providerSessionId);
+    let timer: number | undefined;
+    const observe = () => {
+      const sessions = sessionState.snapshot();
+      const liveIds = new Set(sessions.map((session) => session.id));
+      const visibleIds = openSessionIds(tabsRef.current);
+      for (const session of sessions) {
+        if (
+          removingSessionIds.current.has(session.id) ||
+          switchingWorktrees.current.has(session.id)
+        )
+          continue;
+        const previouslyObserved = observedSessions.current.get(session.id);
+        if (previouslyObserved === session) continue;
+        observedSessions.current.set(session.id, session);
+        const queueChanged =
+          previouslyObserved?.queuedMessages !== session.queuedMessages ||
+          previouslyObserved?.queueStatus !== session.queueStatus;
+        const parked = !visibleIds.has(session.id);
+        const newlyBound =
+          !!session.providerSessionId &&
+          lastBoundProvider.current.get(session.id) !==
+            session.providerSessionId;
+        const lastUserId = lastUserBlockId(session);
+        const newUserTurn =
+          !!lastUserId &&
+          lastPersistedUserBlock.current.get(session.id) !== lastUserId;
+        if (newlyBound && session.providerSessionId) {
+          lastBoundProvider.current.set(session.id, session.providerSessionId);
+        }
+        if (newUserTurn && lastUserId) {
+          lastPersistedUserBlock.current.set(session.id, lastUserId);
+        }
+        if (
+          (newlyBound || newUserTurn || queueChanged) &&
+          shouldPersistSession(session)
+        ) {
+          persistSession(session);
+        }
+        if (
+          shouldPersistSession(session) &&
+          (!session.busy ||
+            parked ||
+            newlyBound ||
+            newUserTurn ||
+            !lastPersisted.current.has(session.id))
+        ) {
+          pendingPersist.current.set(session.id, session);
+        }
       }
-      if (newUserTurn && lastUserId) {
-        lastPersistedUserBlock.current.set(session.id, lastUserId);
+      for (const sessionId of observedSessions.current.keys()) {
+        if (liveIds.has(sessionId)) continue;
+        observedSessions.current.delete(sessionId);
+        pendingPersist.current.delete(sessionId);
       }
-      if (
-        (newlyBound || newUserTurn || queueChanged) &&
-        shouldPersistSession(session)
-      ) {
-        persistSession(session);
-      }
-      if (
-        shouldPersistSession(session) &&
-        (!session.busy ||
-          parked ||
-          newlyBound ||
-          newUserTurn ||
-          !lastPersisted.current.has(session.id))
-      ) {
-        pendingPersist.current.set(session.id, session);
-      }
-    }
-    for (const sessionId of observedSessions.current.keys()) {
-      if (liveIds.has(sessionId)) continue;
-      observedSessions.current.delete(sessionId);
-      pendingPersist.current.delete(sessionId);
-    }
-    if (pendingPersist.current.size === 0) return;
+      if (pendingPersist.current.size === 0) return;
 
-    const timer = window.setTimeout(() => {
-      const dirty = [...pendingPersist.current.values()];
-      pendingPersist.current.clear();
-      void Promise.all(
-        dirty.map(async (session) => {
-          if (
-            removingSessionIds.current.has(session.id) ||
-            switchingWorktrees.current.has(session.id)
-          )
-            return;
-          const fingerprint = persistFingerprint(session);
-          if (lastPersisted.current.get(session.id) === fingerprint) return;
-          const summary = await upsertSession(session).catch(() => null);
-          if (!summary) return;
-          lastPersisted.current.set(session.id, fingerprint);
-          if (summary.cwd === sidebarCwdRef.current) {
-            setHistory((current) =>
-              mergeProjectHistorySummary(current, summary),
-            );
-          }
-        }),
-      );
-    }, 650);
-    return () => window.clearTimeout(timer);
-  }, [persistSession, sessions]);
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const dirty = [...pendingPersist.current.values()];
+        pendingPersist.current.clear();
+        void Promise.all(
+          dirty.map(async (session) => {
+            if (
+              removingSessionIds.current.has(session.id) ||
+              switchingWorktrees.current.has(session.id)
+            )
+              return;
+            const fingerprint = persistFingerprint(session);
+            if (lastPersisted.current.get(session.id) === fingerprint) return;
+            const summary = await upsertSession(session).catch(() => null);
+            if (!summary) return;
+            lastPersisted.current.set(session.id, fingerprint);
+            if (summary.cwd === sidebarCwdRef.current) {
+              setHistory((current) =>
+                mergeProjectHistorySummary(current, summary),
+              );
+            }
+          }),
+        );
+      }, 650);
+    };
+    observe();
+    const unsubscribe = sessionState.observe(observe);
+    return () => {
+      unsubscribe();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [persistSession, sessionState]);
 
   useEffect(() => {
     const refs = inFlightRefs(sessions, tabs);
@@ -2568,6 +2596,7 @@ function Workspace({
       paneId?: string,
       reason: "session" | "workspace" = "session",
     ) => {
+      if (id !== activeTabIdRef.current) beginTabSwitch(id);
       closeMonoView();
       const tab = tabsRef.current.find((entry) => entry.id === id);
       const nextFocusedId =
@@ -4104,18 +4133,19 @@ function Workspace({
         setComposerFocused(true);
         return;
       }
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.id === activeTabId
-            ? { ...t, focusedId: paneId, diffFocused: false }
-            : t,
-        ),
-      );
+      setTabs((prev) => {
+        const selectedId = activeTabIdRef.current;
+        const selected = prev.find((tab) => tab.id === selectedId);
+        if (!selected || (selected.focusedId === paneId && !selected.diffFocused)) return prev;
+        return prev.map((tab) => tab.id === selectedId
+          ? { ...tab, focusedId: paneId, diffFocused: false }
+          : tab);
+      });
       setComposerFocused(
         sessionsRef.current.some((session) => session.id === paneId),
       );
     },
-    [activeTabId, inboxAskPortal, closeMonoView],
+    [inboxAskPortal, closeMonoView],
   );
 
   const onOpenDiff = useCallback(
@@ -12888,6 +12918,7 @@ function Workspace({
   );
 
   return (
+    <SessionStateContext.Provider value={sessionState}>
     <OrchestrationActions.Provider value={orchestrationActions}>
       <OrchestrationWorkers.Provider value={orchestrationWorkers}>
         <div
@@ -13126,6 +13157,7 @@ function Workspace({
                             {tabs.map((tab) => (
                               <div
                                 key={tab.id}
+                                data-workspace-tab={tab.id}
                                 aria-hidden={
                                   tab.id !== activeTabId || monoCovers
                                 }
@@ -13470,6 +13502,14 @@ function Workspace({
             onHeightChange={setHarnessUpdateHeight}
           />
           <ApprovalToasts
+            resourceNotice={
+              <ResourcePressureNotice
+                sessions={sessionsRef}
+                onStopAgent={(id) => { onStop(id, true); }}
+                onStopSession={onStop}
+                onPressureChange={transcriptPool.setResourcePressure}
+              />
+            }
             notices={hiddenApprovalToasts}
             topOffset={
               12 +
@@ -13515,6 +13555,7 @@ function Workspace({
         <TranscriptPoolOutlet pool={transcriptPool} />
       </OrchestrationWorkers.Provider>
     </OrchestrationActions.Provider>
+    </SessionStateContext.Provider>
   );
 }
 function conversationTitle(session: Session): string {

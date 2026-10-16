@@ -1,10 +1,11 @@
 import type { HarnessEvent } from "../../integrations/harness/core/types";
+import { noteStreamArrival } from "../../features/sessions/model/streamingPerformance";
 
 export type ScheduledFlush = { kind: "raf" | "timeout"; id: number };
 
 /**
- * Each flush re-renders the app shell, so a visible stream lands at ~30Hz
- * rather than every frame; paced text animates between flushes on its own.
+ * Visible content subscribers advance at ~30Hz; paced text animates between
+ * deliveries independently of the app shell.
  * Just under two 60Hz frames, so frame jitter can't halve the rate.
  */
 export const FOREGROUND_FLUSH_MS = 30;
@@ -43,6 +44,7 @@ export class HarnessEventQueue {
   ) {}
 
   enqueue = (sessionId: string, event: HarnessEvent) => {
+    noteStreamArrival(event);
     const events = this.queued.get(sessionId);
     if (events) events.push(event);
     else this.queued.set(sessionId, [event]);

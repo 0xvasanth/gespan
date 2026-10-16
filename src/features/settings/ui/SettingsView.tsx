@@ -238,6 +238,8 @@ import {
 import { ProviderAccountSubtitle } from "../../providers/ui/ProviderAccountSubtitle";
 import {
   saveComposerAutocorrect,
+  savePacedReveal,
+  usePacedReveal,
   saveMaskEmails,
   saveRailMonosPinned,
   saveShowRemainingUsage,
@@ -972,6 +974,7 @@ function GeneralPage({
 }
 
 function ChatPage() {
+  const pacedReveal = usePacedReveal();
   const [transcriptLayout, setTranscriptLayout] =
     useState<TranscriptLayout>(loadTranscriptLayout);
   const [transcriptAnchor, setTranscriptAnchor] =
@@ -1068,6 +1071,17 @@ function ChatPage() {
             label="Anchor prompts to top"
             on={transcriptAnchor}
             onChange={onTranscriptAnchor}
+          />
+        </Row>
+        <Row
+          id="paced-reveal"
+          label="Smooth text reveal"
+          description="Reveal incoming bursts gradually. Turn this off to show received text immediately. This changes presentation timing, not processing speed."
+        >
+          <Toggle
+            label="Smooth text reveal"
+            on={pacedReveal}
+            onChange={savePacedReveal}
           />
         </Row>
       </Group>

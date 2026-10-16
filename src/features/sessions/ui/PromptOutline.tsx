@@ -22,6 +22,7 @@ import {
 } from "../model/promptOutline";
 import type { Block } from "../model/session";
 import { Popover } from "../../../shared/ui/Popover";
+import { revealMeasuredTurn } from "./useMeasuredHistory";
 
 const OPEN_DELAY_MS = 25;
 const SCROLL_INSET_PX = 8;
@@ -120,6 +121,7 @@ export function PromptOutline({
   }, [measure]);
 
   useEffect(() => {
+    if (!visible) return;
     const scroller =
       mountedScroller ?? scope.current?.querySelector<HTMLElement>(SCROLLER);
     if (!scroller) return;
@@ -138,10 +140,10 @@ export function PromptOutline({
         frame.current = null;
       }
     };
-  }, [mountedScroller, schedule, scope]);
+  }, [mountedScroller, schedule, scope, visible]);
 
   useEffect(() => {
-    schedule();
+    if (visible) schedule();
   }, [schedule, blocks, visible]);
 
   const cancelOpen = () => {
@@ -205,6 +207,7 @@ export function PromptOutline({
       return;
     }
     const target = anchor.closest<HTMLElement>(TURN) ?? anchor;
+    revealMeasuredTurn(target);
     const align = () => {
       const delta =
         target.getBoundingClientRect().top -

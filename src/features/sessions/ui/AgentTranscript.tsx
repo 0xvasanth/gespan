@@ -37,6 +37,10 @@ import { MonocodeSparkles } from "./MonocodeSparkles";
 import { OrchestratorConstellation } from "./OrchestratorConstellation";
 import { PlanStepsBurst } from "./PlanStepsBurst";
 import { settleWordFades } from "./wordFade";
+import { revealMeasuredTurn, useMeasuredHistory } from "./useMeasuredHistory";
+import { HistoryTurn } from "./HistoryTurn";
+import { streamMeasurement } from "../model/streamingPerformance";
+import { useReplyReflowAnchor } from "./useReplyReflowAnchor";
 import { FilePreview } from "../../files/ui/FilePreview";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
 import { ToolDiffPreview } from "./ToolDiffPreview";
@@ -716,6 +720,7 @@ function AgentTranscriptComponent({
   }, [bottomAligned, scrollerEl, followTranscript, setShowJump, visible]);
 
   useTurnScrollAnchor(scrollerEl, visible, stickToBottom, rememberScroll);
+  useReplyReflowAnchor(scrollerEl, visible, stickToBottom, rememberScroll);
 
   const [turnCache] = useState(() => new TranscriptTurnCache());
   const undeliveredMessageIds = useMemo(
@@ -730,7 +735,10 @@ function AgentTranscriptComponent({
     -1,
   );
   const firstVisibleTurn = Math.max(0, turns.length - visibleTurnCount);
-  const visibleTurns = turns.slice(firstVisibleTurn);
+  const hasOpened = useRef(visible);
+  hasOpened.current ||= visible;
+  const visibleTurns = hasOpened.current ? turns.slice(firstVisibleTurn) : [];
+  useMeasuredHistory(scrollerEl, visible, turns, !!searchQuery);
   const turnsRef = useRef(turns);
   turnsRef.current = turns;
   const visibleTurnCountRef = useRef(visibleTurnCount);
@@ -783,12 +791,23 @@ function AgentTranscriptComponent({
   }, [visibleTurnCount, turns.length, initialTurns]);
 
   useEffect(() => {
-    if (bottomAligned) return;
-    // Interruptible, so switching away before it finishes costs nothing.
-    startTransition(() =>
-      setVisibleTurnCount((count) => Math.max(count, initialTurns)),
-    );
-  }, [bottomAligned, initialTurns]);
+    if (bottomAligned || !visible || visibleTurnCount >= initialTurns) return;
+    // Paint the opening window first, then warm one historical turn at a time.
+    // Expanding all twenty at once forced a large synchronous WebKit layout.
+    let timer = 0;
+    const frame = requestAnimationFrame(() => {
+      timer = window.setTimeout(() => {
+        if (stickToBottom.current)
+          startTransition(() =>
+            setVisibleTurnCount((count) => Math.min(initialTurns, count + 1)),
+          );
+      }, 16);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [bottomAligned, initialTurns, visible, visibleTurnCount]);
 
   const prepareToPrepend = useCallback(() => {
     const el = scroller.current;
@@ -884,10 +903,15 @@ function AgentTranscriptComponent({
       );
       if (index < 0) return false;
       const needed = all.length - index;
-      if (needed <= visibleTurnCountRef.current) return true;
-      prepareToPrepend();
-      // Synchronous. The caller finds the turn in the DOM after this call.
-      flushSync(() => setVisibleTurnCount(needed));
+      if (needed > visibleTurnCountRef.current) {
+        prepareToPrepend();
+        // Synchronous. The caller finds the turn in the DOM after this call.
+        flushSync(() => setVisibleTurnCount(needed));
+      }
+      const row = scroller.current?.querySelector<HTMLElement>(
+        `[data-transcript-turn="${CSS.escape(all[index][0].id)}"]`,
+      );
+      if (row) revealMeasuredTurn(row);
       return true;
     },
     [prepareToPrepend],
@@ -929,6 +953,7 @@ function AgentTranscriptComponent({
             `[data-transcript-turn="${CSS.escape(turnId)}"]`,
           );
         if (!target) return;
+        revealMeasuredTurn(target);
         const wordRect = query
           ? transcriptWordRanges(el, query).current?.getBoundingClientRect?.()
           : null;
@@ -1437,9 +1462,9 @@ function AgentTranscriptComponent({
             </TurnRow>
           );
           return (
-            <div
+            <HistoryTurn
               key={turn[0].id}
-              data-transcript-turn={turnId}
+              id={turnId}
               // A stacked message sits as close as one in the same turn, so
               // the gap between turns gives way.
               className={`transcript-turn flex min-w-0 flex-col${inlineWork && !reactedOnly ? " transcript-turn-mono" : ""}${stacksIntoNextTurn ? " -mb-1" : ""}${
@@ -1634,7 +1659,7 @@ function AgentTranscriptComponent({
                   }
                 />
               ) : null}
-            </div>
+            </HistoryTurn>
           );
         })}
       </TranscriptContent>
@@ -1694,7 +1719,12 @@ export const AgentTranscript = memo(
     );
   },
   (previous, next) => {
-    if (previous.visible === false && next.visible === false) return true;
+    if (
+      previous.visible === false &&
+      next.visible === false &&
+      previous.parked === next.parked
+    )
+      return true;
     const keys = Object.keys(next) as (keyof Props)[];
     return (
       keys.length === Object.keys(previous).length &&
@@ -2370,6 +2400,7 @@ const TranscriptBlock = memo(function TranscriptBlock({
     >
       <AgentMarkdown
         text={block.text}
+        measurement={streamMeasurement(block)}
         streaming={block.streaming}
         revealOnMount={revealOnMount}
         cwd={cwd}
@@ -5169,10 +5200,29 @@ const PROMPT_RISE_FROM = 0.3;
 
 /** Fades the prompt in while sliding it from the upper viewport to its row. */
 function riseIntoAnchor(scroller: HTMLElement | null, blockId: string) {
+  if (!scroller) return;
   const row = scroller?.querySelector<HTMLElement>(
     `[data-prompt-anchor="${CSS.escape(blockId)}"]`,
   );
-  if (!scroller || !row || typeof row.animate !== "function") return;
+  if (!row) {
+    // Retained turns attach their portal before mounting its children. Wait
+    // for that commit so the prompt keeps its existing entry animation.
+    let cancel: (() => void) | undefined;
+    const observer = new MutationObserver(() => {
+      if (
+        !scroller.querySelector(`[data-prompt-anchor="${CSS.escape(blockId)}"]`)
+      )
+        return;
+      observer.disconnect();
+      cancel = riseIntoAnchor(scroller, blockId);
+    });
+    observer.observe(scroller, { subtree: true, childList: true });
+    return () => {
+      observer.disconnect();
+      cancel?.();
+    };
+  }
+  if (typeof row.animate !== "function") return;
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
   const view = scroller.getBoundingClientRect();
   const dy =
