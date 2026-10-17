@@ -90,6 +90,10 @@ import {
 import type { PaneEdge } from "../../features/workspace/model/layout";
 import { suppressTextSelection } from "../../shared/lib/drag";
 import { LAYER } from "../../shared/lib/layers";
+import { RevealHeight } from "../../shared/ui/RevealHeight";
+import { MODE_COMMAND_STYLES } from "../../features/sessions/ui/modeCommands";
+import { OPERATOR_COMMAND } from "../../features/sessions/model/operatorCommand";
+import { ORCHESTRATOR_COMMAND } from "../../features/sessions/model/orchestratorCommand";
 import {
   compareSessionSummaries,
   filterSessionsByArchive,
@@ -758,18 +762,30 @@ function SidebarComponent({
   const worktreeFocus = useWorktreeFocus(cwd);
   const focusedWorktree = remoteProject ? undefined : worktreeFocus;
   useSyncExternalStore(subscribeMonos, monosSnapshot);
-  const listedSessions = mergeFolderSessionSummaries(
+  const listableSessions = mergeFolderSessionSummaries(
     projectSessions,
     remoteProject ? [] : openSessions,
     sessionFolders,
   ).filter(
     (session) =>
       !isMonoSession(session.id) &&
-      !session.sidebarHidden &&
       !("ephemeral" in session && session.ephemeral) &&
       !isHabitRun(session.id) &&
       !session.orchestrationLeadId &&
       inWorktreeFocus(session, focusedWorktree),
+  );
+  // Sessions saved hidden still show when a listed session started them:
+  // /operator launches were once hidden like a Mono's by mistake. A Mono's
+  // chat is never listed, so its hidden launches stay hidden.
+  const shownSessionIds = new Set(
+    listableSessions
+      .filter((session) => !session.sidebarHidden)
+      .map((session) => session.id),
+  );
+  const listedSessions = listableSessions.filter(
+    (session) =>
+      !session.sidebarHidden ||
+      !!startedSessionCaller(session.id, shownSessionIds),
   );
   const visibleSessions = [
     ...filterSessionsByQuery(
@@ -793,6 +809,29 @@ function SidebarComponent({
       searchQuery,
     ),
   ].sort(compareSessionSummaries);
+  // The inset list hangs the sessions an /operator thread started under it,
+  // like an orchestrator's agents, rather than listing them on their own.
+  const startedSessions = inset
+    ? groupStartedSessions(visibleSessions)
+    : NO_STARTED_SESSIONS;
+  // Launches the sidebar has already shown for this project. Anything newer
+  // grows in under its caller; what is there when a project opens does not.
+  const knownStarted = useRef<{ cwd: string; ids: Set<string> } | null>(null);
+  if (!knownStarted.current || knownStarted.current.cwd !== cwd)
+    knownStarted.current = { cwd, ids: new Set(startedSessions.childIds) };
+  const freshStarted = new Set(
+    [...startedSessions.childIds].filter(
+      (id) => !knownStarted.current!.ids.has(id),
+    ),
+  );
+  useEffect(() => {
+    for (const id of freshStarted) knownStarted.current?.ids.add(id);
+  });
+  const listedVisibleSessions = startedSessions.childIds.size
+    ? visibleSessions.filter(
+        (session) => !startedSessions.childIds.has(session.id),
+      )
+    : visibleSessions;
   const filtersActive = hasActiveSessionFilters(sessionFilters);
   const searchNarrowed = Boolean(searchQuery.trim());
   // Summaries for the whole project stay in `sessions` so filters still work.
@@ -806,7 +845,7 @@ function SidebarComponent({
     collapsed: reminderSessionsCollapsed,
   };
   const ungroupedVisible = ungroupedSessions(
-    visibleSessions,
+    listedVisibleSessions,
     sessionFolders,
   ).filter((session) => !reminderIds.has(session.id));
   const activeUngroupedIndex = ungroupedVisible.findIndex(
@@ -819,14 +858,14 @@ function SidebarComponent({
   );
   const shownUngrouped = ungroupedVisible.slice(0, shownUngroupedCount);
   const fullSessionListEntries = buildSessionList(
-    visibleSessions,
+    listedVisibleSessions,
     sessionFolders,
     ungroupedVisible,
     pinnedSessionsCollapsed,
     reminderGroup,
   );
   const sessionListEntries = buildSessionList(
-    visibleSessions,
+    listedVisibleSessions,
     sessionFolders,
     shownUngrouped,
     pinnedSessionsCollapsed,
@@ -1829,7 +1868,72 @@ function SidebarComponent({
     for (const session of listedSessions) motion.seen.add(session.id);
   });
 
-  const renderSessionCard = (session: SessionSummary, compact = false) =>
+  // A session row, with the sessions it started hanging off a rail below it.
+  const renderSessionCard = (session: SessionSummary, compact = false) => {
+    const started = startedSessions.byParent.get(session.id);
+    if (!started?.length) return renderSessionRow(session, compact);
+    // Open while the thread or one of its sessions is the one in view, chosen
+    // or working, as an orchestrator's agents are.
+    const inPlay = (id: string) =>
+      id === highlightedSessionId ||
+      selectedSessionIds.has(id) ||
+      listedBusySessionIds.has(id);
+    const open =
+      inPlay(session.id) || started.some((child) => inPlay(child.id));
+    const card = renderSessionRow(session, compact, {
+      startedCount: started.length,
+      startedOpen: open,
+      startedInView: started.some(
+        (child) =>
+          child.id === highlightedSessionId || selectedSessionIds.has(child.id),
+      ),
+    });
+    return (
+      <>
+        {card}
+        {/* The rail drops from under the row's mark, as an orchestrator's
+            agents do. New launches grow in under it; the whole rail does
+            when it is the first. */}
+        <RevealHeight
+          className="ml-2.5"
+          data-started-sessions={session.id}
+          open={open}
+          animateIn={started.every((child) => freshStarted.has(child.id))}
+        >
+          <div className="pt-1">
+            {started.map((child) => (
+              <RevealHeight
+                key={child.id}
+                className="zen-phase-step orchestration-tree-step"
+                animateIn={
+                  freshStarted.has(child.id) &&
+                  !started.every((other) => freshStarted.has(other.id))
+                }
+              >
+                {renderSessionRow(child, compact, { nested: true })}
+              </RevealHeight>
+            ))}
+          </div>
+        </RevealHeight>
+      </>
+    );
+  };
+
+  const renderSessionRow = (
+    session: SessionSummary,
+    compact = false,
+    {
+      nested = false,
+      startedCount = 0,
+      startedOpen = false,
+      startedInView = false,
+    }: {
+      nested?: boolean;
+      startedCount?: number;
+      startedOpen?: boolean;
+      startedInView?: boolean;
+    } = {},
+  ) =>
     renamingSessionId === session.id && onRenameSession ? (
       <SessionRenameRow
         session={session}
@@ -1853,6 +1957,10 @@ function SidebarComponent({
         dropTarget={isSessionDrop("session", session.id)}
         compact={compact}
         dense={inset}
+        nested={nested}
+        startedCount={startedCount}
+        startedOpen={startedOpen}
+        startedInView={startedInView}
         now={now}
         onSelect={cardActions.select}
         onOpenWorkItem={
@@ -3951,6 +4059,56 @@ function sessionAgeLabel(updatedAt: number, now: number): string {
   return "Older";
 }
 
+/** The session among `ids` that started `id` through the app CLI, if any. */
+export function startedSessionCaller(
+  id: string,
+  ids: ReadonlySet<string>,
+): string | undefined {
+  if (!id.startsWith("app-")) return undefined;
+  const rest = id.slice("app-".length);
+  // The longest listed prefix, since IDs and request IDs both use hyphens.
+  for (let index = rest.lastIndexOf("-"); index > 0;) {
+    const candidate = rest.slice(0, index);
+    if (candidate !== id && ids.has(candidate)) return candidate;
+    index = rest.lastIndexOf("-", index - 1);
+  }
+  return undefined;
+}
+
+const NO_STARTED_SESSIONS: {
+  byParent: ReadonlyMap<string, SessionSummary[]>;
+  childIds: ReadonlySet<string>;
+} = { byParent: new Map(), childIds: new Set() };
+
+/**
+ * Sessions started through the app CLI are named `app-<caller>-<request>`, so
+ * each finds its caller among the listed sessions. One a started session
+ * started in turn joins the same top-level session. Sessions whose caller is
+ * not listed, such as a Mono's, stay where they are.
+ */
+export function groupStartedSessions<T extends { id: string }>(
+  sessions: readonly T[],
+): { byParent: ReadonlyMap<string, T[]>; childIds: ReadonlySet<string> } {
+  const ids = new Set(sessions.map((session) => session.id));
+  const callerOf = (id: string) => startedSessionCaller(id, ids);
+  const byParent = new Map<string, T[]>();
+  const childIds = new Set<string>();
+  for (const session of sessions) {
+    let root = callerOf(session.id);
+    if (!root) continue;
+    const seen = new Set([session.id]);
+    for (let up = callerOf(root); up && !seen.has(up); up = callerOf(up)) {
+      seen.add(root);
+      root = up;
+    }
+    childIds.add(session.id);
+    const list = byParent.get(root);
+    if (list) list.push(session);
+    else byParent.set(root, [session]);
+  }
+  return { byParent, childIds };
+}
+
 /** A quiet heading over a group in the inset sidebar, actions at its end. */
 function SidebarSectionLabel({
   label,
@@ -4483,6 +4641,10 @@ export const SessionCard = memo(function SessionCard({
   dropTarget,
   compact = false,
   dense = false,
+  nested = false,
+  startedCount = 0,
+  startedOpen = false,
+  startedInView = false,
   modelInFooter = false,
   statusLabel,
   project,
@@ -4510,6 +4672,16 @@ export const SessionCard = memo(function SessionCard({
   /** One line: status dot, provider mark, title and time, for the inset
    * layout's list. */
   dense?: boolean;
+  /** A session another one started, on the rail under it: a smaller, muted
+   * title like an orchestrator's agent rows. */
+  nested?: boolean;
+  /** How many listed sessions this one started through /operator. */
+  startedCount?: number;
+  /** Whether those sessions are showing on the rail below. */
+  startedOpen?: boolean;
+  /** One of those sessions is the one in view or chosen, so this row keeps
+   * its hover fill as the group's head. */
+  startedInView?: boolean;
   /** Shows the model as its provider's mark beside the branch, so the title
    * shares its row with the time and the card is a line shorter. */
   modelInFooter?: boolean;
@@ -4570,6 +4742,43 @@ export const SessionCard = memo(function SessionCard({
   const draft = !!session.draft;
   const orchestrationExpanded =
     !!orchestration && (isActive || isSelected || busy);
+  // An orchestrator or /operator thread opens a rail of work below it.
+  const expandable =
+    dense &&
+    !nested &&
+    ((!!orchestration && !orchestrationExpanded) ||
+      (startedCount > 0 && !startedOpen));
+  const markHover = expandable ? " group-hover:hidden" : "";
+  // Marked on the right like a linked issue or PR, in its mode's colour.
+  const modeStyle = orchestration
+    ? MODE_COMMAND_STYLES[ORCHESTRATOR_COMMAND.name]
+    : startedCount > 0
+      ? MODE_COMMAND_STYLES[OPERATOR_COMMAND.name]
+      : undefined;
+  const modeLabel = orchestration
+    ? `Orchestrator, ${orchestration.tasks.length} ${
+        orchestration.tasks.length === 1 ? "agent" : "agents"
+      }`
+    : `Operator, started ${startedCount} ${
+        startedCount === 1 ? "session" : "sessions"
+      }`;
+  const modeBadge =
+    dense && !nested && modeStyle ? (
+      <span
+        role="img"
+        title={modeLabel}
+        aria-label={modeLabel}
+        data-session-mode={orchestration ? "orchestrator" : "operator"}
+        className={`grid size-4 shrink-0 place-items-center ${modeStyle.className}`}
+      >
+        <modeStyle.Icon className="size-3" strokeWidth={1.75} />
+      </span>
+    ) : null;
+  // Set once the card has painted, so only later changes animate.
+  const cardShown = useRef(false);
+  useEffect(() => {
+    cardShown.current = true;
+  }, []);
   const orchestrationDone =
     orchestration?.tasks.filter((task) => task.status === "completed").length ??
     0;
@@ -4860,7 +5069,7 @@ export const SessionCard = memo(function SessionCard({
             closePreview();
             onContextMenu?.(session.id, event);
           }}
-          className={`relative border flex w-full cursor-default select-none touch-none flex-col rounded-md ${dense ? "px-2" : "px-2.5"} text-left ${cardPaddingY} ${
+          className={`relative border flex w-full cursor-default select-none touch-none flex-col rounded-md ${nested ? "px-1.5" : dense ? "px-2" : "px-2.5"} text-left ${cardPaddingY} ${
             dragging ? "opacity-40" : ""
           } ${
             dropTarget
@@ -4876,7 +5085,9 @@ export const SessionCard = memo(function SessionCard({
                       : `text-content/80 hover:text-content border-transparent ${
                           orchestrationExpanded && !dense
                             ? "bg-content/5 hover:bg-content/10"
-                            : "hover:bg-content/5"
+                            : startedInView
+                              ? "bg-content/5"
+                              : "hover:bg-content/5"
                         }`
           }`}
         >
@@ -4907,18 +5118,34 @@ export const SessionCard = memo(function SessionCard({
             className="rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent/50"
           >
             {dense ? (
-              <span className="relative flex h-6 min-w-0 items-center gap-2">
+              <span
+                className={`relative flex min-w-0 items-center ${
+                  nested ? "h-5 gap-1.5" : "h-6 gap-2"
+                }`}
+              >
+                {/* A collapsed orchestrator or /operator thread shows a
+                    chevron in its mark's place on hover: selecting it opens
+                    the rail below. */}
+                {expandable ? (
+                  <span className="hidden size-4 shrink-0 place-items-center text-content/60 group-hover:grid">
+                    <ChevronDown className="size-3.5" strokeWidth={1.75} />
+                  </span>
+                ) : null}
                 {/* A working session spins in place of its provider's mark,
                   then shows a check until it is seen. */}
                 {busy ? (
-                  <span className="grid size-4 shrink-0 place-items-center">
+                  <span
+                    className={`grid size-4 shrink-0 place-items-center${markHover}`}
+                  >
                     <TerminalSpinner
                       aria-label="Working"
                       className="inline-block w-3.5 select-none text-center text-[11px] leading-none text-accent"
                     />
                   </span>
                 ) : done ? (
-                  <span className="grid size-4 shrink-0 place-items-center">
+                  <span
+                    className={`grid size-4 shrink-0 place-items-center${markHover}`}
+                  >
                     <Check
                       role="img"
                       aria-label="Done"
@@ -4929,7 +5156,7 @@ export const SessionCard = memo(function SessionCard({
                 ) : (
                   <HarnessIcon
                     harness={session.harness}
-                    className="size-4 shrink-0"
+                    className={`${nested ? "size-3.5" : "size-4"} shrink-0${markHover}`}
                   />
                 )}
                 {session.pinned ? (
@@ -4940,11 +5167,20 @@ export const SessionCard = memo(function SessionCard({
                 ) : null}
                 <ParticleText
                   text={title}
-                  className="line-clamp-1 min-w-0 flex-1 text-sm font-medium leading-tight text-content"
+                  className={`line-clamp-1 min-w-0 flex-1 leading-tight ${
+                    nested
+                      ? `text-[13px] ${
+                          isActive || isSelected
+                            ? "text-content"
+                            : "text-content/55 group-hover:text-content/80"
+                        }`
+                      : "text-sm font-medium text-content"
+                  }`}
                 />
                 <span className="flex shrink-0 items-center gap-1">
                   {linkedUpdateDot}
                   {workItemBadge}
+                  {modeBadge}
                   {session.automationId ? (
                     <span
                       data-automation-icon
@@ -5238,12 +5474,22 @@ export const SessionCard = memo(function SessionCard({
       </div>
       {/* Under the row, outside its highlight and its hover actions, like a
           tool step's rail. */}
-      {orchestrationExpanded && dense ? (
-        <OrchestrationSidebarAgents
-          leadId={session.id}
-          summary={orchestration!}
-          variant="tree"
-        />
+      {orchestration && dense ? (
+        // Opening under a row already on screen grows in and pushes the
+        // list down; one the list loads with is simply there.
+        <RevealHeight
+          open={orchestrationExpanded}
+          animateIn={cardShown.current}
+        >
+          {/* One item, padding and all, for the reveal to grow. */}
+          <div>
+            <OrchestrationSidebarAgents
+              leadId={session.id}
+              summary={orchestration}
+              variant="tree"
+            />
+          </div>
+        </RevealHeight>
       ) : null}
     </>
   );

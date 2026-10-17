@@ -3215,9 +3215,10 @@ html.theme-light .mono-pill {
   height: 7px;
 }
 
-/* Orchestrated agents on the inset sidebar's rail sit a little apart. The
-   gap is the step's own padding, so the spine runs through it, and the
-   curve and the spine's end move down with the 28px row's centre. */
+/* Orchestrated agents, and sessions an /operator thread started, sit a
+   little apart on the inset sidebar's rail. The gap is the step's own
+   padding, so the spine runs through it, and the curve and the spine's end
+   move down with the 28px row's centre. */
 .orchestration-tree-step {
   padding-top: 2px;
   padding-bottom: 2px;
@@ -3230,6 +3231,58 @@ html.theme-light .mono-pill {
 .orchestration-tree-step:last-child::before {
   height: 9px;
 }
+
+/* RevealHeight: grows a block open from nothing, pushing what follows down,
+   and folds it away again. The grid row animates rather than a height, so
+   the block keeps its natural size; it only clips while it moves. */
+.reveal-height-in,
+.reveal-height-out {
+  display: grid;
+}
+
+.reveal-height-in > *,
+.reveal-height-out > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.reveal-height-in {
+  animation: reveal-height-in 240ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.reveal-height-out {
+  animation: reveal-height-out 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes reveal-height-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+
+@keyframes reveal-height-out {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-height-in,
+  .reveal-height-out {
+    animation: none;
+  }
+}
+
 
 .zen-phase-step::after {
   top: 6px;
