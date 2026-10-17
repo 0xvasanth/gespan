@@ -81,7 +81,8 @@ export class TranscriptPool {
     const container = previous?.container ?? createContainer();
     // Attach before the pane's passive effects run, so anything that looks
     // for the transcript in the pane already finds a revisited one.
-    if (container.parentElement !== host) host.appendChild(container);
+    if (element.props.visible === false) container.remove();
+    else if (container.parentElement !== host) host.appendChild(container);
     if (
       previous?.host === host &&
       previous.onMouseDown === onMouseDown &&

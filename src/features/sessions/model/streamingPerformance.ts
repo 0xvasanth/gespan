@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import type { HarnessEvent } from "../../../integrations/harness/core/types";
 import type { Block } from "./session";
 
@@ -15,8 +15,10 @@ type Sample = {
 export type StreamMeasurement = { pending: Sample[] };
 const measurements = new WeakMap<Block, StreamMeasurement>();
 
-export function noteStreamArrival(event: HarnessEvent) {
-  if (enabled && event.type === "message.delta")
+export function noteStreamArrival(event: HarnessEvent, foreground = true) {
+  // Time spent deliberately batching an unseen chat is not visible-stream
+  // latency. Activation is measured separately by the navigation timing.
+  if (enabled && foreground && event.type === "message.delta")
     arrivals.set(event, performance.now());
 }
 
@@ -57,11 +59,10 @@ export function noteStreamApplied(
 export const streamMeasurement = (block: Block) =>
   enabled ? measurements.get(block) : undefined;
 
-/** Received → committed source and received → revealed text are separate. */
+/** Source readiness and the inner Markdown renderer's commit are separate. */
 export function useStreamPresentation(
   measurement: StreamMeasurement | undefined,
   sourceLength: number,
-  shownLength: number,
   visible: boolean,
 ) {
   const showing = useRef(visible);
@@ -82,34 +83,46 @@ export function useStreamPresentation(
     for (const sample of measurement.pending) {
       if (sample.length <= sourceLength) sample.ready ??= now;
     }
-    const shown = measurement.pending.filter(
-      (sample) => sample.length <= shownLength,
-    );
-    measurement.pending = measurement.pending.filter(
-      (sample) => sample.length > shownLength,
-    );
-    if (!shown.length) return;
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        if (!showing.current || document.hidden) return;
-        const presented = performance.now();
-        if (
-          performance.getEntriesByName("monocode:stream-visible").length >= 300
-        )
-          performance.clearMeasures("monocode:stream-visible");
-        for (const sample of shown)
-          performance.measure("monocode:stream-visible", {
-            start: sample.received,
-            end: presented,
-            detail: {
-              queueMs: sample.applied - sample.received,
-              commitMs: (sample.ready ?? now) - sample.applied,
-              presentationMs: presented - (sample.ready ?? now),
-            },
-          });
-      }),
-    );
-    // Two animation frames bound presentation; they do not expose the exact
-    // compositor timestamp. No text or session identifiers are recorded.
-  }, [measurement, sourceLength, shownLength, visible]);
+  }, [measurement, sourceLength, visible]);
+
+  // Call from the rendered blocks' layout effects, after Streamdown's internal
+  // transition. The outer component receiving source is not a visible update.
+  return useCallback(
+    (shownLength: number) => {
+      if (!measurement || !visible) return;
+      const committed = performance.now();
+      const shown = measurement.pending.filter(
+        (sample) => sample.length <= shownLength,
+      );
+      measurement.pending = measurement.pending.filter(
+        (sample) => sample.length > shownLength,
+      );
+      if (!shown.length) return;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (!showing.current || document.hidden) return;
+          const presented = performance.now();
+          if (
+            performance.getEntriesByName("monocode:stream-visible").length >=
+            300
+          )
+            performance.clearMeasures("monocode:stream-visible");
+          for (const sample of shown)
+            performance.measure("monocode:stream-visible", {
+              start: sample.received,
+              end: presented,
+              detail: {
+                queueMs: sample.applied - sample.received,
+                commitMs: (sample.ready ?? committed) - sample.applied,
+                revealMs: committed - (sample.ready ?? committed),
+                presentationMs: presented - committed,
+              },
+            });
+        }),
+      );
+      // Two animation frames bound presentation; they do not expose the exact
+      // compositor timestamp. No text or session identifiers are recorded.
+    },
+    [measurement, visible],
+  );
 }

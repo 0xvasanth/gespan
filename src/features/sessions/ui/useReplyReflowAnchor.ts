@@ -1,4 +1,4 @@
-import { useLayoutEffect, type RefObject } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 
 type Anchor = {
   message: HTMLElement;
@@ -15,10 +15,13 @@ export function useReplyReflowAnchor(
   following: RefObject<boolean>,
   remember: (element: HTMLElement) => void,
 ) {
+  // The cached transcript can detach while hidden, and its width or reply can
+  // change before it returns. Keep the character as well as the scroll offset.
+  const retained = useRef<Anchor | undefined>(undefined);
   useLayoutEffect(() => {
     if (!visible || !scroller) return;
     let width = scroller.clientWidth;
-    let anchor: Anchor | undefined;
+    let anchor = following.current ? undefined : retained.current;
     let frame = 0;
     let adjustedTop: number | undefined;
     let manualUntil = 0;
@@ -169,8 +172,9 @@ export function useReplyReflowAnchor(
     scroller.addEventListener("pointerdown", pointerDown, { passive: true });
     scroller.addEventListener("keydown", keyDown);
     document.addEventListener("pointerup", pointerUp, { passive: true });
-    schedule();
+    if (!anchor) schedule();
     return () => {
+      retained.current = anchor;
       resize.disconnect();
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("wheel", manualScroll);

@@ -4029,41 +4029,48 @@ function DiffStat({
 }) {
   const containerRef = useRef<HTMLSpanElement>(null);
   const contentRef = useRef<HTMLSpanElement>(null);
+  const hasChanges = additions > 0 || deletions > 0;
 
   useLayoutEffect(() => {
     const container = containerRef.current;
     const content = contentRef.current;
     if (!container || !content) return;
 
-    const fit = () => {
-      const availableWidth = container.getBoundingClientRect().width;
-      if (availableWidth <= 0) return;
-
-      // Measure at the normal size so the text can grow again after resizing.
-      let maxFontSize = 11;
-      content.style.fontSize = `${maxFontSize}px`;
-      if (content.getBoundingClientRect().width <= availableWidth) return;
-
-      // Font metrics can change at small sizes, so check the rendered width.
-      let minFontSize = 0;
-      while (maxFontSize - minFontSize > 0.1) {
-        const fontSize = (minFontSize + maxFontSize) / 2;
-        content.style.fontSize = `${fontSize}px`;
-        if (content.getBoundingClientRect().width > availableWidth) {
-          maxFontSize = fontSize;
-        } else {
-          minFontSize = fontSize;
-        }
+    let availableWidth = 0;
+    let textWidth = 0;
+    let fontSize = parseFloat(content.style.fontSize) || 11;
+    let frame = 0;
+    // Observe both boxes after layout. Repeated font writes and synchronous
+    // measurements here used to force whole-workspace layout on navigation.
+    // The gap uses em units, so the complete label scales with its font size.
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.target === container)
+          availableWidth = entry.contentRect.width;
+        else textWidth = entry.contentRect.width;
       }
-      content.style.fontSize = `${minFontSize}px`;
-    };
-
-    fit();
-    // Sidebar dragging writes its width directly to the DOM, without a render.
-    const observer = new ResizeObserver(fit);
+      if (!availableWidth || !textWidth || frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const next = Math.max(
+          0.1,
+          Math.min(
+            11,
+            Math.floor((fontSize * availableWidth * 10) / textWidth) / 10,
+          ),
+        );
+        if (next === fontSize) return;
+        content.style.fontSize = `${next}px`;
+        fontSize = next;
+      });
+    });
     observer.observe(container);
-    return () => observer.disconnect();
-  }, [additions, deletions]);
+    observer.observe(content);
+    return () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [hasChanges]);
 
   if (additions <= 0 && deletions <= 0) return null;
 

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, createElement } from "react";
+import { act, createElement, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Block } from "./session";
@@ -50,7 +50,8 @@ it("reports receive-to-commit separately from delayed reveal and excludes hidden
     shown: number;
     visible?: boolean;
   }) {
-    useStreamPresentation(observation, 5, shown, visible);
+    const committed = useStreamPresentation(observation, 5, visible);
+    useLayoutEffect(() => committed(shown), [committed, shown]);
     return createElement("span", null, block.text.slice(0, shown));
   }
   const host = document.createElement("div");
@@ -68,13 +69,21 @@ it("reports receive-to-commit separately from delayed reveal and excludes hidden
     expect(measure).toHaveBeenCalledWith("monocode:stream-visible", {
       start: 0,
       end: 230,
-      detail: { queueMs: 10, commitMs: 0, presentationMs: 220 },
+      detail: { queueMs: 10, commitMs: 0, revealMs: 200, presentationMs: 20 },
     });
     const hidden = { ...block, text: "hello again" };
     const hiddenEvent = { type: "message.delta", text: " again" } as const;
     noteStreamArrival(hiddenEvent);
     noteStreamApplied([block], [hidden], [hiddenEvent], false);
     expect(streamMeasurement(hidden)?.pending).toEqual([]);
+    const queuedWhileHidden = {
+      type: "message.delta",
+      text: " unseen",
+    } as const;
+    noteStreamArrival(queuedWhileHidden, false);
+    const reopened = { ...hidden, text: "hello again unseen" };
+    noteStreamApplied([hidden], [reopened], [queuedWhileHidden], true);
+    expect(streamMeasurement(reopened)?.pending ?? []).toEqual([]);
   } finally {
     await act(async () => root.unmount());
     host.remove();

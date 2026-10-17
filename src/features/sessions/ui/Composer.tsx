@@ -895,18 +895,19 @@ export function Composer({
     resizeComposer(el);
   }, [initialDraft]);
 
-  // Drafts changed while hidden could not be measured. Inbox panes are portaled
-  // into place by a parent effect that runs after this one, so the first pass
-  // can still find no layout box; retry once the move has landed.
+  // Measure once the browser has laid out the activated pane. A synchronous
+  // read here forces layout before the pooled transcript has been attached,
+  // then forces it again when that transcript restores its scroll position.
+  // ResizeObserver also handles inbox portals and drafts resized while hidden.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !enabled) return;
-    restoreComposerSize(el);
-    if (el.scrollHeight !== 0) return;
-    const frame = requestAnimationFrame(() => {
-      if (ref.current === el) resizeComposer(el);
+    const observer = new ResizeObserver((entries) => {
+      if (entries.some((entry) => entry.contentRect.width > 0))
+        restoreComposerSize(el);
     });
-    return () => cancelAnimationFrame(frame);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [enabled]);
 
   useEffect(() => {

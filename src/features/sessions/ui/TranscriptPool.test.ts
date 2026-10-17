@@ -134,7 +134,7 @@ describe("transcript pool", () => {
     expect(after).toHaveBeenCalledOnce();
   });
 
-  it("delivers changed visibility props without remounting the transcript", () => {
+  it("detaches hidden DOM and restores the same mounted transcript on activation", () => {
     const pool = new TranscriptPool();
     render(pool, "a");
     const instance = probe("a")?.dataset.instance;
@@ -146,9 +146,16 @@ describe("transcript pool", () => {
         createElement(Probe, { id: "a", visible: false }),
       ),
     );
-    expect(probe("a")?.dataset.visible).toBe("false");
-    expect(probe("a")?.dataset.instance).toBe(instance);
+    expect(probe("a")).toBeNull();
+    const hidden =
+      entry.container.querySelector<HTMLElement>('[data-probe="a"]');
+    expect(hidden?.dataset.visible).toBe("false");
+    expect(hidden?.dataset.instance).toBe(instance);
     expect(unmounts).toEqual([]);
+    render(pool, "a");
+    expect(probe("a")).toBe(hidden);
+    expect(probe("a")?.dataset.visible).toBe("true");
+    expect(mounts).toEqual(["a"]);
   });
 
   it("reuses the mounted transcript when a session is shown again", () => {

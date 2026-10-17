@@ -390,8 +390,9 @@ function AgentTranscriptComponent({
   // Keep prompt spacing for this transcript's lifetime, including while it
   // is parked in the pool. A cold historical mount uses its natural height.
   const [anchorTurn, setAnchorTurn] = useState(!!busy);
-  // Parking detaches the scroller, which drops its scroll offset.
+  // Hidden pooled transcripts are detached, which drops their scroll offset.
   const restoreScroll = useRef(false);
+  if (!visible) restoreScroll.current = true;
   const wasParked = useRef(parked);
   if (wasParked.current !== parked) {
     wasParked.current = parked;

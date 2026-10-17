@@ -285,6 +285,14 @@ test("preserves following and a reader's position through real file-pane resizin
       }
       return Infinity;
     }, anchor);
+  // Background output must not move a reader when the cached transcript's
+  // DOM is detached and reattached through the real workspace shortcuts.
+  await page.keyboard.press("Meta+2");
+  await expect(pane.locator(".agent-transcript")).toHaveCount(0);
+  await page.waitForTimeout(400);
+  await page.keyboard.press("Meta+1");
+  await expect(scroller).toBeVisible();
+  await expect.poll(readerShift).toBeLessThanOrEqual(3);
   await resize(-140);
   await expect.poll(readerShift).toBeLessThanOrEqual(3);
   await page
