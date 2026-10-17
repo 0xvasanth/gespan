@@ -367,6 +367,7 @@ function AgentTranscriptComponent({
   const showJumpRef = useRef(false);
   const distanceFromBottom = useRef(0);
   const lastScrollTop = useRef(0);
+  const scrollAdjustments = useRef<number | undefined>(undefined);
   const pointerScrolling = useRef(false);
   const wheelHold = useRef(0);
   const prependHeight = useRef<number | null>(null);
@@ -485,6 +486,7 @@ function AgentTranscriptComponent({
   );
 
   const rememberScroll = useCallback((el: HTMLElement) => {
+    scrollAdjustments.current = el.scrollTop;
     lastScrollTop.current = el.scrollTop;
     distanceFromBottom.current =
       el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -744,7 +746,13 @@ function AgentTranscriptComponent({
   }, [bottomAligned, scrollerEl, followTranscript, setShowJump, visible]);
 
   useTurnScrollAnchor(scrollerEl, visible, stickToBottom, rememberScroll);
-  useReplyReflowAnchor(scrollerEl, visible, stickToBottom, rememberScroll);
+  useReplyReflowAnchor(
+    scrollerEl,
+    visible,
+    stickToBottom,
+    rememberScroll,
+    scrollAdjustments,
+  );
 
   const [turnCache] = useState(() => new TranscriptTurnCache());
   const undeliveredMessageIds = useMemo(
@@ -1077,6 +1085,7 @@ function AgentTranscriptComponent({
     bottomAligned,
     wheelHold,
     bottomAligned,
+    rememberScroll,
   );
 
   return (

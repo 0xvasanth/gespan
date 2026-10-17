@@ -73,10 +73,13 @@ it("keeps the reader's character through scrolling, reflow, and cached tab retur
       return range;
     },
   });
-  const remember = vi.fn();
+  const adjustments = { current: undefined as number | undefined };
+  const remember = vi.fn((el: HTMLElement) => {
+    adjustments.current = el.scrollTop;
+  });
   const following = { current: false };
   function Probe({ visible = true }: { visible?: boolean }) {
-    useReplyReflowAnchor(scroller, visible, following, remember);
+    useReplyReflowAnchor(scroller, visible, following, remember, adjustments);
     return null;
   }
   const root = createRoot(host);
@@ -92,6 +95,7 @@ it("keeps the reader's character through scrolling, reflow, and cached tab retur
     // A queued correction from another layout observer is not new user
     // input and must not replace the character retained across a divider drag.
     scroller.scrollTop = 130;
+    adjustments.current = scroller.scrollTop;
     scroller.dispatchEvent(new Event("scroll"));
     act(() => {
       while (frames.length) frames.shift()!(now);
@@ -123,6 +127,14 @@ it("keeps the reader's character through scrolling, reflow, and cached tab retur
     // window, even when the wheel's animation frame has already run.
     now = 1000;
     scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: 40 }));
+    act(() => {
+      while (frames.length) frames.shift()!(now);
+    });
+    // The motion hook hands its visual offset to native scrolling first.
+    // That programmatic event must not consume the pending wheel input.
+    scroller.scrollTop = 250;
+    adjustments.current = scroller.scrollTop;
+    scroller.dispatchEvent(new Event("scroll"));
     act(() => {
       while (frames.length) frames.shift()!(now);
     });

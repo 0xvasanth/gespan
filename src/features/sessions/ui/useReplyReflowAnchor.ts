@@ -13,6 +13,7 @@ export function useReplyReflowAnchor(
   visible: boolean,
   following: RefObject<boolean>,
   remember: (element: HTMLElement) => void,
+  adjustments: RefObject<number | undefined>,
 ) {
   // The cached transcript can detach while hidden, and its width or reply can
   // change before it returns. Keep the character as well as the scroll offset.
@@ -83,9 +84,12 @@ export function useReplyReflowAnchor(
         });
     };
     const onScroll = () => {
+      const top = scroller.scrollTop;
+      const programmatic = adjustments.current;
+      adjustments.current = undefined;
       if (
-        adjustedTop != null &&
-        Math.abs(scroller.scrollTop - adjustedTop) < 1
+        (adjustedTop != null && Math.abs(top - adjustedTop) < 1) ||
+        (programmatic != null && Math.abs(top - programmatic) < 1)
       ) {
         adjustedTop = undefined;
         return;
@@ -98,8 +102,11 @@ export function useReplyReflowAnchor(
         // completion restores a character from partway through that scroll.
         manualUntil = now + 180;
         waitingForScroll = false;
-        schedule();
-      } else if (!anchor) schedule();
+      }
+      // A handoff from eased motion can precede the native wheel movement by
+      // more than one quiet window. Every unacknowledged scroll refreshes the
+      // bookmark, while explicit layout corrections retain its character.
+      schedule();
     };
     const manualScroll = () => {
       manualUntil = performance.now() + 180;
@@ -147,6 +154,8 @@ export function useReplyReflowAnchor(
         (draggingScroll ||
           waitingForScroll ||
           performance.now() < manualUntil) &&
+        (adjustments.current == null ||
+          Math.abs(scroller.scrollTop - adjustments.current) > 0.5) &&
         Math.abs(scroller.scrollTop - measuredTop) > 0.5
       ) {
         // Only an offset change belongs to the gesture. Streaming can reflow
@@ -219,5 +228,5 @@ export function useReplyReflowAnchor(
       document.removeEventListener("pointerup", pointerUp);
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [scroller, visible, following, remember]);
+  }, [scroller, visible, following, remember, adjustments]);
 }
