@@ -5,7 +5,7 @@ import {
   DashboardSquare,
   Inbox,
   PanelLeft,
-  PanelRightToggle,
+  GitBranch,
   Plus,
   Search,
   Settings,
@@ -137,6 +137,8 @@ type Props = {
   /** Inset layout: the right panel holding Explorer and Changes. */
   rightPanelOpen?: boolean;
   onToggleRightPanel?: () => void;
+  /** The working tree has changes; dots the right panel toggle. */
+  rightPanelDot?: boolean;
   canGoBack?: boolean;
   canGoForward?: boolean;
   onGoBack?: () => void;
@@ -681,6 +683,7 @@ function TitleBarComponent({
   inset = false,
   rightPanelOpen = false,
   onToggleRightPanel,
+  rightPanelDot = false,
   canGoBack = false,
   canGoForward = false,
   onGoBack,
@@ -978,11 +981,26 @@ function TitleBarComponent({
           // on the left.
           <div className="flex items-center pl-1.5 pr-3">
             <IconButton
-              label="Toggle Explorer and Changes"
+              label={
+                rightPanelDot
+                  ? "Toggle Explorer and Changes (uncommitted changes)"
+                  : "Toggle Explorer and Changes"
+              }
               active={rightPanelOpen}
               onClick={onToggleRightPanel}
             >
-              <PanelRightToggle className="size-3.5" strokeWidth={1.75} />
+              <span className="relative grid">
+                <GitBranch
+                  className={`size-3.5 ${rightPanelDot ? "overview-tab-icon-with-dot" : ""}`}
+                  strokeWidth={1.75}
+                />
+                {rightPanelDot ? (
+                  <span
+                    aria-hidden
+                    className="absolute -top-[2px] -right-[2px] size-1.5 rounded-full bg-accent"
+                  />
+                ) : null}
+              </span>
             </IconButton>
           </div>
         ) : null}

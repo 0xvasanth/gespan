@@ -1810,6 +1810,8 @@ function SidebarComponent({
   const headerProjectMenu = useProjectMenu({
     onRemoveProject,
     onOpenNotificationSettings,
+    // Only the inset layout uses this menu, and it has no project rail.
+    railOptions: false,
   });
   // The inset layout names the project here, with its settings and the
   // project and worktree pickers in a menu below it.
@@ -1826,6 +1828,13 @@ function SidebarComponent({
         onOpenSettings,
         settingsShortcut: `${MOD},`,
         keepOpen: headerProjectMenu.isActive,
+        // The right-click project menu, as a flyout level with its row.
+        onOpenProjectSettings: (row: HTMLElement) => {
+          const rect = row.getBoundingClientRect();
+          headerProjectMenu.open(cwd, rect.right, rect.top - 8, row);
+        },
+        onCloseProjectSettings: headerProjectMenu.close,
+        projectSettingsOpen: headerProjectMenu.isOpen,
         renderProjectPicker: onSelectProject
           ? ({ anchor, layer, attributes, onClose }: ProjectMenuFlyout) => (
               <ProjectPickerPopover

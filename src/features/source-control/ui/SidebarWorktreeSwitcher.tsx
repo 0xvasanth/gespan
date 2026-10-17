@@ -23,6 +23,7 @@ import {
   Plus,
   Search,
   Settings,
+  SlidersHorizontal,
 } from "../../../shared/ui/icons";
 
 /** Clicks inside the project menu or its flyouts are not outside. */
@@ -47,6 +48,11 @@ export type WorktreeSwitcherProject = {
   renderProjectPicker?: (flyout: ProjectMenuFlyout) => ReactNode;
   /** A dialog or menu opened from a flyout keeps the menu up behind it. */
   keepOpen?: boolean;
+  /** Opens the project's own menu (name, look, pinning, removal) as a flyout
+   * beside the given row, the same one right-clicking a project shows. */
+  onOpenProjectSettings?: (row: HTMLElement) => void;
+  onCloseProjectSettings?: () => void;
+  projectSettingsOpen?: boolean;
 };
 
 /** The sidebar title. Picking a worktree narrows the sidebar, and the
@@ -81,6 +87,7 @@ export function SidebarWorktreeSwitcher({
   const anchor = useRef<HTMLButtonElement>(null);
   const worktreeRow = useRef<HTMLButtonElement>(null);
   const projectRow = useRef<HTMLButtonElement>(null);
+  const projectSettingsRow = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const activeOption = useRef<HTMLButtonElement>(null);
   const focus = useWorktreeFocus(cwd);
@@ -116,7 +123,20 @@ export function SidebarWorktreeSwitcher({
   const activePath = rows[activeIndex]?.path;
   const canCreate = !!data && !error && !!createName && rows.length === 0;
 
+  const closeProjectSettings = () => {
+    if (project?.projectSettingsOpen) project.onCloseProjectSettings?.();
+  };
+
+  const openProjectSettings = () => {
+    if (query) return;
+    setOpen(false);
+    setProjectPickerOpen(false);
+    if (projectSettingsRow.current && !project?.projectSettingsOpen)
+      project?.onOpenProjectSettings?.(projectSettingsRow.current);
+  };
+
   const closePicker = () => {
+    closeProjectSettings();
     setOpen(false);
     setMenuOpen(false);
     setProjectPickerOpen(false);
@@ -126,6 +146,7 @@ export function SidebarWorktreeSwitcher({
   };
 
   const openPicker = () => {
+    closeProjectSettings();
     setProjectPickerOpen(false);
     setOpen(true);
     setQuery("");
@@ -273,72 +294,6 @@ export function SidebarWorktreeSwitcher({
           data-project-menu
           className="flex flex-col p-1"
         >
-          {project.onOpenSettings ? (
-            <>
-              <button
-                type="button"
-                role="menuitem"
-                onMouseEnter={() => {
-                  if (!query) setOpen(false);
-                  setProjectPickerOpen(false);
-                }}
-                onClick={() => {
-                  closePicker();
-                  project.onOpenSettings?.();
-                }}
-                className="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-[13px] hover:bg-content/8"
-              >
-                <Settings
-                  className="size-4 shrink-0 text-content/55"
-                  strokeWidth={1.75}
-                />
-                <span className="min-w-0 flex-1 truncate">Settings</span>
-                {project.settingsShortcut ? (
-                  <span className="shrink-0 text-[11px] text-content/40">
-                    {project.settingsShortcut}
-                  </span>
-                ) : null}
-              </button>
-              <div className="mx-2 my-1 h-px bg-stroke" />
-            </>
-          ) : null}
-          {project.renderProjectPicker ? (
-            <button
-              ref={projectRow}
-              type="button"
-              role="menuitem"
-              aria-haspopup="dialog"
-              aria-expanded={projectPickerOpen}
-              onMouseEnter={() => {
-                if (query) return;
-                setOpen(false);
-                setProjectPickerOpen(true);
-              }}
-              onClick={() => {
-                setOpen(false);
-                setProjectPickerOpen(true);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "ArrowRight") return;
-                event.preventDefault();
-                setOpen(false);
-                setProjectPickerOpen(true);
-              }}
-              className={`flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-[13px] hover:bg-content/8 ${
-                projectPickerOpen ? "bg-content/8" : ""
-              }`}
-            >
-              <Folder
-                className="size-4 shrink-0 text-content/55"
-                strokeWidth={1.75}
-              />
-              <span className="min-w-0 flex-1 truncate">Switch project</span>
-              <ChevronRight
-                className="size-3.5 shrink-0 text-content/40"
-                strokeWidth={1.75}
-              />
-            </button>
-          ) : null}
           {worktreesEnabled ? (
             <button
               ref={worktreeRow}
@@ -377,6 +332,114 @@ export function SidebarWorktreeSwitcher({
                 strokeWidth={1.75}
               />
             </button>
+          ) : null}
+          {/* The project's own rows sit together under the worktree. */}
+          {worktreesEnabled &&
+          (project.renderProjectPicker ||
+            project.onOpenProjectSettings ||
+            project.onOpenSettings) ? (
+            <div className="mx-2 my-1 h-px bg-stroke" />
+          ) : null}
+          {project.renderProjectPicker ? (
+            <button
+              ref={projectRow}
+              type="button"
+              role="menuitem"
+              aria-haspopup="dialog"
+              aria-expanded={projectPickerOpen}
+              onMouseEnter={() => {
+                if (query) return;
+                setOpen(false);
+                closeProjectSettings();
+                setProjectPickerOpen(true);
+              }}
+              onClick={() => {
+                setOpen(false);
+                closeProjectSettings();
+                setProjectPickerOpen(true);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowRight") return;
+                event.preventDefault();
+                setOpen(false);
+                setProjectPickerOpen(true);
+              }}
+              className={`flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-[13px] hover:bg-content/8 ${
+                projectPickerOpen ? "bg-content/8" : ""
+              }`}
+            >
+              <Folder
+                className="size-4 shrink-0 text-content/55"
+                strokeWidth={1.75}
+              />
+              <span className="min-w-0 flex-1 truncate">Switch project</span>
+              <ChevronRight
+                className="size-3.5 shrink-0 text-content/40"
+                strokeWidth={1.75}
+              />
+            </button>
+          ) : null}
+          {project.onOpenProjectSettings ? (
+            <>
+              <button
+                ref={projectSettingsRow}
+                type="button"
+                role="menuitem"
+                aria-haspopup="menu"
+                aria-expanded={!!project.projectSettingsOpen}
+                onMouseEnter={openProjectSettings}
+                onClick={openProjectSettings}
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowRight") return;
+                  event.preventDefault();
+                  openProjectSettings();
+                }}
+                className={`flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-[13px] hover:bg-content/8 ${
+                  project.projectSettingsOpen ? "bg-content/8" : ""
+                }`}
+              >
+                <SlidersHorizontal
+                  className="size-4 shrink-0 text-content/55"
+                  strokeWidth={1.75}
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  Project settings
+                </span>
+                <ChevronRight
+                  className="size-3.5 shrink-0 text-content/40"
+                  strokeWidth={1.75}
+                />
+              </button>
+            </>
+          ) : null}
+          {project.onOpenSettings ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onMouseEnter={() => {
+                  if (!query) setOpen(false);
+                  setProjectPickerOpen(false);
+                  closeProjectSettings();
+                }}
+                onClick={() => {
+                  closePicker();
+                  project.onOpenSettings?.();
+                }}
+                className="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-[13px] hover:bg-content/8"
+              >
+                <Settings
+                  className="size-4 shrink-0 text-content/55"
+                  strokeWidth={1.75}
+                />
+                <span className="min-w-0 flex-1 truncate">Settings</span>
+                {project.settingsShortcut ? (
+                  <span className="shrink-0 text-[11px] text-content/40">
+                    {project.settingsShortcut}
+                  </span>
+                ) : null}
+              </button>
+            </>
           ) : null}
         </Popover>
       ) : null}

@@ -139,6 +139,7 @@ import {
   useWorktreeFocus,
   worktreeFocus,
 } from "../features/source-control/model/worktreeFocus";
+import { useProjectDiffStats } from "../features/source-control/hooks/useProjectDiffStats";
 import {
   assertWorktreeFilesClosed,
   createOrchestrationWorktree,
@@ -13316,6 +13317,14 @@ function Workspace({
       content.style.flex = "";
     }
   }, [rightPanelClosing, rightPanelOpen]);
+  // The same shared stats the sidebar's Changes tab reads, so the toggle
+  // that opens it can carry its dot.
+  const showRightPanelToggle =
+    insetLayout && !settingsOpen && looksLikeProject(sidebarCwd);
+  const rightPanelChanges = useProjectDiffStats(
+    gitCwd || sidebarCwd,
+    showRightPanelToggle && isLocalProject(sidebarCwd),
+  );
   const workspaceTitleBar = (
     <TitleBar
       // A Mono in full view stands apart from the project's tabs.
@@ -13358,10 +13367,9 @@ function Workspace({
       inset={insetLayout}
       rightPanelOpen={rightPanelOpen}
       onToggleRightPanel={
-        insetLayout && !settingsOpen && looksLikeProject(sidebarCwd)
-          ? onToggleRightPanel
-          : undefined
+        showRightPanelToggle ? onToggleRightPanel : undefined
       }
+      rightPanelDot={(rightPanelChanges?.files ?? 0) > 0}
       canGoBack={!!monoViewId || tabVisitNav.canBack}
       canGoForward={tabVisitNav.canForward}
       onGoBack={onRailBack}
