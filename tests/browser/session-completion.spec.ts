@@ -93,6 +93,37 @@ async function completeAndRecord(
       const fixture = window as Fixture;
       const el = document.querySelector<HTMLElement>(".agent-transcript")!;
       const anchor = reading ? fixture.captureReaderAnchor() : null;
+      const content = el.querySelector<HTMLElement>(
+        "[data-transcript-content]",
+      );
+      const scrollWrites: Array<{
+        from: number;
+        requested: number;
+        actual: number;
+        transform: string;
+        stack?: string;
+      }> = [];
+      const scrollTop = Object.getOwnPropertyDescriptor(
+        Element.prototype,
+        "scrollTop",
+      )!;
+      if (reading)
+        Object.defineProperty(el, "scrollTop", {
+          configurable: true,
+          get: () => scrollTop.get!.call(el),
+          set: (value: number) => {
+            const from = scrollTop.get!.call(el);
+            scrollTop.set!.call(el, value);
+            if (from !== scrollTop.get!.call(el))
+              scrollWrites.push({
+                from,
+                requested: value,
+                actual: scrollTop.get!.call(el),
+                transform: content?.style.transform ?? "",
+                stack: new Error().stack?.split("\n").slice(1, 6).join("\n"),
+              });
+          },
+        });
       const samples: Array<{
         top: number;
         readerTop: number | null;
@@ -100,6 +131,7 @@ async function completeAndRecord(
         viewport: number;
         length: number;
         fading: boolean;
+        transform: string;
       }> = [];
       let frame = 0;
       const read = () => {
@@ -111,6 +143,7 @@ async function completeAndRecord(
           viewport: el.clientHeight,
           length: output?.textContent?.length ?? 0,
           fading: !!output?.querySelector(".word-fading"),
+          transform: content?.style.transform ?? "",
         });
         frame = requestAnimationFrame(read);
       };
@@ -161,7 +194,8 @@ async function completeAndRecord(
         (!settledAt || performance.now() < settledAt + 300)
       );
       cancelAnimationFrame(frame);
-      return { samples, settled: !!settledAt };
+      if (reading) Reflect.deleteProperty(el, "scrollTop");
+      return { samples, scrollWrites, anchor, settled: !!settledAt };
     },
     { head, reply, incremental, reading },
   );
