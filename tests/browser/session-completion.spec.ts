@@ -67,6 +67,9 @@ async function openPane(page: Page, width: number) {
   await expect(
     page.locator('[data-chat-message="latest-prompt"]'),
   ).toBeVisible();
+  // Historical turns mount progressively. Finish opening the fixture before
+  // measuring completion so unrelated history growth is not in the sample.
+  await expect(page.locator("[data-transcript-turn]")).toHaveCount(20);
   await page.evaluate(() => document.fonts.ready);
   await expect
     .poll(() =>

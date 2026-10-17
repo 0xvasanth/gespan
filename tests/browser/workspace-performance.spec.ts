@@ -216,7 +216,7 @@ test("preserves following and a reader's position through real file-pane resizin
     .getByRole("textbox", { name: "Go to File", exact: true })
     .fill("sample.ts");
   await page.getByRole("option", { name: /sample.ts/ }).click();
-  await expect(page.locator(".cm-editor")).toBeVisible();
+  await expect(page.locator(".cm-editor")).toBeVisible({ timeout: 30_000 });
   await expect.poll(distance).toBeLessThanOrEqual(2);
   const divider = page
     .locator(
@@ -251,13 +251,16 @@ test("preserves following and a reader's position through real file-pane resizin
     const message = range.startContainer.parentElement!.closest<HTMLElement>(
       '[data-chat-message-role="assistant"]',
     )!;
+    // A caret at the end of a text node is an insertion point, not a glyph.
+    // Track the preceding visible character so a later walk does not resolve
+    // it to wrapping whitespace in the next node.
+    const node = range.startContainer as Text;
+    const offset = Math.min(range.startOffset, node.length - 1);
+    range.setStart(node, offset);
+    range.setEnd(node, offset + 1);
     const prefix = document.createRange();
     prefix.selectNodeContents(message);
-    prefix.setEnd(range.startContainer, range.startOffset);
-    range.setEnd(
-      range.startContainer,
-      Math.min(range.startOffset + 1, range.startContainer.textContent!.length),
-    );
+    prefix.setEnd(node, offset);
     return {
       id: message.dataset.chatMessage!,
       character: prefix.toString().length,

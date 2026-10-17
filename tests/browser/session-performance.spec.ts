@@ -68,6 +68,8 @@ for (const example of ["formattedReply", "bulletReply"] as const) {
           top: el.scrollTop,
           height: el.scrollHeight,
           replyHeight: reply.getBoundingClientRect().height,
+          replyTop:
+            reply.getBoundingClientRect().top - el.getBoundingClientRect().top,
           codeHeight: code?.getBoundingClientRect().height,
           fading: !!reply.querySelector(".word-fading"),
         });
@@ -100,7 +102,12 @@ for (const example of ["formattedReply", "bulletReply"] as const) {
       );
       const tops = result.samples.map((sample) => sample.top);
       if (reading) {
-        expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1);
+        // A status row above the reply may change height on completion. The
+        // scroll offset must compensate while the text stays in place.
+        const positions = result.samples.map((sample) => sample.replyTop);
+        expect(Math.max(...positions) - Math.min(...positions)).toBeLessThanOrEqual(
+          1,
+        );
       } else {
         expect(tops.slice(1).filter((top, i) => top < tops[i] - 1)).toEqual([]);
         await expect
