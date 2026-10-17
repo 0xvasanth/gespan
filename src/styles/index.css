@@ -456,6 +456,9 @@ html.layout-inset {
   --inset-glass-alpha: 0.8;
   --inset-panel-alpha: 0.4;
   --inset-wash: hsl(0 0% 92% / 0.05);
+  /* The card's edge, and every rule inside it and the sidebar, so the
+     separators sit no brighter than the hairline around them. */
+  --inset-stroke: color-mix(in srgb, var(--color-content) 4%, transparent);
 }
 
 /* Keep the opaque pane close to the washed sidebar instead of near black. */
@@ -525,7 +528,8 @@ html.layout-inset .inset-shell .inset-rail-host .sidebar-glass {
 
 .inset-card {
   /* A hairline, softer than the app's rules, so the card's edge doesn't cut. */
-  border-color: color-mix(in srgb, var(--color-content) 4%, transparent);
+  --color-stroke: var(--inset-stroke);
+  border-color: var(--inset-stroke);
   background: var(--inset-panel);
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
   transition: background-color var(--motion-feedback-duration)
@@ -565,7 +569,7 @@ html.theme-light .sidebar-peek-backdrop {
 /* Lighter rules in the sidebar, so they read as hairlines over the card's
    glass rather than solid bars. */
 .inset-sidebar {
-  --color-stroke: color-mix(in srgb, var(--color-content) 5%, transparent);
+  --color-stroke: var(--inset-stroke);
 }
 
 /* Dim inactive tabs together so their plate, label and icons recede. */
