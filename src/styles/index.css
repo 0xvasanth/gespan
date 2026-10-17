@@ -547,15 +547,23 @@ html.has-native-glass:not(.theme-light) .inset-card {
   box-shadow: none;
 }
 
-/* A collapsed sidebar peeking out floats over the workspace, so it is the
-   shell colour made opaque, with the rest of the window dimmed behind it. */
+/* A collapsed sidebar peeking out blurs the workspace under a faint wash,
+   with the rest of the window dimmed behind it. */
 .sidebar-peek {
   border-color: color-mix(in srgb, var(--color-content) 8%, transparent);
-  background:
-    linear-gradient(var(--inset-wash), var(--inset-wash)), var(--inset-surface);
+  background: linear-gradient(var(--inset-wash), var(--inset-wash));
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
   box-shadow:
     0 12px 32px rgb(0 0 0 / 0.28),
     0 2px 6px rgb(0 0 0 / 0.16);
+}
+
+html.theme-light .sidebar-peek {
+  background:
+    linear-gradient(var(--inset-wash), var(--inset-wash)), var(--inset-surface);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .sidebar-peek-backdrop {

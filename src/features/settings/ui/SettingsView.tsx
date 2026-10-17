@@ -259,6 +259,7 @@ import {
   savePacedReveal,
   usePacedReveal,
   saveMaskEmails,
+  saveNewLayoutPromptDismissed,
   saveRailMonosPinned,
   saveShowRemainingUsage,
   useComposerAutocorrect,
@@ -2041,6 +2042,7 @@ function useAppearanceSettings(
   }, []);
 
   const onInsetLayout = useCallback((next: boolean) => {
+    saveNewLayoutPromptDismissed(true);
     saveInsetLayout(next);
   }, []);
 
@@ -2271,7 +2273,7 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
           description={
             appearance.insetLayout
               ? "Colors for the inset workspace's shell, card, text and accent. Each theme has a dark and a light palette."
-              : "Colors for the inset workspace. Turn on Inset workspace under Layout to use them."
+              : "Colors for the new layout. Turn on New layout under Layout to use them."
           }
         >
           <div className="w-48">
@@ -2458,11 +2460,11 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
       <Group title="Layout">
         <Row
           id="inset-layout"
-          label="Inset workspace"
-          description="Float the workspace in a rounded card, with the sidebar, tabs and footer on the window around it."
+          label="New layout"
+          description="Use the redesigned sidebar, project switcher, workspace tabs and right panel. Turn off to return to the classic layout."
         >
           <Toggle
-            label="Inset workspace"
+            label="New layout"
             on={appearance.insetLayout}
             onChange={appearance.onInsetLayout}
           />

@@ -2,6 +2,12 @@ import { expect, test } from "@playwright/test";
 
 test.use({ viewport: { width: 1300, height: 900 } });
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("monocode.insetLayout", "1");
+  });
+});
+
 test("app tabs retain their state and keep usage and resource pressure in the footer", async ({
   page,
 }) => {

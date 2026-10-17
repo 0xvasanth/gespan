@@ -159,7 +159,7 @@ export const RIGHT_PANEL_WIDTH_DEFAULT = 288;
 
 export const BODY_GLASS_DEFAULT = !IS_LINUX;
 
-export const INSET_LAYOUT_DEFAULT = true;
+export const INSET_LAYOUT_DEFAULT = false;
 export const INSET_GLASS_DEFAULT = true;
 
 /** Fired on `window` when the inset layout setting flips. */

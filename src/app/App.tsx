@@ -97,6 +97,7 @@ import { noteProjectStep, Sidebar } from "./shell/Sidebar";
 import { ApprovalToasts } from "../features/sessions/ui/ApprovalToasts";
 import { ResourcePressureNotice } from "../features/notifications/ui/ResourcePressureNotice";
 import { HarnessUpdateNotice } from "../features/providers/ui/HarnessUpdateNotice";
+import { NewLayoutNotice } from "./shell/NewLayoutNotice";
 import { WhatsNewDialog } from "./shell/WhatsNewDialog";
 import { ProviderSignInDialog } from "../features/sessions/ui/ProviderSignInDialog";
 import {
@@ -2391,6 +2392,7 @@ function Workspace({
   );
   const [reminderNoticesHeight, setReminderNoticesHeight] = useState(0);
   const [harnessUpdateHeight, setHarnessUpdateHeight] = useState(0);
+  const [newLayoutNoticeHeight, setNewLayoutNoticeHeight] = useState(0);
   // The footer's slot for the resource pressure chip; while the footer is
   // hidden, the notice falls back to a toast.
   const [pressureChipHost, setPressureChipHost] =
@@ -14274,6 +14276,14 @@ function Workspace({
             }
             onHeightChange={setHarnessUpdateHeight}
           />
+          <NewLayoutNotice
+            topOffset={
+              12 +
+              (reminderNoticesHeight ? reminderNoticesHeight + 8 : 0) +
+              (harnessUpdateHeight ? harnessUpdateHeight + 8 : 0)
+            }
+            onHeightChange={setNewLayoutNoticeHeight}
+          />
           <ApprovalToasts
             resourceNotice={
               <ResourcePressureNotice
@@ -14288,7 +14298,8 @@ function Workspace({
             topOffset={
               12 +
               (reminderNoticesHeight ? reminderNoticesHeight + 8 : 0) +
-              (harnessUpdateHeight ? harnessUpdateHeight + 8 : 0)
+              (harnessUpdateHeight ? harnessUpdateHeight + 8 : 0) +
+              (newLayoutNoticeHeight ? newLayoutNoticeHeight + 8 : 0)
             }
             onFocusSession={onOpenApprovalSession}
             onApproval={onApproval}
