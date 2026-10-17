@@ -670,6 +670,19 @@ function SidebarComponent({
       rememberedWidth = next;
     },
   });
+  const { setPaneWidth: setSidebarWidth } = resize;
+  const railSharedWidth = useMemo(
+    () => ({
+      width: resize.width,
+      min: minWidth,
+      max: () => Math.min(MAX_WIDTH, Math.floor(window.innerWidth * 0.5)),
+      onCommit: (next: number) => {
+        rememberedWidth = next;
+        setSidebarWidth(next);
+      },
+    }),
+    [resize.width, minWidth, setSidebarWidth],
+  );
   const [tabOrder, setTabOrder] = useState<SidebarTab[]>(loadSidebarTabOrder);
   const [now, setNow] = useState(() => Date.now());
   const sessionsLock = useLockOverscroll<HTMLDivElement>();
@@ -2486,25 +2499,31 @@ function SidebarComponent({
                   Couldn’t load sessions
                 </p>
               ) : visibleSessions.length === 0 ? (
-                <>
+                // Inset like the list it stands in for, so the label and
+                // its text line up with the sections above.
+                <div className={inset ? "px-2 pt-1" : undefined}>
                   {sessionsLabel}
                   {/* A narrowed-down result is a transient answer to what the user
                     just typed, so it stays a quiet line of text. Only the genuine
                     "this project has nothing in it" case earns the illustration. */}
                   {narrowedByUser ? (
-                    <p className="px-3 py-2 text-[12px] text-content/50">
+                    <p
+                      className={`${inset ? "px-2" : "px-3"} py-2 text-[12px] text-content/50`}
+                    >
                       {searchNarrowed
                         ? "No matching sessions"
                         : "No sessions match these filters"}
                     </p>
                   ) : remoteProject && !remote.machine ? (
-                    <p className="px-3 py-2 text-[12px] text-content/45">
+                    <p
+                      className={`${inset ? "px-2" : "px-3"} py-2 text-[12px] text-content/45`}
+                    >
                       This project’s machine isn’t connected on this computer.
                     </p>
                   ) : (
                     <SessionsEmpty message="Sessions you start will show up here" />
                   )}
-                </>
+                </div>
               ) : (
                 <ul
                   data-session-list
@@ -3011,6 +3030,8 @@ function SidebarComponent({
         <ProjectRail
           visible={railVisible}
           headerless={inset}
+          // In Settings the inset sidebar's width carries over.
+          sharedWidth={inset ? railSharedWidth : undefined}
           cwd={cwd}
           recents={recents}
           inboxUnseen={inboxUnseen}

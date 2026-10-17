@@ -14,7 +14,14 @@ import {
   Settings,
   Zap,
 } from "../../shared/ui/icons";
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import { useDragResize } from "../../shared/hooks/useDragResize";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { useProjectDiffStats } from "../../features/source-control/hooks/useProjectDiffStats";
@@ -93,6 +100,16 @@ type Props = {
   visible?: boolean;
   /** The inset layout's title bar carries the traffic lights and navigation. */
   headerless?: boolean;
+  /**
+   * A width shared with the pane this rail stands in for, as the inset
+   * layout's Settings does with the sidebar: shown at it, resized into it.
+   */
+  sharedWidth?: {
+    width: number;
+    min: number;
+    max: () => number;
+    onCommit: (width: number) => void;
+  };
   cwd: string;
   recents: RecentProject[];
   inboxUnseen?: boolean;
@@ -133,6 +150,7 @@ type Props = {
 export function ProjectRail({
   visible = true,
   headerless = false,
+  sharedWidth,
   cwd,
   recents,
   inboxUnseen = false,
@@ -169,13 +187,22 @@ export function ProjectRail({
   monos,
 }: Props) {
   const resize = useDragResize({
-    min: PROJECT_RAIL_WIDTH_MIN,
-    max: () =>
-      Math.min(PROJECT_RAIL_WIDTH_MAX, Math.floor(window.innerWidth * 0.35)),
+    min: sharedWidth?.min ?? PROJECT_RAIL_WIDTH_MIN,
+    max:
+      sharedWidth?.max ??
+      (() =>
+        Math.min(PROJECT_RAIL_WIDTH_MAX, Math.floor(window.innerWidth * 0.35))),
     defaultWidth: PROJECT_RAIL_WIDTH_DEFAULT,
-    initial: loadProjectRailWidth(),
-    onCommit: saveProjectRailWidth,
+    initial: sharedWidth?.width ?? loadProjectRailWidth(),
+    onCommit: sharedWidth?.onCommit ?? saveProjectRailWidth,
   });
+  // The rail stays mounted while hidden, so it picks the shared width up
+  // each time it is shown, before it paints.
+  const sharedWidthValue = sharedWidth?.width;
+  const { setPaneWidth } = resize;
+  useLayoutEffect(() => {
+    if (visible && sharedWidthValue != null) setPaneWidth(sharedWidthValue);
+  }, [visible, sharedWidthValue, setPaneWidth]);
   const [railOrder, setRailOrder] = useState(loadProjectRailOrder);
   const [pinnedPaths, setPinnedPaths] = useState(loadPinnedProjects);
   const [groupLabels, setGroupLabels] = useState(loadTabGroupLabels);

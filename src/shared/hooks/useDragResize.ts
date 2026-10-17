@@ -135,10 +135,21 @@ export function useDragResize({
     commit(defaultRef.current);
   };
 
+  /** Takes a width set elsewhere, without reporting it back as a commit. */
+  const setPaneWidth = useCallback(
+    (next: number) => {
+      const value = clamp(next);
+      apply(value);
+      setWidth(value);
+    },
+    [clamp],
+  );
+
   return {
     width,
     dragging,
     setPaneRef,
+    setPaneWidth,
     onPointerDown,
     onDoubleClick,
   };
