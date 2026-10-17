@@ -89,6 +89,7 @@ import {
 } from "../../features/workspace/model/paneDrop";
 import type { PaneEdge } from "../../features/workspace/model/layout";
 import { suppressTextSelection } from "../../shared/lib/drag";
+import { LAYER } from "../../shared/lib/layers";
 import {
   compareSessionSummaries,
   filterSessionsByArchive,
@@ -233,6 +234,13 @@ import {
 const MIN_WIDTH = 260;
 /** The inset sidebar's one-line rows stay legible narrower. */
 const INSET_MIN_WIDTH = 200;
+/** How close to the window's left edge the pointer peeks the sidebar out. */
+const PEEK_EDGE = 6;
+/** Grace before a peek closes, so the pointer can cross a gap to the panel. */
+const PEEK_CLOSE_DELAY = 180;
+/** An open menu, not a hover preview, which keeps a peek out. */
+const PEEK_HOLDING_MENU =
+  "[data-popover-side]:not([role=tooltip]):not(:has([role=tooltip]))";
 const MAX_WIDTH = 560;
 const DEFAULT_WIDTH = 260;
 const REMINDERS_COLOR = "#f59e0b";
@@ -932,7 +940,20 @@ function SidebarComponent({
     drawerMounted && !drawerVisible && drawerMode && sidebarAvailable;
   const drawerRendered = drawerVisible || drawerClosing;
   const drawerAnimation = useRef<Animation | null>(null);
-  const panelOpen = open || drawerVisible;
+  // The inset layout peeks a collapsed sidebar out over the workspace while
+  // the pointer rests on the window's left edge or the sidebar toggle.
+  const peekMode = inset && !open && sidebarAvailable;
+  const [peekOpen, setPeekOpen] = useState(false);
+  const peekOpenRef = useRef(false);
+  peekOpenRef.current = peekOpen;
+  const peekRef = useRef<HTMLDivElement>(null);
+  const peekBackdropRef = useRef<HTMLDivElement>(null);
+  const peekVisible = peekMode && peekOpen;
+  const [peekMounted, setPeekMounted] = useState(false);
+  const peekClosing = peekMounted && !peekVisible && peekMode;
+  const peekRendered = peekVisible || peekClosing;
+  const peekAnimation = useRef<Animation[] | null>(null);
+  const panelOpen = open || drawerVisible || peekVisible;
   // Keep the hidden explorer intact when a chat tab changes worktrees. Its
   // rows and file icons only need rebuilding when Files is actually shown.
   // The inset layout shows Explorer and Changes in its right panel, so they
@@ -1006,6 +1027,145 @@ function SidebarComponent({
       if (drawerClosing) setDrawerMounted(false);
     };
   }, [drawerRendered, drawerClosing]);
+
+  useEffect(() => {
+    if (!peekMode) setPeekOpen(false);
+  }, [peekMode]);
+
+  useEffect(() => {
+    if (peekVisible) setPeekMounted(true);
+    else if (!peekClosing) setPeekMounted(false);
+  }, [peekVisible, peekClosing]);
+
+  // Fade the panel in with a short drift from the edge, and the dim behind
+  // it. A reversal midway starts from wherever both currently are.
+  useLayoutEffect(() => {
+    const panel = peekRef.current;
+    const backdrop = peekBackdropRef.current;
+    if (!peekRendered || !panel || !backdrop) {
+      peekAnimation.current = null;
+      return;
+    }
+    const hidden = { opacity: "0", transform: "translateX(-12px)" };
+    const shown = { opacity: "1", transform: "none" };
+    const running = peekAnimation.current;
+    const from = running
+      ? {
+          opacity: getComputedStyle(panel).opacity,
+          transform: getComputedStyle(panel).transform,
+        }
+      : peekClosing
+        ? shown
+        : hidden;
+    const fromDim = running
+      ? getComputedStyle(backdrop).opacity
+      : peekClosing
+        ? "1"
+        : "0";
+    running?.forEach((animation) => animation.cancel());
+    peekAnimation.current = null;
+    const reduceMotion = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (typeof panel.animate !== "function" || reduceMotion) {
+      if (peekClosing) setPeekMounted(false);
+      return;
+    }
+    const timing: KeyframeAnimationOptions = peekClosing
+      ? {
+          duration: 200,
+          easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+          fill: "forwards",
+        }
+      : { duration: 240, easing: "cubic-bezier(0.16, 1, 0.3, 1)" };
+    const fade = panel.animate([from, peekClosing ? hidden : shown], timing);
+    const dim = backdrop.animate(
+      [{ opacity: fromDim }, { opacity: peekClosing ? "0" : "1" }],
+      timing,
+    );
+    const animations = [fade, dim];
+    peekAnimation.current = animations;
+    fade.onfinish = () => {
+      if (peekAnimation.current !== animations) return;
+      peekAnimation.current = null;
+      if (peekClosing) setPeekMounted(false);
+    };
+  }, [peekRendered, peekClosing]);
+
+  useEffect(() => {
+    if (!peekMode) return;
+    let closeTimer: number | undefined;
+    const cancelClose = () => {
+      window.clearTimeout(closeTimer);
+      closeTimer = undefined;
+    };
+    const scheduleClose = () => {
+      if (closeTimer !== undefined) return;
+      closeTimer = window.setTimeout(() => {
+        closeTimer = undefined;
+        setPeekOpen(false);
+      }, PEEK_CLOSE_DELAY);
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      const el = event.target instanceof Element ? event.target : null;
+      const onTrigger =
+        !!el?.closest("[data-sidebar-peek-trigger]") ||
+        (event.clientX <= PEEK_EDGE && !el?.closest("[data-inset-title-bar]"));
+      if (onTrigger) {
+        cancelClose();
+        setPeekOpen(true);
+        return;
+      }
+      if (!peekOpenRef.current) return;
+      // Menus opened from the panel keep it out, as does a drag under way.
+      if (
+        peekRef.current?.contains(el) ||
+        el?.closest("[data-popover-side]") ||
+        document.querySelector(PEEK_HOLDING_MENU) ||
+        event.buttons !== 0
+      ) {
+        cancelClose();
+        return;
+      }
+      scheduleClose();
+    };
+    const onPointerLeave = () => {
+      if (peekOpenRef.current && !document.querySelector(PEEK_HOLDING_MENU))
+        scheduleClose();
+    };
+    // A click anywhere else puts the sidebar away at once.
+    const onPointerDown = (event: PointerEvent) => {
+      const el = event.target instanceof Element ? event.target : null;
+      if (
+        peekRef.current?.contains(el) ||
+        el?.closest("[data-sidebar-peek-trigger],[data-popover-side]")
+      ) {
+        return;
+      }
+      cancelClose();
+      setPeekOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (!peekOpenRef.current) return;
+      cancelClose();
+      setPeekOpen(false);
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    document.documentElement.addEventListener("pointerleave", onPointerLeave);
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      cancelClose();
+      window.removeEventListener("pointermove", onPointerMove);
+      document.documentElement.removeEventListener(
+        "pointerleave",
+        onPointerLeave,
+      );
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [peekMode]);
 
   useEffect(() => {
     if (!drawerVisible) return;
@@ -2923,6 +3083,30 @@ function SidebarComponent({
           {sidebarContent}
         </div>
       ) : null}
+      {peekRendered
+        ? createPortal(
+            <>
+              <div
+                ref={peekBackdropRef}
+                aria-hidden
+                className="sidebar-peek-backdrop pointer-events-none fixed inset-0"
+                style={{ zIndex: LAYER.peek }}
+              />
+              <div
+                ref={peekRef}
+                data-sidebar-peek={peekClosing ? "closing" : "open"}
+                inert={peekClosing || undefined}
+                className={`sidebar-peek fixed bottom-1.5 left-1.5 top-10 flex overflow-hidden rounded-[10px] border text-content ${
+                  peekClosing ? "pointer-events-none" : ""
+                }`}
+                style={{ zIndex: LAYER.peek }}
+              >
+                {sidebarContent}
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

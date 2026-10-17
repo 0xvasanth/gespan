@@ -543,6 +543,25 @@ html.has-native-glass:not(.theme-light) .inset-card {
   box-shadow: none;
 }
 
+/* A collapsed sidebar peeking out floats over the workspace, so it is the
+   shell colour made opaque, with the rest of the window dimmed behind it. */
+.sidebar-peek {
+  border-color: color-mix(in srgb, var(--color-content) 8%, transparent);
+  background:
+    linear-gradient(var(--inset-wash), var(--inset-wash)), var(--inset-surface);
+  box-shadow:
+    0 12px 32px rgb(0 0 0 / 0.28),
+    0 2px 6px rgb(0 0 0 / 0.16);
+}
+
+.sidebar-peek-backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+
+html.theme-light .sidebar-peek-backdrop {
+  background: rgb(0 0 0 / 0.18);
+}
+
 /* Lighter rules in the sidebar, so they read as hairlines over the card's
    glass rather than solid bars. */
 .inset-sidebar {

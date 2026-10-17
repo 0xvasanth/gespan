@@ -1076,12 +1076,15 @@ function TitleBarComponent({
         >
           <div className={`shrink-0 ${IS_MAC ? "w-[78px]" : "w-1.5"}`} />
           {onToggleSessionSidebar ? (
-            <IconButton
-              label={`Toggle Sidebar (${MOD}B)`}
-              onClick={onToggleSessionSidebar}
-            >
-              <PanelLeft className="size-3.5" strokeWidth={1.75} />
-            </IconButton>
+            // Hovering the toggle peeks a collapsed sidebar out.
+            <span data-sidebar-peek-trigger className="flex">
+              <IconButton
+                label={`Toggle Sidebar (${MOD}B)`}
+                onClick={onToggleSessionSidebar}
+              >
+                <PanelLeft className="size-3.5" strokeWidth={1.75} />
+              </IconButton>
+            </span>
           ) : null}
           {/* History sits at the rail's far edge and follows it as the
               sidebar resizes, with the Development badge beside it. */}
