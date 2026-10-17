@@ -875,8 +875,25 @@ html.has-chat-background.chat-background-effect-ready.chat-background-gradient-b
   );
 }
 
-/* Let the latest reply scroll fully clear of the composer's fade. */
+/* The transcript fades under the top edge too, like the composer's fade at
+   the bottom. */
+.transcript-composer-fade .agent-transcript {
+  --scroll-bottom-mask: linear-gradient(
+    to bottom,
+    transparent,
+    #000 1.5rem,
+    #000 calc(100% - 2.5rem),
+    transparent
+  );
+  /* A message scrolled to lands where the first one rests, below the fade.
+     The prompt outline reads this too. */
+  scroll-padding-top: 1.25rem;
+}
+
+/* Let the latest reply scroll fully clear of the composer's fade, and the
+   first message rest below the top one. */
 .transcript-composer-fade [data-transcript-content] {
+  padding-top: 1.25rem;
   padding-bottom: 2.5rem;
 }
 
