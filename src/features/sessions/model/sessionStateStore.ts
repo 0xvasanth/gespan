@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useRef,
   useState,
   useSyncExternalStore,
   type Dispatch,
@@ -99,6 +100,20 @@ export function useSessionSnapshot<T extends Session | undefined>(
 ): T {
   const store = useContext(SessionStateContext);
   const id = fallback?.id;
+  const retained = useRef({ store, id, fallback, value: fallback });
+  // Shell metadata updates still apply to hidden panes. A visibility change
+  // alone must retain the snapshot that was already on screen.
+  if (
+    retained.current.store !== store ||
+    retained.current.id !== id ||
+    retained.current.fallback !== fallback
+  )
+    retained.current = {
+      store,
+      id,
+      fallback,
+      value: (store && id ? (store.session(id) ?? fallback) : fallback) as T,
+    };
   const subscribe = useCallback(
     (listener: Listener) => {
       return store && id && visible
@@ -109,10 +124,14 @@ export function useSessionSnapshot<T extends Session | undefined>(
   );
   const snapshot = useCallback(
     () =>
-      (visible && store && id
-        ? (store.session(id) ?? fallback)
+      (store && id
+        ? visible
+          ? (store.session(id) ?? fallback)
+          : retained.current.value
         : fallback) as T,
     [store, id, fallback, visible],
   );
-  return useSyncExternalStore(subscribe, snapshot);
+  const value = useSyncExternalStore(subscribe, snapshot);
+  retained.current.value = value;
+  return value;
 }
