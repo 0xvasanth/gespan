@@ -5000,10 +5000,6 @@ function Workspace({
       setMonoActivity(null);
       workspaceNavigation.cancel();
       const request = ++monoViewRequest.current;
-      setSearchViewOpen(false);
-      setInboxViewOpen(false);
-      setNotesViewOpen(false);
-      setAutomationsViewOpen(false);
       lastMonoIdRef.current = monoId;
       const session = await ensureMonoSession(monoId, {
         home: homeDir,
@@ -5024,6 +5020,12 @@ function Workspace({
       }
       monoViewIdRef.current = session.id;
       saveOpenMono(monoId);
+      // App views close with the Mono's arrival, not before the await, so
+      // the workspace tab never shows between them.
+      setSearchViewOpen(false);
+      setInboxViewOpen(false);
+      setNotesViewOpen(false);
+      setAutomationsViewOpen(false);
       setMonoViewId(session.id);
       if (insetLayoutRef.current) {
         setOpenMonoTabs((current) =>
@@ -11882,8 +11884,10 @@ function Workspace({
 
   const onOpenSearch = useCallback(() => {
     workspaceNavigation.cancel();
-    closeMonoView();
     startTransition(() => {
+      // With the Mono closed in the same commit, no frame shows the
+      // workspace tab between the two views.
+      closeMonoView();
       rememberAppView("search");
       setFilePickerOpen(false);
       setSettingsOpen(false);
@@ -11901,8 +11905,8 @@ function Workspace({
 
   const onOpenInbox = useCallback(() => {
     workspaceNavigation.cancel();
-    closeMonoView();
     startTransition(() => {
+      closeMonoView();
       rememberAppView("inbox");
       setFilePickerOpen(false);
       setSettingsOpen(false);
@@ -12019,8 +12023,8 @@ function Workspace({
   const onOpenNotes = useCallback(() => {
     workspaceNavigation.cancel();
     if (!loadNotesEnabled()) return;
-    closeMonoView();
     startTransition(() => {
+      closeMonoView();
       rememberAppView("notes");
       setFilePickerOpen(false);
       setSettingsOpen(false);
@@ -12037,8 +12041,8 @@ function Workspace({
 
   const onOpenAutomations = useCallback(() => {
     workspaceNavigation.cancel();
-    closeMonoView();
     startTransition(() => {
+      closeMonoView();
       rememberAppView("automations");
       setFilePickerOpen(false);
       setSettingsOpen(false);
