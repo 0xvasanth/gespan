@@ -6,6 +6,7 @@ import {
   PooledTranscript,
   TranscriptPool,
   TranscriptPoolOutlet,
+  TRANSCRIPT_POOL_LIMIT,
 } from "../../src/features/sessions/ui/TranscriptPool";
 import type { Block } from "../../src/features/sessions/model/session";
 import {
@@ -105,6 +106,7 @@ function Fixture() {
       formattedReply,
       bulletReply,
       transcriptPool: pool,
+      transcriptPoolLimit: TRANSCRIPT_POOL_LIMIT,
     });
     const onKey = (event: KeyboardEvent) => {
       if (event.key >= "0" && event.key <= "9") select(Number(event.key));

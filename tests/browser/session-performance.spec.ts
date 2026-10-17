@@ -9,6 +9,8 @@ type Fixture = Window & {
   sessionBurst: string;
   formattedReply: string;
   bulletReply: string;
+  transcriptPoolLimit: number;
+  transcriptPool: { getSnapshot(): { id: string }[] };
 };
 
 for (const example of ["formattedReply", "bulletReply"] as const) {
@@ -252,7 +254,7 @@ test("paces a completed provider burst and follows it beyond the viewport", asyn
     .toBeLessThanOrEqual(1);
 });
 
-test("reuses ten warm transcripts on rapid keyboard switches", async ({
+test("reuses warm transcripts within the cache limit on rapid keyboard switches", async ({
   page,
 }, testInfo) => {
   if (
@@ -264,8 +266,16 @@ test("reuses ten warm transcripts on rapid keyboard switches", async ({
   }
   await page.goto("/tests/browser/session-performance.html");
   await expect(page.locator(".agent-transcript")).toBeVisible();
+  await page.waitForFunction(
+    () => typeof (window as Fixture).transcriptPoolLimit === "number",
+  );
+  const warmCount = await page.evaluate(
+    () => (window as Fixture).transcriptPoolLimit,
+  );
+  expect(warmCount).toBeGreaterThan(1);
+  expect(warmCount).toBeLessThan(10);
   const nodes = [];
-  for (let id = 0; id < 10; id++) {
+  for (let id = 0; id < warmCount; id++) {
     await page.keyboard.press(String(id));
     await expect(page.locator("[data-session]")).toHaveAttribute(
       "data-session",
@@ -275,7 +285,7 @@ test("reuses ten warm transcripts on rapid keyboard switches", async ({
     nodes.push(await page.locator(".agent-transcript").elementHandle());
   }
   const latencies: number[] = [];
-  for (let id = 0; id < 10; id++) {
+  for (let id = 0; id < warmCount; id++) {
     latencies.push(
       await page.evaluate(async (id) => {
         const start = performance.now();
@@ -298,4 +308,48 @@ test("reuses ten warm transcripts on rapid keyboard switches", async ({
   });
   if (process.env.MARKDOWN_PERFORMANCE === "1")
     expect(Math.max(...latencies)).toBeLessThan(150);
+});
+
+test("restores an evicted transcript with its conversation intact", async ({
+  page,
+}) => {
+  await page.goto("/tests/browser/session-performance.html");
+  const scroller = page.locator(".agent-transcript");
+  await expect(scroller).toBeVisible();
+  await page.evaluate(() =>
+    (window as Fixture).deliverReply(
+      "The reply survives cache eviction.",
+      true,
+    ),
+  );
+  const reply = page.locator('[data-chat-message="live-reply"]');
+  await expect(reply).toHaveText("The reply survives cache eviction.");
+  await expect(page.locator("[data-transcript-turn]")).toHaveCount(20);
+  const original = await scroller.elementHandle();
+  await page.waitForFunction(
+    () => typeof (window as Fixture).transcriptPoolLimit === "number",
+  );
+  const limit = await page.evaluate(
+    () => (window as Fixture).transcriptPoolLimit,
+  );
+  for (let id = 1; id <= limit + 1; id++) {
+    await page.keyboard.press(String(id));
+    await expect(page.locator("[data-session]")).toHaveAttribute(
+      "data-session",
+      String(id),
+    );
+    await expect(page.locator("[data-transcript-turn]")).toHaveCount(20);
+  }
+  const retained = await page.evaluate(() =>
+    (window as Fixture).transcriptPool.getSnapshot().map((entry) => entry.id),
+  );
+  expect(retained).not.toContain("session-0");
+  await page.keyboard.press("0");
+  await expect(page.locator("[data-session]")).toHaveAttribute(
+    "data-session",
+    "0",
+  );
+  await expect(page.locator("[data-transcript-turn]")).toHaveCount(20);
+  await expect(reply).toHaveText("The reply survives cache eviction.");
+  expect(await original!.evaluate((el) => el.isConnected)).toBe(false);
 });
