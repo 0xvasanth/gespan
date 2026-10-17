@@ -100,3 +100,30 @@ test("remembers Not now and still allows opting in from Settings", async ({
   await expect(page.locator(".inset-shell")).toBeVisible();
   await expect(notice).toHaveCount(0);
 });
+
+test("keeps the classic workspace after turning off the new layout and leaving Settings", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("monocode.insetLayout", "1");
+  });
+  await page.goto("/tests/browser/workspace-performance.html");
+  await expect(page.locator(".inset-shell")).toBeVisible({ timeout: 15_000 });
+
+  await openAppearance(page);
+  const layout = page.getByRole("switch", { name: "New layout", exact: true });
+  await layout.click();
+  await expect(layout).not.toBeChecked();
+  await page.keyboard.press("Escape");
+
+  await expect(layout).toHaveCount(0);
+  await expect(
+    page.locator('[data-session-drop="workspace-session-0"]'),
+  ).toBeVisible();
+  await expect(page.locator(".inset-shell")).toHaveCount(0);
+  await expect(page.locator("html")).not.toHaveClass(/layout-inset/);
+  await expect(page.locator(".inset-rail-host")).toHaveCount(0);
+
+  await openAppearance(page);
+  await expect(layout).not.toBeChecked();
+});
