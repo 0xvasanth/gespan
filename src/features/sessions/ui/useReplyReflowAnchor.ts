@@ -84,7 +84,14 @@ export function useReplyReflowAnchor(
       adjustedTop = undefined;
       // Other transcript observers also correct scrollTop during reflow.
       // Those corrections must not replace the reader's original character.
-      if (!anchor || draggingScroll || performance.now() < manualUntil)
+      const now = performance.now();
+      if (draggingScroll || now < manualUntil) {
+        // Momentum can outlast the wheel event that began it. Keep the
+        // gesture active until scrolling itself has been quiet, otherwise
+        // completion restores a character from partway through that scroll.
+        manualUntil = now + 180;
+        schedule();
+      } else if (!anchor)
         schedule();
     };
     const manualScroll = () => {
