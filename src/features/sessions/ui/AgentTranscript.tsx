@@ -38,6 +38,11 @@ import { OrchestratorConstellation } from "./OrchestratorConstellation";
 import { PlanStepsBurst } from "./PlanStepsBurst";
 import { settleWordFades } from "./wordFade";
 import { revealMeasuredTurn, useMeasuredHistory } from "./useMeasuredHistory";
+import {
+  ownStepBlock,
+  ToolDetailSession,
+  useToolDetail,
+} from "./useToolDetail";
 import { HistoryTurn } from "./HistoryTurn";
 import { streamMeasurement } from "../model/streamingPerformance";
 import { useReplyReflowAnchor } from "./useReplyReflowAnchor";
@@ -191,6 +196,7 @@ const INITIAL_TURNS = 20;
  */
 const FIRST_PAINT_TURNS = 3;
 const TURN_PAGE_SIZE = 20;
+const LOADING_OUTPUT = "Loading output…";
 /**
  * How long the reader stays back at the end before the history they paged in
  * above unmounts. Each turn retains its DOM, fibers and markdown output.
@@ -271,6 +277,8 @@ type Props = {
   onScrollerChange?: (el: HTMLDivElement | null) => void;
   /** A worker's transcript: show the orchestrator's turns instead of hiding them. */
   managed?: boolean;
+  /** Saved session that omitted tool output is fetched from. */
+  sessionId?: string;
 };
 
 function AgentTranscriptComponent({
@@ -1760,7 +1768,9 @@ export const AgentTranscript = memo(
     return (
       <TranscriptVisibility.Provider value={props.visible ?? true}>
         <TranscriptPacing.Provider value={!props.bottomAligned}>
-          <AgentTranscriptComponent {...props} />
+          <ToolDetailSession.Provider value={props.sessionId}>
+            <AgentTranscriptComponent {...props} />
+          </ToolDetailSession.Provider>
         </TranscriptPacing.Provider>
       </TranscriptVisibility.Provider>
     );
@@ -3958,9 +3968,13 @@ function SubagentPanel({
   // The run's trail as transcript blocks, so the panel groups it the way the
   // main transcript groups the agent's own work: what it said, then the calls
   // that line introduced, folding behind it once it moves on.
-  const stepBlocks = useMemo(() => steps.map(agentStepBlock), [steps]);
+  const stepBlocks = useMemo(
+    () => steps.map((step) => agentStepBlock(step, block.id)),
+    [steps, block.id],
+  );
   const status = subagentStatusLine(block, steps);
-  const report = subagentReport(block);
+  const output = useToolDetail(block, open);
+  const report = subagentReport(block, output.detail);
   const failed = state === "rejected";
 
   // The name takes the room it needs and gives the rest back: a provider that
@@ -4000,7 +4014,7 @@ function SubagentPanel({
 
   // A run that has not reported a step yet has nothing to open into. The row
   // still holds its place, so the chevron arriving does not move anything.
-  if (steps.length === 0 && !report) {
+  if (steps.length === 0 && !report && !output.omitted) {
     return (
       <div
         aria-label={`Subagent: ${name}`}
@@ -4113,7 +4127,7 @@ function SubagentMascot({
  * A mirrored step as the transcript block it stands for, so a subagent's trail
  * goes through the same rows — labels, file chips, diffs — as the main agent's.
  */
-function agentStepBlock(step: AgentStep): Block {
+function agentStepBlock(step: AgentStep, parentId: string): Block {
   if (step.kind !== "tool") {
     return {
       id: step.id,
@@ -4121,7 +4135,7 @@ function agentStepBlock(step: AgentStep): Block {
       text: step.text,
     };
   }
-  return {
+  const block: Block = {
     id: step.id,
     role: "tool",
     text: step.text,
@@ -4131,9 +4145,11 @@ function agentStepBlock(step: AgentStep): Block {
       ...(step.toolKind ? { kind: step.toolKind } : {}),
       ...(step.status ? { status: step.status } : {}),
       ...(step.detail ? { detail: step.detail } : {}),
+      ...(step.detailOmitted ? { detailOmitted: true } : {}),
       ...(step.preview ? { preview: step.preview } : {}),
     },
   };
+  return ownStepBlock(block, parentId, step.id);
 }
 
 /** What a delegated run is up to: its newest step, or how much it got through. */
@@ -4496,6 +4512,7 @@ function ActivityToolRow({
   onOpenDiff?: (path: string) => void;
 }) {
   const [errorOpen, setErrorOpen] = useState(false);
+  const output = useToolDetail(block, errorOpen);
   const appCall = monoCodeToolCall(block);
   if (appCall) {
     return (
@@ -4506,7 +4523,11 @@ function ActivityToolRow({
   const state = toolCallState(block);
   const pending = needsApproval(block);
   const errorDetail =
-    !pending && state === "rejected" ? block.tool?.detail?.trim() : undefined;
+    !pending && state === "rejected"
+      ? output.omitted
+        ? (output.detail?.trim() ?? LOADING_OUTPUT)
+        : output.detail?.trim()
+      : undefined;
   const summary = (
     <ToolCallSummary
       label={label}
@@ -4587,10 +4608,13 @@ function MonoCodeCallRow({
   onApproval?: (requestId: number, decision: ApprovalDecision) => void;
 }) {
   const state = toolCallState(block);
-  const output =
-    block.tool?.detail?.trim() || block.tool?.preview?.output?.trim();
   const [errorOpen, setErrorOpen] = useState(false);
-  const hasError = state === "rejected" && !!output;
+  const stored = useToolDetail(block, errorOpen);
+  const output =
+    stored.detail?.trim() ||
+    (stored.pending ? LOADING_OUTPUT : undefined) ||
+    block.tool?.preview?.output?.trim();
+  const hasError = state === "rejected" && (!!output || stored.omitted);
   const pendingApproval = needsApproval(block);
   const command = `monocode app ${call.action}`;
   const verb = pendingApproval
@@ -4761,10 +4785,15 @@ function ToolCall({
   embedded?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const output = useToolDetail(block, open);
   const preview = block.tool?.preview;
   const label = toolCallLabel(block, cwd);
-  const detail = block.tool?.detail?.trim();
-  const expanded = detail && detail !== label ? detail : label;
+  const detail = output.detail?.trim();
+  const expanded = output.pending
+    ? LOADING_OUTPUT
+    : detail && detail !== label
+      ? detail
+      : label;
   const state = toolCallState(block);
   const stateLabel =
     state === "accepted"
@@ -4780,7 +4809,8 @@ function ToolCall({
   const compact =
     isReadTool(block.tool?.kind, label, preview) ||
     isSearchTool(block.tool?.kind, label, preview);
-  const expandable = !compact && !!detail && detail !== label;
+  const expandable =
+    !compact && (output.omitted || (!!detail && detail !== label));
 
   const frame = embedded ? "py-0.5" : "px-4 py-1";
 

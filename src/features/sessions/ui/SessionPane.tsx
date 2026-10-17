@@ -948,6 +948,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                             )
                           : monoTranscript.blocks
                       }
+                      sessionId={remoteSession ? undefined : session.id}
                       historicalBlockIds={monoTranscript.historicalBlockIds}
                       initialTurns={agent ? MONO_PAGE_TURNS : undefined}
                       pageSize={agent ? MONO_PAGE_TURNS : undefined}
