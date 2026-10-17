@@ -4,7 +4,14 @@ import {
   inWorktreeFocus,
   useWorktreeFocus,
 } from "../../features/source-control/model/worktreeFocus";
-import { SidebarWorktreeSwitcher } from "../../features/source-control/ui/SidebarWorktreeSwitcher";
+import {
+  SidebarWorktreeSwitcher,
+  type ProjectMenuFlyout,
+} from "../../features/source-control/ui/SidebarWorktreeSwitcher";
+import {
+  CurrentProjectIcon,
+  useProjectLabel,
+} from "../../features/projects/ui/CurrentProjectIcon";
 import { OrchestrationSidebarAgents } from "../../features/orchestration/ui/OrchestrationSidebarAgents";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -12,6 +19,7 @@ import {
   Chatting,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleAlert,
   CircleDashed,
@@ -31,9 +39,13 @@ import {
   Settings,
   StickyNote,
   Zap,
+  type IconComponent,
 } from "../../shared/ui/icons";
+import { createPortal } from "react-dom";
 import {
+  Fragment,
   memo,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -140,7 +152,10 @@ import { useAnimatedReorder } from "../../shared/hooks/useAnimatedReorder";
 import { normalizeHex } from "../../shared/lib/colorUtils";
 import {
   collectRailProjects,
+  loadProjectRailOrder,
   looksLikeProject,
+  projectRailItems,
+  saveProjectRailOrder,
   isRemoteProjectPath,
   sameProjectPath,
   type RecentProject,
@@ -155,15 +170,21 @@ import {
 } from "../../features/files/ui/ExplorerMenu";
 import { FileTree } from "../../features/files/ui/FileTree";
 import { HarnessIcon } from "../../features/sessions/ui/HarnessIcon";
+import { SessionCardPreview } from "../../features/sessions/ui/SessionCardPreview";
 import { LiveAgentsPreview } from "../../features/sessions/ui/LiveAgentsPreview";
 import { ProjectRail } from "./ProjectRail";
 import { InboxNotificationMenu } from "../../features/inbox/ui/InboxNotificationMenu";
-import { RailAction } from "./RailAction";
+import { RailAction, RailSearch } from "./RailAction";
+import type { RightPanelTab } from "../../features/settings/model/appearance";
 import { TerminalSpinner } from "../../features/sessions/ui/TerminalSpinner";
 import { DevModeSlot, IconButton, TabVisitNav } from "./TitleBar";
 import { ProjectSearch } from "../../features/projects/ui/ProjectSearch";
 import { Popover } from "../../shared/ui/Popover";
-import { SearchableProjectPicker } from "../../features/projects/ui/SearchableProjectPicker";
+import {
+  pickerProjects,
+  ProjectPickerPopover,
+  SearchableProjectPicker,
+} from "../../features/projects/ui/SearchableProjectPicker";
 import { useRailTooltip } from "./RailTooltip";
 import { useProjectMenu } from "./useProjectMenu";
 import { SessionFiltersMenu } from "../../features/sessions/ui/SessionFiltersMenu";
@@ -210,6 +231,8 @@ import {
 } from "../../features/connections/model/remoteProjects";
 
 const MIN_WIDTH = 260;
+/** The inset sidebar's one-line rows stay legible narrower. */
+const INSET_MIN_WIDTH = 200;
 const MAX_WIDTH = 560;
 const DEFAULT_WIDTH = 260;
 const REMINDERS_COLOR = "#f59e0b";
@@ -336,6 +359,22 @@ type Props = {
   projectRailOpen?: boolean;
   compactProjectRail?: boolean;
   titleBarAbove?: boolean;
+  /**
+   * The inset layout sets the sidebar on the window's outer glass, beside its
+   * card. Its header menu switches projects, so the rail only shows to carry
+   * the settings navigation.
+   */
+  inset?: boolean;
+  /**
+   * Inset layout: Explorer and Changes render into this panel beside the
+   * card, and the sidebar keeps to the sessions.
+   */
+  rightPanel?: {
+    host: HTMLElement | null;
+    open: boolean;
+    tab: RightPanelTab;
+    onTabChange: (tab: RightPanelTab) => void;
+  };
   unseenFinishedIds?: Set<string>;
   inboxUnseen?: boolean;
   /** Linked GitHub work changed after the session last advanced. */
@@ -432,6 +471,8 @@ function SidebarComponent({
   projectRailOpen = true,
   compactProjectRail = true,
   titleBarAbove = false,
+  inset = false,
+  rightPanel,
   unseenFinishedIds: unseenFinishedIdsProp,
   inboxUnseen = false,
   linkedSessionUpdateIds = new Set(),
@@ -610,8 +651,9 @@ function SidebarComponent({
           remoteExecutionCwd ?? hostProject.cwd,
         )
       : gitCwd || cwd;
+  const minWidth = inset ? INSET_MIN_WIDTH : MIN_WIDTH;
   const resize = useDragResize({
-    min: MIN_WIDTH,
+    min: minWidth,
     max: () => Math.min(MAX_WIDTH, Math.floor(window.innerWidth * 0.5)),
     defaultWidth: DEFAULT_WIDTH,
     initial: rememberedWidth,
@@ -768,6 +810,29 @@ function SidebarComponent({
     pinnedSessionsCollapsed,
     reminderGroup,
   );
+  const firstLooseSessionIndex = sessionListEntries.findIndex(
+    (entry) => entry.kind === "session",
+  );
+  // Reminders, folders and Pinned come first, under one label.
+  const firstGroupIndex = sessionListEntries.findIndex(
+    (entry) => entry.kind !== "session",
+  );
+  const groupFollows = (index: number) => {
+    const next = sessionListEntries[index + 1];
+    return !!next && next.kind !== "session";
+  };
+  // The inset list heads its loose sessions by when they were last active,
+  // the order they are sorted in, so each label starts one unbroken run.
+  const looseSessionLabels = new Map<number, string>();
+  if (inset) {
+    let previous: string | undefined;
+    sessionListEntries.forEach((entry, index) => {
+      if (entry.kind !== "session") return;
+      const label = sessionAgeLabel(entry.session.updatedAt, now);
+      if (label !== previous) looseSessionLabels.set(index, label);
+      previous = label;
+    });
+  }
   const sessionNavigationIds = sessionListNavigationIds(
     fullSessionListEntries,
     searchNarrowed,
@@ -845,7 +910,10 @@ function SidebarComponent({
     : undefined;
   // A blank session has no project to browse, so the shell stands alone until
   // one is picked — whether or not the rail is open.
-  const sidebarAvailable = !otherViewActive && !monoViewActive && inProject;
+  // The inset sidebar holds the links to search, inbox, notes and
+  // automations, so it stays beside them; only settings take its place.
+  const sidebarAvailable =
+    !(inset ? settingsOpen : otherViewActive) && !monoViewActive && inProject;
   const sidebarVisible = open && sidebarAvailable;
   // With the sidebar collapsed beside the compact rail, its tab shortcuts
   // open the sidebar temporarily until the user clicks away.
@@ -863,12 +931,24 @@ function SidebarComponent({
   const panelOpen = open || drawerVisible;
   // Keep the hidden explorer intact when a chat tab changes worktrees. Its
   // rows and file icons only need rebuilding when Files is actually shown.
+  // The inset layout shows Explorer and Changes in its right panel, so they
+  // follow that panel rather than the sidebar's own tab.
+  const paneHost = inset ? rightPanel : undefined;
+  const paneTab: SidebarTab | null = paneHost
+    ? paneHost.open && inProject
+      ? paneHost.tab
+      : null
+    : tab;
+  const panesOpen = paneHost ? paneTab != null : panelOpen;
   const explorer = useRef<{ cwd: string; rootLabel?: string } | null>(null);
-  if (panelOpen && tab === "files") {
+  if (panesOpen && paneTab === "files") {
     explorer.current = { cwd: gitRoot, rootLabel: explorerRootLabel };
   }
-  const gitStatuses = useGitFileStatuses(gitRoot, panelOpen && tab === "files");
-  const changeStats = useProjectDiffStats(gitRoot, panelOpen);
+  const gitStatuses = useGitFileStatuses(
+    gitRoot,
+    panesOpen && paneTab === "files",
+  );
+  const changeStats = useProjectDiffStats(gitRoot, panesOpen);
 
   useEffect(() => {
     if (!drawerMode || !sidebarAvailable) setDrawerOpen(false);
@@ -1593,6 +1673,7 @@ function SidebarComponent({
         needsApproval={listedApprovalSessionIds.has(session.id)}
         dropTarget={isSessionDrop("session", session.id)}
         compact={compact}
+        dense={inset}
         now={now}
         onSelect={cardActions.select}
         onOpenWorkItem={
@@ -1725,19 +1806,241 @@ function SidebarComponent({
     );
   });
 
+  const projectLabel = useProjectLabel(cwd);
+  const headerProjectMenu = useProjectMenu({
+    onRemoveProject,
+    onOpenNotificationSettings,
+  });
+  // The inset layout names the project here, with its settings and the
+  // project and worktree pickers in a menu below it.
+  const headerProject = inset
+    ? {
+        name: projectLabel,
+        icon: (
+          <CurrentProjectIcon
+            cwd={cwd}
+            busy={projectPathBusy(busyProjectPaths, cwd)}
+            mascotClassName="size-2.5"
+          />
+        ),
+        onOpenSettings,
+        settingsShortcut: `${MOD},`,
+        keepOpen: headerProjectMenu.isActive,
+        renderProjectPicker: onSelectProject
+          ? ({ anchor, layer, attributes, onClose }: ProjectMenuFlyout) => (
+              <ProjectPickerPopover
+                anchor={anchor}
+                flyout={{ layer, attributes }}
+                projects={pickerProjects(recents, cwd)}
+                currentProject={cwd}
+                onDismiss={onClose}
+                onSelectProject={onSelectProject}
+                onOpenProject={onOpenProject}
+                onProjectContextMenu={headerProjectMenu.open}
+                projectMenuActive={headerProjectMenu.isActive}
+              />
+            )
+          : undefined,
+      }
+    : undefined;
+  // The inset sidebar's spaces: the projects in the rail's order, the same
+  // one Project: Previous / Next steps through.
+  const spaceProjects = useMemo(
+    () =>
+      inset ? projectRailItems(recents, cwd).map((item) => item.path) : [],
+    [inset, recents, cwd],
+  );
+  // Projects the rail never placed fall back to most-recent-first, which
+  // reshuffles the spaces on every switch. The rail is not mounted in this
+  // layout to save its order, so the spaces pin down whatever they show.
+  useEffect(() => {
+    if (!inset || !spaceProjects.length) return;
+    const stored = loadProjectRailOrder();
+    const unplaced = spaceProjects.some(
+      (path) => !stored.some((saved) => sameProjectPath(saved, path)),
+    );
+    if (unplaced) saveProjectRailOrder(spaceProjects);
+  }, [inset, spaceProjects]);
+  const slideRefs = useRef<(HTMLElement | null)[]>([]);
+  const previousSpace = useRef(cwd);
+  // The outgoing project's header and list, copied while they are still on
+  // screen, so they can be pushed away as the new ones arrive.
+  const outgoingSpace = useRef<{
+    to: string;
+    nodes: { node: HTMLElement; scrollTop: number }[];
+  } | null>(null);
+  if (
+    inset &&
+    !sameProjectPath(previousSpace.current, cwd) &&
+    outgoingSpace.current?.to !== cwd
+  ) {
+    outgoingSpace.current = {
+      to: cwd,
+      nodes: slideRefs.current.flatMap((el) => {
+        if (!el?.isConnected) return [];
+        const node = el.cloneNode(true) as HTMLElement;
+        // A slide still holding the live copy hidden must not hide this one.
+        node.style.opacity = "";
+        return [{ node, scrollTop: el.scrollTop }];
+      }),
+    };
+  }
+  const spaceProjectsRef = useRef(spaceProjects);
+  spaceProjectsRef.current = spaceProjects;
+  const spaceSlide = useRef<{
+    direction: number;
+    overlay: HTMLDivElement | null;
+    started: boolean;
+    timer?: number;
+    animations: Animation[];
+  } | null>(null);
+  const endSpaceSlide = useCallback(() => {
+    const slide = spaceSlide.current;
+    if (!slide) return;
+    spaceSlide.current = null;
+    window.clearTimeout(slide.timer);
+    for (const animation of slide.animations) animation.cancel();
+    slide.overlay?.remove();
+    for (const el of slideRefs.current) if (el) el.style.opacity = "";
+  }, []);
+  // The push itself: both projects move the sidebar's full width together,
+  // the old one fading out as the new one fades in.
+  const startSpaceSlide = useCallback(() => {
+    const slide = spaceSlide.current;
+    if (!slide || slide.started) return;
+    slide.started = true;
+    window.clearTimeout(slide.timer);
+    const aside = slideRefs.current[0]?.closest("aside");
+    const distance = aside?.clientWidth ?? 240;
+    const timing = { duration: 440, easing: "cubic-bezier(0.4, 0, 0.2, 1)" };
+    for (const el of slideRefs.current) {
+      if (!el || typeof el.animate !== "function") continue;
+      el.style.opacity = "";
+      slide.animations.push(
+        el.animate(
+          [
+            {
+              transform: `translateX(${slide.direction * distance}px)`,
+              opacity: 0,
+            },
+            { transform: "none", opacity: 1 },
+          ],
+          timing,
+        ),
+      );
+    }
+    for (const node of slide.overlay?.children ?? []) {
+      slide.animations.push(
+        (node as HTMLElement).animate(
+          [
+            { transform: "none", opacity: 1 },
+            {
+              transform: `translateX(${-slide.direction * distance}px)`,
+              opacity: 0,
+            },
+          ],
+          { ...timing, fill: "forwards" },
+        ),
+      );
+    }
+    void Promise.all(slide.animations.map((animation) => animation.finished))
+      .then(() => {
+        if (spaceSlide.current === slide) endSpaceSlide();
+      })
+      .catch(() => undefined);
+  }, [endSpaceSlide]);
+  // Switching projects slides the sidebar the way the spaces run, like Zen's
+  // workspaces: moving right, the old project leaves to the left as the new
+  // one comes in from the right, and the reverse moving left.
+  useLayoutEffect(() => {
+    const from = previousSpace.current;
+    previousSpace.current = cwd;
+    const outgoing = outgoingSpace.current;
+    outgoingSpace.current = null;
+    if (sameProjectPath(from, cwd)) return;
+    const step = projectStep;
+    projectStep = null;
+    if (!inset) return;
+    endSpaceSlide();
+    const spaces = spaceProjectsRef.current;
+    const fromIndex = spaces.findIndex((path) => sameProjectPath(path, from));
+    const toIndex = spaces.findIndex((path) => sameProjectPath(path, cwd));
+    if (fromIndex < 0 || toIndex < 0) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    if (slideRefs.current.some((el) => el && typeof el.animate !== "function"))
+      return;
+    // The copies sit on an overlay over the sidebar, each where its live
+    // counterpart now is, covering it until the push starts.
+    const aside = slideRefs.current[0]?.closest("aside");
+    let overlay: HTMLDivElement | null = null;
+    if (aside && outgoing?.nodes.length) {
+      overlay = document.createElement("div");
+      overlay.setAttribute("aria-hidden", "true");
+      overlay.inert = true;
+      overlay.className =
+        "pointer-events-none absolute inset-0 z-20 overflow-hidden";
+      const asideRect = aside.getBoundingClientRect();
+      outgoing.nodes.forEach(({ node, scrollTop }, index) => {
+        const live = slideRefs.current[index];
+        if (!live) return;
+        const rect = live.getBoundingClientRect();
+        Object.assign(node.style, {
+          position: "absolute",
+          left: `${rect.left - asideRect.left}px`,
+          top: `${rect.top - asideRect.top}px`,
+          width: `${rect.width}px`,
+          height: `${rect.height}px`,
+        });
+        overlay!.append(node);
+        node.scrollTop = scrollTop;
+      });
+      aside.append(overlay);
+    }
+    // The incoming project waits, hidden, for its first sessions, so it is
+    // not pushed in empty and filled afterwards.
+    for (const el of slideRefs.current) if (el) el.style.opacity = "0";
+    spaceSlide.current = {
+      // A step past either end wraps around but keeps moving the same way.
+      direction:
+        step && sameProjectPath(step.to, cwd)
+          ? step.direction
+          : toIndex > fromIndex
+            ? 1
+            : -1,
+      overlay,
+      started: false,
+      animations: [],
+      timer: window.setTimeout(startSpaceSlide, 400),
+    };
+  }, [cwd, inset, endSpaceSlide, startSpaceSlide]);
+  useLayoutEffect(() => {
+    if (spaceSlide.current && !pendingFirstLoad) startSpaceSlide();
+  }, [cwd, pendingFirstLoad, startSpaceSlide]);
+  useEffect(() => endSpaceSlide, [endSpaceSlide]);
+
   const workspaceHeader = (
     <div
-      className="flex h-10 shrink-0 select-none items-center gap-1 border-b border-stroke pl-3 pr-1.5"
+      ref={(el) => {
+        slideRefs.current[0] = el;
+      }}
+      // Inset, it sits just under the title bar, so it keeps less above the
+      // project button than below it, and its search icon lines up with the
+      // sessions' filter and times.
+      className={`flex shrink-0 select-none items-center gap-1 pl-3${
+        inset ? " h-[39px] pb-px pr-3" : " h-10 border-b border-stroke pr-1.5"
+      }`}
       data-tauri-drag-region="deep"
     >
       <div className="flex min-w-0 flex-1 items-center">
-        {!remoteProject && cwd && cwd !== "~" ? (
+        {(headerProject || !remoteProject) && cwd && cwd !== "~" ? (
           <SidebarWorktreeSwitcher
+            worktrees={!remoteProject}
             cwd={cwd}
             tabStats={worktreeTabStats}
             onSelect={onSelectWorkspace}
             pending={workspaceSwitchPending}
             switchError={workspaceSwitchError}
+            project={headerProject}
           />
         ) : (
           <span className="min-w-0 truncate text-sm font-medium leading-tight">
@@ -1745,25 +2048,151 @@ function SidebarComponent({
           </span>
         )}
       </div>
-      <WorkspaceTitleActions onSearch={onGoToFile} onNew={onNew} />
+      {/* Inset, a new session is the + at the end of the title bar's tabs. */}
+      <WorkspaceTitleActions
+        onSearch={onGoToFile}
+        onNew={inset ? undefined : onNew}
+      />
+      {headerProjectMenu.element}
     </div>
+  );
+
+  // The inset list names its loose sessions like the groups above them, and
+  // carries the filter the search row holds elsewhere.
+  const sessionsFilterButton = (
+    <SessionsHeaderButton
+      label="Filter sessions"
+      active={filtersActive}
+      open={!!filterMenu}
+      hasPopup
+      onClick={onFilterButtonClick}
+    >
+      <ListFilter className="size-3" strokeWidth={1.75} />
+    </SessionsHeaderButton>
+  );
+  // Stands in for the date labels when no loose session is listed, so the
+  // filter stays reachable.
+  const sessionsLabel = inset ? (
+    <SidebarSectionLabel label="Sessions">
+      {sessionsFilterButton}
+    </SidebarSectionLabel>
+  ) : null;
+
+  const navList = inset ? (
+    <SidebarNavList
+      search={
+        onSearch ? { active: searchActive, onClick: onSearch } : undefined
+      }
+      items={[
+        onOpenInbox && {
+          label: "Inbox",
+          icon: Inbox,
+          active: inboxActive,
+          dot: inboxUnseen,
+          onClick: onOpenInbox,
+        },
+        notesEnabled &&
+          onOpenNotes && {
+            label: "Notes",
+            icon: StickyNote,
+            active: notesActive,
+            onClick: onOpenNotes,
+          },
+        onOpenAutomations && {
+          label: "Automations",
+          icon: Zap,
+          active: automationsActive,
+          onClick: onOpenAutomations,
+        },
+      ]}
+    />
+  ) : null;
+
+  const filesPane = (
+    <div
+      className={`flex min-h-0 flex-1 flex-col overflow-hidden ${
+        paneTab === "files" ? "" : "hidden"
+      }`}
+    >
+      {filesSearchOpen ? (
+        <ProjectSearch
+          cwd={gitRoot}
+          focusToken={searchFocusToken}
+          onOpenFile={onOpenFile}
+          onClose={() => onFilesSearchOpenChange(false)}
+        />
+      ) : cwd && cwd !== "~" ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          {explorer.current ? (
+            <FileTree
+              key={explorer.current.cwd}
+              cwd={explorer.current.cwd}
+              rootLabel={explorer.current.rootLabel}
+              onOpenFile={onOpenFile}
+              onOpenTerminal={remoteProject ? undefined : onOpenTerminal}
+              onFileMoved={onFileMoved}
+              onFileDeleted={onFileDeleted}
+              onSearch={onOpenFilesSearch}
+              gitStatuses={gitStatuses}
+            />
+          ) : null}
+        </div>
+      ) : (
+        <p className="px-3 py-2 text-[12px] text-content/50">
+          No project folder
+        </p>
+      )}
+    </div>
+  );
+  const changesPane = (
+    <>
+      {paneTab === "changes" ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <SourceControl
+            cwd={gitRoot}
+            enabled={panesOpen}
+            textHarness={textHarness}
+            selectedPath={selectedDiffPath}
+            selectedKind={selectedDiffKind}
+            selectedSha={selectedCommitSha}
+            onOpenFile={
+              onOpenDiff ??
+              ((path) => onOpenFile(path, undefined, { exact: true }))
+            }
+            onOpenAllChanges={onOpenAllChanges ?? (() => {})}
+            onOpenCommit={onOpenCommit ?? (() => {})}
+          />
+        </div>
+      ) : null}
+    </>
   );
 
   const sidebarContent = (
     <aside
       ref={resize.setPaneRef}
-      className="body-glass relative flex h-full min-h-0 shrink-0 flex-col border-r border-stroke"
+      // The inset card's own edge separates it from the sidebar.
+      className={`relative flex h-full min-h-0 shrink-0 flex-col${
+        inset
+          ? " inset-sidebar overflow-x-clip"
+          : " body-glass border-r border-stroke"
+      }`}
     >
-      {railVisible ? (
+      {/* The inset layout keeps the open-rail header either way: its menu
+          switches projects. */}
+      {railVisible || inset ? (
         <>
           {workspaceHeader}
-          <div
-            role="tablist"
-            aria-label="Workspace"
-            className="flex h-9 shrink-0 items-center gap-px border-b border-stroke px-2"
-          >
-            {workspaceTabItems}
-          </div>
+          {/* The inset sidebar has no tabs: Explorer and Changes live in the
+              right panel. */}
+          {inset ? null : (
+            <div
+              role="tablist"
+              aria-label="Workspace"
+              className="flex h-9 shrink-0 items-center gap-px border-b border-stroke px-2"
+            >
+              {workspaceTabItems}
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -1819,41 +2248,8 @@ function SidebarComponent({
         </>
       )}
       <>
-        <div
-          className={`flex min-h-0 flex-1 flex-col overflow-hidden ${
-            tab === "files" ? "" : "hidden"
-          }`}
-        >
-          {filesSearchOpen ? (
-            <ProjectSearch
-              cwd={gitRoot}
-              focusToken={searchFocusToken}
-              onOpenFile={onOpenFile}
-              onClose={() => onFilesSearchOpenChange(false)}
-            />
-          ) : cwd && cwd !== "~" ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              {explorer.current ? (
-                <FileTree
-                  key={explorer.current.cwd}
-                  cwd={explorer.current.cwd}
-                  rootLabel={explorer.current.rootLabel}
-                  onOpenFile={onOpenFile}
-                  onOpenTerminal={remoteProject ? undefined : onOpenTerminal}
-                  onFileMoved={onFileMoved}
-                  onFileDeleted={onFileDeleted}
-                  onSearch={onOpenFilesSearch}
-                  gitStatuses={gitStatuses}
-                />
-              ) : null}
-            </div>
-          ) : (
-            <p className="px-3 py-2 text-[12px] text-content/50">
-              No project folder
-            </p>
-          )}
-        </div>
-        {tab === "sessions" && cwd && cwd !== "~" ? (
+        {paneHost ? null : filesPane}
+        {tab === "sessions" && cwd && cwd !== "~" && !inset ? (
           <div className="flex h-9 shrink-0 items-center gap-1 border-b border-stroke px-2">
             <div className="relative flex h-7 min-w-0 flex-1 items-center">
               <Search className="pointer-events-none absolute left-2 size-3 shrink-0 opacity-50" />
@@ -1874,11 +2270,24 @@ function SidebarComponent({
           ref={(el) => {
             sessionsLock(el);
             sessionsScrollRef.current = el;
+            slideRefs.current[1] = el;
           }}
           className={`sidebar-session-scroll min-h-0 flex-1 overflow-y-auto overscroll-none ${
             tab === "sessions" ? "" : "hidden"
           }`}
+          // Marks a scrolled list straight on the element, so the header's
+          // fade comes and goes without re-rendering the rows.
+          onScroll={
+            inset
+              ? (event) =>
+                  event.currentTarget.toggleAttribute(
+                    "data-scrolled",
+                    event.currentTarget.scrollTop > 0,
+                  )
+              : undefined
+          }
         >
+          {navList}
           {!cwd || cwd === "~" ? (
             <p className="px-3 py-2 text-[12px] text-content/50">
               No project folder
@@ -1898,26 +2307,31 @@ function SidebarComponent({
                   Couldn’t load sessions
                 </p>
               ) : visibleSessions.length === 0 ? (
-                // A narrowed-down result is a transient answer to what the user
-                // just typed, so it stays a quiet line of text. Only the genuine
-                // "this project has nothing in it" case earns the illustration.
-                narrowedByUser ? (
-                  <p className="px-3 py-2 text-[12px] text-content/50">
-                    {searchNarrowed
-                      ? "No matching sessions"
-                      : "No sessions match these filters"}
-                  </p>
-                ) : remoteProject && !remote.machine ? (
-                  <p className="px-3 py-2 text-[12px] text-content/45">
-                    This project’s machine isn’t connected on this computer.
-                  </p>
-                ) : (
-                  <SessionsEmpty message="Sessions you start will show up here" />
-                )
+                <>
+                  {sessionsLabel}
+                  {/* A narrowed-down result is a transient answer to what the user
+                    just typed, so it stays a quiet line of text. Only the genuine
+                    "this project has nothing in it" case earns the illustration. */}
+                  {narrowedByUser ? (
+                    <p className="px-3 py-2 text-[12px] text-content/50">
+                      {searchNarrowed
+                        ? "No matching sessions"
+                        : "No sessions match these filters"}
+                    </p>
+                  ) : remoteProject && !remote.machine ? (
+                    <p className="px-3 py-2 text-[12px] text-content/45">
+                      This project’s machine isn’t connected on this computer.
+                    </p>
+                  ) : (
+                    <SessionsEmpty message="Sessions you start will show up here" />
+                  )}
+                </>
               ) : (
                 <ul
                   data-session-list
-                  className="flex flex-col gap-0.5 p-1.5 pb-10"
+                  className={`flex flex-col pb-10 ${
+                    inset ? "gap-px px-2 pt-1" : "gap-0.5 p-1.5"
+                  }`}
                 >
                   {sessionListEntries.map((entry, index) => {
                     if (entry.kind === "pinned" || entry.kind === "reminders") {
@@ -1925,16 +2339,28 @@ function SidebarComponent({
                       const expanded = searchNarrowed || !entry.collapsed;
                       const beforeUngrouped =
                         sessionListEntries[index + 1]?.kind === "session";
-                      return (
+                      const groupItem = (
                         <li
                           key={`${entry.kind}-sessions`}
                           data-pinned-sessions={isReminders ? undefined : ""}
                           data-reminder-sessions={isReminders ? "" : undefined}
                           className={`relative ${
-                            expanded || beforeUngrouped ? "mb-1.5" : ""
+                            inset
+                              ? groupFollows(index)
+                                ? "mb-0.5"
+                                : "mb-3"
+                              : expanded || beforeUngrouped
+                                ? "mb-1.5"
+                                : ""
                           }`}
                         >
-                          <div className="overflow-hidden rounded-md bg-content/5">
+                          <div
+                            className={
+                              inset
+                                ? ""
+                                : "overflow-hidden rounded-md bg-content/5"
+                            }
+                          >
                             <FolderRow
                               folder={
                                 isReminders
@@ -1946,6 +2372,7 @@ function SidebarComponent({
                               }
                               sessions={entry.sessions}
                               expanded={expanded}
+                              dense={inset}
                               dropTarget={false}
                               busy={entry.sessions.some((session) =>
                                 listedBusySessionIds.has(session.id),
@@ -1959,12 +2386,14 @@ function SidebarComponent({
                               groupIcon={
                                 isReminders ? (
                                   <Clock
-                                    className="size-3.5"
+                                    className={inset ? "size-4" : "size-3.5"}
                                     strokeWidth={1.75}
                                   />
                                 ) : (
                                   <Pin
-                                    className="size-3.5 text-content"
+                                    className={
+                                      inset ? "size-4" : "size-3.5 text-content"
+                                    }
                                     strokeWidth={1.75}
                                   />
                                 )
@@ -1982,7 +2411,11 @@ function SidebarComponent({
                               }}
                             />
                             {expanded ? (
-                              <ul className="flex flex-col gap-px p-1">
+                              <ul
+                                className={`flex flex-col gap-px ${
+                                  inset ? "pt-px" : "p-1"
+                                }`}
+                              >
                                 {entry.sessions.map((session) => (
                                   <SessionListItem
                                     key={session.id}
@@ -1997,6 +2430,16 @@ function SidebarComponent({
                             ) : null}
                           </div>
                         </li>
+                      );
+                      return inset && index === firstGroupIndex ? (
+                        <Fragment key={`${entry.kind}-sessions`}>
+                          <li className="list-none">
+                            <SidebarSectionLabel label="Folders" />
+                          </li>
+                          {groupItem}
+                        </Fragment>
+                      ) : (
+                        groupItem
                       );
                     }
                     if (entry.kind === "folder") {
@@ -2023,7 +2466,7 @@ function SidebarComponent({
                         folderSortable.toIndex === folderIndex &&
                         folderSortable.fromIndex !== null &&
                         folderSortable.toIndex > folderSortable.fromIndex;
-                      return (
+                      const folderItem = (
                         <li
                           key={entry.folder.id}
                           ref={(el) =>
@@ -2031,7 +2474,13 @@ function SidebarComponent({
                           }
                           data-session-folder={entry.folder.id}
                           className={`relative ${
-                            expanded || beforeUngrouped ? "mb-1.5" : ""
+                            inset
+                              ? groupFollows(index)
+                                ? "mb-0.5"
+                                : "mb-3"
+                              : expanded || beforeUngrouped
+                                ? "mb-1.5"
+                                : ""
                           } ${draggingFolder ? "opacity-40" : ""}`}
                         >
                           {showFolderDropStart ? (
@@ -2041,11 +2490,17 @@ function SidebarComponent({
                             <div className="pointer-events-none absolute inset-x-1 bottom-0 z-20 h-0.5 rounded-full bg-accent" />
                           ) : null}
                           <div
-                            className={`overflow-hidden rounded-md ${
-                              shellFill ? "" : "bg-content/5"
-                            }`}
+                            className={
+                              inset
+                                ? ""
+                                : `overflow-hidden rounded-md ${
+                                    shellFill ? "" : "bg-content/5"
+                                  }`
+                            }
                             style={
-                              shellFill ? { background: shellFill } : undefined
+                              shellFill && !inset
+                                ? { background: shellFill }
+                                : undefined
                             }
                           >
                             {renamingFolderId === entry.folder.id ? (
@@ -2073,6 +2528,7 @@ function SidebarComponent({
                                 folder={entry.folder}
                                 sessions={entry.sessions}
                                 expanded={expanded}
+                                dense={inset}
                                 dropTarget={isSessionDrop(
                                   "folder",
                                   entry.folder.id,
@@ -2113,7 +2569,11 @@ function SidebarComponent({
                             )}
                             {expanded ? (
                               <>
-                                <ul className="flex flex-col gap-px p-1">
+                                <ul
+                                  className={`flex flex-col gap-px ${
+                                    inset ? "pt-px" : "p-1"
+                                  }`}
+                                >
                                   {entry.sessions.map((session) => (
                                     <SessionListItem
                                       key={session.id}
@@ -2126,7 +2586,13 @@ function SidebarComponent({
                                   ))}
                                 </ul>
                                 {onNew ? (
-                                  <div className="border-t border-stroke p-1">
+                                  <div
+                                    className={
+                                      inset
+                                        ? "pt-px"
+                                        : "border-t border-stroke p-1"
+                                    }
+                                  >
                                     <button
                                       type="button"
                                       data-no-drag
@@ -2153,8 +2619,19 @@ function SidebarComponent({
                           </div>
                         </li>
                       );
+                      // The inset list groups its folders under one label.
+                      return inset && index === firstGroupIndex ? (
+                        <Fragment key={entry.folder.id}>
+                          <li className="list-none">
+                            <SidebarSectionLabel label="Folders" />
+                          </li>
+                          {folderItem}
+                        </Fragment>
+                      ) : (
+                        folderItem
+                      );
                     }
-                    return (
+                    const item = (
                       <SessionListItem
                         key={entry.session.id}
                         session={entry.session}
@@ -2164,7 +2641,29 @@ function SidebarComponent({
                         {renderSessionCard(entry.session)}
                       </SessionListItem>
                     );
+                    const ageLabel = looseSessionLabels.get(index);
+                    return ageLabel ? (
+                      <Fragment key={entry.session.id}>
+                        <li
+                          className={`list-none ${
+                            index === firstLooseSessionIndex ? "" : "mt-3"
+                          }`}
+                        >
+                          <SidebarSectionLabel label={ageLabel}>
+                            {index === firstLooseSessionIndex
+                              ? sessionsFilterButton
+                              : null}
+                          </SidebarSectionLabel>
+                        </li>
+                        {item}
+                      </Fragment>
+                    ) : (
+                      item
+                    );
                   })}
+                  {sessionsLabel && firstLooseSessionIndex < 0 ? (
+                    <li className="list-none">{sessionsLabel}</li>
+                  ) : null}
                   {hasMoreSessions ? (
                     <li
                       ref={loadMoreRef}
@@ -2177,24 +2676,7 @@ function SidebarComponent({
             </div>
           )}
         </div>
-        {tab === "changes" ? (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <SourceControl
-              cwd={gitRoot}
-              enabled={panelOpen}
-              textHarness={textHarness}
-              selectedPath={selectedDiffPath}
-              selectedKind={selectedDiffKind}
-              selectedSha={selectedCommitSha}
-              onOpenFile={
-                onOpenDiff ??
-                ((path) => onOpenFile(path, undefined, { exact: true }))
-              }
-              onOpenAllChanges={onOpenAllChanges ?? (() => {})}
-              onOpenCommit={onOpenCommit ?? (() => {})}
-            />
-          </div>
-        ) : null}
+        {paneHost ? null : changesPane}
         {showSidebarFooter ? (
           <>
             <LiveAgentsPreview
@@ -2210,7 +2692,8 @@ function SidebarComponent({
             />
             <div className="flex shrink-0 flex-col gap-px p-2 empty:hidden">
               <GithubStarPrompt />
-              {!compactProjectRail ? (
+              {/* The inset header's project menu carries Settings. */}
+              {!compactProjectRail && !inset ? (
                 <RailAction
                   label="Settings"
                   icon={Settings}
@@ -2221,6 +2704,14 @@ function SidebarComponent({
               ) : null}
             </div>
           </>
+        ) : null}
+        {inset && onSelectProject ? (
+          <ProjectSpacesBar
+            projects={spaceProjects}
+            cwd={cwd}
+            busyProjectPaths={busyProjectPaths}
+            onSelectProject={onSelectProject}
+          />
         ) : null}
       </>
       {sessionMenu ? (
@@ -2285,10 +2776,14 @@ function SidebarComponent({
         aria-orientation="vertical"
         aria-label="Resize sidebar"
         aria-valuenow={resize.width}
-        aria-valuemin={MIN_WIDTH}
+        aria-valuemin={minWidth}
         aria-valuemax={MAX_WIDTH}
-        className={`absolute inset-y-0 -right-px z-10 w-1.5 cursor-col-resize touch-none ${
-          resize.dragging ? "bg-content/15" : "hover:bg-content/10"
+        className={`absolute inset-y-0 -right-px z-10 w-1.5 cursor-col-resize touch-none${
+          inset
+            ? ""
+            : resize.dragging
+              ? " bg-content/15"
+              : " hover:bg-content/10"
         }`}
         onPointerDown={resize.onPointerDown}
         onDoubleClick={resize.onDoubleClick}
@@ -2296,12 +2791,8 @@ function SidebarComponent({
     </aside>
   );
 
-  return (
-    <div
-      className={`flex h-full shrink-0 ${
-        railVisible || compactRailVisible || sidebarVisible ? "" : "hidden"
-      }`}
-    >
+  const rails = (
+    <>
       {compactRailVisible ? (
         <CompactProjectRail
           cwd={cwd}
@@ -2340,6 +2831,7 @@ function SidebarComponent({
       {railMounted.current && onSelectProject && onOpenProject ? (
         <ProjectRail
           visible={railVisible}
+          headerless={inset}
           cwd={cwd}
           recents={recents}
           inboxUnseen={inboxUnseen}
@@ -2376,7 +2868,35 @@ function SidebarComponent({
           monos={railMonos}
         />
       ) : null}
+    </>
+  );
+
+  return (
+    <div
+      className={`flex h-full shrink-0 ${
+        railVisible || compactRailVisible || sidebarVisible || drawerRendered
+          ? ""
+          : "hidden"
+      }`}
+    >
+      {rails}
       {sidebarVisible ? sidebarContent : null}
+      {paneHost?.host && paneTab
+        ? createPortal(
+            <RightPanel
+              tab={paneTab === "changes" ? "changes" : "files"}
+              changesLabel={changesLabel}
+              hasChangeStats={hasChangeStats}
+              changeAdditions={changeAdditions}
+              changeDeletions={changeDeletions}
+              onTabChange={paneHost.onTabChange}
+            >
+              {filesPane}
+              {changesPane}
+            </RightPanel>,
+            paneHost.host,
+          )
+        : null}
       {drawerRendered ? (
         // Pinned to the right edge, so the sidebar slides in as the width grows.
         <div
@@ -2392,6 +2912,17 @@ function SidebarComponent({
       ) : null}
     </div>
   );
+}
+
+/** The project a `Project: Previous` / `Project: Next` step is heading to. */
+let projectStep: { to: string; direction: 1 | -1 } | null = null;
+
+/**
+ * Notes which way a project step runs, so a step that wraps past the last
+ * project to the first (or back) still slides on in that direction.
+ */
+export function noteProjectStep(to: string, delta: number) {
+  projectStep = { to, direction: delta < 0 ? -1 : 1 };
 }
 
 export const Sidebar = memo(SidebarComponent);
@@ -2969,6 +3500,307 @@ function CompactRailAction({
   );
 }
 
+/** Zen-style spaces at the foot of the inset sidebar: each project's logo or
+ * mascot, the current one lifted, and a way to open another. */
+/** Projects the spaces bar shows at once; the chevrons page through more. */
+const SPACES_SHOWN = 5;
+
+function ProjectSpacesBar({
+  projects,
+  cwd,
+  busyProjectPaths,
+  onSelectProject,
+}: {
+  projects: readonly string[];
+  cwd: string;
+  busyProjectPaths?: Iterable<string>;
+  onSelectProject: (path: string) => void;
+}) {
+  const shown = Math.min(projects.length, SPACES_SHOWN);
+  const lastStart = Math.max(0, projects.length - shown);
+  const activeIndex = projects.findIndex((path) => sameProjectPath(path, cwd));
+  const [start, setStart] = useState(() =>
+    Math.min(lastStart, Math.max(0, activeIndex - shown + 1)),
+  );
+  // Bring the current project into view when it changes from elsewhere,
+  // moving the window no further than it needs to.
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    setStart((current) =>
+      activeIndex < current
+        ? activeIndex
+        : activeIndex >= current + shown
+          ? activeIndex - shown + 1
+          : current,
+    );
+  }, [activeIndex, shown]);
+  const first = Math.min(start, lastStart);
+  const visible = projects.slice(first, first + shown);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const step = (direction: -1 | 1) => {
+    const next = Math.min(lastStart, Math.max(0, first + direction));
+    if (next === first) return;
+    setStart(next);
+    // A short slide in from the side the new project comes from.
+    const row = rowRef.current;
+    if (
+      !row ||
+      typeof row.animate !== "function" ||
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
+    row.animate(
+      [
+        { transform: `translateX(${direction * 12}px)`, opacity: 0.4 },
+        { transform: "none", opacity: 1 },
+      ],
+      { duration: 200, easing: "cubic-bezier(0.32, 0.72, 0, 1)" },
+    );
+  };
+  const chevron = (direction: -1 | 1) => {
+    const disabled = direction < 0 ? first <= 0 : first >= lastStart;
+    const Icon = direction < 0 ? ChevronLeft : ChevronRight;
+    const label = direction < 0 ? "Previous projects" : "More projects";
+    return (
+      <button
+        type="button"
+        title={label}
+        aria-label={label}
+        disabled={disabled}
+        data-tauri-drag-region="false"
+        onClick={() => step(direction)}
+        className="grid size-5 shrink-0 place-items-center rounded text-content/50 hover:bg-content/10 hover:text-content disabled:pointer-events-none disabled:opacity-30"
+      >
+        <Icon className="size-3.5" strokeWidth={1.75} />
+      </button>
+    );
+  };
+  return (
+    // As tall as the usage footer beside it, so the two read as one strip.
+    // A mini carousel: up to five spaces spread evenly, chevrons either side.
+    // Its edges line up with the rows above, and its controls with the usage
+    // footer's; each space takes an equal share.
+    <div className="flex h-[30px] shrink-0 items-center gap-1 px-2 pb-0.5">
+      {chevron(-1)}
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <div
+          ref={rowRef}
+          role="tablist"
+          aria-label="Projects"
+          className="flex w-full items-center gap-1"
+        >
+          {visible.map((path) => (
+            <ProjectSpaceButton
+              key={path}
+              path={path}
+              active={sameProjectPath(path, cwd)}
+              busy={projectPathBusy(busyProjectPaths, path)}
+              onSelect={() => onSelectProject(path)}
+            />
+          ))}
+        </div>
+      </div>
+      {chevron(1)}
+    </div>
+  );
+}
+
+function ProjectSpaceButton({
+  path,
+  active,
+  busy,
+  onSelect,
+}: {
+  path: string;
+  active: boolean;
+  busy: boolean;
+  onSelect: () => void;
+}) {
+  const label = useProjectLabel(path);
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      aria-label={busy ? `${label}, working` : label}
+      title={label}
+      data-tauri-drag-region="false"
+      onClick={active ? undefined : onSelect}
+      className={`relative grid h-5 min-w-0 flex-1 place-items-center rounded transition-[opacity,background-color] duration-200 ease-out motion-reduce:transition-none ${
+        active
+          ? "bg-content/10 opacity-100"
+          : "opacity-45 hover:bg-content/5 hover:opacity-100"
+      }`}
+    >
+      <CurrentProjectIcon
+        cwd={path}
+        busy={busy}
+        className="size-3"
+        mascotClassName="size-2.5"
+      />
+      {busy && !active ? (
+        <span
+          aria-hidden
+          className="absolute right-1 top-0.5 size-1.5 rounded-full bg-accent"
+        />
+      ) : null}
+    </button>
+  );
+}
+
+/** The inset layout's Explorer and Changes, beside the card. */
+function RightPanel({
+  tab,
+  changesLabel,
+  hasChangeStats,
+  changeAdditions,
+  changeDeletions,
+  onTabChange,
+  children,
+}: {
+  tab: RightPanelTab;
+  changesLabel: string;
+  hasChangeStats: boolean;
+  changeAdditions: number;
+  changeDeletions: number;
+  onTabChange: (tab: RightPanelTab) => void;
+  children: ReactNode;
+}) {
+  const tabs: RightPanelTab[] = ["files", "changes"];
+  // The sidebar's former tab row, kept as it was.
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <div
+        role="tablist"
+        aria-label="Project"
+        className="flex h-9 shrink-0 items-center gap-px border-b border-stroke px-2"
+      >
+        {tabs.map((itemId) => {
+          const active = tab === itemId;
+          const isChangesTab = itemId === "changes";
+          return (
+            <div
+              key={itemId}
+              className="workspace-tab relative flex min-w-0 flex-1 items-stretch"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-label={isChangesTab ? changesLabel : undefined}
+                data-tauri-drag-region="false"
+                onClick={() => onTabChange(itemId)}
+                className={`flex h-6 min-w-0 flex-1 items-center justify-center self-center rounded-md px-2 text-[12px] leading-none ${
+                  active ? "bg-selection text-content" : "text-content/50"
+                }`}
+              >
+                {isChangesTab && hasChangeStats ? (
+                  <DiffStat
+                    additions={changeAdditions}
+                    deletions={changeDeletions}
+                  />
+                ) : (
+                  <span className="block truncate leading-label">
+                    {TAB_LABELS[itemId]}
+                  </span>
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Which of the inset sidebar's date groups a session's last activity is in. */
+function sessionAgeLabel(updatedAt: number, now: number): string {
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const startOfToday = today.getTime();
+  if (updatedAt >= startOfToday) return "Today";
+  if (updatedAt >= startOfToday - DAY_MS) return "Yesterday";
+  if (updatedAt >= startOfToday - 6 * DAY_MS) return "Last 7 days";
+  return "Older";
+}
+
+/** A quiet heading over a group in the inset sidebar, actions at its end. */
+function SidebarSectionLabel({
+  label,
+  children,
+}: {
+  label: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex h-7 shrink-0 items-center gap-1 px-2 text-[12px] font-medium text-content/50">
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {/* Pulled out so a button's icon, not its padding, lines up with the
+          rows' trailing edge (their padding and border). */}
+      {children ? <span className="-mr-[5px] flex">{children}</span> : null}
+    </div>
+  );
+}
+
+type SidebarNavItem = {
+  label: string;
+  icon: IconComponent;
+  shortcut?: string;
+  active?: boolean;
+  dot?: boolean;
+  onClick: () => void;
+};
+
+/** The inset sidebar's links to the app-wide views, under the project. */
+function SidebarNavList({
+  search,
+  items,
+}: {
+  /** The project rail's search field, above the links. */
+  search?: { active: boolean; onClick: () => void };
+  items: readonly (SidebarNavItem | false | undefined)[];
+}) {
+  const shown = items.filter((item): item is SidebarNavItem => !!item);
+  if (!search && !shown.length) return null;
+  return (
+    <nav
+      aria-label="Views"
+      className="flex shrink-0 flex-col gap-px px-2 pb-3 pt-1"
+    >
+      {/* The project rail's search and rows, so the two layouts read the
+          same. */}
+      {search ? (
+        <>
+          <RailSearch
+            label="Search"
+            icon={Search}
+            onClick={search.onClick}
+            active={search.active}
+            shortcut={`${MOD}K`}
+            ariaLabel={`Search (${MOD}K)`}
+          />
+          <div className="mt-0.5" />
+        </>
+      ) : null}
+      {shown.map(({ label, icon, shortcut, active, dot, onClick }) => (
+        <RailAction
+          key={label}
+          label={label}
+          icon={icon}
+          shortcut={shortcut}
+          active={active}
+          dot={dot}
+          ariaLabel={dot ? `${label}, new items` : undefined}
+          onClick={onClick}
+        />
+      ))}
+    </nav>
+  );
+}
+
 function WorkspaceTitleActions({
   onSearch,
   onNew,
@@ -3089,12 +3921,18 @@ function FolderRow({
   done,
   needsApproval,
   groupIcon,
+  label = false,
+  dense = false,
   onPointerDown,
   onToggle,
   onContextMenu,
   onRename,
 }: {
   folder: Pick<SessionFolder, "name" | "colorIndex" | "customColor">;
+  /** A section label, as in the inset sidebar: the name and a caret. */
+  label?: boolean;
+  /** Sized like the inset sidebar's session cards. */
+  dense?: boolean;
   sessions: SessionSummary[];
   expanded: boolean;
   dropTarget: boolean;
@@ -3109,6 +3947,55 @@ function FolderRow({
 }) {
   const count = sessions.length;
   const accent = folderAccent(folder.colorIndex, folder.customColor);
+  if (label)
+    return (
+      <button
+        type="button"
+        title={folder.name}
+        aria-expanded={expanded}
+        data-tauri-drag-region="false"
+        onPointerDown={onPointerDown}
+        onClick={onToggle}
+        onContextMenu={onContextMenu}
+        onKeyDown={(event) => {
+          if (event.key === "F2" && onRename) {
+            event.preventDefault();
+            onRename();
+          }
+        }}
+        className={`relative flex h-7 w-full touch-none items-center gap-1.5 rounded-md px-2 text-left text-[12px] font-medium text-content/50 hover:text-content/80 ${
+          dropTarget ? "text-content" : ""
+        }`}
+      >
+        {dropTarget ? (
+          <div className="pointer-events-none absolute inset-0 rounded-md bg-accent/20" />
+        ) : null}
+        {accent ? (
+          <span
+            aria-hidden
+            className="relative size-1.5 shrink-0 rounded-full"
+            style={{ background: accent }}
+          />
+        ) : null}
+        <span className="relative min-w-0 truncate">{folder.name}</span>
+        <ChevronDown
+          className={`relative size-3 shrink-0 transition-transform motion-reduce:transition-none ${
+            expanded ? "" : "-rotate-90"
+          }`}
+          strokeWidth={2}
+        />
+        <span className="relative ml-auto flex shrink-0 items-center gap-1 text-[11px] tabular-nums">
+          {!expanded && needsApproval ? (
+            <CircleAlert className="size-3 text-amber-400" strokeWidth={1.75} />
+          ) : !expanded && busy ? (
+            <TerminalSpinner className="inline-block w-3 select-none text-center text-[11px] leading-none text-accent" />
+          ) : !expanded && done ? (
+            <Check className="size-3 text-emerald-400" strokeWidth={2.25} />
+          ) : null}
+          {expanded ? null : <span>{count}</span>}
+        </span>
+      </button>
+    );
   return (
     <button
       type="button"
@@ -3124,14 +4011,17 @@ function FolderRow({
           onRename();
         }
       }}
-      className={`group relative flex w-full touch-none items-center gap-1.5 px-2 h-8 text-left ${
-        expanded ? "rounded-md" : ""
-      } ${
+      className={`group relative flex w-full touch-none items-center ${
+        dense ? "gap-2" : "gap-1.5"
+      } px-2 h-8 text-left ${expanded || dense ? "rounded-md" : ""} ${
         dropTarget
           ? "text-content"
-          : expanded
-            ? "text-content hover:bg-content/10"
-            : "text-content/80 hover:bg-content/10 hover:text-content"
+          : dense
+            ? // Muted like the links above it, Search through Automations.
+              "text-content/50 hover:bg-content/10 hover:text-content"
+            : expanded
+              ? "text-content hover:bg-content/10"
+              : "text-content/80 hover:bg-content/10 hover:text-content"
       }`}
     >
       {dropTarget ? (
@@ -3139,7 +4029,7 @@ function FolderRow({
       ) : null}
       <span
         className={`relative grid size-4 shrink-0 place-items-center ${
-          accent ? "" : "text-content/50"
+          dense ? "opacity-70" : accent ? "" : "text-content/50"
         }`}
         style={accent ? { color: accent } : undefined}
       >
@@ -3150,31 +4040,47 @@ function FolderRow({
                 {groupIcon}
               </span>
               <ChevronDown
-                className="hidden size-3.5 text-content group-hover:block group-focus-visible:block"
+                className={`hidden ${dense ? "size-4" : "size-3.5 text-content"} group-hover:block group-focus-visible:block`}
                 strokeWidth={1.75}
               />
             </>
           ) : (
-            <ChevronDown className="size-3.5 text-content" strokeWidth={1.75} />
+            <ChevronDown
+              className={dense ? "size-4" : "size-3.5 text-content"}
+              strokeWidth={1.75}
+            />
           )
         ) : (
           <>
             <span className="group-hover:hidden group-focus-visible:hidden">
               {groupIcon ?? (
-                <Folder className="size-3.5 text-content" strokeWidth={1.75} />
+                <Folder
+                  className={dense ? "size-4" : "size-3.5 text-content"}
+                  strokeWidth={1.75}
+                />
               )}
             </span>
             <ChevronRight
-              className="hidden size-3.5 group-hover:block group-focus-visible:block text-content"
+              className={`hidden ${dense ? "size-4" : "size-3.5 text-content"} group-hover:block group-focus-visible:block`}
               strokeWidth={1.75}
             />
           </>
         )}
       </span>
-      <span className="relative min-w-0 flex-1 truncate text-[13px] font-semibold leading-snug text-content">
+      <span
+        className={`relative min-w-0 flex-1 truncate ${
+          dense
+            ? "text-sm font-medium leading-tight"
+            : "text-[13px] font-semibold leading-snug text-content"
+        }`}
+      >
         {folder.name}
       </span>
-      <span className="relative flex shrink-0 items-center gap-1 text-[11px] tabular-nums text-content/45">
+      <span
+        className={`relative flex shrink-0 items-center gap-1 text-[11px] tabular-nums ${
+          dense ? "text-content/40" : "text-content/45"
+        }`}
+      >
         {!expanded && needsApproval ? (
           <CircleAlert className="size-3 text-amber-400" strokeWidth={1.75} />
         ) : !expanded && busy ? (
@@ -3352,6 +4258,7 @@ export const SessionCard = memo(function SessionCard({
   needsApproval,
   dropTarget,
   compact = false,
+  dense = false,
   modelInFooter = false,
   statusLabel,
   project,
@@ -3376,6 +4283,9 @@ export const SessionCard = memo(function SessionCard({
   needsApproval: boolean;
   dropTarget?: boolean;
   compact?: boolean;
+  /** One line: status dot, provider mark, title and time, for the inset
+   * layout's list. */
+  dense?: boolean;
   /** Shows the model as its provider's mark beside the branch, so the title
    * shares its row with the time and the card is a line shorter. */
   modelInFooter?: boolean;
@@ -3403,11 +4313,35 @@ export const SessionCard = memo(function SessionCard({
 }) {
   const skipClickUntil = useRef(0);
   const prefetchTimer = useRef<number | null>(null);
+  const previewAnchor = useRef<HTMLDivElement>(null);
+  const previewCloseTimer = useRef<number | null>(null);
+  const previewId = useId();
+  const [previewOpen, setPreviewOpen] = useState(false);
   const orchestrationTooltipRootRef = useRef<HTMLDivElement>(null);
   const orchestrationTooltipId = useId();
   const [dragging, setDragging] = useState(false);
   const [orchestrationTooltipOpen, setOrchestrationTooltipOpen] =
     useState(false);
+  const cancelPreviewClose = useCallback(() => {
+    if (previewCloseTimer.current != null) {
+      window.clearTimeout(previewCloseTimer.current);
+      previewCloseTimer.current = null;
+    }
+  }, []);
+  const closePreview = useCallback(() => {
+    cancelPreviewClose();
+    setPreviewOpen(false);
+  }, [cancelPreviewClose]);
+  const showPreview = () => {
+    cancelPreviewClose();
+    if (dense && !dragging) setPreviewOpen(true);
+  };
+  const schedulePreviewClose = () => {
+    cancelPreviewClose();
+    // Let the pointer cross the gap into the preview without closing it.
+    previewCloseTimer.current = window.setTimeout(closePreview, 120);
+  };
+  useEffect(() => cancelPreviewClose, [cancelPreviewClose]);
   const orchestration = session.orchestration;
   const draft = !!session.draft;
   const orchestrationExpanded =
@@ -3503,7 +4437,7 @@ export const SessionCard = memo(function SessionCard({
       ) : (
         <CircleDot className="size-3" strokeWidth={1.75} />
       )}
-      <span>#{linkedWorkItem.number}</span>
+      {dense ? null : <span>#{linkedWorkItem.number}</span>}
     </button>
   ) : null;
 
@@ -3511,6 +4445,7 @@ export const SessionCard = memo(function SessionCard({
     if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
+      closePreview();
       onSelect(session.id, e);
       return;
     }
@@ -3660,35 +4595,48 @@ export const SessionCard = memo(function SessionCard({
   // Expanding an orchestration card must not move its existing header. Keep
   // the collapsed top inset and give only the new detail area extra room at
   // the bottom.
-  const cardPaddingY = orchestrationExpanded
-    ? compact
-      ? "pb-2.5 pt-1.5"
-      : "pb-2.5 pt-2"
-    : compact
-      ? "py-1.5"
-      : "py-2";
+  // Dense rows match the project rail's 32px rows.
+  const cardPaddingY = dense
+    ? orchestrationExpanded
+      ? "pb-2 pt-[3px]"
+      : "py-[3px]"
+    : orchestrationExpanded
+      ? compact
+        ? "pb-2.5 pt-1.5"
+        : "pb-2.5 pt-2"
+      : compact
+        ? "py-1.5"
+        : "py-2";
 
   return (
     <div className="group relative">
       <div
-        title={title}
+        ref={previewAnchor}
+        title={dense ? undefined : title}
         data-session-card={session.id}
         data-orchestration-card={orchestration ? "true" : undefined}
         data-session-selected={isSelected ? "true" : undefined}
         data-tauri-drag-region="false"
         onPointerDown={onPointerDown}
-        onPointerEnter={schedulePrefetch}
-        onPointerLeave={cancelScheduledPrefetch}
+        onPointerDownCapture={closePreview}
+        onPointerEnter={(event) => {
+          schedulePrefetch();
+          if (event.pointerType !== "touch") showPreview();
+        }}
+        onPointerLeave={() => {
+          cancelScheduledPrefetch();
+          if (previewOpen) schedulePreviewClose();
+        }}
         onClick={(event) => {
+          closePreview();
           if (performance.now() < skipClickUntil.current) return;
           onSelect(session.id, event);
         }}
-        onContextMenu={
-          onContextMenu
-            ? (event) => onContextMenu(session.id, event)
-            : undefined
-        }
-        className={`relative border flex w-full cursor-default select-none touch-none flex-col rounded-md px-2.5 text-left ${cardPaddingY} ${
+        onContextMenu={(event) => {
+          closePreview();
+          onContextMenu?.(session.id, event);
+        }}
+        className={`relative border flex w-full cursor-default select-none touch-none flex-col rounded-md ${dense ? "px-2" : "px-2.5"} text-left ${cardPaddingY} ${
           dragging ? "opacity-40" : ""
         } ${
           dropTarget
@@ -3717,6 +4665,11 @@ export const SessionCard = memo(function SessionCard({
           aria-current={isActive ? "true" : undefined}
           aria-pressed={isSelected}
           data-session-select={session.id}
+          aria-describedby={dense && previewOpen ? previewId : undefined}
+          onFocus={(event) => {
+            if (event.currentTarget.matches(":focus-visible")) showPreview();
+          }}
+          onBlur={closePreview}
           onKeyDown={onKeyDown}
           onMouseDown={(event) => {
             if (event.button !== 0) return;
@@ -3729,7 +4682,108 @@ export const SessionCard = memo(function SessionCard({
           }}
           className="rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent/50"
         >
-          {headerRow ? (
+          {dense ? (
+            <span className="relative flex h-6 min-w-0 items-center gap-2">
+              {/* A working session spins in place of its provider's mark,
+                  then shows a check until it is seen. */}
+              {busy ? (
+                <span className="grid size-4 shrink-0 place-items-center">
+                  <TerminalSpinner
+                    aria-label="Working"
+                    className="inline-block w-3.5 select-none text-center text-[11px] leading-none text-accent"
+                  />
+                </span>
+              ) : done ? (
+                <span className="grid size-4 shrink-0 place-items-center">
+                  <Check
+                    role="img"
+                    aria-label="Done"
+                    className="size-3.5 text-emerald-400"
+                    strokeWidth={2.25}
+                  />
+                </span>
+              ) : (
+                <HarnessIcon
+                  harness={session.harness}
+                  className="size-4 shrink-0"
+                />
+              )}
+              {session.pinned ? (
+                <Pin
+                  className="-mx-0.5 size-3.5 shrink-0 text-content/45"
+                  strokeWidth={1.75}
+                />
+              ) : null}
+              <ParticleText
+                text={title}
+                className="line-clamp-1 min-w-0 flex-1 text-sm font-medium leading-tight text-content"
+              />
+              <span className="flex shrink-0 items-center gap-1">
+                {linkedUpdateDot}
+                {workItemBadge}
+                {session.automationId ? (
+                  <span
+                    data-automation-icon
+                    role="img"
+                    title="Started by an automation"
+                    aria-label="Started by an automation"
+                    className="grid size-4 shrink-0 place-items-center text-amber-400"
+                  >
+                    <Zap className="size-3" strokeWidth={1.75} />
+                  </span>
+                ) : null}
+                {onArchive ? (
+                  <button
+                    type="button"
+                    data-no-drag
+                    data-tauri-drag-region="false"
+                    title={archiveLabel}
+                    aria-label={`${archiveLabel} ${title}`}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onArchive(session.id, !session.archived);
+                    }}
+                    // Pulled right so its box sits as far from the card's
+                    // right edge as from its top.
+                    className="-mr-[3px] hidden size-5 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content group-focus-within:grid group-hover:grid"
+                  >
+                    <Archive className="size-3 shrink-0" strokeWidth={1.75} />
+                  </button>
+                ) : null}
+                {/* A state worth noticing takes the time's place, as an icon
+                    so the row keeps its alignment. */}
+                <span
+                  className={`flex items-center text-[11px] tabular-nums text-content/40 ${
+                    onArchive
+                      ? "group-focus-within:hidden group-hover:hidden"
+                      : ""
+                  }`}
+                >
+                  {needsApproval ? (
+                    <CircleAlert
+                      role="img"
+                      aria-label={
+                        orchestration ? "Needs input" : "Needs approval"
+                      }
+                      className="size-3.5 text-amber-400"
+                      strokeWidth={1.75}
+                    />
+                  ) : draft ? (
+                    <CircleDashed
+                      role="img"
+                      aria-label="Draft"
+                      className="size-3.5"
+                      strokeWidth={1.75}
+                    />
+                  ) : (
+                    (statusLabel ?? time)
+                  )}
+                </span>
+              </span>
+            </span>
+          ) : null}
+          {!dense && headerRow ? (
             <span className="relative flex items-center gap-2">
               <span className="flex min-w-0 flex-1 items-center gap-1.5">
                 <HarnessIcon
@@ -3746,28 +4800,30 @@ export const SessionCard = memo(function SessionCard({
               </span>
             </span>
           ) : null}
-          <span
-            className={`relative flex min-w-0 items-center gap-1.5 ${
-              headerRow ? "mt-1" : ""
-            }`}
-          >
-            {session.pinned ? (
-              <Pin
-                className="size-3 shrink-0 text-content/45"
-                strokeWidth={1.75}
+          {dense ? null : (
+            <span
+              className={`relative flex min-w-0 items-center gap-1.5 ${
+                headerRow ? "mt-1" : ""
+              }`}
+            >
+              {session.pinned ? (
+                <Pin
+                  className="size-3 shrink-0 text-content/45"
+                  strokeWidth={1.75}
+                />
+              ) : null}
+              <ParticleText
+                text={title}
+                className="line-clamp-1 text-[13px] font-semibold leading-snug text-content"
               />
-            ) : null}
-            <ParticleText
-              text={title}
-              className="line-clamp-1 text-[13px] font-semibold leading-snug text-content"
-            />
-            {headerRow ? null : (
-              <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
-                {linkedUpdateDot}
-                {status}
-              </span>
-            )}
-          </span>
+              {headerRow ? null : (
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
+                  {linkedUpdateDot}
+                  {status}
+                </span>
+              )}
+            </span>
+          )}
         </div>
         {orchestrationExpanded ? (
           <OrchestrationSidebarAgents
@@ -3775,115 +4831,130 @@ export const SessionCard = memo(function SessionCard({
             summary={orchestration!}
           />
         ) : null}
-        <span className="relative mt-1 flex items-center gap-2">
-          {project && !gitLabel ? (
-            <span
-              className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-content/45"
-              title={session.cwd}
-            >
-              <Folder className="size-3 shrink-0" strokeWidth={1.75} />
-              <span className="min-w-0 truncate">{project}</span>
-            </span>
-          ) : gitLabel ? (
-            <span
-              className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-content/45"
-              title={
-                session.worktreeCwd
-                  ? `${gitLabel}\n${session.worktreeCwd}`
-                  : gitLabel
-              }
-            >
-              <GitBranch className="size-3 shrink-0" strokeWidth={1.75} />
-              <span className="min-w-0 truncate">
-                {project ? `${project} · ${gitLabel}` : gitLabel}
-              </span>
-            </span>
-          ) : (
-            <span className="min-w-0 flex-1" />
-          )}
-          <span className="relative flex shrink-0 items-center gap-px">
-            {/* Just the provider's mark; the model's name slides out beside
-                it while the card is hovered or focused. */}
-            {modelInFooter && model ? (
+        {dense ? null : (
+          <span className="relative mt-1 flex items-center gap-2">
+            {project && !gitLabel ? (
               <span
-                title={model}
-                className="flex min-w-0 items-center text-[11px] text-content/50"
+                className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-content/45"
+                title={session.cwd}
               >
-                <span className="max-w-0 truncate pr-0 opacity-0 transition-[max-width,opacity,padding] duration-200 ease-out group-focus-within:max-w-32 group-focus-within:pr-1.5 group-focus-within:opacity-100 group-hover:max-w-32 group-hover:pr-1.5 group-hover:opacity-100 motion-reduce:transition-none">
-                  {model}
+                <Folder className="size-3 shrink-0" strokeWidth={1.75} />
+                <span className="min-w-0 truncate">{project}</span>
+              </span>
+            ) : gitLabel ? (
+              <span
+                className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-content/45"
+                title={
+                  session.worktreeCwd
+                    ? `${gitLabel}\n${session.worktreeCwd}`
+                    : gitLabel
+                }
+              >
+                <GitBranch className="size-3 shrink-0" strokeWidth={1.75} />
+                <span className="min-w-0 truncate">
+                  {project ? `${project} · ${gitLabel}` : gitLabel}
                 </span>
-                <HarnessIcon
-                  harness={session.harness}
-                  className="size-3.5 shrink-0"
-                />
               </span>
-            ) : null}
-            {onArchive ? (
-              <button
-                type="button"
-                data-no-drag
-                data-tauri-drag-region="false"
-                title={archiveLabel}
-                aria-label={`${archiveLabel} ${title}`}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onArchive(session.id, !session.archived);
-                }}
-                className="pointer-events-none grid size-5 place-items-center rounded-md text-content/50 opacity-0 hover:bg-content/10 hover:text-content group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100"
-              >
-                <Archive className="size-3 shrink-0" strokeWidth={1.75} />
-              </button>
-            ) : null}
-            {workItemBadge}
-            {session.automationId ? (
-              <span
-                data-automation-icon
-                role="img"
-                title="Started by an automation"
-                aria-label="Started by an automation"
-                className="grid size-5 -mr-1 shrink-0 place-items-center text-amber-400"
-              >
-                <Zap className="size-3" strokeWidth={1.75} />
-              </span>
-            ) : null}
-            {orchestration ? (
-              <div
-                ref={orchestrationTooltipRootRef}
-                className="relative shrink-0"
-                onMouseEnter={() => setOrchestrationTooltipOpen(true)}
-                onMouseLeave={() => setOrchestrationTooltipOpen(false)}
-              >
+            ) : (
+              <span className="min-w-0 flex-1" />
+            )}
+            <span className="relative flex shrink-0 items-center gap-px">
+              {/* Just the provider's mark; the model's name slides out beside
+                it while the card is hovered or focused. */}
+              {modelInFooter && model ? (
+                <span
+                  title={model}
+                  className="flex min-w-0 items-center text-[11px] text-content/50"
+                >
+                  <span className="max-w-0 truncate pr-0 opacity-0 transition-[max-width,opacity,padding] duration-200 ease-out group-focus-within:max-w-32 group-focus-within:pr-1.5 group-focus-within:opacity-100 group-hover:max-w-32 group-hover:pr-1.5 group-hover:opacity-100 motion-reduce:transition-none">
+                    {model}
+                  </span>
+                  <HarnessIcon
+                    harness={session.harness}
+                    className="size-3.5 shrink-0"
+                  />
+                </span>
+              ) : null}
+              {onArchive ? (
                 <button
                   type="button"
                   data-no-drag
                   data-tauri-drag-region="false"
-                  data-orchestration-icon
-                  aria-label={`Orchestrator, ${orchestration.tasks.length} ${
-                    orchestration.tasks.length === 1 ? "subagent" : "subagents"
-                  }, ${orchestrationDone} done`}
-                  aria-describedby={
-                    orchestrationTooltipOpen
-                      ? orchestrationTooltipId
-                      : undefined
-                  }
+                  title={archiveLabel}
+                  aria-label={`${archiveLabel} ${title}`}
                   onPointerDown={(event) => event.stopPropagation()}
-                  onFocus={() => setOrchestrationTooltipOpen(true)}
-                  onBlur={() => setOrchestrationTooltipOpen(false)}
                   onClick={(event) => {
                     event.stopPropagation();
-                    setOrchestrationTooltipOpen(false);
-                    onSelect(session.id, event);
+                    onArchive(session.id, !session.archived);
                   }}
-                  className="grid size-5 shrink-0 place-items-center rounded-md text-fuchsia-300/65 hover:bg-content/10 hover:text-fuchsia-200/90"
+                  className="pointer-events-none grid size-5 place-items-center rounded-md text-content/50 opacity-0 hover:bg-content/10 hover:text-content group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100"
                 >
-                  <Share className="size-3" />
+                  <Archive className="size-3 shrink-0" strokeWidth={1.75} />
                 </button>
-              </div>
-            ) : null}
+              ) : null}
+              {workItemBadge}
+              {session.automationId ? (
+                <span
+                  data-automation-icon
+                  role="img"
+                  title="Started by an automation"
+                  aria-label="Started by an automation"
+                  className="grid size-5 -mr-1 shrink-0 place-items-center text-amber-400"
+                >
+                  <Zap className="size-3" strokeWidth={1.75} />
+                </span>
+              ) : null}
+              {orchestration ? (
+                <div
+                  ref={orchestrationTooltipRootRef}
+                  className="relative shrink-0"
+                  onMouseEnter={() => setOrchestrationTooltipOpen(true)}
+                  onMouseLeave={() => setOrchestrationTooltipOpen(false)}
+                >
+                  <button
+                    type="button"
+                    data-no-drag
+                    data-tauri-drag-region="false"
+                    data-orchestration-icon
+                    aria-label={`Orchestrator, ${orchestration.tasks.length} ${
+                      orchestration.tasks.length === 1
+                        ? "subagent"
+                        : "subagents"
+                    }, ${orchestrationDone} done`}
+                    aria-describedby={
+                      orchestrationTooltipOpen
+                        ? orchestrationTooltipId
+                        : undefined
+                    }
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onFocus={() => setOrchestrationTooltipOpen(true)}
+                    onBlur={() => setOrchestrationTooltipOpen(false)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setOrchestrationTooltipOpen(false);
+                      onSelect(session.id, event);
+                    }}
+                    className="grid size-5 shrink-0 place-items-center rounded-md text-fuchsia-300/65 hover:bg-content/10 hover:text-fuchsia-200/90"
+                  >
+                    <Share className="size-3" />
+                  </button>
+                </div>
+              ) : null}
+            </span>
           </span>
-        </span>
+        )}
       </div>
+      {dense && previewOpen && previewAnchor.current ? (
+        <SessionCardPreview
+          anchor={previewAnchor.current}
+          id={previewId}
+          session={session}
+          status={status}
+          onClose={closePreview}
+          onPointerEnter={cancelPreviewClose}
+          onPointerLeave={schedulePreviewClose}
+        />
+      ) : null}
       {orchestration && orchestrationTooltipOpen ? (
         <Popover
           anchor={orchestrationTooltipRootRef}

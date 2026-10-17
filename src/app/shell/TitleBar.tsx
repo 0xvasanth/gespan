@@ -5,10 +5,14 @@ import {
   DashboardSquare,
   Inbox,
   PanelLeft,
+  PanelRightToggle,
+  Plus,
+  Search,
   Settings,
   StickyNote,
   Terminal,
   X,
+  Zap,
 } from "../../shared/ui/icons";
 import {
   memo,
@@ -56,9 +60,21 @@ import {
   useExternalTitleTabDrop,
 } from "../../features/workspace/model/paneDrop";
 import type { PaneEdge } from "../../features/workspace/model/layout";
+import {
+  APP_VIEW_LABELS,
+  type AppView,
+} from "../../features/workspace/model/appViewTabs";
+
+const APP_VIEW_ICONS = {
+  search: Search,
+  inbox: Inbox,
+  notes: StickyNote,
+  automations: Zap,
+};
 
 export type Tab = {
   id: string;
+  appView?: AppView;
   /** Project folder name, e.g. `agent-terminal`. */
   project: string;
   /** Focused conversation title; empty for a fresh session. */
@@ -108,6 +124,14 @@ type Props = {
   projectRailOpen?: boolean;
   sessionSidebarOpen?: boolean;
   compactRail?: boolean;
+  /**
+   * Spans the inset layout's outer glass, above the rail and the card, and
+   * owns the rail toggle and history navigation in both rail states.
+   */
+  inset?: boolean;
+  /** Inset layout: the right panel holding Explorer and Changes. */
+  rightPanelOpen?: boolean;
+  onToggleRightPanel?: () => void;
   canGoBack?: boolean;
   canGoForward?: boolean;
   onGoBack?: () => void;
@@ -116,6 +140,8 @@ type Props = {
   onToggleSessionSidebar?: () => void;
   onSelect: (id: string) => void;
   onNewTerminal?: () => void;
+  /** Inset layout: a new session, from the end of the tabs. */
+  onNewSession?: () => void;
   onOpenSettings?: () => void;
   onOpenInbox?: () => void;
   onOpenNotes?: () => void;
@@ -143,6 +169,10 @@ export function tabCopy(tab: Tab): {
   meta: string;
   tooltip: string;
 } {
+  if (tab.appView) {
+    const headline = APP_VIEW_LABELS[tab.appView];
+    return { headline, meta: "", tooltip: headline };
+  }
   const project = tab.project.trim() || "~";
   const conversation = tab.title.trim();
   const file = tab.files[0] ?? "";
@@ -310,6 +340,7 @@ function TitleTabItem({
 }) {
   const { headline, meta, tooltip } = tabCopy(tab);
   const fileIcon = tab.files[0];
+  const AppViewIcon = tab.appView ? APP_VIEW_ICONS[tab.appView] : null;
   const accessibleTooltip =
     (tab.doneHarnesses?.length ?? 0) > 0
       ? `${tooltip} · Response complete`
@@ -350,6 +381,8 @@ function TitleTabItem({
         title={accessibleTooltip}
         aria-label={accessibleTooltip}
         data-tauri-drag-region="false"
+        data-title-tab
+        data-title-tab-active={active || undefined}
         onClick={() => {
           if (sortable.consumeClick()) return;
           onSelect(tab.id);
@@ -365,7 +398,9 @@ function TitleTabItem({
             : "text-content/50 hover:bg-content/5 hover:text-content"
         }`}
       >
-        {tab.harnesses.length > 0 ? (
+        {AppViewIcon ? (
+          <AppViewIcon className="size-3.5 shrink-0" strokeWidth={1.75} />
+        ) : tab.harnesses.length > 0 ? (
           <TabHarnesses
             harnesses={tab.harnesses}
             busyHarnesses={tab.busyHarnesses}
@@ -637,6 +672,9 @@ function TitleBarComponent({
   projectRailOpen = true,
   sessionSidebarOpen = true,
   compactRail = false,
+  inset = false,
+  rightPanelOpen = false,
+  onToggleRightPanel,
   canGoBack = false,
   canGoForward = false,
   onGoBack,
@@ -645,6 +683,7 @@ function TitleBarComponent({
   onToggleSessionSidebar,
   onSelect,
   onNewTerminal,
+  onNewSession,
   onOpenSettings,
   onOpenInbox,
   onOpenNotes,
@@ -663,6 +702,8 @@ function TitleBarComponent({
   const { displayed, tabNodeRef, finishMotion } = useTabCloseMotion(tabs);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
   const paneDropArmed = useRef(false);
+  const appTabIds = useRef(new Set<string>());
+  appTabIds.current = new Set(tabs.filter((tab) => tab.appView).map((tab) => tab.id));
   const externalTabDrop = useMemo<
     ReorderExternalDrop<string> | undefined
   >(() => {
@@ -679,6 +720,7 @@ function TitleBarComponent({
     return onPlaceOnPane
       ? {
           onMove: (tabId, event) => {
+            if (appTabIds.current.has(tabId)) return false;
             if (tabId === activeId || !pulledBelowTabs(event)) {
               setExternalPaneDrop(null);
               return false;
@@ -692,6 +734,7 @@ function TitleBarComponent({
             return over != null;
           },
           onDrop: (tabId, event) => {
+            if (appTabIds.current.has(tabId)) return false;
             if (tabId === activeId || !pulledBelowTabs(event)) return false;
             const over = paneDropFromPoint(event.clientX, event.clientY);
             if (!over) return false;
@@ -770,7 +813,9 @@ function TitleBarComponent({
   );
   const systemTitle = useMemo(() => {
     const activeName = activeTab
-      ? activeTab.files[0]
+      ? activeTab.appView
+        ? APP_VIEW_LABELS[activeTab.appView]
+        : activeTab.files[0]
         ? basename(activeTab.files[0])
         : activeTab.project
       : "";
@@ -906,18 +951,35 @@ function TitleBarComponent({
   const projectless = !showCurrentProject;
   // An open project is labeled in the sidebar, above Sessions / Explorer /
   // Changes. Without a project that sidebar is gone, so the picker stays here.
+  // The inset sidebar's header menu switches projects.
   const showProjectButton =
-    railClosed && Boolean(onSelectProject) && !showCurrentProject;
+    !inset && railClosed && Boolean(onSelectProject) && !showCurrentProject;
   const showTrailingActions =
+    !inset &&
     !mono &&
     projectless &&
     railClosed &&
     Boolean(onOpenInbox || onOpenNotes || onOpenSettings);
+  const showRightPanelToggle = inset && !mono && Boolean(onToggleRightPanel);
   const trailingControls =
     showTrailingActions ||
+    showRightPanelToggle ||
     (mono && (onToggleMonoOverview || onOpenMonoSettings)) ||
     (!IS_MAC && !hideWindowControls) ? (
       <div className="flex h-full shrink-0 items-stretch">
+        {showRightPanelToggle ? (
+          // Clear of the window's right edge, like the traffic lights' inset
+          // on the left.
+          <div className="flex items-center pl-1.5 pr-3">
+            <IconButton
+              label="Toggle Explorer and Changes"
+              active={rightPanelOpen}
+              onClick={onToggleRightPanel}
+            >
+              <PanelRightToggle className="size-3.5" strokeWidth={1.75} />
+            </IconButton>
+          </div>
+        ) : null}
         {mono && (onToggleMonoOverview || onOpenMonoSettings) ? (
           <div className="flex items-center gap-1 px-3">
             {onToggleMonoOverview ? (
@@ -975,12 +1037,39 @@ function TitleBarComponent({
   // exempts buttons, links and inputs on its own.
   return (
     <header
-      className={`flex h-10 shrink-0 select-none items-stretch border-b border-stroke${
-        compactRail && !mono ? " body-glass" : ""
-      }`}
+      data-inset-title-bar={inset || undefined}
+      className={`flex h-10 shrink-0 select-none items-stretch${
+        inset ? "" : " border-b border-stroke"
+      }${compactRail && !mono && !inset ? " body-glass" : ""}`}
       data-tauri-drag-region="deep"
     >
-      {compactRail ? (
+      {inset ? (
+        <div
+          data-inset-title-nav
+          // As wide as the open rail, so the tabs start over the card.
+          className="flex shrink-0 items-center pr-1.5"
+          style={{ minWidth: "var(--inset-rail-width, 0px)" }}
+        >
+          <div className={`shrink-0 ${IS_MAC ? "w-[78px]" : "w-1.5"}`} />
+          {onToggleSessionSidebar ? (
+            <IconButton
+              label={`Toggle Sidebar (${MOD}B)`}
+              onClick={onToggleSessionSidebar}
+            >
+              <PanelLeft className="size-3.5" strokeWidth={1.75} />
+            </IconButton>
+          ) : null}
+          {/* History sits at the rail's far edge and follows it as the
+              sidebar resizes, with the Development badge beside it. */}
+          <DevModeSlot />
+          <TabVisitNav
+            canGoBack={canGoBack}
+            canGoForward={canGoForward}
+            onGoBack={onGoBack}
+            onGoForward={onGoForward}
+          />
+        </div>
+      ) : compactRail ? (
         <div
           data-compact-title-nav
           // A full Mono's title bar starts beside the 48px compact rail.
@@ -996,7 +1085,7 @@ function TitleBarComponent({
       ) : null}
       {/* Both the rail and the sidebar step aside without a project, so the
           title bar takes over the traffic lights and the rail toggle. */}
-      {projectless && railClosed && !compactRail ? (
+      {projectless && railClosed && !compactRail && !inset ? (
         <>
           <div className="w-[78px] shrink-0" />
           <div className="flex shrink-0 items-center px-1.5">
@@ -1009,9 +1098,12 @@ function TitleBarComponent({
           </div>
         </>
       ) : null}
-      {!sessionSidebarOpen && !projectless && onToggleSessionSidebar ? (
+      {!inset &&
+      !sessionSidebarOpen &&
+      !projectless &&
+      onToggleSessionSidebar ? (
         <div className="flex shrink-0 items-center px-1.5">
-          {IS_MAC && railClosed && !compactRail ? (
+          {IS_MAC && railClosed && !compactRail && !inset ? (
             <div className="w-[70px] shrink-0" />
           ) : null}
           <IconButton
@@ -1037,7 +1129,7 @@ function TitleBarComponent({
 
       <div
         className={`flex min-w-0 flex-1 items-stretch${
-          showProjectButton ? " border-l border-stroke" : ""
+          showProjectButton && !inset ? " border-l border-stroke" : ""
         }`}
       >
         {mono ? (
@@ -1134,6 +1226,19 @@ function TitleBarComponent({
                   </div>
                 );
               })}
+              {onNewSession ? (
+                // Sized and plated like an inactive tab beside it.
+                <button
+                  type="button"
+                  title={`New session (${MOD}T)`}
+                  aria-label={`New session (${MOD}T)`}
+                  data-tauri-drag-region="false"
+                  onClick={onNewSession}
+                  className="ml-0.5 grid size-7.5 shrink-0 cursor-default place-items-center rounded-md bg-content/4 text-content/50 opacity-65 hover:bg-content/7 hover:text-content hover:opacity-100 focus-visible:opacity-100"
+                >
+                  <Plus className="size-3.5" strokeWidth={1.75} />
+                </button>
+              ) : null}
             </div>
           </div>
         )}
@@ -1152,7 +1257,7 @@ function TitleBarComponent({
           x={tabMenu.x}
           y={tabMenu.y}
           width={244}
-          items={contextMenuItems}
+          items={contextTab?.appView ? contextMenuItems.slice(0, 1) : contextMenuItems}
           ariaLabel={`Tab actions for ${tabCopy(contextTab).headline}`}
           onPick={onPickTabMenu}
           onClose={() => setTabMenu(null)}

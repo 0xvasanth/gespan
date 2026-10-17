@@ -370,6 +370,8 @@ type CiRepairProps = {
 };
 
 type Props = {
+  tabbed?: boolean;
+  active?: boolean;
   onAsk: (item: InboxItem) => Promise<string>;
   onAskRestart: (item: InboxItem) => Promise<string>;
   onAskMount: (portal: InboxSessionPortal | null) => void;
@@ -391,6 +393,8 @@ type Props = {
 };
 
 export function InboxView({
+  tabbed = false,
+  active = true,
   onAsk,
   onAskRestart,
   onAskMount,
@@ -522,6 +526,7 @@ export function InboxView({
   }, [target]);
 
   useEffect(() => {
+    if (!active) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
@@ -538,7 +543,7 @@ export function InboxView({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [connectMenuOpen, filterMenu]);
+  }, [active, connectMenuOpen, filterMenu]);
 
   useEffect(() => {
     const onChange = () => {
@@ -1141,24 +1146,27 @@ export function InboxView({
       data-app-inbox
       className="flex min-h-0 min-w-0 flex-1 flex-col text-content"
     >
-      <div
-        className="flex h-10 shrink-0 select-none items-center border-b border-stroke"
-        data-tauri-drag-region="deep"
-      >
-        {IS_MAC && compactRail ? <div className="w-4 shrink-0" /> : null}
-        {IS_MAC && !besideRail ? <div className="w-[78px] shrink-0" /> : null}
-        {besideRail ? null : (
-          <OverlayNav onBack={onClose} onToggleSidebar={onToggleSidebar} />
-        )}
-        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-[13px]">
-          <Inbox
-            className="size-3.5 shrink-0 text-content/45"
-            strokeWidth={1.75}
-          />
-          <span className="min-w-0 truncate text-content">Inbox</span>
+      {!tabbed ? (
+        <div
+          data-app-view-header
+          className="flex h-10 shrink-0 select-none items-center border-b border-stroke"
+          data-tauri-drag-region="deep"
+        >
+          {IS_MAC && compactRail ? <div className="w-4 shrink-0" /> : null}
+          {IS_MAC && !besideRail ? <div className="w-[78px] shrink-0" /> : null}
+          {besideRail ? null : (
+            <OverlayNav onBack={onClose} onToggleSidebar={onToggleSidebar} />
+          )}
+          <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-[13px]">
+            <Inbox
+              className="size-3.5 shrink-0 text-content/45"
+              strokeWidth={1.75}
+            />
+            <span className="min-w-0 truncate text-content">Inbox</span>
+          </div>
+          {IS_MAC ? null : <WindowControls />}
         </div>
-        {IS_MAC ? null : <WindowControls />}
-      </div>
+      ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1">
         {list}

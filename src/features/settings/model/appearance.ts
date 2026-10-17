@@ -16,7 +16,12 @@ const OPACITY_KEY = "monocode.sidebarOpacity";
 const BLUR_KEY = "monocode.sidebarBlur";
 const PROJECT_RAIL_OPEN_KEY = "monocode.projectRailOpen";
 const SESSION_SIDEBAR_OPEN_KEY = "monocode.sessionSidebarOpen";
+const RIGHT_PANEL_OPEN_KEY = "monocode.rightPanelOpen";
+const RIGHT_PANEL_TAB_KEY = "monocode.rightPanelTab";
+const RIGHT_PANEL_WIDTH_KEY = "monocode.rightPanelWidth";
 const BODY_KEY = "monocode.bodyGlass";
+const INSET_LAYOUT_KEY = "monocode.insetLayout";
+const INSET_GLASS_KEY = "monocode.insetGlass";
 const SCHEME_KEY = "monocode.colorScheme";
 const SIDEBAR_TAB_ORDER_KEY = "monocode.sidebarTabOrder";
 const PROJECT_RAIL_WIDTH_KEY = "monocode.projectRailWidth";
@@ -139,7 +144,29 @@ export const PROJECT_RAIL_WIDTH_MIN = 180;
 export const PROJECT_RAIL_WIDTH_MAX = 360;
 export const PROJECT_RAIL_WIDTH_DEFAULT = 200;
 
+export const RIGHT_PANEL_WIDTH_MIN = 220;
+export const RIGHT_PANEL_WIDTH_MAX = 640;
+export const RIGHT_PANEL_WIDTH_DEFAULT = 288;
+
 export const BODY_GLASS_DEFAULT = !IS_LINUX;
+
+export const INSET_LAYOUT_DEFAULT = true;
+export const INSET_GLASS_DEFAULT = true;
+
+/** Fired on `window` when the inset layout setting flips. */
+export const INSET_LAYOUT_CHANGE_EVENT = "monocode:inset-layout-change";
+
+/** The inset layout's fixed glass: its shell grey per scheme
+ * (`--inset-surface` in the stylesheet), the 80% tint over the blur, and the
+ * blur radius its macOS window sets. The translucency settings don't apply. */
+const INSET_SHELL_DARK: Rgb = { r: 13, g: 13, b: 13 };
+const INSET_SHELL_LIGHT: Rgb = { r: 245, g: 245, b: 245 };
+const INSET_GLASS_OPACITY = 0.8;
+const INSET_BLUR_RADIUS = 60;
+
+function insetLayoutActive(): boolean {
+  return document.documentElement.classList.contains("layout-inset");
+}
 
 export const CHAT_BACKGROUND_OPACITY_MIN = 0.05;
 export const CHAT_BACKGROUND_OPACITY_MAX = 0.65;
@@ -397,21 +424,28 @@ export function applyThemePreference(value: ThemePreference): ColorScheme {
 
 /** The page colour, also used by the native macOS glass tint. */
 function opaqueWindowBackground(): Rgb {
+  if (insetLayoutActive())
+    return isLightScheme() ? INSET_SHELL_LIGHT : INSET_SHELL_DARK;
   const style = getComputedStyle(document.documentElement);
   const read = (name: string, fallback: number) => {
     const value = Number.parseFloat(style.getPropertyValue(name));
     return Number.isFinite(value) ? value : fallback;
   };
+  const lightness = read(
+    "--background-lightness",
+    THEME_DARK_LIGHTNESS_DEFAULT,
+  );
   return hslToRgb(
     read("--theme-hue", THEME_HUE_DEFAULT),
     read("--theme-saturation", THEME_SATURATION_DEFAULT),
-    read("--background-lightness", THEME_DARK_LIGHTNESS_DEFAULT),
+    lightness,
   );
 }
 
 /** Compose both shared CSS tints into the native fill, including the shell's
  * base tint, so the steady page and a newly exposed resize edge match. */
 function nativeWindowOpacity(): number {
+  if (insetLayoutActive()) return INSET_GLASS_OPACITY;
   const style = getComputedStyle(document.documentElement);
   const glass = clamp(
     Number.parseFloat(style.getPropertyValue("--sidebar-opacity")) ||
@@ -443,7 +477,13 @@ function glassFadeMs(): number {
  * overtaken is dropped rather than left to settle last.
  */
 export function syncNativeGlass(scheme: ColorScheme) {
-  const enabled = scheme === "dark" && (!IS_LINUX || loadBodyGlass());
+  // The inset layout stays opaque on Linux, where compositor blur is not
+  // guaranteed.
+  const enabled =
+    scheme === "dark" &&
+    (insetLayoutActive()
+      ? !IS_LINUX && loadInsetGlass()
+      : !IS_LINUX || loadBodyGlass());
   const root = document.documentElement;
   const generation = ++glassSyncGeneration;
   const setWindow = () =>
@@ -544,7 +584,9 @@ export function saveSidebarBlur(value: number) {
 
 export function applySidebarBlur(value: number) {
   const next = Math.round(clamp(value, SIDEBAR_BLUR_MIN, SIDEBAR_BLUR_MAX));
-  void invoke("set_window_background_blur", { radius: next });
+  void invoke("set_window_background_blur", {
+    radius: insetLayoutActive() ? INSET_BLUR_RADIUS : next,
+  });
   return next;
 }
 
@@ -558,6 +600,42 @@ export function saveBodyGlass(value: boolean) {
 
 export function applyBodyGlass(value: boolean) {
   document.documentElement.classList.toggle("glass-body", value);
+  return value;
+}
+
+export function loadInsetGlass(): boolean {
+  return readFlag(INSET_GLASS_KEY) ?? INSET_GLASS_DEFAULT;
+}
+
+export function saveInsetGlass(value: boolean) {
+  writeFlag(INSET_GLASS_KEY, value);
+}
+
+export function loadInsetLayout(): boolean {
+  return readFlag(INSET_LAYOUT_KEY) ?? INSET_LAYOUT_DEFAULT;
+}
+
+export function saveInsetLayout(value: boolean) {
+  writeFlag(INSET_LAYOUT_KEY, value);
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<boolean>(INSET_LAYOUT_CHANGE_EVENT, { detail: value }),
+  );
+}
+
+export function subscribeInsetLayout(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(INSET_LAYOUT_CHANGE_EVENT, onStoreChange);
+  return () =>
+    window.removeEventListener(INSET_LAYOUT_CHANGE_EVENT, onStoreChange);
+}
+
+/** Only the main window has the inset shell, so only it applies the class. */
+export function applyInsetLayout(value: boolean) {
+  document.documentElement.classList.toggle("layout-inset", value);
+  // Swaps between the fixed blur and the user's own.
+  applySidebarBlur(loadSidebarBlur());
+  if (nativeGlassReady) syncNativeGlass(isLightScheme() ? "light" : "dark");
   return value;
 }
 
@@ -827,6 +905,52 @@ export function loadSessionSidebarOpen(): boolean {
 
 export function saveSessionSidebarOpen(value: boolean) {
   writeFlag(SESSION_SIDEBAR_OPEN_KEY, value);
+}
+
+/** The inset layout's right panel: Explorer or Changes beside the card. */
+export type RightPanelTab = "files" | "changes";
+
+export function loadRightPanelOpen(): boolean {
+  return readFlag(RIGHT_PANEL_OPEN_KEY) ?? false;
+}
+
+export function saveRightPanelOpen(value: boolean) {
+  writeFlag(RIGHT_PANEL_OPEN_KEY, value);
+}
+
+export function loadRightPanelTab(): RightPanelTab {
+  try {
+    return localStorage.getItem(RIGHT_PANEL_TAB_KEY) === "changes"
+      ? "changes"
+      : "files";
+  } catch {
+    return "files";
+  }
+}
+
+export function saveRightPanelTab(value: RightPanelTab) {
+  try {
+    localStorage.setItem(RIGHT_PANEL_TAB_KEY, value);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function loadRightPanelWidth(): number {
+  return Math.round(
+    clamp(
+      readNumber(RIGHT_PANEL_WIDTH_KEY) ?? RIGHT_PANEL_WIDTH_DEFAULT,
+      RIGHT_PANEL_WIDTH_MIN,
+      RIGHT_PANEL_WIDTH_MAX,
+    ),
+  );
+}
+
+export function saveRightPanelWidth(value: number) {
+  writeNumber(
+    RIGHT_PANEL_WIDTH_KEY,
+    Math.round(clamp(value, RIGHT_PANEL_WIDTH_MIN, RIGHT_PANEL_WIDTH_MAX)),
+  );
 }
 
 export function loadSidebarTabOrder(): SidebarTabId[] {

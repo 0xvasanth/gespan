@@ -78,6 +78,8 @@ export function UsageFooter({
   projectTerminalOpen = false,
   onSelectAccount,
   onManageAccounts,
+  inset = false,
+  pressureSlot,
 }: {
   providers: RateLimitProvider[];
   session?: UsageFooterSession;
@@ -94,6 +96,10 @@ export function UsageFooter({
     accountId: string,
   ) => void;
   onManageAccounts?: (provider: ProviderAccountProvider) => void;
+  /** Sits on the inset layout's outer glass, below the card. */
+  inset?: boolean;
+  /** Receives the slot beside the terminal button for the pressure chip. */
+  pressureSlot?: (element: HTMLSpanElement | null) => void;
 }) {
   const opencode = useCachedRateLimits("opencode");
   const showUsage =
@@ -120,7 +126,11 @@ export function UsageFooter({
   return (
     <footer
       aria-label={ariaLabel}
-      className="flex h-7 shrink-0 items-center gap-1.5 overflow-x-auto border-t border-stroke px-3 text-[11px] text-content/55"
+      // Inset: the card's edge above reads as part of the gap, so a little
+      // room below keeps the chips optically centred.
+      className={`flex shrink-0 items-center gap-1.5 overflow-x-auto px-3 text-[11px] text-content/55${
+        inset ? " h-[30px] pb-0.5" : " h-7 border-t border-stroke"
+      }`}
     >
       <UsageChips
         providers={providers}
@@ -137,8 +147,14 @@ export function UsageFooter({
           ) : null
         }
       />
-      {showTerminals || showTerminalButton ? (
+      {showTerminals || showTerminalButton || pressureSlot ? (
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          {pressureSlot ? (
+            <span
+              ref={pressureSlot}
+              className="flex items-center empty:hidden"
+            />
+          ) : null}
           {showTerminals ? (
             <RunningTerminalChip
               terminals={terminals}

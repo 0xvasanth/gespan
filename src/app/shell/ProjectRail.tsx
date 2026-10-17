@@ -91,6 +91,8 @@ import { MonoRailSection, type MonoRailProps } from "./MonoRailSection";
 
 type Props = {
   visible?: boolean;
+  /** The inset layout's title bar carries the traffic lights and navigation. */
+  headerless?: boolean;
   cwd: string;
   recents: RecentProject[];
   inboxUnseen?: boolean;
@@ -130,6 +132,7 @@ type Props = {
 
 export function ProjectRail({
   visible = true,
+  headerless = false,
   cwd,
   recents,
   inboxUnseen = false,
@@ -350,21 +353,23 @@ export function ProjectRail({
       aria-label="Projects"
       className={`sidebar-glass relative shrink-0 flex-col border-r border-stroke ${visible ? "flex" : "hidden"}`}
     >
-      <div
-        className="flex h-10 shrink-0 select-none items-center pr-1.5"
-        data-tauri-drag-region="deep"
-      >
-        {IS_MAC ? <div className="w-[78px] shrink-0" /> : null}
-        <DevModeSlot />
-        <TabVisitNav
-          canGoBack={canGoBack}
-          canGoForward={canGoForward}
-          onGoBack={onGoBack}
-          onGoForward={onGoForward}
-          onTogglePanel={settingsOpen ? undefined : onTogglePanel}
-          panelActive
-        />
-      </div>
+      {headerless ? null : (
+        <div
+          className="flex h-10 shrink-0 select-none items-center pr-1.5"
+          data-tauri-drag-region="deep"
+        >
+          {IS_MAC ? <div className="w-[78px] shrink-0" /> : null}
+          <DevModeSlot />
+          <TabVisitNav
+            canGoBack={canGoBack}
+            canGoForward={canGoForward}
+            onGoBack={onGoBack}
+            onGoForward={onGoForward}
+            onTogglePanel={settingsOpen ? undefined : onTogglePanel}
+            panelActive
+          />
+        </div>
+      )}
 
       {settingsOpen ? (
         <SettingsNav

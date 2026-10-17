@@ -62,6 +62,8 @@ import {
   applyThemePreference,
   applyThemeTint,
   BODY_GLASS_DEFAULT,
+  INSET_LAYOUT_DEFAULT,
+  INSET_GLASS_DEFAULT,
   ACCENT_COLOR_DEFAULT,
   CHAT_BACKGROUND_EMPTY_OPACITY_DEFAULT,
   CHAT_BACKGROUND_OPACITY_MAX,
@@ -71,6 +73,8 @@ import {
   THEME_PREFERENCE_DEFAULT,
   chatBackgroundSrc,
   loadBodyGlass,
+  loadInsetLayout,
+  loadInsetGlass,
   loadAccentColor,
   loadChatBackgroundEmptyOpacity,
   loadChatBackgroundPath,
@@ -87,6 +91,9 @@ import {
   loadTranscriptLayout,
   loadTranscriptAnchor,
   saveBodyGlass,
+  saveInsetLayout,
+  saveInsetGlass,
+  subscribeInsetLayout,
   saveAccentColor,
   saveChatBackgroundEmptyOpacity,
   saveChatBackgroundPath,
@@ -1884,6 +1891,12 @@ function useAppearanceSettings(
     loadThemeDarkLightness,
   );
   const [bodyGlass, setBodyGlass] = useState(loadBodyGlass);
+  const [insetGlass, setInsetGlass] = useState(loadInsetGlass);
+  const insetLayout = useSyncExternalStore(
+    subscribeInsetLayout,
+    loadInsetLayout,
+    () => INSET_LAYOUT_DEFAULT,
+  );
   const [showExcludedFiles, setShowExcludedFiles] = useState(
     loadShowExcludedFiles,
   );
@@ -1955,6 +1968,16 @@ function useAppearanceSettings(
     saveBodyGlass(next);
     setBodyGlass(next);
     if (IS_LINUX) syncNativeGlass(isLightScheme() ? "light" : "dark");
+  }, []);
+
+  const onInsetLayout = useCallback((next: boolean) => {
+    saveInsetLayout(next);
+  }, []);
+
+  const onInsetGlass = useCallback((next: boolean) => {
+    saveInsetGlass(next);
+    setInsetGlass(next);
+    syncNativeGlass(isLightScheme() ? "light" : "dark");
   }, []);
 
   const onShowExcludedFiles = useCallback((next: boolean) => {
@@ -2052,6 +2075,8 @@ function useAppearanceSettings(
     onTint(THEME_HUE_DEFAULT, THEME_SATURATION_DEFAULT);
     onDarkLightness(THEME_DARK_LIGHTNESS_DEFAULT);
     onBodyGlass(BODY_GLASS_DEFAULT);
+    onInsetLayout(INSET_LAYOUT_DEFAULT);
+    onInsetGlass(INSET_GLASS_DEFAULT);
     onShowExcludedFiles(SHOW_EXCLUDED_FILES_DEFAULT);
     onChatBackgroundEmptyOpacity(
       Math.round(CHAT_BACKGROUND_EMPTY_OPACITY_DEFAULT * 100),
@@ -2069,6 +2094,8 @@ function useAppearanceSettings(
     chatBackgroundPath,
     onBlur,
     onBodyGlass,
+    onInsetLayout,
+    onInsetGlass,
     onChatBackgroundEmptyOpacity,
     onChatBackgroundSessionOpacity,
     onChatBackgroundScope,
@@ -2094,6 +2121,8 @@ function useAppearanceSettings(
     themeSaturation,
     themeDarkLightness,
     bodyGlass,
+    insetGlass,
+    insetLayout,
     showExcludedFiles,
     chatBackgroundPath,
     chatBackgroundEmptyOpacity,
@@ -2112,6 +2141,8 @@ function useAppearanceSettings(
     onTint,
     onDarkLightness,
     onBodyGlass,
+    onInsetLayout,
+    onInsetGlass,
     onShowExcludedFiles,
     onChooseChatBackground,
     onClearChatBackground,
@@ -2129,6 +2160,9 @@ function useAppearanceSettings(
 function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
   const percent = Math.round(appearance.opacity * 100);
   const glassDisabled = useColorScheme() === "light";
+  // The inset workspace has its own glass preference and fixed tint/blur.
+  const translucencyFixed = appearance.insetLayout;
+  const translucencyDisabled = glassDisabled || translucencyFixed;
 
   return (
     <>
@@ -2238,11 +2272,29 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
       <Group
         title="Translucency"
         description={
-          glassDisabled
-            ? "Light mode always uses an opaque window, so these are off. Your dark-mode values are preserved."
-            : "How much of the desktop shows through MonoCode. Blur costs more to composite the higher it goes."
+          translucencyFixed
+            ? "Use Inset workspace glass to control this layout. Sidebar opacity, blur radius and main pane glass apply to the classic layout."
+            : glassDisabled
+              ? "Light mode always uses an opaque window, so these are off. Your dark-mode values are preserved."
+              : "How much of the desktop shows through MonoCode. Blur costs more to composite the higher it goes."
         }
       >
+        <Row
+          id="inset-glass"
+          label="Inset workspace glass"
+          description={
+            IS_LINUX
+              ? "The inset workspace always uses an opaque window on Linux."
+              : "Show the desktop through the inset workspace's sidebar and main pane. Dark mode only."
+          }
+        >
+          <Toggle
+            label="Inset workspace glass"
+            on={appearance.insetGlass}
+            onChange={appearance.onInsetGlass}
+            disabled={!appearance.insetLayout || glassDisabled || IS_LINUX}
+          />
+        </Row>
         <Row
           id="sidebar-opacity"
           label="Sidebar opacity"
@@ -2255,7 +2307,7 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
             min={Math.round(SIDEBAR_OPACITY_MIN * 100)}
             max={Math.round(SIDEBAR_OPACITY_MAX * 100)}
             onChange={appearance.onOpacity}
-            disabled={glassDisabled}
+            disabled={translucencyDisabled}
           />
         </Row>
         <Row
@@ -2270,7 +2322,7 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
             min={SIDEBAR_BLUR_MIN}
             max={SIDEBAR_BLUR_MAX}
             onChange={appearance.onBlur}
-            disabled={glassDisabled}
+            disabled={translucencyDisabled}
           />
         </Row>
         <Row
@@ -2282,7 +2334,7 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
             label="Main pane glass"
             on={appearance.bodyGlass}
             onChange={appearance.onBodyGlass}
-            disabled={glassDisabled}
+            disabled={translucencyDisabled}
           />
         </Row>
       </Group>
@@ -2290,6 +2342,17 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
       <ChatBackgroundCard appearance={appearance} />
 
       <Group title="Layout">
+        <Row
+          id="inset-layout"
+          label="Inset workspace"
+          description="Float the workspace in a rounded card, with the sidebar, tabs and footer on the window around it."
+        >
+          <Toggle
+            label="Inset workspace"
+            on={appearance.insetLayout}
+            onChange={appearance.onInsetLayout}
+          />
+        </Row>
         <Row
           id="collapsed-project-rail"
           label="Collapsed project rail"

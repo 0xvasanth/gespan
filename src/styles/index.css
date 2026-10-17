@@ -407,11 +407,110 @@ html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
     var(--motion-ease-out);
 }
 
+/* Inset layout: the sidebar, tabs and footer sit on an outer layer around a
+   rounded card holding the workspace. Its surfaces are fixed rather than
+   following the translucency settings: a neutral shell at 80% over the window
+   blur with a faint wash, and the content panel the deepest plane in dark
+   mode, white in light. */
+html.layout-inset {
+  --inset-surface: #0d0d0d;
+  --inset-panel: #060606;
+  --inset-glass-alpha: 0.8;
+  --inset-panel-alpha: 0.4;
+  --inset-wash: hsl(0 0% 92% / 0.05);
+}
+
+/* Keep the opaque pane close to the washed sidebar instead of near black. */
+html.layout-inset:not(.has-native-glass):not(.theme-light) {
+  --inset-panel: #141414;
+}
+
+/* Light mode is opaque here, so the shell is its solid grey under the wash. */
+html.layout-inset.theme-light {
+  --inset-surface: #f5f5f5;
+  --inset-panel: #ffffff;
+  --inset-wash: hsl(0 0% 10% / 0.01);
+}
+
+.inset-outer {
+  background:
+    linear-gradient(var(--inset-wash), var(--inset-wash)), var(--inset-surface);
+  transition: background-color var(--motion-feedback-duration)
+    var(--motion-ease-out);
+}
+
+html.has-native-glass:not(.theme-light) .inset-outer {
+  background:
+    linear-gradient(var(--inset-wash), var(--inset-wash)),
+    color-mix(
+      in srgb,
+      var(--inset-surface) calc(var(--inset-glass-alpha) * 100%),
+      transparent
+    );
+}
+
+/* AppKit already fills the shell colour across the window. */
+html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
+  .inset-outer {
+  background: linear-gradient(var(--inset-wash), var(--inset-wash));
+}
+
+/* Outranks the theme and native-glass fills on `.sidebar-glass`. */
+html.layout-inset .inset-shell .inset-rail-host .sidebar-glass {
+  background: transparent;
+  border-right-color: transparent;
+}
+
+/* Without a rail beside it, the card keeps the same gutter on both sides. */
+.inset-shell:not(:has(.inset-rail-host > :not(.hidden))) .inset-card {
+  margin-left: 0.375rem;
+}
+
+.inset-card {
+  /* A hairline, softer than the app's rules, so the card's edge doesn't cut. */
+  border-color: color-mix(in srgb, var(--color-content) 4%, transparent);
+  background: var(--inset-panel);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
+  transition: background-color var(--motion-feedback-duration)
+    var(--motion-ease-out);
+}
+
+/* Over the glass the panel lets the blur through; the main pane glass
+   setting does not apply here. */
+html.has-native-glass:not(.theme-light) .inset-card {
+  background: color-mix(
+    in srgb,
+    var(--inset-panel) calc(var(--inset-panel-alpha) * 100%),
+    transparent
+  );
+  box-shadow: none;
+}
+
+/* Lighter rules in the sidebar, so they read as hairlines over the card's
+   glass rather than solid bars. */
+.inset-sidebar {
+  --color-stroke: color-mix(in srgb, var(--color-content) 5%, transparent);
+}
+
+/* Dim inactive tabs together so their plate, label and icons recede. */
+[data-inset-title-bar] [data-title-tab]:not([data-title-tab-active]) {
+  background: color-mix(in srgb, var(--color-content) 4%, transparent);
+  opacity: 0.65;
+}
+
+[data-inset-title-bar] [data-title-tab]:not([data-title-tab-active]):hover,
+[data-inset-title-bar] [data-title-tab]:not([data-title-tab-active]):focus-visible {
+  background: color-mix(in srgb, var(--color-content) 7%, transparent);
+  opacity: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html,
   body,
   #root,
   .sidebar-glass,
+  .inset-outer,
+  .inset-card,
   .body-glass {
     transition: none;
   }
@@ -678,6 +777,19 @@ html.has-chat-background.chat-background-effect-ready.chat-background-gradient-b
   );
   -webkit-mask-image: var(--scroll-bottom-mask);
   mask-image: var(--scroll-bottom-mask);
+}
+
+/* In the inset sidebar, rows scrolled up under the project header fade out
+   too; at rest the list starts crisp. Use the viewport mask alone, without
+   a sticky backdrop filter sampling the native glass through another mask. */
+.inset-sidebar .sidebar-session-scroll[data-scrolled] {
+  --scroll-bottom-mask: linear-gradient(
+    to bottom,
+    transparent,
+    #000 1.75rem,
+    #000 calc(100% - 2.5rem),
+    transparent
+  );
 }
 
 /* Let the latest reply scroll fully clear of the composer's fade. */
@@ -1593,6 +1705,36 @@ html.is-resizing * {
   [data-access-picker-trigger] > svg:last-child {
     display: none;
   }
+}
+
+/* The positioned composer box already creates a stacking context. Keep its
+   blur behind the live field and highlight layer, as a separate surface, so
+   caret/hover repaints do not repaint the backdrop-filter's own content.
+   Avoid transforms or paint containment here: pickers must escape the box.
+   The layer bleeds past the box and is clipped back to it, so the blur near
+   the edges averages the backdrop beyond them instead of leaving a band of
+   unblurred background just inside. */
+[data-composer-box]::before {
+  --composer-blur-bleed: calc(var(--blur-sm) * 2);
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--composer-blur-bleed));
+  z-index: -1;
+  clip-path: inset(
+    var(--composer-blur-bleed) round var(--radius-lg, 0.5rem)
+  );
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-content) 3%, transparent);
+  -webkit-backdrop-filter: blur(var(--blur-sm));
+  backdrop-filter: blur(var(--blur-sm));
+}
+
+/* The light box is already solid, so a blur behind it has nothing to frost
+   and only smears its shadow in over the edges. */
+html.theme-light [data-composer-box]::before {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 html.theme-light [data-composer-box],

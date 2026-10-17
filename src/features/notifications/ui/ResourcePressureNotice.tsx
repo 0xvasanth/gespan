@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { CircleAlert } from "../../../shared/ui/icons";
 import { Modal } from "../../../shared/ui/Modal";
 import {
@@ -28,6 +29,8 @@ type Props = {
   onStopAgent: (id: string) => void;
   onStopSession: (id: string) => void;
   onPressureChange?: (active: boolean) => void;
+  /** The footer's slot. Without one, the notice shows as a toast. */
+  chipHost?: HTMLElement | null;
 };
 
 /** Local subscriptions keep resource sampling out of the workspace render loop. */
@@ -36,6 +39,7 @@ export function ResourcePressureNotice({
   onStopAgent,
   onStopSession,
   onPressureChange,
+  chipHost,
 }: Props) {
   const [pressure, setPressure] = useState<PressureState>(emptyPressure);
   const [sample, setSample] = useState<ResourceSample>();
@@ -165,7 +169,25 @@ export function ResourcePressureNotice({
   };
   return (
     <>
-      {pressure.active ? (
+      {pressure.active && chipHost
+        ? createPortal(
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              title={`${pressure.reasons.join(" · ")} · View processes`}
+              className="inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 text-content/70 hover:bg-content/10 hover:text-content"
+            >
+              <CircleAlert
+                className="size-3.5 shrink-0 text-amber-400"
+                strokeWidth={1.75}
+                aria-hidden
+              />
+              <span>Resource pressure</span>
+            </button>,
+            chipHost,
+          )
+        : null}
+      {pressure.active && !chipHost ? (
         <article
           className="approval-toast pointer-events-auto overflow-hidden rounded-xl border border-content/20 border-dashed bg-content/10 shadow-xl backdrop-blur-xl"
           role="status"

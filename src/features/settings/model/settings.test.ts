@@ -652,6 +652,7 @@ describe("settings search", () => {
 
   it("ranks label matches over keyword matches, and pages last", () => {
     expect(searchSettings("glass").map((result) => result.label)).toEqual([
+      "Inset workspace glass",
       "Main pane glass",
       "Blur radius",
       "Sidebar opacity",

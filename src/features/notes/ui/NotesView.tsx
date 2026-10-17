@@ -85,6 +85,8 @@ function enqueueNoteSave(
 }
 
 type Props = {
+  tabbed?: boolean;
+  active?: boolean;
   besideRail?: boolean;
   compactRail?: boolean;
   cwd?: string;
@@ -94,6 +96,8 @@ type Props = {
 };
 
 export function NotesView({
+  tabbed = false,
+  active = true,
   besideRail = false,
   compactRail = false,
   cwd,
@@ -161,6 +165,7 @@ export function NotesView({
   }, [selectedId]);
 
   useEffect(() => {
+    if (!active) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
@@ -169,7 +174,7 @@ export function NotesView({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [active]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -330,24 +335,27 @@ export function NotesView({
       data-app-notes
       className="flex min-h-0 min-w-0 flex-1 flex-col text-content"
     >
-      <div
-        className="flex h-10 shrink-0 select-none items-center border-b border-stroke"
-        data-tauri-drag-region="deep"
-      >
-        {IS_MAC && compactRail ? <div className="w-4 shrink-0" /> : null}
-        {IS_MAC && !besideRail ? <div className="w-[78px] shrink-0" /> : null}
-        {besideRail ? null : (
-          <OverlayNav onBack={onClose} onToggleSidebar={onToggleSidebar} />
-        )}
-        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-[13px]">
-          <File
-            className="size-3.5 shrink-0 text-content/45"
-            strokeWidth={1.75}
-          />
-          <span className="min-w-0 truncate text-content">Notes</span>
+      {!tabbed ? (
+        <div
+          data-app-view-header
+          className="flex h-10 shrink-0 select-none items-center border-b border-stroke"
+          data-tauri-drag-region="deep"
+        >
+          {IS_MAC && compactRail ? <div className="w-4 shrink-0" /> : null}
+          {IS_MAC && !besideRail ? <div className="w-[78px] shrink-0" /> : null}
+          {besideRail ? null : (
+            <OverlayNav onBack={onClose} onToggleSidebar={onToggleSidebar} />
+          )}
+          <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-[13px]">
+            <File
+              className="size-3.5 shrink-0 text-content/45"
+              strokeWidth={1.75}
+            />
+            <span className="min-w-0 truncate text-content">Notes</span>
+          </div>
+          {IS_MAC ? null : <WindowControls />}
         </div>
-        {IS_MAC ? null : <WindowControls />}
-      </div>
+      ) : null}
       <div className="flex min-h-0 min-w-0 flex-1">
         {list}
         <NoteDetail

@@ -1911,7 +1911,7 @@ export function Composer({
           ref={boxRef}
           data-composer-box
           data-composer-editing={resendEdited ? "" : undefined}
-          className={`relative z-10 border bg-content/3 backdrop-blur-sm ${
+          className={`relative z-10 border ${
             resendEdited
               ? "edit-last-turn-composer rounded-lg"
               : "rounded-lg border-content/10 has-focus:border-content/20"

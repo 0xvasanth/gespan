@@ -269,7 +269,10 @@ const sessions = Array.from({ length: 6 }, (_, index) => {
 });
 const tabs = sessions.map((session) => newTab(session.id));
 const commits: { duration: number; at: number }[] = [];
-Object.assign(window, { workspaceCommits: commits });
+Object.assign(window, {
+  workspaceCommits: commits,
+  workspaceSessions: sessions,
+});
 const { default: App } = await import("../../src/app/App");
 createRoot(document.getElementById("root")!).render(
   <Profiler

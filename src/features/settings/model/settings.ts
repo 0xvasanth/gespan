@@ -310,6 +310,12 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     keywords: "black brightness contrast background",
   },
   {
+    id: "inset-glass",
+    section: "appearance",
+    label: "Inset workspace glass",
+    keywords: "translucent transparency opaque desktop blur layout",
+  },
+  {
     id: "sidebar-opacity",
     section: "appearance",
     label: "Sidebar opacity",
@@ -326,6 +332,12 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     section: "appearance",
     label: "Main pane glass",
     keywords: "translucent transparency body window",
+  },
+  {
+    id: "inset-layout",
+    section: "appearance",
+    label: "Inset workspace",
+    keywords: "layout card rounded floating linear frame",
   },
   {
     id: "interface-scale",
