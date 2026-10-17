@@ -1,8 +1,8 @@
 import type { Session } from "../model/session";
 
 /** Closed chats stay here so clicking a session card can paint without disk. */
-export const SESSION_LOAD_CACHE_LIMIT = 12;
-export const SESSION_LOAD_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+export const SESSION_LOAD_CACHE_LIMIT = 6;
+export const SESSION_LOAD_CACHE_MAX_BYTES = 12 * 1024 * 1024;
 
 const estimatedBytes = new WeakMap<object, number>();
 

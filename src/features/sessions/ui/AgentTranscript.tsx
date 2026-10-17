@@ -191,6 +191,11 @@ const INITIAL_TURNS = 20;
  */
 const FIRST_PAINT_TURNS = 3;
 const TURN_PAGE_SIZE = 20;
+/**
+ * How long the reader stays back at the end before the history they paged in
+ * above unmounts. Each turn retains its DOM, fibers and markdown output.
+ */
+const HISTORY_TRIM_DELAY_MS = 2000;
 
 type Props = {
   blocks: Block[];
@@ -423,14 +428,23 @@ function AgentTranscriptComponent({
       block.role === "handoff" && block.handoff?.status === "preparing",
   );
 
+  const historyTrimTimer = useRef(0);
+  const trimHistoryRef = useRef(() => {});
   const setShowJump = useCallback(
     (show: boolean) => {
       if (showJumpRef.current === show) return;
       showJumpRef.current = show;
       onJumpToBottomChange?.(show);
+      clearTimeout(historyTrimTimer.current);
+      if (!show)
+        historyTrimTimer.current = window.setTimeout(
+          () => trimHistoryRef.current(),
+          HISTORY_TRIM_DELAY_MS,
+        );
     },
     [onJumpToBottomChange],
   );
+  useEffect(() => () => clearTimeout(historyTrimTimer.current), []);
 
   const syncPinned = useCallback(
     (el: HTMLElement) => {
@@ -745,6 +759,34 @@ function AgentTranscriptComponent({
   turnsRef.current = turns;
   const visibleTurnCountRef = useRef(visibleTurnCount);
   visibleTurnCountRef.current = visibleTurnCount;
+  const searchingRef = useRef(false);
+  searchingRef.current = !!searchQuery;
+
+  // Turns paged in while reading earlier stay mounted only while the reader
+  // is up there. Once following the end again, or hidden while following it,
+  // the window returns to its opening size. Removing turns above a pinned
+  // viewport leaves what the reader sees in place.
+  trimHistoryRef.current = () => {
+    const el = scroller.current;
+    if (
+      !stickToBottom.current ||
+      searchingRef.current ||
+      visibleTurnCountRef.current <= initialTurns
+    )
+      return;
+    const selection = window.getSelection();
+    if (
+      el &&
+      selection &&
+      !selection.isCollapsed &&
+      (el.contains(selection.anchorNode) || el.contains(selection.focusNode))
+    )
+      return;
+    setVisibleTurnCount(initialTurns);
+  };
+  useEffect(() => {
+    if (!visible) trimHistoryRef.current();
+  }, [visible]);
 
   useLayoutEffect(() => {
     const previousHeight = prependHeight.current;

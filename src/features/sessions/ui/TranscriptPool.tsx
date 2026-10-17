@@ -11,13 +11,15 @@ import { estimateRetainedBytes } from "../data/sessionCache";
 import { detachedHistoryNodes } from "./useMeasuredHistory";
 
 /** Transcripts kept mounted after their pane closes, so a revisit skips the rebuild. */
-export const TRANSCRIPT_POOL_LIMIT = 12;
-// Count alone lets twelve code-heavy conversations retain enormous DOM trees.
-// Six code-heavy histories fit without cycling through eviction on each visit.
+export const TRANSCRIPT_POOL_LIMIT = 4;
+// Each retained node also holds its React fiber and render objects, roughly
+// 1-2 KB together, so the node budget is the pool's real memory ceiling.
+// Reopening an evicted transcript reads it from SQLite in tens of
+// milliseconds, so a tight budget costs little on revisit.
 // Sustained pressure reduces only parked entries; visible content stays intact.
-export const TRANSCRIPT_POOL_NODE_LIMIT = 80_000;
-const PRESSURED_NODE_LIMIT = 20_000;
-export const TRANSCRIPT_POOL_DATA_LIMIT = 16 * 1024 * 1024;
+export const TRANSCRIPT_POOL_NODE_LIMIT = 30_000;
+const PRESSURED_NODE_LIMIT = 10_000;
+export const TRANSCRIPT_POOL_DATA_LIMIT = 8 * 1024 * 1024;
 
 type PooledProps = { visible?: boolean; parked?: boolean; blocks?: object[] };
 
