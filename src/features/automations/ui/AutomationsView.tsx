@@ -94,6 +94,7 @@ import { defaultSessionChoice, firstEnabledHarness, modelsFor, preferredModelId,
 import { projectKey, projectName } from "../../../shared/lib/paths";
 import { IS_MAC } from "../../../platform/tauri/platform";
 import { looksLikeProject, type RecentProject } from "../../projects/model/recents";
+import { inProjectScope } from "../../projects/model/projectScope";
 import {
   loadSessionFolders,
   subscribeSessionFolders,
@@ -115,6 +116,8 @@ type Props = {
   besideRail?: boolean;
   compactRail?: boolean;
   cwd?: string;
+  /** Lists only automations that run in this project, plus project-less ones. */
+  scopeProject?: string;
   recents: RecentProject[];
   onClose: () => void;
   onToggleSidebar?: () => void;
@@ -137,6 +140,7 @@ export function AutomationsView({
   besideRail = false,
   compactRail = false,
   cwd,
+  scopeProject,
   recents,
   onClose,
   onToggleSidebar,
@@ -173,6 +177,7 @@ export function AutomationsView({
       ) : null}
       <AutomationsContent
         cwd={cwd}
+        scopeProject={scopeProject}
         recents={recents}
         onLaunch={onLaunch}
         onOpenSession={onOpenSession}
@@ -183,10 +188,14 @@ export function AutomationsView({
 
 function AutomationsContent({
   cwd,
+  scopeProject,
   recents,
   onLaunch,
   onOpenSession,
-}: Pick<Props, "cwd" | "recents" | "onLaunch" | "onOpenSession">) {
+}: Pick<
+  Props,
+  "cwd" | "scopeProject" | "recents" | "onLaunch" | "onOpenSession"
+>) {
   const [automations, setAutomations] = useState<Automation[]>(
     () => peekAutomations() ?? [],
   );
@@ -230,14 +239,33 @@ function AutomationsContent({
     return subscribeAutomations(() => void refresh());
   }, [refresh]);
 
+  const scoped = useMemo(
+    () =>
+      scopeProject
+        ? automations.filter((automation) =>
+            inProjectScope(automation.cwd, scopeProject),
+          )
+        : automations,
+    [automations, scopeProject],
+  );
+  // One from another project stays remembered, but a scoped list opens on its
+  // own first automation instead.
+  const shownId =
+    scopeProject && !scoped.some((entry) => entry.id === selectedId)
+      ? (scoped[0]?.id ?? null)
+      : selectedId;
+
   useEffect(() => {
     rememberedAutomationId = selectedId;
-    if (!selectedId) {
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!shownId) {
       setRuns([]);
       return;
     }
     let cancelled = false;
-    void listAutomationRuns(selectedId)
+    void listAutomationRuns(shownId)
       .then((next) => {
         if (!cancelled) setRuns(next);
       })
@@ -247,11 +275,11 @@ function AutomationsContent({
     return () => {
       cancelled = true;
     };
-  }, [automations, selectedId]);
+  }, [automations, shownId]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
-    return automations.filter((automation) => {
+    return scoped.filter((automation) => {
       if (!needle) return true;
       const project = resolveTabGroupLabel(
         projectKey(automation.cwd),
@@ -262,8 +290,8 @@ function AutomationsContent({
         .toLocaleLowerCase()
         .includes(needle);
     });
-  }, [automations, groupLabels, query]);
-  const selected = automations.find((entry) => entry.id === selectedId) ?? null;
+  }, [scoped, groupLabels, query]);
+  const selected = automations.find((entry) => entry.id === shownId) ?? null;
 
   const defaultDraftTarget = () => {
     const project =

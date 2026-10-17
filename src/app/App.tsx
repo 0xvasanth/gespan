@@ -2059,6 +2059,10 @@ function Workspace({
     activeFile?.projectCwd ?? activeFile?.cwd ?? active?.cwd ?? projectCwd;
   const sidebarCwdRef = useRef(sidebarCwd);
   sidebarCwdRef.current = sidebarCwd;
+  // Each inset space is one project, so its Inbox, Notes and Automations (and
+  // the Inbox dot) show that project's items; the classic layout shows all.
+  const appViewScope =
+    insetLayout && looksLikeProject(sidebarCwd) ? sidebarCwd : undefined;
   const [sidebarTabSelection, setSidebarTabSelection] = useState<{
     project: string;
     tab: SidebarTabId;
@@ -11677,6 +11681,7 @@ function Workspace({
     linkedSessionUpdates,
   } = useInboxActivity(recents, sidebarCwd, sidebarHistory, {
     onAppeared: onInboxAppeared,
+    scopeProject: appViewScope,
   });
   linkedSessionUpdatesRef.current = linkedSessionUpdates;
   const inboxRelatedSessions = useMemo(() => {
@@ -13946,6 +13951,7 @@ function Workspace({
                         tabbed={insetLayout}
                         active={inboxViewOpen}
                         cwd={sidebarCwd}
+                        scopeProject={appViewScope}
                         recents={recents}
                         besideRail={
                           insetLayout || projectRailOpen || compactProjectRail
@@ -13976,6 +13982,7 @@ function Workspace({
                         }
                         compactRail={!insetLayout && compactRailActive}
                         cwd={projectCwd}
+                        scopeProject={appViewScope}
                         recents={recents}
                         onClose={onLeaveNotes}
                         onToggleSidebar={onToggleSidebar}
@@ -13992,6 +13999,7 @@ function Workspace({
                         }
                         compactRail={!insetLayout && compactRailActive}
                         cwd={projectCwd}
+                        scopeProject={appViewScope}
                         recents={recents}
                         onClose={onLeaveAutomations}
                         onToggleSidebar={onToggleSidebar}

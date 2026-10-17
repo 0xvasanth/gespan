@@ -127,6 +127,43 @@
   --window-background-opacity: 0.4;
   --chat-background-empty-opacity: 0.24;
   --chat-background-session-opacity: 0.24;
+  /* The Haze fades its artwork out toward the composer. */
+  --chat-background-fade-mask: linear-gradient(
+    to bottom,
+    #000 0 19%,
+    rgb(0 0 0 / 94%) 30%,
+    rgb(0 0 0 / 72%) 42%,
+    rgb(0 0 0 / 42%) 54%,
+    rgb(0 0 0 / 16%) 66%,
+    rgb(0 0 0 / 4%) 78%,
+    transparent 90%
+  );
+  --chat-background-session-fade-mask: linear-gradient(
+    to bottom,
+    #000 0 18%,
+    transparent 76%
+  );
+  /*
+   * The Haze also darkens toward the bottom, so it reads as gone by the
+   * middle. Plain images have no overlay; these masks bake that darkening in.
+   */
+  --chat-background-image-fade-mask: linear-gradient(
+    to bottom,
+    #000 0 19%,
+    rgb(0 0 0 / 79%) 30%,
+    rgb(0 0 0 / 50%) 42%,
+    rgb(0 0 0 / 20%) 54%,
+    rgb(0 0 0 / 5%) 64%,
+    transparent 72%
+  );
+  --chat-background-image-session-fade-mask: linear-gradient(
+    to bottom,
+    #000 0 18%,
+    rgb(0 0 0 / 61%) 32%,
+    rgb(0 0 0 / 32%) 47%,
+    rgb(0 0 0 / 11%) 62%,
+    transparent 72%
+  );
   --selection-subtle-strength: 8%;
   --selection-strength: 10%;
   --selection-strong-strength: 12%;
@@ -548,9 +585,21 @@ html.has-native-glass:not(.theme-light) .inset-card {
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
+  -webkit-mask-image: var(--chat-background-image-fade-mask);
+  mask-image: var(--chat-background-image-fade-mask);
   opacity: 0;
   transition: opacity var(--motion-feedback-duration) var(--motion-ease-out);
   pointer-events: none;
+}
+
+.chat-pane-background[data-session-empty="false"]::before {
+  -webkit-mask-image: var(--chat-background-image-session-fade-mask);
+  mask-image: var(--chat-background-image-session-fade-mask);
+}
+
+.chat-background-fade {
+  -webkit-mask-image: var(--chat-background-image-fade-mask);
+  mask-image: var(--chat-background-image-fade-mask);
 }
 
 /* Each masked copy samples the same artwork; only the image is blurred. */
@@ -574,16 +623,7 @@ html.has-native-glass:not(.theme-light) .inset-card {
     color-mix(in srgb, var(--color-background-base) 55%, transparent) 55%,
     color-mix(in srgb, var(--color-background-base) 78%, transparent) 75%
   );
-  --gradient-blur-mask: linear-gradient(
-    to bottom,
-    #000 0 19%,
-    rgb(0 0 0 / 94%) 30%,
-    rgb(0 0 0 / 72%) 42%,
-    rgb(0 0 0 / 42%) 54%,
-    rgb(0 0 0 / 16%) 66%,
-    rgb(0 0 0 / 4%) 78%,
-    transparent 90%
-  );
+  --gradient-blur-mask: var(--chat-background-fade-mask);
   overflow: hidden;
   pointer-events: none;
   background-image: var(--chat-background-image, none);
@@ -664,7 +704,7 @@ html.has-native-glass:not(.theme-light) .inset-card {
     transparent 15%,
     color-mix(in srgb, var(--color-background-base) 70%, transparent) 76%
   );
-  --gradient-blur-mask: linear-gradient(to bottom, #000 0 18%, transparent 76%);
+  --gradient-blur-mask: var(--chat-background-session-fade-mask);
 }
 
 html.chat-background-gradient-blur

@@ -102,6 +102,7 @@ import {
 } from "../model/inboxFilters";
 import { copyText } from "../../../platform/tauri/clipboard";
 import { projectKey, projectName } from "../../../shared/lib/paths";
+import { inProjectScope } from "../../projects/model/projectScope";
 import { IS_MAC } from "../../../platform/tauri/platform";
 import { playCue } from "../../settings/model/sounds";
 import {
@@ -376,6 +377,8 @@ type Props = {
   onAskRestart: (item: InboxItem) => Promise<string>;
   onAskMount: (portal: InboxSessionPortal | null) => void;
   cwd: string;
+  /** Shows only this project's items, plus ones not tied to any project. */
+  scopeProject?: string;
   recents: RecentProject[];
   besideRail?: boolean;
   compactRail?: boolean;
@@ -399,6 +402,7 @@ export function InboxView({
   onAskRestart,
   onAskMount,
   cwd,
+  scopeProject,
   recents,
   besideRail = false,
   compactRail = false,
@@ -469,22 +473,43 @@ export function InboxView({
   const [jiraProjects, setJiraProjects] = useState<JiraProject[]>([]);
   const prevRefresh = useRef(refresh);
 
+  // Fetches still cover every project, sharing the background poll's cache,
+  // so switching projects is instant; a scoped Inbox only shows its own.
   const projects = useMemo(
     () => inboxProjectsForRail(recents, cwd),
     [cwd, recents],
   );
-  const projectOptions = useMemo(
-    () => inboxProjectOptions(projects, logos),
-    [logos, projects],
+  const shownProjects = useMemo(
+    () =>
+      scopeProject
+        ? projects.filter((project) =>
+            sameProjectPath(project.path, scopeProject),
+          )
+        : projects,
+    [projects, scopeProject],
   );
-  const linearProjects = useMemo(() => linearProjectOptions(items), [items]);
+  const scopedItems = useMemo(
+    () =>
+      scopeProject
+        ? items.filter((item) => inProjectScope(item.projectPath, scopeProject))
+        : items,
+    [items, scopeProject],
+  );
+  const projectOptions = useMemo(
+    () => inboxProjectOptions(shownProjects, logos),
+    [logos, shownProjects],
+  );
+  const linearProjects = useMemo(
+    () => linearProjectOptions(scopedItems),
+    [scopedItems],
+  );
   const activeFilters = useMemo(
     () =>
       pruneInboxFilters(
         filters,
-        projects.map((project) => project.path),
+        shownProjects.map((project) => project.path),
       ),
-    [filters, projects],
+    [filters, shownProjects],
   );
   const filtersActive = hasActiveInboxFilters(
     activeFilters,
@@ -760,7 +785,7 @@ export function InboxView({
   const visibleItems = useMemo(() => {
     if (!sourceAvailable) return [];
     const visible = applyInboxFilters(
-      items,
+      scopedItems,
       activeFilters,
       searchInput,
       Date.now(),
@@ -777,6 +802,7 @@ export function InboxView({
   }, [
     activeFilters,
     items,
+    scopedItems,
     searchInput,
     source,
     sourceAvailable,
@@ -797,14 +823,14 @@ export function InboxView({
   const sourceEntries = useMemo(
     () =>
       sourceAvailable
-        ? items
+        ? scopedItems
             .filter((item) => item.provider === source)
             .map((item) => ({
               key: inboxItemKey(item),
               updatedAt: item.updatedAt,
             }))
         : [],
-    [items, source, sourceAvailable],
+    [scopedItems, source, sourceAvailable],
   );
   const sourceHasUnseen = useMemo(
     () => sourceEntries.some(isInboxEntryUnseen),

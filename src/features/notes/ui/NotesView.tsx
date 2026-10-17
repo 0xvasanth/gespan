@@ -43,6 +43,7 @@ import {
 import { projectKey, projectName } from "../../../shared/lib/paths";
 import { IS_MAC } from "../../../platform/tauri/platform";
 import { looksLikeProject, type RecentProject } from "../../projects/model/recents";
+import { inProjectScope } from "../../projects/model/projectScope";
 import {
   loadTabGroupColors,
   loadTabGroupCustomColors,
@@ -90,6 +91,8 @@ type Props = {
   besideRail?: boolean;
   compactRail?: boolean;
   cwd?: string;
+  /** Lists only this project's notes, plus project-less ones. */
+  scopeProject?: string;
   recents: RecentProject[];
   onClose: () => void;
   onToggleSidebar?: () => void;
@@ -101,6 +104,7 @@ export function NotesView({
   besideRail = false,
   compactRail = false,
   cwd,
+  scopeProject,
   recents,
   onClose,
   onToggleSidebar,
@@ -176,10 +180,18 @@ export function NotesView({
     return () => window.removeEventListener("keydown", onKey);
   }, [active]);
 
+  const scoped = useMemo(
+    () =>
+      scopeProject
+        ? notes.filter((note) => inProjectScope(note.sourceCwd, scopeProject))
+        : notes,
+    [notes, scopeProject],
+  );
+
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return notes;
-    return notes.filter((note) => {
+    if (!needle) return scoped;
+    return scoped.filter((note) => {
       const project = noteSourceProject(note.sourceCwd)?.toLowerCase() ?? "";
       return (
         note.title.toLowerCase().includes(needle) ||
@@ -189,12 +201,14 @@ export function NotesView({
         project.includes(needle)
       );
     });
-  }, [notes, query]);
+  }, [scoped, query]);
 
+  // A note from another project stays remembered, but a scoped list opens on
+  // its own first note instead.
   const selected =
     visible.find((note) => note.id === selectedId) ??
-    notes.find((note) => note.id === selectedId) ??
-    null;
+    scoped.find((note) => note.id === selectedId) ??
+    (scopeProject ? (visible[0] ?? null) : null);
 
   const onCreate = async () => {
     if (creating) return;

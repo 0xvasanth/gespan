@@ -2548,7 +2548,7 @@ function ChatBackgroundCard({
               ) : (
                 <div
                   aria-hidden
-                  className="size-full bg-cover bg-center bg-no-repeat"
+                  className="chat-background-fade size-full bg-cover bg-center bg-no-repeat"
                   style={{
                     backgroundImage: "var(--chat-background-image)",
                     opacity: appearance.chatBackgroundEmptyOpacity,
