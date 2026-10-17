@@ -313,13 +313,22 @@ export function saveThemeDarkLightness(value: number) {
   );
 }
 
+/**
+ * The inset layout has a fixed, neutral tint and hides the tint controls, so
+ * the saved ones wait for the classic layout rather than tinting its menus
+ * and dialogs.
+ */
+function insetLayoutApplied(): boolean {
+  return document.documentElement.classList.contains("layout-inset");
+}
+
 export function applyThemeDarkLightness(value: number) {
   const next = Math.round(
     clamp(value, THEME_DARK_LIGHTNESS_MIN, THEME_DARK_LIGHTNESS_MAX),
   );
   document.documentElement.style.setProperty(
     "--theme-dark-lightness",
-    `${next}%`,
+    `${insetLayoutApplied() ? THEME_DARK_LIGHTNESS_DEFAULT : next}%`,
   );
   refreshNativeTint();
   return next;
@@ -330,10 +339,14 @@ export function applyThemeTint(hue: number, saturation: number) {
   const nextSaturation = Math.round(
     clamp(saturation, THEME_SATURATION_MIN, THEME_SATURATION_MAX),
   );
-  document.documentElement.style.setProperty("--theme-hue", String(nextHue));
+  const inset = insetLayoutApplied();
+  document.documentElement.style.setProperty(
+    "--theme-hue",
+    String(inset ? THEME_HUE_DEFAULT : nextHue),
+  );
   document.documentElement.style.setProperty(
     "--theme-saturation",
-    `${nextSaturation}%`,
+    `${inset ? THEME_SATURATION_DEFAULT : nextSaturation}%`,
   );
   refreshNativeTint();
   return { hue: nextHue, saturation: nextSaturation };
@@ -686,8 +699,10 @@ export function subscribeInsetLayout(onStoreChange: () => void) {
 /** Only the main window has the inset shell, so only it applies the class. */
 export function applyInsetLayout(value: boolean) {
   document.documentElement.classList.toggle("layout-inset", value);
-  // Swaps between the fixed blur and the user's own.
+  // Swaps between the fixed blur and tint and the user's own.
   applySidebarBlur(loadSidebarBlur());
+  applyThemeTint(loadThemeHue(), loadThemeSaturation());
+  applyThemeDarkLightness(loadThemeDarkLightness());
   if (nativeGlassReady) syncNativeGlass(isLightScheme() ? "light" : "dark");
   return value;
 }
