@@ -547,6 +547,13 @@ html.has-native-glass:not(.theme-light) .inset-card {
   box-shadow: none;
 }
 
+/* WebKit otherwise paints the rounded translucent card into the transparent
+   root alongside the window chrome. Give the whole, stationary card its own
+   backing surface so hover and streaming repaints keep the same clip/tint. */
+html.is-mac.has-native-glass:not(.theme-light) .inset-card {
+  transform: translateZ(0);
+}
+
 /* A collapsed sidebar peeking out blurs the workspace under a faint wash,
    with the rest of the window dimmed behind it. */
 .sidebar-peek {
