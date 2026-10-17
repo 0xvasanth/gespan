@@ -3215,6 +3215,22 @@ html.theme-light .mono-pill {
   height: 7px;
 }
 
+/* Orchestrated agents on the inset sidebar's rail sit a little apart. The
+   gap is the step's own padding, so the spine runs through it, and the
+   curve and the spine's end move down with the 28px row's centre. */
+.orchestration-tree-step {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.orchestration-tree-step::after {
+  top: 8px;
+}
+
+.orchestration-tree-step:last-child::before {
+  height: 9px;
+}
+
 .zen-phase-step::after {
   top: 6px;
   width: 8px;

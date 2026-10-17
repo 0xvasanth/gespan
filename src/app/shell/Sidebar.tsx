@@ -4820,10 +4820,9 @@ export const SessionCard = memo(function SessionCard({
   // the collapsed top inset and give only the new detail area extra room at
   // the bottom.
   // Dense rows match the project rail's 32px rows.
+  // Dense rows hang their agents on a rail below the card instead.
   const cardPaddingY = dense
-    ? orchestrationExpanded
-      ? "pb-2 pt-[3px]"
-      : "py-[3px]"
+    ? "py-[3px]"
     : orchestrationExpanded
       ? compact
         ? "pb-2.5 pt-1.5"
@@ -4833,127 +4832,271 @@ export const SessionCard = memo(function SessionCard({
         : "py-2";
 
   return (
-    <div className="group relative">
-      <div
-        ref={previewAnchor}
-        title={dense ? undefined : title}
-        data-session-card={session.id}
-        data-orchestration-card={orchestration ? "true" : undefined}
-        data-session-selected={isSelected ? "true" : undefined}
-        data-tauri-drag-region="false"
-        onPointerDown={onPointerDown}
-        onPointerDownCapture={closePreview}
-        onPointerEnter={(event) => {
-          schedulePrefetch();
-          if (event.pointerType !== "touch") showPreview();
-        }}
-        onPointerLeave={() => {
-          cancelScheduledPrefetch();
-          if (previewOpen) schedulePreviewClose();
-        }}
-        onClick={(event) => {
-          closePreview();
-          if (performance.now() < skipClickUntil.current) return;
-          onSelect(session.id, event);
-        }}
-        onContextMenu={(event) => {
-          closePreview();
-          onContextMenu?.(session.id, event);
-        }}
-        className={`relative border flex w-full cursor-default select-none touch-none flex-col rounded-md ${dense ? "px-2" : "px-2.5"} text-left ${cardPaddingY} ${
-          dragging ? "opacity-40" : ""
-        } ${
-          dropTarget
-            ? "text-content border-transparent"
-            : isSelected
-              ? `bg-accent/15 text-content ${draft ? "border-content/30 border-dashed" : "border-transparent"}`
-              : needsApproval
-                ? "bg-content/20 text-content border-content/30 border-dashed"
-                : isActive
-                  ? `bg-selection text-content ${draft ? "border-content/30 border-dashed" : "border-transparent"}`
-                  : draft
-                    ? "border-content/25 border-dashed text-content/80 hover:bg-content/5 hover:text-content"
-                    : `text-content/80 hover:text-content border-transparent ${
-                        orchestrationExpanded
-                          ? "bg-content/5 hover:bg-content/10"
-                          : "hover:bg-content/5"
-                      }`
-        }`}
-      >
-        {dropTarget ? (
-          <div className="pointer-events-none absolute inset-0 rounded-md bg-accent/20" />
-        ) : null}
+    <>
+      <div className="group relative">
         <div
-          role="button"
-          tabIndex={0}
-          aria-current={isActive ? "true" : undefined}
-          aria-pressed={isSelected}
-          data-session-select={session.id}
-          aria-describedby={dense && previewOpen ? previewId : undefined}
-          onFocus={(event) => {
-            if (event.currentTarget.matches(":focus-visible")) showPreview();
+          ref={previewAnchor}
+          title={dense ? undefined : title}
+          data-session-card={session.id}
+          data-orchestration-card={orchestration ? "true" : undefined}
+          data-session-selected={isSelected ? "true" : undefined}
+          data-tauri-drag-region="false"
+          onPointerDown={onPointerDown}
+          onPointerDownCapture={closePreview}
+          onPointerEnter={(event) => {
+            schedulePrefetch();
+            if (event.pointerType !== "touch") showPreview();
           }}
-          onBlur={closePreview}
-          onKeyDown={onKeyDown}
-          onMouseDown={(event) => {
-            if (event.button !== 0) return;
-            // Shift-click can trigger :focus-visible. Mouse selection should
-            // only highlight the card; Tab can still focus this button.
-            event.preventDefault();
-            // Clear prior focus too, so shortcuts cannot target another card.
-            const focused = event.currentTarget.ownerDocument.activeElement;
-            if (focused instanceof HTMLElement) focused.blur();
+          onPointerLeave={() => {
+            cancelScheduledPrefetch();
+            if (previewOpen) schedulePreviewClose();
           }}
-          className="rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent/50"
+          onClick={(event) => {
+            closePreview();
+            if (performance.now() < skipClickUntil.current) return;
+            onSelect(session.id, event);
+          }}
+          onContextMenu={(event) => {
+            closePreview();
+            onContextMenu?.(session.id, event);
+          }}
+          className={`relative border flex w-full cursor-default select-none touch-none flex-col rounded-md ${dense ? "px-2" : "px-2.5"} text-left ${cardPaddingY} ${
+            dragging ? "opacity-40" : ""
+          } ${
+            dropTarget
+              ? "text-content border-transparent"
+              : isSelected
+                ? `bg-accent/15 text-content ${draft ? "border-content/30 border-dashed" : "border-transparent"}`
+                : needsApproval
+                  ? "bg-content/20 text-content border-content/30 border-dashed"
+                  : isActive
+                    ? `bg-selection text-content ${draft ? "border-content/30 border-dashed" : "border-transparent"}`
+                    : draft
+                      ? "border-content/25 border-dashed text-content/80 hover:bg-content/5 hover:text-content"
+                      : `text-content/80 hover:text-content border-transparent ${
+                          orchestrationExpanded && !dense
+                            ? "bg-content/5 hover:bg-content/10"
+                            : "hover:bg-content/5"
+                        }`
+          }`}
         >
-          {dense ? (
-            <span className="relative flex h-6 min-w-0 items-center gap-2">
-              {/* A working session spins in place of its provider's mark,
+          {dropTarget ? (
+            <div className="pointer-events-none absolute inset-0 rounded-md bg-accent/20" />
+          ) : null}
+          <div
+            role="button"
+            tabIndex={0}
+            aria-current={isActive ? "true" : undefined}
+            aria-pressed={isSelected}
+            data-session-select={session.id}
+            aria-describedby={dense && previewOpen ? previewId : undefined}
+            onFocus={(event) => {
+              if (event.currentTarget.matches(":focus-visible")) showPreview();
+            }}
+            onBlur={closePreview}
+            onKeyDown={onKeyDown}
+            onMouseDown={(event) => {
+              if (event.button !== 0) return;
+              // Shift-click can trigger :focus-visible. Mouse selection should
+              // only highlight the card; Tab can still focus this button.
+              event.preventDefault();
+              // Clear prior focus too, so shortcuts cannot target another card.
+              const focused = event.currentTarget.ownerDocument.activeElement;
+              if (focused instanceof HTMLElement) focused.blur();
+            }}
+            className="rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent/50"
+          >
+            {dense ? (
+              <span className="relative flex h-6 min-w-0 items-center gap-2">
+                {/* A working session spins in place of its provider's mark,
                   then shows a check until it is seen. */}
-              {busy ? (
-                <span className="grid size-4 shrink-0 place-items-center">
-                  <TerminalSpinner
-                    aria-label="Working"
-                    className="inline-block w-3.5 select-none text-center text-[11px] leading-none text-accent"
+                {busy ? (
+                  <span className="grid size-4 shrink-0 place-items-center">
+                    <TerminalSpinner
+                      aria-label="Working"
+                      className="inline-block w-3.5 select-none text-center text-[11px] leading-none text-accent"
+                    />
+                  </span>
+                ) : done ? (
+                  <span className="grid size-4 shrink-0 place-items-center">
+                    <Check
+                      role="img"
+                      aria-label="Done"
+                      className="size-3.5 text-emerald-400"
+                      strokeWidth={2.25}
+                    />
+                  </span>
+                ) : (
+                  <HarnessIcon
+                    harness={session.harness}
+                    className="size-4 shrink-0"
                   />
+                )}
+                {session.pinned ? (
+                  <Pin
+                    className="-mx-0.5 size-3.5 shrink-0 text-content/45"
+                    strokeWidth={1.75}
+                  />
+                ) : null}
+                <ParticleText
+                  text={title}
+                  className="line-clamp-1 min-w-0 flex-1 text-sm font-medium leading-tight text-content"
+                />
+                <span className="flex shrink-0 items-center gap-1">
+                  {linkedUpdateDot}
+                  {workItemBadge}
+                  {session.automationId ? (
+                    <span
+                      data-automation-icon
+                      role="img"
+                      title="Started by an automation"
+                      aria-label="Started by an automation"
+                      className="grid size-4 shrink-0 place-items-center text-amber-400"
+                    >
+                      <Zap className="size-3" strokeWidth={1.75} />
+                    </span>
+                  ) : null}
+                  {onArchive ? (
+                    <button
+                      type="button"
+                      data-no-drag
+                      data-tauri-drag-region="false"
+                      title={archiveLabel}
+                      aria-label={`${archiveLabel} ${title}`}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onArchive(session.id, !session.archived);
+                      }}
+                      // Pulled right so its box sits as far from the card's
+                      // right edge as from its top.
+                      className="-mr-[3px] hidden size-5 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content group-focus-within:grid group-hover:grid"
+                    >
+                      <Archive className="size-3 shrink-0" strokeWidth={1.75} />
+                    </button>
+                  ) : null}
+                  {/* A state worth noticing takes the time's place, as an icon
+                    so the row keeps its alignment. */}
+                  <span
+                    className={`flex items-center text-[11px] tabular-nums text-content/40 ${
+                      onArchive
+                        ? "group-focus-within:hidden group-hover:hidden"
+                        : ""
+                    }`}
+                  >
+                    {needsApproval ? (
+                      <CircleAlert
+                        role="img"
+                        aria-label={
+                          orchestration ? "Needs input" : "Needs approval"
+                        }
+                        className="size-3.5 text-amber-400"
+                        strokeWidth={1.75}
+                      />
+                    ) : draft ? (
+                      <CircleDashed
+                        role="img"
+                        aria-label="Draft"
+                        className="size-3.5"
+                        strokeWidth={1.75}
+                      />
+                    ) : (
+                      (statusLabel ?? time)
+                    )}
+                  </span>
                 </span>
-              ) : done ? (
-                <span className="grid size-4 shrink-0 place-items-center">
-                  <Check
-                    role="img"
-                    aria-label="Done"
-                    className="size-3.5 text-emerald-400"
-                    strokeWidth={2.25}
+              </span>
+            ) : null}
+            {!dense && headerRow ? (
+              <span className="relative flex items-center gap-2">
+                <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <HarnessIcon
+                    harness={session.harness}
+                    className="size-3.5 shrink-0"
                   />
+                  <span className="min-w-0 truncate text-[11px] text-content/50">
+                    {model}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  {linkedUpdateDot}
+                  {status}
+                </span>
+              </span>
+            ) : null}
+            {dense ? null : (
+              <span
+                className={`relative flex min-w-0 items-center gap-1.5 ${
+                  headerRow ? "mt-1" : ""
+                }`}
+              >
+                {session.pinned ? (
+                  <Pin
+                    className="size-3 shrink-0 text-content/45"
+                    strokeWidth={1.75}
+                  />
+                ) : null}
+                <ParticleText
+                  text={title}
+                  className="line-clamp-1 text-[13px] font-semibold leading-snug text-content"
+                />
+                {headerRow ? null : (
+                  <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
+                    {linkedUpdateDot}
+                    {status}
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
+          {orchestrationExpanded && !dense ? (
+            <OrchestrationSidebarAgents
+              leadId={session.id}
+              summary={orchestration!}
+            />
+          ) : null}
+          {dense ? null : (
+            <span className="relative mt-1 flex items-center gap-2">
+              {project && !gitLabel ? (
+                <span
+                  className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-content/45"
+                  title={session.cwd}
+                >
+                  <Folder className="size-3 shrink-0" strokeWidth={1.75} />
+                  <span className="min-w-0 truncate">{project}</span>
+                </span>
+              ) : gitLabel ? (
+                <span
+                  className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-content/45"
+                  title={
+                    session.worktreeCwd
+                      ? `${gitLabel}\n${session.worktreeCwd}`
+                      : gitLabel
+                  }
+                >
+                  <GitBranch className="size-3 shrink-0" strokeWidth={1.75} />
+                  <span className="min-w-0 truncate">
+                    {project ? `${project} · ${gitLabel}` : gitLabel}
+                  </span>
                 </span>
               ) : (
-                <HarnessIcon
-                  harness={session.harness}
-                  className="size-4 shrink-0"
-                />
+                <span className="min-w-0 flex-1" />
               )}
-              {session.pinned ? (
-                <Pin
-                  className="-mx-0.5 size-3.5 shrink-0 text-content/45"
-                  strokeWidth={1.75}
-                />
-              ) : null}
-              <ParticleText
-                text={title}
-                className="line-clamp-1 min-w-0 flex-1 text-sm font-medium leading-tight text-content"
-              />
-              <span className="flex shrink-0 items-center gap-1">
-                {linkedUpdateDot}
-                {workItemBadge}
-                {session.automationId ? (
+              <span className="relative flex shrink-0 items-center gap-px">
+                {/* Just the provider's mark; the model's name slides out beside
+                it while the card is hovered or focused. */}
+                {modelInFooter && model ? (
                   <span
-                    data-automation-icon
-                    role="img"
-                    title="Started by an automation"
-                    aria-label="Started by an automation"
-                    className="grid size-4 shrink-0 place-items-center text-amber-400"
+                    title={model}
+                    className="flex min-w-0 items-center text-[11px] text-content/50"
                   >
-                    <Zap className="size-3" strokeWidth={1.75} />
+                    <span className="max-w-0 truncate pr-0 opacity-0 transition-[max-width,opacity,padding] duration-200 ease-out group-focus-within:max-w-32 group-focus-within:pr-1.5 group-focus-within:opacity-100 group-hover:max-w-32 group-hover:pr-1.5 group-hover:opacity-100 motion-reduce:transition-none">
+                      {model}
+                    </span>
+                    <HarnessIcon
+                      harness={session.harness}
+                      className="size-3.5 shrink-0"
+                    />
                   </span>
                 ) : null}
                 {onArchive ? (
@@ -4968,274 +5111,141 @@ export const SessionCard = memo(function SessionCard({
                       event.stopPropagation();
                       onArchive(session.id, !session.archived);
                     }}
-                    // Pulled right so its box sits as far from the card's
-                    // right edge as from its top.
-                    className="-mr-[3px] hidden size-5 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content group-focus-within:grid group-hover:grid"
+                    className="pointer-events-none grid size-5 place-items-center rounded-md text-content/50 opacity-0 hover:bg-content/10 hover:text-content group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100"
                   >
                     <Archive className="size-3 shrink-0" strokeWidth={1.75} />
                   </button>
                 ) : null}
-                {/* A state worth noticing takes the time's place, as an icon
-                    so the row keeps its alignment. */}
-                <span
-                  className={`flex items-center text-[11px] tabular-nums text-content/40 ${
-                    onArchive
-                      ? "group-focus-within:hidden group-hover:hidden"
-                      : ""
-                  }`}
-                >
-                  {needsApproval ? (
-                    <CircleAlert
-                      role="img"
-                      aria-label={
-                        orchestration ? "Needs input" : "Needs approval"
+                {workItemBadge}
+                {session.automationId ? (
+                  <span
+                    data-automation-icon
+                    role="img"
+                    title="Started by an automation"
+                    aria-label="Started by an automation"
+                    className="grid size-5 -mr-1 shrink-0 place-items-center text-amber-400"
+                  >
+                    <Zap className="size-3" strokeWidth={1.75} />
+                  </span>
+                ) : null}
+                {orchestration ? (
+                  <div
+                    ref={orchestrationTooltipRootRef}
+                    className="relative shrink-0"
+                    onMouseEnter={() => setOrchestrationTooltipOpen(true)}
+                    onMouseLeave={() => setOrchestrationTooltipOpen(false)}
+                  >
+                    <button
+                      type="button"
+                      data-no-drag
+                      data-tauri-drag-region="false"
+                      data-orchestration-icon
+                      aria-label={`Orchestrator, ${orchestration.tasks.length} ${
+                        orchestration.tasks.length === 1
+                          ? "subagent"
+                          : "subagents"
+                      }, ${orchestrationDone} done`}
+                      aria-describedby={
+                        orchestrationTooltipOpen
+                          ? orchestrationTooltipId
+                          : undefined
                       }
-                      className="size-3.5 text-amber-400"
-                      strokeWidth={1.75}
-                    />
-                  ) : draft ? (
-                    <CircleDashed
-                      role="img"
-                      aria-label="Draft"
-                      className="size-3.5"
-                      strokeWidth={1.75}
-                    />
-                  ) : (
-                    (statusLabel ?? time)
-                  )}
-                </span>
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onFocus={() => setOrchestrationTooltipOpen(true)}
+                      onBlur={() => setOrchestrationTooltipOpen(false)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOrchestrationTooltipOpen(false);
+                        onSelect(session.id, event);
+                      }}
+                      className="grid size-5 shrink-0 place-items-center rounded-md text-fuchsia-300/65 hover:bg-content/10 hover:text-fuchsia-200/90"
+                    >
+                      <Share className="size-3" />
+                    </button>
+                  </div>
+                ) : null}
               </span>
-            </span>
-          ) : null}
-          {!dense && headerRow ? (
-            <span className="relative flex items-center gap-2">
-              <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                <HarnessIcon
-                  harness={session.harness}
-                  className="size-3.5 shrink-0"
-                />
-                <span className="min-w-0 truncate text-[11px] text-content/50">
-                  {model}
-                </span>
-              </span>
-              <span className="flex shrink-0 items-center gap-1.5">
-                {linkedUpdateDot}
-                {status}
-              </span>
-            </span>
-          ) : null}
-          {dense ? null : (
-            <span
-              className={`relative flex min-w-0 items-center gap-1.5 ${
-                headerRow ? "mt-1" : ""
-              }`}
-            >
-              {session.pinned ? (
-                <Pin
-                  className="size-3 shrink-0 text-content/45"
-                  strokeWidth={1.75}
-                />
-              ) : null}
-              <ParticleText
-                text={title}
-                className="line-clamp-1 text-[13px] font-semibold leading-snug text-content"
-              />
-              {headerRow ? null : (
-                <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
-                  {linkedUpdateDot}
-                  {status}
-                </span>
-              )}
             </span>
           )}
         </div>
-        {orchestrationExpanded ? (
-          <OrchestrationSidebarAgents
-            leadId={session.id}
-            summary={orchestration!}
+        {dense && previewOpen && previewAnchor.current ? (
+          <SessionCardPreview
+            anchor={previewAnchor.current}
+            id={previewId}
+            session={session}
+            status={status}
+            onClose={closePreview}
+            onPointerEnter={cancelPreviewClose}
+            onPointerLeave={schedulePreviewClose}
           />
         ) : null}
-        {dense ? null : (
-          <span className="relative mt-1 flex items-center gap-2">
-            {project && !gitLabel ? (
-              <span
-                className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-content/45"
-                title={session.cwd}
-              >
-                <Folder className="size-3 shrink-0" strokeWidth={1.75} />
-                <span className="min-w-0 truncate">{project}</span>
+        {orchestration && orchestrationTooltipOpen ? (
+          <Popover
+            anchor={orchestrationTooltipRootRef}
+            side="right"
+            align="end"
+            width={248}
+            maxHeight={320}
+            role="tooltip"
+            id={orchestrationTooltipId}
+            className="pointer-events-none overflow-y-auto p-2.5"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[11px] font-semibold text-content/85">
+                Subagents
               </span>
-            ) : gitLabel ? (
-              <span
-                className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-content/45"
-                title={
-                  session.worktreeCwd
-                    ? `${gitLabel}\n${session.worktreeCwd}`
-                    : gitLabel
-                }
-              >
-                <GitBranch className="size-3 shrink-0" strokeWidth={1.75} />
-                <span className="min-w-0 truncate">
-                  {project ? `${project} · ${gitLabel}` : gitLabel}
-                </span>
+              <span className="shrink-0 text-[10px] tabular-nums text-content/45">
+                {orchestrationDone}/{orchestration.tasks.length} done
               </span>
-            ) : (
-              <span className="min-w-0 flex-1" />
-            )}
-            <span className="relative flex shrink-0 items-center gap-px">
-              {/* Just the provider's mark; the model's name slides out beside
-                it while the card is hovered or focused. */}
-              {modelInFooter && model ? (
-                <span
-                  title={model}
-                  className="flex min-w-0 items-center text-[11px] text-content/50"
-                >
-                  <span className="max-w-0 truncate pr-0 opacity-0 transition-[max-width,opacity,padding] duration-200 ease-out group-focus-within:max-w-32 group-focus-within:pr-1.5 group-focus-within:opacity-100 group-hover:max-w-32 group-hover:pr-1.5 group-hover:opacity-100 motion-reduce:transition-none">
-                    {model}
-                  </span>
-                  <HarnessIcon
-                    harness={session.harness}
-                    className="size-3.5 shrink-0"
-                  />
-                </span>
-              ) : null}
-              {onArchive ? (
-                <button
-                  type="button"
-                  data-no-drag
-                  data-tauri-drag-region="false"
-                  title={archiveLabel}
-                  aria-label={`${archiveLabel} ${title}`}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onArchive(session.id, !session.archived);
-                  }}
-                  className="pointer-events-none grid size-5 place-items-center rounded-md text-content/50 opacity-0 hover:bg-content/10 hover:text-content group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100"
-                >
-                  <Archive className="size-3 shrink-0" strokeWidth={1.75} />
-                </button>
-              ) : null}
-              {workItemBadge}
-              {session.automationId ? (
-                <span
-                  data-automation-icon
-                  role="img"
-                  title="Started by an automation"
-                  aria-label="Started by an automation"
-                  className="grid size-5 -mr-1 shrink-0 place-items-center text-amber-400"
-                >
-                  <Zap className="size-3" strokeWidth={1.75} />
-                </span>
-              ) : null}
-              {orchestration ? (
-                <div
-                  ref={orchestrationTooltipRootRef}
-                  className="relative shrink-0"
-                  onMouseEnter={() => setOrchestrationTooltipOpen(true)}
-                  onMouseLeave={() => setOrchestrationTooltipOpen(false)}
-                >
-                  <button
-                    type="button"
-                    data-no-drag
-                    data-tauri-drag-region="false"
-                    data-orchestration-icon
-                    aria-label={`Orchestrator, ${orchestration.tasks.length} ${
-                      orchestration.tasks.length === 1
-                        ? "subagent"
-                        : "subagents"
-                    }, ${orchestrationDone} done`}
-                    aria-describedby={
-                      orchestrationTooltipOpen
-                        ? orchestrationTooltipId
-                        : undefined
-                    }
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onFocus={() => setOrchestrationTooltipOpen(true)}
-                    onBlur={() => setOrchestrationTooltipOpen(false)}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setOrchestrationTooltipOpen(false);
-                      onSelect(session.id, event);
-                    }}
-                    className="grid size-5 shrink-0 place-items-center rounded-md text-fuchsia-300/65 hover:bg-content/10 hover:text-fuchsia-200/90"
+            </div>
+            <div className="mt-1.5 flex flex-col gap-0.5">
+              {orchestration.tasks.map((task) => {
+                const label = orchestrationTaskLabel(task, orchestration);
+                return (
+                  <div
+                    key={task.sessionId}
+                    className="flex min-w-0 items-center gap-1.5 rounded-md px-1 py-1"
                   >
-                    <Share className="size-3" />
-                  </button>
-                </div>
-              ) : null}
-            </span>
-          </span>
-        )}
+                    <HarnessIcon
+                      harness={task.harness}
+                      className="size-3.5 shrink-0 opacity-75"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-[11px] text-content/75">
+                      {task.title}
+                    </span>
+                    <span
+                      className={`shrink-0 text-[10px] ${
+                        task.needsInput ||
+                        task.status === "failed" ||
+                        task.status === "blocked" ||
+                        task.status === "interrupted"
+                          ? "text-amber-400"
+                          : label === "Working"
+                            ? "text-accent"
+                            : task.status === "completed"
+                              ? "text-emerald-400"
+                              : "text-content/45"
+                      }`}
+                    >
+                      {label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </Popover>
+        ) : null}
       </div>
-      {dense && previewOpen && previewAnchor.current ? (
-        <SessionCardPreview
-          anchor={previewAnchor.current}
-          id={previewId}
-          session={session}
-          status={status}
-          onClose={closePreview}
-          onPointerEnter={cancelPreviewClose}
-          onPointerLeave={schedulePreviewClose}
+      {/* Under the row, outside its highlight and its hover actions, like a
+          tool step's rail. */}
+      {orchestrationExpanded && dense ? (
+        <OrchestrationSidebarAgents
+          leadId={session.id}
+          summary={orchestration!}
+          variant="tree"
         />
       ) : null}
-      {orchestration && orchestrationTooltipOpen ? (
-        <Popover
-          anchor={orchestrationTooltipRootRef}
-          side="right"
-          align="end"
-          width={248}
-          maxHeight={320}
-          role="tooltip"
-          id={orchestrationTooltipId}
-          className="pointer-events-none overflow-y-auto p-2.5"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[11px] font-semibold text-content/85">
-              Subagents
-            </span>
-            <span className="shrink-0 text-[10px] tabular-nums text-content/45">
-              {orchestrationDone}/{orchestration.tasks.length} done
-            </span>
-          </div>
-          <div className="mt-1.5 flex flex-col gap-0.5">
-            {orchestration.tasks.map((task) => {
-              const label = orchestrationTaskLabel(task, orchestration);
-              return (
-                <div
-                  key={task.sessionId}
-                  className="flex min-w-0 items-center gap-1.5 rounded-md px-1 py-1"
-                >
-                  <HarnessIcon
-                    harness={task.harness}
-                    className="size-3.5 shrink-0 opacity-75"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-[11px] text-content/75">
-                    {task.title}
-                  </span>
-                  <span
-                    className={`shrink-0 text-[10px] ${
-                      task.needsInput ||
-                      task.status === "failed" ||
-                      task.status === "blocked" ||
-                      task.status === "interrupted"
-                        ? "text-amber-400"
-                        : label === "Working"
-                          ? "text-accent"
-                          : task.status === "completed"
-                            ? "text-emerald-400"
-                            : "text-content/45"
-                    }`}
-                  >
-                    {label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </Popover>
-      ) : null}
-    </div>
+    </>
   );
 });
 
