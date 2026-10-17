@@ -1071,7 +1071,8 @@ function TitleBarComponent({
         <div
           data-inset-title-nav
           // As wide as the open rail, so the tabs start over the card.
-          className="flex shrink-0 items-center pr-1.5"
+          // Closed, the tab strip's own inset is gap enough after the arrows.
+          className={`flex shrink-0 items-center${sessionSidebarOpen ? " pr-1.5" : ""}`}
           style={{ minWidth: "var(--inset-rail-width, 0px)" }}
         >
           <div className={`shrink-0 ${IS_MAC ? "w-[78px]" : "w-1.5"}`} />
@@ -1087,8 +1088,8 @@ function TitleBarComponent({
             </span>
           ) : null}
           {/* History sits at the rail's far edge and follows it as the
-              sidebar resizes, with the Development badge beside it. */}
-          <DevModeSlot />
+              sidebar resizes. The Development badge lives in the footer. */}
+          <div className="flex-1" />
           <TabVisitNav
             canGoBack={canGoBack}
             canGoForward={canGoForward}
