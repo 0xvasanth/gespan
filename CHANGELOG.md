@@ -7,30 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-17
+
 ### Added
 
-- Remote hosts can run on **Linux without systemd**, such as containers and Firecracker microVMs. Setup starts the host as a detached background process there instead of a systemd user service, so it keeps running after SSH disconnects, and the next connect starts it again if it has stopped. Machines with systemd keep the user service and lingering.
-- The workspace tab context menu has **Close All Tabs** after Close Tabs to the Left. It closes every tab in the tab bar and resets the active one to a blank session, with the same unsaved-file and terminal confirmations as File > Close All Tabs, and it is disabled when the only tab is already blank.
+- The Mono overview has an **Activity** tab showing its current work and completed activity. Reports from habit runs also list the sessions they started.
+- A **Resource pressure** indicator in the usage footer opens a process view with CPU and memory usage, controls to stop agents and sessions, and controls to stop individual running tools.
+- **Smooth text reveal** in Settings → Chat controls whether incoming reply bursts appear gradually or immediately. It is enabled by default.
+- Project groups in the rail support **drag to reorder**. The compact rail has instant hover tooltips and an unseen-reply dot on its Sessions tab.
+- Remote hosts can run on **Linux without systemd**, including containers and Firecracker microVMs. Setup uses a detached background process there and reconnecting starts it again if needed; machines with systemd keep their user service and lingering.
+- The workspace tab context menu has **Close All Tabs**, with the same unsaved-file and terminal confirmations as the File menu.
+- Syntax highlighting supports **Vue, Svelte, SCSS, Sass, Less, and .env files**. Terminal hyperlinks can be clicked to open them.
+- Notification sounds also play when an agent asks a question or needs approval. The keybindings settings list the Escape shortcut for stopping a run.
+
+### Changed
+
+- Large conversations and busy workspaces stay more responsive: recent transcripts retain their rendered state across tab switches, hidden transcripts detach from the page, code highlighting and large diffs run in workers, and navigation avoids unnecessary layout measurements.
+- Background Git work and agent tool processes receive lower scheduling priority where supported. Resource pressure reduces retained transcript memory while preserving session history.
+- Mono chats use a more compact composer and model controls in narrow panes. Replies no longer have bubble tails, the Mono introduction appears as an inline rail card, unread badges use the accent color, and document readers have tighter spacing.
+- Model pickers group **omp, Pi, and Hermes** models by provider. Claude model labels make their versions easier to distinguish, and Pi and Codex turn totals include every request in the turn.
+- Previewable files remember the last **Preview or Source** choice.
 
 ### Fixed
 
-- Git LFS repositories no longer fail with "git-lfs: command not found" when MonoCode is opened from Finder. Status, diffs, staging, discards, and worktree checks run Git with Homebrew and other common install directories on its PATH, plus the terminal's PATH once it has been read, so filters resolve without waiting on the login shell.
-
-### Fixed
-
-- Selecting the **whole last paragraph** of a reply, such as by triple-clicking it, shows the Add to chat and Add to notes menu instead of nothing. Such a selection ends at the start of the action row below the reply, which no longer counts as leaving the reply when it picks up none of the row's text.
-
-### Fixed
-
-- Change markers on the diff editor's scrollbar line up with their changes when long lines wrap. Markers follow the rendered line heights, including removed lines, so the scrollbar thumb covers a marker while its change is on screen, and clicking a marker scrolls to its change.
-
-### Fixed
-
-- Right-clicking an empty part of a MonoCode window no longer opens a native menu offering only **Reload**, which read like an action on the clicked item. Reload stays in the View menu (**⌘⇧R / Ctrl+Shift+R**), and text fields, editors, terminals, selected text, links, and media keep their native menus.
-
-### Fixed
-
-- The **Markdown preview** of a file such as a README shows its images, whether written as Markdown or as HTML `<img>`, including centered headers, tables, and `<picture>` elements. Paths resolve from the document's folder, or from the project root when they start with `/`, and keep their width, height, and alignment. Only image files inside the project are read, symlinks included, so a document cannot pull in files from elsewhere on disk. Remote images, and local ones that are missing or not really images, show their alt text instead of nothing.
+- Completing a reply, changing a file pane's width, or returning to a cached conversation preserves the reader's position and keeps a following conversation at its reply. Completed provider bursts continue their text reveal without jumping the transcript.
+- Session streaming avoids unnecessary background rerenders and repeated history work. Composer resizing and decorative transcript measurements no longer force repeated workspace layout during navigation.
+- Typing in a composer on macOS no longer rechecks the whole page's styles for each keystroke. The composer runner stops its animation loop while its tab is in the background.
+- A blank session keeps the provider account selected for its own project. Saved Claude model versions show their settings on first open, omp model discovery loads extensions, and asynchronously registered Pi models are awaited.
+- Replayed Claude background-task notifications no longer end a resumed turn early. A consumed handoff recap is not resent on later turns, refused fast mode is not reported as a usage limit, and punctuation-only assistant text does not create a transcript reply.
+- Sending a message during a running turn preserves its existing clock. Title-bar and Mono overview buttons keep consistent sizing, and branch and commit menus remain anchored to their controls.
+- A session whose worktree was deleted outside the app can select another checkout. Remote session diffs use their linked worktree, and quoted Git diff paths are read literally.
+- Git LFS works when MonoCode is launched from Finder: Git commands include Homebrew and other common install locations on their PATH, plus the terminal's PATH once available.
+- Selecting the **whole last paragraph** of a reply opens the Add to chat and Add to notes menu. Wrapped diff lines place scrollbar change markers at their rendered positions.
+- **Markdown file previews** display local Markdown and HTML images, including centered headers, tables, and picture elements, while preserving dimensions and alignment. Paths resolve within the project; missing, invalid, remote, or out-of-project images fall back to their alt text.
+- Right-clicking empty window space no longer opens a native menu offering only **Reload**. Reload remains in the View menu, and controls keep their applicable native menus.
+- The footer's **Terminal** button toggles its panel and reflects its pressed state. HTML artifacts render their surface, muted, and border theme colors opaquely, and macOS development bundles retain correct version metadata.
 
 ## [0.13.0] - 2026-10-12
 
