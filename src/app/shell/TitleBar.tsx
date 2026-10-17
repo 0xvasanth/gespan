@@ -1344,11 +1344,7 @@ function TitleBarComponent({
           x={tabMenu.x}
           y={tabMenu.y}
           width={244}
-          items={
-            contextTab?.appView || contextTab?.mono
-              ? contextMenuItems.slice(0, 1)
-              : contextMenuItems
-          }
+          items={contextMenuItems}
           ariaLabel={`Tab actions for ${tabCopy(contextTab).headline}`}
           onPick={onPickTabMenu}
           onClose={() => setTabMenu(null)}

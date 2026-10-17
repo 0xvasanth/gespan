@@ -2003,7 +2003,11 @@ function Workspace({
     });
   }, []);
 
-  const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+  // A stale id falls back within the project, never to another project's tab.
+  const activeTab =
+    tabs.find((t) => t.id === activeTabId) ??
+    filterTabsForProject(tabs, sessions, projectCwd)[0] ??
+    tabs[0];
   const active =
     sessions.find((session) => session.id === activeTab?.focusedId) ??
     sessions.find(
@@ -3506,20 +3510,46 @@ function Workspace({
           for (const file of closingFiles) updated.delete(file.id);
           return updated;
         });
-        setTabs(next);
-        if (id === activeTabIdRef.current) {
-          const navigation = displayedTabNavigation.current;
-          const nextId = nextDisplayedTabAfterClose(
-            navigation.tabs,
-            navigation.activeId,
-            id,
-          );
-          // App tabs still need a valid workspace to return to underneath.
-          if ((!nextId || appViewForTab(nextId)) && nextActiveTabId) {
-            activateTab(nextActiveTabId);
+        if (id !== activeTabIdRef.current) {
+          setTabs(next);
+          void refreshHistory(sidebarCwd);
+          return;
+        }
+        const navigation = displayedTabNavigation.current;
+        // A view shown over this tab stays up; only the workspace beneath it
+        // moves on.
+        if (
+          insetLayoutRef.current &&
+          navigation.activeId !== id &&
+          isViewTab(navigation.activeId)
+        ) {
+          setTabs(next);
+          if (nextActiveTabId) setActiveTabIdState(nextActiveTabId);
+          void refreshHistory(sidebarCwd);
+          return;
+        }
+        const nextId = nextDisplayedTabAfterClose(
+          navigation.tabs,
+          navigation.activeId,
+          id,
+        );
+        const close = () => {
+          setTabs(next);
+          // View tabs still need a valid workspace to return to underneath;
+          // a Mono's opens over it, so it moves there without revealing it.
+          if (nextActiveTabId) {
+            if (nextId && monoForTab(nextId)) {
+              setActiveTabIdState(nextActiveTabId);
+            } else if (!nextId || appViewForTab(nextId)) {
+              activateTab(nextActiveTabId);
+            }
           }
           if (nextId) navigation.select?.(nextId);
-        }
+        };
+        // A view tab opens in a transition; closing alongside it keeps the
+        // workspace beneath from painting between the two.
+        if (nextId && isViewTab(nextId)) startTransition(close);
+        else close();
         void refreshHistory(sidebarCwd);
       };
 
@@ -3819,15 +3849,12 @@ function Workspace({
     (id: string, opts?: { confirmed?: boolean; selectNeighbor?: boolean }) => {
       const tab = tabs.find((entry) => entry.id === id);
       if (!tab) return;
+      const navigation = displayedTabNavigation.current;
+      const neighborId = opts?.selectNeighbor
+        ? nextDisplayedTabAfterClose(navigation.tabs, navigation.activeId, id)
+        : undefined;
       const selectNeighbor = () => {
-        if (!opts?.selectNeighbor) return;
-        const navigation = displayedTabNavigation.current;
-        const nextId = nextDisplayedTabAfterClose(
-          navigation.tabs,
-          navigation.activeId,
-          id,
-        );
-        if (nextId) navigation.select?.(nextId);
+        if (neighborId) navigation.select?.(neighborId);
       };
       if (isBlankWorkspaceTab(tab, sessionsRef.current)) {
         selectNeighbor();
@@ -3850,7 +3877,7 @@ function Workspace({
       );
       if (!oldSession) return;
 
-      const finishClear = () => {
+      const clear = () => {
         persistSession(oldSession);
         for (const shellId of leafIds(tab.layout)) {
           rememberRemoteSession(shellId);
@@ -3909,6 +3936,12 @@ function Workspace({
         setComposerFocused(true);
         void refreshHistory(sidebarCwd);
         selectNeighbor();
+      };
+      // A view tab opens in a transition; clearing alongside it keeps the
+      // blank tab from painting before the view.
+      const finishClear = () => {
+        if (neighborId && isViewTab(neighborId)) startTransition(clear);
+        else clear();
       };
 
       // The caller already confirmed unsaved files.
@@ -4197,7 +4230,9 @@ function Workspace({
 
   const onCloseTitleTab = useCallback(
     (id: string) => {
-      closeMonoView();
+      // The inset layout shows a Mono as its own tab, which closing another
+      // tab leaves alone.
+      if (!insetLayoutRef.current) closeMonoView();
       const closePlan = planWorkspaceTabClose({
         tabs: tabsRef.current,
         sessions: sessionsRef.current,
@@ -11653,7 +11688,7 @@ function Workspace({
     [onOpenApprovalSession],
   );
 
-  const nextTitleTabs: TitleTab[] = orderByIds(
+  const orderedTitleTabs: TitleTab[] = orderByIds(
     [
       ...deckProjectTabs.map((tab) =>
         toTitleTab(tab, sessions, dirtyFiles, unseenFinishedIds),
@@ -11703,6 +11738,27 @@ function Workspace({
     ],
     insetLayout ? titleTabOrder : [],
   );
+  // Like a browser, a Mono or app tab can be the only tab. The project's lone
+  // blank session tab stays underneath, out of the strip, until closing the
+  // last of them shows it again.
+  const shownViewTabId = settingsOpen
+    ? undefined
+    : monoCovers
+      ? monoViewTabId
+      : activeAppView
+        ? appViewTabId(activeAppView)
+        : undefined;
+  const placeholderTab =
+    insetLayout &&
+    shownViewTabId &&
+    orderedTitleTabs.some((tab) => tab.id === shownViewTabId) &&
+    deckProjectTabs.length === 1 &&
+    isBlankWorkspaceTab(deckProjectTabs[0], sessions)
+      ? deckProjectTabs[0].id
+      : undefined;
+  const nextTitleTabs = placeholderTab
+    ? orderedTitleTabs.filter((tab) => tab.id !== placeholderTab)
+    : orderedTitleTabs;
   tabProjectsRef.current = new Map(
     nextTitleTabs.map((tab) => [tab.id, tab.project]),
   );
@@ -12436,22 +12492,44 @@ function Workspace({
   );
   const onCloseDisplayedTabs = useCallback(
     (ids: string[], fallbackId: string) => {
-      for (const id of ids) {
-        if (isViewTab(id)) closeViewTab(id, false);
-      }
-      onCloseTabs(
-        ids.filter((id) => !isViewTab(id)),
-        fallbackId,
-      );
+      const navigation = displayedTabNavigation.current;
+      const closing = new Set(ids);
+      const workspaceIds = ids.filter((id) => !isViewTab(id));
+      startTransition(() => {
+        for (const id of ids) {
+          if (isViewTab(id)) closeViewTab(id, false);
+        }
+        if (workspaceIds.length > 0) {
+          // Kept from a view tab, the workspace beneath falls back to one of
+          // this project's shown tabs that stays open; with none left, Close
+          // All keeps a blank one rather than reaching into another project.
+          const workspaceFallback = isViewTab(fallbackId)
+            ? [
+                activeTabIdRef.current,
+                ...navigation.tabs.map((tab) => tab.id),
+              ].find(
+                (id) =>
+                  !closing.has(id) &&
+                  !isViewTab(id) &&
+                  navigation.tabs.some((tab) => tab.id === id),
+              )
+            : fallbackId;
+          if (workspaceFallback) onCloseTabs(workspaceIds, workspaceFallback);
+          else onCloseEveryTab(workspaceIds);
+        }
+        if (closing.has(navigation.activeId)) navigation.select?.(fallbackId);
+      });
     },
-    [closeViewTab, onCloseTabs],
+    [closeViewTab, onCloseTabs, onCloseEveryTab],
   );
   const onCloseAllDisplayedTabs = useCallback(
     (ids: readonly string[]) => {
-      for (const id of ids) {
-        if (isViewTab(id)) closeViewTab(id, false);
-      }
-      onCloseEveryTab(ids.filter((id) => !isViewTab(id)));
+      startTransition(() => {
+        for (const id of ids) {
+          if (isViewTab(id)) closeViewTab(id, false);
+        }
+        onCloseEveryTab(ids.filter((id) => !isViewTab(id)));
+      });
     },
     [closeViewTab, onCloseEveryTab],
   );
@@ -12524,11 +12602,35 @@ function Workspace({
     [insetLayout, titleTabs, onSelectTitleTab, onActivate],
   );
 
+  // The inset layout's shortcuts close every kind of title tab, like its
+  // tab menu.
+  const onCloseOtherVisibleTabs = useCallback(() => {
+    if (!insetLayout) {
+      onCloseOtherTabs();
+      return;
+    }
+    const { tabs: shown, activeId } = displayedTabNavigation.current;
+    if (!shown.some((tab) => tab.id === activeId)) return;
+    onCloseDisplayedTabs(
+      shown.filter((tab) => tab.id !== activeId).map((tab) => tab.id),
+      activeId,
+    );
+  }, [insetLayout, onCloseOtherTabs, onCloseDisplayedTabs]);
+  const onCloseAllVisibleTabs = useCallback(() => {
+    if (!insetLayout) {
+      onCloseAllTabs();
+      return;
+    }
+    onCloseAllDisplayedTabs(
+      displayedTabNavigation.current.tabs.map((tab) => tab.id),
+    );
+  }, [insetLayout, onCloseAllTabs, onCloseAllDisplayedTabs]);
+
   const actions = useRef({
     onNewFocused,
     onArchiveFocusedSession,
-    onCloseOtherTabs,
-    onCloseAllTabs,
+    onCloseOtherTabs: onCloseOtherVisibleTabs,
+    onCloseAllTabs: onCloseAllVisibleTabs,
     onCloseFocused: onCloseVisibleTab,
     onNext: () => onCycleVisibleTab(1),
     onPrev: () => onCycleVisibleTab(-1),
@@ -12559,8 +12661,8 @@ function Workspace({
   actions.current = {
     onNewFocused,
     onArchiveFocusedSession,
-    onCloseOtherTabs,
-    onCloseAllTabs,
+    onCloseOtherTabs: onCloseOtherVisibleTabs,
+    onCloseAllTabs: onCloseAllVisibleTabs,
     onCloseFocused: onCloseVisibleTab,
     onNext: () => onCycleVisibleTab(1),
     onPrev: () => onCycleVisibleTab(-1),
