@@ -58,8 +58,6 @@ import type { Worktree } from "../../source-control/model/worktrees";
 type Shared = {
   workspaceSwitchingSessionId?: string;
   visible: boolean;
-  /** Hidden and not recently shown: sessions release their transcripts. */
-  releaseTranscripts?: boolean;
   sessions: Session[];
   editorPanes: EditorPane[];
   dirtyFileIds: Set<string>;
@@ -205,7 +203,6 @@ const DRAG_THRESHOLD = 5;
 
 function PaneTreeComponent({
   visible,
-  releaseTranscripts = false,
   layout,
   sessions,
   editorPanes,
@@ -510,7 +507,6 @@ function PaneTreeComponent({
                       ),
                   )}
                   visible={visible}
-                  releaseTranscript={releaseTranscripts}
                   focused={focusedId === session.id}
                   addToChatTarget={addToChatSessionId === session.id}
                   inSplit={inSplit}
@@ -605,13 +601,12 @@ function busyWorkCwds(sessions: readonly Session[]): string {
 }
 
 /**
- * Hidden trees re-render only to release or reclaim transcripts. A visible one skips the `sessions` rebuild
+ * Hidden trees never re-render. A visible one skips the `sessions` rebuild
  * that another tab's stream causes, re-rendering only when its own panes'
  * sessions or the busy set it reads change.
  */
 function samePaneTreeProps(previous: Props, next: Props): boolean {
-  if (!previous.visible && !next.visible)
-    return previous.releaseTranscripts === next.releaseTranscripts;
+  if (!previous.visible && !next.visible) return true;
   const keys = Object.keys(next) as (keyof Props)[];
   if (keys.length !== Object.keys(previous).length) return false;
   for (const key of keys) {

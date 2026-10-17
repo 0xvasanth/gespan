@@ -17,11 +17,6 @@ import {
 import { acceptQuickLaunch } from "./model/quickLaunchSession";
 import { useWorkspaceNavigation } from "./hooks/useWorkspaceNavigation";
 import { useIdleSessionDetach } from "./hooks/useIdleSessionDetach";
-import {
-  useReleasedIds,
-  WARM_MONO_COUNT,
-  WARM_TAB_COUNT,
-} from "./hooks/useReleasedIds";
 import { HarnessEventQueue } from "./model/harnessFlush";
 import { noteStreamApplied } from "../features/sessions/model/streamingPerformance";
 import { updateSessionState } from "./model/sessionState";
@@ -1118,10 +1113,6 @@ function Workspace({
     () => windowTransfer?.activeTabId ?? resumed?.activeTabId ?? seed.tab.id,
   );
   const [monoViewId, setMonoViewId] = useState<string | null>(null);
-  // Hidden tabs and Monos in these keep their panes, drafts, editors and
-  // terminals, but hand their transcripts to the pool's bounded budget.
-  const releasedTabIds = useReleasedIds(activeTabId, WARM_TAB_COUNT);
-  const releasedMonoIds = useReleasedIds(monoViewId, WARM_MONO_COUNT);
   // A Mono opens with its overview beside the chat until it is hidden.
   const [monoOverviewOpen, setMonoOverviewOpen] = useState(true);
   const [monoOverviewTab, setMonoOverviewTab] =
@@ -13183,9 +13174,6 @@ function Workspace({
                                 <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
                                   <PaneTree
                                     {...sessionPaneProps}
-                                    releaseTranscripts={releasedTabIds.has(
-                                      tab.id,
-                                    )}
                                     visible={
                                       tab.id === activeTabId &&
                                       !inboxViewOpen &&
@@ -13261,9 +13249,6 @@ function Workspace({
                                       {...sessionPaneProps}
                                       session={session}
                                       visible={visible}
-                                      releaseTranscript={releasedMonoIds.has(
-                                        session.id,
-                                      )}
                                       focused={
                                         visible &&
                                         !projectTerminalFocused &&

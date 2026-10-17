@@ -14,9 +14,9 @@ import { detachedHistoryNodes } from "./useMeasuredHistory";
 export const TRANSCRIPT_POOL_LIMIT = 4;
 // Each retained node also holds its React fiber and render objects, roughly
 // 1-2 KB together, so the node budget is the pool's real memory ceiling.
-// Tabs outside the recent few park here too. The workspace benchmark needs
-// about 50k nodes to keep four large transcripts: at 40k, revisits rebuild
-// and take twice as long.
+// Four large transcripts need about 50k nodes: at 40k, revisits rebuild and
+// take twice as long. Workspace tabs stay mounted and do not count here;
+// releasing them measured slower and no smaller with real sessions.
 // Sustained pressure reduces only parked entries; visible content stays intact.
 export const TRANSCRIPT_POOL_NODE_LIMIT = 50_000;
 const PRESSURED_NODE_LIMIT = 10_000;

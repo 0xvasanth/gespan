@@ -131,8 +131,6 @@ export type SessionPaneProps = {
   workspaceSwitchingSessionId?: string;
   reviewUndoLocked?: boolean;
   visible: boolean;
-  /** Hidden and not recently shown: the pool may evict this transcript. */
-  releaseTranscript?: boolean;
   focused: boolean;
   addToChatTarget?: boolean;
   inSplit: boolean;
@@ -311,7 +309,6 @@ const LocalSessionPane = memo(function LocalSessionPane({
   workspaceSwitchingSessionId,
   reviewUndoLocked = false,
   visible,
-  releaseTranscript = false,
   focused,
   addToChatTarget = focused,
   inSplit,
@@ -933,174 +930,170 @@ const LocalSessionPane = memo(function LocalSessionPane({
               )
             ) : (
               <>
-                {releaseTranscript && !visible ? null : (
-                  <PooledTranscript
-                    pool={transcriptPool}
-                    sessionId={session.id}
-                    onMouseDown={focusPane}
-                  >
-                    <AgentTranscript
-                      blocks={
-                        agent && !monoTranscript.viewingOlderPage
-                          ? monoPendingTranscriptBlocks(
-                              session,
-                              monoTranscript.blocks,
+                <PooledTranscript
+                  pool={transcriptPool}
+                  sessionId={session.id}
+                  onMouseDown={focusPane}
+                >
+                  <AgentTranscript
+                    blocks={
+                      agent && !monoTranscript.viewingOlderPage
+                        ? monoPendingTranscriptBlocks(
+                            session,
+                            monoTranscript.blocks,
+                          )
+                        : monoTranscript.blocks
+                    }
+                    sessionId={remoteSession ? undefined : session.id}
+                    historicalBlockIds={monoTranscript.historicalBlockIds}
+                    initialTurns={agent ? MONO_PAGE_TURNS : undefined}
+                    pageSize={agent ? MONO_PAGE_TURNS : undefined}
+                    hasEarlier={monoTranscript.hasEarlier}
+                    loadEarlierOnScroll={!!agent}
+                    onLoadEarlier={
+                      agent ? monoTranscript.loadEarlier : undefined
+                    }
+                    onReturnToLatest={
+                      monoTranscript.viewingOlderPage
+                        ? monoTranscript.latest
+                        : undefined
+                    }
+                    busy={!!session.busy && !monoTranscript.viewingOlderPage}
+                    visible={visible}
+                    cwd={workCwd}
+                    agentName={agent?.name}
+                    onOpenArtifact={
+                      onOpenArtifact
+                        ? (id) => onOpenArtifact(session.id, id)
+                        : undefined
+                    }
+                    agentMascot={agent}
+                    bottomAligned={!!agent}
+                    inlineWork={!!agent}
+                    messageDeliveries={agent ? messageDeliveries : undefined}
+                    onRetryMessage={
+                      agent ? () => onResumeQueue(session.id) : undefined
+                    }
+                    onShowWork={
+                      agent && onShowMonoActivity
+                        ? (turnId, blocks) =>
+                            onShowMonoActivity(session.id, turnId, blocks)
+                        : undefined
+                    }
+                    activeWorkTurnId={monoActivityTurnId}
+                    onOpenSession={
+                      agent && onOpenMonoSession
+                        ? (turnId, blocks, launchedId) =>
+                            onOpenMonoSession(
+                              session.id,
+                              turnId,
+                              blocks,
+                              launchedId,
                             )
-                          : monoTranscript.blocks
-                      }
-                      sessionId={remoteSession ? undefined : session.id}
-                      historicalBlockIds={monoTranscript.historicalBlockIds}
-                      initialTurns={agent ? MONO_PAGE_TURNS : undefined}
-                      pageSize={agent ? MONO_PAGE_TURNS : undefined}
-                      hasEarlier={monoTranscript.hasEarlier}
-                      loadEarlierOnScroll={!!agent}
-                      onLoadEarlier={
-                        agent ? monoTranscript.loadEarlier : undefined
-                      }
-                      onReturnToLatest={
-                        monoTranscript.viewingOlderPage
-                          ? monoTranscript.latest
-                          : undefined
-                      }
-                      busy={!!session.busy && !monoTranscript.viewingOlderPage}
-                      visible={visible}
-                      cwd={workCwd}
-                      agentName={agent?.name}
-                      onOpenArtifact={
-                        onOpenArtifact
-                          ? (id) => onOpenArtifact(session.id, id)
-                          : undefined
-                      }
-                      agentMascot={agent}
-                      bottomAligned={!!agent}
-                      inlineWork={!!agent}
-                      messageDeliveries={agent ? messageDeliveries : undefined}
-                      onRetryMessage={
-                        agent ? () => onResumeQueue(session.id) : undefined
-                      }
-                      onShowWork={
-                        agent && onShowMonoActivity
-                          ? (turnId, blocks) =>
-                              onShowMonoActivity(session.id, turnId, blocks)
-                          : undefined
-                      }
-                      activeWorkTurnId={monoActivityTurnId}
-                      onOpenSession={
-                        agent && onOpenMonoSession
-                          ? (turnId, blocks, launchedId) =>
-                              onOpenMonoSession(
-                                session.id,
-                                turnId,
-                                blocks,
-                                launchedId,
-                              )
-                          : undefined
-                      }
-                      launchedSessions={monoLaunchedSessions}
-                      openSessionId={openMonoSessionId}
-                      // A Mono's turn keeps copy, save as note and the time.
-                      daySeparators={!!agent}
-                      hideTurnMetrics={!!agent}
-                      harness={session.harness}
-                      model={session.model}
-                      modelSettings={session.modelSettings}
-                      pendingQuestion={!!session.pendingQuestion}
-                      backgroundTasks={session.backgroundTasks}
-                      onApproval={session.worktreeRemoved ? undefined : approve}
-                      onAddToChat={addSelectionToChat}
-                      onSaveNote={notesEnabled ? saveNote : undefined}
-                      onSendDraft={
-                        draftBlock
-                          ? (block) =>
-                              onSubmit(
-                                session.id,
-                                block.text,
-                                block.attachments ?? [],
-                                {
-                                  draftBlockId: block.id,
-                                  ...(block.appRequestId
-                                    ? { appRequestId: block.appRequestId }
-                                    : {}),
-                                },
-                              )
-                          : undefined
-                      }
-                      onRemoveDraft={
-                        draftBlock
-                          ? (block) => onRemoveDraft(session.id, block.id)
-                          : undefined
-                      }
-                      onSaveSelectionNote={
-                        notesEnabled ? saveSelectionNote : undefined
-                      }
-                      onOpenFile={onOpenFile}
-                      onOpenDiff={onOpenDiff}
-                      onOpenPlan={openPlan}
-                      onBuildPlan={
-                        session.worktreeRemoved ? undefined : buildPlan
-                      }
-                      planBuildTargets={!remote}
-                      onSecondOpinion={
-                        !agent &&
-                        !session.inboxAsk &&
-                        !session.worktreeRemoved &&
-                        onSecondOpinion
-                          ? (target, turn) =>
-                              onSecondOpinion(session.id, target, turn)
-                          : undefined
-                      }
-                      onHandoff={
-                        !agent &&
-                        !session.inboxAsk &&
-                        !session.worktreeRemoved &&
-                        onHandoff
-                          ? (target, turn) =>
-                              onHandoff(session.id, target, turn)
-                          : undefined
-                      }
-                      onJumpToBottomChange={jumpVisibility.setVisible}
-                      onJumpToBottomReady={onJumpToBottomReady}
-                      onRevealReady={onRevealReady}
-                      onNavigateReady={onNavigateReady}
-                      onScrollerChange={setTranscriptScroller}
-                      editingLastTurn={editingLastTurn}
-                      onEditLastTurn={
-                        editLastTurnSupported &&
-                        !monoTranscript.viewingOlderPage
-                          ? () => {
-                              onFocus(session.id);
-                              recallLastTurnRef.current?.();
-                            }
-                          : undefined
-                      }
-                      latestTurnAccessory={
-                        reviewHidden || agent ? undefined : (
-                          <SessionReview
-                            sessionId={session.id}
-                            editedPaths={editedPaths}
-                            cwd={workCwd}
-                            enabled={visible}
-                            busy={!!session.busy}
-                            undoLocked={
-                              reviewUndoLocked ||
-                              orchestrationRuns.some(
-                                (run) =>
-                                  (run.status === "active" ||
-                                    run.status === "paused") &&
-                                  (run.leadId === session.id ||
-                                    run.tasks.some(
-                                      (task) => task.sessionId === session.id,
-                                    )),
-                              )
-                            }
-                            onOpenDiff={onOpenDiff}
-                            onCommit={onCommitChanges}
-                          />
-                        )
-                      }
-                    />
-                  </PooledTranscript>
-                )}
+                        : undefined
+                    }
+                    launchedSessions={monoLaunchedSessions}
+                    openSessionId={openMonoSessionId}
+                    // A Mono's turn keeps copy, save as note and the time.
+                    daySeparators={!!agent}
+                    hideTurnMetrics={!!agent}
+                    harness={session.harness}
+                    model={session.model}
+                    modelSettings={session.modelSettings}
+                    pendingQuestion={!!session.pendingQuestion}
+                    backgroundTasks={session.backgroundTasks}
+                    onApproval={session.worktreeRemoved ? undefined : approve}
+                    onAddToChat={addSelectionToChat}
+                    onSaveNote={notesEnabled ? saveNote : undefined}
+                    onSendDraft={
+                      draftBlock
+                        ? (block) =>
+                            onSubmit(
+                              session.id,
+                              block.text,
+                              block.attachments ?? [],
+                              {
+                                draftBlockId: block.id,
+                                ...(block.appRequestId
+                                  ? { appRequestId: block.appRequestId }
+                                  : {}),
+                              },
+                            )
+                        : undefined
+                    }
+                    onRemoveDraft={
+                      draftBlock
+                        ? (block) => onRemoveDraft(session.id, block.id)
+                        : undefined
+                    }
+                    onSaveSelectionNote={
+                      notesEnabled ? saveSelectionNote : undefined
+                    }
+                    onOpenFile={onOpenFile}
+                    onOpenDiff={onOpenDiff}
+                    onOpenPlan={openPlan}
+                    onBuildPlan={
+                      session.worktreeRemoved ? undefined : buildPlan
+                    }
+                    planBuildTargets={!remote}
+                    onSecondOpinion={
+                      !agent &&
+                      !session.inboxAsk &&
+                      !session.worktreeRemoved &&
+                      onSecondOpinion
+                        ? (target, turn) =>
+                            onSecondOpinion(session.id, target, turn)
+                        : undefined
+                    }
+                    onHandoff={
+                      !agent &&
+                      !session.inboxAsk &&
+                      !session.worktreeRemoved &&
+                      onHandoff
+                        ? (target, turn) => onHandoff(session.id, target, turn)
+                        : undefined
+                    }
+                    onJumpToBottomChange={jumpVisibility.setVisible}
+                    onJumpToBottomReady={onJumpToBottomReady}
+                    onRevealReady={onRevealReady}
+                    onNavigateReady={onNavigateReady}
+                    onScrollerChange={setTranscriptScroller}
+                    editingLastTurn={editingLastTurn}
+                    onEditLastTurn={
+                      editLastTurnSupported && !monoTranscript.viewingOlderPage
+                        ? () => {
+                            onFocus(session.id);
+                            recallLastTurnRef.current?.();
+                          }
+                        : undefined
+                    }
+                    latestTurnAccessory={
+                      reviewHidden || agent ? undefined : (
+                        <SessionReview
+                          sessionId={session.id}
+                          editedPaths={editedPaths}
+                          cwd={workCwd}
+                          enabled={visible}
+                          busy={!!session.busy}
+                          undoLocked={
+                            reviewUndoLocked ||
+                            orchestrationRuns.some(
+                              (run) =>
+                                (run.status === "active" ||
+                                  run.status === "paused") &&
+                                (run.leadId === session.id ||
+                                  run.tasks.some(
+                                    (task) => task.sessionId === session.id,
+                                  )),
+                            )
+                          }
+                          onOpenDiff={onOpenDiff}
+                          onCommit={onCommitChanges}
+                        />
+                      )
+                    }
+                  />
+                </PooledTranscript>
                 {!session.inboxAsk ? (
                   <TranscriptFind
                     blocks={session.blocks}
