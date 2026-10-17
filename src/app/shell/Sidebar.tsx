@@ -70,7 +70,7 @@ import {
   type GitFileDiffKind,
   type GitHistoryCommit,
 } from "../../platform/tauri/fs";
-import { IS_MAC, MOD } from "../../platform/tauri/platform";
+import { IS_MAC, MOD, SHIFT } from "../../platform/tauri/platform";
 import { copyText } from "../../platform/tauri/clipboard";
 import { resolveModel } from "../../features/sessions/model/models";
 import type { OpenFileFn } from "../../features/search/model/search";
@@ -145,7 +145,11 @@ import type {
 } from "../../features/sessions/model/session";
 import type { LiveAgent } from "../../features/sessions/model/liveAgents";
 import type { SessionSummary } from "../../features/sessions/data/sessionStore";
-import type { SettingsSectionId } from "../../features/settings/model/settings";
+import {
+  keybindingShortcutLabel,
+  subscribeKeybindings,
+  type SettingsSectionId,
+} from "../../features/settings/model/settings";
 import type { InstalledUpdate } from "../model/updateNotice";
 import { TAB_GROUP_COLORS } from "../../features/workspace/model/tabGroups";
 import { useDragResize } from "../../shared/hooks/useDragResize";
@@ -924,14 +928,16 @@ function SidebarComponent({
   const sessionHarnesses = harnessesInSessions(projectSessions);
   const narrowedByUser = searchNarrowed || filtersActive;
   const visibleTabs = tabOrder.filter((itemId) => itemId !== "inbox");
-  const sortable = useAnimatedReorder(visibleTabs, (ids) => {
+  const onReorderTabs = (ids: SidebarTab[]) => {
+    const reordered = new Set(ids);
     let index = 0;
     const next = tabOrder.map((itemId) =>
-      itemId === "inbox" ? itemId : ids[index++],
+      reordered.has(itemId) ? ids[index++] : itemId,
     );
     setTabOrder(next);
     saveSidebarTabOrder(next);
-  });
+  };
+  const sortable = useAnimatedReorder(visibleTabs, onReorderTabs);
   const visibleFolderIds = sessionListEntries.flatMap((entry) =>
     entry.kind === "folder" ? [entry.folder.id] : [],
   );
@@ -3193,6 +3199,11 @@ function SidebarComponent({
         ? createPortal(
             <RightPanel
               tab={paneTab === "changes" ? "changes" : "files"}
+              tabs={tabOrder.filter(
+                (itemId): itemId is RightPanelTab =>
+                  itemId === "files" || itemId === "changes",
+              )}
+              onReorder={onReorderTabs}
               changesLabel={changesLabel}
               hasChangeStats={hasChangeStats}
               changeAdditions={changeAdditions}
@@ -3848,6 +3859,15 @@ function ProjectSpacesBar({
   busyProjectPaths?: Iterable<string>;
   onSelectProject: (path: string) => void;
 }) {
+  const projectTooltip = useRailTooltip("top");
+  const shortcuts = useSyncExternalStore(subscribeKeybindings, () =>
+    [
+      keybindingShortcutLabel("Project: Previous", `${MOD}${SHIFT}←`),
+      keybindingShortcutLabel("Project: Next", `${MOD}${SHIFT}→`),
+    ]
+      .filter(Boolean)
+      .join(" / "),
+  );
   const shown = Math.min(projects.length, SPACES_SHOWN);
   const lastStart = Math.max(0, projects.length - shown);
   const activeIndex = projects.findIndex((path) => sameProjectPath(path, cwd));
@@ -3912,7 +3932,10 @@ function ProjectSpacesBar({
     // A mini carousel: up to five spaces spread evenly, chevrons either side.
     // Its edges line up with the rows above, and its controls with the usage
     // footer's; each space takes an equal share.
-    <div className="flex h-[30px] shrink-0 items-center gap-1 px-2 pb-0.5">
+    <div
+      {...projectTooltip.handlers}
+      className="flex h-[30px] shrink-0 items-center gap-1 px-2 pb-0.5"
+    >
       {chevron(-1)}
       <div className="min-w-0 flex-1 overflow-hidden">
         <div
@@ -3927,12 +3950,14 @@ function ProjectSpacesBar({
               path={path}
               active={sameProjectPath(path, cwd)}
               busy={projectPathBusy(busyProjectPaths, path)}
+              shortcuts={shortcuts}
               onSelect={() => onSelectProject(path)}
             />
           ))}
         </div>
       </div>
       {chevron(1)}
+      {projectTooltip.tooltip}
     </div>
   );
 }
@@ -3941,11 +3966,13 @@ function ProjectSpaceButton({
   path,
   active,
   busy,
+  shortcuts,
   onSelect,
 }: {
   path: string;
   active: boolean;
   busy: boolean;
+  shortcuts: string;
   onSelect: () => void;
 }) {
   const label = useProjectLabel(path);
@@ -3955,7 +3982,8 @@ function ProjectSpaceButton({
       role="tab"
       aria-selected={active}
       aria-label={busy ? `${label}, working` : label}
-      title={label}
+      data-rail-tip={label}
+      data-rail-tip-detail={shortcuts || undefined}
       data-tauri-drag-region="false"
       onClick={active ? undefined : onSelect}
       className={`relative grid h-5 min-w-0 flex-1 place-items-center rounded-md transition-[opacity,background-color] duration-200 ease-out motion-reduce:transition-none ${
@@ -3983,6 +4011,8 @@ function ProjectSpaceButton({
 /** The inset layout's Explorer and Changes, beside the card. */
 function RightPanel({
   tab,
+  tabs,
+  onReorder,
   changesLabel,
   hasChangeStats,
   changeAdditions,
@@ -3991,6 +4021,8 @@ function RightPanel({
   children,
 }: {
   tab: RightPanelTab;
+  tabs: RightPanelTab[];
+  onReorder: (tabs: RightPanelTab[]) => void;
   changesLabel: string;
   hasChangeStats: boolean;
   changeAdditions: number;
@@ -3998,8 +4030,7 @@ function RightPanel({
   onTabChange: (tab: RightPanelTab) => void;
   children: ReactNode;
 }) {
-  const tabs: RightPanelTab[] = ["files", "changes"];
-  // The sidebar's former tab row, kept as it was.
+  const sortable = useAnimatedReorder(tabs, onReorder);
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
       <div
@@ -4013,7 +4044,11 @@ function RightPanel({
           return (
             <div
               key={itemId}
-              className="workspace-tab relative flex min-w-0 flex-1 items-stretch"
+              ref={(el) => sortable.setItemRef(itemId, el)}
+              className="reorder-item workspace-tab relative flex min-w-0 flex-1 touch-none items-stretch"
+              onPointerDown={(event) => {
+                sortable.onItemPointerDown(itemId, event);
+              }}
             >
               <button
                 type="button"
@@ -4021,7 +4056,10 @@ function RightPanel({
                 aria-selected={active}
                 aria-label={isChangesTab ? changesLabel : undefined}
                 data-tauri-drag-region="false"
-                onClick={() => onTabChange(itemId)}
+                onClick={() => {
+                  if (sortable.consumeClick()) return;
+                  onTabChange(itemId);
+                }}
                 className={`flex h-6 min-w-0 flex-1 items-center justify-center self-center rounded-md px-2 text-[12px] leading-none ${
                   active ? "bg-selection text-content" : "text-content/50"
                 }`}
