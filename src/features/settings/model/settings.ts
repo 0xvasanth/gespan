@@ -279,6 +279,13 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     keywords: "dark light system appearance mode",
   },
   {
+    id: "workspace-theme",
+    section: "appearance",
+    label: "Workspace theme",
+    keywords:
+      "color colour palette scheme preset inset harbor moss ember orchid",
+  },
+  {
     id: "accent-color",
     section: "appearance",
     label: "Accent color",

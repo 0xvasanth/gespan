@@ -49,6 +49,13 @@ import { WindowControls } from "../../../app/shell/WindowControls";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
 import { useColorScheme } from "../../../shared/hooks/useColorScheme";
 import {
+  WORKSPACE_THEMES,
+  WORKSPACE_THEME_DEFAULT,
+  isWorkspaceThemeId,
+  type WorkspacePalette,
+  type WorkspaceThemeId,
+} from "../model/workspaceThemes";
+import {
   applyChatBackground,
   applyChatBackgroundEmptyOpacity,
   applyChatBackgroundSessionOpacity,
@@ -61,6 +68,7 @@ import {
   applyThemeDarkLightness,
   applyThemePreference,
   applyThemeTint,
+  applyWorkspaceTheme,
   BODY_GLASS_DEFAULT,
   INSET_LAYOUT_DEFAULT,
   INSET_GLASS_DEFAULT,
@@ -88,6 +96,7 @@ import {
   loadSidebarOpacity,
   loadThemeHue,
   loadThemeSaturation,
+  loadWorkspaceTheme,
   loadTranscriptLayout,
   loadTranscriptAnchor,
   saveBodyGlass,
@@ -107,6 +116,7 @@ import {
   saveSidebarOpacity,
   saveThemeHue,
   saveThemeSaturation,
+  saveWorkspaceTheme,
   isLightScheme,
   saveTranscriptLayout,
   saveTranscriptAnchor,
@@ -1883,6 +1893,8 @@ function useAppearanceSettings(
   const [themePreference, setThemePreference] =
     useState<ThemePreference>(loadThemePreference);
   const [accentColor, setAccentColor] = useState(loadAccentColor);
+  const [workspaceTheme, setWorkspaceTheme] =
+    useState<WorkspaceThemeId>(loadWorkspaceTheme);
   const [opacity, setOpacity] = useState(loadSidebarOpacity);
   const [blur, setBlur] = useState(loadSidebarBlur);
   const [themeHue, setThemeHue] = useState(loadThemeHue);
@@ -1935,6 +1947,12 @@ function useAppearanceSettings(
     const next = applyAccentColor(value);
     saveAccentColor(next);
     setAccentColor(next);
+  }, []);
+
+  const onWorkspaceTheme = useCallback((value: WorkspaceThemeId) => {
+    const next = applyWorkspaceTheme(value);
+    saveWorkspaceTheme(next);
+    setWorkspaceTheme(next);
   }, []);
 
   const onOpacity = useCallback((percent: number) => {
@@ -2070,6 +2088,7 @@ function useAppearanceSettings(
   const restoreDefaults = useCallback(() => {
     onThemePreference(THEME_PREFERENCE_DEFAULT);
     onAccentColor(ACCENT_COLOR_DEFAULT);
+    onWorkspaceTheme(WORKSPACE_THEME_DEFAULT);
     onOpacity(Math.round(SIDEBAR_OPACITY_DEFAULT * 100));
     onBlur(SIDEBAR_BLUR_DEFAULT);
     onTint(THEME_HUE_DEFAULT, THEME_SATURATION_DEFAULT);
@@ -2103,6 +2122,7 @@ function useAppearanceSettings(
     onNewThreadBackgroundEffect,
     onClearChatBackground,
     onAccentColor,
+    onWorkspaceTheme,
     onShowExcludedFiles,
     onThemePreference,
     onOpacity,
@@ -2115,6 +2135,7 @@ function useAppearanceSettings(
   return {
     themePreference,
     accentColor,
+    workspaceTheme,
     opacity,
     blur,
     themeHue,
@@ -2136,6 +2157,7 @@ function useAppearanceSettings(
     collapsedProjectRailMode,
     onThemePreference,
     onAccentColor,
+    onWorkspaceTheme,
     onOpacity,
     onBlur,
     onTint,
@@ -2163,6 +2185,10 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
   // The inset workspace has its own glass preference and fixed tint/blur.
   const translucencyFixed = appearance.insetLayout;
   const translucencyDisabled = glassDisabled || translucencyFixed;
+  // A workspace theme brings its own colours, so the tint sliders sit out.
+  const tintFixed =
+    appearance.insetLayout &&
+    appearance.workspaceTheme !== WORKSPACE_THEME_DEFAULT;
 
   return (
     <>
@@ -2185,6 +2211,35 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
             ]}
             onChange={appearance.onThemePreference}
           />
+        </Row>
+        <Row
+          id="workspace-theme"
+          label="Workspace theme"
+          description={
+            appearance.insetLayout
+              ? "Colors for the inset workspace's shell, card, text and accent. Each theme has a dark and a light palette."
+              : "Colors for the inset workspace. Turn on Inset workspace under Layout to use them."
+          }
+        >
+          <div className="w-48">
+            <Select
+              label="Workspace theme"
+              value={appearance.workspaceTheme}
+              options={WORKSPACE_THEMES.map((theme) => ({
+                value: theme.id,
+                label: theme.label,
+                icon: (
+                  <WorkspaceThemeSwatch
+                    palette={glassDisabled ? theme.light : theme.dark}
+                  />
+                ),
+              }))}
+              onChange={(value) => {
+                if (isWorkspaceThemeId(value))
+                  appearance.onWorkspaceTheme(value);
+              }}
+            />
+          </div>
         </Row>
         <Row
           id="accent-color"
@@ -2216,7 +2271,11 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
 
       <Group
         title="Color"
-        description="Hue and saturation tint every surface. Lightness only moves the dark theme."
+        description={
+          tintFixed
+            ? "The workspace theme sets these colors. Choose Default to tint with hue and saturation."
+            : "Hue and saturation tint every surface. Lightness only moves the dark theme."
+        }
       >
         <Row
           id="hue"
@@ -2232,6 +2291,7 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
             onChange={(value) =>
               appearance.onTint(value, appearance.themeSaturation)
             }
+            disabled={tintFixed}
           />
         </Row>
         <Row
@@ -2246,6 +2306,7 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
             min={THEME_SATURATION_MIN}
             max={THEME_SATURATION_MAX}
             onChange={(value) => appearance.onTint(appearance.themeHue, value)}
+            disabled={tintFixed}
           />
         </Row>
         <Row
@@ -2264,7 +2325,7 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
             min={THEME_DARK_LIGHTNESS_MIN}
             max={THEME_DARK_LIGHTNESS_MAX}
             onChange={appearance.onDarkLightness}
-            disabled={glassDisabled}
+            disabled={glassDisabled || tintFixed}
           />
         </Row>
       </Group>
@@ -4438,6 +4499,26 @@ function Slider({
         {display}
       </span>
     </div>
+  );
+}
+
+/** The shell, the card inside it and the accent, at the size of a menu icon. */
+function WorkspaceThemeSwatch({ palette }: { palette: WorkspacePalette }) {
+  return (
+    <span
+      aria-hidden
+      className="relative block size-4 overflow-hidden rounded-[4px] border border-content/15"
+      style={{ background: palette.surface }}
+    >
+      <span
+        className="absolute inset-y-[3px] right-0 left-[5px] rounded-l-[2px]"
+        style={{ background: palette.panelSolid }}
+      />
+      <span
+        className="absolute top-[6px] left-[8px] size-[5px] rounded-full"
+        style={{ background: palette.accent }}
+      />
+    </span>
   );
 }
 

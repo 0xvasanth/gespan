@@ -4,6 +4,14 @@ import { IS_LINUX, IS_MAC } from "../../../platform/tauri/platform";
 import { readFlag, writeFlag } from "./storageFlags";
 import { applyUiScale, loadUiScale } from "./uiScale";
 import {
+  WORKSPACE_THEME_DEFAULT,
+  WORKSPACE_THEME_VARIABLE_NAMES,
+  isWorkspaceThemeId,
+  workspaceTheme,
+  workspaceThemeVariables,
+  type WorkspaceThemeId,
+} from "./workspaceThemes";
+import {
   applyPreparedNewThreadBackground,
   clearPreparedNewThreadBackground,
 } from "./newThreadBackgroundEffects";
@@ -23,6 +31,7 @@ const BODY_KEY = "monocode.bodyGlass";
 const INSET_LAYOUT_KEY = "monocode.insetLayout";
 const INSET_GLASS_KEY = "monocode.insetGlass";
 const SCHEME_KEY = "monocode.colorScheme";
+const WORKSPACE_THEME_KEY = "monocode.workspaceTheme";
 const SIDEBAR_TAB_ORDER_KEY = "monocode.sidebarTabOrder";
 const PROJECT_RAIL_WIDTH_KEY = "monocode.projectRailWidth";
 const TRANSCRIPT_LAYOUT_KEY = "monocode.transcriptLayout";
@@ -156,11 +165,10 @@ export const INSET_GLASS_DEFAULT = true;
 /** Fired on `window` when the inset layout setting flips. */
 export const INSET_LAYOUT_CHANGE_EVENT = "monocode:inset-layout-change";
 
-/** The inset layout's fixed glass: its shell grey per scheme
- * (`--inset-surface` in the stylesheet), the 80% tint over the blur, and the
- * blur radius its macOS window sets. The translucency settings don't apply. */
-const INSET_SHELL_DARK: Rgb = { r: 13, g: 13, b: 13 };
-const INSET_SHELL_LIGHT: Rgb = { r: 245, g: 245, b: 245 };
+/** The inset layout's fixed glass: the 80% tint over the blur and the blur
+ * radius its macOS window sets. The shell grey comes from the
+ * workspace theme (`--inset-surface` in the stylesheet). The translucency
+ * settings don't apply. */
 const INSET_GLASS_OPACITY = 0.8;
 const INSET_BLUR_RADIUS = 60;
 
@@ -331,8 +339,50 @@ export function applyThemeTint(hue: number, saturation: number) {
   return { hue: nextHue, saturation: nextSaturation };
 }
 
+export function loadWorkspaceTheme(): WorkspaceThemeId {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_THEME_KEY);
+    return isWorkspaceThemeId(raw) ? raw : WORKSPACE_THEME_DEFAULT;
+  } catch {
+    return WORKSPACE_THEME_DEFAULT;
+  }
+}
+
+export function saveWorkspaceTheme(value: WorkspaceThemeId) {
+  try {
+    if (value === WORKSPACE_THEME_DEFAULT)
+      localStorage.removeItem(WORKSPACE_THEME_KEY);
+    else localStorage.setItem(WORKSPACE_THEME_KEY, value);
+  } catch {
+    // private mode / quota
+  }
+}
+
+/** Sets both schemes' palettes at once; the stylesheet picks one by class, so
+ * a scheme flip needs no reapply. Only the inset layout reads them. */
+export function applyWorkspaceTheme(value: WorkspaceThemeId) {
+  const next = isWorkspaceThemeId(value) ? value : WORKSPACE_THEME_DEFAULT;
+  const root = document.documentElement;
+  for (const name of WORKSPACE_THEME_VARIABLE_NAMES)
+    root.style.removeProperty(name);
+  for (const [name, color] of Object.entries(workspaceThemeVariables(next)))
+    root.style.setProperty(name, color);
+  root.classList.toggle(
+    "has-workspace-theme",
+    next !== WORKSPACE_THEME_DEFAULT,
+  );
+  refreshNativeTint();
+  return next;
+}
+
+function hexToRgb(hex: string): Rgb {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
+}
+
 const THEME_KEYS = new Set([
   ACCENT_COLOR_KEY,
+  WORKSPACE_THEME_KEY,
   THEME_HUE_KEY,
   THEME_SATURATION_KEY,
   THEME_DARK_LIGHTNESS_KEY,
@@ -343,6 +393,7 @@ function applyStoredTheme() {
   applyAccentColor(loadAccentColor());
   applyThemeTint(loadThemeHue(), loadThemeSaturation());
   applyThemeDarkLightness(loadThemeDarkLightness());
+  applyWorkspaceTheme(loadWorkspaceTheme());
   applyThemePreference(loadThemePreference());
 }
 
@@ -424,8 +475,10 @@ export function applyThemePreference(value: ThemePreference): ColorScheme {
 
 /** The page colour, also used by the native macOS glass tint. */
 function opaqueWindowBackground(): Rgb {
-  if (insetLayoutActive())
-    return isLightScheme() ? INSET_SHELL_LIGHT : INSET_SHELL_DARK;
+  if (insetLayoutActive()) {
+    const theme = workspaceTheme(loadWorkspaceTheme());
+    return hexToRgb((isLightScheme() ? theme.light : theme.dark).surface);
+  }
   const style = getComputedStyle(document.documentElement);
   const read = (name: string, fallback: number) => {
     const value = Number.parseFloat(style.getPropertyValue(name));

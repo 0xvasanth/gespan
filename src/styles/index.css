@@ -408,13 +408,14 @@ html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
 }
 
 /* Inset layout: the sidebar, tabs and footer sit on an outer layer around a
-   rounded card holding the workspace. Its surfaces are fixed rather than
-   following the translucency settings: a neutral shell at 80% over the window
-   blur with a faint wash, and the content panel the deepest plane in dark
-   mode, white in light. */
+   rounded card holding the workspace. Its surfaces ignore the translucency
+   settings. By default they are a neutral shell at 80% over the window blur
+   with a faint wash, and the content panel the deepest plane in dark mode,
+   white in light. A workspace
+   theme swaps the colours through the `--wt-*` variables. */
 html.layout-inset {
-  --inset-surface: #0d0d0d;
-  --inset-panel: #060606;
+  --inset-surface: var(--wt-dark-surface, #0d0d0d);
+  --inset-panel: var(--wt-dark-panel, #060606);
   --inset-glass-alpha: 0.8;
   --inset-panel-alpha: 0.4;
   --inset-wash: hsl(0 0% 92% / 0.05);
@@ -422,14 +423,33 @@ html.layout-inset {
 
 /* Keep the opaque pane close to the washed sidebar instead of near black. */
 html.layout-inset:not(.has-native-glass):not(.theme-light) {
-  --inset-panel: #141414;
+  --inset-panel: var(--wt-dark-panel-solid, #141414);
 }
 
 /* Light mode is opaque here, so the shell is its solid grey under the wash. */
 html.layout-inset.theme-light {
-  --inset-surface: #f5f5f5;
-  --inset-panel: #ffffff;
+  --inset-surface: var(--wt-light-surface, #f5f5f5);
+  --inset-panel: var(--wt-light-panel-solid, #ffffff);
   --inset-wash: hsl(0 0% 10% / 0.01);
+}
+
+/* A workspace theme (workspaceThemes.ts) replaces the hue/saturation tint with
+   its own text, accent and markdown colours. Strokes and selections mix from
+   `--color-content`, so they follow. Menus and popovers sit on the shell. */
+html.layout-inset.has-workspace-theme {
+  --color-content: var(--wt-dark-content);
+  --color-background-base: var(--wt-dark-surface);
+  --color-accent: var(--wt-dark-accent);
+  --link-color: var(--wt-dark-link);
+  --color-markdown-heading: var(--wt-dark-heading);
+}
+
+html.layout-inset.has-workspace-theme.theme-light {
+  --color-content: var(--wt-light-content);
+  --color-background-base: var(--wt-light-surface);
+  --color-accent: var(--wt-light-accent);
+  --link-color: var(--wt-light-link);
+  --color-markdown-heading: var(--wt-light-heading);
 }
 
 .inset-outer {
@@ -1714,15 +1734,23 @@ html.is-resizing * {
    The layer bleeds past the box and is clipped back to it, so the blur near
    the edges averages the backdrop beyond them instead of leaving a band of
    unblurred background just inside. */
+[data-composer-box] {
+  --composer-radius: var(--radius-lg, 0.5rem);
+}
+
+/* The inset layout rounds the box like a multi-line user message. */
+html.layout-inset [data-composer-box] {
+  --composer-radius: var(--radius-xl, 0.75rem);
+  border-radius: var(--composer-radius);
+}
+
 [data-composer-box]::before {
   --composer-blur-bleed: calc(var(--blur-sm) * 2);
   content: "";
   position: absolute;
   inset: calc(-1 * var(--composer-blur-bleed));
   z-index: -1;
-  clip-path: inset(
-    var(--composer-blur-bleed) round var(--radius-lg, 0.5rem)
-  );
+  clip-path: inset(var(--composer-blur-bleed) round var(--composer-radius));
   pointer-events: none;
   background: color-mix(in srgb, var(--color-content) 3%, transparent);
   -webkit-backdrop-filter: blur(var(--blur-sm));
