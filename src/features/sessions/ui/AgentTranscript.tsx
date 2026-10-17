@@ -5437,12 +5437,18 @@ function pinToBottom(el: HTMLElement | null) {
   el.scrollTop = el.scrollHeight;
 }
 
-/** Keep the live turn's min-height in lockstep with the visible transcript. */
+/**
+ * Keep the live turn's min-height in lockstep with the visible transcript.
+ * The content's top padding comes off too, so an anchored prompt rests as far
+ * below the top fade as the first message does.
+ */
 function syncTranscriptViewport(el: HTMLElement | null) {
   if (!el || el.clientHeight <= 0) return;
   const inner = el.querySelector<HTMLElement>("[data-transcript-content]");
-  const pad = inner
-    ? Number.parseFloat(getComputedStyle(inner).paddingBottom) || 0
+  const style = inner ? getComputedStyle(inner) : null;
+  const pad = style
+    ? (Number.parseFloat(style.paddingBottom) || 0) +
+      (Number.parseFloat(style.paddingTop) || 0)
     : 0;
   const next = `${Math.max(0, el.clientHeight - pad)}px`;
   if (el.style.getPropertyValue("--transcript-viewport") === next) return;
