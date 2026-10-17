@@ -164,7 +164,7 @@ export function UsageFooter({
           ) : showTerminalButton ? (
             <button
               type="button"
-              className={`inline-flex h-5 shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-1.5 hover:bg-content/10 ${
+              className={`inline-flex h-5 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 hover:bg-content/10 ${
                 projectTerminalOpen
                   ? "text-accent"
                   : "text-content/40 hover:text-content"
@@ -592,7 +592,7 @@ function SessionChip({ session }: { session: UsageFooterSession }) {
       <button
         ref={trigger}
         type="button"
-        className="-mx-1 inline-flex h-5 min-w-0 shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-1 text-content/55 transition-[background-color,color,transform] duration-150 ease-out hover:bg-content/10 hover:text-content focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.97]"
+        className="-mx-1 inline-flex h-5 min-w-0 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-1 text-content/55 transition-[background-color,color,transform] duration-150 ease-out hover:bg-content/10 hover:text-content focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.97]"
         aria-label={`${HARNESS_TITLE[session.harness]} sign-in required`}
         aria-expanded={open}
         aria-haspopup="dialog"
@@ -668,7 +668,7 @@ function RunningTerminalChip({
       <button
         ref={root}
         type="button"
-        className="inline-flex min-w-0 max-w-[16rem] items-center gap-1.5 whitespace-nowrap rounded px-1 -mx-1 hover:bg-content/10 hover:text-content"
+        className="inline-flex min-w-0 max-w-[16rem] items-center gap-1.5 whitespace-nowrap rounded-md px-1 -mx-1 hover:bg-content/10 hover:text-content"
         aria-label={ariaLabel}
         aria-pressed={panelOpen}
         aria-expanded={many && !panelOpen ? menuOpen : undefined}

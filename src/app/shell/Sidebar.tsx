@@ -908,6 +908,10 @@ function SidebarComponent({
   const railMonos = monos
     ? { ...monos, activeId: otherViewActive ? undefined : monos.activeId }
     : undefined;
+  // Likewise the session they cover stays current but isn't shown selected.
+  const highlightedSessionId = otherViewActive
+    ? undefined
+    : activeListedSessionId;
   // A blank session has no project to browse, so the shell stands alone until
   // one is picked — whether or not the rail is open.
   // The inset sidebar holds the links to search, inbox, notes and
@@ -1654,7 +1658,7 @@ function SidebarComponent({
     renamingSessionId === session.id && onRenameSession ? (
       <SessionRenameRow
         session={session}
-        isActive={session.id === activeListedSessionId}
+        isActive={session.id === highlightedSessionId}
         needsApproval={listedApprovalSessionIds.has(session.id)}
         onCommit={(title) => {
           onRenameSession(session.id, title);
@@ -1665,7 +1669,7 @@ function SidebarComponent({
     ) : (
       <SessionCard
         session={session}
-        isActive={session.id === activeListedSessionId}
+        isActive={session.id === highlightedSessionId}
         isSelected={selectedSessionIds.has(session.id)}
         busy={listedBusySessionIds.has(session.id)}
         done={unseenFinishedIds.has(session.id)}
@@ -3578,7 +3582,7 @@ function ProjectSpacesBar({
         disabled={disabled}
         data-tauri-drag-region="false"
         onClick={() => step(direction)}
-        className="grid size-5 shrink-0 place-items-center rounded text-content/50 hover:bg-content/10 hover:text-content disabled:pointer-events-none disabled:opacity-30"
+        className="grid size-5 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content disabled:pointer-events-none disabled:opacity-30"
       >
         <Icon className="size-3.5" strokeWidth={1.75} />
       </button>
@@ -3635,7 +3639,7 @@ function ProjectSpaceButton({
       title={label}
       data-tauri-drag-region="false"
       onClick={active ? undefined : onSelect}
-      className={`relative grid h-5 min-w-0 flex-1 place-items-center rounded transition-[opacity,background-color] duration-200 ease-out motion-reduce:transition-none ${
+      className={`relative grid h-5 min-w-0 flex-1 place-items-center rounded-md transition-[opacity,background-color] duration-200 ease-out motion-reduce:transition-none ${
         active
           ? "bg-content/10 opacity-100"
           : "opacity-45 hover:bg-content/5 hover:opacity-100"

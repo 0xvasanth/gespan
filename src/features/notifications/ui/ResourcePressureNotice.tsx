@@ -175,7 +175,7 @@ export function ResourcePressureNotice({
               type="button"
               onClick={() => setOpen(true)}
               title={`${pressure.reasons.join(" · ")} · View processes`}
-              className="inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 text-content/70 hover:bg-content/10 hover:text-content"
+              className="inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-content/70 hover:bg-content/10 hover:text-content"
             >
               <CircleAlert
                 className="size-3.5 shrink-0 text-amber-400"

@@ -459,6 +459,31 @@ describe.each([false, true])("Mono rail selection (compact: %s)", (compact) => {
   });
 });
 
+it.each([
+  "inboxActive",
+  "notesActive",
+  "automationsActive",
+  "searchActive",
+] as const)("does not show the covered inset session selected while %s", async (active) => {
+  const selected = () =>
+    container
+      .querySelector('[data-session-select="session-1"]')
+      ?.getAttribute("aria-current");
+  // The inset sidebar keeps the session list beside these views.
+  props = { ...props, inset: true };
+  await act(async () => render());
+  expect(selected()).toBe("true");
+
+  props = { ...props, [active]: true };
+  await act(async () => render());
+  expect(selected() ?? undefined).toBeUndefined();
+  expect(container.querySelector('[data-session-select="session-1"]')).not.toBeNull();
+
+  props = { ...props, [active]: false };
+  await act(async () => render());
+  expect(selected()).toBe("true");
+});
+
 describe("sidebar session multiselection", () => {
   it.each(["ctrlKey", "metaKey"] as const)(
     "resets the %s anchor after acting on another session's context menu",
