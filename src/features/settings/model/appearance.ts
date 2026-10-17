@@ -371,10 +371,18 @@ export function saveWorkspaceTheme(value: WorkspaceThemeId) {
   }
 }
 
+/**
+ * The theme on the page. The native tint reads this rather than storage:
+ * Settings applies a theme before saving it, and a stored read would tint
+ * the window with the previous theme until the next apply.
+ */
+let appliedWorkspaceTheme: WorkspaceThemeId = WORKSPACE_THEME_DEFAULT;
+
 /** Sets both schemes' palettes at once; the stylesheet picks one by class, so
  * a scheme flip needs no reapply. Only the inset layout reads them. */
 export function applyWorkspaceTheme(value: WorkspaceThemeId) {
   const next = isWorkspaceThemeId(value) ? value : WORKSPACE_THEME_DEFAULT;
+  appliedWorkspaceTheme = next;
   const root = document.documentElement;
   for (const name of WORKSPACE_THEME_VARIABLE_NAMES)
     root.style.removeProperty(name);
@@ -489,7 +497,7 @@ export function applyThemePreference(value: ThemePreference): ColorScheme {
 /** The page colour, also used by the native macOS glass tint. */
 function opaqueWindowBackground(): Rgb {
   if (insetLayoutActive()) {
-    const theme = workspaceTheme(loadWorkspaceTheme());
+    const theme = workspaceTheme(appliedWorkspaceTheme);
     return hexToRgb((isLightScheme() ? theme.light : theme.dark).surface);
   }
   const style = getComputedStyle(document.documentElement);
