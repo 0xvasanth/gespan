@@ -214,6 +214,7 @@ import { useRailMonosPinned } from "../../features/settings/model/displayPrefs";
 import type { PickerMonos } from "../../features/projects/ui/SearchableProjectPicker";
 import { isHabitRun } from "../../features/monos/model/monoHabits";
 import {
+  MonoRailSection,
   unreadBadge,
   unreadLabel,
   type MonoRailProps,
@@ -917,15 +918,16 @@ function SidebarComponent({
     ? { ...monos, activeId: otherViewActive ? undefined : monos.activeId }
     : undefined;
   // Likewise the session they cover stays current but isn't shown selected.
-  const highlightedSessionId = otherViewActive
-    ? undefined
-    : activeListedSessionId;
+  const highlightedSessionId =
+    otherViewActive || monoViewActive ? undefined : activeListedSessionId;
   // A blank session has no project to browse, so the shell stands alone until
   // one is picked — whether or not the rail is open.
   // The inset sidebar holds the links to search, inbox, notes and
-  // automations, so it stays beside them; only settings take its place.
-  const sidebarAvailable =
-    !(inset ? settingsOpen : otherViewActive) && !monoViewActive && inProject;
+  // automations, and lists the project's Monos, so it stays beside them;
+  // only settings take its place.
+  const sidebarAvailable = inset
+    ? !settingsOpen && inProject
+    : !otherViewActive && !monoViewActive && inProject;
   const sidebarVisible = open && sidebarAvailable;
   // With the sidebar collapsed beside the compact rail, its tab shortcuts
   // open the sidebar temporarily until the user clicks away.
@@ -2461,6 +2463,10 @@ function SidebarComponent({
           }
         >
           {navList}
+          {/* The project's Monos, above its folders. */}
+          {inset && railMonos && inProject ? (
+            <MonoRailSection {...railMonos} project={cwd} />
+          ) : null}
           {!cwd || cwd === "~" ? (
             <p className="px-3 py-2 text-[12px] text-content/50">
               No project folder

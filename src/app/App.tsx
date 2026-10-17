@@ -99,11 +99,18 @@ import { ResourcePressureNotice } from "../features/notifications/ui/ResourcePre
 import { HarnessUpdateNotice } from "../features/providers/ui/HarnessUpdateNotice";
 import { WhatsNewDialog } from "./shell/WhatsNewDialog";
 import { ProviderSignInDialog } from "../features/sessions/ui/ProviderSignInDialog";
-import { TitleBar, type Tab as TitleTab } from "./shell/TitleBar";
+import {
+  MonoViewActions,
+  TitleBar,
+  type Tab as TitleTab,
+} from "./shell/TitleBar";
 import {
   APP_VIEW_LABELS,
   appViewForTab,
   appViewTabId,
+  isViewTab,
+  monoForTab,
+  monoTabId,
   nextDisplayedTabAfterClose,
   reconcileTitleTabOrder,
   type AppView,
@@ -1042,6 +1049,9 @@ function titleTabsEqual(a: TitleTab[], b: TitleTab[]): boolean {
       other != null &&
       tab.id === other.id &&
       tab.appView === other.appView &&
+      tab.mono?.mascot === other.mono?.mascot &&
+      tab.mono?.color === other.mono?.color &&
+      tab.mono?.status === other.mono?.status &&
       tab.project === other.project &&
       tab.title === other.title &&
       tab.sessionCount === other.sessionCount &&
@@ -1283,6 +1293,8 @@ function Workspace({
   const [notesViewOpen, setNotesViewOpen] = useState(false);
   const [automationsViewOpen, setAutomationsViewOpen] = useState(false);
   const [openAppViews, setOpenAppViews] = useState<AppView[]>([]);
+  // Monos open as title tabs in the inset layout, by Mono id.
+  const [openMonoTabs, setOpenMonoTabs] = useState<string[]>([]);
   const [titleTabOrder, setTitleTabOrder] = useState(() =>
     tabs.map((tab) => tab.id),
   );
@@ -1339,15 +1351,6 @@ function Workspace({
     useState<HTMLDivElement | null>(null);
   const insetLayoutRef = useRef(insetLayout);
   insetLayoutRef.current = insetLayout;
-  useLayoutEffect(() => {
-    if (!insetLayout) return;
-    setTitleTabOrder((order) =>
-      reconcileTitleTabOrder(order, [
-        ...tabs.map((tab) => tab.id),
-        ...openAppViews.map(appViewTabId),
-      ]),
-    );
-  }, [insetLayout, tabs, openAppViews]);
   // The inset layout's right panel: Explorer and Changes beside the card.
   const [rightPanelHost, setRightPanelHost] = useState<HTMLDivElement | null>(
     null,
@@ -1429,6 +1432,26 @@ function Workspace({
     () => true,
   );
   const monosSnap = useSyncExternalStore(subscribeMonos, monosSnapshot);
+  // A deleted Mono, or Monos turned off, drop their tabs.
+  const shownMonoTabs = useMemo(
+    () =>
+      insetLayout && monosEnabled
+        ? openMonoTabs.filter((monoId) => findMono(monoId))
+        : [],
+    // The roster is read through its snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [insetLayout, monosEnabled, openMonoTabs, monosSnap],
+  );
+  useLayoutEffect(() => {
+    if (!insetLayout) return;
+    setTitleTabOrder((order) =>
+      reconcileTitleTabOrder(order, [
+        ...tabs.map((tab) => tab.id),
+        ...openAppViews.map(appViewTabId),
+        ...shownMonoTabs.map(monoTabId),
+      ]),
+    );
+  }, [insetLayout, tabs, openAppViews, shownMonoTabs]);
   /** A Mono hides the terminal, so reaching for one leaves it. */
   const leaveCoveringMono = useCallback(() => {
     if (monoViewIdRef.current) closeMonoView();
@@ -1988,6 +2011,13 @@ function Workspace({
     ? sessions.find((session) => session.id === monoViewId)
     : undefined;
   const monoCovers = !!monoViewId;
+  // The open Mono's title tab, in the inset layout.
+  const monoViewTabId = useMemo(() => {
+    const monoId = monoViewId ? monoForSession(monoViewId)?.id : undefined;
+    return monoId ? monoTabId(monoId) : undefined;
+    // The roster is read through its snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monoViewId, monosSnap]);
   const activeTabSessionIds = activeTab ? leafIds(activeTab.layout) : [];
   const activeLinkedWorkItemPanel = activeTab
     ? (linkedWorkItemPanels.get(activeTab.focusedId) ??
@@ -2177,36 +2207,40 @@ function Workspace({
     void refreshHarnessCatalogs([activeHarness]);
   }, [activeHarness]);
 
+  // The footer's usage follows what is in view: under the inset layout a
+  // Mono's tab keeps the footer, which then reads the Mono's model.
+  const usageSource =
+    insetLayout && monoViewSession ? monoViewSession : active;
   const usageProviders = useMemo(() => {
     if (
-      active?.harness === "claude" ||
-      active?.harness === "codex" ||
-      active?.harness === "opencode" ||
-      active?.harness === "devin"
+      usageSource?.harness === "claude" ||
+      usageSource?.harness === "codex" ||
+      usageSource?.harness === "opencode" ||
+      usageSource?.harness === "devin"
     ) {
-      return [active.harness];
+      return [usageSource.harness];
     }
     return [];
-  }, [active?.harness]);
+  }, [usageSource?.harness]);
   const usageSession = useMemo(() => {
-    if (!active) return undefined;
+    if (!usageSource) return undefined;
     return {
-      id: active.id,
-      harness: active.harness,
-      model: active.model,
-      authRequired: latestTurnNeedsHarnessLogin(active.blocks),
+      id: usageSource.id,
+      harness: usageSource.harness,
+      model: usageSource.model,
+      authRequired: latestTurnNeedsHarnessLogin(usageSource.blocks),
       providerAccountId:
-        active.providerAccountId ??
-        (active.blocks.some((block) => block.role === "user")
+        usageSource.providerAccountId ??
+        (usageSource.blocks.some((block) => block.role === "user")
           ? DEFAULT_PROVIDER_ACCOUNT_ID
           : undefined),
     };
   }, [
-    active?.id,
-    active?.harness,
-    active?.model,
-    active?.blocks,
-    active?.providerAccountId,
+    usageSource?.id,
+    usageSource?.harness,
+    usageSource?.model,
+    usageSource?.blocks,
+    usageSource?.providerAccountId,
   ]);
   const activeProviderSignInRequest = useMemo(() => {
     if (
@@ -4988,6 +5022,11 @@ function Workspace({
       monoViewIdRef.current = session.id;
       saveOpenMono(monoId);
       setMonoViewId(session.id);
+      if (insetLayoutRef.current) {
+        setOpenMonoTabs((current) =>
+          current.includes(monoId) ? current : [...current, monoId],
+        );
+      }
       setProjectTerminalFocused(false);
       setComposerFocused(true);
       setComposerFocusToken((token) => token + 1);
@@ -5022,8 +5061,8 @@ function Workspace({
   }, [closeMonoView, monosEnabled, onOpenMono]);
 
   /** A new Mono opens straight away, ready to be told what it works on. */
-  const onCreateMono = useCallback(() => {
-    const monoId = createMono().id;
+  const onCreateMono = useCallback((projects?: readonly string[]) => {
+    const monoId = createMono(projects).id;
     setMonoSettingsFor(monoId);
     void onOpenMono(monoId);
   }, [onOpenMono]);
@@ -11627,6 +11666,31 @@ function Workspace({
               files: [],
             }))
         : []),
+      ...shownMonoTabs.flatMap((monoId): TitleTab[] => {
+        const mono = findMono(monoId);
+        if (!mono) return [];
+        const look = monoLook(mono);
+        const session = mono.sessionId
+          ? sessions.find((entry) => entry.id === mono.sessionId)
+          : undefined;
+        return [
+          {
+            id: monoTabId(monoId),
+            mono: {
+              mascot: look.mascot,
+              color: look.color,
+              status: session ? monoState(session).status : "idle",
+            },
+            project: "",
+            title: look.name,
+            more: [],
+            sessionCount: 0,
+            harnesses: [],
+            busyHarnesses: [],
+            files: [],
+          },
+        ];
+      }),
     ],
     insetLayout ? titleTabOrder : [],
   );
@@ -12256,6 +12320,11 @@ function Workspace({
 
   const onSelectTitleTab = useCallback(
     (id: string) => {
+      const monoId = monoForTab(id);
+      if (monoId) {
+        void onOpenMono(monoId);
+        return;
+      }
       const view = appViewForTab(id);
       if (view) {
         const open = {
@@ -12274,14 +12343,22 @@ function Workspace({
       setAutomationsViewOpen(false);
       activateTab(id);
     },
-    [activateTab, onOpenSearch, onOpenInbox, onOpenNotes, onOpenAutomations],
+    [
+      activateTab,
+      onOpenMono,
+      onOpenSearch,
+      onOpenInbox,
+      onOpenNotes,
+      onOpenAutomations,
+    ],
   );
 
   displayedTabNavigation.current = {
     tabs: insetLayout ? titleTabs : [],
-    activeId:
-      settingsOpen || monoCovers
-        ? ""
+    activeId: settingsOpen
+      ? ""
+      : monoCovers
+        ? (monoViewTabId ?? "")
         : activeAppView
           ? appViewTabId(activeAppView)
           : activeTabId,
@@ -12309,36 +12386,63 @@ function Workspace({
       if (nextId) navigation.select?.(nextId);
     });
   }, []);
+  /** Closing a Mono's tab puts its view away when it is the one shown. */
+  const onCloseMonoTab = useCallback(
+    (monoId: string, selectNeighbor = true) => {
+      const navigation = displayedTabNavigation.current;
+      const id = monoTabId(monoId);
+      const showing = navigation.activeId === id;
+      const nextId =
+        selectNeighbor && showing
+          ? nextDisplayedTabAfterClose(navigation.tabs, navigation.activeId, id)
+          : undefined;
+      startTransition(() => {
+        setOpenMonoTabs((current) =>
+          current.filter((entry) => entry !== monoId),
+        );
+        setTitleTabOrder((current) => current.filter((entry) => entry !== id));
+        if (nextId) navigation.select?.(nextId);
+        else if (showing) closeMonoView();
+      });
+    },
+    [closeMonoView],
+  );
+  const closeViewTab = useCallback(
+    (id: string, selectNeighbor?: boolean) => {
+      const view = appViewForTab(id);
+      if (view) onCloseAppView(view, selectNeighbor);
+      const monoId = monoForTab(id);
+      if (monoId) onCloseMonoTab(monoId, selectNeighbor);
+    },
+    [onCloseAppView, onCloseMonoTab],
+  );
   const onCloseDisplayedTab = useCallback(
     (id: string) => {
-      const view = appViewForTab(id);
-      if (view) onCloseAppView(view);
+      if (isViewTab(id)) closeViewTab(id);
       else onCloseTitleTab(id);
     },
-    [onCloseAppView, onCloseTitleTab],
+    [closeViewTab, onCloseTitleTab],
   );
   const onCloseDisplayedTabs = useCallback(
     (ids: string[], fallbackId: string) => {
       for (const id of ids) {
-        const view = appViewForTab(id);
-        if (view) onCloseAppView(view, false);
+        if (isViewTab(id)) closeViewTab(id, false);
       }
       onCloseTabs(
-        ids.filter((id) => !appViewForTab(id)),
+        ids.filter((id) => !isViewTab(id)),
         fallbackId,
       );
     },
-    [onCloseAppView, onCloseTabs],
+    [closeViewTab, onCloseTabs],
   );
   const onCloseAllDisplayedTabs = useCallback(
     (ids: readonly string[]) => {
       for (const id of ids) {
-        const view = appViewForTab(id);
-        if (view) onCloseAppView(view, false);
+        if (isViewTab(id)) closeViewTab(id, false);
       }
-      onCloseEveryTab(ids.filter((id) => !appViewForTab(id)));
+      onCloseEveryTab(ids.filter((id) => !isViewTab(id)));
     },
-    [onCloseAppView, onCloseEveryTab],
+    [closeViewTab, onCloseEveryTab],
   );
   const onReorderDisplayedTabs = useCallback(
     (ids: string[], movedId?: string) => {
@@ -12349,23 +12453,37 @@ function Workspace({
         ).map((tab) => tab.id),
       );
       onReorderTabs(
-        ids.filter((id) => !appViewForTab(id)),
-        appViewForTab(movedId ?? "") ? undefined : movedId,
+        ids.filter((id) => !isViewTab(id)),
+        isViewTab(movedId ?? "") ? undefined : movedId,
       );
     },
     [onReorderTabs],
   );
   const onCloseVisibleTab = useCallback(() => {
-    if (insetLayout && activeAppView) onCloseAppView(activeAppView);
+    if (insetLayout && monoCovers && monoViewTabId) closeViewTab(monoViewTabId);
+    else if (insetLayout && activeAppView) onCloseAppView(activeAppView);
     else onCloseFocused();
-  }, [insetLayout, activeAppView, onCloseAppView, onCloseFocused]);
+  }, [
+    insetLayout,
+    monoCovers,
+    monoViewTabId,
+    activeAppView,
+    closeViewTab,
+    onCloseAppView,
+    onCloseFocused,
+  ]);
   const onCycleVisibleTab = useCallback(
     (delta: number) => {
-      if (!insetLayout || monoViewIdRef.current) {
+      if (!insetLayout) {
         (delta > 0 ? onNext : onPrev)();
         return;
       }
-      const current = activeAppView ? appViewTabId(activeAppView) : activeTabId;
+      const current =
+        monoCovers && monoViewTabId
+          ? monoViewTabId
+          : activeAppView
+            ? appViewTabId(activeAppView)
+            : activeTabId;
       const index = titleTabs.findIndex((tab) => tab.id === current);
       const next =
         titleTabs[(index + delta + titleTabs.length) % titleTabs.length];
@@ -12373,6 +12491,8 @@ function Workspace({
     },
     [
       insetLayout,
+      monoCovers,
+      monoViewTabId,
       activeAppView,
       activeTabId,
       titleTabs,
@@ -13330,10 +13450,20 @@ function Workspace({
     gitCwd || sidebarCwd,
     showRightPanelToggle && isLocalProject(sidebarCwd),
   );
+  const onToggleMonoOverview = () => setMonoOverviewOpen(!monoOverviewOpen);
+  const onOpenMonoViewSettings = monoViewMono
+    ? () => setMonoSettingsFor(monoViewMono.id)
+    : undefined;
+  // A new session takes over from a Mono in view.
+  const onNewFromTitleBar = () => {
+    if (monoViewIdRef.current) closeMonoView();
+    onNew();
+  };
   const workspaceTitleBar = (
     <TitleBar
-      // A Mono in full view stands apart from the project's tabs.
-      tabs={monoCovers ? NO_TITLE_TABS : titleTabs}
+      // A Mono in full view stands apart from the project's tabs, except
+      // in the inset layout, where it is one of them.
+      tabs={monoCovers && !insetLayout ? NO_TITLE_TABS : titleTabs}
       content={
         insetLayout && settingsOpen ? (
           <div
@@ -13348,19 +13478,20 @@ function Workspace({
           ? { look: monoLook(monoViewMono), state: monoState(monoViewSession) }
           : undefined
       }
+      // The inset layout keeps these in the Mono's pane, under its tab.
       onToggleMonoOverview={
-        monoCovers ? () => setMonoOverviewOpen(!monoOverviewOpen) : undefined
+        monoCovers && !insetLayout ? onToggleMonoOverview : undefined
       }
       monoOverviewOpen={monoOverviewOpen}
       onOpenMonoSettings={
-        monoCovers && monoViewMono
-          ? () => setMonoSettingsFor(monoViewMono.id)
-          : undefined
+        monoCovers && !insetLayout ? onOpenMonoViewSettings : undefined
       }
       hideWindowControls={monoCovers && monoOverviewOpen && !!monoOverviewPanel}
       activeId={
         monoViewSession
-          ? ""
+          ? insetLayout
+            ? (monoViewTabId ?? "")
+            : ""
           : insetLayout && activeAppView
             ? appViewTabId(activeAppView)
             : activeTabId
@@ -13384,8 +13515,8 @@ function Workspace({
       onSelect={onSelectTitleTab}
       onNewTerminal={onNewTerminal}
       onNewSession={
-        insetLayout && !settingsOpen && !monoCovers && looksLikeProject(sidebarCwd)
-          ? onNew
+        insetLayout && !settingsOpen && looksLikeProject(sidebarCwd)
+          ? onNewFromTitleBar
           : undefined
       }
       onOpenSettings={onOpenSettings}
@@ -13530,12 +13661,13 @@ function Workspace({
   );
 
   const usageFooter =
-    (chromeSurfaceOpen && !(insetLayout && activeAppView)) || monoCovers ? null : (
+    (chromeSurfaceOpen && !(insetLayout && activeAppView)) ||
+    (monoCovers && !insetLayout) ? null : (
       <UsageFooter
         pressureSlot={setPressureChipHost}
         providers={usageProviders}
         session={usageSession}
-        project={active?.cwd ?? projectCwd}
+        project={usageSource?.cwd ?? projectCwd}
         onSelectAccount={onSelectProviderAccount}
         onManageAccounts={() => openSettings("providers", "provider-accounts")}
         // A Mono in full view has no terminal of its own.
@@ -13816,6 +13948,21 @@ function Workspace({
                                             : "hidden"
                                         }
                                       >
+                                        {insetLayout &&
+                                        visible &&
+                                        monoViewMono ? (
+                                          <MonoViewActions
+                                            name={monoLook(monoViewMono).name}
+                                            overviewOpen={monoOverviewOpen}
+                                            onToggleOverview={
+                                              onToggleMonoOverview
+                                            }
+                                            onOpenSettings={
+                                              onOpenMonoViewSettings
+                                            }
+                                            className="absolute right-2.5 top-2.5 z-10"
+                                          />
+                                        ) : null}
                                         <SessionPane
                                           {...sessionPaneProps}
                                           session={session}
@@ -13852,6 +13999,9 @@ function Workspace({
                                               : undefined
                                           }
                                           openMonoSessionId={shownMonoSessionId}
+                                          // The inset footer stays under a
+                                          // Mono and shows its usage.
+                                          monoComposerUsage={!insetLayout}
                                         />
                                       </div>
                                     );
