@@ -1,4 +1,5 @@
 import { Profiler } from "react";
+import { captureReaderAnchor, readerAnchorTop } from "./readerAnchor";
 import { createRoot } from "react-dom/client";
 import {
   newSession,
@@ -147,6 +148,7 @@ const fixtureInvoke = async (
     return;
   if (command === "session_checkpoint_status") return { files: [] };
   if (command === "plugin:window|set_title") return;
+  if (command === "set_window_background_blur") return;
   if (
     nativeInvoke &&
     [
@@ -460,6 +462,8 @@ Object.assign(window, {
   workspaceResetMetrics: resetMetrics,
   workspaceMetrics: metrics,
   workspaceHasStore: () => !!store,
+  captureReaderAnchor,
+  readerAnchorTop,
 });
 if (nativeInvoke) {
   // Native automation can finish a run before inspecting its accessibility

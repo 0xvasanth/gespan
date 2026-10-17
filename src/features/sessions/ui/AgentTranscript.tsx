@@ -21,6 +21,7 @@ import {
   memo,
   startTransition,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -36,7 +37,7 @@ import { GeneratedImage } from "./GeneratedImage";
 import { MonocodeSparkles } from "./MonocodeSparkles";
 import { OrchestratorConstellation } from "./OrchestratorConstellation";
 import { PlanStepsBurst } from "./PlanStepsBurst";
-import { settleWordFades } from "./wordFade";
+import { settleCatchUpFades } from "./wordFade";
 import { revealMeasuredTurn, useMeasuredHistory } from "./useMeasuredHistory";
 import {
   ownStepBlock,
@@ -188,6 +189,8 @@ const STEP_ENTRANCE_MS = 480;
 const STEP_ENTRANCE_MIN_MS = 160;
 const STEP_QUEUE_CALM_MS = 960;
 const STEP_QUEUE_MS = 2000;
+/** How long after its tab returns a group's arriving steps count as history. */
+const STEP_CATCH_UP_MS = 400;
 const INITIAL_TURNS = 20;
 /**
  * Turns built before a transcript first paints. Every turn in the initial
@@ -367,6 +370,7 @@ function AgentTranscriptComponent({
   const showJumpRef = useRef(false);
   const distanceFromBottom = useRef(0);
   const lastScrollTop = useRef(0);
+  const scrollAdjustments = useRef<number | undefined>(undefined);
   const pointerScrolling = useRef(false);
   const wheelHold = useRef(0);
   const prependHeight = useRef<number | null>(null);
@@ -485,6 +489,7 @@ function AgentTranscriptComponent({
   );
 
   const rememberScroll = useCallback((el: HTMLElement) => {
+    scrollAdjustments.current = el.scrollTop;
     lastScrollTop.current = el.scrollTop;
     distanceFromBottom.current =
       el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -669,21 +674,45 @@ function AgentTranscriptComponent({
 
   // In the chat layout a sent prompt rises from the upper screen into its
   // anchored spot at the top. On mount this only plays for a session's first
-  // send.
+  // send, and only just after it: a transcript remounted mid-reply (its tab
+  // was evicted from the pool) must not replay it and hide the turn again.
+  // Nor does a prompt sent while the tab was hidden: a hidden transcript does
+  // not render, so it only reaches here as the tab comes back.
   const introducePrompt = useRef({ chat: false, anchor: false, visible });
   introducePrompt.current = {
     chat: transcriptLayout === "chat",
     anchor: promptAnchor && anchorTurn,
     visible,
   };
-  const introducedPromptMount = useRef(false);
+  // The prompt this has already handled, so the effect running again for the
+  // same one (StrictMode replays effects of a component it places) neither
+  // replays the motion nor cuts it short. Undefined until the first run.
+  const introducedPrompt = useRef<{ id?: string; cancel?: () => void }>(
+    undefined,
+  );
   useLayoutEffect(() => {
-    const mounting = !introducedPromptMount.current;
-    introducedPromptMount.current = true;
+    const previous = introducedPrompt.current;
+    if (previous && previous.id === lastUserId) return;
+    const mounting = !previous;
+    previous?.cancel?.();
+    introducedPrompt.current = { id: lastUserId };
     const { chat, anchor, visible } = introducePrompt.current;
     if (!lastUserId || !chat || !anchor || !visible) return;
-    if (mounting && !(busy && userTurnCount(blocks, managed) === 1)) return;
-    return riseIntoAnchor(scroller.current, lastUserId);
+    // Runs before the effect below records this render's visibility.
+    if (!mounting && !wasVisible.current) return;
+    if (
+      mounting &&
+      !(
+        busy &&
+        userTurnCount(blocks, managed) === 1 &&
+        justSent(blocks.find((block) => block.id === lastUserId))
+      )
+    )
+      return;
+    introducedPrompt.current.cancel = riseIntoAnchor(
+      scroller.current,
+      lastUserId,
+    );
     // Only a new prompt starts the motion; later renders must not replay it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastUserId]);
@@ -694,7 +723,7 @@ function AgentTranscriptComponent({
     if (!opened) return;
     const el = scroller.current;
     if (!el) return;
-    settleWordFades(el);
+    const stopSettling = settleCatchUpFades(el);
     syncTranscriptViewport(el);
     const restore = restoreScroll.current;
     restoreScroll.current = false;
@@ -715,6 +744,7 @@ function AgentTranscriptComponent({
       );
       rememberScroll(el);
     }
+    return stopSettling;
   }, [visible, pinTranscript, rememberScroll, setShowJump]);
 
   useLayoutEffect(() => {
@@ -744,7 +774,13 @@ function AgentTranscriptComponent({
   }, [bottomAligned, scrollerEl, followTranscript, setShowJump, visible]);
 
   useTurnScrollAnchor(scrollerEl, visible, stickToBottom, rememberScroll);
-  useReplyReflowAnchor(scrollerEl, visible, stickToBottom, rememberScroll);
+  useReplyReflowAnchor(
+    scrollerEl,
+    visible,
+    stickToBottom,
+    rememberScroll,
+    scrollAdjustments,
+  );
 
   const [turnCache] = useState(() => new TranscriptTurnCache());
   const undeliveredMessageIds = useMemo(
@@ -1077,6 +1113,7 @@ function AgentTranscriptComponent({
     bottomAligned,
     wheelHold,
     bottomAligned,
+    rememberScroll,
   );
 
   return (
@@ -1387,7 +1424,6 @@ function AgentTranscriptComponent({
                   blocks={item.blocks}
                   cwd={cwd}
                   done={
-                    !visible ||
                     settled ||
                     itemIndex < foldedAt ||
                     (answering && !workStillRunning)
@@ -2909,17 +2945,24 @@ function TurnRow({
   const [foldState, setFoldState] = useState<
     "open" | "opening" | "closing" | "closed"
   >(folded ? "closed" : "open");
+  // A fold that changes as the tab hides or comes back jumps to where it is
+  // going: nobody watched the change, and opening one on return would push
+  // the whole reply below it down the screen.
+  const visible = useContext(TranscriptVisibility);
+  const wasVisible = useRef(visible);
 
   useLayoutEffect(() => {
+    const animate = visible && wasVisible.current;
+    wasVisible.current = visible;
     setFoldState((current) => {
       if (folded) {
-        return current === "closed" || current === "closing"
-          ? current
-          : "closing";
+        if (current === "closed") return current;
+        return animate ? "closing" : "closed";
       }
-      return current === "open" || current === "opening" ? current : "opening";
+      if (current === "open") return current;
+      return animate ? "opening" : "open";
     });
-  }, [folded]);
+  }, [folded, visible]);
 
   useEffect(() => {
     if (foldState !== "opening" && foldState !== "closing") return;
@@ -3631,9 +3674,26 @@ function ActivityPhaseGroup({
   const waiting = phase.steps.some(needsApproval);
   const open = waiting || (override ?? active);
   const [liveScroller, setLiveScroller] = useState<HTMLDivElement | null>(null);
-  useLivePhaseScroll(liveScroller, active && open, phase.steps);
-  // Steps already here when the group mounted, or that landed while it was
-  // folded, are history: only a step you watch arrive gets the entrance.
+  // A hidden tab stays as it was, open and live, so coming back neither
+  // unfolds the group again nor plays in the steps that ran meanwhile. Those
+  // land a render or two after the tab shows, once the app delivers what it
+  // held back, so the return is a short window rather than one render. The
+  // detached window lost its offset, so it pins again on return.
+  const visible = useContext(TranscriptVisibility);
+  const wasVisible = useRef(visible);
+  const returnedAt = useRef(-Infinity);
+  const returning =
+    !visible ||
+    !wasVisible.current ||
+    performance.now() - returnedAt.current < STEP_CATCH_UP_MS;
+  useLayoutEffect(() => {
+    if (visible && !wasVisible.current) returnedAt.current = performance.now();
+    wasVisible.current = visible;
+  }, [visible]);
+  useLivePhaseScroll(liveScroller, active && open && visible, phase.steps);
+  // Steps already here when the group mounted, that landed while it was
+  // folded, or while its tab was hidden, are history: only a step you watch
+  // arrive gets the entrance.
   const settled = useRef<Set<Block["id"]> | null>(null);
   settled.current ??= new Set(phase.steps.map((step) => step.id));
   useEffect(() => {
@@ -3750,7 +3810,8 @@ function ActivityPhaseGroup({
                 </div>
               ) : null}
               {phase.steps.map((block) => {
-                const arriving = active && !settled.current?.has(block.id);
+                const arriving =
+                  active && !returning && !settled.current?.has(block.id);
                 return (
                   <PhaseStep
                     key={block.id}
@@ -3834,6 +3895,14 @@ function PhaseStep({
     const timer = window.setTimeout(() => setStage("entering"), turn.wait);
     return () => window.clearTimeout(timer);
   }, [stage, turn]);
+
+  // A hidden tab's animations stop where they are and start over when it
+  // shows again, so an entrance cut short by leaving would play again on
+  // return. Leaving finishes it instead.
+  const visible = useContext(TranscriptVisibility);
+  useLayoutEffect(() => {
+    if (!visible && stage !== "settled") setStage("settled");
+  }, [visible, stage]);
 
   return (
     <div
@@ -5268,6 +5337,13 @@ function userTurnCount(blocks: Block[], managed = false): number {
   ).length;
 }
 
+/** Whether `block` is a prompt sent so recently that its rise has not played. */
+function justSent(block: Block | undefined): boolean {
+  const at = block?.sentAt ?? block?.startedAt;
+  return at != null && Date.now() - at < PROMPT_JUST_SENT_MS;
+}
+
+const PROMPT_JUST_SENT_MS = 1500;
 const PROMPT_RISE_MS = 560;
 // Keep in sync with the prompt-turn-reveal animation in index.css.
 const PROMPT_REVEAL_MS = 320;

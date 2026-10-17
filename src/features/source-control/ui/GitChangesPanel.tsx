@@ -126,6 +126,12 @@ export function GitChangesPanel({
   onOpenCommit,
 }: Props) {
   const { index, reload } = useDiffIndex(cwd, enabled);
+  useEffect(() => {
+    if (!enabled) return;
+    // Opening Changes signals an upcoming review. Warm its optional surface
+    // while the file list loads, so the first file opens during streaming too.
+    void import("./WorkingTreeDiff").catch(() => {});
+  }, [enabled]);
   const files = index?.files ?? [];
   const paneRef = useRef<HTMLDivElement>(null);
   const branchMenuRef = useRef<HTMLButtonElement>(null);

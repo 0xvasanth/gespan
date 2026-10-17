@@ -20,24 +20,28 @@ let container: HTMLDivElement;
 let root: Root;
 let animate: ReturnType<typeof vi.fn>;
 
-const first: Block[] = [{ id: "u1", role: "user", text: "Hello" }];
-const second: Block[] = [
-  ...first,
-  { id: "a1", role: "assistant", text: "Hi" },
-  { id: "u2", role: "user", text: "Next" },
-];
+let first: Block[];
+let second: Block[];
 
-async function render(blocks: Block[], busy = true) {
+function sendFirst(startedAt = Date.now()) {
+  first = [{ id: "u1", role: "user", text: "Hello", startedAt }];
+  second = [
+    ...first,
+    { id: "a1", role: "assistant", text: "Hi" },
+    { id: "u2", role: "user", text: "Next" },
+  ];
+}
+
+async function render(blocks: Block[], busy = true, visible = true) {
   await act(async () => {
-    root.render(
-      createElement(AgentTranscript, { blocks, busy, visible: true }),
-    );
+    root.render(createElement(AgentTranscript, { blocks, busy, visible }));
   });
 }
 
 beforeEach(() => {
   appearance.layout = "chat";
   appearance.anchor = true;
+  sendFirst();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal(
     "ResizeObserver",
@@ -114,6 +118,22 @@ describe("prompt rise in the chat layout", () => {
   });
 
   it("does not replay an existing conversation on mount", async () => {
+    await render(second);
+
+    expect(animate).not.toHaveBeenCalled();
+  });
+
+  it("does not replay a first prompt sent a while ago when remounted mid-reply", async () => {
+    sendFirst(Date.now() - 60_000);
+    await render(first);
+
+    expect(animate).not.toHaveBeenCalled();
+  });
+
+  it("does not rise a prompt sent while the tab was hidden when it returns", async () => {
+    await render(first, false);
+    await render(first, false, false);
+    await render(second, true, false);
     await render(second);
 
     expect(animate).not.toHaveBeenCalled();
