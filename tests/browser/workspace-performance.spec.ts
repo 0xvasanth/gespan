@@ -209,7 +209,19 @@ test("preserves following and a reader's position through real file-pane resizin
     )
     .toBeGreaterThan(500);
   const distance = () =>
-    scroller.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
+    scroller.evaluate(
+      (el) =>
+        new Promise<number>((resolve) => {
+          // A synchronous layout read can see newly streamed text before the
+          // transcript's resize observers pin it for the next paint. Register
+          // after them so this measures the position the browser will paint.
+          const observer = new ResizeObserver(() => {
+            observer.disconnect();
+            resolve(el.scrollHeight - el.clientHeight - el.scrollTop);
+          });
+          observer.observe(el.querySelector("[data-transcript-content]")!);
+        }),
+    );
   await expect.poll(distance).toBeLessThanOrEqual(2);
   await page.keyboard.press("Meta+p");
   await page

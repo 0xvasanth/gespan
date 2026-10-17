@@ -2,8 +2,6 @@ import { useLayoutEffect, useRef, type RefObject } from "react";
 
 type Anchor = {
   message: HTMLElement;
-  node: Text;
-  offset: number;
   character: number;
   top: number;
 };
@@ -23,7 +21,11 @@ export function useReplyReflowAnchor(
     let width = scroller.clientWidth;
     let anchor = following.current ? undefined : retained.current;
     let frame = 0;
-    let adjustedTop: number | undefined;
+    // The activation effect restores the cached native offset before this
+    // hook runs. Its queued scroll event must not replace the retained glyph
+    // before the first resize delivery can restore that glyph's position.
+    let adjustedTop: number | undefined = scroller.scrollTop;
+    let measuredTop = scroller.scrollTop;
     let manualUntil = 0;
     let draggingScroll = false;
     const capture = () => {
@@ -57,11 +59,10 @@ export function useReplyReflowAnchor(
           prefix.setEnd(node, offset);
           anchor = {
             message,
-            node,
-            offset,
             character: prefix.toString().length,
             top: range.getBoundingClientRect().top - viewport.top,
           };
+          measuredTop = scroller.scrollTop;
           return;
         }
       }
@@ -127,31 +128,31 @@ export function useReplyReflowAnchor(
         manualUntil = 0;
         if (frame) cancelAnimationFrame(frame);
         frame = 0;
-      } else if (draggingScroll || performance.now() < manualUntil) {
+      } else if (
+        (draggingScroll || performance.now() < manualUntil) &&
+        Math.abs(scroller.scrollTop - measuredTop) > 0.5
+      ) {
+        // Only an offset change belongs to the gesture. Streaming can reflow
+        // after the reader stops, while the input's quiet window is still open.
         capture();
         width = next;
         return;
       }
       if (!following.current && anchor?.message.isConnected) {
-        let { node, offset } = anchor;
-        if (!node.isConnected || offset >= node.length) {
-          // Markdown can replace a text node while retaining the same text.
-          let remaining = anchor.character;
-          const walker = document.createTreeWalker(
-            anchor.message,
-            NodeFilter.SHOW_TEXT,
-          );
-          let found: Text | null;
-          while ((found = walker.nextNode() as Text | null)) {
-            if (remaining < found.length) {
-              node = found;
-              offset = remaining;
-              break;
-            }
-            remaining -= found.length;
-          }
+        // Markdown can merge text into a surviving node during word-fade
+        // cleanup. Resolve the saved character even if that node stayed
+        // connected: its former offset may now point at different text.
+        let offset = anchor.character;
+        const walker = document.createTreeWalker(
+          anchor.message,
+          NodeFilter.SHOW_TEXT,
+        );
+        let node: Text | null;
+        while ((node = walker.nextNode() as Text | null)) {
+          if (offset < node.length) break;
+          offset -= node.length;
         }
-        if (node.isConnected && offset < node.length) {
+        if (node && offset < node.length) {
           const range = document.createRange();
           range.setStart(node, offset);
           range.setEnd(node, offset + 1);
@@ -167,6 +168,7 @@ export function useReplyReflowAnchor(
         }
       }
       width = next;
+      measuredTop = scroller.scrollTop;
       // Other transcript observers can also adjust the offset in this resize
       // delivery. Their queued scroll event must preserve the same character
       // through subsequent reflows, even when our own shift was zero.

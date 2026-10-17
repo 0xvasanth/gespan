@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { useReplyReflowAnchor } from "./useReplyReflowAnchor";
 
-it("keeps the reader anchored through paragraph gaps and a long wheel gesture", () => {
+it("keeps the reader's character through scrolling, reflow, and cached tab return", () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -31,10 +31,19 @@ it("keeps the reader anchored through paragraph gaps and a long wheel gesture", 
   const text = scroller.querySelector("[data-chat-message-role]")!.firstChild!;
   let width = 200;
   let glyphTop = 48;
+  let merged = false;
+  let caretOffset = 3;
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
   vi.spyOn(Range.prototype, "getBoundingClientRect").mockImplementation(
-    () => ({ top: glyphTop - scroller.scrollTop }) as DOMRect,
+    function (this: Range) {
+      return {
+        top:
+          glyphTop -
+          scroller.scrollTop +
+          (merged && this.startOffset === 3 ? 250 : 0),
+      } as DOMRect;
+    },
   );
   Object.defineProperty(scroller, "clientWidth", { get: () => width });
   scroller.getBoundingClientRect = () =>
@@ -49,16 +58,16 @@ it("keeps the reader anchored through paragraph gaps and a long wheel gesture", 
       const range = document.createRange();
       if (y === 32) range.selectNodeContents(scroller);
       else {
-        range.setStart(text, 3);
-        range.setEnd(text, 4);
+        range.setStart(text, caretOffset);
+        range.setEnd(text, caretOffset + 1);
       }
       return range;
     },
   });
   const remember = vi.fn();
   const following = { current: false };
-  function Probe() {
-    useReplyReflowAnchor(scroller, true, following, remember);
+  function Probe({ visible = true }: { visible?: boolean }) {
+    useReplyReflowAnchor(scroller, visible, following, remember);
     return null;
   }
   const root = createRoot(host);
@@ -74,7 +83,11 @@ it("keeps the reader anchored through paragraph gaps and a long wheel gesture", 
     // Momentum continues after the original wheel event's quiet period.
     // Each scroll must update the reader's glyph until the gesture settles.
     scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: 40 }));
-    for (const [time, movement] of [[0, 20], [150, 30], [250, 40]]) {
+    for (const [time, movement] of [
+      [0, 20],
+      [150, 30],
+      [250, 40],
+    ]) {
       now = time;
       scroller.scrollTop = 100 + movement;
       scroller.dispatchEvent(new Event("scroll"));
@@ -104,6 +117,48 @@ it("keeps the reader anchored through paragraph gaps and a long wheel gesture", 
     glyphTop = 348;
     act(() => resize([], {} as ResizeObserver));
     expect(scroller.scrollTop).toBe(380);
+
+    // Streamed layout can change just after scrolling stops. Recent input
+    // alone must not discard the bookmark while the offset is stationary.
+    now = 2000;
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -40 }));
+    act(() => {
+      while (frames.length) frames.shift()!(now);
+    });
+    glyphTop = 388;
+    act(() => resize([], {} as ResizeObserver));
+    expect(scroller.scrollTop).toBe(420);
+
+    // Reattaching a cached transcript restores a native offset before the
+    // resize observer restores the reader's glyph. Ignore that queued event.
+    merged = false;
+    caretOffset = 11;
+    act(() => root.render(createElement(Probe, { visible: false })));
+    scroller.scrollTop = 460;
+    act(() => root.render(createElement(Probe)));
+    scroller.dispatchEvent(new Event("scroll"));
+    act(() => {
+      while (frames.length) frames.shift()!(now);
+    });
+    act(() => resize([], {} as ResizeObserver));
+    expect(scroller.scrollTop).toBe(420);
+
+    // Word-fade cleanup can merge text into a surviving node. That node's old
+    // offset now names a different glyph even though it is still connected.
+    caretOffset = 3;
+    const prefix = document.createTextNode("Earlier ");
+    text.parentNode!.insertBefore(prefix, text);
+    now = 3000;
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -40 }));
+    act(() => {
+      while (frames.length) frames.shift()!(now);
+    });
+    prefix.remove();
+    text.textContent = "Earlier A visible reply";
+    merged = true;
+    now = 3250;
+    act(() => resize([], {} as ResizeObserver));
+    expect(scroller.scrollTop).toBe(420);
   } finally {
     act(() => root.unmount());
     host.remove();
