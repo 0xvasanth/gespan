@@ -36,6 +36,27 @@ test("opts in from the invitation and switches back without changing glass", asy
   await expect(page.locator(".inset-shell")).toBeVisible();
   await expect(notice).toHaveCount(0);
   await openAppearance(page);
+  const resizer = page.getByRole("separator", {
+    name: "Resize project sidebar",
+    exact: true,
+  });
+  await resizer.hover();
+  await expect(resizer).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(resizer).toHaveCSS("cursor", "col-resize");
+  const width = Number(await resizer.getAttribute("aria-valuenow"));
+  const edge = await resizer.boundingBox();
+  await page.mouse.move(edge!.x + edge!.width / 2, edge!.y + 100);
+  await page.mouse.down();
+  await expect(resizer).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page.mouse.move(edge!.x + edge!.width / 2 + 40, edge!.y + 100, {
+    steps: 4,
+  });
+  await expect(resizer).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page.mouse.up();
+  await expect
+    .poll(async () => Number(await resizer.getAttribute("aria-valuenow")))
+    .toBeGreaterThan(width);
+  await expect(resizer).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(
     page.getByRole("switch", { name: "Transparent window", exact: true }),
   ).not.toBeChecked();
@@ -44,6 +65,8 @@ test("opts in from the invitation and switches back without changing glass", asy
   await layout.click();
   await expect(layout).not.toBeChecked();
   await expect(page.locator(".inset-shell")).toHaveCount(0);
+  await resizer.hover();
+  await expect(resizer).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   expect(
     await page.evaluate(() => localStorage.getItem("monocode.insetGlass")),
   ).toBe("0");
