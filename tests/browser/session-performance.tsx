@@ -1,3 +1,4 @@
+import { captureReaderAnchor, readerAnchorTop } from "./readerAnchor";
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AgentTranscript } from "../../src/features/sessions/ui/AgentTranscript";
@@ -89,6 +90,8 @@ function Fixture() {
   const [busy, setBusy] = useState(true);
   useEffect(() => {
     Object.assign(window, {
+      captureReaderAnchor,
+      readerAnchorTop,
       selectSession: select,
       deliverReply: (text: string, complete = false) => {
         setBlocks([
