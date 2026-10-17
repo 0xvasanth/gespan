@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, createElement, useEffect, useState } from "react";
+import { act, createElement, StrictMode, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -39,11 +39,16 @@ function Probe({
   });
 }
 
-function render(pool: TranscriptPool, shown: string | null, onFocus = vi.fn()) {
+function render(
+  pool: TranscriptPool,
+  shown: string | null,
+  onFocus = vi.fn(),
+  strict = false,
+) {
   act(() =>
     root.render(
       createElement(
-        "div",
+        strict ? StrictMode : "div",
         null,
         shown
           ? createElement(
@@ -99,6 +104,19 @@ describe("transcript pool", () => {
       expect(probe(id)?.dataset.instance).toBe(instances.get(id));
     }
     expect(mounts).toEqual(ids);
+    expect(unmounts).toEqual([]);
+  });
+
+  it("does not replay a transcript's effects when switching back to it", () => {
+    // StrictMode replays the effects of any component React places, and a
+    // reordered portal counts as placed, so the outlet must keep its order.
+    const pool = new TranscriptPool();
+    for (const id of ["a", "b", "c"]) render(pool, id, vi.fn(), true);
+    mounts = [];
+    unmounts = [];
+    for (const id of ["a", "c", "b", "a"]) render(pool, id, vi.fn(), true);
+
+    expect(mounts).toEqual([]);
     expect(unmounts).toEqual([]);
   });
 

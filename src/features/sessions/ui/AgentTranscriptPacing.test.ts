@@ -102,6 +102,38 @@ it("paces a burst of tool calls so each enters after the one before it", () => {
   expect(stages()).toEqual(["settled", "entering", "entering", "entering"]);
 });
 
+it("does not replay or play in tool calls when their tab comes back", () => {
+  const head: Block[] = [
+    { id: "user", role: "user", text: "Review the diff" },
+    { id: "intro", role: "assistant", text: "Checking the repo first." },
+    tool("first"),
+  ];
+  const burst = [...head, tool("second"), tool("third")];
+  render(head);
+  render(burst);
+  expect(stages()).toEqual(["settled", "entering", "waiting"]);
+
+  // Leaving cuts the entrances short; they must not start over on return.
+  render(burst, true, false);
+  expect(stages()).toEqual(["settled", "settled", "settled"]);
+
+  // Steps that ran while the tab was hidden land just after it returns.
+  render(burst);
+  render([...burst, tool("fourth"), tool("fifth")]);
+  expect(stages()).toEqual([
+    "settled",
+    "settled",
+    "settled",
+    "settled",
+    "settled",
+  ]);
+
+  // Once caught up, a step you watch arrive still enters.
+  act(() => vi.advanceTimersByTime(1_000));
+  render([...burst, tool("fourth"), tool("fifth"), tool("sixth")]);
+  expect(stages().at(-1)).toBe("entering");
+});
+
 const reply =
   "The investigation is complete. The updated implementation keeps replies smooth while preserving your place in the transcript.";
 const prompt: Block = { id: "prompt", role: "user", text: "Investigate" };

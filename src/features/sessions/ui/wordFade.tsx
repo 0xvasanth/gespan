@@ -300,6 +300,35 @@ export function settleWordFades(root: ParentNode) {
   }
 }
 
+/**
+ * Settles the words under `root` now and those the tab's catch-up adds next.
+ * A hidden transcript stops rendering, and Streamdown commits the text that
+ * streamed meanwhile in a transition after the tab is shown, so those words
+ * would otherwise all fade in at once on return. A mutation observer runs
+ * before the browser paints, so none of them is seen fading. It lets go a
+ * frame after the catch-up lands, so words that stream in after that fade.
+ */
+export function settleCatchUpFades(root: ParentNode & Node): () => void {
+  settleWordFades(root);
+  let frame = 0;
+  const observer = new MutationObserver(() => {
+    settleWordFades(root);
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(stop);
+  });
+  const timer = window.setTimeout(stop, CATCH_UP_LIMIT_MS);
+  function stop() {
+    observer.disconnect();
+    cancelAnimationFrame(frame);
+    window.clearTimeout(timer);
+  }
+  observer.observe(root, { childList: true, subtree: true });
+  return stop;
+}
+
+/** The longest a returning tab waits for its catch-up render to land. */
+const CATCH_UP_LIMIT_MS = 500;
+
 /*
  * Text here is either not prose (code, math, drawings) or read whole by the
  * component that renders it (links).

@@ -45,6 +45,12 @@ export class TranscriptPool {
   private listeners = new Set<() => void>();
   private snapshot: TranscriptPoolEntry[] = [];
   private pressured = false;
+  // `entries` is kept least-recently-shown first for eviction. The outlet
+  // renders in arrival order instead: reordering would move a transcript's
+  // portal on every switch, and React treats a moved component as newly
+  // placed (StrictMode replays every effect in it).
+  private arrival = new Map<string, number>();
+  private nextArrival = 0;
 
   private get nodeBudget() {
     return this.pressured
@@ -159,7 +165,13 @@ export class TranscriptPool {
   }
 
   private emit() {
-    this.snapshot = [...this.entries.values()];
+    for (const id of this.arrival.keys())
+      if (!this.entries.has(id)) this.arrival.delete(id);
+    for (const id of this.entries.keys())
+      if (!this.arrival.has(id)) this.arrival.set(id, this.nextArrival++);
+    this.snapshot = [...this.entries.values()].sort(
+      (a, b) => this.arrival.get(a.id)! - this.arrival.get(b.id)!,
+    );
     for (const listener of this.listeners) listener();
   }
 }
