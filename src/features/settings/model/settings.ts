@@ -319,8 +319,8 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
   {
     id: "inset-glass",
     section: "appearance",
-    label: "Inset workspace glass",
-    keywords: "translucent transparency opaque desktop blur layout",
+    label: "Transparent window",
+    keywords: "glass inset translucent transparency opaque desktop blur layout",
   },
   {
     id: "sidebar-opacity",

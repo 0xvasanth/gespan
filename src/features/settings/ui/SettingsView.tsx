@@ -2299,15 +2299,17 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
         {inset ? (
           <Row
             id="inset-glass"
-            label="Inset workspace glass"
+            label="Transparent window"
             description={
               IS_LINUX
-                ? "The inset workspace always uses an opaque window on Linux."
-                : "Show the desktop through the inset workspace's sidebar and main pane. Dark mode only."
+                ? "The window stays opaque on Linux."
+                : glassDisabled
+                  ? "Light mode keeps the window opaque. Your dark-mode choice is remembered."
+                  : "Show the desktop through the window. Turn off to keep the window opaque."
             }
           >
             <Toggle
-              label="Inset workspace glass"
+              label="Transparent window"
               on={appearance.insetGlass}
               onChange={appearance.onInsetGlass}
               disabled={glassDisabled || IS_LINUX}

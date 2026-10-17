@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Turning off **Transparent window** keeps the new layout opaque when themes change, including native appearance updates before the layout has mounted. The setting now clearly describes its transparency behavior.
 - Git LFS repositories no longer fail with "git-lfs: command not found" when MonoCode is opened from Finder. Status, diffs, staging, discards, and worktree checks run Git with Homebrew and other common install directories on its PATH, plus the terminal's PATH once it has been read, so filters resolve without waiting on the login shell.
 
 ### Fixed

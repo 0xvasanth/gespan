@@ -37,7 +37,7 @@ test("opts in from the invitation and switches back without changing glass", asy
   await expect(notice).toHaveCount(0);
   await openAppearance(page);
   await expect(
-    page.getByRole("switch", { name: "Inset workspace glass", exact: true }),
+    page.getByRole("switch", { name: "Transparent window", exact: true }),
   ).not.toBeChecked();
   const layout = page.getByRole("switch", { name: "New layout", exact: true });
   await expect(layout).toBeChecked();

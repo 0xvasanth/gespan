@@ -552,10 +552,12 @@ function glassFadeMs(): number {
  */
 export function syncNativeGlass(scheme: ColorScheme) {
   // The inset layout stays opaque on Linux, where compositor blur is not
-  // guaranteed.
+  // guaranteed. Honor its saved glass choice before the shell's CSS class
+  // arrives too: launch and theme refreshes must not fall back to classic glass.
+  const inset = insetLayoutActive() || loadInsetLayout();
   const enabled =
     scheme === "dark" &&
-    (insetLayoutActive()
+    (inset
       ? !IS_LINUX && loadInsetGlass()
       : !IS_LINUX || loadBodyGlass());
   const root = document.documentElement;
