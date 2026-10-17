@@ -143,6 +143,9 @@ type Props = {
   onToggleRightPanel?: () => void;
   /** The working tree has changes; dots the right panel toggle. */
   rightPanelDot?: boolean;
+  /** An app view (Search, Inbox, Notes, Automations) is shown, which has no
+   * project files beside it. */
+  rightPanelUnavailable?: boolean;
   canGoBack?: boolean;
   canGoForward?: boolean;
   onGoBack?: () => void;
@@ -753,6 +756,7 @@ function TitleBarComponent({
   rightPanelOpen = false,
   onToggleRightPanel,
   rightPanelDot = false,
+  rightPanelUnavailable = false,
   canGoBack = false,
   canGoForward = false,
   onGoBack,
@@ -1043,7 +1047,9 @@ function TitleBarComponent({
     railClosed &&
     Boolean(onOpenInbox || onOpenNotes || onOpenSettings);
   const showRightPanelToggle = inset && Boolean(onToggleRightPanel);
-  const changesDot = rightPanelDot && !mono;
+  // A Mono's own overview holds its changes; app views have none beside them.
+  const rightPanelOff = !!mono || rightPanelUnavailable;
+  const changesDot = rightPanelDot && !rightPanelOff;
   const trailingControls =
     showTrailingActions ||
     showRightPanelToggle ||
@@ -1060,9 +1066,8 @@ function TitleBarComponent({
                   ? "Toggle Explorer and Changes (uncommitted changes)"
                   : "Toggle Explorer and Changes"
               }
-              // A Mono's own overview holds its changes.
-              active={rightPanelOpen && !mono}
-              disabled={!!mono}
+              active={rightPanelOpen && !rightPanelOff}
+              disabled={rightPanelOff}
               onClick={onToggleRightPanel}
             >
               <span className="relative grid">

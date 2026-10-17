@@ -13486,6 +13486,7 @@ function Workspace({
     (rightPanelOpen || rightPanelClosing) &&
     !settingsOpen &&
     !monoCovers &&
+    !activeAppView &&
     looksLikeProject(sidebarCwd);
   // The right panel grows from the card's edge and pushes the workspace. Its
   // own contents keep their full width and ride its edge.
@@ -13617,6 +13618,7 @@ function Workspace({
         showRightPanelToggle ? onToggleRightPanel : undefined
       }
       rightPanelDot={(rightPanelChanges?.files ?? 0) > 0}
+      rightPanelUnavailable={!!activeAppView}
       canGoBack={!!monoViewId || tabVisitNav.canBack}
       canGoForward={tabVisitNav.canForward}
       onGoBack={onRailBack}
