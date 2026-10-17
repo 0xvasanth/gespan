@@ -14288,7 +14288,7 @@ function Workspace({
             resourceNotice={
               <ResourcePressureNotice
                 sessions={sessionsRef}
-                onStopAgent={(id) => { onStop(id, true); }}
+                onStopAgent={(id) => onStop(id, true)}
                 onStopSession={onStop}
                 onPressureChange={transcriptPool.setResourcePressure}
                 chipHost={pressureChipHost}
