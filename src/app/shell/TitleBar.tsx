@@ -2,6 +2,7 @@ import {
   CheckCircle,
   ChevronLeft,
   ChevronRight,
+  Code,
   DashboardSquare,
   Inbox,
   PanelLeft,
@@ -595,6 +596,21 @@ export function DevModeLabel() {
   );
 }
 
+/** The Development badge as an icon, for the inset title bar. */
+export function DevModeIcon() {
+  if (!import.meta.env.DEV) return null;
+  return (
+    <span
+      title="Development build"
+      aria-label="Development build"
+      role="img"
+      className="grid size-6 shrink-0 place-items-center text-skill"
+    >
+      <Code className="size-3.5" strokeWidth={1.75} />
+    </span>
+  );
+}
+
 /** Flex spacer that keeps the Development badge next to the visit arrows. */
 export function DevModeSlot() {
   return (
@@ -1127,8 +1143,9 @@ function TitleBarComponent({
               </IconButton>
             </span>
           ) : null}
+          <DevModeIcon />
           {/* History sits at the rail's far edge and follows it as the
-              sidebar resizes. The Development badge lives in the footer. */}
+              sidebar resizes. */}
           <div className="flex-1" />
           <TabVisitNav
             canGoBack={canGoBack}

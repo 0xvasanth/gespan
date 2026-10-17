@@ -40,7 +40,6 @@ import {
   type UsageChipVariant,
 } from "./UsageProviderChip";
 import { PiUsage } from "./PiUsage";
-import { DevModeLabel } from "./TitleBar";
 import {
   ProviderSignInPanel,
   type ProviderSignInState,
@@ -148,7 +147,7 @@ export function UsageFooter({
           ) : null
         }
       />
-      {showTerminals || showTerminalButton || pressureSlot || inset ? (
+      {showTerminals || showTerminalButton || pressureSlot ? (
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {pressureSlot ? (
             <span
@@ -179,7 +178,6 @@ export function UsageFooter({
               <span>Terminal</span>
             </button>
           ) : null}
-          {inset ? <DevModeLabel /> : null}
         </div>
       ) : null}
     </footer>
