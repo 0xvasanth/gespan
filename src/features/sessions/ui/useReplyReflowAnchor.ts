@@ -82,17 +82,16 @@ export function useReplyReflowAnchor(
         return;
       }
       adjustedTop = undefined;
-      // Other transcript observers also correct scrollTop during reflow.
-      // Those corrections must not replace the reader's original character.
       const now = performance.now();
       if (draggingScroll || now < manualUntil) {
         // Momentum can outlast the wheel event that began it. Keep the
         // gesture active until scrolling itself has been quiet, otherwise
         // completion restores a character from partway through that scroll.
         manualUntil = now + 180;
-        schedule();
-      } else if (!anchor)
-        schedule();
+      }
+      // Native scrolling can arrive after the input's quiet window. Capture
+      // every scroll except the layout corrections acknowledged below.
+      schedule();
     };
     const manualScroll = () => {
       manualUntil = performance.now() + 180;
@@ -168,6 +167,10 @@ export function useReplyReflowAnchor(
         }
       }
       width = next;
+      // Other transcript observers can also adjust the offset in this resize
+      // delivery. Their queued scroll event must preserve the same character
+      // through subsequent reflows, even when our own shift was zero.
+      adjustedTop = scroller.scrollTop;
       // Keep this character for the whole drag. Picking another word at the
       // same x coordinate after each reflow would gradually drift by lines.
       if (!anchor) capture();

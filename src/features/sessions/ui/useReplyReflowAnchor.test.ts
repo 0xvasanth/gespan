@@ -86,6 +86,24 @@ it("keeps the reader anchored through paragraph gaps and a long wheel gesture", 
     glyphTop = 248;
     act(() => resize([], {} as ResizeObserver));
     expect(scroller.scrollTop).toBe(240);
+
+    // A native scroll can reach the main thread after the input's quiet
+    // window, even when the wheel's animation frame has already run.
+    now = 1000;
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: 40 }));
+    act(() => {
+      while (frames.length) frames.shift()!(now);
+    });
+    now = 1250;
+    scroller.scrollTop = 280;
+    scroller.dispatchEvent(new Event("scroll"));
+    act(() => {
+      while (frames.length) frames.shift()!(now);
+    });
+    width = 100;
+    glyphTop = 348;
+    act(() => resize([], {} as ResizeObserver));
+    expect(scroller.scrollTop).toBe(380);
   } finally {
     act(() => root.unmount());
     host.remove();
