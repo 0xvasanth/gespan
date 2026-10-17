@@ -78,6 +78,7 @@ export function UsageFooter({
   projectTerminalOpen = false,
   onSelectAccount,
   onManageAccounts,
+  pressureSlot,
 }: {
   providers: RateLimitProvider[];
   session?: UsageFooterSession;
@@ -94,6 +95,8 @@ export function UsageFooter({
     accountId: string,
   ) => void;
   onManageAccounts?: (provider: ProviderAccountProvider) => void;
+  /** Receives the slot beside the terminal button for the pressure chip. */
+  pressureSlot?: (element: HTMLSpanElement | null) => void;
 }) {
   const opencode = useCachedRateLimits("opencode");
   const showUsage =
@@ -137,8 +140,14 @@ export function UsageFooter({
           ) : null
         }
       />
-      {showTerminals || showTerminalButton ? (
+      {showTerminals || showTerminalButton || pressureSlot ? (
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          {pressureSlot ? (
+            <span
+              ref={pressureSlot}
+              className="flex items-center empty:hidden"
+            />
+          ) : null}
           {showTerminals ? (
             <RunningTerminalChip
               terminals={terminals}

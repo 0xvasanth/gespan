@@ -37,6 +37,15 @@ import { MonocodeSparkles } from "./MonocodeSparkles";
 import { OrchestratorConstellation } from "./OrchestratorConstellation";
 import { PlanStepsBurst } from "./PlanStepsBurst";
 import { settleWordFades } from "./wordFade";
+import { revealMeasuredTurn, useMeasuredHistory } from "./useMeasuredHistory";
+import {
+  ownStepBlock,
+  ToolDetailSession,
+  useToolDetail,
+} from "./useToolDetail";
+import { HistoryTurn } from "./HistoryTurn";
+import { streamMeasurement } from "../model/streamingPerformance";
+import { useReplyReflowAnchor } from "./useReplyReflowAnchor";
 import { FilePreview } from "../../files/ui/FilePreview";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
 import { ToolDiffPreview } from "./ToolDiffPreview";
@@ -95,6 +104,7 @@ import {
   type TurnMetrics,
 } from "../model/session";
 import { HarnessIcon } from "./HarnessIcon";
+import { TranscriptPacing, TranscriptVisibility } from "./transcriptVisibility";
 import {
   innerScrollerTakes,
   useLockOverscroll,
@@ -186,6 +196,12 @@ const INITIAL_TURNS = 20;
  */
 const FIRST_PAINT_TURNS = 3;
 const TURN_PAGE_SIZE = 20;
+const LOADING_OUTPUT = "Loading output…";
+/**
+ * How long the reader stays back at the end before the history they paged in
+ * above unmounts. Each turn retains its DOM, fibers and markdown output.
+ */
+const HISTORY_TRIM_DELAY_MS = 2000;
 
 type Props = {
   blocks: Block[];
@@ -261,6 +277,8 @@ type Props = {
   onScrollerChange?: (el: HTMLDivElement | null) => void;
   /** A worker's transcript: show the orchestrator's turns instead of hiding them. */
   managed?: boolean;
+  /** Saved session that omitted tool output is fetched from. */
+  sessionId?: string;
 };
 
 function AgentTranscriptComponent({
@@ -349,6 +367,7 @@ function AgentTranscriptComponent({
   const showJumpRef = useRef(false);
   const distanceFromBottom = useRef(0);
   const lastScrollTop = useRef(0);
+  const scrollAdjustments = useRef<number | undefined>(undefined);
   const pointerScrolling = useRef(false);
   const wheelHold = useRef(0);
   const prependHeight = useRef<number | null>(null);
@@ -382,12 +401,12 @@ function AgentTranscriptComponent({
   const toggleWork = useCallback((turnId: string, currentlyOpen: boolean) => {
     setOpenWork((open) => ({ ...open, [turnId]: !currentlyOpen }));
   }, []);
-  // Stretch the last turn after a send while this tab stays open. Closing
-  // the tab is a new visit: the remount uses the true transcript height so
-  // the latest reply sits near the composer instead of a hole of empty space.
+  // Keep prompt spacing for this transcript's lifetime, including while it
+  // is parked in the pool. A cold historical mount uses its natural height.
   const [anchorTurn, setAnchorTurn] = useState(!!busy);
-  // Parking detaches the scroller, which drops its scroll offset.
+  // Hidden pooled transcripts are detached, which drops their scroll offset.
   const restoreScroll = useRef(false);
+  if (!visible) restoreScroll.current = true;
   const wasParked = useRef(parked);
   if (wasParked.current !== parked) {
     wasParked.current = parked;
@@ -395,8 +414,6 @@ function AgentTranscriptComponent({
       restoreScroll.current = true;
       setSearchCurrent(null);
       setSearchQuery("");
-    } else if (anchorTurn !== !!busy) {
-      setAnchorTurn(!!busy);
     }
   }
   const { selection, dismissSelection } = useTranscriptSelection(
@@ -420,14 +437,23 @@ function AgentTranscriptComponent({
       block.role === "handoff" && block.handoff?.status === "preparing",
   );
 
+  const historyTrimTimer = useRef(0);
+  const trimHistoryRef = useRef(() => {});
   const setShowJump = useCallback(
     (show: boolean) => {
       if (showJumpRef.current === show) return;
       showJumpRef.current = show;
       onJumpToBottomChange?.(show);
+      clearTimeout(historyTrimTimer.current);
+      if (!show)
+        historyTrimTimer.current = window.setTimeout(
+          () => trimHistoryRef.current(),
+          HISTORY_TRIM_DELAY_MS,
+        );
     },
     [onJumpToBottomChange],
   );
+  useEffect(() => () => clearTimeout(historyTrimTimer.current), []);
 
   const syncPinned = useCallback(
     (el: HTMLElement) => {
@@ -460,6 +486,7 @@ function AgentTranscriptComponent({
   );
 
   const rememberScroll = useCallback((el: HTMLElement) => {
+    scrollAdjustments.current = el.scrollTop;
     lastScrollTop.current = el.scrollTop;
     distanceFromBottom.current =
       el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -719,6 +746,13 @@ function AgentTranscriptComponent({
   }, [bottomAligned, scrollerEl, followTranscript, setShowJump, visible]);
 
   useTurnScrollAnchor(scrollerEl, visible, stickToBottom, rememberScroll);
+  useReplyReflowAnchor(
+    scrollerEl,
+    visible,
+    stickToBottom,
+    rememberScroll,
+    scrollAdjustments,
+  );
 
   const [turnCache] = useState(() => new TranscriptTurnCache());
   const undeliveredMessageIds = useMemo(
@@ -733,11 +767,42 @@ function AgentTranscriptComponent({
     -1,
   );
   const firstVisibleTurn = Math.max(0, turns.length - visibleTurnCount);
-  const visibleTurns = turns.slice(firstVisibleTurn);
+  const hasOpened = useRef(visible);
+  hasOpened.current ||= visible;
+  const visibleTurns = hasOpened.current ? turns.slice(firstVisibleTurn) : [];
+  useMeasuredHistory(scrollerEl, visible, turns, !!searchQuery);
   const turnsRef = useRef(turns);
   turnsRef.current = turns;
   const visibleTurnCountRef = useRef(visibleTurnCount);
   visibleTurnCountRef.current = visibleTurnCount;
+  const searchingRef = useRef(false);
+  searchingRef.current = !!searchQuery;
+
+  // Turns paged in while reading earlier stay mounted only while the reader
+  // is up there. Once following the end again, or hidden while following it,
+  // the window returns to its opening size. Removing turns above a pinned
+  // viewport leaves what the reader sees in place.
+  trimHistoryRef.current = () => {
+    const el = scroller.current;
+    if (
+      !stickToBottom.current ||
+      searchingRef.current ||
+      visibleTurnCountRef.current <= initialTurns
+    )
+      return;
+    const selection = window.getSelection();
+    if (
+      el &&
+      selection &&
+      !selection.isCollapsed &&
+      (el.contains(selection.anchorNode) || el.contains(selection.focusNode))
+    )
+      return;
+    setVisibleTurnCount(initialTurns);
+  };
+  useEffect(() => {
+    if (!visible) trimHistoryRef.current();
+  }, [visible]);
 
   useLayoutEffect(() => {
     const previousHeight = prependHeight.current;
@@ -786,12 +851,23 @@ function AgentTranscriptComponent({
   }, [visibleTurnCount, turns.length, initialTurns]);
 
   useEffect(() => {
-    if (bottomAligned) return;
-    // Interruptible, so switching away before it finishes costs nothing.
-    startTransition(() =>
-      setVisibleTurnCount((count) => Math.max(count, initialTurns)),
-    );
-  }, [bottomAligned, initialTurns]);
+    if (bottomAligned || !visible || visibleTurnCount >= initialTurns) return;
+    // Paint the opening window first, then warm one historical turn at a time.
+    // Expanding all twenty at once forced a large synchronous WebKit layout.
+    let timer = 0;
+    const frame = requestAnimationFrame(() => {
+      timer = window.setTimeout(() => {
+        if (stickToBottom.current)
+          startTransition(() =>
+            setVisibleTurnCount((count) => Math.min(initialTurns, count + 1)),
+          );
+      }, 16);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [bottomAligned, initialTurns, visible, visibleTurnCount]);
 
   const prepareToPrepend = useCallback(() => {
     const el = scroller.current;
@@ -887,10 +963,15 @@ function AgentTranscriptComponent({
       );
       if (index < 0) return false;
       const needed = all.length - index;
-      if (needed <= visibleTurnCountRef.current) return true;
-      prepareToPrepend();
-      // Synchronous. The caller finds the turn in the DOM after this call.
-      flushSync(() => setVisibleTurnCount(needed));
+      if (needed > visibleTurnCountRef.current) {
+        prepareToPrepend();
+        // Synchronous. The caller finds the turn in the DOM after this call.
+        flushSync(() => setVisibleTurnCount(needed));
+      }
+      const row = scroller.current?.querySelector<HTMLElement>(
+        `[data-transcript-turn="${CSS.escape(all[index][0].id)}"]`,
+      );
+      if (row) revealMeasuredTurn(row);
       return true;
     },
     [prepareToPrepend],
@@ -932,6 +1013,7 @@ function AgentTranscriptComponent({
             `[data-transcript-turn="${CSS.escape(turnId)}"]`,
           );
         if (!target) return;
+        revealMeasuredTurn(target);
         const wordRect = query
           ? transcriptWordRanges(el, query).current?.getBoundingClientRect?.()
           : null;
@@ -1003,6 +1085,7 @@ function AgentTranscriptComponent({
     bottomAligned,
     wheelHold,
     bottomAligned,
+    rememberScroll,
   );
 
   return (
@@ -1443,9 +1526,9 @@ function AgentTranscriptComponent({
             </TurnRow>
           );
           return (
-            <div
+            <HistoryTurn
               key={turn[0].id}
-              data-transcript-turn={turnId}
+              id={turnId}
               // A stacked message sits as close as one in the same turn, so
               // the gap between turns gives way.
               className={`transcript-turn flex min-w-0 flex-col${inlineWork && !reactedOnly ? " transcript-turn-mono" : ""}${stacksIntoNextTurn ? " -mb-1" : ""}${
@@ -1640,7 +1723,7 @@ function AgentTranscriptComponent({
                   }
                 />
               ) : null}
-            </div>
+            </HistoryTurn>
           );
         })}
       </TranscriptContent>
@@ -1690,8 +1773,30 @@ function TranscriptContent({
 
 // Keep hidden panes' local state, and catch up with current props on activation.
 export const AgentTranscript = memo(
-  AgentTranscriptComponent,
-  (previous, next) => previous.visible === false && next.visible === false,
+  function VisibleTranscript(props: Props) {
+    return (
+      <TranscriptVisibility.Provider value={props.visible ?? true}>
+        <TranscriptPacing.Provider value={!props.bottomAligned}>
+          <ToolDetailSession.Provider value={props.sessionId}>
+            <AgentTranscriptComponent {...props} />
+          </ToolDetailSession.Provider>
+        </TranscriptPacing.Provider>
+      </TranscriptVisibility.Provider>
+    );
+  },
+  (previous, next) => {
+    if (
+      previous.visible === false &&
+      next.visible === false &&
+      previous.parked === next.parked
+    )
+      return true;
+    const keys = Object.keys(next) as (keyof Props)[];
+    return (
+      keys.length === Object.keys(previous).length &&
+      keys.every((key) => Object.is(previous[key], next[key]))
+    );
+  },
 );
 
 /** "Today", "Yesterday" or the date, in bold, with the time beside it. */
@@ -2361,6 +2466,7 @@ const TranscriptBlock = memo(function TranscriptBlock({
     >
       <AgentMarkdown
         text={block.text}
+        measurement={streamMeasurement(block)}
         streaming={block.streaming}
         revealOnMount={revealOnMount}
         cwd={cwd}
@@ -3871,9 +3977,13 @@ function SubagentPanel({
   // The run's trail as transcript blocks, so the panel groups it the way the
   // main transcript groups the agent's own work: what it said, then the calls
   // that line introduced, folding behind it once it moves on.
-  const stepBlocks = useMemo(() => steps.map(agentStepBlock), [steps]);
+  const stepBlocks = useMemo(
+    () => steps.map((step) => agentStepBlock(step, block.id)),
+    [steps, block.id],
+  );
   const status = subagentStatusLine(block, steps);
-  const report = subagentReport(block);
+  const output = useToolDetail(block, open);
+  const report = subagentReport(block, output.detail);
   const failed = state === "rejected";
 
   // The name takes the room it needs and gives the rest back: a provider that
@@ -3913,7 +4023,7 @@ function SubagentPanel({
 
   // A run that has not reported a step yet has nothing to open into. The row
   // still holds its place, so the chevron arriving does not move anything.
-  if (steps.length === 0 && !report) {
+  if (steps.length === 0 && !report && !output.omitted) {
     return (
       <div
         aria-label={`Subagent: ${name}`}
@@ -4026,7 +4136,7 @@ function SubagentMascot({
  * A mirrored step as the transcript block it stands for, so a subagent's trail
  * goes through the same rows — labels, file chips, diffs — as the main agent's.
  */
-function agentStepBlock(step: AgentStep): Block {
+function agentStepBlock(step: AgentStep, parentId: string): Block {
   if (step.kind !== "tool") {
     return {
       id: step.id,
@@ -4034,7 +4144,7 @@ function agentStepBlock(step: AgentStep): Block {
       text: step.text,
     };
   }
-  return {
+  const block: Block = {
     id: step.id,
     role: "tool",
     text: step.text,
@@ -4044,9 +4154,11 @@ function agentStepBlock(step: AgentStep): Block {
       ...(step.toolKind ? { kind: step.toolKind } : {}),
       ...(step.status ? { status: step.status } : {}),
       ...(step.detail ? { detail: step.detail } : {}),
+      ...(step.detailOmitted ? { detailOmitted: true } : {}),
       ...(step.preview ? { preview: step.preview } : {}),
     },
   };
+  return ownStepBlock(block, parentId, step.id);
 }
 
 /** What a delegated run is up to: its newest step, or how much it got through. */
@@ -4409,6 +4521,7 @@ function ActivityToolRow({
   onOpenDiff?: (path: string) => void;
 }) {
   const [errorOpen, setErrorOpen] = useState(false);
+  const output = useToolDetail(block, errorOpen);
   const appCall = monoCodeToolCall(block);
   if (appCall) {
     return (
@@ -4419,7 +4532,11 @@ function ActivityToolRow({
   const state = toolCallState(block);
   const pending = needsApproval(block);
   const errorDetail =
-    !pending && state === "rejected" ? block.tool?.detail?.trim() : undefined;
+    !pending && state === "rejected"
+      ? output.omitted
+        ? (output.detail?.trim() ?? LOADING_OUTPUT)
+        : output.detail?.trim()
+      : undefined;
   const summary = (
     <ToolCallSummary
       label={label}
@@ -4500,10 +4617,13 @@ function MonoCodeCallRow({
   onApproval?: (requestId: number, decision: ApprovalDecision) => void;
 }) {
   const state = toolCallState(block);
-  const output =
-    block.tool?.detail?.trim() || block.tool?.preview?.output?.trim();
   const [errorOpen, setErrorOpen] = useState(false);
-  const hasError = state === "rejected" && !!output;
+  const stored = useToolDetail(block, errorOpen);
+  const output =
+    stored.detail?.trim() ||
+    (stored.pending ? LOADING_OUTPUT : undefined) ||
+    block.tool?.preview?.output?.trim();
+  const hasError = state === "rejected" && (!!output || stored.omitted);
   const pendingApproval = needsApproval(block);
   const command = `monocode app ${call.action}`;
   const verb = pendingApproval
@@ -4674,10 +4794,15 @@ function ToolCall({
   embedded?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const output = useToolDetail(block, open);
   const preview = block.tool?.preview;
   const label = toolCallLabel(block, cwd);
-  const detail = block.tool?.detail?.trim();
-  const expanded = detail && detail !== label ? detail : label;
+  const detail = output.detail?.trim();
+  const expanded = output.pending
+    ? LOADING_OUTPUT
+    : detail && detail !== label
+      ? detail
+      : label;
   const state = toolCallState(block);
   const stateLabel =
     state === "accepted"
@@ -4693,7 +4818,8 @@ function ToolCall({
   const compact =
     isReadTool(block.tool?.kind, label, preview) ||
     isSearchTool(block.tool?.kind, label, preview);
-  const expandable = !compact && !!detail && detail !== label;
+  const expandable =
+    !compact && (output.omitted || (!!detail && detail !== label));
 
   const frame = embedded ? "py-0.5" : "px-4 py-1";
 
@@ -5160,10 +5286,29 @@ const PROMPT_RISE_FROM = 0.3;
 
 /** Fades the prompt in while sliding it from the upper viewport to its row. */
 function riseIntoAnchor(scroller: HTMLElement | null, blockId: string) {
+  if (!scroller) return;
   const row = scroller?.querySelector<HTMLElement>(
     `[data-prompt-anchor="${CSS.escape(blockId)}"]`,
   );
-  if (!scroller || !row || typeof row.animate !== "function") return;
+  if (!row) {
+    // Retained turns attach their portal before mounting its children. Wait
+    // for that commit so the prompt keeps its existing entry animation.
+    let cancel: (() => void) | undefined;
+    const observer = new MutationObserver(() => {
+      if (
+        !scroller.querySelector(`[data-prompt-anchor="${CSS.escape(blockId)}"]`)
+      )
+        return;
+      observer.disconnect();
+      cancel = riseIntoAnchor(scroller, blockId);
+    });
+    observer.observe(scroller, { subtree: true, childList: true });
+    return () => {
+      observer.disconnect();
+      cancel?.();
+    };
+  }
+  if (typeof row.animate !== "function") return;
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
   const view = scroller.getBoundingClientRect();
   const dy =

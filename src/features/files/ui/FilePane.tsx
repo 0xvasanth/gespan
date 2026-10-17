@@ -147,6 +147,7 @@ function FilePaneComponent({
         {sessionReview ? (
           <div className="absolute inset-0 h-full">
             <SessionChangesDiff
+              visible={visible}
               cwd={sessionReview.cwd}
               sessionId={sessionReview.sessionChanges.sessionId}
               focusPath={sessionReview.path}
@@ -154,11 +155,16 @@ function FilePaneComponent({
           </div>
         ) : commitReview && activeFile?.commit ? (
           <div className="absolute inset-0 h-full">
-            <CommitDiff cwd={activeFile.cwd} sha={activeFile.commit.sha} />
+            <CommitDiff
+              cwd={activeFile.cwd}
+              sha={activeFile.commit.sha}
+              visible={visible}
+            />
           </div>
         ) : unifiedReview && activeFile ? (
           <div className="absolute inset-0 h-full">
             <WorkingTreeDiff
+              visible={visible}
               cwd={activeFile.cwd}
               focusPath={activeFile.path}
               focusKind={activeFile.changeKind}
@@ -189,7 +195,7 @@ function FilePaneComponent({
                   session={sessions.find(
                     (entry) => entry.id === file.agent.sessionId,
                   )}
-                  visible={file.id === pane.activeFileId}
+                  visible={visible && file.id === pane.activeFileId}
                   focused={focused && file.id === pane.activeFileId}
                   onOpenFile={onOpenFile}
                 />

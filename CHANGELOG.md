@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A **Resource pressure** indicator in the usage footer opens a process view with CPU and memory usage, controls to stop agents and sessions, and controls to stop individual running tools. In #1045 by @hardbeat920.
+- **Smooth text reveal** in Settings → Chat controls whether incoming reply bursts appear gradually or immediately. It is enabled by default. In #1045 by @hardbeat920.
+
+### Changed
+
+- Large conversations and busy workspaces stay more responsive: recent transcripts retain their rendered state across tab switches, code highlighting and large diffs run in workers, and navigation avoids unnecessary layout measurements. Large tool output loads when expanded. In #1045 by @hardbeat920.
+- Background Git work and agent tool processes receive lower scheduling priority where supported. Resource pressure reduces retained transcript memory while preserving session history. In #1045 by @hardbeat920.
+
+### Fixed
+
+- Completing a reply, changing a file pane's width, or returning to a cached conversation preserves the reader's position and keeps a following conversation at its reply. Completed provider bursts continue their text reveal without jumping the transcript. In #1045 by @hardbeat920.
+- Session streaming avoids unnecessary background rerenders and repeated history work. Composer resizing and decorative transcript measurements no longer force repeated workspace layout during navigation. In #1045 by @hardbeat920.
+- Notification sounds suspend their audio context after playback finishes, reducing idle resource use. In #1045 by @hardbeat920.
+
+
 ## [0.14.0] - 2026-10-17
 
 ### Added
@@ -1526,7 +1543,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/hardbeat920/monocode/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/hardbeat920/monocode/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/hardbeat920/monocode/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/hardbeat920/monocode/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/hardbeat920/monocode/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/hardbeat920/monocode/compare/v0.10.0...v0.11.0

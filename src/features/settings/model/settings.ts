@@ -364,6 +364,12 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     keywords: "scroll position sticky message",
   },
   {
+    id: "paced-reveal",
+    section: "chat",
+    label: "Smooth text reveal",
+    keywords: "streaming pacing immediate latency performance animation",
+  },
+  {
     id: "follow-up",
     section: "chat",
     label: "Follow-up behavior",

@@ -1,4 +1,5 @@
 import { GripVertical, X } from "../../../shared/ui/icons";
+import { useSessionSnapshot } from "../model/sessionStateStore";
 import {
   memo,
   useCallback,
@@ -278,7 +279,9 @@ type Props = SessionPaneProps & {
   allowedModelHarnesses?: readonly HarnessId[];
 };
 
-export const SessionPane = memo(function SessionPane(props: SessionPaneProps) {
+export const SessionPane = memo(function SessionPane(input: SessionPaneProps) {
+  const session = useSessionSnapshot(input.session, input.visible);
+  const props = session === input.session ? input : { ...input, session };
   // Sessions in a project on another machine render this same pane, backed by
   // the host instead of this computer's session runtime.
   if (isRemoteProjectPath(props.session.cwd))
@@ -863,7 +866,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div
             ref={transcriptScope}
-            className={`@container relative min-h-0 flex-1${
+            className={`relative min-h-0 flex-1${
               dockComposer && !agent ? " transcript-composer-fade" : ""
             }`}
           >
@@ -941,6 +944,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                           )
                         : monoTranscript.blocks
                     }
+                    sessionId={remoteSession ? undefined : session.id}
                     historicalBlockIds={monoTranscript.historicalBlockIds}
                     initialTurns={agent ? MONO_PAGE_TURNS : undefined}
                     pageSize={agent ? MONO_PAGE_TURNS : undefined}
@@ -1245,7 +1249,10 @@ const LocalSessionPane = memo(function LocalSessionPane({
                             its current thread is. It rotates threads itself,
                             so there is nothing to compact here. */}
                         <div className="grid size-6.5 place-items-center rounded-md transition-colors hover:bg-content/8">
-                          <ContextMeter usage={session.context} empty={isEmpty} />
+                          <ContextMeter
+                            usage={session.context}
+                            empty={isEmpty}
+                          />
                         </div>
                       </>
                     }

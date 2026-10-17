@@ -1,5 +1,5 @@
 import { CircleAlert } from "../../../shared/ui/icons";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { allowsProjectNotification } from "../../notifications/model/notificationPreferences";
 import { knownNotificationProject } from "../../notifications/model/notificationProjects";
@@ -17,6 +17,7 @@ import { HarnessIcon } from "./HarnessIcon";
 type Notice = PendingApprovalNotice & { session: Session };
 
 type Props = {
+  resourceNotice?: ReactNode;
   notices: Notice[];
   topOffset?: number;
   onFocusSession: (sessionId: string) => void;
@@ -28,13 +29,14 @@ type Props = {
 };
 
 export function ApprovalToasts({
+  resourceNotice,
   notices,
   onFocusSession,
   onApproval,
   topOffset = 12,
 }: Props) {
   useProjectNotificationPreferences();
-  if (notices.length === 0) return null;
+  if (notices.length === 0 && !resourceNotice) return null;
 
   return createPortal(
     <div
@@ -50,6 +52,10 @@ export function ApprovalToasts({
           onApproval={onApproval}
         />
       ))}
+      {/* Persistent pressure notices must leave the tab controls reachable. */}
+      <div className="first:pt-16">
+        {resourceNotice}
+      </div>
     </div>,
     document.body,
   );

@@ -30,7 +30,7 @@ import {
   pickAttachments,
   revokeAttachment,
 } from "../model/attachments";
-import { resizeComposer } from "../model/composerResize";
+import { resizeComposer, restoreComposerSize } from "../model/composerResize";
 import {
   isFileReferenceText,
   messageFilesFromClipboard,
@@ -895,18 +895,19 @@ export function Composer({
     resizeComposer(el);
   }, [initialDraft]);
 
-  // Drafts changed while hidden could not be measured. Inbox panes are portaled
-  // into place by a parent effect that runs after this one, so the first pass
-  // can still find no layout box; retry once the move has landed.
+  // Measure once the browser has laid out the activated pane. A synchronous
+  // read here forces layout before the pooled transcript has been attached,
+  // then forces it again when that transcript restores its scroll position.
+  // ResizeObserver also handles inbox portals and drafts resized while hidden.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !enabled) return;
-    resizeComposer(el);
-    if (el.scrollHeight !== 0) return;
-    const frame = requestAnimationFrame(() => {
-      if (ref.current === el) resizeComposer(el);
+    const observer = new ResizeObserver((entries) => {
+      if (entries.some((entry) => entry.contentRect.width > 0))
+        restoreComposerSize(el);
     });
-    return () => cancelAnimationFrame(frame);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [enabled]);
 
   useEffect(() => {
@@ -1155,7 +1156,10 @@ export function Composer({
       )
     )
       return;
-    ref.current?.focus();
+    // Pane activation already positions the composer. Native focus scrolling
+    // otherwise walks the entire workspace and can move transcript ancestors.
+    if (ref.current && document.activeElement !== ref.current)
+      ref.current.focus({ preventScroll: true });
   }, [disabled, focused, question, busy, focusToken]);
 
   const fileDrag = useFileDrop({

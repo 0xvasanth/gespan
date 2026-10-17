@@ -27,7 +27,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  // These cover the opt-in paced reveal unless a test says otherwise.
+  // Explicitly exercise pacing unless a test selects the fallback.
   localStorage.setItem(PACED_REVEAL_KEY, "1");
   container = document.createElement("div");
   document.body.append(container);
@@ -222,7 +222,7 @@ it("shows output received in a hidden tab immediately when switching to it", () 
 });
 
 it("shows a new reply at once and fades it in without the paced reveal", () => {
-  localStorage.removeItem(PACED_REVEAL_KEY);
+  localStorage.setItem(PACED_REVEAL_KEY, "0");
   render([prompt]);
   render(
     [

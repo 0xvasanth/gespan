@@ -641,6 +641,12 @@ html.has-chat-background.chat-background-effect-ready.chat-background-gradient-b
   content-visibility: visible;
 }
 
+/* Heights come from this exact turn at the current pane width. The live turn
+   always keeps its natural layout, including throughout completion. */
+.transcript-turn[data-history-height] {
+  flex-shrink: 0;
+}
+
 ::highlight(monocode-transcript-search-match) {
   background-color: color-mix(in srgb, #e2c08d 46%, transparent);
 }
@@ -1379,8 +1385,8 @@ html.has-user-accent .user-message-bubble[data-draft="true"] {
 
 /*
  * After a send, the live turn fills the transcript viewport so the prompt sits
- * at the top. Switching tabs keeps this. Closing the tab drops it, so opening
- * that conversation again uses the true bottom (latest reply on the composer).
+ * at the top, then follows the reply when it outgrows the viewport. A pooled
+ * transcript keeps this spacing across tab switches, including after a run ends.
  */
 .transcript-turn-anchor {
   min-height: var(--transcript-viewport, 0px);
@@ -1389,21 +1395,28 @@ html.has-user-accent .user-message-bubble[data-draft="true"] {
 /* A finished run can still be revealing its reply. Artifacts and actions wait
    for the final word's fade, using the reply's actual animation state. */
 .transcript-turn:has([data-artifact-results]):has(.word-fading)
+  > [data-history-content]
   > :is([data-artifact-results], [data-turn-actions]) {
   display: none;
 }
 /* Session cards wait for the reply above them to finish its reveal; cards
    above a later reply, such as a report back, stay where they are. */
-.transcript-turn > :has(.word-fading) ~ [data-launched-sessions] {
+.transcript-turn
+  > [data-history-content]
+  > :has(.word-fading)
+  ~ [data-launched-sessions] {
   display: none;
 }
 
 /* While a sent prompt rises into place, the rest of its turn waits for it. */
-.transcript-turn[data-prompt-rise="rising"] > :not(:has([data-prompt-anchor])) {
+.transcript-turn[data-prompt-rise="rising"]
+  > [data-history-content]
+  > :not(:has([data-prompt-anchor])) {
   opacity: 0;
 }
 
 .transcript-turn[data-prompt-rise="revealing"]
+  > [data-history-content]
   > :not(:has([data-prompt-anchor])) {
   animation: prompt-turn-reveal 320ms var(--motion-ease-out) both;
 }
@@ -1742,6 +1755,12 @@ header[data-tauri-drag-region] button {
 }
 
 .agent-markdown [data-streamdown="code-block"] {
+  /* Streamdown sets inline content-visibility:auto with a 200px estimate.
+     WebKit can use that estimate during a streaming commit, then shrink the
+     scroll range on the next frame. Loaded transcript turns already use real
+     heights; their code fences must do the same, including nested fences. */
+  content-visibility: visible !important;
+  contain-intrinsic-size: none !important;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
