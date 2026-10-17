@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Right-clicking an empty part of a MonoCode window no longer opens a native menu offering only **Reload**, which read like an action on the clicked item. Reload stays in the View menu (**⌘⇧R / Ctrl+Shift+R**), and text fields, editors, terminals, selected text, links, and media keep their native menus.
 
+### Fixed
+
+- The **Markdown preview** of a file such as a README shows its images, whether written as Markdown or as HTML `<img>`, including centered headers, tables, and `<picture>` elements. Paths resolve from the document's folder, or from the project root when they start with `/`, and keep their width, height, and alignment. Only image files inside the project are read, symlinks included, so a document cannot pull in files from elsewhere on disk. Remote images, and local ones that are missing or not really images, show their alt text instead of nothing.
+
 ## [0.13.0] - 2026-10-12
 
 ### Added
