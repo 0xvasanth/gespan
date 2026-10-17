@@ -1333,6 +1333,9 @@ function Workspace({
   const [insetRailHost, setInsetRailHost] = useState<HTMLDivElement | null>(
     null,
   );
+  // Where Settings puts its breadcrumb and actions in the inset title bar.
+  const [settingsHeaderHost, setSettingsHeaderHost] =
+    useState<HTMLDivElement | null>(null);
   const insetLayoutRef = useRef(insetLayout);
   insetLayoutRef.current = insetLayout;
   useLayoutEffect(() => {
@@ -13317,6 +13320,15 @@ function Workspace({
     <TitleBar
       // A Mono in full view stands apart from the project's tabs.
       tabs={monoCovers ? NO_TITLE_TABS : titleTabs}
+      content={
+        insetLayout && settingsOpen ? (
+          <div
+            ref={setSettingsHeaderHost}
+            data-settings-title
+            className="flex h-full min-w-0 flex-1"
+          />
+        ) : undefined
+      }
       mono={
         monoCovers && monoViewMono && monoViewSession
           ? { look: monoLook(monoViewMono), state: monoState(monoViewSession) }
@@ -13346,7 +13358,7 @@ function Workspace({
       inset={insetLayout}
       rightPanelOpen={rightPanelOpen}
       onToggleRightPanel={
-        insetLayout && looksLikeProject(sidebarCwd)
+        insetLayout && !settingsOpen && looksLikeProject(sidebarCwd)
           ? onToggleRightPanel
           : undefined
       }
@@ -13359,7 +13371,7 @@ function Workspace({
       onSelect={onSelectTitleTab}
       onNewTerminal={onNewTerminal}
       onNewSession={
-        insetLayout && !monoCovers && looksLikeProject(sidebarCwd)
+        insetLayout && !settingsOpen && !monoCovers && looksLikeProject(sidebarCwd)
           ? onNew
           : undefined
       }
@@ -13996,6 +14008,7 @@ function Workspace({
                       onCheckWorktreeRemoval={onCheckWorktreeRemoval}
                       onDeleteWorktreeSessions={onDeleteWorktreeSessions}
                       besideRail
+                      headerHost={insetLayout ? settingsHeaderHost : undefined}
                       onClose={onCloseSettings}
                       onSelectSection={onSelectSettingsSection}
                       onOpenSession={onOpenArchivedSession}
@@ -14050,7 +14063,12 @@ function Workspace({
                 ) : null}
               </div>
               {insetLayout
-                ? (usageFooter ?? <div className="h-[30px] shrink-0" />)
+                ? (usageFooter ??
+                  // Settings has no footer, so the card runs down to the same
+                  // gutter as its right edge.
+                  <div
+                    className={`${settingsOpen ? "h-1.5" : "h-[30px]"} shrink-0`}
+                  />)
                 : null}
             </div>
           </div>

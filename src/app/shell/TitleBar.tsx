@@ -115,6 +115,11 @@ type Props = {
    * project-scoped belongs beside it.
    */
   mono?: { look: MonoLook; state: MonoState };
+  /**
+   * Takes the tabs' place, as the inset layout's Settings does with its
+   * breadcrumb and actions.
+   */
+  content?: ReactNode;
   /** Shows or hides the Mono's overview panel beside its chat. */
   onToggleMonoOverview?: () => void;
   monoOverviewOpen?: boolean;
@@ -665,6 +670,7 @@ function TitleBarComponent({
   activeId,
   cwd,
   mono,
+  content,
   onToggleMonoOverview,
   monoOverviewOpen = false,
   onOpenMonoSettings,
@@ -1132,7 +1138,9 @@ function TitleBarComponent({
           showProjectButton && !inset ? " border-l border-stroke" : ""
         }`}
       >
-        {mono ? (
+        {content ? (
+          content
+        ) : mono ? (
           <MonoTitle look={mono.look} state={mono.state} />
         ) : (
           <div
@@ -1243,7 +1251,7 @@ function TitleBarComponent({
           </div>
         )}
 
-        {!IS_MAC && !IS_WIN ? (
+        {!IS_MAC && !IS_WIN && !content ? (
           <div className="flex min-w-0 flex-1 items-center justify-center px-4">
             <span className="pointer-events-none truncate text-[11.5px] font-medium text-content/40 select-none">
               {systemTitle}

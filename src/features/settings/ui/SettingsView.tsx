@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ConnectionsSettings } from "../../connections/ui/ConnectionsSettings";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -382,6 +383,8 @@ import {
   type KeybindingOverride,
   saveTabAnimationsEnabled,
   searchSettings,
+  CLASSIC_LAYOUT_HIDDEN_SETTINGS,
+  INSET_LAYOUT_HIDDEN_SETTINGS,
   settingsSectionDescription,
   settingsSectionLabel,
   COLLAPSED_PROJECT_RAIL_MODE_DEFAULT,
@@ -458,6 +461,12 @@ type Props = {
     sessionIds: readonly string[],
   ) => Promise<boolean>;
   besideRail?: boolean;
+  /**
+   * The inset layout's title bar slot. When given, the breadcrumb and actions
+   * render there in place of the tabs and the page drops its own header row;
+   * `null` means the slot hasn't mounted yet, so neither shows for a frame.
+   */
+  headerHost?: HTMLElement | null;
   onClose: () => void;
   /** Lets search jump to a setting that lives on another page. */
   onSelectSection?: (section: SettingsSectionId) => void;
@@ -484,6 +493,7 @@ export function SettingsView({
   onCheckWorktreeRemoval,
   onDeleteWorktreeSessions,
   besideRail = false,
+  headerHost,
   onClose,
   onSelectSection,
   onOpenSession,
@@ -540,6 +550,47 @@ export function SettingsView({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // The breadcrumb and page actions, in the page's own header row or the
+  // inset title bar. There the bar already sits 6px past the rail, and the
+  // card ends 6px short of the window, so the padding keeps both ends 10px
+  // inside the card's edges.
+  const inTitleBar = headerHost !== undefined;
+  const settingsHeader = (
+    <>
+      <div
+        className={`flex min-w-0 flex-1 items-center gap-2 text-[13px] ${
+          inTitleBar ? "pr-3 pl-1" : "px-3"
+        }`}
+      >
+        <span className="shrink-0 text-content/45">Settings</span>
+        <span aria-hidden className="shrink-0 text-content/25">
+          /
+        </span>
+        <span className="min-w-0 truncate text-content">
+          {settingsSectionLabel(section)}
+        </span>
+      </div>
+      <div
+        className={`flex shrink-0 items-center gap-1.5 ${
+          inTitleBar ? "pr-4" : "pr-2"
+        }`}
+        data-tauri-drag-region="false"
+      >
+        {section === "appearance" ? (
+          <button
+            type="button"
+            onClick={appearance.restoreDefaults}
+            className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-content/50 hover:bg-content/10 hover:text-content"
+          >
+            <RotateCcw className="size-3.5" strokeWidth={1.75} />
+            Restore defaults
+          </button>
+        ) : null}
+        <SettingsSearch onReveal={onReveal} />
+      </div>
+    </>
+  );
+
   return (
     <div
       role="region"
@@ -547,38 +598,24 @@ export function SettingsView({
       data-app-settings
       className="flex min-h-0 min-w-0 flex-1 flex-col text-content"
     >
-      <div
-        className="flex h-10 shrink-0 select-none items-center border-b border-stroke"
-        data-tauri-drag-region="deep"
-      >
-        {IS_MAC && !besideRail ? <div className="w-[78px] shrink-0" /> : null}
-        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-[13px]">
-          <span className="shrink-0 text-content/45">Settings</span>
-          <span aria-hidden className="shrink-0 text-content/25">
-            /
-          </span>
-          <span className="min-w-0 truncate text-content">
-            {settingsSectionLabel(section)}
-          </span>
-        </div>
+      {headerHost !== undefined ? (
+        headerHost &&
+        createPortal(
+          <div className="flex h-full min-w-0 flex-1 items-center">
+            {settingsHeader}
+          </div>,
+          headerHost,
+        )
+      ) : (
         <div
-          className="flex shrink-0 items-center gap-1.5 pr-2"
-          data-tauri-drag-region="false"
+          className="flex h-10 shrink-0 select-none items-center border-b border-stroke"
+          data-tauri-drag-region="deep"
         >
-          {section === "appearance" ? (
-            <button
-              type="button"
-              onClick={appearance.restoreDefaults}
-              className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-content/50 hover:bg-content/10 hover:text-content"
-            >
-              <RotateCcw className="size-3.5" strokeWidth={1.75} />
-              Restore defaults
-            </button>
-          ) : null}
-          <SettingsSearch onReveal={onReveal} />
+          {IS_MAC && !besideRail ? <div className="w-[78px] shrink-0" /> : null}
+          {settingsHeader}
+          {IS_MAC ? null : <WindowControls />}
         </div>
-        {IS_MAC ? null : <WindowControls />}
-      </div>
+      )}
 
       {section === "skills" ? (
         <SkillsPage
@@ -666,7 +703,22 @@ function SettingsSearch({
   const root = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const listId = useId();
-  const results = useMemo(() => searchSettings(query), [query]);
+  const insetLayout = useSyncExternalStore(
+    subscribeInsetLayout,
+    loadInsetLayout,
+    () => INSET_LAYOUT_DEFAULT,
+  );
+  const results = useMemo(
+    () =>
+      searchSettings(
+        query,
+        undefined,
+        insetLayout
+          ? INSET_LAYOUT_HIDDEN_SETTINGS
+          : CLASSIC_LAYOUT_HIDDEN_SETTINGS,
+      ),
+    [query, insetLayout],
+  );
   const open = query.trim().length > 0;
 
   useEffect(() => setActive(0), [query]);
@@ -2182,19 +2234,20 @@ function useAppearanceSettings(
 function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
   const percent = Math.round(appearance.opacity * 100);
   const glassDisabled = useColorScheme() === "light";
-  // The inset workspace has its own glass preference and fixed tint/blur.
-  const translucencyFixed = appearance.insetLayout;
-  const translucencyDisabled = glassDisabled || translucencyFixed;
-  // A workspace theme brings its own colours, so the tint sliders sit out.
-  const tintFixed =
-    appearance.insetLayout &&
-    appearance.workspaceTheme !== WORKSPACE_THEME_DEFAULT;
+  // The inset workspace takes its colours from the workspace theme and has a
+  // fixed tint and blur, so the tint and translucency groups only belong to
+  // the classic layout. Its one glass switch lives with the theme instead.
+  const inset = appearance.insetLayout;
 
   return (
     <>
       <Group
         title="Theme"
-        description="Dark and light share the same tint, so the color settings below apply to both."
+        description={
+          inset
+            ? "Each workspace theme has its own dark and light palette."
+            : "Dark and light share the same tint, so the color settings below apply to both."
+        }
       >
         <Row
           id="theme"
@@ -2241,6 +2294,24 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
             />
           </div>
         </Row>
+        {inset ? (
+          <Row
+            id="inset-glass"
+            label="Inset workspace glass"
+            description={
+              IS_LINUX
+                ? "The inset workspace always uses an opaque window on Linux."
+                : "Show the desktop through the inset workspace's sidebar and main pane. Dark mode only."
+            }
+          >
+            <Toggle
+              label="Inset workspace glass"
+              on={appearance.insetGlass}
+              onChange={appearance.onInsetGlass}
+              disabled={glassDisabled || IS_LINUX}
+            />
+          </Row>
+        ) : null}
         <Row
           id="accent-color"
           label="Accent color"
@@ -2269,136 +2340,118 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
         </Row>
       </Group>
 
-      <Group
-        title="Color"
-        description={
-          tintFixed
-            ? "The workspace theme sets these colors. Choose Default to tint with hue and saturation."
-            : "Hue and saturation tint every surface. Lightness only moves the dark theme."
-        }
-      >
-        <Row
-          id="hue"
-          label="Hue"
-          description="Base hue for accents and tinted surfaces."
-        >
-          <Slider
-            label="Hue"
-            value={appearance.themeHue}
-            display={`${appearance.themeHue}°`}
-            min={THEME_HUE_MIN}
-            max={THEME_HUE_MAX}
-            onChange={(value) =>
-              appearance.onTint(value, appearance.themeSaturation)
-            }
-            disabled={tintFixed}
-          />
-        </Row>
-        <Row
-          id="saturation"
-          label="Saturation"
-          description="How strongly the hue tints the interface. Zero keeps it neutral."
-        >
-          <Slider
-            label="Saturation"
-            value={appearance.themeSaturation}
-            display={`${appearance.themeSaturation}%`}
-            min={THEME_SATURATION_MIN}
-            max={THEME_SATURATION_MAX}
-            onChange={(value) => appearance.onTint(appearance.themeHue, value)}
-            disabled={tintFixed}
-          />
-        </Row>
-        <Row
-          id="dark-lightness"
-          label="Dark-mode lightness"
-          description={
-            glassDisabled
-              ? "This only affects dark mode. Your dark-mode value is preserved."
-              : "Base brightness of the dark theme. Lower values are darker; zero is true black."
-          }
-        >
-          <Slider
-            label="Dark-mode lightness"
-            value={appearance.themeDarkLightness}
-            display={`${appearance.themeDarkLightness}%`}
-            min={THEME_DARK_LIGHTNESS_MIN}
-            max={THEME_DARK_LIGHTNESS_MAX}
-            onChange={appearance.onDarkLightness}
-            disabled={glassDisabled || tintFixed}
-          />
-        </Row>
-      </Group>
+      {inset ? null : (
+        <>
+          <Group
+            title="Color"
+            description="Hue and saturation tint every surface. Lightness only moves the dark theme."
+          >
+            <Row
+              id="hue"
+              label="Hue"
+              description="Base hue for accents and tinted surfaces."
+            >
+              <Slider
+                label="Hue"
+                value={appearance.themeHue}
+                display={`${appearance.themeHue}°`}
+                min={THEME_HUE_MIN}
+                max={THEME_HUE_MAX}
+                onChange={(value) =>
+                  appearance.onTint(value, appearance.themeSaturation)
+                }
+              />
+            </Row>
+            <Row
+              id="saturation"
+              label="Saturation"
+              description="How strongly the hue tints the interface. Zero keeps it neutral."
+            >
+              <Slider
+                label="Saturation"
+                value={appearance.themeSaturation}
+                display={`${appearance.themeSaturation}%`}
+                min={THEME_SATURATION_MIN}
+                max={THEME_SATURATION_MAX}
+                onChange={(value) =>
+                  appearance.onTint(appearance.themeHue, value)
+                }
+              />
+            </Row>
+            <Row
+              id="dark-lightness"
+              label="Dark-mode lightness"
+              description={
+                glassDisabled
+                  ? "This only affects dark mode. Your dark-mode value is preserved."
+                  : "Base brightness of the dark theme. Lower values are darker; zero is true black."
+              }
+            >
+              <Slider
+                label="Dark-mode lightness"
+                value={appearance.themeDarkLightness}
+                display={`${appearance.themeDarkLightness}%`}
+                min={THEME_DARK_LIGHTNESS_MIN}
+                max={THEME_DARK_LIGHTNESS_MAX}
+                onChange={appearance.onDarkLightness}
+                disabled={glassDisabled}
+              />
+            </Row>
+          </Group>
 
-      <Group
-        title="Translucency"
-        description={
-          translucencyFixed
-            ? "Use Inset workspace glass to control this layout. Sidebar opacity, blur radius and main pane glass apply to the classic layout."
-            : glassDisabled
-              ? "Light mode always uses an opaque window, so these are off. Your dark-mode values are preserved."
-              : "How much of the desktop shows through MonoCode. Blur costs more to composite the higher it goes."
-        }
-      >
-        <Row
-          id="inset-glass"
-          label="Inset workspace glass"
-          description={
-            IS_LINUX
-              ? "The inset workspace always uses an opaque window on Linux."
-              : "Show the desktop through the inset workspace's sidebar and main pane. Dark mode only."
-          }
-        >
-          <Toggle
-            label="Inset workspace glass"
-            on={appearance.insetGlass}
-            onChange={appearance.onInsetGlass}
-            disabled={!appearance.insetLayout || glassDisabled || IS_LINUX}
-          />
-        </Row>
-        <Row
-          id="sidebar-opacity"
-          label="Sidebar opacity"
-          description="Applies to the project rail and the other glass panes."
-        >
-          <Slider
-            label="Sidebar opacity"
-            value={percent}
-            display={`${percent}%`}
-            min={Math.round(SIDEBAR_OPACITY_MIN * 100)}
-            max={Math.round(SIDEBAR_OPACITY_MAX * 100)}
-            onChange={appearance.onOpacity}
-            disabled={translucencyDisabled}
-          />
-        </Row>
-        <Row
-          id="blur"
-          label="Blur radius"
-          description="Background blur behind the window."
-        >
-          <Slider
-            label="Blur radius"
-            value={appearance.blur}
-            display={String(appearance.blur)}
-            min={SIDEBAR_BLUR_MIN}
-            max={SIDEBAR_BLUR_MAX}
-            onChange={appearance.onBlur}
-            disabled={translucencyDisabled}
-          />
-        </Row>
-        <Row
-          id="main-pane-glass"
-          label="Main pane glass"
-          description="Extend the translucent treatment to the main pane behind sessions and editors."
-        >
-          <Toggle
-            label="Main pane glass"
-            on={appearance.bodyGlass}
-            onChange={appearance.onBodyGlass}
-            disabled={translucencyDisabled}
-          />
-        </Row>
-      </Group>
+          <Group
+            title="Translucency"
+            description={
+              glassDisabled
+                ? "Light mode always uses an opaque window, so these are off. Your dark-mode values are preserved."
+                : "How much of the desktop shows through MonoCode. Blur costs more to composite the higher it goes."
+            }
+          >
+            <Row
+              id="sidebar-opacity"
+              label="Sidebar opacity"
+              description="Applies to the project rail and the other glass panes."
+            >
+              <Slider
+                label="Sidebar opacity"
+                value={percent}
+                display={`${percent}%`}
+                min={Math.round(SIDEBAR_OPACITY_MIN * 100)}
+                max={Math.round(SIDEBAR_OPACITY_MAX * 100)}
+                onChange={appearance.onOpacity}
+                disabled={glassDisabled}
+              />
+            </Row>
+            <Row
+              id="blur"
+              label="Blur radius"
+              description="Background blur behind the window."
+            >
+              <Slider
+                label="Blur radius"
+                value={appearance.blur}
+                display={String(appearance.blur)}
+                min={SIDEBAR_BLUR_MIN}
+                max={SIDEBAR_BLUR_MAX}
+                onChange={appearance.onBlur}
+                disabled={glassDisabled}
+              />
+            </Row>
+            <Row
+              id="main-pane-glass"
+              label="Main pane glass"
+              description="Extend the translucent treatment to the main pane behind sessions and editors."
+            >
+              <Toggle
+                label="Main pane glass"
+                on={appearance.bodyGlass}
+                onChange={appearance.onBodyGlass}
+                disabled={glassDisabled}
+              />
+            </Row>
+          </Group>
+        </>
+      )}
 
       <ChatBackgroundCard appearance={appearance} />
 

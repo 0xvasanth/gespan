@@ -534,16 +534,34 @@ function matchScore(
   return null;
 }
 
+const NO_HIDDEN_SETTINGS: ReadonlySet<string> = new Set();
+
+/** Appearance rows that only one layout shows: the inset workspace drops the
+ * tint and translucency controls, and only it has its own glass switch. */
+export const INSET_LAYOUT_HIDDEN_SETTINGS: ReadonlySet<string> = new Set([
+  "hue",
+  "saturation",
+  "dark-lightness",
+  "sidebar-opacity",
+  "blur",
+  "main-pane-glass",
+]);
+export const CLASSIC_LAYOUT_HIDDEN_SETTINGS: ReadonlySet<string> = new Set([
+  "inset-glass",
+]);
+
 /** Individual settings first, then whole sections, so a row wins its own name. */
 export function searchSettings(
   query: string,
   limit = 8,
+  hidden: ReadonlySet<string> = NO_HIDDEN_SETTINGS,
 ): SettingsSearchResult[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
   const scored: { score: number; result: SettingsSearchResult }[] = [];
 
   for (const entry of SETTINGS_INDEX) {
+    if (hidden.has(entry.id)) continue;
     const score = matchScore(needle, entry.label, entry.keywords);
     if (score == null) continue;
     scored.push({

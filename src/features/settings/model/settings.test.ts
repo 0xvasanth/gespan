@@ -4,6 +4,8 @@ import {
   AUTOSAVE_DEFAULT,
   COLLAPSED_PROJECT_RAIL_MODE_DEFAULT,
   searchSettings,
+  CLASSIC_LAYOUT_HIDDEN_SETTINGS,
+  INSET_LAYOUT_HIDDEN_SETTINGS,
   SETTINGS_INDEX,
   settingsSectionsByGroup,
   MODEL_CONTROLS_DEFAULT,
@@ -653,6 +655,21 @@ describe("settings search", () => {
   it("ranks label matches over keyword matches, and pages last", () => {
     expect(searchSettings("glass").map((result) => result.label)).toEqual([
       "Inset workspace glass",
+      "Main pane glass",
+      "Blur radius",
+      "Sidebar opacity",
+      "Appearance",
+    ]);
+  });
+
+  it("leaves out the rows the current layout does not show", () => {
+    const labels = (hidden: ReadonlySet<string>) =>
+      searchSettings("glass", undefined, hidden).map((result) => result.label);
+    expect(labels(INSET_LAYOUT_HIDDEN_SETTINGS)).toEqual([
+      "Inset workspace glass",
+      "Appearance",
+    ]);
+    expect(labels(CLASSIC_LAYOUT_HIDDEN_SETTINGS)).toEqual([
       "Main pane glass",
       "Blur radius",
       "Sidebar opacity",
