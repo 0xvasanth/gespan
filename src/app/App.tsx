@@ -13396,14 +13396,14 @@ function Workspace({
     endRightPanelTransition.current = null;
     if (!animate) {
       content.style.width = "";
-      content.style.flex = "";
       if (!rightPanelOpen) setRightPanelClosing(false);
       return;
     }
-    // The committed width; a running slide only overrides it.
+    // The committed width; a running slide only overrides it. Only the
+    // width is pinned: the column still stretches the contents to full
+    // height, so the Changes graph stays at the bottom while it slides.
     const full = parseFloat(pane.style.width) || pane.offsetWidth;
     content.style.width = `${full}px`;
-    content.style.flex = "none";
     endRightPanelTransition.current = beginLayoutTransition();
     const animation = pane.animate(
       [{ width: `${from}px` }, { width: `${rightPanelOpen ? full : 0}px` }],
@@ -13422,7 +13422,6 @@ function Workspace({
         endRightPanelTransition.current?.();
         endRightPanelTransition.current = null;
         content.style.width = "";
-        content.style.flex = "";
       } else {
         setRightPanelClosing(false);
       }
@@ -13439,7 +13438,6 @@ function Workspace({
     const content = rightPanelRef.current?.firstElementChild;
     if (content instanceof HTMLElement) {
       content.style.width = "";
-      content.style.flex = "";
     }
   }, [rightPanelClosing, rightPanelOpen]);
   // The same shared stats the sidebar's Changes tab reads, so the toggle
