@@ -11,13 +11,16 @@ import { estimateRetainedBytes } from "../data/sessionCache";
 import { detachedHistoryNodes } from "./useMeasuredHistory";
 
 /** Transcripts kept mounted after their pane closes, so a revisit skips the rebuild. */
-export const TRANSCRIPT_POOL_LIMIT = 12;
-// Count alone lets twelve code-heavy conversations retain enormous DOM trees.
-// Six code-heavy histories fit without cycling through eviction on each visit.
+export const TRANSCRIPT_POOL_LIMIT = 4;
+// Each retained node also holds its React fiber and render objects, roughly
+// 1-2 KB together, so the node budget is the pool's real memory ceiling.
+// Four large transcripts need about 50k nodes: at 40k, revisits rebuild and
+// take twice as long. Workspace tabs stay mounted and do not count here;
+// releasing them measured slower and no smaller with real sessions.
 // Sustained pressure reduces only parked entries; visible content stays intact.
-export const TRANSCRIPT_POOL_NODE_LIMIT = 80_000;
-const PRESSURED_NODE_LIMIT = 20_000;
-export const TRANSCRIPT_POOL_DATA_LIMIT = 16 * 1024 * 1024;
+export const TRANSCRIPT_POOL_NODE_LIMIT = 50_000;
+const PRESSURED_NODE_LIMIT = 10_000;
+export const TRANSCRIPT_POOL_DATA_LIMIT = 8 * 1024 * 1024;
 
 type PooledProps = { visible?: boolean; parked?: boolean; blocks?: object[] };
 
@@ -81,7 +84,8 @@ export class TranscriptPool {
     const container = previous?.container ?? createContainer();
     // Attach before the pane's passive effects run, so anything that looks
     // for the transcript in the pane already finds a revisited one.
-    if (container.parentElement !== host) host.appendChild(container);
+    if (element.props.visible === false) container.remove();
+    else if (container.parentElement !== host) host.appendChild(container);
     if (
       previous?.host === host &&
       previous.onMouseDown === onMouseDown &&

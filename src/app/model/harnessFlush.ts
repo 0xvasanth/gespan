@@ -44,7 +44,8 @@ export class HarnessEventQueue {
   ) {}
 
   enqueue = (sessionId: string, event: HarnessEvent) => {
-    noteStreamArrival(event);
+    const foreground = this.visible(sessionId);
+    noteStreamArrival(event, foreground);
     const events = this.queued.get(sessionId);
     if (events) events.push(event);
     else this.queued.set(sessionId, [event]);
@@ -63,7 +64,7 @@ export class HarnessEventQueue {
       this.flushMatching((id) => id === sessionId);
       return;
     }
-    this.schedule(this.visible(sessionId));
+    this.schedule(foreground);
   };
 
   /** Lifecycle boundaries still need every session's latest output. */

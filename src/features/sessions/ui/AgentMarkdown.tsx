@@ -7,6 +7,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -608,7 +609,15 @@ const MARKDOWN_COMPONENTS = {
  * but put it on a real block box; index.css zeroes its margins so spacing still
  * comes from the block inside it.
  */
+const MarkdownCommit = createContext<
+  ((index: number, content: string) => void) | null
+>(null);
+
 function DirectionalBlock({ dir, ...props }: BlockProps) {
+  const committed = useContext(MarkdownCommit);
+  useLayoutEffect(() => {
+    committed?.(props.index, props.content);
+  }, [committed, props.index, props.content]);
   // The word-fade plugin marks changed ancestors for Streamdown's memoized
   // elements, so removing its spans can reconcile the existing block.
   // A fade-end key change also tears down nested code/media in lists and can
@@ -701,7 +710,27 @@ export const AgentMarkdown = memo(function AgentMarkdown({
     visible && !pacedReveal,
   );
   const paced = pacedReveal ? smooth : immediate;
-  useStreamPresentation(measurement, text.length, paced.text.length, visible);
+  const presented = useStreamPresentation(measurement, text.length, visible);
+  // Only instrumentation needs the expected block list outside Streamdown.
+  // Feed that same list to its parser so measuring never doubles the parsing.
+  const measuredBlocks = useMemo(
+    () => (measurement ? parseStreamingMarkdown(paced.text) : undefined),
+    [measurement, paced.text],
+  );
+  const parseBlocks = useCallback(
+    (source: string) => measuredBlocks ?? parseStreamingMarkdown(source),
+    [measuredBlocks],
+  );
+  const blockCommitted = useMemo(() => {
+    if (!measuredBlocks) return null;
+    const committed = new Set<number>();
+    return (index: number, content: string) => {
+      if (measuredBlocks[index] !== content) return;
+      committed.add(index);
+      if (committed.size === measuredBlocks.length)
+        presented(paced.text.length);
+    };
+  }, [measuredBlocks, paced.text.length, presented]);
   const cadence = useCadenceFade(paced.text);
   const fadeMs = pacedReveal ? WORD_FADE_MS : cadence.durationMs;
   const fading = useWordFading(!!streaming || paced.revealing, fadeMs);
@@ -779,21 +808,23 @@ export const AgentMarkdown = memo(function AgentMarkdown({
           <>
             {/* Streamdown takes no style; a contents box passes the fade timing down. */}
             <div className="contents" style={fadeStyle}>
-              <Streamdown
-                BlockComponent={DirectionalBlock}
-                className={`agent-markdown min-w-0 font-sans text-sm leading-6 ${fading ? "word-fading" : ""} ${className ?? ""}`}
-                components={MARKDOWN_COMPONENTS}
-                controls={false}
-                dir="auto"
-                isAnimating={!!streaming || paced.revealing}
-                parseIncompleteMarkdown={false}
-                parseMarkdownIntoBlocksFn={parseStreamingMarkdown}
-                plugins={MARKDOWN_PLUGINS}
-                remarkPlugins={remarkPlugins}
-                rehypePlugins={rehypePlugins}
-              >
-                {paced.text}
-              </Streamdown>
+              <MarkdownCommit.Provider value={blockCommitted}>
+                <Streamdown
+                  BlockComponent={DirectionalBlock}
+                  className={`agent-markdown min-w-0 font-sans text-sm leading-6 ${fading ? "word-fading" : ""} ${className ?? ""}`}
+                  components={MARKDOWN_COMPONENTS}
+                  controls={false}
+                  dir="auto"
+                  isAnimating={!!streaming || paced.revealing}
+                  parseIncompleteMarkdown={false}
+                  parseMarkdownIntoBlocksFn={parseBlocks}
+                  plugins={MARKDOWN_PLUGINS}
+                  remarkPlugins={remarkPlugins}
+                  rehypePlugins={rehypePlugins}
+                >
+                  {paced.text}
+                </Streamdown>
+              </MarkdownCommit.Provider>
             </div>
             {fileMenu ? (
               <ExplorerMenu

@@ -615,6 +615,43 @@ export async function readSession(sessionId: string): Promise<Session | null> {
   return session;
 }
 
+/** Fetched output stays off its block, so saves never ship it back. */
+const TOOL_DETAIL_CACHE_CHARS = 2_000_000;
+const toolDetailCache = new Map<string, string | null>();
+let toolDetailCacheChars = 0;
+
+/**
+ * Output a loaded transcript omitted (`detailOmitted`), read when its row is
+ * expanded. `stepId` names a step inside the block's subagent run.
+ */
+export async function loadToolDetail(
+  sessionId: string,
+  blockId: string,
+  stepId?: string,
+): Promise<string | null> {
+  const key = `${sessionId}\0${blockId}\0${stepId ?? ""}`;
+  const cached = toolDetailCache.get(key);
+  if (cached !== undefined) {
+    toolDetailCache.delete(key);
+    toolDetailCache.set(key, cached);
+    return cached;
+  }
+  const detail = await invoke<string | null>("session_tool_detail", {
+    sessionId,
+    blockId,
+    stepId: stepId ?? null,
+  });
+  toolDetailCache.set(key, detail);
+  toolDetailCacheChars += detail?.length ?? 0;
+  for (const [oldest, value] of toolDetailCache) {
+    if (toolDetailCacheChars <= TOOL_DETAIL_CACHE_CHARS) break;
+    if (oldest === key) break;
+    toolDetailCache.delete(oldest);
+    toolDetailCacheChars -= value?.length ?? 0;
+  }
+  return detail;
+}
+
 /** A progressive caller publishes the repair against current state before persisting. */
 export async function repairSession(
   source: Session,
@@ -1349,6 +1386,9 @@ function sanitizeAgentRun(value: unknown): AgentRunMeta | null {
         ...(typeof row.toolKind === "string" ? { toolKind: row.toolKind } : {}),
         ...(typeof row.status === "string" ? { status: row.status } : {}),
         ...(typeof row.detail === "string" ? { detail: row.detail } : {}),
+        ...(row.detailOmitted === true && typeof row.detail !== "string"
+          ? { detailOmitted: true }
+          : {}),
         ...(row.preview && typeof row.preview === "object"
           ? { preview: row.preview as AgentStep["preview"] }
           : {}),

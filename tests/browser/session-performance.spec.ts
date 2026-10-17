@@ -1,6 +1,9 @@
+import type { ReaderAnchor } from "./readerAnchor";
 import { expect, test } from "@playwright/test";
 
 type Fixture = Window & {
+  captureReaderAnchor(): ReaderAnchor;
+  readerAnchorTop(anchor: ReaderAnchor): number;
   selectSession(id: number): void;
   deliverReply(text: string, complete?: boolean): void;
   sessionBurst: string;
@@ -56,35 +59,40 @@ for (const example of ["formattedReply", "bulletReply"] as const) {
           )
           .toBe(true);
       }
-      const result = await page.evaluate(async (example) => {
-        const fixture = window as Fixture;
-        const el = document.querySelector<HTMLElement>(".agent-transcript")!;
-        const reply = el.querySelector<HTMLElement>(
-          '[data-chat-message="live-reply"]',
-        )!;
-        const list = reply.querySelector("ol, ul")!;
-        const code = reply.querySelector(".markdown-code-shell");
-        const read = () => ({
-          top: el.scrollTop,
-          height: el.scrollHeight,
-          replyHeight: reply.getBoundingClientRect().height,
-          codeHeight: code?.getBoundingClientRect().height,
-          fading: !!reply.querySelector(".word-fading"),
-        });
-        const samples = [read()];
-        fixture.deliverReply(fixture[example], true);
-        const deadline = performance.now() + 900;
-        do {
-          await new Promise(requestAnimationFrame);
-          samples.push(read());
-        } while (performance.now() < deadline);
-        return {
-          samples,
-          listPreserved: reply.querySelector("ol, ul") === list,
-          codePreserved: reply.querySelector(".markdown-code-shell") === code,
-          wordSpans: reply.querySelectorAll("[data-word-fade]").length,
-        };
-      }, example);
+      const result = await page.evaluate(
+        async ({ example, reading }) => {
+          const fixture = window as Fixture;
+          const el = document.querySelector<HTMLElement>(".agent-transcript")!;
+          const reply = el.querySelector<HTMLElement>(
+            '[data-chat-message="live-reply"]',
+          )!;
+          const list = reply.querySelector("ol, ul")!;
+          const code = reply.querySelector(".markdown-code-shell");
+          const anchor = reading ? fixture.captureReaderAnchor() : null;
+          const read = () => ({
+            top: el.scrollTop,
+            height: el.scrollHeight,
+            replyHeight: reply.getBoundingClientRect().height,
+            readerTop: anchor ? fixture.readerAnchorTop(anchor) : null,
+            codeHeight: code?.getBoundingClientRect().height,
+            fading: !!reply.querySelector(".word-fading"),
+          });
+          const samples = [read()];
+          fixture.deliverReply(fixture[example], true);
+          const deadline = performance.now() + 900;
+          do {
+            await new Promise(requestAnimationFrame);
+            samples.push(read());
+          } while (performance.now() < deadline);
+          return {
+            samples,
+            listPreserved: reply.querySelector("ol, ul") === list,
+            codePreserved: reply.querySelector(".markdown-code-shell") === code,
+            wordSpans: reply.querySelectorAll("[data-word-fade]").length,
+          };
+        },
+        { example, reading },
+      );
       await testInfo.attach("completion-scroll-frames", {
         body: JSON.stringify(result.samples),
         contentType: "application/json",
@@ -100,7 +108,12 @@ for (const example of ["formattedReply", "bulletReply"] as const) {
       );
       const tops = result.samples.map((sample) => sample.top);
       if (reading) {
-        expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1);
+        // A status row above the reply may change height on completion. The
+        // scroll offset must compensate while the text stays in place.
+        const positions = result.samples.map((sample) => sample.readerTop!);
+        expect(
+          Math.max(...positions) - Math.min(...positions),
+        ).toBeLessThanOrEqual(1);
       } else {
         expect(tops.slice(1).filter((top, i) => top < tops[i] - 1)).toEqual([]);
         await expect
@@ -205,7 +218,20 @@ test("paces a completed provider burst and follows it beyond the viewport", asyn
       ),
     )
     .toBeGreaterThan(100);
-  const before = await scroller.evaluate((el) => el.scrollTop);
+  await expect
+    .poll(() =>
+      scroller.evaluate(
+        (el) =>
+          new Promise<boolean>((resolve) => {
+            const top = el.scrollTop;
+            setTimeout(() => resolve(el.scrollTop === top), 150);
+          }),
+      ),
+    )
+    .toBe(true);
+  const anchor = await page.evaluate(() =>
+    (window as Fixture).captureReaderAnchor(),
+  );
   await page.evaluate(() =>
     (window as Fixture).deliverReply(
       (window as Fixture).sessionBurst + "\n\nOne more paragraph.",
@@ -215,9 +241,15 @@ test("paces a completed provider burst and follows it beyond the viewport", asyn
   await expect(page.locator('[data-chat-message="live-reply"]')).toContainText(
     "One more paragraph.",
   );
-  expect(
-    Math.abs((await scroller.evaluate((el) => el.scrollTop)) - before),
-  ).toBeLessThanOrEqual(1);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (anchor) =>
+          Math.abs((window as Fixture).readerAnchorTop(anchor) - anchor.top),
+        anchor,
+      ),
+    )
+    .toBeLessThanOrEqual(1);
 });
 
 test("reuses ten warm transcripts on rapid keyboard switches", async ({

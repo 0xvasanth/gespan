@@ -1,7 +1,10 @@
+import type { ReaderAnchor } from "./readerAnchor";
 import { expect, test, type Page } from "@playwright/test";
 import type { Block } from "../../src/features/sessions/model/session";
 
 type Fixture = Window & {
+  captureReaderAnchor(): ReaderAnchor;
+  readerAnchorTop(anchor: ReaderAnchor): number;
   setReplayBlocks(blocks: Block[], busy: boolean): void;
 };
 
@@ -67,6 +70,9 @@ async function openPane(page: Page, width: number) {
   await expect(
     page.locator('[data-chat-message="latest-prompt"]'),
   ).toBeVisible();
+  // Historical turns mount progressively. Finish opening the fixture before
+  // measuring completion so unrelated history growth is not in the sample.
+  await expect(page.locator("[data-transcript-turn]")).toHaveCount(20);
   await page.evaluate(() => document.fonts.ready);
   await expect
     .poll(() =>
@@ -77,13 +83,19 @@ async function openPane(page: Page, width: number) {
     .toBeLessThanOrEqual(1);
 }
 
-async function completeAndRecord(page: Page, incremental: boolean) {
+async function completeAndRecord(
+  page: Page,
+  incremental: boolean,
+  reading = false,
+) {
   return page.evaluate(
-    async ({ head, reply, incremental }) => {
+    async ({ head, reply, incremental, reading }) => {
       const fixture = window as Fixture;
       const el = document.querySelector<HTMLElement>(".agent-transcript")!;
+      const anchor = reading ? fixture.captureReaderAnchor() : null;
       const samples: Array<{
         top: number;
+        readerTop: number | null;
         height: number;
         viewport: number;
         length: number;
@@ -94,6 +106,7 @@ async function completeAndRecord(page: Page, incremental: boolean) {
         const output = el.querySelector('[data-chat-message="live-reply"]');
         samples.push({
           top: el.scrollTop,
+          readerTop: anchor ? fixture.readerAnchorTop(anchor) : null,
           height: el.scrollHeight,
           viewport: el.clientHeight,
           length: output?.textContent?.length ?? 0,
@@ -150,7 +163,7 @@ async function completeAndRecord(page: Page, incremental: boolean) {
       cancelAnimationFrame(frame);
       return { samples, settled: !!settledAt };
     },
-    { head, reply, incremental },
+    { head, reply, incremental, reading },
   );
 }
 
@@ -225,12 +238,12 @@ test("completion preserves a reader's position inside the full session pane", as
       ),
     )
     .toBe(true);
-  const result = await completeAndRecord(page, false);
+  const result = await completeAndRecord(page, false, true);
   await info.attach("completion-reading-frames", {
     body: JSON.stringify(result),
     contentType: "application/json",
   });
   expect(result.settled).toBe(true);
-  const tops = result.samples.map((sample) => sample.top);
+  const tops = result.samples.map((sample) => sample.readerTop!);
   expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1);
 });

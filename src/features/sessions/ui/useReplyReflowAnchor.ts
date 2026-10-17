@@ -1,4 +1,4 @@
-import { useLayoutEffect, type RefObject } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 
 type Anchor = {
   message: HTMLElement;
@@ -15,10 +15,13 @@ export function useReplyReflowAnchor(
   following: RefObject<boolean>,
   remember: (element: HTMLElement) => void,
 ) {
+  // The cached transcript can detach while hidden, and its width or reply can
+  // change before it returns. Keep the character as well as the scroll offset.
+  const retained = useRef<Anchor | undefined>(undefined);
   useLayoutEffect(() => {
     if (!visible || !scroller) return;
     let width = scroller.clientWidth;
-    let anchor: Anchor | undefined;
+    let anchor = following.current ? undefined : retained.current;
     let frame = 0;
     let adjustedTop: number | undefined;
     let manualUntil = 0;
@@ -31,32 +34,36 @@ export function useReplyReflowAnchor(
       // A pending width change must use the position from before reflow.
       if (!scroller.isConnected || scroller.clientWidth !== width) return;
       const viewport = scroller.getBoundingClientRect();
-      for (const fraction of [0.25, 0.5, 0.75]) {
-        const range = document.caretRangeFromPoint?.(
-          viewport.left + viewport.width * fraction,
-          viewport.top + 32,
-        );
-        if (!range || range.startContainer.nodeType !== Node.TEXT_NODE)
-          continue;
-        const node = range.startContainer as Text;
-        const message = node.parentElement?.closest<HTMLElement>(
-          '[data-chat-message-role="assistant"]',
-        );
-        if (!message || !scroller.contains(message) || !node.length) continue;
-        const offset = Math.min(range.startOffset, node.length - 1);
-        range.setStart(node, offset);
-        range.setEnd(node, offset + 1);
-        const prefix = document.createRange();
-        prefix.selectNodeContents(message);
-        prefix.setEnd(node, offset);
-        anchor = {
-          message,
-          node,
-          offset,
-          character: prefix.toString().length,
-          top: range.getBoundingClientRect().top - viewport.top,
-        };
-        return;
+      // A point can fall between list items or paragraphs. Try the next
+      // nearby line before giving up on a reader's visible text.
+      for (const offsetY of [32, 48, 64]) {
+        for (const fraction of [0.25, 0.5, 0.75]) {
+          const range = document.caretRangeFromPoint?.(
+            viewport.left + viewport.width * fraction,
+            viewport.top + offsetY,
+          );
+          if (!range || range.startContainer.nodeType !== Node.TEXT_NODE)
+            continue;
+          const node = range.startContainer as Text;
+          const message = node.parentElement?.closest<HTMLElement>(
+            '[data-chat-message-role="assistant"]',
+          );
+          if (!message || !scroller.contains(message) || !node.length) continue;
+          const offset = Math.min(range.startOffset, node.length - 1);
+          range.setStart(node, offset);
+          range.setEnd(node, offset + 1);
+          const prefix = document.createRange();
+          prefix.selectNodeContents(message);
+          prefix.setEnd(node, offset);
+          anchor = {
+            message,
+            node,
+            offset,
+            character: prefix.toString().length,
+            top: range.getBoundingClientRect().top - viewport.top,
+          };
+          return;
+        }
       }
     };
     const schedule = () => {
@@ -169,8 +176,9 @@ export function useReplyReflowAnchor(
     scroller.addEventListener("pointerdown", pointerDown, { passive: true });
     scroller.addEventListener("keydown", keyDown);
     document.addEventListener("pointerup", pointerUp, { passive: true });
-    schedule();
+    if (!anchor) schedule();
     return () => {
+      retained.current = anchor;
       resize.disconnect();
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("wheel", manualScroll);

@@ -1,3 +1,4 @@
+import { captureReaderAnchor, readerAnchorTop } from "./readerAnchor";
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -75,6 +76,8 @@ function Fixture() {
   const [busy, setBusy] = useState(true);
   useEffect(() => {
     Object.assign(window, {
+      captureReaderAnchor,
+      readerAnchorTop,
       setReplayBlocks: (blocks: Block[], busy: boolean) => {
         setBlocks(blocks);
         setBusy(busy);

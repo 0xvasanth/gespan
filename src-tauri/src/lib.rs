@@ -50,6 +50,7 @@ mod search;
 mod session_store;
 mod skills;
 pub mod ssh_askpass;
+mod tool_detail;
 #[cfg(target_os = "macos")]
 mod trackpad_zoom;
 #[cfg(target_os = "windows")]
@@ -521,6 +522,7 @@ pub fn run() {
             session_store::session_search,
             session_store::cancel_session_search,
             session_store::session_get,
+            session_store::session_tool_detail,
             mono_transcript::mono_session_get,
             mono_transcript::mono_session_page,
             mono_transcript::mono_session_upsert,

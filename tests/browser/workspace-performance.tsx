@@ -238,7 +238,7 @@ if (nativeInvoke) {
     showError(event.error?.stack ?? event.message),
   );
   window.addEventListener("unhandledrejection", (event) =>
-    showError(String(event.reason)),
+    showError(event.reason?.stack ?? String(event.reason)),
   );
 }
 
@@ -321,6 +321,22 @@ const queue = new HarnessEventQueue(foreground, (batches) => {
       events.every((event) => event.type === "message.delta"),
     ),
   );
+});
+// App flushes its real provider queue in a layout effect on activation. This
+// synthetic queue must follow that boundary too, rather than leave the newly
+// visible session waiting for its old 250ms background timer.
+const activationObserver = new MutationObserver((records) => {
+  if (
+    records.some((record) =>
+      (record.target as Element).hasAttribute("data-workspace-tab"),
+    )
+  )
+    queue.flushForeground();
+});
+activationObserver.observe(document.body, {
+  attributes: true,
+  attributeFilter: ["aria-hidden"],
+  subtree: true,
 });
 let timer = 0;
 let streamDeadline = 0;

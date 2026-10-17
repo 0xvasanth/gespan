@@ -17,15 +17,21 @@ afterEach(() => vi.unstubAllGlobals());
 it("publishes tokens to the visible session without rendering the shell or hidden panes", () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const initial = [newSession("claude", "/one"), newSession("codex", "/two")];
+  let fallbacks = initial;
   const renders = [0, 0];
   let shellRenders = 0;
   let store!: SessionStateStore;
   let select!: (index: number) => void;
-  const root = createRoot(document.createElement("div"));
+  const host = document.createElement("div");
+  const root = createRoot(host);
   function Pane({ index, visible }: { index: number; visible: boolean }) {
-    const session = useSessionSnapshot(initial[index], visible);
+    const session = useSessionSnapshot(fallbacks[index], visible);
     renders[index]++;
-    return createElement("p", null, session.blocks.at(-1)?.text);
+    return createElement(
+      "p",
+      { "data-busy": String(session.busy) },
+      session.blocks.at(-1)?.text,
+    );
   }
   function Workspace() {
     const state = useWorkspaceSessionState(() => initial);
@@ -62,6 +68,10 @@ it("publishes tokens to the visible session without rendering the shell or hidde
   expect(store.ref.current[1].blocks[0].text).toContain("chunk9");
   act(() => select(1));
   expect(shellRenders).toBe(baseline.shell + 1);
+  // Token-only updates do not refresh the parent's fallback. Hiding its
+  // pane must keep the output already shown instead of restoring that draft.
+  expect(host.querySelectorAll("p")[0].textContent).toContain("chunk9");
+  expect(host.querySelectorAll("p")[1].textContent).toContain("chunk9");
   const afterSwitch = [...renders];
   act(() =>
     store.update(
@@ -76,12 +86,17 @@ it("publishes tokens to the visible session without rendering the shell or hidde
   );
   expect(renders[0]).toBe(afterSwitch[0]);
   expect(renders[1]).toBe(afterSwitch[1] + 1);
+  expect(host.querySelectorAll("p")[0].textContent).not.toContain("latest");
+  expect(host.querySelectorAll("p")[1].textContent).toContain("latest");
   act(() =>
-    store.setState((sessions) =>
-      sessions.map((session) => ({ ...session, busy: false })),
-    ),
+    store.setState((sessions) => {
+      fallbacks = sessions.map((session) => ({ ...session, busy: false }));
+      return fallbacks;
+    }),
   );
   expect(shellRenders).toBe(baseline.shell + 2);
+  expect(host.querySelectorAll("p")[0].dataset.busy).toBe("false");
+  expect(host.querySelectorAll("p")[0].textContent).toContain("latest");
   act(() => root.unmount());
 });
 

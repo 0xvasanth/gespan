@@ -69,6 +69,7 @@ export function PromptOutline({
   const [focusId, setFocusId] = useState<string | null>(null);
   const rail = useRef<HTMLDivElement>(null);
   const frame = useRef<number | null>(null);
+  const measureTimer = useRef<number | null>(null);
   const openTimer = useRef<number | null>(null);
   const pointerInside = useRef(false);
   const lastPromptId = useRef<string | null>(null);
@@ -113,10 +114,16 @@ export function PromptOutline({
   }, [scope]);
 
   const schedule = useCallback(() => {
-    if (frame.current != null) return;
+    if (frame.current != null || measureTimer.current != null) return;
     frame.current = window.requestAnimationFrame(() => {
       frame.current = null;
-      measure();
+      // The outline is decorative. Read after this frame's transcript writes
+      // and layout, so it does not force layout ahead of the selected pane's
+      // first paint or compete with the streaming scroll observers.
+      measureTimer.current = window.setTimeout(() => {
+        measureTimer.current = null;
+        measure();
+      }, 0);
     });
   }, [measure]);
 
@@ -138,6 +145,10 @@ export function PromptOutline({
       if (frame.current != null) {
         window.cancelAnimationFrame(frame.current);
         frame.current = null;
+      }
+      if (measureTimer.current != null) {
+        window.clearTimeout(measureTimer.current);
+        measureTimer.current = null;
       }
     };
   }, [mountedScroller, schedule, scope, visible]);
