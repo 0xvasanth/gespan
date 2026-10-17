@@ -36,7 +36,7 @@ type Props = {
   onStopAgent: (id: string) => void | Promise<unknown>;
   onStopSession: (id: string) => void | Promise<unknown>;
   onPressureChange?: (active: boolean) => void;
-  /** The footer's slot. Without one, the notice shows as a toast. */
+  /** The footer's slot. Without one, monitoring continues without a notice. */
   chipHost?: HTMLElement | null;
 };
 
@@ -59,6 +59,10 @@ export function ResourcePressureNotice({
   useEffect(() => {
     onPressureChange?.(pressure.active);
   }, [pressure.active, onPressureChange]);
+
+  useEffect(() => {
+    if (!chipHost) setOpen(false);
+  }, [chipHost]);
 
   useEffect(() => {
     let alive = true;
@@ -111,7 +115,7 @@ export function ResourcePressureNotice({
   }, []);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !chipHost) return;
     let alive = true;
     let timer = 0;
     setLoading(true);
@@ -155,7 +159,7 @@ export function ResourcePressureNotice({
       alive = false;
       clearTimeout(timer);
     };
-  }, [open, stopping]);
+  }, [open, stopping, chipHost]);
 
   if (!pressure.active && !open) return null;
   const sessionFor = (id: string) =>
@@ -216,32 +220,7 @@ export function ResourcePressureNotice({
             chipHost,
           )
         : null}
-      {pressure.active && !chipHost ? (
-        <article
-          className="approval-toast pointer-events-auto overflow-hidden rounded-xl border border-content/10 bg-content/10 shadow-xl backdrop-blur-xl"
-          role="status"
-        >
-          <button
-            type="button"
-            aria-haspopup="dialog"
-            aria-expanded={open}
-            onClick={() => setOpen(true)}
-            className="flex w-full items-center gap-2 px-3.5 py-3 text-left hover:bg-content/5"
-          >
-            <CircleAlert className="size-4 shrink-0 text-amber-500 dark:text-amber-400" />
-            <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-semibold">
-                High resource usage
-              </span>
-              <span className="block text-[12px] text-content/60">
-                MonoCode may feel slower.
-              </span>
-            </span>
-            <span className="text-[11px] text-content/50">Review work</span>
-          </button>
-        </article>
-      ) : null}
-      {open ? (
+      {open && chipHost ? (
         <Modal
           title="Running work"
           size="sm"

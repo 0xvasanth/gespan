@@ -2393,8 +2393,8 @@ function Workspace({
   const [reminderNoticesHeight, setReminderNoticesHeight] = useState(0);
   const [harnessUpdateHeight, setHarnessUpdateHeight] = useState(0);
   const [newLayoutNoticeHeight, setNewLayoutNoticeHeight] = useState(0);
-  // The footer's slot for the resource pressure chip; while the footer is
-  // hidden, the notice falls back to a toast.
+  // The footer's slot for the resource pressure chip. Monitoring continues
+  // while the footer is hidden.
   const [pressureChipHost, setPressureChipHost] =
     useState<HTMLSpanElement | null>(null);
 
@@ -14284,16 +14284,14 @@ function Workspace({
             }
             onHeightChange={setNewLayoutNoticeHeight}
           />
+          <ResourcePressureNotice
+            sessions={sessionsRef}
+            onStopAgent={(id) => onStop(id, true)}
+            onStopSession={onStop}
+            onPressureChange={transcriptPool.setResourcePressure}
+            chipHost={pressureChipHost}
+          />
           <ApprovalToasts
-            resourceNotice={
-              <ResourcePressureNotice
-                sessions={sessionsRef}
-                onStopAgent={(id) => onStop(id, true)}
-                onStopSession={onStop}
-                onPressureChange={transcriptPool.setResourcePressure}
-                chipHost={pressureChipHost}
-              />
-            }
             notices={hiddenApprovalToasts}
             topOffset={
               12 +

@@ -17,6 +17,68 @@ afterEach(() => {
   invoke.mockReset();
 });
 
+it("monitors silently without a footer and closes its dialog when the footer disappears", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "resource_usage")
+      return { cpuPercent: 95, memoryPressure: 1 };
+    if (command === "resource_processes") return [];
+    throw new Error(command);
+  });
+  const container = document.createElement("div");
+  const footer = document.createElement("span");
+  document.body.append(container, footer);
+  const root = createRoot(container);
+  const onPressureChange = vi.fn();
+  const props = {
+    sessions: { current: [] },
+    onStopAgent: vi.fn(),
+    onStopSession: vi.fn(),
+    onPressureChange,
+  };
+  const render = (chipHost?: HTMLElement) =>
+    act(async () => {
+      root.render(
+        createElement(ResourcePressureNotice, { ...props, chipHost }),
+      );
+    });
+  const processPolls = () =>
+    invoke.mock.calls.filter(([command]) => command === "resource_processes")
+      .length;
+  try {
+    await render();
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(onPressureChange).toHaveBeenLastCalledWith(true);
+    expect(document.querySelector(".approval-toast")).toBeNull();
+    expect(
+      document.querySelector('[aria-label="High resource usage"]'),
+    ).toBeNull();
+    expect(container.textContent).toBe("");
+    expect(processPolls()).toBe(0);
+
+    await render(footer);
+    expect(footer.textContent).toContain("High usage");
+    await act(async () => footer.querySelector("button")!.click());
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await render();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(footer.querySelector("button")).toBeNull();
+    const polls = processPolls();
+    await act(async () => vi.advanceTimersByTimeAsync(6_000));
+    expect(processPolls()).toBe(polls);
+    expect(document.querySelector(".approval-toast")).toBeNull();
+
+    await render(footer);
+    expect(footer.textContent).toContain("High usage");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    footer.remove();
+  }
+});
+
 it("only lists processes when opened and stops a tool only after its button is clicked", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -52,7 +114,9 @@ it("only lists processes when opened and stops a tool only after its button is c
     throw new Error(command);
   });
   const container = document.createElement("div");
+  const chipHost = document.createElement("span");
   document.body.append(container);
+  document.body.append(chipHost);
   const root = createRoot(container);
   const onStopAgent = vi.fn();
   const onStopSession = vi.fn();
@@ -63,15 +127,16 @@ it("only lists processes when opened and stops a tool only after its button is c
           sessions: { current: [session] },
           onStopAgent,
           onStopSession,
+          chipHost,
         }),
       ),
     );
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
-    expect(container.textContent).toContain("High resource usage");
+    expect(chipHost.textContent).toContain("High usage");
     expect(
       invoke.mock.calls.some(([command]) => command !== "resource_usage"),
     ).toBe(false);
-    await act(async () => container.querySelector("button")!.click());
+    await act(async () => chipHost.querySelector("button")!.click());
     expect(document.querySelectorAll("[data-resource-session]")).toHaveLength(
       1,
     );
@@ -136,9 +201,10 @@ it("only lists processes when opened and stops a tool only after its button is c
     await act(async () => vi.advanceTimersByTimeAsync(18_000));
     expect(document.body.textContent).toContain("Usage is back to normal");
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-    expect(container.querySelector("button")).toBeNull();
+    expect(chipHost.querySelector("button")).toBeNull();
   } finally {
     await act(async () => root.unmount());
     container.remove();
+    chipHost.remove();
   }
 });

@@ -121,4 +121,19 @@ test("keeps many processes compact, with details and stop controls on demand", a
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(chip).toBeVisible();
+
+  await page.setViewportSize({ width: 1300, height: 900 });
+  const modifier = await page.evaluate(() =>
+    /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
+  );
+  await page.keyboard.press(`${modifier}+,`);
+  await expect(page.locator("[data-app-settings]")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "High resource usage", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.locator(".approval-toast")).toHaveCount(0);
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(chip).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator(".approval-toast")).toHaveCount(0);
 });
