@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { ReaderAnchor } from "./readerAnchor";
 
 type WorkspaceFixture = Window & {
   workspaceHasStore: () => boolean;
@@ -6,6 +7,8 @@ type WorkspaceFixture = Window & {
   workspaceFinishStreams: () => void;
   workspaceResetMetrics: () => void;
   workspaceMetrics: () => unknown;
+  captureReaderAnchor: () => ReaderAnchor;
+  readerAnchorTop: (anchor: ReaderAnchor) => number;
 };
 
 test("switches six large sessions through the workspace shortcut", async ({
@@ -254,52 +257,17 @@ test("preserves following and a reader's position through real file-pane resizin
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       ),
   );
-  const anchor = await scroller.evaluate((el) => {
-    const rect = el.getBoundingClientRect();
-    const range = document.caretRangeFromPoint(
-      rect.left + rect.width / 4,
-      rect.top + 32,
-    )!;
-    const message = range.startContainer.parentElement!.closest<HTMLElement>(
-      '[data-chat-message-role="assistant"]',
-    )!;
-    // A caret at the end of a text node is an insertion point, not a glyph.
-    // Track the preceding visible character so a later walk does not resolve
-    // it to wrapping whitespace in the next node.
-    const node = range.startContainer as Text;
-    const offset = Math.min(range.startOffset, node.length - 1);
-    range.setStart(node, offset);
-    range.setEnd(node, offset + 1);
-    const prefix = document.createRange();
-    prefix.selectNodeContents(message);
-    prefix.setEnd(node, offset);
-    return {
-      id: message.dataset.chatMessage!,
-      character: prefix.toString().length,
-      top: range.getBoundingClientRect().top - rect.top,
-    };
-  });
+  const anchor = await page.evaluate(() =>
+    (window as WorkspaceFixture).captureReaderAnchor(),
+  );
   const readerShift = () =>
-    scroller.evaluate((el, anchor) => {
-      const message = el.querySelector(`[data-chat-message="${anchor.id}"]`)!;
-      const walker = document.createTreeWalker(message, NodeFilter.SHOW_TEXT);
-      let offset = anchor.character;
-      let node: Text | null;
-      while ((node = walker.nextNode() as Text | null)) {
-        if (offset < node.length) {
-          const range = document.createRange();
-          range.setStart(node, offset);
-          range.setEnd(node, offset + 1);
-          return Math.abs(
-            range.getBoundingClientRect().top -
-              el.getBoundingClientRect().top -
-              anchor.top,
-          );
-        }
-        offset -= node.length;
-      }
-      return Infinity;
-    }, anchor);
+    page.evaluate(
+      (anchor) =>
+        Math.abs(
+          (window as WorkspaceFixture).readerAnchorTop(anchor) - anchor.top,
+        ),
+      anchor,
+    );
   // Background output must not move a reader when the cached transcript's
   // DOM is detached and reattached through the real workspace shortcuts.
   await page.keyboard.press("Meta+2");

@@ -29,6 +29,8 @@ it("keeps the reader's character through scrolling, reflow, and cached tab retur
     '<div><div data-chat-message-role="assistant">A visible reply</div></div>';
   document.body.append(host, scroller);
   const text = scroller.querySelector("[data-chat-message-role]")!.firstChild!;
+  const whitespace = document.createTextNode(" ");
+  text.parentNode!.insertBefore(whitespace, text);
   let width = 200;
   let glyphTop = 48;
   let merged = false;
@@ -37,7 +39,11 @@ it("keeps the reader's character through scrolling, reflow, and cached tab retur
   vi.spyOn(performance, "now").mockImplementation(() => now);
   vi.spyOn(Range.prototype, "getBoundingClientRect").mockImplementation(
     function (this: Range) {
+      if (this.startContainer === whitespace && width === 100)
+        return { top: 0, width: 0, height: 0 } as DOMRect;
       return {
+        width: 8,
+        height: 16,
         top:
           glyphTop -
           scroller.scrollTop +
@@ -57,7 +63,10 @@ it("keeps the reader's character through scrolling, reflow, and cached tab retur
     value: (_x: number, y: number) => {
       const range = document.createRange();
       if (y === 32) range.selectNodeContents(scroller);
-      else {
+      else if (y === 48 && _x === width * 0.25) {
+        range.setStart(whitespace, 0);
+        range.setEnd(whitespace, 1);
+      } else {
         range.setStart(text, caretOffset);
         range.setEnd(text, caretOffset + 1);
       }
@@ -79,6 +88,16 @@ it("keeps the reader's character through scrolling, reflow, and cached tab retur
     act(() => resize([], {} as ResizeObserver));
     expect(scroller.scrollTop).toBe(100);
     expect(remember).toHaveBeenCalledWith(scroller);
+
+    // A queued correction from another layout observer is not new user
+    // input and must not replace the character retained across a divider drag.
+    scroller.scrollTop = 130;
+    scroller.dispatchEvent(new Event("scroll"));
+    act(() => {
+      while (frames.length) frames.shift()!(now);
+    });
+    act(() => resize([], {} as ResizeObserver));
+    expect(scroller.scrollTop).toBe(100);
 
     // Momentum continues after the original wheel event's quiet period.
     // Each scroll must update the reader's glyph until the gesture settles.

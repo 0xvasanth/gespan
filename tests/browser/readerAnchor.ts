@@ -17,15 +17,18 @@ export function captureReaderAnchor(): ReaderAnchor {
       );
       if (!message || !scroller.contains(message) || !node.length) continue;
       const offset = Math.min(range.startOffset, node.length - 1);
+      if (/\s/.test(node.data[offset])) continue;
       range.setStart(node, offset);
       range.setEnd(node, offset + 1);
+      const rect = range.getBoundingClientRect();
+      if (!rect.width || !rect.height) continue;
       const prefix = document.createRange();
       prefix.selectNodeContents(message);
       prefix.setEnd(node, offset);
       return {
         id: message.dataset.chatMessage!,
         character: prefix.toString().length,
-        top: range.getBoundingClientRect().top - viewport.top,
+        top: rect.top - viewport.top,
       };
     }
   }
