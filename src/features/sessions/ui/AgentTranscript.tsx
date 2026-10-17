@@ -144,6 +144,7 @@ import {
   turnCopyText,
   workKind,
   workSummaryLine,
+  joinedTurnStart,
   monoTurnLatestStart,
   monoTurnRuns,
   opensNewStretch,
@@ -1124,7 +1125,10 @@ function AgentTranscriptComponent({
           const foldedAt = lastActivityIndex(items);
           const initialThinkingAt = initialThinkingIndex(items);
           const startedAt =
-            userBlock?.startedAt ?? habit?.at ?? turn[0].startedAt;
+            userBlock?.startedAt ??
+            habit?.at ??
+            turn[0].startedAt ??
+            joinedTurnStart(turns, firstVisibleTurn + turnIndex);
           const previousTurn = turns[firstVisibleTurn + turnIndex - 1];
           const previousAt = !previousTurn
             ? undefined
