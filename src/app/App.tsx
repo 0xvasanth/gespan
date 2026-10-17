@@ -603,6 +603,7 @@ import {
 import {
   createMono,
   findMono,
+  monoWorksOn,
   isMonoSession,
   listMonos,
   loadOpenMono,
@@ -11668,7 +11669,9 @@ function Workspace({
         : []),
       ...shownMonoTabs.flatMap((monoId): TitleTab[] => {
         const mono = findMono(monoId);
-        if (!mono) return [];
+        // Like the sidebar's Monos, a Mono's tab shows in the projects it
+        // works on; it keeps its place for when the project comes back.
+        if (!mono || !monoWorksOn(mono, sidebarCwd)) return [];
         const look = monoLook(mono);
         const session = mono.sessionId
           ? sessions.find((entry) => entry.id === mono.sessionId)
@@ -13958,7 +13961,8 @@ function Workspace({
                                             onOpenSettings={
                                               onOpenMonoViewSettings
                                             }
-                                            className="absolute right-2.5 top-2.5 z-10"
+                                            // The overview header's row, so both share a centre line.
+                                            className="absolute right-2.5 top-0 z-10 h-10"
                                           />
                                         ) : null}
                                         <SessionPane
