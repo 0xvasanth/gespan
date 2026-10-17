@@ -1831,16 +1831,18 @@ html.is-resizing * {
    unblurred background just inside. */
 [data-composer-box] {
   --composer-radius: var(--radius-lg, 0.5rem);
+  --composer-blur: var(--blur-sm);
 }
 
 /* The inset layout rounds the box like a multi-line user message. */
 html.layout-inset [data-composer-box] {
   --composer-radius: var(--radius-xl, 0.75rem);
+  --composer-blur: 24px;
   border-radius: var(--composer-radius);
 }
 
 [data-composer-box]::before {
-  --composer-blur-bleed: calc(var(--blur-sm) * 2);
+  --composer-blur-bleed: calc(var(--composer-blur) * 2);
   content: "";
   position: absolute;
   inset: calc(-1 * var(--composer-blur-bleed));
@@ -1848,8 +1850,13 @@ html.layout-inset [data-composer-box] {
   clip-path: inset(var(--composer-blur-bleed) round var(--composer-radius));
   pointer-events: none;
   background: color-mix(in srgb, var(--color-content) 3%, transparent);
-  -webkit-backdrop-filter: blur(var(--blur-sm));
-  backdrop-filter: blur(var(--blur-sm));
+  -webkit-backdrop-filter: blur(var(--composer-blur));
+  backdrop-filter: blur(var(--composer-blur));
+}
+
+html.layout-inset:not(.theme-light) .agent-chat-composer {
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
 }
 
 /* The light box is already solid, so a blur behind it has nothing to frost

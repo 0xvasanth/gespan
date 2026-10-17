@@ -2267,35 +2267,33 @@ function AppearancePage({ appearance }: { appearance: AppearanceSettings }) {
             onChange={appearance.onThemePreference}
           />
         </Row>
-        <Row
-          id="workspace-theme"
-          label="Workspace theme"
-          description={
-            appearance.insetLayout
-              ? "Colors for the inset workspace's shell, card, text and accent. Each theme has a dark and a light palette."
-              : "Colors for the new layout. Turn on New layout under Layout to use them."
-          }
-        >
-          <div className="w-48">
-            <Select
-              label="Workspace theme"
-              value={appearance.workspaceTheme}
-              options={WORKSPACE_THEMES.map((theme) => ({
-                value: theme.id,
-                label: theme.label,
-                icon: (
-                  <WorkspaceThemeSwatch
-                    palette={glassDisabled ? theme.light : theme.dark}
-                  />
-                ),
-              }))}
-              onChange={(value) => {
-                if (isWorkspaceThemeId(value))
-                  appearance.onWorkspaceTheme(value);
-              }}
-            />
-          </div>
-        </Row>
+        {inset ? (
+          <Row
+            id="workspace-theme"
+            label="Workspace theme"
+            description="Colors for the inset workspace's shell, card, text and accent. Each theme has a dark and a light palette."
+          >
+            <div className="w-48">
+              <Select
+                label="Workspace theme"
+                value={appearance.workspaceTheme}
+                options={WORKSPACE_THEMES.map((theme) => ({
+                  value: theme.id,
+                  label: theme.label,
+                  icon: (
+                    <WorkspaceThemeSwatch
+                      palette={glassDisabled ? theme.light : theme.dark}
+                    />
+                  ),
+                }))}
+                onChange={(value) => {
+                  if (isWorkspaceThemeId(value))
+                    appearance.onWorkspaceTheme(value);
+                }}
+              />
+            </div>
+          </Row>
+        ) : null}
         {inset ? (
           <Row
             id="inset-glass"

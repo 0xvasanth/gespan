@@ -538,7 +538,8 @@ function matchScore(
 const NO_HIDDEN_SETTINGS: ReadonlySet<string> = new Set();
 
 /** Appearance rows that only one layout shows: the inset workspace drops the
- * tint and translucency controls, and only it has its own glass switch. */
+ * tint and translucency controls, and only it has workspace themes and its
+ * own glass switch. */
 export const INSET_LAYOUT_HIDDEN_SETTINGS: ReadonlySet<string> = new Set([
   "hue",
   "saturation",
@@ -548,6 +549,7 @@ export const INSET_LAYOUT_HIDDEN_SETTINGS: ReadonlySet<string> = new Set([
   "main-pane-glass",
 ]);
 export const CLASSIC_LAYOUT_HIDDEN_SETTINGS: ReadonlySet<string> = new Set([
+  "workspace-theme",
   "inset-glass",
 ]);
 
