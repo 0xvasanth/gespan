@@ -42,6 +42,7 @@ import {
   type IconComponent,
 } from "../../shared/ui/icons";
 import { createPortal } from "react-dom";
+import { useProjectSwipe } from "./useProjectSwipe";
 import {
   Fragment,
   memo,
@@ -2164,6 +2165,18 @@ function SidebarComponent({
       inset ? projectRailItems(recents, cwd).map((item) => item.path) : [],
     [inset, recents, cwd],
   );
+  const projectSwipeRef = useProjectSwipe(inset, {
+    cwd,
+    projects: spaceProjects,
+    onSelectProject,
+  });
+  const setSidebarRef = useCallback(
+    (el: HTMLElement | null) => {
+      resize.setPaneRef(el);
+      projectSwipeRef(el);
+    },
+    [resize.setPaneRef, projectSwipeRef],
+  );
   // Projects the rail never placed fall back to most-recent-first, which
   // reshuffles the spaces on every switch. The rail is not mounted in this
   // layout to save its order, so the spaces pin down whatever they show.
@@ -2501,7 +2514,7 @@ function SidebarComponent({
 
   const sidebarContent = (
     <aside
-      ref={resize.setPaneRef}
+      ref={setSidebarRef}
       // The inset card's own edge separates it from the sidebar.
       className={`relative flex h-full min-h-0 shrink-0 flex-col${
         inset

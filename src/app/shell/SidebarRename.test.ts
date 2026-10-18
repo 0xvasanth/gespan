@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatSessionTitle } from "../../features/sessions/model/session";
 import { formatReminderTime } from "../../features/sessions/model/sessionReminders";
 import { Sidebar } from "./Sidebar";
+import { saveProjectRailOrder } from "../../features/projects/model/recents";
 import {
   loadSessionFolders,
   saveSessionFolders,
@@ -149,6 +150,40 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe("project swipe navigation", () => {
+  it.each([true, false])(
+    "enables swiping only in the inset sidebar (inset=%s)",
+    (inset) => {
+      const paths = ["/workspace/project", "/workspace/other", "/workspace/last"];
+      saveProjectRailOrder(paths);
+      props = {
+        ...props,
+        inset,
+        recents: paths.map((path) => ({ path, openedAt: 1 })),
+        onSelectProject: vi.fn((cwd: string) => {
+          props = { ...props, cwd };
+          render();
+        }),
+      };
+      act(render);
+      const swipe = () => act(() => {
+        container.querySelector("aside")!.dispatchEvent(new WheelEvent("wheel", {
+          deltaX: 80,
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      swipe();
+      swipe();
+      if (inset) {
+        expect(props.onSelectProject).toHaveBeenCalledExactlyOnceWith(paths[1]);
+      } else {
+        expect(props.onSelectProject).not.toHaveBeenCalled();
+      }
+    },
+  );
 });
 
 describe("inset session previews", () => {
