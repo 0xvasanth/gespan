@@ -26,6 +26,7 @@ const PROJECT_RAIL_OPEN_KEY = "monocode.projectRailOpen";
 const SESSION_SIDEBAR_OPEN_KEY = "monocode.sessionSidebarOpen";
 const RIGHT_PANEL_OPEN_KEY = "monocode.rightPanelOpen";
 const RIGHT_PANEL_TAB_KEY = "monocode.rightPanelTab";
+const RIGHT_PANEL_TAB_ORDER_KEY = "monocode.rightPanelTabOrder";
 const RIGHT_PANEL_WIDTH_KEY = "monocode.rightPanelWidth";
 const BODY_KEY = "monocode.bodyGlass";
 const INSET_LAYOUT_KEY = "monocode.insetLayout";
@@ -985,8 +986,12 @@ export function saveSessionSidebarOpen(value: boolean) {
   writeFlag(SESSION_SIDEBAR_OPEN_KEY, value);
 }
 
-/** The inset layout's right panel: Explorer or Changes beside the card. */
-export type RightPanelTab = "files" | "changes";
+/** The inset layout's project tools beside the card. */
+export type RightPanelTab = "files" | "changes" | "graph";
+
+function isRightPanelTab(value: unknown): value is RightPanelTab {
+  return value === "files" || value === "changes" || value === "graph";
+}
 
 export function loadRightPanelOpen(): boolean {
   return readFlag(RIGHT_PANEL_OPEN_KEY) ?? false;
@@ -998,9 +1003,8 @@ export function saveRightPanelOpen(value: boolean) {
 
 export function loadRightPanelTab(): RightPanelTab {
   try {
-    return localStorage.getItem(RIGHT_PANEL_TAB_KEY) === "changes"
-      ? "changes"
-      : "files";
+    const value = localStorage.getItem(RIGHT_PANEL_TAB_KEY);
+    return isRightPanelTab(value) ? value : "files";
   } catch {
     return "files";
   }
@@ -1009,6 +1013,37 @@ export function loadRightPanelTab(): RightPanelTab {
 export function saveRightPanelTab(value: RightPanelTab) {
   try {
     localStorage.setItem(RIGHT_PANEL_TAB_KEY, value);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function loadRightPanelTabOrder(): RightPanelTab[] {
+  // Preserve the Explorer/Changes order from before Graph had its own tab.
+  const defaults: RightPanelTab[] = [
+    ...loadSidebarTabOrder().filter(
+      (tab) => tab === "files" || tab === "changes",
+    ),
+    "graph",
+  ];
+  try {
+    const raw = localStorage.getItem(RIGHT_PANEL_TAB_ORDER_KEY);
+    if (!raw) return defaults;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return defaults;
+    const next = [...new Set(parsed.filter(isRightPanelTab))];
+    for (const tab of defaults) {
+      if (!next.includes(tab)) next.push(tab);
+    }
+    return next;
+  } catch {
+    return defaults;
+  }
+}
+
+export function saveRightPanelTabOrder(value: RightPanelTab[]) {
+  try {
+    localStorage.setItem(RIGHT_PANEL_TAB_ORDER_KEY, JSON.stringify(value));
   } catch {
     /* storage unavailable */
   }

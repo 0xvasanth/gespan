@@ -63,6 +63,9 @@ import {
 import {
   loadSidebarTabOrder,
   saveSidebarTabOrder,
+  loadRightPanelTabOrder,
+  saveRightPanelTabOrder,
+  type RightPanelTab,
   type SidebarTabId,
 } from "../../features/settings/model/appearance";
 import { formatInteger } from "../../shared/lib/numbers";
@@ -185,7 +188,6 @@ import { LiveAgentsPreview } from "../../features/sessions/ui/LiveAgentsPreview"
 import { ProjectRail } from "./ProjectRail";
 import { InboxNotificationMenu } from "../../features/inbox/ui/InboxNotificationMenu";
 import { RailAction, RailSearch } from "./RailAction";
-import type { RightPanelTab } from "../../features/settings/model/appearance";
 import { TerminalSpinner } from "../../features/sessions/ui/TerminalSpinner";
 import { DevModeSlot, IconButton, TabVisitNav } from "./TitleBar";
 import { ProjectSearch } from "../../features/projects/ui/ProjectSearch";
@@ -208,6 +210,7 @@ import {
 import { SessionsEmpty } from "../../features/sessions/ui/SessionsEmpty";
 import { SidebarUpdateFooter } from "./SidebarUpdate";
 import { SourceControl } from "../../features/source-control/ui/SourceControl";
+import { GitHistoryGraph } from "../../features/source-control/ui/GitHistoryGraph";
 import { GithubStarPrompt } from "./GithubStarPrompt";
 import {
   isMonoSession,
@@ -259,11 +262,12 @@ let rememberedWidth = DEFAULT_WIDTH;
 
 type SidebarTab = SidebarTabId;
 
-const TAB_LABELS: Record<SidebarTab, string> = {
+const TAB_LABELS: Record<SidebarTab | RightPanelTab, string> = {
   sessions: "Sessions",
   inbox: "Inbox",
   files: "Explorer",
   changes: "Changes",
+  graph: "History",
 };
 
 const COMPACT_TAB_ICONS: Record<SidebarTab, typeof PanelLeft> = {
@@ -384,7 +388,7 @@ type Props = {
    */
   inset?: boolean;
   /**
-   * Inset layout: Explorer and Changes render into this panel beside the
+   * Inset layout: Explorer, Changes and Graph render into this panel beside the
    * card, and the sidebar keeps to the sessions.
    */
   rightPanel?: {
@@ -694,6 +698,8 @@ function SidebarComponent({
     [resize.width, minWidth, setSidebarWidth],
   );
   const [tabOrder, setTabOrder] = useState<SidebarTab[]>(loadSidebarTabOrder);
+  const [rightTabOrder, setRightTabOrder] =
+    useState<RightPanelTab[]>(loadRightPanelTabOrder);
   const [now, setNow] = useState(() => Date.now());
   const sessionsLock = useLockOverscroll<HTMLDivElement>();
   const sessionsScrollRef = useRef<HTMLDivElement>(null);
@@ -939,6 +945,10 @@ function SidebarComponent({
     setTabOrder(next);
     saveSidebarTabOrder(next);
   };
+  const onReorderRightTabs = (tabs: RightPanelTab[]) => {
+    setRightTabOrder(tabs);
+    saveRightPanelTabOrder(tabs);
+  };
   const sortable = useAnimatedReorder(visibleTabs, onReorderTabs);
   const visibleFolderIds = sessionListEntries.flatMap((entry) =>
     entry.kind === "folder" ? [entry.folder.id] : [],
@@ -1018,10 +1028,10 @@ function SidebarComponent({
   const panelOpen = open || drawerVisible || peekVisible;
   // Keep the hidden explorer intact when a chat tab changes worktrees. Its
   // rows and file icons only need rebuilding when Files is actually shown.
-  // The inset layout shows Explorer and Changes in its right panel, so they
-  // follow that panel rather than the sidebar's own tab.
+  // The inset layout's project tools follow the right panel rather than the
+  // sidebar's own tab.
   const paneHost = inset ? rightPanel : undefined;
-  const paneTab: SidebarTab | null = paneHost
+  const paneTab: SidebarTab | RightPanelTab | null = paneHost
     ? paneHost.open && inProject
       ? paneHost.tab
       : null
@@ -2431,6 +2441,7 @@ function SidebarComponent({
             <FileTree
               key={explorer.current.cwd}
               cwd={explorer.current.cwd}
+              compactHeader={inset}
               rootLabel={explorer.current.rootLabel}
               onOpenFile={onOpenFile}
               onOpenTerminal={remoteProject ? undefined : onOpenTerminal}
@@ -2455,6 +2466,8 @@ function SidebarComponent({
           <SourceControl
             cwd={gitRoot}
             enabled={panesOpen}
+            showGraph={!inset}
+            compactHeader={inset}
             textHarness={textHarness}
             selectedPath={selectedDiffPath}
             selectedKind={selectedDiffKind}
@@ -2471,6 +2484,21 @@ function SidebarComponent({
     </>
   );
 
+  const graphPane = paneHost && paneTab === "graph" ? (
+    <div
+      role="tabpanel"
+      aria-label="History"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+    >
+      <GitHistoryGraph
+        cwd={gitRoot}
+        enabled={panesOpen}
+        selectedSha={selectedCommitSha}
+        onOpenCommit={onOpenCommit ?? (() => {})}
+      />
+    </div>
+  ) : null;
+
   const sidebarContent = (
     <aside
       ref={resize.setPaneRef}
@@ -2486,7 +2514,7 @@ function SidebarComponent({
       {railVisible || inset ? (
         <>
           {workspaceHeader}
-          {/* The inset sidebar has no tabs: Explorer and Changes live in the
+          {/* The inset sidebar has no tabs: the project tools live in the
               right panel. */}
           {inset ? null : (
             <div
@@ -3200,12 +3228,9 @@ function SidebarComponent({
       {paneHost?.host && paneTab
         ? createPortal(
             <RightPanel
-              tab={paneTab === "changes" ? "changes" : "files"}
-              tabs={tabOrder.filter(
-                (itemId): itemId is RightPanelTab =>
-                  itemId === "files" || itemId === "changes",
-              )}
-              onReorder={onReorderTabs}
+              tab={paneHost.tab}
+              tabs={rightTabOrder}
+              onReorder={onReorderRightTabs}
               changesLabel={changesLabel}
               hasChangeStats={hasChangeStats}
               changeAdditions={changeAdditions}
@@ -3214,6 +3239,7 @@ function SidebarComponent({
             >
               {filesPane}
               {changesPane}
+              {graphPane}
             </RightPanel>,
             paneHost.host,
           )
@@ -4010,7 +4036,7 @@ function ProjectSpaceButton({
   );
 }
 
-/** The inset layout's Explorer and Changes, beside the card. */
+/** The inset layout's project tools, beside the card. */
 function RightPanel({
   tab,
   tabs,

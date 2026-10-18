@@ -1353,7 +1353,7 @@ function Workspace({
     useState<HTMLDivElement | null>(null);
   const insetLayoutRef = useRef(insetLayout);
   insetLayoutRef.current = insetLayout;
-  // The inset layout's right panel: Explorer and Changes beside the card.
+  // The inset layout's project tools beside the card.
   const [rightPanelHost, setRightPanelHost] = useState<HTMLDivElement | null>(
     null,
   );
@@ -13521,7 +13521,7 @@ function Workspace({
     }
     // The committed width; a running slide only overrides it. Only the
     // width is pinned: the column still stretches the contents to full
-    // height, so the Changes graph stays at the bottom while it slides.
+    // height, so the panel's scrolling content stays put while it slides.
     const full = parseFloat(pane.style.width) || pane.offsetWidth;
     content.style.width = `${full}px`;
     endRightPanelTransition.current = beginLayoutTransition();
@@ -14314,7 +14314,7 @@ function Workspace({
                   {insetLayout ? null : usageFooter}
                 </div>
                 {insetLayout ? (
-                  // Part of the card: Explorer and Changes beside the
+                  // Part of the card: the project tools beside the
                   // workspace, behind a hairline.
                   <div
                     ref={setRightPanelRef}
@@ -14327,13 +14327,13 @@ function Workspace({
                   >
                     <div
                       ref={setRightPanelHost}
-                      aria-label="Explorer and Changes"
+                      aria-label="Project tools"
                       className="flex min-h-0 flex-1 flex-col"
                     />
                     <div
                       role="separator"
                       aria-orientation="vertical"
-                      aria-label="Resize Explorer and Changes"
+                      aria-label="Resize right sidebar"
                       aria-valuenow={rightPanelResize.width}
                       aria-valuemin={RIGHT_PANEL_WIDTH_MIN}
                       aria-valuemax={RIGHT_PANEL_WIDTH_MAX}

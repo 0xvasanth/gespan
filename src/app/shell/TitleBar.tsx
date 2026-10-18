@@ -139,7 +139,7 @@ type Props = {
    * owns the rail toggle and history navigation in both rail states.
    */
   inset?: boolean;
-  /** Inset layout: the right panel holding Explorer and Changes. */
+  /** Inset layout: the right sidebar holding the project tools. */
   rightPanelOpen?: boolean;
   onToggleRightPanel?: () => void;
   /** The working tree has changes; dots the right panel toggle. */
@@ -1065,8 +1065,8 @@ function TitleBarComponent({
             <IconButton
               label={
                 changesDot
-                  ? "Toggle Explorer and Changes (uncommitted changes)"
-                  : "Toggle Explorer and Changes"
+                  ? "Toggle right sidebar (uncommitted changes)"
+                  : "Toggle right sidebar"
               }
               active={rightPanelOpen && !rightPanelOff}
               disabled={rightPanelOff}

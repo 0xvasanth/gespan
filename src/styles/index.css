@@ -4284,6 +4284,12 @@ html.layout-inset.theme-light .dialog-scrim {
   }
 }
 
+/* Match the solid labels' brighter hues on light surfaces. */
+.theme-light .git-history-item {
+  --git-history-color-strength: 100%;
+  --git-history-line-opacity: 1;
+  --git-history-line-width: 1.25px;
+}
 /* Graph node cutouts so lane strokes do not show through the circles. */
 .git-history-item svg {
   display: block;
