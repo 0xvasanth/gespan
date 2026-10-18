@@ -40,6 +40,10 @@ import { PlanStepsBurst } from "./PlanStepsBurst";
 import { settleCatchUpFades } from "./wordFade";
 import { revealMeasuredTurn, useMeasuredHistory } from "./useMeasuredHistory";
 import {
+  layoutTransitionActive,
+  onLayoutTransitionEnd,
+} from "../../../shared/lib/layoutTransition";
+import {
   ownStepBlock,
   ToolDetailSession,
   useToolDetail,
@@ -769,8 +773,12 @@ function AgentTranscriptComponent({
     const observer = new ResizeObserver(onResize);
     observer.observe(inner);
     observer.observe(el);
+    const stopTransitionEnd = onLayoutTransitionEnd(onResize);
     onResize();
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      stopTransitionEnd();
+    };
   }, [bottomAligned, scrollerEl, followTranscript, setShowJump, visible]);
 
   useTurnScrollAnchor(scrollerEl, visible, stickToBottom, rememberScroll);
@@ -5451,6 +5459,21 @@ function syncTranscriptViewport(el: HTMLElement | null) {
       (Number.parseFloat(style.paddingTop) || 0)
     : 0;
   const next = `${Math.max(0, el.clientHeight - pad)}px`;
+  const anchors = inner?.querySelectorAll<HTMLElement>(
+    ":scope > .transcript-turn-anchor",
+  );
+  // Changing the inherited value restyles the whole history. While a pane
+  // slides, only the anchored turn follows; the rest catches up once at
+  // the end.
+  if (layoutTransitionActive()) {
+    anchors?.forEach((anchor) =>
+      anchor.style.setProperty("--transcript-viewport", next),
+    );
+    return;
+  }
+  anchors?.forEach((anchor) =>
+    anchor.style.removeProperty("--transcript-viewport"),
+  );
   if (el.style.getPropertyValue("--transcript-viewport") === next) return;
   el.style.setProperty("--transcript-viewport", next);
 }

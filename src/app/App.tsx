@@ -284,6 +284,7 @@ import {
   createProjectTerminal,
   findProjectTerminal,
   focusedDockTerminalId,
+  isVerticalDock,
   mapProjectTerminal,
   nextDockTerminalTitle,
   patchProjectTerminals,
@@ -13131,19 +13132,118 @@ function Workspace({
     },
     [onProjectTerminalSize],
   );
+  const dockWasOpen = useRef<{ path: string; open: boolean } | null>(null);
+  const dockAnimation = useRef<{ key: string; stop: () => void } | null>(
+    null,
+  );
+  // The project whose dock stays rendered while it slides shut.
+  const [dockClosing, setDockClosing] = useState<string | null>(null);
+  const dockClosingShown =
+    dockClosing != null &&
+    !monoCovers &&
+    !!currentProjectDock &&
+    !currentProjectDock.open &&
+    sameProjectPath(dockClosing, projectCwd);
   useLayoutEffect(() => {
     if (monoCovers) dockDragSize.current = null;
     if (dockDragSize.current != null) return;
     const el = dockGridRef.current;
     if (!el) return;
-    applyDockGridStyle(
-      el,
-      dockVisible && !monoCovers && currentProjectDock
-        ? currentProjectDock.side
-        : null,
-      currentProjectDock?.size ?? 0,
+    const dock = currentProjectDock;
+    const open = dockVisible && !monoCovers && !!dock;
+    const side = dock && (open || dockClosingShown) ? dock.side : null;
+    const size = dock?.size ?? 0;
+    // Only a dock opening or closing in place slides; a project switch or a
+    // mono covering the workspace shows or hides it at once.
+    const previous = dockWasOpen.current;
+    const inPlace = !!previous && sameProjectPath(previous.path, projectCwd);
+    dockWasOpen.current = { path: projectCwd, open };
+    const key = side ? `${open ? "open" : "close"}:${side}:${size}` : "";
+    // Unrelated dock updates, like a terminal retitling itself, leave a
+    // running slide alone.
+    if (inPlace && dockAnimation.current?.key === key) return;
+    const reduceMotion = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const animates =
+      insetLayout && !reduceMotion && typeof el.animate === "function";
+    // Render the dock once more so it can slide out; the grid keeps its
+    // track until then.
+    if (
+      animates &&
+      inPlace &&
+      previous.open &&
+      !open &&
+      dock &&
+      !monoCovers
+    ) {
+      setDockClosing(projectCwd);
+      return;
+    }
+    const host = el.querySelector<HTMLElement>(":scope > [data-dock-shown]");
+    const vertical = side ? isVerticalDock(side) : true;
+    // A reversal mid-slide starts from wherever the track currently is.
+    const current = host
+      ? vertical
+        ? host.getBoundingClientRect().height
+        : host.getBoundingClientRect().width
+      : 0;
+    const reversing = !!dockAnimation.current;
+    dockAnimation.current?.stop();
+    dockAnimation.current = null;
+    applyDockGridStyle(el, side, size);
+    const opening = open && inPlace && (!previous.open || reversing);
+    const closing = !open && !!side;
+    if (!side || !animates || !(opening || closing)) return;
+    const section = host?.firstElementChild;
+    if (!host || !(section instanceof HTMLElement)) return;
+    // The terminal keeps its full size and rides the moving edge, so it fits
+    // once instead of on every frame.
+    const property = vertical ? "gridTemplateRows" : "gridTemplateColumns";
+    const leading = side === "top" || side === "left";
+    host.style.display = "flex";
+    host.style.flexDirection = vertical ? "column" : "row";
+    host.style.justifyContent = leading ? "flex-end" : "flex-start";
+    section.style.flexShrink = "0";
+    if (vertical) section.style.height = `${size}px`;
+    else section.style.width = `${size}px`;
+    const track = (px: number) =>
+      leading ? `${px}px minmax(0, 1fr)` : `minmax(0, 1fr) ${px}px`;
+    const from = reversing ? current : opening ? 0 : size;
+    const endTransition = beginLayoutTransition();
+    const animation = el.animate(
+      [{ [property]: track(from) }, { [property]: track(opening ? size : 0) }],
+      {
+        duration: opening ? 240 : 200,
+        easing: "cubic-bezier(0.32, 0.72, 0, 1)",
+        fill: "forwards",
+      },
     );
-  }, [currentProjectDock, dockVisible, monoCovers]);
+    const stop = () => {
+      animation.onfinish = null;
+      animation.cancel();
+      host.style.display = "";
+      host.style.flexDirection = "";
+      host.style.justifyContent = "";
+      section.style.flexShrink = "";
+      section.style.height = "";
+      section.style.width = "";
+      endTransition();
+      if (dockAnimation.current?.stop === stop) dockAnimation.current = null;
+      if (closing) setDockClosing(null);
+    };
+    // A closed dock holds its last frame until it is no longer rendered.
+    animation.onfinish = opening ? stop : () => setDockClosing(null);
+    dockAnimation.current = { key, stop };
+  }, [
+    currentProjectDock,
+    dockVisible,
+    dockClosingShown,
+    monoCovers,
+    insetLayout,
+    projectCwd,
+  ]);
+  useEffect(() => () => dockAnimation.current?.stop(), []);
 
   const lastRemoteSnapshot = useRef(new Map<string, HostSession>());
   const onRemoteSnapshot = useCallback(
@@ -14021,7 +14121,7 @@ function Workspace({
                           >
                             {projectTerminals.map((dock) => {
                               const show =
-                                dock.open &&
+                                (dock.open || dockClosingShown) &&
                                 !monoCovers &&
                                 sameProjectPath(dock.projectPath, projectCwd);
                               return (
@@ -14036,6 +14136,7 @@ function Workspace({
                                     show ? { gridArea: "dock" } : undefined
                                   }
                                   aria-hidden={!show}
+                                  data-dock-shown={show ? "" : undefined}
                                 >
                                   <ProjectTerminalDock
                                     dock={dock}
