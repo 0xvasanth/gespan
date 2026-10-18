@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-18
+
 ### Added
 
 - An optional **New layout** brings a redesigned sidebar, project switcher, workspace tabs and right panel. Try it from the invitation or Settings > Appearance > Layout, where it can also be turned off to return to the classic layout. Glass remains a separate setting.
@@ -1564,7 +1566,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/hardbeat920/monocode/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/hardbeat920/monocode/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/hardbeat920/monocode/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/hardbeat920/monocode/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/hardbeat920/monocode/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/hardbeat920/monocode/compare/v0.11.0...v0.12.0
