@@ -4,7 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { cspStyleNonce } from "../../../shared/lib/csp";
 import type { ColorScheme } from "../../settings/model/appearance";
 import { editorHighlightStyle } from "./editorLanguage";
-import { EDITOR_FONT_PX, EDITOR_LINE_HEIGHT_PX } from "./editorMetrics";
+import { EDITOR_LINE_HEIGHT_PX } from "./editorMetrics";
 
 export {
   editorHighlightStyle,
@@ -18,7 +18,7 @@ function editorThemeStyles(dark: boolean) {
       height: "100%",
       backgroundColor: "transparent",
       color: "var(--color-content)",
-      fontSize: `${EDITOR_FONT_PX}px`,
+      fontSize: "var(--code-font-size)",
       userSelect: "text",
     },
     "&.cm-focused": {

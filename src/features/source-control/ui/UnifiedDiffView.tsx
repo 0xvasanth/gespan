@@ -495,7 +495,7 @@ export function UnifiedDiffView({
         >
           <div
             ref={content}
-            className="diff-review-content font-mono text-[12px]"
+            className="diff-review-content font-mono"
             style={{
               height: document.totalHeight,
             }}

@@ -56,8 +56,8 @@ export type WorkspaceTheme = {
 export const WORKSPACE_THEME_DEFAULT: WorkspaceThemeId = "default";
 
 // The default palette mirrors the stylesheet's own values (its code colours are
-// GitHub's); it is only read for previews and the native tint, never written as
-// variables.
+// VS Code's Dark+ and Light+); it is only read for previews and the native
+// tint, never written as variables.
 export const WORKSPACE_THEMES: readonly WorkspaceTheme[] = [
   {
     id: "default",
@@ -71,16 +71,16 @@ export const WORKSPACE_THEMES: readonly WorkspaceTheme[] = [
       link: "#7dd3fc",
       heading: "#f9a8c9",
       syntax: {
-        keyword: "#f47067",
-        callable: "#dcbdfb",
-        string: "#96d0ff",
-        type: "#f69d50",
-        tag: "#8ddb8c",
-        number: "#6cb6ff",
-        comment: "#768390",
-        property: "#6cb6ff",
-        meta: "#768390",
-        invalid: "#ff938a",
+        keyword: "#569cd6",
+        callable: "#dcdcaa",
+        string: "#ce9178",
+        type: "#4ec9b0",
+        tag: "#569cd6",
+        number: "#b5cea8",
+        comment: "#6a9955",
+        property: "#9cdcfe",
+        meta: "#dcdcaa",
+        invalid: "#f44747",
       },
     },
     light: {
@@ -92,16 +92,16 @@ export const WORKSPACE_THEMES: readonly WorkspaceTheme[] = [
       link: "#0866c6",
       heading: "#be185d",
       syntax: {
-        keyword: "#cf222e",
-        callable: "#8250df",
-        string: "#0a3069",
-        type: "#953800",
-        tag: "#116329",
-        number: "#0550ae",
-        comment: "#6e7781",
-        property: "#0550ae",
-        meta: "#6e7781",
-        invalid: "#82071e",
+        keyword: "#0000ff",
+        callable: "#795e26",
+        string: "#a31515",
+        type: "#267f99",
+        tag: "#800000",
+        number: "#098658",
+        comment: "#008000",
+        property: "#001080",
+        meta: "#795e26",
+        invalid: "#cd3131",
       },
     },
   },

@@ -51,8 +51,8 @@ describe("bounded code highlight plugin", () => {
         highlighter.codeToTokens("a\r\n\r\nb", {
           lang: "text",
           themes: {
-            light: "github-light-default",
-            dark: "github-dark-dimmed",
+            light: "light-plus",
+            dark: "dark-plus",
           },
         }).tokens,
       );
@@ -125,8 +125,8 @@ describe("bounded code highlight plugin", () => {
           const expected = highlighter.codeToTokens(code, {
             lang: language as BundledLanguage,
             themes: {
-              light: "github-light-default",
-              dark: "github-dark-dimmed",
+              light: "light-plus",
+              dark: "dark-plus",
             },
           });
           expect((await highlight(plugin, code, language)).tokens).toEqual(
@@ -143,8 +143,8 @@ describe("bounded code highlight plugin", () => {
             highlighter.codeToTokens(code, {
               lang: language as BundledLanguage,
               themes: {
-                light: "github-light-default",
-                dark: "github-dark-dimmed",
+                light: "light-plus",
+                dark: "dark-plus",
               },
             }).tokens,
           );

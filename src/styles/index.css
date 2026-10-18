@@ -105,19 +105,21 @@
 }
 
 /* Code colours for the editor, diffs and previews (editorLanguage.ts).
-   GitHub Dark Dimmed by default; light mode (GitHub Light Default) and the
-   inset workspace themes swap them below. */
+   VS Code's Dark+ by default; light mode (Light+) and the inset workspace
+   themes swap them below. */
 :root {
-  --syntax-keyword: #f47067;
-  --syntax-callable: #dcbdfb;
-  --syntax-string: #96d0ff;
-  --syntax-type: #f69d50;
-  --syntax-tag: #8ddb8c;
-  --syntax-number: #6cb6ff;
-  --syntax-comment: #768390;
-  --syntax-property: #6cb6ff;
-  --syntax-meta: #768390;
-  --syntax-invalid: #ff938a;
+  /* Code text in the file editor and the unified diff. */
+  --code-font-size: 12.5px;
+  --syntax-keyword: #569cd6;
+  --syntax-callable: #dcdcaa;
+  --syntax-string: #ce9178;
+  --syntax-type: #4ec9b0;
+  --syntax-tag: #569cd6;
+  --syntax-number: #b5cea8;
+  --syntax-comment: #6a9955;
+  --syntax-property: #9cdcfe;
+  --syntax-meta: #dcdcaa;
+  --syntax-invalid: #f44747;
 }
 
 /* Static so Tailwind always emits it: only xterm reads it, via JS. */
@@ -216,16 +218,16 @@ html.theme-light {
   --selection-emphasis-strength: 14%;
   --color-diff-add-fg: #047857;
   --color-diff-del-fg: #be123c;
-  --syntax-keyword: #cf222e;
-  --syntax-callable: #8250df;
-  --syntax-string: #0a3069;
-  --syntax-type: #953800;
-  --syntax-tag: #116329;
-  --syntax-number: #0550ae;
-  --syntax-comment: #6e7781;
-  --syntax-property: #0550ae;
-  --syntax-meta: #6e7781;
-  --syntax-invalid: #82071e;
+  --syntax-keyword: #0000ff;
+  --syntax-callable: #795e26;
+  --syntax-string: #a31515;
+  --syntax-type: #267f99;
+  --syntax-tag: #800000;
+  --syntax-number: #098658;
+  --syntax-comment: #008000;
+  --syntax-property: #001080;
+  --syntax-meta: #795e26;
+  --syntax-invalid: #cd3131;
   color-scheme: light;
 }
 

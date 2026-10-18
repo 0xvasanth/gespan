@@ -4,6 +4,7 @@
 }
 .diff-review-content {
   position: relative;
+  font-size: var(--code-font-size);
   tab-size: 4;
 }
 .diff-review-file-slot {
@@ -59,7 +60,8 @@
   bottom: 0;
   flex-shrink: 0;
   height: 14px;
-  font-size: 12px;
+  /* Same font as the code lanes, so `--diff-code-min-width`'s ch matches. */
+  font-size: var(--code-font-size);
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: none;
@@ -162,7 +164,7 @@
   display: block;
   padding: 0 24px 0 12px;
   white-space: pre;
-  font-size: 12px;
+  font-size: var(--code-font-size);
   line-height: 20px;
   color: color-mix(in srgb, var(--color-content) 92%, transparent);
 }
