@@ -30,7 +30,11 @@ describe("workspace themes", () => {
     expect(new Set(ids).size).toBe(ids.length);
     for (const theme of WORKSPACE_THEMES) {
       for (const palette of [theme.dark, theme.light]) {
-        for (const color of Object.values(palette)) {
+        const { syntax, ...shell } = palette;
+        for (const color of [
+          ...Object.values(shell),
+          ...Object.values(syntax),
+        ]) {
           expect(color).toMatch(/^#[0-9a-f]{6}$/);
         }
       }
@@ -55,6 +59,9 @@ describe("workspace themes", () => {
     expect(root.style.getPropertyValue("--wt-dark-surface")).toBe("#120e0c");
     expect(root.style.getPropertyValue("--wt-light-panel-solid")).toBe(
       "#ffffff",
+    );
+    expect(root.style.getPropertyValue("--wt-dark-syntax-keyword")).toBe(
+      "#fe8019",
     );
 
     applyWorkspaceTheme(WORKSPACE_THEME_DEFAULT);

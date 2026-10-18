@@ -23,9 +23,7 @@ import {
   lockOverscroll,
   useLockOverscroll,
 } from "../../../shared/hooks/useLockOverscroll";
-import { useColorScheme } from "../../../shared/hooks/useColorScheme";
 import { formatInteger } from "../../../shared/lib/numbers";
-import type { ColorScheme } from "../../settings/model/appearance";
 import { basename } from "../../../platform/tauri/fs";
 import type { SyntaxToken } from "../../files/editor/syntaxTokens";
 import {
@@ -94,7 +92,6 @@ export function UnifiedDiffView({
   onDiscardFile,
   onStageHunk,
 }: Props) {
-  const scheme = useColorScheme();
   const previousFiles = useRef<UnifiedDiffFileModel[]>([]);
   const stableFiles = useMemo(() => {
     const stable = reuseUnchangedById(previousFiles.current, files);
@@ -211,7 +208,7 @@ export function UnifiedDiffView({
       visible.filter((row) => row.type === "line").map((row) => row.fileId),
     ),
   ].join("\n");
-  useVisibleHighlights(stableFiles, visibleFiles, scheme);
+  useVisibleHighlights(stableFiles, visibleFiles);
   const [pending, setPending] = useState<PendingJump | null>(null);
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
@@ -386,7 +383,7 @@ export function UnifiedDiffView({
         stickyHeader={fill && fileLayout === "stacked"}
         tokens={
           row.type === "line"
-            ? cachedDiffHighlight(file, scheme)?.get(row.line)
+            ? cachedDiffHighlight(file)?.get(row.line)
             : undefined
         }
       />
@@ -953,14 +950,12 @@ function currentHunkIndex(document: ReviewDocument, top: number) {
 function useVisibleHighlights(
   files: UnifiedDiffFileModel[],
   visibleKey: string,
-  scheme: ColorScheme,
 ) {
   const requests = useRef(
     new Map<
       string,
       {
         blocks: UnifiedDiffFileModel["blocks"];
-        scheme: ColorScheme;
         controller: AbortController;
       }
     >(),
@@ -970,11 +965,7 @@ function useVisibleHighlights(
     const visible = new Set(visibleKey.split("\n"));
     const currentFiles = new Map(files.map((file) => [file.id, file]));
     for (const [id, job] of requests.current) {
-      if (
-        !visible.has(id) ||
-        currentFiles.get(id)?.blocks !== job.blocks ||
-        job.scheme !== scheme
-      ) {
+      if (!visible.has(id) || currentFiles.get(id)?.blocks !== job.blocks) {
         job.controller.abort();
         requests.current.delete(id);
       }
@@ -983,22 +974,21 @@ function useVisibleHighlights(
       if (
         !visible.has(file.id) ||
         requests.current.has(file.id) ||
-        cachedDiffHighlight(file, scheme)
+        cachedDiffHighlight(file)
       )
         continue;
       const controller = new AbortController();
       requests.current.set(file.id, {
         blocks: file.blocks,
-        scheme,
         controller,
       });
-      void highlightDiffInBackground(file, scheme, controller.signal)
+      void highlightDiffInBackground(file, controller.signal)
         .then(() => {
           if (!controller.signal.aborted) repaint((current) => current + 1);
         })
         .catch(() => {});
     }
-  }, [files, visibleKey, scheme]);
+  }, [files, visibleKey]);
   useEffect(
     () => () => {
       for (const request of requests.current.values())

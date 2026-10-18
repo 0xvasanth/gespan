@@ -25,8 +25,8 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
  * a remounted block briefly shows plain text while it is highlighted again.
  */
 const DEFAULT_THEMES: [ThemeInput, ThemeInput] = [
-  "github-light",
-  "github-dark",
+  "github-light-default",
+  "github-dark-dimmed",
 ];
 const MAX_ENTRIES = 100;
 const MAX_CACHED_CHARS = 500_000;

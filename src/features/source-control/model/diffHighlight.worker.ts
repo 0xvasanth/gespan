@@ -3,7 +3,7 @@ import type { HighlightRequest } from "./diffHighlight";
 
 self.onmessage = async ({ data }: MessageEvent<HighlightRequest>) => {
   try {
-    const tokens = await highlightDiffFile(data.file, data.scheme);
+    const tokens = await highlightDiffFile(data.file);
     self.postMessage({
       id: data.id,
       tokens: data.file.blocks.flatMap((block) =>

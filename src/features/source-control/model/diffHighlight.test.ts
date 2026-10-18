@@ -44,20 +44,16 @@ it("maps worker results to original source lines and caches the unchanged snapsh
   const { highlightDiffInBackground } = await import("./diffHighlight");
   const model = file("a.ts");
   const controller = new AbortController();
-  const result = highlightDiffInBackground(model, "dark", controller.signal);
+  const result = highlightDiffInBackground(model, controller.signal);
   const worker = TestWorker.instances[0];
   worker.finish();
   const tokens = await result;
   const line = model.blocks[0].lines[0];
   expect(tokens?.get(line)?.[0]).toEqual({ text: line.text, color: "#abcdef" });
-  expect(
-    await highlightDiffInBackground({ ...model }, "dark", controller.signal),
-  ).toBe(tokens);
+  expect(await highlightDiffInBackground({ ...model }, controller.signal)).toBe(
+    tokens,
+  );
   expect(worker.sent).toHaveLength(1);
-  const light = highlightDiffInBackground(model, "light", controller.signal);
-  expect(worker.sent).toHaveLength(2);
-  worker.finish();
-  expect(await light).not.toBe(tokens);
 });
 
 it("drops abandoned queued parses without interrupting the active visible file", async () => {
@@ -65,18 +61,12 @@ it("drops abandoned queued parses without interrupting the active visible file",
   const { highlightDiffInBackground } = await import("./diffHighlight");
   const first = highlightDiffInBackground(
     file("first.ts"),
-    "dark",
     new AbortController().signal,
   );
   const obsolete = new AbortController();
-  const queued = highlightDiffInBackground(
-    file("old.ts"),
-    "dark",
-    obsolete.signal,
-  );
+  const queued = highlightDiffInBackground(file("old.ts"), obsolete.signal);
   const next = highlightDiffInBackground(
     file("next.ts"),
-    "dark",
     new AbortController().signal,
   );
   obsolete.abort();
@@ -98,7 +88,6 @@ it("falls back to plain text on worker failure and recovers without stale events
   const { highlightDiffInBackground } = await import("./diffHighlight");
   const first = highlightDiffInBackground(
     file("first.ts"),
-    "dark",
     new AbortController().signal,
   );
   const previous = TestWorker.instances[0];
@@ -106,7 +95,6 @@ it("falls back to plain text on worker failure and recovers without stale events
   expect(await first).toBeNull();
   const next = highlightDiffInBackground(
     file("next.ts"),
-    "dark",
     new AbortController().signal,
   );
   const worker = TestWorker.instances[1];

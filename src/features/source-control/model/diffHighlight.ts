@@ -2,14 +2,12 @@ import {
   highlightDiffFile,
   type SyntaxToken,
 } from "../../files/editor/syntaxTokens";
-import type { ColorScheme } from "../../settings/model/appearance";
 import type { UnifiedBlock, UnifiedLine } from "./unifiedDiff";
 
 type HighlightFile = { path: string; blocks: UnifiedBlock[] };
 export type HighlightRequest = {
   id: number;
   file: HighlightFile;
-  scheme: ColorScheme;
 };
 type Job = HighlightRequest & {
   signal: AbortSignal;
@@ -17,6 +15,7 @@ type Job = HighlightRequest & {
   cleanup: () => void;
 };
 
+// Token colours are `--syntax-*` variables, so one result serves both schemes.
 const cache = new WeakMap<
   UnifiedBlock[],
   Map<string, Map<UnifiedLine, SyntaxToken[]>>
@@ -26,26 +25,24 @@ let worker: Worker | undefined;
 let active: Job | undefined;
 let sequence = 0;
 
-export function cachedDiffHighlight(file: HighlightFile, scheme: ColorScheme) {
-  return cache.get(file.blocks)?.get(`${scheme}\0${file.path}`);
+export function cachedDiffHighlight(file: HighlightFile) {
+  return cache.get(file.blocks)?.get(file.path);
 }
 
 /** Decorative parsing is serialized off the UI thread. Abandoned queued files
  * are dropped; an already-running parse may finish and populate the cache. */
 export function highlightDiffInBackground(
   file: HighlightFile,
-  scheme: ColorScheme,
   signal: AbortSignal,
 ): Promise<Map<UnifiedLine, SyntaxToken[]> | null> {
-  const cached = cachedDiffHighlight(file, scheme);
+  const cached = cachedDiffHighlight(file);
   if (cached) return Promise.resolve(cached);
   if (signal.aborted) return Promise.resolve(null);
-  if (typeof Worker === "undefined") return highlightDiffFile(file, scheme);
+  if (typeof Worker === "undefined") return highlightDiffFile(file);
   return new Promise((resolve) => {
     const job: Job = {
       id: ++sequence,
       file,
-      scheme,
       signal,
       resolve,
       cleanup: () => signal.removeEventListener("abort", cancel),
@@ -85,9 +82,9 @@ function pump() {
             const pieces = data.tokens[index++];
             if (pieces?.length) tokens.set(line, pieces);
           }
-        let byScheme = cache.get(job.file.blocks);
-        if (!byScheme) cache.set(job.file.blocks, (byScheme = new Map()));
-        byScheme.set(`${job.scheme}\0${job.file.path}`, tokens);
+        let byPath = cache.get(job.file.blocks);
+        if (!byPath) cache.set(job.file.blocks, (byPath = new Map()));
+        byPath.set(job.file.path, tokens);
         active = undefined;
         job.cleanup();
         job.resolve(tokens);
@@ -101,7 +98,6 @@ function pump() {
     worker.postMessage({
       id: active.id,
       file: active.file,
-      scheme: active.scheme,
     });
   } catch {
     fail();

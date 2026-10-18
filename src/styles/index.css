@@ -104,6 +104,22 @@
   );
 }
 
+/* Code colours for the editor, diffs and previews (editorLanguage.ts).
+   GitHub Dark Dimmed by default; light mode (GitHub Light Default) and the
+   inset workspace themes swap them below. */
+:root {
+  --syntax-keyword: #f47067;
+  --syntax-callable: #dcbdfb;
+  --syntax-string: #96d0ff;
+  --syntax-type: #f69d50;
+  --syntax-tag: #8ddb8c;
+  --syntax-number: #6cb6ff;
+  --syntax-comment: #768390;
+  --syntax-property: #6cb6ff;
+  --syntax-meta: #768390;
+  --syntax-invalid: #ff938a;
+}
+
 /* Static so Tailwind always emits it: only xterm reads it, via JS. */
 @theme static {
   /* Terminal-only stack. JetBrains Mono Nerd Font leads so prompt text and
@@ -200,6 +216,16 @@ html.theme-light {
   --selection-emphasis-strength: 14%;
   --color-diff-add-fg: #047857;
   --color-diff-del-fg: #be123c;
+  --syntax-keyword: #cf222e;
+  --syntax-callable: #8250df;
+  --syntax-string: #0a3069;
+  --syntax-type: #953800;
+  --syntax-tag: #116329;
+  --syntax-number: #0550ae;
+  --syntax-comment: #6e7781;
+  --syntax-property: #0550ae;
+  --syntax-meta: #6e7781;
+  --syntax-invalid: #82071e;
   color-scheme: light;
 }
 
@@ -479,7 +505,7 @@ html.layout-inset.theme-light {
 }
 
 /* A workspace theme (workspaceThemes.ts) replaces the hue/saturation tint with
-   its own text, accent and markdown colours. Strokes and selections mix from
+   its own text, accent, markdown and code colours. Strokes and selections mix from
    `--color-content`, so they follow. Menus and popovers sit on the shell. */
 html.layout-inset.has-workspace-theme {
   --color-content: var(--wt-dark-content);
@@ -487,6 +513,16 @@ html.layout-inset.has-workspace-theme {
   --color-accent: var(--wt-dark-accent);
   --link-color: var(--wt-dark-link);
   --color-markdown-heading: var(--wt-dark-heading);
+  --syntax-keyword: var(--wt-dark-syntax-keyword);
+  --syntax-callable: var(--wt-dark-syntax-callable);
+  --syntax-string: var(--wt-dark-syntax-string);
+  --syntax-type: var(--wt-dark-syntax-type);
+  --syntax-tag: var(--wt-dark-syntax-tag);
+  --syntax-number: var(--wt-dark-syntax-number);
+  --syntax-comment: var(--wt-dark-syntax-comment);
+  --syntax-property: var(--wt-dark-syntax-property);
+  --syntax-meta: var(--wt-dark-syntax-meta);
+  --syntax-invalid: var(--wt-dark-syntax-invalid);
 }
 
 html.layout-inset.has-workspace-theme.theme-light {
@@ -495,6 +531,16 @@ html.layout-inset.has-workspace-theme.theme-light {
   --color-accent: var(--wt-light-accent);
   --link-color: var(--wt-light-link);
   --color-markdown-heading: var(--wt-light-heading);
+  --syntax-keyword: var(--wt-light-syntax-keyword);
+  --syntax-callable: var(--wt-light-syntax-callable);
+  --syntax-string: var(--wt-light-syntax-string);
+  --syntax-type: var(--wt-light-syntax-type);
+  --syntax-tag: var(--wt-light-syntax-tag);
+  --syntax-number: var(--wt-light-syntax-number);
+  --syntax-comment: var(--wt-light-syntax-comment);
+  --syntax-property: var(--wt-light-syntax-property);
+  --syntax-meta: var(--wt-light-syntax-meta);
+  --syntax-invalid: var(--wt-light-syntax-invalid);
 }
 
 .inset-outer {
