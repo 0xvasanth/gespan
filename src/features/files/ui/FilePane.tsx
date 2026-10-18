@@ -33,6 +33,7 @@ import { AgentTabView } from "../../sessions/ui/AgentTabView";
 import { MarkdownPreview } from "../../sessions/ui/AgentMarkdown";
 import { BinaryFileView } from "./BinaryFileView";
 import { ReleaseNotesSurface } from "../../../app/ui/ReleaseNotesSurface";
+import { WorkingTreeDiffSurface as WorkingTreeDiff } from "../../source-control/ui/workingTreeDiffSurface";
 import { isRemoteProjectPath } from "../../projects/model/recents";
 
 const CommitDiff = lazySurface(async () => {
@@ -50,10 +51,6 @@ const SessionChangesDiff = lazySurface(async () => {
 const TerminalView = lazySurface(async () => {
   const module = await import("../../terminal/ui/TerminalView");
   return { default: module.TerminalView };
-});
-const WorkingTreeDiff = lazySurface(async () => {
-  const module = await import("../../source-control/ui/WorkingTreeDiff");
-  return { default: module.WorkingTreeDiff };
 });
 
 type Props = {

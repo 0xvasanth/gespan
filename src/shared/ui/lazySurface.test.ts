@@ -147,3 +147,30 @@ it("retries a failed warmup when the page is opened", async () => {
   expect(load).toHaveBeenCalledTimes(2);
   expect(container.textContent).toBe("Inbox content");
 });
+
+it("renders a prefetched surface synchronously on its first mount", async () => {
+  const Surface = lazySurface(async () => ({
+    default: () => createElement("main", null, "Ready content"),
+  }));
+  await Surface.preload();
+  act(() => root.render(createElement(Surface)));
+  expect(container.textContent).toBe("Ready content");
+});
+
+it("retains a cold surface's state after loading and parent updates", async () => {
+  function Counter({ label }: { label: string }) {
+    const [count, setCount] = useState(0);
+    return createElement(
+      "button",
+      { onClick: () => setCount((current) => current + 1) },
+      `${label}: ${count}`,
+    );
+  }
+  const Surface = lazySurface(async () => ({ default: Counter }));
+  await act(async () =>
+    root.render(createElement(Surface, { label: "First" })),
+  );
+  act(() => container.querySelector("button")!.click());
+  act(() => root.render(createElement(Surface, { label: "Second" })));
+  expect(container.textContent).toBe("Second: 1");
+});
