@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import { sameProjectPath } from "../../features/projects/model/recents";
 
 type ProjectSwipeOptions = {
@@ -8,7 +8,7 @@ type ProjectSwipeOptions = {
 };
 
 const GESTURE_IDLE_MS = 220;
-const SWIPE_DISTANCE = 60;
+const SWIPE_DISTANCE = 30;
 
 function reservedTarget(root: HTMLElement, target: EventTarget | null) {
   let node = target instanceof Element ? target : null;
@@ -77,12 +77,15 @@ export function attachProjectSwipe(
   return () => root.removeEventListener("wheel", onWheel, true);
 }
 
+/** Keep the gesture listener attached across project switches, using committed options. */
 export function useProjectSwipe(
   enabled: boolean,
   options: ProjectSwipeOptions,
 ) {
   const latest = useRef(options);
-  latest.current = options;
+  useLayoutEffect(() => {
+    latest.current = options;
+  });
   const detach = useRef<(() => void) | null>(null);
   return useCallback(
     (root: HTMLElement | null) => {

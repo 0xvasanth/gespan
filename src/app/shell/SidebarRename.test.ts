@@ -153,6 +153,48 @@ afterEach(() => {
 });
 
 describe("project swipe navigation", () => {
+  it("starts a short swipe transition immediately while the destination is loading", () => {
+    const animate = vi
+      .spyOn(HTMLElement.prototype, "animate")
+      .mockImplementation(
+        () =>
+          ({
+            cancel: vi.fn(),
+            finished: new Promise(() => {}),
+          }) as unknown as Animation,
+      );
+    const paths = ["/workspace/project", "/workspace/other"];
+    saveProjectRailOrder(paths);
+    props = {
+      ...props,
+      inset: true,
+      recents: paths.map((path) => ({ path, openedAt: 1 })),
+      onSelectProject: vi.fn((cwd: string) => {
+        props = { ...props, cwd, pending: true, sessions: [] };
+        render();
+      }),
+    };
+    act(render);
+    animate.mockClear();
+    act(() => {
+      container.querySelector("aside")!.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaX: 30,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(props.onSelectProject).toHaveBeenCalledExactlyOnceWith(paths[1]);
+    expect(animate).toHaveBeenCalled();
+    expect(
+      animate.mock.calls.some(
+        ([, options]) =>
+          typeof options === "object" && options?.duration === 180,
+      ),
+    ).toBe(true);
+  });
+
   it.each([true, false])(
     "enables swiping only in the inset sidebar (inset=%s)",
     (inset) => {

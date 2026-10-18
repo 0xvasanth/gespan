@@ -1,11 +1,14 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { attachProjectSwipe } from "./useProjectSwipe";
+import { act, createElement, startTransition, Suspense } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { attachProjectSwipe, useProjectSwipe } from "./useProjectSwipe";
 
 let root: HTMLDivElement;
 let detach: () => void;
 let cwd: string;
 let select: ReturnType<typeof vi.fn>;
+let reactRoot: Root | undefined;
 const projects = ["/work/alpha", "remote://host/work/beta", "/work/gamma"];
 
 function wheel(
@@ -45,10 +48,20 @@ beforeEach(() => {
   }));
 });
 afterEach(() => {
+  if (reactRoot) act(() => reactRoot!.unmount());
+  reactRoot = undefined;
   detach();
   root.remove();
   vi.restoreAllMocks();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+it("recognizes a deliberate short swipe without waiting for the gesture to end", () => {
+  wheel(12);
+  expect(select).not.toHaveBeenCalled();
+  wheel(18);
+  expect(select).toHaveBeenCalledExactlyOnceWith(projects[2]);
 });
 
 it("accumulates a swipe and selects once through a long momentum tail", () => {
@@ -133,4 +146,59 @@ it("detaches the listener", () => {
   detach();
   expect(wheel(80).defaultPrevented).toBe(false);
   expect(select).not.toHaveBeenCalled();
+});
+
+it("only exposes committed project options to the wheel listener", async () => {
+  detach();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  reactRoot = createRoot(root);
+  const suspended = new Promise<never>(() => {});
+  const attemptedRender = vi.fn();
+  function View({
+    project,
+    suspend = false,
+  }: {
+    project: string;
+    suspend?: boolean;
+  }) {
+    const ref = useProjectSwipe(true, {
+      cwd: project,
+      projects,
+      onSelectProject: select,
+    });
+    if (suspend) {
+      attemptedRender();
+      throw suspended;
+    }
+    return createElement("div", { ref, "data-swipe-root": true });
+  }
+  const view = (project: string, suspend = false) =>
+    createElement(
+      Suspense,
+      { fallback: "Loading" },
+      createElement(View, { project, suspend }),
+    );
+  await act(async () => reactRoot!.render(view(projects[1])));
+  await act(async () => {
+    startTransition(() => reactRoot!.render(view(projects[0], true)));
+  });
+  expect(attemptedRender).toHaveBeenCalled();
+  const target = root.querySelector("[data-swipe-root]")!;
+  act(() => {
+    wheel(30, 0, {}, target);
+  });
+  expect(select).toHaveBeenCalledExactlyOnceWith(projects[2]);
+
+  // A later committed update must become visible without reattaching/resetting
+  // the listener's momentum guard.
+  await act(async () => reactRoot!.render(view(projects[0])));
+  act(() => {
+    wheel(30, 0, {}, target);
+  });
+  expect(select).toHaveBeenCalledTimes(1);
+  vi.advanceTimersByTime(250);
+  act(() => {
+    wheel(30, 0, {}, target);
+  });
+  expect(select).toHaveBeenLastCalledWith(projects[1]);
 });

@@ -2165,10 +2165,18 @@ function SidebarComponent({
       inset ? projectRailItems(recents, cwd).map((item) => item.path) : [],
     [inset, recents, cwd],
   );
+  const swipeDestination = useRef<{ from: string; to: string } | null>(null);
+  const onSwipeProject = useCallback(
+    (path: string) => {
+      swipeDestination.current = { from: cwd, to: path };
+      onSelectProject?.(path);
+    },
+    [cwd, onSelectProject],
+  );
   const projectSwipeRef = useProjectSwipe(inset, {
     cwd,
     projects: spaceProjects,
-    onSelectProject,
+    onSelectProject: onSelectProject ? onSwipeProject : undefined,
   });
   const setSidebarRef = useCallback(
     (el: HTMLElement | null) => {
@@ -2216,6 +2224,7 @@ function SidebarComponent({
   spaceProjectsRef.current = spaceProjects;
   const spaceSlide = useRef<{
     direction: number;
+    swipe: boolean;
     overlay: HTMLDivElement | null;
     started: boolean;
     timer?: number;
@@ -2239,7 +2248,9 @@ function SidebarComponent({
     window.clearTimeout(slide.timer);
     const aside = slideRefs.current[0]?.closest("aside");
     const distance = aside?.clientWidth ?? 240;
-    const timing = { duration: 440, easing: "cubic-bezier(0.4, 0, 0.2, 1)" };
+    const timing = slide.swipe
+      ? { duration: 180, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }
+      : { duration: 440, easing: "cubic-bezier(0.4, 0, 0.2, 1)" };
     for (const el of slideRefs.current) {
       if (!el || typeof el.animate !== "function") continue;
       el.style.opacity = "";
@@ -2285,6 +2296,12 @@ function SidebarComponent({
     const outgoing = outgoingSpace.current;
     outgoingSpace.current = null;
     if (sameProjectPath(from, cwd)) return;
+    const destination = swipeDestination.current;
+    swipeDestination.current = null;
+    const swipe =
+      !!destination &&
+      sameProjectPath(destination.from, from) &&
+      sameProjectPath(destination.to, cwd);
     const step = projectStep;
     projectStep = null;
     if (!inset) return;
@@ -2323,8 +2340,8 @@ function SidebarComponent({
       });
       aside.append(overlay);
     }
-    // The incoming project waits, hidden, for its first sessions, so it is
-    // not pushed in empty and filled afterwards.
+    // Clicks and shortcuts can wait for first-load sessions. A swipe starts
+    // immediately so disk/network latency does not hold the gesture still.
     for (const el of slideRefs.current) if (el) el.style.opacity = "0";
     spaceSlide.current = {
       // A step past either end wraps around but keeps moving the same way.
@@ -2335,10 +2352,12 @@ function SidebarComponent({
             ? 1
             : -1,
       overlay,
+      swipe,
       started: false,
       animations: [],
-      timer: window.setTimeout(startSpaceSlide, 400),
+      timer: swipe ? undefined : window.setTimeout(startSpaceSlide, 400),
     };
+    if (swipe) startSpaceSlide();
   }, [cwd, inset, endSpaceSlide, startSpaceSlide]);
   useLayoutEffect(() => {
     if (spaceSlide.current && !pendingFirstLoad) startSpaceSlide();
