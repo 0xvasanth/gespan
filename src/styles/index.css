@@ -1861,6 +1861,27 @@ html.layout-inset [data-composer-box] {
   backdrop-filter: blur(var(--composer-blur));
 }
 
+/* The queue ledge tucks behind the inset composer: inset by its corner
+   radius, a quieter edge than the box itself, and the same frost. */
+html.layout-inset [data-message-queue] {
+  padding-inline: var(--radius-xl, 0.75rem);
+}
+
+html.layout-inset [data-message-queue-card] {
+  border-color: color-mix(in srgb, var(--color-content) 6%, transparent);
+  border-top-left-radius: var(--radius-xl, 0.75rem);
+  border-top-right-radius: var(--radius-xl, 0.75rem);
+  background: color-mix(in srgb, var(--color-content) 2.5%, transparent);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+}
+
+html.layout-inset.theme-light [data-message-queue-card] {
+  border-color: color-mix(in srgb, var(--color-content) 8%, transparent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 html.layout-inset:not(.theme-light) .agent-chat-composer {
   -webkit-backdrop-filter: blur(24px);
   backdrop-filter: blur(24px);
