@@ -13219,7 +13219,12 @@ function Workspace({
         fill: "forwards",
       },
     );
+    // Mounting the terminal can hold up the next frame; the slide starts
+    // once that frame is out, not partway through.
+    animation.pause();
+    const start = requestAnimationFrame(() => animation.play());
     const stop = () => {
+      cancelAnimationFrame(start);
       animation.onfinish = null;
       animation.cancel();
       host.style.display = "";

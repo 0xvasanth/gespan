@@ -63,6 +63,8 @@ type Props = {
   visible?: boolean;
   /** The title bar already names a standalone file, so avoid repeating it. */
   showTabs?: boolean;
+  /** Shows the tabs but holds off mounting the files, as a pane slides in. */
+  deferBody?: boolean;
   dirtyFileIds: Set<string>;
   fileErrorCounts: Map<string, number>;
   sessions: Session[];
@@ -91,6 +93,7 @@ function FilePaneComponent({
   focused,
   visible = true,
   showTabs = true,
+  deferBody = false,
   dirtyFileIds,
   fileErrorCounts,
   sessions,
@@ -133,8 +136,8 @@ function FilePaneComponent({
           onPaneDragStart={onPaneDragStart}
         />
       ) : null}
-      <div className="relative min-h-0 flex-1">
-        {pane.files.map((file) => {
+      <div data-pane-body="" className="relative min-h-0 flex-1">
+        {(deferBody ? [] : pane.files).map((file) => {
           // Keep review state alive just like an editor; visibility suspends
           // its rendering and background work until the tab is active again.
           const active = visible && file.id === pane.activeFileId;
@@ -241,6 +244,7 @@ export const FilePane = memo(FilePaneComponent, (previous, next) => {
     previous.focused !== next.focused ||
     previous.visible !== next.visible ||
     previous.showTabs !== next.showTabs ||
+    previous.deferBody !== next.deferBody ||
     previous.dirtyFileIds !== next.dirtyFileIds ||
     previous.fileErrorCounts !== next.fileErrorCounts ||
     previous.onFocus !== next.onFocus ||

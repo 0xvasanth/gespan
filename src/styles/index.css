@@ -2588,39 +2588,9 @@ html:not(.theme-light) .markdown-code-token {
 }
 
 /* New split panes; same motion as the linked panel's slide. */
-@keyframes pane-enter {
-  from {
-    opacity: var(--pane-enter-opacity, 1);
-    transform: translate(var(--pane-enter-x, 0), var(--pane-enter-y, 0));
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-[data-pane-enter] {
-  animation: pane-enter 260ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-[data-pane-enter="right"] {
-  --pane-enter-x: 100%;
-}
-
-[data-pane-enter="left"] {
-  --pane-enter-x: -100%;
-}
-
-[data-pane-enter="bottom"] {
-  --pane-enter-y: 100%;
-}
-
-[data-pane-enter="top"] {
-  --pane-enter-y: -100%;
-}
-
-[data-pane-enter="fade"] {
-  --pane-enter-opacity: 0;
+/* A sliding pane draws the edge it rides until the layout settles. */
+[data-pane-sliding] > [data-pane-sash] {
+  visibility: hidden;
 }
 
 @keyframes linked-panel-reveal {
@@ -2640,8 +2610,7 @@ html:not(.theme-light) .markdown-code-token {
 
 @media (prefers-reduced-motion: reduce) {
   .linked-panel-slide,
-  .linked-panel-reveal,
-  [data-pane-enter] {
+  .linked-panel-reveal {
     animation: none;
   }
 }
