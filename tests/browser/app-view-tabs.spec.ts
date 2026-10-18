@@ -120,6 +120,9 @@ test("closing a tab selects its neighbor across app and session tabs", async ({
   page,
 }) => {
   test.setTimeout(60_000);
+  // Linux also shows a window title beside the strip. Keep all eight tabs
+  // visible so dragging Notes starts on the tab, not outside the scroll clip.
+  await page.setViewportSize({ width: 2400, height: 900 });
   await page.goto("/tests/browser/workspace-performance.html");
   await page.locator(".inset-shell").waitFor();
   const nav = page.getByRole("navigation", { name: "Views" });
@@ -177,7 +180,11 @@ test("closing a tab selects its neighbor across app and session tabs", async ({
     "data-title-tab-active",
     "true",
   );
-  await tab(workspaceTabs[1]).scrollIntoViewIfNeeded();
+  await expect(
+    page.locator("[data-opening-tab], [data-closing-tab]"),
+  ).toHaveCount(0);
+  await expect(tab("app-view:notes")).toBeInViewport();
+  await expect(tab(workspaceTabs[1])).toBeInViewport();
   const from = await tab("app-view:notes").boundingBox();
   const to = await tab(workspaceTabs[1]).boundingBox();
   await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2);
