@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use crate::codex_mono_store::{
-    apply_agent_edges, closed_agent_edges, copy_durable, find_thread, history_base,
-    rollout_dest, rollout_matches, state_db, validate_thread_id,
+    apply_agent_edges, closed_agent_edges, copy_durable, find_thread, history_base, rollout_dest,
+    rollout_matches, state_db, validate_thread_id,
 };
 
 #[tauri::command(async)]
@@ -35,7 +35,11 @@ pub fn provider_session_transfer(
     }
 }
 
-fn provider_home(app: &AppHandle, provider: &str, account_id: Option<&str>) -> Result<PathBuf, String> {
+fn provider_home(
+    app: &AppHandle,
+    provider: &str,
+    account_id: Option<&str>,
+) -> Result<PathBuf, String> {
     if let Some(dir) = crate::harness::provider_account_dir(app, provider, account_id)? {
         return Ok(dir);
     }
@@ -73,12 +77,17 @@ fn transfer_claude(from: &Path, to: &Path, id: &str) -> Result<(), String> {
                 .find(|dir| dir.join(&name).is_file())
         })
         .ok_or("Could not find the Claude conversation to carry over")?;
-    let dest_project = to
-        .join("projects")
-        .join(project.file_name().ok_or("Invalid Claude project directory")?);
+    let dest_project = to.join("projects").join(
+        project
+            .file_name()
+            .ok_or("Invalid Claude project directory")?,
+    );
     std::fs::create_dir_all(&dest_project).map_err(|e| e.to_string())?;
     copy_tree(&project.join(id), &dest_project.join(id))?;
-    copy_tree(&from.join("file-history").join(id), &to.join("file-history").join(id))?;
+    copy_tree(
+        &from.join("file-history").join(id),
+        &to.join("file-history").join(id),
+    )?;
     copy_durable(&project.join(&name), &dest_project.join(&name))
         .map_err(|e| format!("Could not carry the Claude conversation over: {e}"))
 }
@@ -178,8 +187,9 @@ fn descendant_threads(sqlite_home: &Path, id: &str) -> Result<Vec<String>, Strin
     let Some(path) = state_db(sqlite_home)? else {
         return Ok(Vec::new());
     };
-    let db = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|e| e.to_string())?;
+    let db =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| e.to_string())?;
     db.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| e.to_string())?;
     let exists: bool = db
@@ -215,8 +225,10 @@ mod tests {
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
-            let dir = std::env::temp_dir()
-                .join(format!("monocode-session-transfer-{}", uuid::Uuid::new_v4()));
+            let dir = std::env::temp_dir().join(format!(
+                "monocode-session-transfer-{}",
+                uuid::Uuid::new_v4()
+            ));
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)
         }
@@ -239,9 +251,17 @@ mod tests {
         let project = fixture.from().join("projects").join("-Users-me-app");
         std::fs::create_dir_all(project.join("abc").join("subagents")).unwrap();
         std::fs::write(project.join("abc.jsonl"), "{\"turn\":2}\n").unwrap();
-        std::fs::write(project.join("abc").join("subagents").join("agent-1.jsonl"), "x").unwrap();
+        std::fs::write(
+            project.join("abc").join("subagents").join("agent-1.jsonl"),
+            "x",
+        )
+        .unwrap();
         std::fs::create_dir_all(fixture.from().join("file-history").join("abc")).unwrap();
-        std::fs::write(fixture.from().join("file-history").join("abc").join("v1"), "y").unwrap();
+        std::fs::write(
+            fixture.from().join("file-history").join("abc").join("v1"),
+            "y",
+        )
+        .unwrap();
         std::fs::write(project.join("other.jsonl"), "unrelated").unwrap();
         // An older copy from an earlier switch is replaced by the newer one.
         let dest = fixture.to().join("projects").join("-Users-me-app");
@@ -250,9 +270,21 @@ mod tests {
 
         transfer_claude(&fixture.from(), &fixture.to(), "abc").unwrap();
 
-        assert_eq!(std::fs::read_to_string(dest.join("abc.jsonl")).unwrap(), "{\"turn\":2}\n");
-        assert!(dest.join("abc").join("subagents").join("agent-1.jsonl").is_file());
-        assert!(fixture.to().join("file-history").join("abc").join("v1").is_file());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("abc.jsonl")).unwrap(),
+            "{\"turn\":2}\n"
+        );
+        assert!(dest
+            .join("abc")
+            .join("subagents")
+            .join("agent-1.jsonl")
+            .is_file());
+        assert!(fixture
+            .to()
+            .join("file-history")
+            .join("abc")
+            .join("v1")
+            .is_file());
         assert!(!dest.join("other.jsonl").exists());
     }
 
@@ -270,7 +302,11 @@ mod tests {
             let dir = fixture.from().join(dir).join("2026").join("10").join("08");
             std::fs::create_dir_all(&dir).unwrap();
             let meta = serde_json::json!({"type":"session_meta","payload":{"id":id,"history_base":base.map(|id| serde_json::json!({"thread_id":id}))}});
-            std::fs::write(dir.join(format!("rollout-2026-10-08T10-00-00-{id}.jsonl")), format!("{meta}\n")).unwrap();
+            std::fs::write(
+                dir.join(format!("rollout-2026-10-08T10-00-00-{id}.jsonl")),
+                format!("{meta}\n"),
+            )
+            .unwrap();
         };
         write("sessions", "root-1", Some("base-1"));
         write("archived_sessions", "base-1", None);
@@ -278,9 +314,20 @@ mod tests {
 
         transfer_codex(&fixture.from(), &fixture.to(), "root-1").unwrap();
 
-        let day = fixture.to().join("sessions").join("2026").join("10").join("08");
-        assert!(day.join("rollout-2026-10-08T10-00-00-root-1.jsonl").is_file());
-        assert!(day.join("rollout-2026-10-08T10-00-00-base-1.jsonl").is_file());
-        assert!(!day.join("rollout-2026-10-08T10-00-00-unrelated-1.jsonl").exists());
+        let day = fixture
+            .to()
+            .join("sessions")
+            .join("2026")
+            .join("10")
+            .join("08");
+        assert!(day
+            .join("rollout-2026-10-08T10-00-00-root-1.jsonl")
+            .is_file());
+        assert!(day
+            .join("rollout-2026-10-08T10-00-00-base-1.jsonl")
+            .is_file());
+        assert!(!day
+            .join("rollout-2026-10-08T10-00-00-unrelated-1.jsonl")
+            .exists());
     }
 }
