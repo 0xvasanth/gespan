@@ -11895,6 +11895,17 @@ function Workspace({
     });
   }, [insetLayout, onToggleSessionSidebar]);
 
+  // The inset layout's sidebar already answers the primary toggle, so the
+  // session sidebar's shortcut takes the right panel instead.
+  const rightPanelToggleRef = useRef<(() => void) | null>(null);
+  const onToggleSessionSidebarShortcut = useCallback(() => {
+    if (insetLayout) {
+      rightPanelToggleRef.current?.();
+      return;
+    }
+    onToggleSessionSidebar();
+  }, [insetLayout, onToggleSessionSidebar]);
+
   const onToggleProjectRail = useCallback(() => {
     setProjectRailOpen((open) => {
       const next = !open;
@@ -12640,7 +12651,7 @@ function Workspace({
     onSplit,
     onFocusDir,
     onToggleSidebar,
-    onToggleSessionSidebar,
+    onToggleSessionSidebar: onToggleSessionSidebarShortcut,
     onToggleMono,
     onGoToFile,
     onOpenCommandPalette,
@@ -12672,7 +12683,7 @@ function Workspace({
     onSplit,
     onFocusDir,
     onToggleSidebar,
-    onToggleSessionSidebar,
+    onToggleSessionSidebar: onToggleSessionSidebarShortcut,
     onToggleMono,
     onGoToFile,
     onOpenCommandPalette,
@@ -13564,6 +13575,10 @@ function Workspace({
   // that opens it can carry its dot.
   const showRightPanelToggle =
     insetLayout && !settingsOpen && looksLikeProject(sidebarCwd);
+  rightPanelToggleRef.current =
+    showRightPanelToggle && !(monoCovers && monoViewMono) && !activeAppView
+      ? onToggleRightPanel
+      : null;
   const rightPanelChanges = useProjectDiffStats(
     gitCwd || sidebarCwd,
     showRightPanelToggle && isLocalProject(sidebarCwd),
@@ -13890,7 +13905,9 @@ function Workspace({
                         onToggleTerminal={onToggleProjectTerminal}
                         onGoToFile={onGoToFile}
                         onToggleSidebar={onToggleSidebar}
-                        onToggleSessionSidebar={onToggleSessionSidebar}
+                        onToggleSessionSidebar={
+                          onToggleSessionSidebarShortcut
+                        }
                         onShowSourceControl={onToggleChanges}
                         onCloseCurrentTab={
                           activeTabId

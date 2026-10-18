@@ -1065,8 +1065,8 @@ function TitleBarComponent({
             <IconButton
               label={
                 changesDot
-                  ? "Toggle right sidebar (uncommitted changes)"
-                  : "Toggle right sidebar"
+                  ? `Toggle right sidebar (${MOD}${SHIFT}B, uncommitted changes)`
+                  : `Toggle right sidebar (${MOD}${SHIFT}B)`
               }
               active={rightPanelOpen && !rightPanelOff}
               disabled={rightPanelOff}
