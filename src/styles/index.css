@@ -526,8 +526,10 @@ html.layout-inset .inset-shell .inset-rail-host .sidebar-glass {
   border-right-color: transparent;
 }
 
-/* Without a rail beside it, the card keeps the same gutter on both sides. */
-.inset-shell:not(:has(.inset-rail-host > :not(.hidden))) .inset-card {
+/* Without a rail beside it, the card keeps the same gutter on both sides,
+   and the footer's chips stay lined up with its edge. */
+.inset-shell:not(:has(.inset-rail-host > :not(.hidden))) .inset-card,
+.inset-shell:not(:has(.inset-rail-host > :not(.hidden))) .inset-footer {
   margin-left: 0.375rem;
 }
 
@@ -3734,13 +3736,16 @@ html.theme-light .mono-pill {
   }
 }
 
-/* Keep the original glass tint in dark mode. Light popovers use an opaque
-   surface so underlying content cannot show through. */
-.popover-backdrop {
+/* Floating dialogs in the inset layout share the popover glass instead of
+   layering a second, dark base fill over it. Classic dialogs keep their own
+   fills. Light surfaces stay opaque so underlying content cannot show through. */
+.popover-backdrop,
+html.layout-inset .modal-surface {
   background: color-mix(in srgb, var(--color-content) 2%, transparent);
 }
 
-html.theme-light .popover-backdrop {
+html.theme-light .popover-backdrop,
+html.layout-inset.theme-light .modal-surface {
   background: var(--color-background-base);
 }
 
@@ -4142,6 +4147,14 @@ html.theme-light .btw-burst {
 }
 
 /* Centered modals: lift the content inside the stationary glass frame. */
+html.layout-inset .dialog-scrim {
+  background: rgb(0 0 0 / 0.35);
+}
+
+html.layout-inset.theme-light .dialog-scrim {
+  background: rgb(0 0 0 / 0.2);
+}
+
 @keyframes modal-backdrop-in {
   from {
     opacity: 0;

@@ -38,6 +38,8 @@ type Props = {
   onPressureChange?: (active: boolean) => void;
   /** The footer's slot. Without one, monitoring continues without a notice. */
   chipHost?: HTMLElement | null;
+  /** Pill-shaped chip, for the inset layout's footer. */
+  insetChip?: boolean;
 };
 
 /** Local subscriptions keep resource sampling out of the workspace render loop. */
@@ -47,6 +49,7 @@ export function ResourcePressureNotice({
   onStopSession,
   onPressureChange,
   chipHost,
+  insetChip = false,
 }: Props) {
   const [pressure, setPressure] = useState<PressureState>(emptyPressure);
   const [open, setOpen] = useState(false);
@@ -208,7 +211,7 @@ export function ResourcePressureNotice({
               aria-expanded={open}
               onClick={() => setOpen(true)}
               title={`${reasons.join(" · ")} · Review running work`}
-              className={`inline-flex h-5 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 text-content/55 transition-colors hover:bg-content/8 hover:text-content focus-visible:outline-2 focus-visible:outline-accent ${open ? "bg-content/8 text-content" : ""}`}
+              className={`inline-flex h-5 shrink-0 items-center gap-1.5 whitespace-nowrap ${insetChip ? "rounded-full px-2" : "rounded-md px-1.5"} text-content/55 transition-colors hover:bg-content/8 hover:text-content focus-visible:outline-2 focus-visible:outline-accent ${open ? "bg-content/8 text-content" : ""}`}
             >
               <CircleAlert
                 className="size-3.5 shrink-0 text-amber-500 dark:text-amber-400"

@@ -14404,6 +14404,7 @@ function Workspace({
             onStopSession={onStop}
             onPressureChange={transcriptPool.setResourcePressure}
             chipHost={pressureChipHost}
+            insetChip={insetLayout}
           />
           <ApprovalToasts
             notices={hiddenApprovalToasts}
