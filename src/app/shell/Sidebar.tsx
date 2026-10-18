@@ -70,7 +70,8 @@ import {
   type GitFileDiffKind,
   type GitHistoryCommit,
 } from "../../platform/tauri/fs";
-import { IS_MAC, MOD, SHIFT } from "../../platform/tauri/platform";
+import { MOD, SHIFT } from "../../platform/tauri/platform";
+import { useTrafficLightsVisible } from "../../platform/tauri/useTrafficLightsVisible";
 import { copyText } from "../../platform/tauri/clipboard";
 import { resolveModel } from "../../features/sessions/model/models";
 import type { OpenFileFn } from "../../features/search/model/search";
@@ -505,6 +506,7 @@ function SidebarComponent({
   monos,
   monoViewActive = false,
 }: Props) {
+  const trafficLightsVisible = useTrafficLightsVisible();
   const remoteProject = isRemoteProjectPath(cwd);
   const tab: SidebarTabId = requestedTab;
   const remote = useRemoteProjectSessions(cwd, remoteProject);
@@ -2503,7 +2505,7 @@ function SidebarComponent({
               className="flex h-10 shrink-0 select-none items-center border-b border-stroke pr-1.5"
               data-tauri-drag-region="deep"
             >
-              {IS_MAC ? <div className="w-[78px] shrink-0" /> : null}
+              {trafficLightsVisible ? <div className="w-[78px] shrink-0" /> : null}
               <DevModeSlot />
               <TabVisitNav
                 canGoBack={canGoBack}

@@ -51,6 +51,7 @@ import {
   type MonoState,
 } from "../../features/monos/model/mono";
 import { IS_MAC, IS_WIN, MOD, SHIFT } from "../../platform/tauri/platform";
+import { useTrafficLightsVisible } from "../../platform/tauri/useTrafficLightsVisible";
 import type { RecentProject } from "../../features/projects/model/recents";
 import {
   ExplorerMenu,
@@ -780,6 +781,7 @@ function TitleBarComponent({
   recents = [],
   onSelectProject,
 }: Props) {
+  const trafficLightsVisible = useTrafficLightsVisible();
   const tabIds = tabs.map((tab) => tab.id);
   const { displayed, tabNodeRef, finishMotion } = useTabCloseMotion(tabs);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
@@ -1136,7 +1138,10 @@ function TitleBarComponent({
           className={`flex shrink-0 items-center${sessionSidebarOpen ? " pr-1.5" : ""}`}
           style={{ minWidth: "var(--inset-rail-width, 0px)" }}
         >
-          <div className={`shrink-0 ${IS_MAC ? "w-[78px]" : "w-1.5"}`} />
+          <div
+            // Center the toggle over the sidebar's project icon.
+            className={`shrink-0 ${trafficLightsVisible ? "w-[78px]" : "w-2.5"}`}
+          />
           {onToggleSessionSidebar ? (
             // Hovering the toggle peeks a collapsed sidebar out.
             <span data-sidebar-peek-trigger className="flex">
@@ -1163,7 +1168,9 @@ function TitleBarComponent({
         <div
           data-compact-title-nav
           // A full Mono's title bar starts beside the 48px compact rail.
-          className={`flex shrink-0 items-center ${mono ? "pl-[22px]" : "pl-[70px]"}`}
+          className={`flex shrink-0 items-center ${
+            trafficLightsVisible ? (mono ? "pl-[22px]" : "pl-[70px]") : "pl-1.5"
+          }`}
         >
           <TabVisitNav
             canGoBack={canGoBack}
@@ -1177,7 +1184,7 @@ function TitleBarComponent({
           title bar takes over the traffic lights and the rail toggle. */}
       {projectless && railClosed && !compactRail && !inset ? (
         <>
-          <div className="w-[78px] shrink-0" />
+          {trafficLightsVisible ? <div className="w-[78px] shrink-0" /> : null}
           <div className="flex shrink-0 items-center px-1.5">
             <IconButton
               label={`Toggle Sidebar (${MOD}B)`}
@@ -1193,7 +1200,7 @@ function TitleBarComponent({
       !projectless &&
       onToggleSessionSidebar ? (
         <div className="flex shrink-0 items-center px-1.5">
-          {IS_MAC && railClosed && !compactRail && !inset ? (
+          {trafficLightsVisible && railClosed && !compactRail && !inset ? (
             <div className="w-[70px] shrink-0" />
           ) : null}
           <IconButton

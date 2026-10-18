@@ -35,7 +35,8 @@ import {
   saveProjectRailWidth,
 } from "../../features/settings/model/appearance";
 import { basename, type GitDiffStats } from "../../platform/tauri/fs";
-import { IS_MAC, MOD } from "../../platform/tauri/platform";
+import { MOD } from "../../platform/tauri/platform";
+import { useTrafficLightsVisible } from "../../platform/tauri/useTrafficLightsVisible";
 import { formatInteger } from "../../shared/lib/numbers";
 import { pathKey, projectKey, projectName } from "../../shared/lib/paths";
 import {
@@ -186,6 +187,7 @@ export function ProjectRail({
   onDismissUpdate,
   monos,
 }: Props) {
+  const trafficLightsVisible = useTrafficLightsVisible();
   const resize = useDragResize({
     min: sharedWidth?.min ?? PROJECT_RAIL_WIDTH_MIN,
     max:
@@ -385,7 +387,7 @@ export function ProjectRail({
           className="flex h-10 shrink-0 select-none items-center pr-1.5"
           data-tauri-drag-region="deep"
         >
-          {IS_MAC ? <div className="w-[78px] shrink-0" /> : null}
+          {trafficLightsVisible ? <div className="w-[78px] shrink-0" /> : null}
           <DevModeSlot />
           <TabVisitNav
             canGoBack={canGoBack}
