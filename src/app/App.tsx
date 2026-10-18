@@ -318,6 +318,7 @@ import {
   appendUser,
   appendSteerUser,
   bindHarnessSession,
+  transferHarnessSessionAccount,
   cancelHarnessTurn,
   canCompactHarnessContext,
   canRewindHarnessLastTurn,
@@ -479,6 +480,7 @@ import { shouldGenerateSessionTitle } from "../features/sessions/model/sessionTi
 import {
   DEFAULT_PROVIDER_ACCOUNT_ID,
   providerAccountExists,
+  sameProviderAccountId,
   selectedProviderAccountId,
   supportsProviderAccounts,
   type ProviderAccountProvider,
@@ -527,6 +529,7 @@ import {
   USAGE_LIMIT_RESUME_GRACE_MS,
   resumeUsageLimitedSession,
   usageLimitResumeDue,
+  withUsageLimitAccount,
 } from "../features/sessions/model/usageLimit";
 import {
   fetchClaudeRateLimits,
@@ -2885,12 +2888,21 @@ function Workspace({
     [insertBesideActive],
   );
 
+  const usageLimitAccountChangeRef = useRef<
+    ((sessionId: string, accountId: string) => Promise<void>) | null
+  >(null);
   const onSelectProviderAccount = useCallback(
     (provider: ProviderAccountProvider, accountId: string) => {
       const current = sessionsRef.current.find(
         (session) => session.id === active?.id,
       );
       if (!current || current.harness !== provider) return;
+
+      // A limited session continues in place under the selected account.
+      if (current.usageLimit && !current.busy) {
+        void usageLimitAccountChangeRef.current?.(current.id, accountId);
+        return;
+      }
 
       if (current.blocks.length === 0 && !current.busy) {
         if (current.providerAccountId === accountId) return;
@@ -9504,28 +9516,87 @@ function Workspace({
     [onSubmit, onUsageLimitDismiss],
   );
 
+  const usageLimitSwitching = useRef(new Set<string>());
   const onUsageLimitAccountChange = useCallback(
-    (sessionId: string, accountId: string) => {
+    async (sessionId: string, accountId: string) => {
       const session = sessionsRef.current.find(
         (entry) => entry.id === sessionId,
       );
       if (
-        !session ||
-        !isMonoSession(sessionId) ||
+        !session?.usageLimit ||
+        session.busy ||
         !supportsProviderAccounts(session.harness) ||
-        !providerAccountExists(session.harness, accountId)
+        !providerAccountExists(session.harness, accountId) ||
+        sameProviderAccountId(session.providerAccountId, accountId) ||
+        usageLimitSwitching.current.has(sessionId)
       )
         return;
-      setSessions((prev) =>
-        prev.map((entry) =>
+      const mono = isMonoSession(sessionId);
+      // Copy the native transcript so the other account resumes the very same
+      // provider session. Mono Codex threads live in a private store instead.
+      let carried = false;
+      if (
+        session.providerSessionId &&
+        (session.harness === "claude" ||
+          (session.harness === "codex" && !mono))
+      ) {
+        usageLimitSwitching.current.add(sessionId);
+        try {
+          await transferHarnessSessionAccount({
+            harness: session.harness,
+            threadId: sessionId,
+            providerSessionId: session.providerSessionId,
+            cwd: sessionWorkCwd(session),
+            fromAccountId: session.providerAccountId,
+            toAccountId: accountId,
+            blocks: session.blocks,
+          });
+          carried = true;
+        } catch (error) {
+          console.warn(
+            "Could not carry the conversation to the other account; continuing from a handoff",
+            error,
+          );
+        } finally {
+          usageLimitSwitching.current.delete(sessionId);
+        }
+        const latest = sessionsRef.current.find(
+          (entry) => entry.id === sessionId,
+        );
+        // The user moved on while the transcript was copied.
+        if (
+          !latest?.usageLimit ||
+          latest.busy ||
+          latest.providerSessionId !== session.providerSessionId ||
+          !sameProviderAccountId(
+            latest.providerAccountId,
+            session.providerAccountId,
+          )
+        )
+          return;
+      }
+      if (mono) {
+        updateSessionState(sessionsRef, setSessions, (sessions) =>
+          sessions.map((entry) =>
+            entry.id === sessionId
+              ? switchMonoUsageLimitAccount(entry, accountId, carried)
+              : entry,
+          ),
+        );
+        return;
+      }
+      updateSessionState(sessionsRef, setSessions, (sessions) =>
+        sessions.map((entry) =>
           entry.id === sessionId
-            ? switchMonoUsageLimitAccount(entry, accountId)
+            ? withUsageLimitAccount(entry, accountId, carried)
             : entry,
         ),
       );
+      onUsageLimitResume(sessionId);
     },
-    [],
+    [onUsageLimitResume],
   );
+  usageLimitAccountChangeRef.current = onUsageLimitAccountChange;
 
   const [usageLimitTick, setUsageLimitTick] = useState(0);
   useEffect(() => {

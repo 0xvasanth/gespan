@@ -780,6 +780,12 @@ const LocalSessionPane = memo(function LocalSessionPane({
         onUsageLimitResumeAtReset(session.id, enabled)
       }
       onUsageLimitDismiss={() => onUsageLimitDismiss(session.id)}
+      providerAccountId={session.providerAccountId}
+      onUsageLimitAccountChange={
+        onUsageLimitAccountChange
+          ? (accountId) => onUsageLimitAccountChange(session.id, accountId)
+          : undefined
+      }
       onOpenFile={onOpenFile}
       busy={!!session.busy}
       editLastTurnSupported={editLastTurnSupported}

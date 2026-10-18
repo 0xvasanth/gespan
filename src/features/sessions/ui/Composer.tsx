@@ -144,6 +144,7 @@ import { resolveTabGroupLogo } from "../../workspace/model/tabGroups";
 import { useComposerSkills } from "./useComposerSkills";
 import { Popover } from "../../../shared/ui/Popover";
 import { UsageLimitNotice } from "./UsageLimitNotice";
+import { UsageLimitAccountPicker } from "./UsageLimitAccountPicker";
 import { consumePlanCommand, PLAN_COMMAND } from "../model/plan";
 import {
   consumeOperatorCommand,
@@ -292,6 +293,9 @@ type Props = {
   onUsageLimitResume?: () => void;
   onUsageLimitResumeAtReset?: (enabled: boolean) => void;
   onUsageLimitDismiss?: () => void;
+  /** Continue this session under another account of its provider. */
+  onUsageLimitAccountChange?: (accountId: string) => void;
+  providerAccountId?: string;
   onOpenFile?: (path: string) => void;
   onDraftChange?: (text: string) => void;
   onRecallLastTurnReady?: (recall: () => void) => void;
@@ -407,6 +411,8 @@ export function Composer({
   onUsageLimitResume,
   onUsageLimitResumeAtReset,
   onUsageLimitDismiss,
+  onUsageLimitAccountChange,
+  providerAccountId,
   onOpenFile,
   onDraftChange,
   onRecallLastTurnReady,
@@ -1843,6 +1849,16 @@ export function Composer({
           onResume={onUsageLimitResume}
           onResumeAtReset={onUsageLimitResumeAtReset}
           onDismiss={onUsageLimitDismiss}
+          modelPicker={
+            onUsageLimitAccountChange ? (
+              <UsageLimitAccountPicker
+                harness={harness}
+                accountId={providerAccountId}
+                onSelect={onUsageLimitAccountChange}
+                variant="composer"
+              />
+            ) : undefined
+          }
         />
       ) : null}
       <MessageQueue
