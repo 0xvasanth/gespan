@@ -404,13 +404,18 @@ fn send(action: &str, input: &Value, request_id: &str, app_mode: bool) -> Result
     };
     let endpoint = std::env::var(endpoint_key).map_err(|_| {
         unsent(if app_mode {
-            "No Rebase app connection. Start this agent turn in Rebase."
+            "Rebase app connection is unavailable: this environment has no app connection variables. Run this command from a Rebase-spawned agent turn; external harnesses must be launched by Rebase to receive app access."
         } else {
             "No Rebase connection. Confirm the Orchestrator proposal in Rebase first."
         })
     })?;
-    let token = std::env::var(token_key)
-        .map_err(|_| unsent("No Rebase session credential. Start the agent from Rebase."))?;
+    let token = std::env::var(token_key).map_err(|_| {
+        unsent(if app_mode {
+            "Rebase app connection is unavailable: no app token was injected into this environment. Run this command from a Rebase-spawned agent turn."
+        } else {
+            "No Rebase session credential. Start the agent from Rebase."
+        })
+    })?;
     let address: SocketAddr = endpoint
         .parse()
         .map_err(|_| unsent("Invalid Rebase endpoint"))?;
