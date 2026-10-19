@@ -284,12 +284,16 @@ createRoot(document.getElementById("root")!).render(
     }}
   >
     <App
-      resumed={{
-        sessions,
-        tabs,
-        activeTabId: tabs[0].id,
-        projectCwd: projectRoot,
-      }}
+      resumed={
+        params.has("empty")
+          ? null
+          : {
+              sessions,
+              tabs,
+              activeTabId: tabs[0].id,
+              projectCwd: projectRoot,
+            }
+      }
     />
   </Profiler>,
 );

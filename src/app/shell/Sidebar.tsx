@@ -991,13 +991,12 @@ function SidebarComponent({
   // Likewise the session they cover stays current but isn't shown selected.
   const highlightedSessionId =
     otherViewActive || monoViewActive ? undefined : activeListedSessionId;
-  // A blank session has no project to browse, so the shell stands alone until
-  // one is picked — whether or not the rail is open.
   // The inset sidebar holds the links to search, inbox, notes and
-  // automations, and lists the project's Monos, so it stays beside them;
-  // only settings take its place.
+  // automations, and lets new users open their first project and Settings.
+  // It stays available without a project; only settings take its place.
+  // The classic sidebar only has project-scoped tools and sessions.
   const sidebarAvailable = inset
-    ? !settingsOpen && inProject
+    ? !settingsOpen
     : !otherViewActive && !monoViewActive && inProject;
   const sidebarVisible = open && sidebarAvailable;
   // With the sidebar collapsed beside the compact rail, its tab shortcuts
@@ -2676,9 +2675,19 @@ function SidebarComponent({
             <MonoRailSection {...railMonos} project={cwd} />
           ) : null}
           {!cwd || cwd === "~" ? (
-            <p className="px-3 py-2 text-[12px] text-content/50">
-              No project folder
-            </p>
+            <div className="px-3 py-2 text-[12px] text-content/50">
+              <p>No project folder</p>
+              {inset && onOpenProject ? (
+                <button
+                  type="button"
+                  onClick={onOpenProject}
+                  className="mt-2 flex items-center gap-1.5 rounded-md bg-content/5 px-2 py-1.5 text-content/70 hover:bg-content/10 hover:text-content"
+                >
+                  <Plus className="size-3.5" strokeWidth={1.75} />
+                  Open project
+                </button>
+              ) : null}
+            </div>
           ) : (
             <div>
               {/*
@@ -3085,8 +3094,8 @@ function SidebarComponent({
             />
             <div className="flex shrink-0 flex-col gap-px p-2 empty:hidden">
               <GithubStarPrompt />
-              {/* The inset header's project menu carries Settings. */}
-              {!compactProjectRail && !inset ? (
+              {/* Without a project, the inset header has no Settings menu. */}
+              {(inset ? !inProject : !compactProjectRail) ? (
                 <RailAction
                   label="Settings"
                   icon={Settings}
