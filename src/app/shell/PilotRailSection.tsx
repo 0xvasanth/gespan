@@ -74,17 +74,25 @@ export function PilotRailSection({
   onCreate,
   onDelete,
   project,
+  showAll,
 }: PilotRailProps & {
   /**
-   * Lists only the Pilots working on this project, as the inset sidebar does;
-   * a Pilot on several projects shows in each of them.
+   * The project the inset sidebar is showing: it styles the section and is
+   * the project a Pilot created here starts working on. Unless `showAll` is
+   * set it also filters the list, so only the Pilots working on this project
+   * show; a Pilot on several projects shows in each of them.
    */
   project?: string;
+  /** Lists every Pilot regardless of `project`, as the collapsed rail does. */
+  showAll?: boolean;
 }) {
   const snapshot = useSyncExternalStore(subscribePilots, pilotsSnapshot);
   const pilots = useMemo(
-    () => listPilots().filter((pilot) => !project || pilotWorksOn(pilot, project)),
-    [snapshot, project],
+    () =>
+      listPilots().filter(
+        (pilot) => showAll || !project || pilotWorksOn(pilot, project),
+      ),
+    [snapshot, project, showAll],
   );
   const ids = pilots.map((pilot) => pilot.id);
   const sortable = useAnimatedReorder(ids, reorderPilots, "y");

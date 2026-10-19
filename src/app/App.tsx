@@ -619,7 +619,6 @@ import {
   createPilot,
   findPilot,
   pilotIdFromConversation,
-  pilotWorksOn,
   isPilotSession,
   listPilots,
   loadOpenPilot,
@@ -11900,9 +11899,9 @@ function Workspace({
         : []),
       ...shownPilotTabs.flatMap((pilotId): TitleTab[] => {
         const pilot = findPilot(pilotId);
-        // Like the sidebar's Pilots, a Pilot's tab shows in the projects it
-        // works on; it keeps its place for when the project comes back.
-        if (!pilot || !pilotWorksOn(pilot, sidebarCwd)) return [];
+        // Like the sidebar's Pilots, a Pilot's tab shows whichever project is
+        // open; switching projects never hides it.
+        if (!pilot) return [];
         const look = pilotLook(pilot);
         const session = pilot.sessionId
           ? sessions.find((entry) => entry.id === pilot.sessionId)

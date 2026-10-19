@@ -85,3 +85,28 @@ it("counts a pilot's unread replies, except the one open", () => {
   render({ activeId: pilot.id, unseenCounts: new Map([[pilot.id, 3]]) });
   expect(badge()).toBeNull();
 });
+
+it("lists every pilot under an open project while showing all", () => {
+  createPilot(["/code/app"]);
+  createPilot(["/code/site"]);
+  createPilot();
+  render({ project: "/code/app", showAll: true });
+  expect(container.querySelectorAll("[data-pilot-status]")).toHaveLength(3);
+});
+
+it("still lists only a project's own pilots while filtering", () => {
+  createPilot(["/code/app"]);
+  createPilot(["/code/site"]);
+  createPilot();
+  render({ project: "/code/app" });
+  expect(container.querySelectorAll("[data-pilot-status]")).toHaveLength(1);
+});
+
+it("binds a new pilot to the open project while showing all", () => {
+  createPilot();
+  const onCreate = render({ project: "/code/app", showAll: true });
+  act(() =>
+    container.querySelector<HTMLElement>('[aria-label="New pilot"]')!.click(),
+  );
+  expect(onCreate).toHaveBeenCalledWith(["/code/app"]);
+});
