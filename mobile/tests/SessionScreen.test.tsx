@@ -1,4 +1,6 @@
 import { act, StrictMode, useState, type ReactNode } from "react";
+import { forwardRef, use } from "react";
+import { GlassBlurTarget } from "@/ui/LiquidView";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -11,6 +13,11 @@ const layout = vi.hoisted(() => ({
   onBelowLayout: undefined as undefined | ((event: { nativeEvent: { layout: { height: number } } }) => void),
 }));
 vi.mock("expo-sqlite/kv-store", () => ({ default: { getItemSync: () => null } }));
+vi.mock("expo-blur", () => ({
+  BlurTargetView: forwardRef<HTMLDivElement, { children?: ReactNode }>(({ children }, ref) => (
+    <div ref={ref} data-blur-target>{children}</div>
+  )),
+}));
 
 vi.mock("react-native", () => {
   const View = ({ children, onLayout, style }: {
@@ -53,7 +60,8 @@ vi.mock("react-native-safe-area-context", () => ({
 vi.mock("@/ui/CircleButton", () => ({ CircleButton: () => null }));
 vi.mock("@/ui/GradualBlur", () => ({ GradualBlur: () => null }));
 vi.mock("@/ui/Icon", () => ({ Icon: () => null }));
-vi.mock("@/ui/LiquidView", () => ({
+vi.mock("@/ui/LiquidView", async () => ({
+  GlassBlurTarget: (await import("react")).createContext<unknown>(undefined),
   LiquidView: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   GlassPresence: ({ children }: { children?: ReactNode }) => children,
 }));
@@ -78,6 +86,30 @@ vi.mock("expo-router", () => ({
 vi.stubGlobal("__DEV__", false);
 
 describe("persistent session frame", () => {
+  it("samples Android page content without including the composer in its blur target", () => {
+    layout.OS = "android";
+    let target: unknown;
+    function Composer() {
+      target = use(GlassBlurTarget);
+      return <span data-composer>Composer</span>;
+    }
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      act(() => root.render(
+        <SessionFrame nativeHeaderHeight={80}>
+          <SessionScreen composer={<Composer />}><span>Transcript</span></SessionScreen>
+        </SessionFrame>,
+      ));
+      const background = container.querySelector("[data-blur-target]")!;
+      expect(background.textContent).toContain("Transcript");
+      expect(background.querySelector("[data-composer]")).toBeNull();
+      expect((target as { current: unknown }).current).toBe(background);
+    } finally {
+      act(() => root.unmount());
+      layout.OS = "ios";
+    }
+  });
   it("reserves the full Android workspace line height below the native header", () => {
     layout.OS = "android";
     function Screen() {

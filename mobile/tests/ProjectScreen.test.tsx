@@ -10,10 +10,22 @@ const desktop = vi.hoisted(() => ({
   startSession: vi.fn(),
   sendMessage: vi.fn(),
   offline: false,
+  os: "ios",
+  header: {} as {
+    headerTitle?: unknown;
+    headerRight?: unknown;
+    headerTitleAlign?: string;
+    headerBackVisible?: boolean;
+  },
   existing: { path: "/repo/.worktrees/mobile", name: "feature/mobile" },
 }));
 
 vi.mock("react-native", () => ({
+  Platform: {
+    get OS() {
+      return desktop.os;
+    },
+  },
   View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   Text: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
   Pressable: ({
@@ -60,7 +72,10 @@ vi.mock("react-native-worklets", () => ({ scheduleOnRN: vi.fn() }));
 vi.mock("expo-router", () => ({
   router: { push: vi.fn() },
   Stack: {
-    Screen: () => null,
+    Screen: ({ options }: { options: typeof desktop.header }) => {
+      desktop.header = options;
+      return null;
+    },
     Toolbar: Object.assign(() => null, { View: () => null }),
   },
   useIsFocused: () => true,
@@ -138,13 +153,16 @@ vi.mock("@/features/sessions/SessionScreen", () => ({
   SessionScreen: ({
     below,
     composer,
+    children,
   }: {
     below?: ReactNode;
     composer?: ReactNode;
+    children?: ReactNode;
   }) => (
     <>
       <header>{below}</header>
       {composer}
+      {children}
     </>
   ),
 }));
@@ -170,7 +188,7 @@ vi.mock("@/features/workspace/WorkspaceProvider", () => ({
     sendMessage: desktop.sendMessage,
   }),
   useConversation: () => ({}),
-  useConversationTurns: () => ({}),
+  useConversationTurns: () => ({ turns: [], hasOlder: false }),
 }));
 vi.mock("@/features/workspace/WorkspaceMenu", () => ({
   WorkspaceMenu: ({
@@ -254,10 +272,20 @@ describe("new session composer workspace", () => {
     desktop.startSession.mockReset().mockResolvedValue("started-session");
     desktop.sendMessage.mockReset().mockResolvedValue(undefined);
     desktop.offline = false;
+    desktop.os = "ios";
     container = document.createElement("div");
     root = createRoot(container);
   });
   afterEach(() => act(() => root.unmount()));
+
+  it("puts Android session titles and actions in the native title/right slots", () => {
+    desktop.os = "android";
+    render("existing-session");
+    expect(desktop.header.headerTitleAlign).toBe("left");
+    expect(desktop.header.headerBackVisible).toBe(true);
+    expect(desktop.header.headerTitle).toBeTypeOf("function");
+    expect(desktop.header.headerRight).toBeTypeOf("function");
+  });
 
   it("switches to a new worktree from the composer and sends that choice", async () => {
     render();

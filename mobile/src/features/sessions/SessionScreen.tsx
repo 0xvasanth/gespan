@@ -1,4 +1,5 @@
 import { router, useGlobalSearchParams, useIsFocused, usePathname } from "expo-router";
+import { BlurTargetView } from "expo-blur";
 import {
   createContext,
   useCallback,
@@ -12,6 +13,7 @@ import {
 } from "react";
 import {
   Platform,
+  StyleSheet,
   Text,
   View,
   type LayoutChangeEvent,
@@ -45,7 +47,7 @@ import {
   useHeaderPush,
   useSceneKey,
 } from "@/ui/SceneFade";
-import { GlassPresence, LiquidView } from "@/ui/LiquidView";
+import { GlassBlurTarget, GlassPresence, LiquidView } from "@/ui/LiquidView";
 import { themedStyles, useColors } from "@/ui/theme";
 
 const HEADER_HEIGHT = 44;
@@ -421,6 +423,7 @@ export function SessionFrame({
   }));
 
   const headerTop = insets.top + 6;
+  const blurTarget = useRef<View>(null);
   const headerBottom = headerTop + HEADER_HEIGHT + 8;
   // Android's workspace menu is a React Native control with its own padding
   // and font metrics. Let it lay out fully rather than squeezing it into the
@@ -503,7 +506,11 @@ export function SessionFrame({
             {/* First, unwrapped: the screens' scroll views lead each view's
                 first-child chain, where iOS looks for what to blur under a
                 native header, and nothing fades their native glass away. */}
-            {children}
+            {Platform.OS === "android" ? (
+              <BlurTargetView ref={blurTarget} style={StyleSheet.absoluteFill}>
+                {children}
+              </BlurTargetView>
+            ) : children}
 
             {/* Under the native header too, which is transparent over it. */}
             {covered ? null : (
@@ -617,7 +624,11 @@ export function SessionFrame({
                   color={colors.background}
                 />
                 <View style={{ paddingBottom: composerBottom }}>
-                  <View onLayout={onComposerLayout}>{chrome?.composer}</View>
+                  <View onLayout={onComposerLayout}>
+                    <GlassBlurTarget value={Platform.OS === "android" ? blurTarget : undefined}>
+                      {chrome?.composer}
+                    </GlassBlurTarget>
+                  </View>
                 </View>
                 {/* Only a transcript needs this glass surface. Empty sessions
                     have no scroll target, so keep it out of the native tree. */}

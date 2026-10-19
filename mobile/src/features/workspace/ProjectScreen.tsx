@@ -9,7 +9,7 @@ import { useProjectChanges } from "@/features/connection/useProjectChanges";
 import { useProjectWorktrees } from "@/features/connection/useProjectWorktrees";
 import type { Project, SessionSummary } from "@/features/workspace/types";
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, StyleSheet } from "react-native";
+import { Platform, Pressable, StyleSheet } from "react-native";
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -258,6 +258,24 @@ export function ProjectScreen({
   const openSettings = () =>
     router.push({ pathname: "/settings", params: { projectId: project.id } });
 
+  const sessionTitle = sessionId ? (
+    <SessionTitle
+      title={session?.title ?? "Session"}
+      subtitle={[project.name, branch].filter(Boolean).join(" · ")}
+    />
+  ) : null;
+  const sessionToolbar = sessionId ? (
+    <SessionToolbar
+      projectId={project.id}
+      sessionId={sessionId}
+      session={session}
+      worktreePath={worktreePath}
+      harness={harness}
+      changed={changes.length}
+      onSettings={openSettings}
+    />
+  ) : null;
+
   return (
     <SessionScreen
       // Where a new session will work, under the tabs and in view across its
@@ -347,15 +365,21 @@ export function ProjectScreen({
         options={
           sessionId
             ? // A session's title is on the left, beside the back button.
-              { headerTitle: "", headerBackVisible: true }
+              Platform.OS === "android"
+              ? {
+                  headerTitle: () => sessionTitle,
+                  headerTitleAlign: "left",
+                  headerRight: () => sessionToolbar,
+                  headerBackVisible: true,
+                }
+              : { headerTitle: "", headerBackVisible: true }
             : { headerTitle: () => <ProjectSwitch pages={pages} /> }
         }
       />
       {sessionId ? (
-        <SessionTitle
-          title={session?.title ?? "Session"}
-          subtitle={[project.name, branch].filter(Boolean).join(" · ")}
-        />
+        Platform.OS === "android" ? null : (
+          sessionTitle
+        )
       ) : (
         <Stack.Toolbar placement="left">
           {/* The project's mascot in the bar's glass, for the button. */}
@@ -382,15 +406,9 @@ export function ProjectScreen({
         </Stack.Toolbar>
       )}
       {sessionId ? (
-        <SessionToolbar
-          projectId={project.id}
-          sessionId={sessionId}
-          session={session}
-          worktreePath={worktreePath}
-          harness={harness}
-          changed={changes.length}
-          onSettings={openSettings}
-        />
+        Platform.OS === "android" ? null : (
+          sessionToolbar
+        )
       ) : (
         <Stack.Toolbar placement="right">
           {/* The app's own cog in the bar's glass, as the mascot on the left. */}
