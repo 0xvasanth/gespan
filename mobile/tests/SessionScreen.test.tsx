@@ -6,11 +6,25 @@ import {
   SessionScreen,
   useSessionLayout,
 } from "@/features/sessions/SessionScreen";
+const layout = vi.hoisted(() => ({
+  OS: "ios",
+  onBelowLayout: undefined as undefined | ((event: { nativeEvent: { layout: { height: number } } }) => void),
+}));
 vi.mock("expo-sqlite/kv-store", () => ({ default: { getItemSync: () => null } }));
 
 vi.mock("react-native", () => {
-  const View = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
+  const View = ({ children, onLayout, style }: {
+    children?: ReactNode;
+    onLayout?: typeof layout.onBelowLayout;
+    style?: unknown;
+  }) => {
+    if (onLayout && Array.isArray(style) && style.some((entry) => entry?.minHeight === 22)) {
+      layout.onBelowLayout = onLayout;
+    }
+    return <div>{children}</div>;
+  };
   return {
+    Platform: { get OS() { return layout.OS; } },
     View,
     Text: View,
     StyleSheet: { create: (styles: unknown) => styles },
@@ -64,6 +78,34 @@ vi.mock("expo-router", () => ({
 vi.stubGlobal("__DEV__", false);
 
 describe("persistent session frame", () => {
+  it("reserves the full Android workspace line height below the native header", () => {
+    layout.OS = "android";
+    function Screen() {
+      const { top, pageTop } = useSessionLayout();
+      return (
+        <SessionScreen below={<span>Workspace and changes</span>}>
+          <output>{`${top}:${pageTop}`}</output>
+        </SessionScreen>
+      );
+    }
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      act(() => root.render(<SessionFrame nativeHeaderHeight={80}><Screen /></SessionFrame>));
+      expect(layout.onBelowLayout).toBeDefined();
+      act(() => layout.onBelowLayout!({ nativeEvent: { layout: { height: 38 } } }));
+      expect(container.textContent).toContain("Workspace and changes");
+      expect(container.querySelector("output")?.textContent).toBe("156:128");
+      // Larger font metrics must also move both content insets down.
+      act(() => layout.onBelowLayout!({ nativeEvent: { layout: { height: 50 } } }));
+      expect(container.querySelector("output")?.textContent).toBe("168:140");
+    } finally {
+      act(() => root.unmount());
+      layout.OS = "ios";
+      layout.onBelowLayout = undefined;
+    }
+  });
+
   it("opens a screen reading its own insets and updates its header without a render loop", () => {
     let renders = 0;
     function Screen({ title, compose }: { title: string; compose: boolean }) {

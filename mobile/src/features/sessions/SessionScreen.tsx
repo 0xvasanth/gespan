@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  Platform,
   Text,
   View,
   type LayoutChangeEvent,
@@ -421,11 +422,16 @@ export function SessionFrame({
 
   const headerTop = insets.top + 6;
   const headerBottom = headerTop + HEADER_HEIGHT + 8;
+  // Android's workspace menu is a React Native control with its own padding
+  // and font metrics. Let it lay out fully rather than squeezing it into the
+  // compact iOS line height, and reserve that same room for page content.
+  const measureBelow = native && Platform.OS === "android";
+  const [belowHeight, setBelowHeight] = useState(BELOW_HEIGHT);
   const hasBelow = !!chrome?.below;
   // Where the frame above the content ends: the header, and the line under it if any.
   const belowTop = (native ? nativeHeaderHeight : headerBottom) + BELOW_GAP;
   const frameBottom = hasBelow
-    ? belowTop + BELOW_HEIGHT
+    ? belowTop + (measureBelow ? belowHeight : BELOW_HEIGHT)
     : native
       ? nativeHeaderHeight
       : headerBottom;
@@ -512,8 +518,12 @@ export function SessionFrame({
                 header has its height, so it doesn't show at the top first. */}
             {native && chrome?.below ? (
               <View
+                onLayout={measureBelow ? (event) => {
+                  setBelowHeight(Math.ceil(event.nativeEvent.layout.height));
+                } : undefined}
                 style={[
                   styles.below,
+                  measureBelow && { height: undefined, minHeight: BELOW_HEIGHT },
                   { top: belowTop },
                   nativeHeaderHeight === 0 && styles.unplaced,
                 ]}
