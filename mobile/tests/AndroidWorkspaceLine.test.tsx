@@ -8,6 +8,31 @@ import {
 import type { ChangedFile } from "@/features/workspace/types";
 
 vi.mock("react-native", () => ({
+  Modal: ({ visible, children }: { visible: boolean; children?: ReactNode }) =>
+    visible ? <section>{children}</section> : null,
+  ScrollView: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  Pressable: ({
+    children,
+    onPress,
+    disabled,
+    style,
+    accessibilityLabel,
+  }: {
+    children?: ReactNode;
+    onPress?: () => void;
+    disabled?: boolean;
+    style?: object;
+    accessibilityLabel?: string;
+  }) => (
+    <button
+      disabled={disabled}
+      style={style}
+      aria-label={accessibilityLabel}
+      onClick={onPress}
+    >
+      {children}
+    </button>
+  ),
   View: ({ children, style }: { children?: ReactNode; style?: object }) => (
     <div style={style}>{children}</div>
   ),
@@ -34,14 +59,8 @@ vi.mock("react-native", () => ({
     </span>
   ),
 }));
-vi.mock("@/ui/ChoiceMenu", () => ({
-  ChoiceMenu: ({
-    children,
-    style,
-  }: {
-    children?: ReactNode;
-    style?: object;
-  }) => <button style={style}>{children}</button>,
+vi.mock("react-native-safe-area-context", () => ({
+  useSafeAreaInsets: () => ({ bottom: 0 }),
 }));
 vi.mock("@/ui/Icon", () => ({ Icon: () => null }));
 vi.mock("@/ui/theme", () => ({
@@ -100,6 +119,49 @@ it("bounds long branch labels in empty-session and chat workspace lines while pr
       if (empty)
         expect(container.querySelector("button")!.style.maxWidth).toBe("100%");
     }
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it("keeps worktree selection available while changes load and replaces the pending summary when ready", () => {
+  (
+    globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const onChange = vi.fn();
+  const render = (loading: boolean) =>
+    act(() =>
+      root.render(
+        <WorkspaceMenu
+          value={{ mode: "current" }}
+          worktrees={[]}
+          onChange={onChange}
+          branch="main"
+          files={[]}
+          loading={loading}
+          onOpenChanges={() => {}}
+        />,
+      ),
+    );
+  try {
+    render(true);
+    expect(container.textContent).toContain("Loading changes…");
+    expect(container.textContent).not.toContain("0 files");
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Workspace: main"]',
+    )!;
+    expect(trigger.disabled).toBe(false);
+    act(() => trigger.click());
+    const worktree = [...container.querySelectorAll("button")].find(
+      (item) => item.textContent === "New worktree",
+    )!;
+    act(() => worktree.click());
+    expect(onChange).toHaveBeenCalledWith({ mode: "worktree" });
+    render(false);
+    expect(container.textContent).not.toContain("Loading changes…");
+    expect(container.textContent).toContain("0 files+0-0");
   } finally {
     act(() => root.unmount());
   }

@@ -30,7 +30,6 @@ export function WorkspaceMenu({
     <ChoiceMenu
       style={{ maxWidth: "100%", flexShrink: 1 }}
       label={`Workspace: ${branch}`}
-      disabled={loading}
       actions={[
         {
           label: `Current checkout${checkoutBranch ? ` (${checkoutBranch})` : ""}`,
@@ -60,6 +59,7 @@ export function WorkspaceMenu({
           current={value.mode === "current"}
           branch={branch}
           files={files}
+          loading={loading}
         />
       </View>
     </ChoiceMenu>
@@ -69,10 +69,12 @@ export function WorkspaceLine({
   current,
   branch,
   files,
+  loading = false,
 }: {
   current: boolean;
   branch: string;
   files: ChangedFile[];
+  loading?: boolean;
 }) {
   const colors = useColors();
   const diff = useDiffTheme();
@@ -105,16 +107,21 @@ export function WorkspaceLine({
       >
         {branch}
       </Text>
-      <Text
-        numberOfLines={1}
-        style={{ color: colors.muted, flexShrink: 0 }}
-      >{`· ${formatCount(files.length)} files`}</Text>
-      <Text numberOfLines={1} style={{ color: diff.add.fg, flexShrink: 0 }}>
-        +{formatCount(files.reduce((n, f) => n + f.additions, 0))}
+      <Text numberOfLines={1} style={{ color: colors.muted, flexShrink: 0 }}>
+        {loading
+          ? "· Loading changes…"
+          : `· ${formatCount(files.length)} files`}
       </Text>
-      <Text numberOfLines={1} style={{ color: diff.del.fg, flexShrink: 0 }}>
-        -{formatCount(files.reduce((n, f) => n + f.deletions, 0))}
-      </Text>
+      {!loading ? (
+        <>
+          <Text numberOfLines={1} style={{ color: diff.add.fg, flexShrink: 0 }}>
+            +{formatCount(files.reduce((n, f) => n + f.additions, 0))}
+          </Text>
+          <Text numberOfLines={1} style={{ color: diff.del.fg, flexShrink: 0 }}>
+            -{formatCount(files.reduce((n, f) => n + f.deletions, 0))}
+          </Text>
+        </>
+      ) : null}
     </View>
   );
 }
