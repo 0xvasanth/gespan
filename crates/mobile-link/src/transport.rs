@@ -22,7 +22,26 @@ pub fn server_endpoint(
     gate: Gate,
     address: SocketAddr,
 ) -> LinkResult<quinn::Endpoint> {
-    quinn::Endpoint::server(tls::server(identity, gate)?, address).map_err(|e| e.to_string())
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(address),
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )
+    .map_err(|e| e.to_string())?;
+    // Windows makes IPv6 sockets IPv6-only by default. The desktop listens
+    // on [::], so enable IPv4-mapped packets before binding on every platform.
+    if address.is_ipv6() {
+        socket.set_only_v6(false).map_err(|e| e.to_string())?;
+    }
+    socket.bind(&address.into()).map_err(|e| e.to_string())?;
+    socket.set_nonblocking(true).map_err(|e| e.to_string())?;
+    quinn::Endpoint::new(
+        quinn::EndpointConfig::default(),
+        Some(tls::server(identity, gate)?),
+        socket.into(),
+        Arc::new(quinn::TokioRuntime),
+    )
+    .map_err(|e| e.to_string())
 }
 pub async fn read_frame(stream: &mut quinn::RecvStream, limit: usize) -> LinkResult<Value> {
     let length = stream.read_u32().await.map_err(|e| e.to_string())? as usize;
@@ -694,7 +713,7 @@ mod tests {
                 json!({"method":"workspace.list"}),
             )
             .await
-            .unwrap();
+            .unwrap_or_else(|error| panic!("QUIC connection to {host} failed: {error}"));
             assert_eq!(result, json!({"method":"workspace.list"}));
         }
         endpoint.close(0_u32.into(), b"Test complete");

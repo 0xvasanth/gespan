@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The new sidebar keeps **Open project** and **Settings** available before a project is selected.
 - The empty conversation view no longer scrolls a few pixels around the message input.
 - The message input's blurred background stays within its rounded corners on Windows.
+- Phone connections on Windows accept both IPv4 and IPv6.
 
 ## [0.15.0] - 2026-10-18
 
