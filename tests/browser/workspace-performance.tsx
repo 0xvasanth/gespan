@@ -139,6 +139,7 @@ const fixtureInvoke = async (
   if (command === "plugin:event|listen") return 0;
   if (command === "plugin:event|unlisten") return;
   if (command === "control_load") return null;
+  if (command === "mobile_status") return { enabled: false };
   if (command === "reminder_list") return [];
   if (command === "reminder_take_open") return null;
   if (
