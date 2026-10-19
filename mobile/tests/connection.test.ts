@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeSelection,
   selectedWorkspace,
-} from "../../../../mobile/src/features/connection/selection";
-import { parseInvitation } from "../../../../mobile/src/features/connection/invitation";
+} from "@/features/connection/selection";
+import { parseInvitation } from "@/features/connection/invitation";
 const catalog = {
   projects: [{ id: "a" }, { id: "b" }],
   monos: [{ id: "m" }, { id: "n" }],
