@@ -15,7 +15,7 @@ vi.mock("react-native", () => ({
   }) => <button aria-label={accessibilityLabel} aria-selected={accessibilityState.selected} onClick={onPress}>{children}</button>,
 }));
 vi.mock("@/ui/LiquidView", () => ({
-  LiquidView: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  LiquidView: ({ children, style }: { children: ReactNode; style?: object }) => <div style={style}>{children}</div>,
 }));
 vi.mock("@/ui/theme", () => ({
   themedStyles: (create: (colors: object) => object) => () => create({ content: "white", thumb: "gray" }),
@@ -48,6 +48,8 @@ it("keeps the selected label visible without layout events, across switches and 
     expect(container.querySelector('[aria-selected="true"]')?.textContent).toBe("Sessions");
     render("new", "remounted");
     expect(container.textContent).toBe("New");
+    expect((container.firstElementChild as HTMLElement).style.width).toBe("200px");
+    expect((container.firstElementChild as HTMLElement).style.maxWidth).toBe("100%");
   } finally {
     act(() => root.unmount());
   }

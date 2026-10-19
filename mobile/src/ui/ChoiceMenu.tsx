@@ -1,5 +1,13 @@
 import { useState, type ReactNode } from "react";
-import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "./theme";
 
@@ -14,11 +22,13 @@ export function ChoiceMenu({
   children,
   actions,
   disabled,
+  style,
 }: {
   label: string;
   children: ReactNode;
   actions: MenuAction[];
   disabled?: boolean;
+  style?: StyleProp<ViewStyle>;
 }) {
   const [open, setOpen] = useState(false);
   const colors = useColors();
@@ -29,6 +39,7 @@ export function ChoiceMenu({
         accessibilityRole="button"
         accessibilityLabel={label}
         disabled={disabled}
+        style={style}
         onPress={() => setOpen(true)}
       >
         {children}

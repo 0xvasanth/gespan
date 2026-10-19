@@ -51,7 +51,9 @@ export function SegmentedSwitch<T extends string>({
 }
 
 const useStyles = themedStyles((colors) => ({
-  compact: { alignSelf: "center" },
+  // Native headers can reuse an icon-only intrinsic width after switching
+  // projects. Give the track stable room for the selected label on every mount.
+  compact: { alignSelf: "center", width: 200, maxWidth: "100%" },
   track: { height: 44, padding: 4 },
   segment: {
     height: 36,
@@ -61,9 +63,10 @@ const useStyles = themedStyles((colors) => ({
     gap: 8,
     borderRadius: 18,
   },
-  selected: { paddingHorizontal: 16, backgroundColor: colors.thumb },
+  selected: { flex: 1, paddingHorizontal: 16, backgroundColor: colors.thumb },
   label: {
     maxWidth: 120,
+    flexShrink: 1,
     color: colors.content,
     fontSize: 15,
     fontWeight: "600",

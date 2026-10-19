@@ -13,6 +13,7 @@ const desktop = vi.hoisted(() => ({
   os: "ios",
   header: {} as {
     headerTitle?: unknown;
+    headerLeft?: unknown;
     headerRight?: unknown;
     headerTitleAlign?: string;
     headerBackVisible?: boolean;
@@ -33,16 +34,25 @@ vi.mock("react-native", () => ({
     onPress,
     accessibilityLabel,
     disabled,
+    style,
   }: {
     children?: ReactNode;
     onPress?: () => void;
     accessibilityLabel?: string;
     disabled?: boolean;
+    style?: object | object[];
   }) => (
     <button
       aria-label={accessibilityLabel}
       onClick={onPress}
       disabled={disabled}
+      style={
+        typeof style === "function"
+          ? undefined
+          : Array.isArray(style)
+            ? Object.assign({}, ...style)
+            : style
+      }
     >
       {children}
     </button>
@@ -74,7 +84,20 @@ vi.mock("expo-router", () => ({
   Stack: {
     Screen: ({ options }: { options: typeof desktop.header }) => {
       desktop.header = options;
-      return null;
+      if (desktop.os !== "android") return null;
+      return (
+        <>
+          {typeof options.headerLeft === "function"
+            ? options.headerLeft()
+            : null}
+          {typeof options.headerTitle === "function"
+            ? options.headerTitle()
+            : null}
+          {typeof options.headerRight === "function"
+            ? options.headerRight()
+            : null}
+        </>
+      );
     },
     Toolbar: Object.assign(() => null, { View: () => null }),
   },
@@ -277,6 +300,26 @@ describe("new session composer workspace", () => {
     root = createRoot(container);
   });
   afterEach(() => act(() => root.unmount()));
+
+  it("keeps circular Android project/settings controls after switching projects", () => {
+    desktop.os = "android";
+    render();
+    for (const label of ["Switch project, Monocode", "Settings"]) {
+      expect(button(label).style.borderRadius).toBe("22px");
+      expect(button(label).style.backgroundColor).toBe("gray");
+    }
+    act(() =>
+      root.render(
+        <ProjectScreen
+          project={{ ...project, id: "other", name: "Other" }}
+          sessionId={undefined}
+        />,
+      ),
+    );
+    expect(button("Switch project, Other").style.borderRadius).toBe("22px");
+    expect(button("Settings").style.backgroundColor).toBe("gray");
+    expect(desktop.header.headerTitleAlign).toBe("center");
+  });
 
   it("puts Android session titles and actions in the native title/right slots", () => {
     desktop.os = "android";

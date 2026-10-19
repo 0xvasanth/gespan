@@ -50,7 +50,7 @@ export function SessionTitle({
         <Text style={styles.name} numberOfLines={1} ellipsizeMode="tail">
           {title}
         </Text>
-        <Text style={styles.meta} numberOfLines={1} ellipsizeMode="tail">
+        <Text style={styles.meta} numberOfLines={1} ellipsizeMode="middle">
           {subtitle}
         </Text>
       </View>

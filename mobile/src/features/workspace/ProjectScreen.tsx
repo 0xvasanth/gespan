@@ -258,6 +258,38 @@ export function ProjectScreen({
   const openSettings = () =>
     router.push({ pathname: "/settings", params: { projectId: project.id } });
 
+  const projectButtonStyle = Platform.OS === "android"
+    ? [styles.androidProjectButton, { backgroundColor: colors.fill }]
+    : styles.projectButton;
+  const projectAvatar = (
+    <Pressable
+      style={projectButtonStyle}
+      accessibilityRole="button"
+      accessibilityLabel={`Switch project, ${project.name}`}
+      onPress={() => router.push({
+        pathname: "/projects",
+        params: { current: project.id },
+      })}
+    >
+      <ProjectMascot
+        project={project.path}
+        name={project.mascot}
+        color={project.color}
+        size={20}
+      />
+    </Pressable>
+  );
+  const settingsButton = (
+    <Pressable
+      style={projectButtonStyle}
+      accessibilityRole="button"
+      accessibilityLabel="Settings"
+      onPress={openSettings}
+    >
+      <Icon name="settings" size={22} color={colors.content} />
+    </Pressable>
+  );
+
   const sessionTitle = sessionId ? (
     <SessionTitle
       title={session?.title ?? "Session"}
@@ -373,55 +405,37 @@ export function ProjectScreen({
                   headerBackVisible: true,
                 }
               : { headerTitle: "", headerBackVisible: true }
-            : { headerTitle: () => <ProjectSwitch pages={pages} /> }
+            : {
+                headerTitle: () => <ProjectSwitch pages={pages} />,
+                ...(Platform.OS === "android"
+                  ? {
+                      headerTitleAlign: "center" as const,
+                      headerLeft: () => projectAvatar,
+                      headerRight: () => settingsButton,
+                      headerBackVisible: false,
+                    }
+                  : {}),
+              }
         }
       />
       {sessionId ? (
         Platform.OS === "android" ? null : (
           sessionTitle
         )
-      ) : (
+      ) : Platform.OS === "android" ? null : (
         <Stack.Toolbar placement="left">
           {/* The project's mascot in the bar's glass, for the button. */}
-          <Stack.Toolbar.View>
-            <Pressable
-              style={styles.projectButton}
-              accessibilityRole="button"
-              accessibilityLabel={`Switch project, ${project.name}`}
-              onPress={() =>
-                router.push({
-                  pathname: "/projects",
-                  params: { current: project.id },
-                })
-              }
-            >
-              <ProjectMascot
-                project={project.path}
-                name={project.mascot}
-                color={project.color}
-                size={20}
-              />
-            </Pressable>
-          </Stack.Toolbar.View>
+          <Stack.Toolbar.View>{projectAvatar}</Stack.Toolbar.View>
         </Stack.Toolbar>
       )}
       {sessionId ? (
         Platform.OS === "android" ? null : (
           sessionToolbar
         )
-      ) : (
+      ) : Platform.OS === "android" ? null : (
         <Stack.Toolbar placement="right">
           {/* The app's own cog in the bar's glass, as the mascot on the left. */}
-          <Stack.Toolbar.View>
-            <Pressable
-              style={styles.projectButton}
-              accessibilityRole="button"
-              accessibilityLabel="Settings"
-              onPress={openSettings}
-            >
-              <Icon name="settings" size={22} color={colors.content} />
-            </Pressable>
-          </Stack.Toolbar.View>
+          <Stack.Toolbar.View>{settingsButton}</Stack.Toolbar.View>
         </Stack.Toolbar>
       )}
       {sessionId ? (
@@ -560,6 +574,13 @@ const styles = StyleSheet.create({
   projectButton: {
     width: 36,
     height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  androidProjectButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
   },
