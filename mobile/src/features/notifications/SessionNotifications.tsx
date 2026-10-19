@@ -150,7 +150,7 @@ export function useNotificationsBlocked() {
   useEffect(() => {
     const check = () =>
       void Notifications.getPermissionsAsync().then((settings) =>
-        setBlocked(settings.status === "denied"),
+        setBlocked(settings.status === "denied" && !settings.canAskAgain),
       );
     check();
     const subscription = AppState.addEventListener("change", (state) => {

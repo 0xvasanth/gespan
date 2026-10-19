@@ -143,15 +143,15 @@ it.each(["android", "ios"])("routes immediate session alerts on %s", async (os) 
   }));
 });
 
-it("reflects Android notification denial and updates after returning from Settings", async () => {
+it.each([true, false])("reflects Android notification denial with canAskAgain %s and updates after returning from Settings", async (canAskAgain) => {
   let blocked = false;
   function Probe() {
     blocked = useNotificationsBlocked();
     return null;
   }
-  state.settings = { status: "denied", canAskAgain: false };
+  state.settings = { status: "denied", canAskAgain };
   await act(async () => root.render(<Probe />));
-  expect(blocked).toBe(true);
+  expect(blocked).toBe(!canAskAgain);
   state.settings.status = "granted";
   await act(async () => state.onAppState?.("active"));
   expect(blocked).toBe(false);
