@@ -2113,9 +2113,18 @@ function SidebarComponent({
   });
 
   const projectLabel = useProjectLabel(cwd);
+  const [insetInboxMenu, setInsetInboxMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const insetInboxTrigger = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!inset || !panelOpen || !sidebarAvailable) setInsetInboxMenu(null);
+  }, [inset, panelOpen, sidebarAvailable]);
   const headerProjectMenu = useProjectMenu({
     onRemoveProject,
     onOpenNotificationSettings,
+    onOpen: () => setInsetInboxMenu(null),
     // Only the inset layout uses this menu, and it has no project rail.
     railOptions: false,
   });
@@ -2139,6 +2148,8 @@ function SidebarComponent({
           const rect = row.getBoundingClientRect();
           headerProjectMenu.open(cwd, rect.right, rect.top - 8, row);
         },
+        onContextMenu: (x: number, y: number, trigger: HTMLElement) =>
+          headerProjectMenu.open(cwd, x, y, trigger),
         onCloseProjectSettings: headerProjectMenu.close,
         projectSettingsOpen: headerProjectMenu.isOpen,
         renderProjectPicker: onSelectProject
@@ -2436,6 +2447,14 @@ function SidebarComponent({
           active: inboxActive,
           dot: inboxUnseen,
           onClick: onOpenInbox,
+          onOpenContextMenu: (x, y) => {
+            headerProjectMenu.close();
+            insetInboxTrigger.current =
+              document.activeElement instanceof HTMLElement
+                ? document.activeElement
+                : null;
+            setInsetInboxMenu({ x, y });
+          },
         },
         notesEnabled &&
           onOpenNotes && {
@@ -3085,9 +3104,21 @@ function SidebarComponent({
             cwd={cwd}
             busyProjectPaths={busyProjectPaths}
             onSelectProject={onSelectProject}
+            onProjectContextMenu={headerProjectMenu.open}
           />
         ) : null}
       </>
+      {insetInboxMenu ? (
+        <InboxNotificationMenu
+          {...insetInboxMenu}
+          projectPaths={[...collectRailProjects(recents, cwd).keys()]}
+          onOpenSettings={onOpenNotificationSettings}
+          onClose={() => {
+            setInsetInboxMenu(null);
+            insetInboxTrigger.current?.focus();
+          }}
+        />
+      ) : null}
       {sessionMenu ? (
         <ExplorerMenu
           x={sessionMenu.x}
@@ -3913,11 +3944,18 @@ function ProjectSpacesBar({
   cwd,
   busyProjectPaths,
   onSelectProject,
+  onProjectContextMenu,
 }: {
   projects: readonly string[];
   cwd: string;
   busyProjectPaths?: Iterable<string>;
   onSelectProject: (path: string) => void;
+  onProjectContextMenu: (
+    path: string,
+    x: number,
+    y: number,
+    trigger: HTMLElement,
+  ) => void;
 }) {
   const projectTooltip = useRailTooltip("top");
   const shortcuts = useSyncExternalStore(subscribeKeybindings, () =>
@@ -4012,6 +4050,9 @@ function ProjectSpacesBar({
               busy={projectPathBusy(busyProjectPaths, path)}
               shortcuts={shortcuts}
               onSelect={() => onSelectProject(path)}
+              onContextMenu={(x, y, trigger) =>
+                onProjectContextMenu(path, x, y, trigger)
+              }
             />
           ))}
         </div>
@@ -4028,12 +4069,14 @@ function ProjectSpaceButton({
   busy,
   shortcuts,
   onSelect,
+  onContextMenu,
 }: {
   path: string;
   active: boolean;
   busy: boolean;
   shortcuts: string;
   onSelect: () => void;
+  onContextMenu: (x: number, y: number, trigger: HTMLElement) => void;
 }) {
   const label = useProjectLabel(path);
   return (
@@ -4046,6 +4089,23 @@ function ProjectSpaceButton({
       data-rail-tip-detail={shortcuts || undefined}
       data-tauri-drag-region="false"
       onClick={active ? undefined : onSelect}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.focus();
+        onContextMenu(event.clientX, event.clientY, event.currentTarget);
+      }}
+      onKeyDown={(event) => {
+        if (
+          event.key !== "ContextMenu" &&
+          !(event.shiftKey && event.key === "F10")
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = event.currentTarget.getBoundingClientRect();
+        onContextMenu(rect.left, rect.bottom, event.currentTarget);
+      }}
       className={`relative grid h-5 min-w-0 flex-1 place-items-center rounded-md transition-[opacity,background-color] duration-200 ease-out motion-reduce:transition-none ${
         active
           ? "bg-content/10 opacity-100"
@@ -4232,6 +4292,7 @@ type SidebarNavItem = {
   active?: boolean;
   dot?: boolean;
   onClick: () => void;
+  onOpenContextMenu?: (x: number, y: number) => void;
 };
 
 /** The inset sidebar's links to the app-wide views, under the project. */
@@ -4265,18 +4326,21 @@ function SidebarNavList({
           <div className="mt-0.5" />
         </>
       ) : null}
-      {shown.map(({ label, icon, shortcut, active, dot, onClick }) => (
-        <RailAction
-          key={label}
-          label={label}
-          icon={icon}
-          shortcut={shortcut}
-          active={active}
-          dot={dot}
-          ariaLabel={dot ? `${label}, new items` : undefined}
-          onClick={onClick}
-        />
-      ))}
+      {shown.map(
+        ({ label, icon, shortcut, active, dot, onClick, onOpenContextMenu }) => (
+          <RailAction
+            key={label}
+            label={label}
+            icon={icon}
+            shortcut={shortcut}
+            active={active}
+            dot={dot}
+            ariaLabel={dot ? `${label}, new items` : undefined}
+            onClick={onClick}
+            onOpenContextMenu={onOpenContextMenu}
+          />
+        ),
+      )}
     </nav>
   );
 }
