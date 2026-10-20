@@ -16,6 +16,7 @@ import Svg, { Circle, Path } from "react-native-svg";
 
 import type { SessionSummary } from "@/features/workspace/types";
 import { useWorkspace } from "@/features/workspace/WorkspaceProvider";
+import { LiquidView } from "@/ui/LiquidView";
 import { ChoiceMenu } from "@/ui/ChoiceMenu";
 import { themedStyles, useColors } from "@/ui/theme";
 
@@ -157,7 +158,7 @@ export function SessionToolbar({
   if (Platform.OS === "android")
     return (
       <View style={styles.androidToolbar}>
-        <View style={styles.androidActions}>
+        <LiquidView borderRadius={24} innerStyle={styles.androidActions}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Changes, ${changed} ${changed === 1 ? "file" : "files"}`}
@@ -214,7 +215,7 @@ export function SessionToolbar({
               </Svg>
             </View>
           </ChoiceMenu>
-        </View>
+        </LiquidView>
         {/* Keep the overhang outside both the pill and the button's clip bounds. */}
         {changed > 0 ? (
           <View pointerEvents="none" style={styles.badge}>
@@ -333,10 +334,9 @@ const useStyles = themedStyles((colors) => ({
     alignItems: "center",
     flexShrink: 0,
     borderRadius: 24,
-    backgroundColor: colors.fill,
   },
   androidButton: {
-    width: 44,
+    width: 40,
     height: 44,
     alignItems: "center",
     justifyContent: "center",
@@ -344,7 +344,7 @@ const useStyles = themedStyles((colors) => ({
   badge: {
     position: "absolute",
     top: 0,
-    right: 44,
+    right: 40,
     minWidth: 20,
     height: 20,
     paddingHorizontal: 4,

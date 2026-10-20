@@ -23,6 +23,7 @@ const desktop = vi.hoisted(() => ({
   existing: { path: "/repo/.worktrees/mobile", name: "feature/mobile" },
 }));
 
+vi.mock("react-native-svg", () => ({ default: () => <svg />, Path: () => null }));
 vi.mock("react-native", () => ({
   Platform: {
     get OS() {
@@ -374,11 +375,11 @@ describe("new session composer workspace", () => {
     );
   });
 
-  it("puts Android session titles and actions in the native title/right slots", () => {
+  it("keeps Android session titles next to the back target and actions on the right", () => {
     desktop.os = "android";
     render("existing-session");
     expect(desktop.header.headerTitleAlign).toBe("left");
-    expect(desktop.header.headerBackVisible).toBe(true);
+    expect(desktop.header.headerBackVisible).toBe(false);
     expect(desktop.header.headerTitle).toBeTypeOf("function");
     expect(desktop.header.headerRight).toBeTypeOf("function");
   });

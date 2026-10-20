@@ -1,8 +1,19 @@
-import { act, type ReactNode } from "react";
+import { act, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { SegmentedSwitch } from "@/ui/SegmentedSwitch.android";
 
+const animation = vi.hoisted(() => ({ reaction: undefined as undefined | (() => void) }));
+vi.mock("react-native-reanimated", () => ({
+  useAnimatedReaction: (read: () => number | null, react: (next: number | null, previous: number | null) => void) => {
+    useEffect(() => {
+      let previous: number | null = null;
+      animation.reaction = () => { const next = read(); react(next, previous); previous = next; };
+      animation.reaction();
+    });
+  },
+}));
+vi.mock("react-native-worklets", () => ({ scheduleOnRN: (fn: (next: number | null) => void, next: number | null) => fn(next) }));
 vi.mock("expo-haptics", () => ({ selectionAsync: vi.fn() }));
 vi.mock("react-native", () => ({
   View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
@@ -51,4 +62,26 @@ it("keeps the selected label visible without layout events, across switches and 
   } finally {
     act(() => root.unmount());
   }
+});
+
+it("updates selected labels during a swipe before the pager commits value", () => {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  let position = 0;
+  const progress = { get: () => position } as import("react-native-reanimated").SharedValue<number>;
+  const segments = [
+    { value: "new", label: "New", icon: <i /> },
+    { value: "sessions", label: "Sessions", icon: <i /> },
+  ];
+  try {
+    act(() => root.render(<SegmentedSwitch segments={segments} value="new" progress={progress} onChange={() => {}} />));
+    expect(container.textContent).toBe("New");
+    act(() => { position = 0.6; animation.reaction?.(); });
+    expect(container.textContent).toBe("Sessions");
+    expect(container.querySelector('[aria-selected="true"]')?.textContent).toBe("Sessions");
+    act(() => { position = -2; animation.reaction?.(); });
+    expect(container.textContent).toBe("New");
+    act(() => root.render(<SegmentedSwitch segments={segments} value="sessions" onChange={() => {}} />));
+    expect(container.textContent).toBe("Sessions");
+  } finally { act(() => root.unmount()); }
 });

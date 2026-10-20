@@ -1,7 +1,8 @@
 import * as Haptics from "expo-haptics";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import type { SharedValue } from "react-native-reanimated";
+import { useAnimatedReaction, type SharedValue } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
 
 import { LiquidView } from "./LiquidView";
 import { themedStyles } from "./theme";
@@ -10,12 +11,13 @@ import { themedStyles } from "./theme";
  * Android's native header can miss layout events for children inside clipped
  * animated label windows. Render the selected label at its natural size so
  * neither it nor its highlight depends on measurements or cached widths.
- * Page swipes update `value` through the pager, just as taps do.
+ * Subscribe to rounded pager progress so selection follows a swipe as it moves.
  */
 export function SegmentedSwitch<T extends string>({
   segments,
   value,
   onChange,
+  progress,
 }: {
   segments: { value: T; label: string; icon: ReactNode }[];
   value: T;
@@ -23,7 +25,19 @@ export function SegmentedSwitch<T extends string>({
   progress?: SharedValue<number>;
 }) {
   const styles = useStyles();
-  const selectedIndex = Math.max(0, segments.findIndex((segment) => segment.value === value));
+  const valueIndex = Math.max(0, segments.findIndex((segment) => segment.value === value));
+  const [swipeIndex, setSwipeIndex] = useState<number | null>(null);
+  const [reportSwipe] = useState(() => (index: number | null) => setSwipeIndex(index));
+  // Capture a number, never the segments array containing React icon elements.
+  const segmentCount = segments.length;
+  useAnimatedReaction(
+    () => progress ? Math.max(0, Math.min(segmentCount - 1, Math.round(progress.get()))) : null,
+    (next, previous) => {
+      if (next !== previous) scheduleOnRN(reportSwipe, next);
+    },
+    [progress, segmentCount, reportSwipe],
+  );
+  const selectedIndex = progress ? (swipeIndex ?? valueIndex) : valueIndex;
   return (
     <LiquidView style={styles.compact} innerStyle={styles.track}>
       {segments.map((segment, index) => {

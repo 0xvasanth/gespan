@@ -17,6 +17,9 @@ const app = vi.hoisted(() => ({
   remove: vi.fn(async () => {}),
   rename: vi.fn(async () => {}),
 }));
+vi.mock("@/ui/LiquidView", () => ({
+  LiquidView: ({ children, innerStyle }: { children: ReactNode; innerStyle: object }) => <div data-glass style={innerStyle}>{children}</div>,
+}));
 vi.mock("expo-router", () => ({
   router: { push: app.push, back: app.back },
   Stack: {
@@ -201,6 +204,7 @@ it("shows changes/count and opens the correct working copy", async () => {
     false,
   );
   expect(toolbar.style.paddingTop).toBe("6px");
+  expect(button("Changes, 14 files").parentElement!.hasAttribute("data-glass")).toBe(true);
   await click("Changes, 14 files");
   expect(app.push).toHaveBeenCalledWith({
     pathname: "/changes",

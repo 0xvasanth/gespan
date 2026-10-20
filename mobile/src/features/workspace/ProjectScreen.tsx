@@ -68,6 +68,7 @@ import {
 } from "@/features/workspace/WorkspaceMenu";
 import { ComposerWorkspace } from "@/features/workspace/ComposerWorkspace";
 import { Icon } from "@/ui/Icon";
+import { androidBackHeader } from "@/ui/AndroidHeader";
 import { GlassBlurTarget, LiquidView } from "@/ui/LiquidView";
 import { useColors } from "@/ui/theme";
 import { usePushedIn, usePushStarted } from "@/ui/usePushedIn";
@@ -399,10 +400,9 @@ export function ProjectScreen({
             ? // A session's title is on the left, beside the back button.
               Platform.OS === "android"
               ? {
-                  headerTitle: () => sessionTitle,
+                  ...androidBackHeader(sessionTitle),
                   headerTitleAlign: "left",
-                  headerRight: () => sessionToolbar,
-                  headerBackVisible: true,
+                  headerRight: () => headerSurface(sessionToolbar),
                 }
               : { headerTitle: "", headerBackVisible: true }
             : {
