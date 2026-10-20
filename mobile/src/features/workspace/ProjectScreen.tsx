@@ -8,7 +8,7 @@ import { hasNativeTranscript } from "@/features/connection/nativeLink";
 import { useProjectChanges } from "@/features/connection/useProjectChanges";
 import { useProjectWorktrees } from "@/features/connection/useProjectWorktrees";
 import type { Project, SessionSummary } from "@/features/workspace/types";
-import { useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Platform, Pressable, StyleSheet } from "react-native";
 import Animated, {
   Easing,
@@ -44,7 +44,7 @@ import {
   markStartedHere,
   markViewing,
 } from "@/features/sessions/activityStore";
-import { SessionScreen } from "@/features/sessions/SessionScreen";
+import { SessionContent, SessionScreen } from "@/features/sessions/SessionScreen";
 import { SessionsPage } from "@/features/sessions/SessionsPage";
 import {
   SessionTitle,
@@ -68,6 +68,7 @@ import {
 } from "@/features/workspace/WorkspaceMenu";
 import { ComposerWorkspace } from "@/features/workspace/ComposerWorkspace";
 import { Icon } from "@/ui/Icon";
+import { GlassBlurTarget, LiquidView } from "@/ui/LiquidView";
 import { useColors } from "@/ui/theme";
 import { usePushedIn, usePushStarted } from "@/ui/usePushedIn";
 
@@ -91,6 +92,7 @@ export function ProjectScreen({
   const { startSession, sendMessage, stop } = useWorkspace();
   const [openAfterStarting] = useOpenSessionAfterStarting();
   const colors = useColors();
+  const blurTarget = use(GlassBlurTarget);
   // What it runs with, as the model picker, a route over it, sets it.
   const { session, chosen, startAccess, accounts } = useSessionChoice(project, sessionId);
   useForgetChoiceOnLeave(project.id, sessionId);
@@ -258,14 +260,14 @@ export function ProjectScreen({
   const openSettings = () =>
     router.push({ pathname: "/settings", params: { projectId: project.id } });
 
-  const projectButtonStyle = Platform.OS === "android"
-    ? [styles.androidProjectButton, { backgroundColor: colors.fill }]
-    : styles.projectButton;
+  // Native headers render outside the screen's context tree. Carry the page's
+  // blur target into each button callback so its glass samples page content.
+  const headerSurface = (content: ReactNode) => (
+    <GlassBlurTarget value={blurTarget}>{content}</GlassBlurTarget>
+  );
   const projectAvatar = (
-    <Pressable
-      style={projectButtonStyle}
-      accessibilityRole="button"
-      accessibilityLabel={`Switch project, ${project.name}`}
+    <ProjectHeaderButton
+      label={`Switch project, ${project.name}`}
       onPress={() => router.push({
         pathname: "/projects",
         params: { current: project.id },
@@ -277,17 +279,15 @@ export function ProjectScreen({
         color={project.color}
         size={20}
       />
-    </Pressable>
+    </ProjectHeaderButton>
   );
   const settingsButton = (
-    <Pressable
-      style={projectButtonStyle}
-      accessibilityRole="button"
-      accessibilityLabel="Settings"
+    <ProjectHeaderButton
+      label="Settings"
       onPress={openSettings}
     >
       <Icon name="settings" size={22} color={colors.content} />
-    </Pressable>
+    </ProjectHeaderButton>
   );
 
   const sessionTitle = sessionId ? (
@@ -410,8 +410,8 @@ export function ProjectScreen({
                 ...(Platform.OS === "android"
                   ? {
                       headerTitleAlign: "center" as const,
-                      headerLeft: () => projectAvatar,
-                      headerRight: () => settingsButton,
+                      headerLeft: () => headerSurface(projectAvatar),
+                      headerRight: () => headerSurface(settingsButton),
                       headerBackVisible: false,
                     }
                   : {}),
@@ -438,39 +438,41 @@ export function ProjectScreen({
           <Stack.Toolbar.View>{settingsButton}</Stack.Toolbar.View>
         </Stack.Toolbar>
       )}
-      {sessionId ? (
-        <SessionTranscript
-          sessionId={sessionId}
-          projectId={project.id}
-          worktreePath={worktreePath}
-          busy={conversation.busy}
-          failed={!!conversation.error}
-        />
-      ) : (
-        <ProjectPages
-          pages={pages}
-          chat={
-            <Animated.View style={[styles.chat, emptyStyle]}>
-              <ProjectEmptySession
-                project={project}
-                inView={focused && pages.view === "chat"}
-                swiping={swiping}
+      <SessionContent>
+        {sessionId ? (
+          <SessionTranscript
+            sessionId={sessionId}
+            projectId={project.id}
+            worktreePath={worktreePath}
+            busy={conversation.busy}
+            failed={!!conversation.error}
+          />
+        ) : (
+          <ProjectPages
+            pages={pages}
+            chat={
+              <Animated.View style={[styles.chat, emptyStyle]}>
+                <ProjectEmptySession
+                  project={project}
+                  inView={focused && pages.view === "chat"}
+                  swiping={swiping}
+                  onOpen={(session) => openSession(session.id)}
+                />
+              </Animated.View>
+            }
+            sessions={
+              <SessionsPage
+                projectId={project.id}
+                active={pages.view === "sessions"}
+                worktree={
+                  workspace.mode === "existing" ? workspace.worktree : undefined
+                }
                 onOpen={(session) => openSession(session.id)}
               />
-            </Animated.View>
-          }
-          sessions={
-            <SessionsPage
-              projectId={project.id}
-              active={pages.view === "sessions"}
-              worktree={
-                workspace.mode === "existing" ? workspace.worktree : undefined
-              }
-              onOpen={(session) => openSession(session.id)}
-            />
-          }
-        />
-      )}
+            }
+          />
+        )}
+      </SessionContent>
       {/* After the content: iOS blurs under the header the scroll view it
           finds first, down each view's first child. */}
       <ConnectionNotice error={conversation.error} />
@@ -563,6 +565,34 @@ function SessionTranscript({
         <TranscriptLoading key={`loading:${sessionId}`} />
       ) : null}
     </FileOpener>
+  );
+}
+
+function ProjectHeaderButton({ label, onPress, children }: {
+  label: string;
+  onPress: () => void;
+  children: ReactNode;
+}) {
+  if (Platform.OS === "android")
+    return (
+      <LiquidView
+        accessibilityLabel={label}
+        onPress={onPress}
+        borderRadius={22}
+        innerStyle={styles.androidProjectButton}
+      >
+        {children}
+      </LiquidView>
+    );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={styles.projectButton}
+    >
+      {children}
+    </Pressable>
   );
 }
 

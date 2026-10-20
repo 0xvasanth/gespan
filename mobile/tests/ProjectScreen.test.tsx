@@ -5,12 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectScreen } from "@/features/workspace/ProjectScreen";
 import type { Project } from "@/features/workspace/types";
 import type { Workspace } from "@/features/workspace/WorkspaceMenu";
+import { GlassBlurTarget } from "@/ui/LiquidView";
 
 const desktop = vi.hoisted(() => ({
   startSession: vi.fn(),
   sendMessage: vi.fn(),
   offline: false,
   os: "ios",
+  headerTarget: undefined as unknown,
   header: {} as {
     headerTitle?: unknown;
     headerLeft?: unknown;
@@ -173,6 +175,7 @@ vi.mock("@/features/sessions/activityStore", () => ({
   markViewing: () => () => {},
 }));
 vi.mock("@/features/sessions/SessionScreen", () => ({
+  SessionContent: ({ children }: { children?: ReactNode }) => <>{children}</>,
   SessionScreen: ({
     below,
     composer,
@@ -241,6 +244,38 @@ vi.mock("@/features/workspace/WorkspaceMenu", () => ({
   WorkspaceLine: ({ branch }: { branch: string }) => <span>{branch}</span>,
 }));
 vi.mock("@/ui/Icon", () => ({ Icon: () => null }));
+vi.mock("@/ui/LiquidView", async () => {
+  const { createContext, use } = await import("react");
+  const targetContext = createContext<unknown>(undefined);
+  return {
+    GlassBlurTarget: targetContext,
+    LiquidView: ({
+      children,
+      accessibilityLabel,
+      onPress,
+      borderRadius,
+      innerStyle,
+    }: {
+      children?: ReactNode;
+      accessibilityLabel?: string;
+      onPress?: () => void;
+      borderRadius?: number;
+      innerStyle?: object;
+    }) => {
+      desktop.headerTarget = use(targetContext);
+      return (
+        <button
+          data-glass
+          aria-label={accessibilityLabel}
+          onClick={onPress}
+          style={{ ...innerStyle, borderRadius }}
+        >
+          {children}
+        </button>
+      );
+    },
+  };
+});
 vi.mock("@/ui/theme", () => {
   const colors = { content: "white", muted: "gray", fill: "gray" };
   return {
@@ -306,7 +341,7 @@ describe("new session composer workspace", () => {
     render();
     for (const label of ["Switch project, Monocode", "Settings"]) {
       expect(button(label).style.borderRadius).toBe("22px");
-      expect(button(label).style.backgroundColor).toBe("gray");
+      expect(button(label).hasAttribute("data-glass")).toBe(true);
     }
     act(() =>
       root.render(
@@ -317,8 +352,26 @@ describe("new session composer workspace", () => {
       ),
     );
     expect(button("Switch project, Other").style.borderRadius).toBe("22px");
-    expect(button("Settings").style.backgroundColor).toBe("gray");
+    expect(button("Settings").hasAttribute("data-glass")).toBe(true);
     expect(desktop.header.headerTitleAlign).toBe("center");
+  });
+
+  it("carries the page blur target into header callbacks rendered outside the screen", () => {
+    desktop.os = "android";
+    const target = { current: null };
+    act(() =>
+      root.render(
+        <GlassBlurTarget value={target}>
+          <ProjectScreen project={project} sessionId={undefined} />
+        </GlassBlurTarget>,
+      ),
+    );
+    const renderAvatar = desktop.header.headerLeft as () => ReactNode;
+    act(() => root.render(<>{renderAvatar()}</>));
+    expect(desktop.headerTarget).toBe(target);
+    expect(button("Switch project, Monocode").hasAttribute("data-glass")).toBe(
+      true,
+    );
   });
 
   it("puts Android session titles and actions in the native title/right slots", () => {

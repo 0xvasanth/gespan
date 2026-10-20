@@ -10,10 +10,10 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import {
   Platform,
-  StyleSheet,
   Text,
   View,
   type LayoutChangeEvent,
@@ -108,6 +108,22 @@ const SessionLayoutContext = createContext<SessionLayout>({
   composerGrowth: 0,
   settled: true,
 });
+
+const ContentBlurTarget = createContext<RefObject<View | null> | undefined>(undefined);
+const ContentBlurReady = createContext<(() => void) | undefined>(undefined);
+
+/** Record page content only; native header declarations must stay outside. */
+export function SessionContent({ children }: { children: ReactNode }) {
+  const targetRef = use(ContentBlurTarget);
+  const onLayout = use(ContentBlurReady);
+  if (!targetRef) return <>{children}</>;
+  return (
+    <BlurTargetView ref={targetRef} onLayout={onLayout} style={{ flex: 1 }}>
+      {/* A surface inside the recorded content must never sample its ancestor. */}
+      <GlassBlurTarget value={undefined}>{children}</GlassBlurTarget>
+    </BlurTargetView>
+  );
+}
 
 /** The composer's one-line height, as last measured, so a new frame starts
  *  with it rather than with nothing and a jump once the composer lays out. */
@@ -423,7 +439,15 @@ export function SessionFrame({
   }));
 
   const headerTop = insets.top + 6;
+  // The outer frame contains the native navigator and its header surfaces.
+  // Recording that whole tree can include a blur sampling its own RenderNode.
+  // Only the per-screen frame may record content for its sibling surfaces.
+  const androidBlur = Platform.OS === "android" && native;
   const blurTarget = useRef<View>(null);
+  const [blurTargetReady, setBlurTargetReady] = useState(false);
+  const onBlurTargetLayout = useCallback(() => {
+    if (blurTarget.current) setBlurTargetReady(true);
+  }, []);
   const headerBottom = headerTop + HEADER_HEIGHT + 8;
   // Android's workspace menu is a React Native control with its own padding
   // and font metrics. Let it lay out fully rather than squeezing it into the
@@ -506,11 +530,13 @@ export function SessionFrame({
             {/* First, unwrapped: the screens' scroll views lead each view's
                 first-child chain, where iOS looks for what to blur under a
                 native header, and nothing fades their native glass away. */}
-            {Platform.OS === "android" ? (
-              <BlurTargetView ref={blurTarget} style={StyleSheet.absoluteFill}>
-                {children}
-              </BlurTargetView>
-            ) : children}
+            <ContentBlurTarget value={androidBlur ? blurTarget : undefined}>
+              <ContentBlurReady value={onBlurTargetLayout}>
+                <GlassBlurTarget value={androidBlur && blurTargetReady ? blurTarget : undefined}>
+                  {children}
+                </GlassBlurTarget>
+              </ContentBlurReady>
+            </ContentBlurTarget>
 
             {/* Under the native header too, which is transparent over it. */}
             {covered ? null : (
@@ -625,7 +651,9 @@ export function SessionFrame({
                 />
                 <View style={{ paddingBottom: composerBottom }}>
                   <View onLayout={onComposerLayout}>
-                    <GlassBlurTarget value={Platform.OS === "android" ? blurTarget : undefined}>
+                    <GlassBlurTarget
+                      value={androidBlur && blurTargetReady ? blurTarget : undefined}
+                    >
                       {chrome?.composer}
                     </GlassBlurTarget>
                   </View>
