@@ -32,6 +32,7 @@ import {
 import { Popover } from "../../../shared/ui/Popover";
 import { PaneHeader } from "../../../shared/ui/PaneHeader";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
+import { WorkingTreeDiffSurface } from "./workingTreeDiffSurface";
 import {
   GitHistoryGraph,
   GraphResizeSash,
@@ -135,7 +136,7 @@ export function GitChangesPanel({
     if (!enabled) return;
     // Opening Changes signals an upcoming review. Warm its optional surface
     // while the file list loads, so the first file opens during streaming too.
-    void import("./WorkingTreeDiff").catch(() => {});
+    void WorkingTreeDiffSurface.preload().catch(() => {});
   }, [enabled]);
   const files = index?.files ?? [];
   const paneRef = useRef<HTMLDivElement>(null);
@@ -1233,7 +1234,7 @@ type ChangeDir = {
   status: string | null;
 };
 
-async function remotePrContent(cwd: string) {
+export async function remotePrContent(cwd: string) {
   const range = await gitRangeContext(cwd);
   const commits = range.commitSummary.trim();
   const firstCommit = commits
