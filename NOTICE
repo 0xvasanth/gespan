@@ -7,6 +7,9 @@ The native UI uses Zed Industries' GPUI framework through gpui-pre and
 gpui-pre-platform 0.3.9 (Zed snapshot
 93d745668805029476e6d7fbb19652116fed51de), licensed under Apache-2.0.
 Copyright 2022 - 2025 Zed Industries, Inc.
+The native composer in crates/monocode-gpui/src/input.rs adapts text input
+plumbing from that snapshot's GPUI examples/input.rs.
+Source: https://github.com/zed-industries/zed/blob/93d745668805029476e6d7fbb19652116fed51de/crates/gpui/examples/input.rs
 License: https://www.apache.org/licenses/LICENSE-2.0
 License text: docs/native/LICENSE-GPUI-APACHE
 
