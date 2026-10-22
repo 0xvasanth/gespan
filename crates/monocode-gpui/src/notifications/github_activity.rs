@@ -170,7 +170,11 @@ pub(crate) struct GithubActivity {
     seen: HashMap<i64, i64>,
     checked: Option<Instant>,
     checking: bool,
+    /// Detail feeds by URL with the item `updated_at` they were fetched for:
+    /// an unchanged item reuses them instead of calling gh every poll.
+    details: Details,
 }
+type Details = HashMap<String, (i64, Value)>;
 impl EventEmitter<GithubActivityEvent> for GithubActivity {}
 impl GithubActivity {
     pub(crate) fn new(seen: HashMap<i64, i64>) -> Self {
@@ -179,6 +183,7 @@ impl GithubActivity {
             seen,
             checked: None,
             checking: false,
+            details: HashMap::new(),
         }
     }
     pub(crate) fn restore_seen(&mut self, seen: HashMap<i64, i64>) {
@@ -220,13 +225,15 @@ impl GithubActivity {
         self.checking = true;
         self.checked = Some(Instant::now());
         let seen = self.seen.clone();
+        let details = std::mem::take(&mut self.details);
         let work = cx
             .background_executor()
-            .spawn(async move { fetch(sessions, &seen) });
+            .spawn(async move { fetch(sessions, &seen, details) });
         cx.spawn(async move |this, cx| {
-            let cards = work.await;
+            let (cards, details) = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.checking = false;
+                this.details = details;
                 // An acknowledgment made while polling must not reappear.
                 this.cards = cards
                     .into_iter()
@@ -261,38 +268,104 @@ fn api(endpoint: &str) -> Result<Value, String> {
     )?;
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
-fn fetch(sessions: Vec<Session>, seen: &HashMap<i64, i64>) -> HashMap<i64, Card> {
-    let mut cards = HashMap::new();
-    let mut cache: HashMap<String, Option<Value>> = HashMap::new();
-    for session in sessions
-        .into_iter()
-        .filter(|s| !s.archived && s.work_item.is_some())
-    {
-        let item = session.work_item.unwrap();
-        // Only canonical GitHub repository slugs enter a gh API endpoint.
-        let parts = item.repo.split('/').collect::<Vec<_>>();
-        if item.number == 0
-            || parts.len() != 2
-            || parts.iter().any(|p| {
-                p.is_empty()
-                    || !p
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-            })
-        {
-            continue;
+/// Only canonical GitHub repository slugs enter a gh API endpoint or query.
+fn canonical(item: &WorkItem) -> bool {
+    let parts = item.repo.split('/').collect::<Vec<_>>();
+    item.number != 0
+        && parts.len() == 2
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        })
+}
+/// Every linked item's summary in one GraphQL request, shaped like the REST
+/// `api` summary. None if the request fails, so callers fall back to REST.
+fn summaries(items: &[(String, u64)]) -> Option<HashMap<(String, u64), Value>> {
+    let mut out = HashMap::new();
+    for chunk in items.chunks(50) {
+        let mut query = String::from("query{");
+        for (ix, (repo, number)) in chunk.iter().enumerate() {
+            let (owner, name) = repo.split_once('/')?;
+            query.push_str(&format!(
+                "i{ix}:repository(owner:\"{owner}\",name:\"{name}\"){{issueOrPullRequest(number:{number}){{...on PullRequest{{title state merged updatedAt}}...on Issue{{title state updatedAt}}}}}}"
+            ));
         }
+        query.push('}');
+        let binary = monocode_core::scm::resolve_gui_binary("gh")?;
+        let text = monocode_core::cli::output(
+            &binary,
+            &[
+                "api".into(),
+                "graphql".into(),
+                "-f".into(),
+                format!("query={query}"),
+            ],
+            Path::new("/"),
+            Duration::from_secs(20),
+        )
+        .ok()?;
+        let body: Value = serde_json::from_str(&text).ok()?;
+        let data = body.get("data")?;
+        for (ix, item) in chunk.iter().enumerate() {
+            let node = &data[format!("i{ix}")]["issueOrPullRequest"];
+            if node.is_null() {
+                continue;
+            }
+            // REST reports a merged pull request as closed plus `merged`.
+            let state = match node["state"].as_str().unwrap_or("") {
+                "MERGED" => "closed".to_owned(),
+                state => state.to_ascii_lowercase(),
+            };
+            out.insert(
+                item.clone(),
+                serde_json::json!({
+                    "title": node["title"],
+                    "state": state,
+                    "merged": node["merged"].as_bool().unwrap_or(false),
+                    "updated_at": node["updatedAt"],
+                }),
+            );
+        }
+    }
+    Some(out)
+}
+fn fetch(
+    sessions: Vec<Session>,
+    seen: &HashMap<i64, i64>,
+    previous: Details,
+) -> (HashMap<i64, Card>, Details) {
+    let mut cards = HashMap::new();
+    let mut details = Details::new();
+    let sessions: Vec<_> = sessions
+        .into_iter()
+        .filter(|s| !s.archived && s.work_item.as_ref().is_some_and(canonical))
+        .collect();
+    let mut items: Vec<(String, u64)> = sessions
+        .iter()
+        .filter_map(|s| s.work_item.as_ref())
+        .map(|item| (item.repo.clone(), item.number))
+        .collect();
+    items.sort();
+    items.dedup();
+    let batched = summaries(&items);
+    let mut cache: HashMap<String, Option<Value>> = HashMap::new();
+    for session in sessions {
+        let item = session.work_item.clone().unwrap();
         let base = format!(
             "repos/{}/{}s/{}",
             item.repo,
             if item.kind == "pr" { "pull" } else { "issue" },
             item.number
         );
-        let Some(body) = cache
-            .entry(base.clone())
-            .or_insert_with(|| api(&base).ok())
-            .clone()
-        else {
+        let summary = match &batched {
+            Some(batched) => batched.get(&(item.repo.clone(), item.number)).cloned(),
+            None => cache
+                .entry(base.clone())
+                .or_insert_with(|| api(&base).ok())
+                .clone(),
+        };
+        let Some(body) = summary else {
             continue;
         };
         let updated_at = timestamp(body["updated_at"].as_str().unwrap_or(""));
@@ -325,11 +398,17 @@ fn fetch(sessions: Vec<Session>, seen: &HashMap<i64, i64>) -> HashMap<i64, Card>
             ]);
         }
         for (url, kind) in feeds {
-            let result = api(&url);
-            let Ok(body) = result else {
-                card.details_error = true;
-                continue;
+            let body = match previous.get(&url).or_else(|| details.get(&url)) {
+                Some((at, body)) if *at == updated_at => body.clone(),
+                _ => match api(&url) {
+                    Ok(body) => body,
+                    Err(_) => {
+                        card.details_error = true;
+                        continue;
+                    }
+                },
             };
+            details.insert(url, (updated_at, body.clone()));
             let Some(entries) = body.as_array() else {
                 card.details_error = true;
                 continue;
@@ -395,5 +474,5 @@ fn fetch(sessions: Vec<Session>, seen: &HashMap<i64, i64>) -> HashMap<i64, Card>
             .sort_by_key(|e| std::cmp::Reverse(timestamp(&e.created_at)));
         cards.insert(card.session, card);
     }
-    cards
+    (cards, details)
 }
