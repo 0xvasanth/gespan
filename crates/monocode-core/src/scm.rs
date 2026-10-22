@@ -1343,6 +1343,25 @@ fn git_ahead_behind(root: &Path, base: &str) -> (i64, i64) {
     (ahead, behind)
 }
 
+/// The checkout's Git directory and, for a linked worktree, the shared one:
+/// where HEAD, the index and refs live, for change watchers.
+pub fn git_dirs(root: &Path) -> Vec<std::path::PathBuf> {
+    let Some(text) = git_stdout(
+        root,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-dir",
+            "--git-common-dir",
+        ],
+    ) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<std::path::PathBuf> = text.lines().map(Into::into).collect();
+    dirs.dedup();
+    dirs
+}
+
 fn git_stdout(root: &Path, args: &[&str]) -> Option<String> {
     let output = git_cmd().arg("-C").arg(root).args(args).output().ok()?;
     if !output.status.success() {

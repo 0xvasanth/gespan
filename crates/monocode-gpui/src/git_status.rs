@@ -11,8 +11,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Without a file watcher, visible status polls on this interval.
 const POLL: Duration = Duration::from_secs(2);
 const RESUME_TTL: Duration = Duration::from_secs(30);
+/// A burst of writes settles into one read this long after the last.
+const SETTLE: Duration = Duration::from_millis(300);
+/// Watched status still reads this often, in case an event went missing.
+const REPAIR: Duration = Duration::from_secs(30);
 
 /// A disk or Git change: Changes, History and the Explorer reread.
 pub(crate) struct GitChanged;
@@ -73,7 +78,8 @@ pub(crate) struct ProjectGit {
     in_flight: bool,
     pending: bool,
     stats_loaded: Option<Instant>,
-    poll: Option<Task<()>>,
+    /// Reads while status is visible: a file watcher, or a timer without one.
+    poll: Option<[Task<()>; 2]>,
 }
 impl EventEmitter<GitChanged> for ProjectGit {}
 
@@ -125,9 +131,16 @@ impl ProjectGit {
         cx.emit(GitChanged);
         cx.notify();
         self.warm_choices(cx);
-        self.reload(cx);
+        if self.poll.take().is_some() {
+            // Watch the new checkout instead; this reads it straight away.
+            self.set_polling(true, cx);
+        } else {
+            self.reload(cx);
+        }
     }
-    /// Poll every 2s while the project's Git status is visible.
+    /// While the project's Git status is visible, read it again whenever the
+    /// checkout or its Git directory changes on disk, and every 30s besides.
+    /// Without a file watcher, poll every 2s instead.
     pub(crate) fn set_polling(&mut self, polling: bool, cx: &mut Context<Self>) {
         if polling == self.poll.is_some() {
             return;
@@ -137,14 +150,45 @@ impl ProjectGit {
             return;
         }
         self.reload(cx);
-        self.poll = Some(cx.spawn(async move |this, cx| {
+        let project = PathBuf::from(&self.project);
+        let watched = cx.spawn(async move |this, cx| {
+            let watch = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut roots = vec![project.clone()];
+                    roots.extend(
+                        scm::git_dirs(&project)
+                            .into_iter()
+                            .filter(|dir| !dir.starts_with(&project)),
+                    );
+                    crate::fs_watch::watch(&roots)
+                })
+                .await;
+            let Some((_watch, changes)) = watch else {
+                loop {
+                    cx.background_executor().timer(POLL).await;
+                    if this.update(cx, |this, cx| this.reload(cx)).is_err() {
+                        return;
+                    }
+                }
+            };
+            while changes.recv().await.is_ok() {
+                cx.background_executor().timer(SETTLE).await;
+                while changes.try_recv().is_ok() {}
+                if this.update(cx, |this, cx| this.reload(cx)).is_err() {
+                    return;
+                }
+            }
+        });
+        let repair = cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor().timer(POLL).await;
+                cx.background_executor().timer(REPAIR).await;
                 if this.update(cx, |this, cx| this.reload(cx)).is_err() {
                     break;
                 }
             }
-        }));
+        });
+        self.poll = Some([watched, repair]);
     }
     /// useProjectDiffStats reads again on focus once its snapshot is 30s old.
     pub(crate) fn resume(&mut self, cx: &mut Context<Self>) {

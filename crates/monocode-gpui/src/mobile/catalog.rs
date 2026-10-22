@@ -8,29 +8,45 @@ use monocode_core::{
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-/// Read each checkout once per publication, including all its linked copies.
+/// Read each checkout once per publication. Mobile republishes every few
+/// seconds for every session's checkout, so this reads HEAD from disk rather
+/// than starting Git; the last cached snapshot covers anything it can't read.
 /// This runs after releasing the database lock, never on the UI thread.
 pub(crate) fn checkout_branch(cwd: &str, branches: &mut HashMap<String, String>) -> String {
     let key = monocode_core::files::path_key(cwd);
     if let Some(branch) = branches.get(&key) {
         return branch.clone();
     }
-    let state = crate::git_cache::load(std::path::Path::new(cwd))
-        .ok()
-        .or_else(|| crate::git_cache::get(cwd));
-    let branch = state
-        .as_ref()
-        .and_then(|state| state.current.clone())
+    let branch = head_branch(std::path::Path::new(cwd))
+        .or_else(|| crate::git_cache::get(cwd).and_then(|state| state.current))
         .unwrap_or_default();
-    if let Some(state) = state {
-        for tree in state.worktrees {
-            branches
-                .entry(monocode_core::files::path_key(&tree.path))
-                .or_insert_with(|| tree.branch.unwrap_or_default());
-        }
-    }
     branches.insert(key, branch.clone());
     branch
+}
+
+/// The branch HEAD names, or a detached HEAD's short hash, found from any
+/// folder inside the checkout. A linked worktree's `.git` file points at its
+/// own Git directory.
+fn head_branch(cwd: &std::path::Path) -> Option<String> {
+    let (checkout, dot_git) = cwd
+        .ancestors()
+        .map(|dir| (dir, dir.join(".git")))
+        .find(|(_, dot_git)| dot_git.exists())?;
+    let git_dir = if dot_git.is_file() {
+        let text = std::fs::read_to_string(&dot_git).ok()?;
+        checkout.join(text.strip_prefix("gitdir:")?.trim())
+    } else {
+        dot_git
+    };
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    Some(match head.strip_prefix("ref: ") {
+        Some(reference) => reference
+            .strip_prefix("refs/heads/")
+            .unwrap_or(reference)
+            .to_owned(),
+        None => head.chars().take(7).collect(),
+    })
 }
 
 pub(crate) struct LiveSession {
