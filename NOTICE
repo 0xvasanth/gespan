@@ -10,6 +10,10 @@ Copyright 2022 - 2025 Zed Industries, Inc.
 License: https://www.apache.org/licenses/LICENSE-2.0
 License text: docs/native/LICENSE-GPUI-APACHE
 
+Native window and sidebar glyphs reuse Monocode's Hugeicons Stroke Rounded set
+from @hugeicons/core-free-icons 4.3.0, copyright Hugeicons, licensed under MIT.
+Source: https://github.com/hugeicons/hugeicons
+
 vendor/gpui-pre-apple contains gpui-pre-apple 0.3.9 (Zed snapshot
 93d745668805029476e6d7fbb19652116fed51de), copyright Zed Industries,
 licensed under Apache-2.0 (license included). Monocode modifications include
@@ -28,3 +32,14 @@ review. The retained framework code remains Apache-2.0.
 Unused upstream examples and their demo assets are omitted, together with four
 upstream SVG tests requiring font fixtures absent from the published crate.
 The small EXIF image regression fixture is retained under tests/assets.
+
+Native chat file icons and the Dark+ token palette reuse the React UI's
+react-material-icon-theme 1.2.0 and @shikijs/themes assets. Their MIT license
+notices are included alongside the assets in crates/monocode-gpui/assets.
+
+The native editor's analysis and formatting bundles reuse CodeMirror, Lezer,
+the Replit Svelte grammar and Prettier under their MIT licenses. Package versions and complete license notices are included in
+crates/monocode-gpui/assets/native-editor.LICENSE.txt. The bundle is generated
+from scripts/native-editor and the retained React editor language, syntax,
+lint, typing and Git hunk implementations. Prettier dependency notices are
+included alongside the package licenses.
