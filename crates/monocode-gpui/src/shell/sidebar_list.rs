@@ -260,7 +260,12 @@ impl Shell {
         for entry in entries {
             let (members, collapsed) = match entry {
                 Entry::Pinned { sessions } => {
-                    // Pins read as ordinary cards under a plain label.
+                    // Pins sit between the folders and the dated sessions,
+                    // as ordinary cards under a plain label.
+                    if folders {
+                        rows.push(Row::Gap);
+                        folders = false;
+                    }
                     rows.push(Row::Pinned);
                     rows.extend(
                         sessions

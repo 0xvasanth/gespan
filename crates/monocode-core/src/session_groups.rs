@@ -198,7 +198,7 @@ pub fn build_list(
         .collect();
     let (pins, loose): (Vec<_>, Vec<_>) = loose.into_iter().partition(|&id| pinned(id));
     if !pins.is_empty() {
-        entries.insert(0, Entry::Pinned { sessions: pins });
+        entries.push(Entry::Pinned { sessions: pins });
     }
     entries.extend(loose.into_iter().map(Entry::Session));
     entries
@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn list_leads_with_pins_then_reminders_folders_and_loose_sessions() {
+    fn list_orders_reminders_folders_then_pins_and_loose_sessions() {
         let mut groups = Groups::default();
         groups.create_folder(&[2, 3], "f".into());
         let visible = [1, 2, 3, 4, 5, 6];
@@ -394,7 +394,6 @@ mod tests {
         assert_eq!(
             list,
             vec![
-                Entry::Pinned { sessions: vec![5] },
                 Entry::Reminders {
                     collapsed: false,
                     sessions: vec![3, 6]
@@ -403,14 +402,15 @@ mod tests {
                     id: "f".into(),
                     sessions: vec![2]
                 },
+                Entry::Pinned { sessions: vec![5] },
                 Entry::Session(1),
                 Entry::Session(4),
             ]
         );
         groups.reminders_collapsed = true;
         let list = build_list(&visible, |id| id == 5, &groups, &[(3, 10)]);
-        assert_eq!(navigation_ids(&list, false), vec![5, 2, 1, 4, 6]);
-        assert_eq!(navigation_ids(&list, true), vec![5, 3, 2, 1, 4, 6]);
+        assert_eq!(navigation_ids(&list, false), vec![2, 5, 1, 4, 6]);
+        assert_eq!(navigation_ids(&list, true), vec![3, 2, 5, 1, 4, 6]);
     }
 
     #[test]
