@@ -1,10 +1,12 @@
 //! GUI-launch environment for git and gh, ported from src-tauri harness.rs.
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::{mpsc, Mutex};
-use std::time::Duration;
+use std::process::Command;
+use std::sync::Mutex;
+#[cfg(not(windows))]
+use std::{process::Stdio, sync::mpsc, time::Duration};
 
+#[cfg(not(windows))]
 const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
 
 static LOGIN_SHELL_ENV: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
