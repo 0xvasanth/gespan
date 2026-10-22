@@ -2,14 +2,14 @@
 //! view-relative masks happen while painting, including during live resize.
 use crate::popover::AnchorSlot;
 use gpui::{
-    App, Asset, Bounds, Context, Image, ImageFormat, ObjectFit, Role, Window, canvas, div, img,
+    App, Asset, Bounds, Context, ObjectFit, RenderImage, Role, Window, canvas, div, img,
     prelude::*, px,
 };
 #[cfg(any(target_os = "macos", test))]
 use gpui::{Corners, Pixels};
 #[cfg(target_os = "macos")]
 use monocode_core::project_appearance::background_texture;
-use monocode_core::project_appearance::{Background, Effect, SourceImage, png_bytes, read_image};
+use monocode_core::project_appearance::{Background, Effect, read_image};
 use std::{
     hash::{Hash, Hasher},
     path::Path,
@@ -29,24 +29,18 @@ struct Key {
 #[derive(Clone)]
 struct TextureRequest {
     key: Key,
-    source: Option<Arc<SourceImage>>,
 }
 impl Hash for TextureRequest {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Imported images have content-addressed paths. Pixels, effects and
-        // decoding are shared regardless of which tab already read the source.
+        // Imported images have content-addressed paths. Pixels and effects are
+        // shared regardless of which tab asked first.
         self.key.hash(state);
     }
-}
-#[derive(Clone)]
-struct PreparedTexture {
-    source: Arc<SourceImage>,
-    image: Arc<Image>,
 }
 struct BackgroundTexture;
 impl Asset for BackgroundTexture {
     type Source = TextureRequest;
-    type Output = Result<PreparedTexture, String>;
+    type Output = Result<Arc<RenderImage>, String>;
 
     fn load(
         request: TextureRequest,
@@ -55,25 +49,25 @@ impl Asset for BackgroundTexture {
         prepare_texture(request)
     }
 }
-// Keep the UI-thread App out of the Send future run by the asset cache.
-async fn prepare_texture(request: TextureRequest) -> Result<PreparedTexture, String> {
-    let source = match request.source {
-        Some(source) => source,
-        None => Arc::new(read_image(Path::new(&request.key.path))?),
-    };
+// Keep the UI-thread App out of the Send future run by the asset cache. The
+// cache holds one finished sprite per effect: no decoded source, no PNG round
+// trip, so each variant costs its pixels once in memory and once on the GPU.
+async fn prepare_texture(request: TextureRequest) -> Result<Arc<RenderImage>, String> {
+    let source = read_image(Path::new(&request.key.path))?;
     #[cfg(target_os = "macos")]
-    let pixels = background_texture(&source, request.key.effect);
+    let mut pixels = background_texture(&source, request.key.effect);
     #[cfg(not(target_os = "macos"))]
-    let pixels = monocode_core::project_appearance::software_background_texture(
+    let mut pixels = monocode_core::project_appearance::software_background_texture(
         &source,
         request.key.effect,
         request.key.empty,
         request.key.preview,
     );
-    Ok(PreparedTexture {
-        source,
-        image: Arc::new(Image::from_bytes(ImageFormat::Png, png_bytes(pixels)?)),
-    })
+    drop(source);
+    for pixel in pixels.pixels_mut() {
+        pixel.0.swap(0, 2);
+    }
+    Ok(Arc::new(RenderImage::new(vec![image::Frame::new(pixels)])))
 }
 #[derive(Default)]
 pub(crate) struct ProjectBackground {
@@ -82,14 +76,13 @@ pub(crate) struct ProjectBackground {
     empty: bool,
     clip: Option<AnchorSlot>,
     key: Option<Key>,
-    source: Option<Arc<SourceImage>>,
-    image: Option<Arc<Image>>,
+    image: Option<Arc<RenderImage>>,
     pub(crate) error: Option<String>,
     loading: bool,
 }
 impl ProjectBackground {
     #[cfg(test)]
-    pub(crate) fn prepared_image(&self) -> Option<Arc<Image>> {
+    pub(crate) fn prepared_image(&self) -> Option<Arc<RenderImage>> {
         self.image.clone()
     }
     pub(crate) fn preview() -> Self {
@@ -112,7 +105,6 @@ impl ProjectBackground {
         }
         if self.settings.as_ref().map(|s| &s.path) != settings.as_ref().map(|s| &s.path) {
             self.loading = false;
-            self.source = None;
             self.image = None;
             self.key = None;
             self.error = None;
@@ -127,16 +119,9 @@ impl ProjectBackground {
         // GPUI shares pending jobs and completed textures across views. A warm
         // hit returns in this render, with the same Image ID and decoded asset.
         // Closing the first tab cannot cancel a load another tab is waiting on.
-        match window.use_asset::<BackgroundTexture>(
-            &TextureRequest {
-                key,
-                source: self.source.clone(),
-            },
-            cx,
-        ) {
+        match window.use_asset::<BackgroundTexture>(&TextureRequest { key }, cx) {
             Some(Ok(prepared)) => {
-                self.source = Some(prepared.source);
-                self.image = Some(prepared.image);
+                self.image = Some(prepared);
                 self.loading = false;
             }
             Some(Err(error)) => {
@@ -370,10 +355,9 @@ mod tests {
             window.draw(cx).clear(cx);
         })
         .unwrap();
-        warm.read_with(cx, |background, cx| {
+        warm.read_with(cx, |background, _| {
             assert!(!background.loading);
             assert!(Arc::ptr_eq(background.image.as_ref().unwrap(), &image));
-            assert!(gpui::ImageSource::from(image.clone()).is_asset_cached(cx));
         });
         warm.update(cx, |background, cx| {
             background.configure(
@@ -421,10 +405,9 @@ mod tests {
                 div().relative().size_full().child(self.0.clone())
             }
         }
-        let image = Arc::new(Image::from_bytes(
-            ImageFormat::Png,
-            include_bytes!("../assets/monocode.png").to_vec(),
-        ));
+        let image = Arc::new(RenderImage::new(vec![image::Frame::new(
+            image::RgbaImage::new(4, 4),
+        )]));
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |_, cx| {
                 cx.new(|cx| {

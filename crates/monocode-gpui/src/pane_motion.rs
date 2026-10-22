@@ -108,60 +108,6 @@ impl PaneReveal {
     }
 }
 
-/// A resize that hits its limit mid-drag knocks a few pixels past it and
-/// springs back, while the pointer is still held.
-pub(crate) struct ResizeSettle {
-    from: f32,
-    to: f32,
-    velocity: f32,
-    pixels_per_unit: f32,
-    start: Cell<Option<Instant>>,
-}
-
-impl ResizeSettle {
-    const FREQUENCY: f32 = 26.;
-    const DAMPING: f32 = 0.5;
-
-    fn damped() -> f32 {
-        Self::FREQUENCY * (1. - Self::DAMPING * Self::DAMPING).sqrt()
-    }
-
-    /// Kicks from `limit` so the edge peaks `overshoot` units past it.
-    pub(crate) fn hit(limit: f32, overshoot: f32, pixels_per_unit: f32) -> Self {
-        // A kick from rest peaks at `velocity / damped * peak`.
-        let decay = Self::DAMPING * Self::FREQUENCY;
-        let peak_at = (Self::damped() / decay).atan() / Self::damped();
-        let peak = (-decay * peak_at).exp() * (Self::damped() * peak_at).sin();
-        Self {
-            from: limit,
-            to: limit,
-            velocity: overshoot * Self::damped() / peak,
-            pixels_per_unit: pixels_per_unit.max(f32::EPSILON),
-            start: Cell::new(None),
-        }
-    }
-
-    pub(crate) fn target(&self) -> f32 {
-        self.to
-    }
-
-    pub(crate) fn at(&self, now: Instant) -> (f32, bool) {
-        let start = self.start.get().unwrap_or(now);
-        self.start.set(Some(start));
-        let t = now.saturating_duration_since(start).as_secs_f32();
-        let decay = Self::DAMPING * Self::FREQUENCY;
-        let damped = Self::damped();
-        let d = self.from - self.to;
-        let s = (self.velocity + decay * d) / damped;
-        let envelope = (-decay * t).exp();
-        if t > 0. && envelope * (d.abs() + s.abs()) * self.pixels_per_unit < 0.25 {
-            return (self.to, true);
-        }
-        let wave = d * (damped * t).cos() + s * (damped * t).sin();
-        (self.to + envelope * wave, false)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,23 +196,5 @@ mod tests {
             reveal.opacity(first + Duration::from_millis(140)),
             (1., true)
         );
-    }
-
-    #[test]
-    fn hitting_a_limit_knocks_past_it_and_springs_back() {
-        let bounce = ResizeSettle::hit(560., 6., 1.);
-        let start = Instant::now();
-        assert_eq!(bounce.at(start), (560., false));
-        let mut peak = f32::MIN;
-        for ms in (8..800).step_by(8) {
-            let (value, done) = bounce.at(start + Duration::from_millis(ms));
-            peak = peak.max(value);
-            if done {
-                assert_eq!(value, 560.);
-                assert!((peak - 566.).abs() < 0.3);
-                return;
-            }
-        }
-        panic!("bounce never settled");
     }
 }

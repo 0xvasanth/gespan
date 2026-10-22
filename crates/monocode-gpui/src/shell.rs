@@ -38,7 +38,7 @@ use crate::{
     input,
     notes::Notes,
     pane_layout::{Edge, LayoutLeaf, Rect, SplitDir},
-    pane_motion::{PaneSlide, ResizeSettle},
+    pane_motion::PaneSlide,
     pickers::{ProjectPicked, ProjectPicker},
     popover::{
         Align, Anchor, AnchorSlot, Flyout, Menu, MenuAction, MenuEvent, MenuItem, MenuStyle, Side,
@@ -645,10 +645,6 @@ pub(crate) struct Shell {
     /// A project's dock sliding open (toward 1) or shut (toward 0).
     dock_slide: Option<(String, PaneSlide)>,
     dock_resize: Option<(f32, f32)>,
-    /// A resize bouncing off the limit it was dragged into.
-    resize_settle: Option<(ResizeTarget, ResizeSettle)>,
-    /// The drag is pressing past its limit, so it has already bounced.
-    resize_pinned: bool,
     dock_hover: Option<usize>,
     /// Tab animations for the dock's terminals, with each tab's last title.
     dock_tab_motion: crate::tab_motion::TabMotion<gpui::EntityId, SharedString>,
@@ -946,8 +942,6 @@ impl Shell {
             terminals: HashMap::new(),
             dock_slide: None,
             dock_resize: None,
-            resize_settle: None,
-            resize_pinned: false,
             dock_hover: None,
             dock_tab_motion: Default::default(),
             dock_drag: None,
@@ -3408,41 +3402,21 @@ impl Shell {
             } => self.workspace.place_sash(*tab, path, *index, value),
         }
     }
-    /// Follows the pointer to `value`, stopping at the target's limits. The
-    /// moment the drag hits one, the edge knocks a little past it and springs
-    /// back, harder the faster it arrived.
+    /// Follows the pointer to `value`, stopping at the target's limits.
     fn drag_resize(&mut self, target: ResizeTarget, value: f32, cx: &mut Context<Self>) {
-        if let Some((settling, settle)) = self.resize_settle.take() {
-            if settling == target {
-                self.resize_settle = Some((settling, settle));
-            } else {
-                self.set_resize(&settling, settle.target());
-            }
-        }
-        let Some((_, min, max, scale)) = self.resize_extent(&target) else {
+        let Some((_, min, max, _)) = self.resize_extent(&target) else {
             return;
         };
         let clamped = value.clamp(min, max);
-        let pressing = (value - clamped).abs() * scale > 0.5;
         let to = if matches!(target, ResizeTarget::Sash { .. }) {
             clamped
         } else {
             clamped.round()
         };
-        if pressing && !self.resize_pinned && !cx.reduce_motion() {
-            let past = (value - clamped).abs() * scale;
-            let overshoot = (past * 0.4).clamp(3., 8.) * (value - clamped).signum() / scale;
-            self.resize_settle = Some((target.clone(), ResizeSettle::hit(to, overshoot, scale)));
-        } else if !pressing {
-            self.resize_settle = None;
-        }
-        self.resize_pinned = pressing;
-        if self.resize_settle.is_none() {
-            self.set_resize(&target, to);
-        }
+        self.set_resize(&target, to);
         cx.notify();
     }
-    /// Ends every resize in progress; a bounce under way plays out.
+    /// Ends every resize in progress.
     fn release_resizes(&mut self, cx: &mut Context<Self>) -> bool {
         let any = [
             self.pane_sash.take().is_some(),
@@ -3451,39 +3425,11 @@ impl Shell {
             self.dock_resize.take().is_some(),
         ]
         .contains(&true);
-        self.resize_pinned = false;
         if any {
-            self.persist_settled(cx);
+            self.persist(cx);
             cx.notify();
         }
         any
-    }
-    /// Saves the layout with any bouncing resize at its resting size.
-    fn persist_settled(&mut self, cx: &mut Context<Self>) {
-        let Some((target, settle)) = self.resize_settle.take() else {
-            self.persist(cx);
-            return;
-        };
-        let shown = self.resize_extent(&target).map(|extent| extent.0);
-        self.set_resize(&target, settle.target());
-        self.persist(cx);
-        if let Some(shown) = shown {
-            self.set_resize(&target, shown);
-        }
-        self.resize_settle = Some((target, settle));
-    }
-    fn tick_resize_settle(&mut self, window: &mut Window) {
-        let Some((target, settle)) = &self.resize_settle else {
-            return;
-        };
-        let (value, done) = settle.at(std::time::Instant::now());
-        let target = target.clone();
-        self.set_resize(&target, value);
-        if done {
-            self.resize_settle = None;
-        } else {
-            window.request_animation_frame();
-        }
     }
     fn resume_git(&mut self, cx: &mut Context<Self>) {
         self.git.update(cx, |git, cx| git.resume(cx));
@@ -7301,7 +7247,6 @@ fn enter_from(leaf: &LayoutLeaf) -> (Edge, Rect) {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.keep_visible_idle_agents(cx);
-        self.tick_resize_settle(window);
         if let Some(id) = self.pending_composer_focus.take()
             && self
                 .workspace
@@ -8848,7 +8793,6 @@ mod tests {
                         Arc::ptr_eq(&prepared, &image_b),
                         "new tabs must reuse the already decoded artwork"
                     );
-                    assert!(gpui::ImageSource::from(prepared).is_asset_cached(cx));
                     shell.close(new, w, cx);
                 })
                 .unwrap();
@@ -8873,10 +8817,6 @@ mod tests {
                         assert!(
                             Arc::ptr_eq(&prepared, image),
                             "switching tabs must not regenerate the texture"
-                        );
-                        assert!(
-                            gpui::ImageSource::from(prepared).is_asset_cached(cx),
-                            "the decoded image stays ready for the first returning frame"
                         );
                     }
                 })

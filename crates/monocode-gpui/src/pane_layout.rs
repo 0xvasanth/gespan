@@ -273,7 +273,7 @@ impl PaneNode {
 
     /// Move the sash between `index` and `index + 1` of the split at `path`
     /// to `boundary`, a 0–1 position within its group. It may pass the
-    /// `sash_range` a little, so a drag can stretch beyond it and spring back.
+    /// `sash_range` a little; callers clamp drags to it.
     pub fn place_sash(&mut self, path: &[usize], index: usize, boundary: f32) {
         if let Some(sizes) = self.sizes_mut(path) {
             *sizes = sizes_at_boundary(sizes, index, boundary, MIN_SIZE / 4.);

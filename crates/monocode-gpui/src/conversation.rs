@@ -140,6 +140,10 @@ pub(crate) struct Conversation {
     follow_ups: follow_up::FollowUps,
     attachments: Vec<std::path::PathBuf>,
     pending_attachments: Vec<std::path::PathBuf>,
+    attachment_photos: std::collections::HashMap<
+        std::path::PathBuf,
+        Entity<crate::transcript::attachments::Photo>,
+    >,
     attaching: bool,
     file_drag: bool,
     attachment_error: Option<String>,
@@ -553,6 +557,7 @@ impl Conversation {
             follow_ups: Default::default(),
             attachments: Vec::new(),
             pending_attachments: Vec::new(),
+            attachment_photos: Default::default(),
             attaching: false,
             file_drag: false,
             attachment_error: None,

@@ -207,6 +207,26 @@ pub fn decode_image_data(data: &str) -> Result<Vec<u8>, String> {
     }
     Ok(bytes)
 }
+/// Shrink an attachment until its shorter side just covers `side` pixels, so a
+/// chip never holds a full screenshot in memory. BGRA, as GPU sprites expect.
+pub fn thumbnail_bgra(bytes: &[u8], side: u32) -> Result<image::RgbaImage, String> {
+    let image = image::load_from_memory(bytes).map_err(|error| error.to_string())?;
+    let (width, height) = (image.width(), image.height());
+    let scale = (f64::from(side) / f64::from(width.min(height).max(1))).min(1.);
+    let mut image = if scale < 1. {
+        image.thumbnail_exact(
+            ((f64::from(width) * scale).round() as u32).max(1),
+            ((f64::from(height) * scale).round() as u32).max(1),
+        )
+    } else {
+        image
+    }
+    .into_rgba8();
+    for pixel in image.pixels_mut() {
+        pixel.0.swap(0, 2);
+    }
+    Ok(image)
+}
 /// Resolve only exact, boundary-delimited known skill invocations. The original
 /// draft remains the visible user message; these instructions travel on the wire.
 pub fn prepare_prompt(text: &str, cwd: &str, attachments: &[PathBuf]) -> Result<String, String> {
@@ -359,6 +379,19 @@ fn mentions_in_line(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn thumbnails_cover_the_chip_and_swap_to_bgra() {
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(2738, 1864, image::Rgba([10, 20, 30, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let thumb = thumbnail_bgra(&png, 108).unwrap();
+        assert_eq!(thumb.dimensions(), (159, 108));
+        assert_eq!(thumb.get_pixel(0, 0).0, [30, 20, 10, 255]);
+        let small = thumbnail_bgra(&png, 4000).unwrap();
+        assert_eq!(small.dimensions(), (2738, 1864));
+        assert!(thumbnail_bgra(b"not an image", 108).is_err());
+    }
     #[test]
     fn token_boundaries_and_unicode() {
         let text = "漢字 /rev tail";

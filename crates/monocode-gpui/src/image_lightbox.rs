@@ -133,6 +133,17 @@ impl ImageLightbox {
             })
             .detach();
         }
+        // GPUI keeps decoded files and atlas sprites until told; closing the
+        // preview must give back the full-resolution copy.
+        cx.on_release(|this, cx| {
+            if let Some(image) = this.image.take() {
+                cx.drop_image(image, None);
+            }
+            if let Source::Path(path) = &this.source {
+                cx.remove_asset::<ImgResourceLoader>(&path.clone().into());
+            }
+        })
+        .detach();
         Self {
             source: open.source,
             alt: open.alt,

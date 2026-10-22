@@ -292,9 +292,23 @@ impl Conversation {
         self.add_attachments(pending, cx);
         cx.notify();
     }
-    pub(super) fn attachment_chips(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn attachment_chips(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        // Removed chips release their thumbnail sprites with the entity.
+        let attachments = &self.attachments;
+        self.attachment_photos
+            .retain(|path, _| attachments.contains(path));
         if self.attachments.is_empty() && self.attachment_error.is_none() && !self.attaching {
             return None;
+        }
+        for path in &self.attachments {
+            if let Some(mime) = monocode_core::composer::image_mime(path)
+                && !self.attachment_photos.contains_key(path)
+            {
+                let origin = crate::transcript::attachments::Origin::Path(path.clone());
+                let photo = cx
+                    .new(|cx| crate::transcript::attachments::Photo::new(origin, mime.into(), cx));
+                self.attachment_photos.insert(path.clone(), photo);
+            }
         }
         Some(
             div()
@@ -310,6 +324,7 @@ impl Conversation {
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string();
+                    let photo = self.attachment_photos.get(path).cloned();
                     let image = monocode_core::composer::image_mime(path).is_some();
                     let remove = div()
                         .id(("remove-attachment", ix))
@@ -367,7 +382,7 @@ impl Conversation {
                                 cx.stop_propagation();
                                 window.dispatch_action(Box::new(preview.clone()), cx);
                             })
-                            .child(attachment_thumbnail(path.clone()))
+                            .children(photo)
                             .child(remove)
                             .into_any_element();
                     }

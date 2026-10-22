@@ -77,18 +77,55 @@ pub(crate) fn message(rows: &[Row], end: usize, text: &str) -> (Option<String>, 
     )
 }
 
-/// Embedded images are decoded only when their bubble enters the viewport.
-/// File images use GPUI's asynchronous resource cache directly.
-pub(super) struct Photo {
-    data: Arc<str>,
+/// Where a chip's pixels come from: the transcript's embedded copy, or a file.
+#[derive(Clone)]
+pub(crate) enum Origin {
+    Embedded(Arc<str>),
+    Path(PathBuf),
+}
+
+impl Origin {
+    fn of(file: &Attachment) -> Option<Self> {
+        file.data
+            .clone()
+            .map(Self::Embedded)
+            .or_else(|| file.path.clone().map(Self::Path))
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Embedded(a), Self::Embedded(b)) => {
+                Arc::ptr_eq(a, b)
+                    || (monocode_core::remote::attachments::is_attachment_source(b) && a == b)
+            }
+            (Self::Path(a), Self::Path(b)) => a == b,
+            _ => false,
+        }
+    }
+
+    fn read(&self) -> Result<Vec<u8>, String> {
+        match self {
+            Self::Embedded(data) => monocode_core::composer::decode_image_data(data),
+            Self::Path(path) => std::fs::read(path).map_err(|error| error.to_string()),
+        }
+    }
+}
+
+/// A chip covers 36px at up to 3x, so it keeps a sprite this tall, never the
+/// full image. Opening the lightbox decodes the original separately.
+const THUMBNAIL_SIDE: u32 = 108;
+
+/// Images are decoded off-thread when their chip is first built. Releasing the
+/// entity frees the GPU sprite too; GPUI keeps atlas entries until told.
+pub(crate) struct Photo {
+    origin: Origin,
     bytes: usize,
     mime: SharedString,
     source: Option<ImageSource>,
 }
 
 impl Photo {
-    fn new(data: Arc<str>, mime: SharedString, cx: &mut Context<Self>) -> Self {
-        let encoded = data.clone();
+    pub(crate) fn new(origin: Origin, mime: SharedString, cx: &mut Context<Self>) -> Self {
         let format = match mime.as_ref() {
             "image/jpeg" | "image/jpg" => gpui::ImageFormat::Jpeg,
             "image/gif" => gpui::ImageFormat::Gif,
@@ -98,25 +135,52 @@ impl Photo {
             "image/tiff" => gpui::ImageFormat::Tiff,
             _ => gpui::ImageFormat::Png,
         };
+        let read = origin.clone();
         let work = cx.background_executor().spawn(async move {
-            monocode_core::composer::decode_image_data(&encoded)
-                .map(|bytes| Arc::new(gpui::Image::from_bytes(format, bytes)))
+            let bytes = read.read()?;
+            Ok::<_, String>(
+                match monocode_core::composer::thumbnail_bgra(&bytes, THUMBNAIL_SIDE) {
+                    Ok(pixels) => Ok(Arc::new(gpui::RenderImage::new(vec![image::Frame::new(
+                        pixels,
+                    )]))),
+                    // SVG and formats the decoder lacks still go through GPUI.
+                    Err(_) => Err(Arc::new(gpui::Image::from_bytes(format, bytes))),
+                },
+            )
         });
         cx.spawn(async move |this, cx| {
-            let source = work.await.ok().map(ImageSource::from);
+            let source = work.await.ok().map(|decoded| match decoded {
+                Ok(sprite) => ImageSource::Render(sprite),
+                Err(encoded) => ImageSource::from(encoded),
+            });
             let _ = this.update(cx, |this, cx| {
                 this.source = source;
                 cx.notify();
             });
         })
         .detach();
+        cx.on_release(|this, cx| match this.source.take() {
+            Some(ImageSource::Render(image)) => cx.drop_image(image, None),
+            Some(source) => source.remove_asset(cx),
+            None => {}
+        })
+        .detach();
         Self {
-            bytes: monocode_core::remote::attachments::attachment_source_size(&data)
-                .unwrap_or(data.len()),
-            data,
+            bytes: match &origin {
+                Origin::Embedded(data) => {
+                    monocode_core::remote::attachments::attachment_source_size(data)
+                        .unwrap_or(data.len())
+                }
+                Origin::Path(_) => 0,
+            },
+            origin,
             mime,
             source: None,
         }
+    }
+
+    pub(crate) fn matches(&self, origin: &Origin, mime: &SharedString) -> bool {
+        self.origin.same(origin) && &self.mime == mime
     }
 }
 
@@ -152,23 +216,15 @@ impl TranscriptView {
             .gap_1p5()
             .children(files.iter().enumerate().map(|(ix, file)| {
                 if file.image {
-                    let photo = if let Some(data) = &file.data {
+                    let photo = if let Some(origin) = Origin::of(file) {
                         let key = format!("{key}-{ix}");
                         let cached = self
                             .attachment_images
                             .get(&key)
-                            .filter(|photo| {
-                                let photo = photo.read(cx);
-                                (Arc::ptr_eq(&photo.data, data)
-                                    || (monocode_core::remote::attachments::is_attachment_source(
-                                        data,
-                                    ) && photo.data.as_ref() == data.as_ref()))
-                                    && photo.mime == file.mime
-                            })
+                            .filter(|photo| photo.read(cx).matches(&origin, &file.mime))
                             .cloned();
                         let photo = cached.unwrap_or_else(|| {
-                            let photo =
-                                cx.new(|cx| Photo::new(data.clone(), file.mime.clone(), cx));
+                            let photo = cx.new(|cx| Photo::new(origin, file.mime.clone(), cx));
                             self.attachment_images.insert(key.clone(), photo.clone());
                             // Bound decoded image ownership while scrolling long histories.
                             while self.attachment_images.len() > 32
@@ -192,8 +248,6 @@ impl TranscriptView {
                             photo
                         });
                         photo.into_any_element()
-                    } else if let Some(path) = &file.path {
-                        attachment_thumbnail(path.clone())
                     } else {
                         icon("file", 16.).into_any_element()
                     };
