@@ -489,7 +489,10 @@ mod tests {
                 .unwrap()
                 .map(|entry| {
                     let entry = entry.unwrap();
-                    (entry.file_name(), std::fs::read(entry.path()).unwrap())
+                    let name = entry.file_name();
+                    // Windows denies reads of the byte-range-locked LOCK file.
+                    let contents = (name != "LOCK").then(|| std::fs::read(entry.path()).unwrap());
+                    (name, contents)
                 })
                 .collect::<BTreeMap<_, _>>()
         };
