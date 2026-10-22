@@ -14,7 +14,10 @@ use std::{
     hash::{Hash, Hasher},
     path::Path,
     sync::Arc,
+    time::{Duration, Instant},
 };
+
+const FADE: Duration = Duration::from_millis(240);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Key {
@@ -44,15 +47,46 @@ impl Asset for BackgroundTexture {
 
     fn load(
         request: TextureRequest,
-        _: &mut App,
+        cx: &mut App,
     ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
-        prepare_texture(request)
+        // The widest and tallest display at Retina scale; scaled display modes
+        // draw windows at twice their logical size.
+        let screen = cx
+            .displays()
+            .iter()
+            .fold((0, 0), |(width, height), display| {
+                let size = display.bounds().size;
+                (
+                    width.max((size.width.as_f32() * 2.).ceil() as u32),
+                    height.max((size.height.as_f32() * 2.).ceil() as u32),
+                )
+            });
+        prepare_texture(request, screen)
     }
+}
+/// The smallest size that still covers `screen` at full resolution, when the
+/// artwork is larger. The view cover-crops it, so pixels past the screen are
+/// never seen at native size; the GPU would only discard them while drawing.
+fn covering_size(artwork: (u32, u32), screen: (u32, u32)) -> Option<(u32, u32)> {
+    let (width, height) = artwork;
+    if screen.0 == 0 || screen.1 == 0 || width == 0 || height == 0 {
+        return None;
+    }
+    let scale = (screen.0 as f64 / width as f64).max(screen.1 as f64 / height as f64);
+    (scale < 1.).then(|| {
+        (
+            ((width as f64 * scale).ceil() as u32).clamp(1, width),
+            ((height as f64 * scale).ceil() as u32).clamp(1, height),
+        )
+    })
 }
 // Keep the UI-thread App out of the Send future run by the asset cache. The
 // cache holds one finished sprite per effect: no decoded source, no PNG round
 // trip, so each variant costs its pixels once in memory and once on the GPU.
-async fn prepare_texture(request: TextureRequest) -> Result<Arc<RenderImage>, String> {
+async fn prepare_texture(
+    request: TextureRequest,
+    screen: (u32, u32),
+) -> Result<Arc<RenderImage>, String> {
     let source = read_image(Path::new(&request.key.path))?;
     #[cfg(target_os = "macos")]
     let mut pixels = background_texture(source, request.key.effect);
@@ -67,6 +101,16 @@ async fn prepare_texture(request: TextureRequest) -> Result<Arc<RenderImage>, St
         drop(source);
         pixels
     };
+    // Effects run at the artwork's resolution, as React's do; only the
+    // finished texture is resampled.
+    if let Some((width, height)) = covering_size(pixels.dimensions(), screen) {
+        pixels = image::imageops::resize(
+            &pixels,
+            width,
+            height,
+            image::imageops::FilterType::Triangle,
+        );
+    }
     for pixel in pixels.pixels_mut() {
         pixel.0.swap(0, 2);
     }
@@ -82,6 +126,9 @@ pub(crate) struct ProjectBackground {
     image: Option<Arc<RenderImage>>,
     pub(crate) error: Option<String>,
     loading: bool,
+    /// Set when the shell switches here from a tab drawing no background; the
+    /// fade starts once the texture is ready, so a reload doesn't pop in.
+    fade: Option<Instant>,
     _release: Option<gpui::Subscription>,
 }
 impl ProjectBackground {
@@ -129,6 +176,30 @@ impl ProjectBackground {
             cx.drop_image(image, window);
         }
     }
+    pub(crate) fn fade_in(&mut self, cx: &mut Context<Self>) {
+        if !cx.reduce_motion() {
+            self.fade = Some(Instant::now());
+            cx.notify();
+        }
+    }
+    /// The fade's share of the configured opacity, 0 to 1.
+    fn faded(&mut self, window: &mut Window) -> f32 {
+        let Some(start) = self.fade else {
+            return 1.;
+        };
+        if self.image.is_none() {
+            self.fade = Some(Instant::now());
+            return 0.;
+        }
+        let t = (start.elapsed().as_secs_f32() / FADE.as_secs_f32()).min(1.);
+        if t >= 1. {
+            self.fade = None;
+        } else {
+            window.request_animation_frame();
+        }
+        // Quadratic ease-out, as the tab strip's motion.
+        1. - (1. - t) * (1. - t)
+    }
     fn prepare(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
         if self._release.is_none() {
             self._release = Some(cx.on_release(|this, cx| this.release(None, cx)));
@@ -154,11 +225,10 @@ impl ProjectBackground {
             None => self.loading = true,
         }
     }
-    fn mask(&self, begin: bool, settings: &Background) -> impl IntoElement {
+    fn mask(&self, begin: bool, settings: &Background, opacity: f32) -> impl IntoElement {
         let clip = self.clip.clone();
         let preview = self.preview;
         let empty = self.empty;
-        let opacity = settings.opacity(empty);
         let haze = settings.effect == Effect::GradientBlur;
         canvas(
             |_, _, _| {},
@@ -250,6 +320,7 @@ impl Render for ProjectBackground {
         if self.key.as_ref() != Some(&key) || self.loading {
             self.prepare(key, window, cx);
         }
+        let opacity = settings.opacity(self.empty) * self.faded(window);
         div()
             .id("project-chat-background")
             .debug_selector(|| "project-chat-background".into())
@@ -259,22 +330,20 @@ impl Render for ProjectBackground {
             .size_full()
             .overflow_hidden()
             .when_some(self.image.clone(), |d, image| {
-                d.child(self.mask(true, &settings))
+                d.child(self.mask(true, &settings, opacity))
                     .child(img(image).size_full().object_fit(ObjectFit::Cover).when(
                         cfg!(not(target_os = "macos")),
                         |image| {
-                            image.opacity(settings.opacity(self.empty)).rounded(px(
-                                if self.preview {
-                                    11.
-                                } else if self.clip.is_some() {
-                                    9.
-                                } else {
-                                    0.
-                                },
-                            ))
+                            image.opacity(opacity).rounded(px(if self.preview {
+                                11.
+                            } else if self.clip.is_some() {
+                                9.
+                            } else {
+                                0.
+                            }))
                         },
                     ))
-                    .child(self.mask(false, &settings))
+                    .child(self.mask(false, &settings, opacity))
             })
             .into_any_element()
     }
@@ -285,6 +354,20 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, point, size};
 
+    #[test]
+    fn textures_shrink_only_to_still_cover_the_largest_screen() {
+        // A 13" MacBook Pro's default scaled mode draws at 2880×1800.
+        assert_eq!(
+            covering_size((3360, 2038), (2880, 1800)),
+            Some((2968, 1800))
+        );
+        assert_eq!(
+            covering_size((3266, 2324), (2880, 1800)),
+            Some((2880, 2050))
+        );
+        assert_eq!(covering_size((2048, 1242), (2880, 1800)), None);
+        assert_eq!(covering_size((3360, 2038), (0, 0)), None);
+    }
     #[test]
     fn artwork_rounds_only_the_corners_on_the_card_perimeter() {
         let card = Bounds::new(point(px(20.), px(40.)), size(px(800.), px(600.)));

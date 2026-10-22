@@ -232,6 +232,14 @@ impl Shell {
             });
             background
         });
+        if self.workspace.active == Some(id) {
+            let previous = self.backdrop.replace((id, background.is_some()));
+            if let (Some((previous, false)), Some(background)) = (previous, &background)
+                && previous != id
+            {
+                background.update(cx, |background, cx| background.fade_in(cx));
+            }
+        }
         let linked = if self.workspace.active == Some(id) && !self.review_focused {
             self.linked_notice(id, cx)
         } else {

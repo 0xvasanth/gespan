@@ -589,6 +589,9 @@ pub(crate) struct Shell {
     pub(crate) menu: Option<ShellMenu>,
     background_dialog: Option<project_settings::OpenBackground>,
     backgrounds: HashMap<i64, Entity<crate::project_background::ProjectBackground>>,
+    /// The last active chat and whether it drew a background, so arriving
+    /// from one without fades the next one in.
+    backdrop: Option<(i64, bool)>,
     background_card: AnchorSlot,
     project_anchor: AnchorSlot,
     sidebar_options_anchor: AnchorSlot,
@@ -897,6 +900,7 @@ impl Shell {
             menu: None,
             background_dialog: None,
             backgrounds: HashMap::new(),
+            backdrop: None,
             background_card: AnchorSlot::default(),
             project_anchor: AnchorSlot::default(),
             sidebar_options_anchor: AnchorSlot::default(),
