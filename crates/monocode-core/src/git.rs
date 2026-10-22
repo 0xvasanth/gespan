@@ -316,6 +316,7 @@ mod tests {
         let cwd = temp.path().join("project");
         std::fs::create_dir(&cwd).unwrap();
         git(&cwd, &["init", "-b", "main"]).unwrap();
+        git(&cwd, &["config", "core.autocrlf", "false"]).unwrap();
         std::fs::write(cwd.join("file"), "committed\n").unwrap();
         git(&cwd, &["add", "file"]).unwrap();
         git(
@@ -369,6 +370,7 @@ mod tests {
         let cwd = temp.path().join("project");
         std::fs::create_dir(&cwd).unwrap();
         git(&cwd, &["init", "-b", "main"]).unwrap();
+        git(&cwd, &["config", "core.autocrlf", "false"]).unwrap();
         git(&cwd, &["config", "user.name", "Native review"]).unwrap();
         git(&cwd, &["config", "user.email", "native@example.invalid"]).unwrap();
         std::fs::write(cwd.join("file"), "main\n").unwrap();

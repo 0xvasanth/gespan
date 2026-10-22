@@ -62,6 +62,7 @@ pub(super) fn untracked_attachment_tail(prompt: &str) -> bool {
         return false;
     };
     Path::new(path).is_absolute()
+        || path.starts_with('/')
         || path.starts_with("\\\\")
         || path.as_bytes().get(1) == Some(&b':')
 }
@@ -343,17 +344,28 @@ mod tests {
     }
     #[test]
     fn native_attachment_links_are_never_recalled_as_text_without_the_original_files() {
-        let (mut store, id, mut rows) = fixture();
-        rows[2].text = "Describe image\n\n[photo.png](</tmp/photo.png>)".into();
-        store.write_rows(id, 2, &rows[2..]).unwrap();
-        assert!(store
-            .prepare_edit_last_turn(id, &rows, Some("turn"))
-            .unwrap_err()
-            .contains("attachment manifest"));
-        assert_eq!(store.load(id).unwrap().rows, rows);
-        assert!(!untracked_attachment_tail(
-            "A [web link](https://example.com)"
-        ));
+        for path in [
+            "/tmp/photo.png",
+            r"C:\Users\me\photo.png",
+            "C:/Users/me/photo.png",
+            r"\\server\share\photo.png",
+        ] {
+            let (mut store, id, mut rows) = fixture();
+            rows[2].text = format!("Describe image\n\n[photo.png](<{path}>)");
+            store.write_rows(id, 2, &rows[2..]).unwrap();
+            assert!(store
+                .prepare_edit_last_turn(id, &rows, Some("turn"))
+                .unwrap_err()
+                .contains("attachment manifest"));
+            assert_eq!(store.load(id).unwrap().rows, rows);
+        }
+        for link in [
+            "A [web link](https://example.com)",
+            "[photo.png](<https://example.com/photo.png>)",
+            "[photo.png](<relative/photo.png>)",
+        ] {
+            assert!(!untracked_attachment_tail(link));
+        }
     }
     #[test]
     fn provider_confirmed_conflict_leaves_a_durable_recovery_guard_and_blocks_recall() {

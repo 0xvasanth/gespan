@@ -105,15 +105,20 @@ fn review_index_revalidates_closed_views_and_subdirectories() {
     assert!(init_git_commit(root, &[("src/a.txt", "base\n")]));
     std::fs::write(root.join("src/a.txt"), "edit\n").unwrap();
     let before = diff_files(root).unwrap();
-    std::fs::write(root.join("src/ new\tfile.txt"), "new\n").unwrap();
+    let added_name = if cfg!(windows) {
+        " new file.txt"
+    } else {
+        " new\tfile.txt"
+    };
+    std::fs::write(root.join("src").join(added_name), "new\n").unwrap();
     let next = review_index(root, Some(&before)).unwrap();
     assert_eq!(next.files.len(), 2);
     assert_eq!(next.files[1].additions, before.files[0].additions);
     let sub = review_index(&root.join("src"), None).unwrap();
-    assert_eq!(sub.files[0].relative, " new\tfile.txt");
+    assert_eq!(sub.files[0].relative, added_name);
     assert_eq!(sub.files[1].relative, "a.txt");
     let versions = file_diff_versions(&root.join("src"), &sub).unwrap();
-    assert!(versions.contains_key("unstaged: new\tfile.txt"));
+    assert!(versions.contains_key(&format!("unstaged:{added_name}")));
     assert!(versions.contains_key("unstaged:a.txt"));
     std::fs::remove_file(root.join("src/a.txt")).unwrap();
     let deleted = review_index(root, None).unwrap();
@@ -796,7 +801,18 @@ fn sync_pulls_then_pushes() {
         origin.path(),
         &["symbolic-ref", "HEAD", "refs/heads/main"]
     ));
-    assert!(git(&b, &["clone", "-b", "main", &url, "."]));
+    assert!(git(
+        &b,
+        &[
+            "clone",
+            "-c",
+            "core.autocrlf=false",
+            "-b",
+            "main",
+            &url,
+            "."
+        ]
+    ));
     for args in [
         ["config", "user.name", "MonoCode"],
         ["config", "user.email", "monocode@test"],
