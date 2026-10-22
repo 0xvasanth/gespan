@@ -5,9 +5,9 @@ use crate::{
     theme::*,
 };
 use gpui::{
-    AnyElement, App, Asset, AvailableSpace, Bounds, Context, Element, ElementId, Entity,
-    GlobalElementId, Image, ImageFormat, InspectorElementId, LayoutId, Pixels, Role, SharedString,
-    Style, TextStyle, Window, div, img, point, prelude::*, px, size,
+    AnyElement, App, AvailableSpace, Bounds, Context, Element, ElementId, Entity, GlobalElementId,
+    Image, ImageCacheError, ImageFormat, InspectorElementId, LayoutId, Pixels, RenderImage, Role,
+    SharedString, Style, TextStyle, Window, div, img, point, prelude::*, px, size,
 };
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::{path::PathBuf, sync::Arc, time::Instant};
@@ -109,23 +109,33 @@ fn append_markdown(rows: &mut Vec<Row>, text: &str, cwd: &std::path::Path) {
     }
 }
 
-struct Attachment;
-impl Asset for Attachment {
-    type Source = String;
-    type Output = Result<Arc<Image>, String>;
-    #[expect(
-        clippy::manual_async_fn,
-        reason = "An async method captures the non-Send App reference."
-    )]
-    fn load(
-        url: String,
-        _: &mut App,
-    ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
-        async move {
-            monocode_core::inbox::media_png(&url)
-                .map(|bytes| Arc::new(Image::from_bytes(ImageFormat::Png, bytes)))
-        }
-    }
+/// Issue images decode into the shared content budget, not GPUI's permanent
+/// asset cache, so pages read long ago give their pixels back.
+fn attachment(
+    url: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+    let url = url.to_owned();
+    let view = window.current_view();
+    let key = gpui::hash(&("inbox", &url));
+    crate::image_memory::images(cx).update(cx, |cache, cx| {
+        cache.request(
+            key,
+            view,
+            move |cx| {
+                let renderer = cx.svg_renderer();
+                async move {
+                    let bytes = monocode_core::inbox::media_png(&url)
+                        .map_err(|error| ImageCacheError::Asset(error.into()))?;
+                    Image::from_bytes(ImageFormat::Png, bytes)
+                        .to_image_data(renderer)
+                        .map_err(|error| ImageCacheError::Other(Arc::new(error)))
+                }
+            },
+            cx,
+        )
+    })
 }
 
 /// Exact heights are retained at a given width/style. A collapsed body only
@@ -150,7 +160,7 @@ impl InboxDocument {
         let row = &self.rows[ix];
         match row {
             Row::Image { url, alt } => {
-                let source = window.use_asset::<Attachment>(url, cx);
+                let source = attachment(url, window, cx);
                 let label = if alt.trim().is_empty() { "Image" } else { alt }.to_string();
                 let url = url.clone();
                 let media = match source {
@@ -259,7 +269,7 @@ impl InboxDocument {
             .iter()
             .take(count)
             .filter_map(|row| match row {
-                Row::Image { url, .. } => Some(window.use_asset::<Attachment>(url, cx).is_some()),
+                Row::Image { url, .. } => Some(attachment(url, window, cx).is_some()),
                 _ => None,
             })
             .collect()

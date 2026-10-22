@@ -3,8 +3,8 @@
 use super::*;
 use crate::popover::{Anchor, AnchorSlot, Menu, MenuAction, MenuEvent, menu_popover};
 use gpui::{
-    Bounds, ClipboardEntry, ClipboardItem, ExternalPaths, MouseButton, Point, ScrollHandle,
-    ScrollWheelEvent, canvas, fill, point, size,
+    Bounds, ClipboardEntry, ClipboardItem, ExternalPaths, ImageSource, MouseButton, Point,
+    RenderImage, ScrollHandle, ScrollWheelEvent, canvas, fill, point, size,
 };
 
 #[cfg(target_os = "macos")]
@@ -46,6 +46,9 @@ pub(super) enum MediaEvent {
 pub(super) struct MediaPreview {
     path: String,
     image: Option<Arc<Image>>,
+    /// Decoded here rather than by `img(Image)`: GPUI keeps those decodes and
+    /// sprites for the life of the app, and closing a tab must give them back.
+    decoded: Option<Arc<RenderImage>>,
     width: u32,
     height: u32,
     size: u64,
@@ -91,10 +94,31 @@ impl MediaPreview {
         height: u32,
         bytes: usize,
         format: &str,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let renderer = cx.svg_renderer();
+        let encoded = image.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { encoded.to_image_data(renderer).ok() });
+        cx.spawn(async move |this, cx| {
+            let decoded = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.decoded = decoded;
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.on_release(|this, cx| {
+            if let Some(decoded) = this.decoded.take() {
+                cx.drop_image(decoded, None);
+            }
+        })
+        .detach();
         Self {
             path,
             image: Some(image),
+            decoded: None,
             width,
             height,
             size: bytes as u64,
@@ -130,6 +154,7 @@ impl MediaPreview {
                 .into_owned(),
             path: path.clone(),
             image: None,
+            decoded: None,
             width: 0,
             height: 0,
             size: bytes,
@@ -323,7 +348,11 @@ impl gpui::Render for MediaPreview {
         {
             video.pause();
         }
-        let body = if let Some(image) = &self.image {
+        let body = if self.image.is_some() {
+            let source = match &self.decoded {
+                Some(decoded) => ImageSource::Render(decoded.clone()),
+                None => ImageSource::Custom(Arc::new(|_, _| None)),
+            };
             let bounds = self.bounds.clone();
             let viewport_scroll = self.scroll.clone();
             let entity = cx.entity().downgrade();
@@ -406,7 +435,7 @@ impl gpui::Render for MediaPreview {
                         .items_center()
                         .justify_center()
                         .child(
-                            img(image.clone())
+                            img(source)
                                 .w(px(self.width.max(1) as f32 * scale))
                                 .h(px(self.height.max(1) as f32 * scale))
                                 .object_fit(ObjectFit::Contain)
@@ -634,7 +663,7 @@ mod tests {
                     ..Default::default()
                 },
                 |_, cx| {
-                    cx.new(|_| {
+                    cx.new(|cx| {
                         MediaPreview::image(
                             "/tmp/image.png".into(),
                             Arc::new(Image::from_bytes(
@@ -645,6 +674,7 @@ mod tests {
                             400,
                             1024,
                             "png",
+                            cx,
                         )
                     })
                 },

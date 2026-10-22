@@ -5,7 +5,7 @@ use crate::{
     runtime::{Database, locked},
     theme::*,
 };
-use gpui::{AnyElement, Context, ImageSource, Render, Role, Window, div, img, prelude::*, px};
+use gpui::{AnyElement, Context, ImageSource, Render, Role, Window, div, prelude::*, px};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::{path::Path, time::Instant};
 
@@ -100,7 +100,7 @@ impl Render for Preview {
                         .w_full()
                         .min_w_0()
                         .child(
-                            img(source.clone())
+                            crate::image_memory::image(source.clone())
                                 .id(("note-image", ix))
                                 .role(Role::Image)
                                 .aria_label(alt.clone())

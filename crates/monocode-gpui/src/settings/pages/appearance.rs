@@ -6,7 +6,7 @@ use crate::settings::{
 };
 use crate::theme::*;
 use gpui::{
-    AnyElement, Context, Focusable, Role, SharedString, Window, div, img, linear_color_stop,
+    AnyElement, Context, Focusable, Role, SharedString, Window, div, linear_color_stop,
     linear_gradient, prelude::*, px, rgb,
 };
 
@@ -493,7 +493,7 @@ impl SettingsView {
                                 .relative()
                                 .h(px(144.))
                                 .child(
-                                    img(std::path::PathBuf::from(path))
+                                    crate::image_memory::preview(std::path::PathBuf::from(path))
                                         .size_full()
                                         .object_fit(gpui::ObjectFit::Cover)
                                         .opacity(empty as f32 / 100.),

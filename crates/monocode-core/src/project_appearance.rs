@@ -252,11 +252,13 @@ pub fn background_fade(y: f32, empty: bool, haze: bool) -> f32 {
 
 /// View-independent artwork, matching the React worker. Crop, fade and Haze
 /// belong to the view and must not trigger another texture job during resize.
-pub fn background_texture(source: &RgbaImage, effect: Effect) -> RgbaImage {
+/// Takes the decoded source so plain artwork becomes the texture without a
+/// second full-size copy.
+pub fn background_texture(source: RgbaImage, effect: Effect) -> RgbaImage {
     if matches!(effect, Effect::None | Effect::GradientBlur) {
-        source.clone()
+        source
     } else {
-        effect_pixels(source, effect, true, false, 1.)
+        effect_pixels(&source, effect, true, false, 1.)
     }
 }
 
@@ -271,7 +273,7 @@ pub fn software_background_texture(
     if effect == Effect::GradientBlur {
         effect_pixels(source, effect, empty, preview, 1.)
     } else {
-        background_texture(source, effect)
+        background_texture(source.clone(), effect)
     }
 }
 
@@ -483,7 +485,7 @@ mod tests {
     #[test]
     fn dither_matches_the_react_workers_palette_and_two_pixel_bayer_cells() {
         let source = RgbaImage::from_pixel(9, 9, image::Rgba([130, 180, 210, 127]));
-        let result = background_texture(&source, Effect::Dither);
+        let result = background_texture(source.clone(), Effect::Dither);
         let bayer = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
         for (x, y, pixel) in result.enumerate_pixels() {
             let expected = if bayer[(y / 2 % 4) as usize][(x / 2 % 4) as usize] <= 12 {
@@ -493,8 +495,11 @@ mod tests {
             };
             assert_eq!(pixel.0, expected, "React worker sample at {x},{y}");
         }
-        assert_eq!(background_texture(&source, Effect::None), source);
-        assert_eq!(background_texture(&source, Effect::GradientBlur), source);
+        assert_eq!(background_texture(source.clone(), Effect::None), source);
+        assert_eq!(
+            background_texture(source.clone(), Effect::GradientBlur),
+            source
+        );
     }
     #[test]
     fn dither_texture_scales_with_the_artwork_in_the_preview() {

@@ -8,7 +8,7 @@ use crate::{
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, MouseButton,
     MouseDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, Role, SharedString, Subscription,
-    Window, canvas, div, img, prelude::*, px, rgb,
+    Window, canvas, div, prelude::*, px, rgb,
 };
 use monocode_core::project_appearance::{
     Background, COLORS, Effect, MASCOTS, ProjectAppearance, Scope, import_image,
@@ -94,7 +94,7 @@ pub(crate) fn project_icon(appearance: &ProjectAppearance, project: &str, side: 
             .into_any_element();
     }
     match &appearance.logo {
-        Some(path) => img(PathBuf::from(path))
+        Some(path) => crate::image_memory::thumbnail(PathBuf::from(path))
             .size(px(side))
             .object_fit(ObjectFit::Contain)
             .flex_shrink_0()
@@ -118,7 +118,7 @@ pub(crate) fn header_project_icon(appearance: &ProjectAppearance, project: &str)
             .into_any_element();
     }
     match &appearance.logo {
-        Some(path) => img(PathBuf::from(path))
+        Some(path) => crate::image_memory::thumbnail(PathBuf::from(path))
             .relative()
             .left(px(-1.))
             .size(px(20.))

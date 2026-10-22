@@ -7,7 +7,7 @@ use crate::{
 use gpui::{
     AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
     MouseButton, MouseMoveEvent, Pixels, Point, Render, Role, ScrollHandle, StyledText,
-    Subscription, Task, Window, canvas, div, fill, img, point, prelude::*, px, relative, size,
+    Subscription, Task, Window, canvas, div, fill, point, prelude::*, px, relative, size,
 };
 use monocode_core::{
     search::{self, Hit, Scope, Target},
@@ -490,7 +490,7 @@ impl Render for SearchView {
                         .logos
                         .get(path)
                         .map(|logo| {
-                            img(std::path::PathBuf::from(logo))
+                            crate::image_memory::thumbnail(std::path::PathBuf::from(logo))
                                 .size(px(14.))
                                 .rounded_sm()
                                 .into_any_element()

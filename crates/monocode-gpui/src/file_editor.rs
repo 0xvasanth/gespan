@@ -8,9 +8,9 @@ use crate::{
     transcript::TranscriptView,
 };
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Image, ImageFormat,
-    KeyBinding, ObjectFit, PromptLevel, Role, SharedString, Subscription, Task, Window, actions,
-    div, img, prelude::*, px, rgb,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Image, ImageCacheError,
+    ImageFormat, ImageSource, KeyBinding, ObjectFit, PromptLevel, RenderImage, Role, SharedString,
+    Subscription, Task, Window, actions, div, img, prelude::*, px, rgb,
 };
 use monocode_core::files::document::{self, Document, TextDocument};
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -189,7 +189,10 @@ pub(crate) struct FileEditor {
     image: Option<Arc<Image>>,
     media: Option<Entity<media::MediaPreview>>,
     media_events: Option<Subscription>,
-    svg_preview: Option<Arc<Image>>,
+    /// Each edit renders a fresh sprite; the one it replaces is given back.
+    svg_preview: Option<Arc<RenderImage>>,
+    svg_failed: bool,
+    svg_render: Option<Task<()>>,
     unsupported: Option<String>,
     error: Option<String>,
     disk_changed: bool,
@@ -292,6 +295,12 @@ impl FileEditor {
                 }
             }
         });
+        cx.on_release(|this, cx| {
+            if let Some(image) = this.svg_preview.take() {
+                cx.drop_image(image, None);
+            }
+        })
+        .detach();
         Self {
             path,
             cwd: git.read(cx).project().to_owned(),
@@ -325,6 +334,8 @@ impl FileEditor {
             media: None,
             media_events: None,
             svg_preview: None,
+            svg_failed: false,
+            svg_render: None,
             unsupported: None,
             error: None,
             disk_changed: false,
@@ -477,7 +488,7 @@ impl FileEditor {
                         {
                             return;
                         }
-                        this.media = Some(cx.new(|_| {
+                        this.media = Some(cx.new(|cx| {
                             media::MediaPreview::image(
                                 this.path.clone(),
                                 image.clone(),
@@ -485,6 +496,7 @@ impl FileEditor {
                                 height,
                                 byte_size,
                                 file_format,
+                                cx,
                             )
                         }));
                         this.image = Some(image);
@@ -827,10 +839,23 @@ impl FileEditor {
     }
     fn update_preview(&mut self, cx: &mut Context<Self>) {
         if self.preview && self.is_svg() {
-            self.svg_preview = Some(Arc::new(Image::from_bytes(
-                ImageFormat::Svg,
-                self.input.read(cx).content.as_bytes().to_vec(),
-            )));
+            let bytes = self.input.read(cx).content.as_bytes().to_vec();
+            let renderer = cx.svg_renderer();
+            let work = cx.background_executor().spawn(async move {
+                Image::from_bytes(ImageFormat::Svg, bytes)
+                    .to_image_data(renderer)
+                    .ok()
+            });
+            self.svg_render = Some(cx.spawn(async move |this, cx| {
+                let image = work.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.svg_failed = image.is_none();
+                    if let Some(old) = std::mem::replace(&mut this.svg_preview, image) {
+                        cx.drop_image(old, None);
+                    }
+                    cx.notify();
+                });
+            }));
         }
         if self.preview && self.is_markdown() {
             let text = self.input.read(cx).content.clone();
@@ -1015,10 +1040,16 @@ impl gpui::Render for FileEditor {
         if ready && !self.preview && self.focus.is_focused(window) {
             window.focus(&self.input.focus_handle(cx), cx);
         }
-        let preview_image = self
-            .image
-            .as_ref()
-            .or_else(|| self.preview.then_some(self.svg_preview.as_ref()).flatten());
+        let preview_image: Option<ImageSource> = match &self.image {
+            Some(image) => Some(image.clone().into()),
+            None if self.preview && self.svg_failed => {
+                Some(ImageSource::Custom(Arc::new(|_, _| {
+                    Some(Err(ImageCacheError::Asset("Invalid SVG".into())))
+                })))
+            }
+            None if self.preview => self.svg_preview.clone().map(ImageSource::Render),
+            None => None,
+        };
         let body: AnyElement = if let Some(media) = &self.media {
             media.clone().into_any_element()
         } else if let Some(image) = preview_image {
@@ -1029,7 +1060,7 @@ impl gpui::Render for FileEditor {
                 .items_center()
                 .justify_center()
                 .child(
-                    img(image.clone())
+                    img(image)
                         .size_full()
                         .object_fit(ObjectFit::Contain)
                         .with_fallback(|| {

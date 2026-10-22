@@ -55,15 +55,18 @@ impl Asset for BackgroundTexture {
 async fn prepare_texture(request: TextureRequest) -> Result<Arc<RenderImage>, String> {
     let source = read_image(Path::new(&request.key.path))?;
     #[cfg(target_os = "macos")]
-    let mut pixels = background_texture(&source, request.key.effect);
+    let mut pixels = background_texture(source, request.key.effect);
     #[cfg(not(target_os = "macos"))]
-    let mut pixels = monocode_core::project_appearance::software_background_texture(
-        &source,
-        request.key.effect,
-        request.key.empty,
-        request.key.preview,
-    );
-    drop(source);
+    let mut pixels = {
+        let pixels = monocode_core::project_appearance::software_background_texture(
+            &source,
+            request.key.effect,
+            request.key.empty,
+            request.key.preview,
+        );
+        drop(source);
+        pixels
+    };
     for pixel in pixels.pixels_mut() {
         pixel.0.swap(0, 2);
     }
@@ -79,6 +82,7 @@ pub(crate) struct ProjectBackground {
     image: Option<Arc<RenderImage>>,
     pub(crate) error: Option<String>,
     loading: bool,
+    _release: Option<gpui::Subscription>,
 }
 impl ProjectBackground {
     #[cfg(test)]
@@ -105,15 +109,33 @@ impl ProjectBackground {
         }
         if self.settings.as_ref().map(|s| &s.path) != settings.as_ref().map(|s| &s.path) {
             self.loading = false;
-            self.image = None;
-            self.key = None;
+            self.release(None, cx);
             self.error = None;
         }
         self.settings = settings;
         self.empty = empty;
         cx.notify();
     }
+    /// Give back a texture no other view draws. The asset cache would otherwise
+    /// keep every artwork and effect variant, in memory and on the GPU, for good.
+    fn release(&mut self, window: Option<&mut Window>, cx: &mut App) {
+        let key = self.key.take();
+        let (Some(key), Some(image)) = (key, self.image.take()) else {
+            return;
+        };
+        // Only this view and the asset cache hold it.
+        if Arc::strong_count(&image) == 2 {
+            cx.remove_asset::<BackgroundTexture>(&TextureRequest { key });
+            cx.drop_image(image, window);
+        }
+    }
     fn prepare(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
+        if self._release.is_none() {
+            self._release = Some(cx.on_release(|this, cx| this.release(None, cx)));
+        }
+        if self.key.as_ref() != Some(&key) {
+            self.release(Some(window), cx);
+        }
         self.key = Some(key.clone());
         self.error = None;
         // GPUI shares pending jobs and completed textures across views. A warm

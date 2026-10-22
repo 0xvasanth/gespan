@@ -26,6 +26,7 @@ mod git_picker;
 mod git_status;
 mod history;
 mod image_lightbox;
+mod image_memory;
 mod inbox;
 mod input;
 mod markdown;
@@ -84,6 +85,12 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
+/// libmalloc keeps freed large spans dirty, so startup decodes and image churn
+/// stayed in the footprint. mimalloc 2 returns them; 3 retains churn too.
+#[cfg(target_os = "macos")]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 actions!(application, [Quit]);
 fn quit(cx: &mut App) {
     let shutdown = cx
@@ -357,6 +364,7 @@ fn main() {
             #[cfg(debug_assertions)]
             dev_reload::install(cx);
             cx.set_global(title_raster);
+            image_memory::init(cx);
             input::bind(cx);
             image_lightbox::bind(cx);
             composer_completion::bind(cx);
