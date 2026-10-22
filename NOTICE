@@ -2,3 +2,10 @@ MonoCode is not affiliated with, endorsed by, or sponsored by the makers of the
 agent harnesses it can drive.
 
 Provider marks that appear in the UI (including Claude, Codex, Cursor, GitHub, GitLab, Linear, Grok, OpenCode, Pi, omp, fx, Hermes, Nous Research, Devin, and Cognition) are trademarks of their respective owners and are used only to identify those products.
+
+The native UI uses Zed Industries' GPUI framework through gpui-pre and
+gpui-pre-platform 0.3.9 (Zed snapshot
+93d745668805029476e6d7fbb19652116fed51de), licensed under Apache-2.0.
+Copyright 2022 - 2025 Zed Industries, Inc.
+License: https://www.apache.org/licenses/LICENSE-2.0
+License text: docs/native/LICENSE-GPUI-APACHE
