@@ -110,9 +110,10 @@ impl Render for Runner {
         {
             self.frame = frame;
         }
-        // Each frame steps the physics in JS, so cap it at the shared 30fps.
+        // Each frame steps the physics in JS and repaints the conversation
+        // around it, so the pixel-art runner moves at 15fps.
         if self.busy || self.frame.active {
-            crate::pulse::request(crate::pulse::Rate::Smooth, window, cx);
+            crate::pulse::request(crate::pulse::Rate::Half, window, cx);
         }
         let frame = self.frame.clone();
         let color: gpui::Hsla = gpui::rgb(self.color).into();
