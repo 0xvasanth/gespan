@@ -72,6 +72,18 @@ impl Runner {
         }
     }
 }
+impl Runner {
+    /// The strip above the composer the runner plays in. Mounted cached, so
+    /// the conversation's own re-renders don't step the physics again.
+    pub fn placement() -> gpui::StyleRefinement {
+        gpui::StyleRefinement::default()
+            .absolute()
+            .left_0()
+            .right_0()
+            .top(px(-64.))
+            .h(px(80.))
+    }
+}
 impl Render for Runner {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let bounds = self.anchor.get().unwrap_or_default();
@@ -98,89 +110,84 @@ impl Render for Runner {
         {
             self.frame = frame;
         }
-        if (self.busy || self.frame.active) && !reduced {
-            window.request_animation_frame();
+        // Each frame steps the physics in JS, so cap it at the shared 30fps.
+        if self.busy || self.frame.active {
+            crate::pulse::request(crate::pulse::Rate::Smooth, window, cx);
         }
         let frame = self.frame.clone();
         let color: gpui::Hsla = gpui::rgb(self.color).into();
-        div()
-            .absolute()
-            .left_0()
-            .right_0()
-            .top(px(-64.))
-            .h(px(80.))
-            .child(self.anchor.probe())
-            .child(
-                canvas(
-                    |_, _, _| {},
-                    move |bounds, _, window, _| {
-                        if !frame.active {
-                            return;
-                        }
-                        let sprite = |rows: &[String],
-                                      x: f32,
-                                      y: f32,
-                                      side: f32,
-                                      facing: i32,
-                                      alpha: f32,
-                                      window: &mut Window| {
-                            let unit = side / 8.;
-                            let mut ink = color;
-                            ink.a *= alpha;
-                            for (iy, row) in rows.iter().enumerate() {
-                                for (ix, pixel) in row.bytes().enumerate() {
-                                    if pixel != b'#' {
-                                        continue;
-                                    }
-                                    let px_x = x - side / 2.
-                                        + if facing < 0 {
-                                            (7 - ix) as f32 * unit
-                                        } else {
-                                            ix as f32 * unit
-                                        };
-                                    let px_y = 64. - y - side + iy as f32 * unit;
-                                    if px_y >= 64. {
-                                        continue;
-                                    }
-                                    window.paint_quad(gpui::fill(
-                                        gpui::Bounds::new(
-                                            bounds.origin + point(px(px_x), px(px_y)),
-                                            size(px(unit), px(unit.min(64. - px_y))),
-                                        ),
-                                        ink,
-                                    ));
+        // Conversation places the cached view; see `Runner::placement`.
+        div().size_full().child(self.anchor.probe()).child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    if !frame.active {
+                        return;
+                    }
+                    let sprite = |rows: &[String],
+                                  x: f32,
+                                  y: f32,
+                                  side: f32,
+                                  facing: i32,
+                                  alpha: f32,
+                                  window: &mut Window| {
+                        let unit = side / 8.;
+                        let mut ink = color;
+                        ink.a *= alpha;
+                        for (iy, row) in rows.iter().enumerate() {
+                            for (ix, pixel) in row.bytes().enumerate() {
+                                if pixel != b'#' {
+                                    continue;
                                 }
+                                let px_x = x - side / 2.
+                                    + if facing < 0 {
+                                        (7 - ix) as f32 * unit
+                                    } else {
+                                        ix as f32 * unit
+                                    };
+                                let px_y = 64. - y - side + iy as f32 * unit;
+                                if px_y >= 64. {
+                                    continue;
+                                }
+                                window.paint_quad(gpui::fill(
+                                    gpui::Bounds::new(
+                                        bounds.origin + point(px(px_x), px(px_y)),
+                                        size(px(unit), px(unit.min(64. - px_y))),
+                                    ),
+                                    ink,
+                                ));
                             }
-                        };
-                        sprite(&frame.rows, frame.x, frame.y, 16., frame.facing, 1., window);
-                        let coin = [
-                            "........", "..####..", ".######.", "########", "########", ".######.",
-                            "..####..", "........",
-                        ]
-                        .map(str::to_owned);
-                        for c in &frame.coins {
-                            sprite(&coin, c.x, c.y - 6., 12., 1, c.alpha, window);
                         }
-                        let star = [
-                            "...##...", "...##...", "..####..", "########", "########", "..####..",
-                            "...##...", "...##...",
-                        ]
-                        .map(str::to_owned);
-                        for s in &frame.stars {
-                            sprite(
-                                &star,
-                                frame.x - 4. + s.dx,
-                                frame.y + 8. - s.dy,
-                                8.,
-                                1,
-                                s.opacity,
-                                window,
-                            );
-                        }
-                    },
-                )
-                .size_full(),
+                    };
+                    sprite(&frame.rows, frame.x, frame.y, 16., frame.facing, 1., window);
+                    let coin = [
+                        "........", "..####..", ".######.", "########", "########", ".######.",
+                        "..####..", "........",
+                    ]
+                    .map(str::to_owned);
+                    for c in &frame.coins {
+                        sprite(&coin, c.x, c.y - 6., 12., 1, c.alpha, window);
+                    }
+                    let star = [
+                        "...##...", "...##...", "..####..", "########", "########", "..####..",
+                        "...##...", "...##...",
+                    ]
+                    .map(str::to_owned);
+                    for s in &frame.stars {
+                        sprite(
+                            &star,
+                            frame.x - 4. + s.dx,
+                            frame.y + 8. - s.dy,
+                            8.,
+                            1,
+                            s.opacity,
+                            window,
+                        );
+                    }
+                },
             )
+            .size_full(),
+        )
     }
 }
 

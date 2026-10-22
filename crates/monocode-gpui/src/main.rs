@@ -48,6 +48,7 @@ mod project_background;
 mod project_search;
 mod project_settings;
 mod project_tabs;
+mod pulse;
 mod questions;
 mod quick_composer;
 mod quick_open;
@@ -367,9 +368,9 @@ fn main() {
             dev_reload::install(cx);
             cx.set_global(title_raster);
             image_memory::init(cx);
-            input::bind(cx);
             #[cfg(target_os = "macos")]
             memory_log::start(cx);
+            input::bind(cx);
             image_lightbox::bind(cx);
             composer_completion::bind(cx);
             file_editor::bind(cx);

@@ -2863,7 +2863,9 @@ impl Conversation {
                     )
                     .children(self.attachment_drop_overlay(12.)),
             )
-            .children(runner)
+            .children(runner.map(|runner| {
+                runner.cached(crate::composer_runner::Runner::placement())
+            }))
             .children(self.remote_notice(cx))
             .child(self.workspace_bar(cx))
             .into_any_element()

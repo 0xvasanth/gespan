@@ -140,14 +140,16 @@ pub(crate) fn icon_action(
 
 /// The `animate-spin` Loader.
 pub(crate) fn spinner(id: impl Into<gpui::ElementId>, path: &'static str, side: f32) -> AnyElement {
-    use gpui::{Animation, AnimationExt, Transformation, percentage};
-    icon(path, side)
-        .with_animation(
-            id,
-            Animation::new(std::time::Duration::from_secs(1)).repeat(),
-            |icon, delta| icon.with_transformation(Transformation::rotate(percentage(delta))),
-        )
-        .into_any_element()
+    use gpui::{Transformation, percentage};
+    crate::pulse::looping(
+        id,
+        std::time::Duration::from_secs(1),
+        crate::pulse::Rate::Smooth,
+        move |delta| {
+            icon(path, side).with_transformation(Transformation::rotate(percentage(delta)))
+        },
+    )
+    .into_any_element()
 }
 
 pub(crate) fn format_integer(value: i64) -> String {

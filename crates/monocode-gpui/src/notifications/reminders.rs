@@ -55,17 +55,24 @@ impl View {
         desktop_alerts: bool,
         cx: &mut Context<Self>,
     ) {
+        let mut unchanged = self.reminders == reminders
+            && self.error == error
+            && self.desktop_alerts == desktop_alerts;
         if self.snooze.as_ref().is_some_and(|s| {
             !reminders
                 .iter()
                 .any(|r| (r.session_id, r.due_at) == s.target)
         }) {
             self.snooze = None;
+            unchanged = false;
         }
         self.reminders = reminders;
         self.error = error;
         self.desktop_alerts = desktop_alerts;
-        cx.notify();
+        // Shell syncs on every render; only a change may redraw.
+        if !unchanged {
+            cx.notify();
+        }
     }
     pub(crate) fn is_empty(&self) -> bool {
         self.reminders.is_empty() && self.error.is_none()

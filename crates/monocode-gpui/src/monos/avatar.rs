@@ -1,7 +1,7 @@
 //! PixelMascot.tsx / pixelMascots.ts rendered as native quads.
 use gpui::{AnyElement, Hsla, canvas, prelude::*, px, rgb, rgba};
 use serde::Deserialize;
-use std::{sync::LazyLock, time::Instant};
+use std::sync::LazyLock;
 #[derive(Deserialize)]
 struct Sprite {
     name: String,
@@ -11,7 +11,6 @@ struct Sprite {
 }
 static SPRITES: LazyLock<Vec<Sprite>> =
     LazyLock::new(|| serde_json::from_str(include_str!("sprites.json")).unwrap());
-static START: LazyLock<Instant> = LazyLock::new(Instant::now);
 fn tone(mut c: Hsla, t: f32) -> Hsla {
     c.l = if t >= 0. {
         c.l + (1. - c.l) * t
@@ -47,11 +46,17 @@ pub(crate) fn avatar(name: &str, color: u32, status: &str, side: f32, still: boo
     canvas(
         |_, _, _| {},
         move |bounds, _, window, cx| {
-            let t = START.elapsed().as_secs_f32();
-            let animate = !cx.reduce_motion() && (!still || status == "working");
-            if animate {
-                window.request_animation_frame();
-            }
+            // "needs-you" holds still, so it must not keep the clock running.
+            let working = status == "working";
+            let moves = working || (!still && status != "needs-you");
+            // Pixel art reads fine at a low frame rate; a working hop is faster.
+            let rate = if working {
+                crate::pulse::Rate::Half
+            } else {
+                crate::pulse::Rate::Low
+            };
+            let animate = moves && crate::pulse::request(rate, window, cx);
+            let t = crate::pulse::elapsed(cx).as_secs_f32();
             let talk = animate && status == "working" && (t * 3.).floor() as u64 % 2 == 1;
             let sprite = &SPRITES[index];
             let rows = if talk { &sprite.talk } else { &sprite.rest };

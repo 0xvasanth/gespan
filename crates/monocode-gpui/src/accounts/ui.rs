@@ -4,9 +4,7 @@ use crate::{
     settings::widgets::{primary_button, secondary_button},
     theme::*,
 };
-use gpui::{
-    AnimationExt, AnyElement, App, Div, FontWeight, MouseButton, Role, SharedString, div, px,
-};
+use gpui::{AnyElement, App, Div, FontWeight, MouseButton, Role, SharedString, div, px};
 fn account_button(
     id: SharedString,
     label: SharedString,
@@ -97,13 +95,14 @@ impl Accounts {
                     .gap(px(6.))
                     .text_size(px(11.))
                     .when(self.working, |d| {
-                        d.child(icon("refresh-cw", 14.).with_animation(
+                        d.child(crate::pulse::looping(
                             "footer-account-spinner",
-                            gpui::Animation::new(Duration::from_secs(1)).repeat(),
-                            |icon, delta| {
-                                icon.with_transformation(gpui::Transformation::rotate(
-                                    gpui::percentage(delta),
-                                ))
+                            std::time::Duration::from_secs(1),
+                            crate::pulse::Rate::Smooth,
+                            move |delta| {
+                                icon("refresh-cw", 14.).with_transformation(
+                                    gpui::Transformation::rotate(gpui::percentage(delta)),
+                                )
                             },
                         ))
                     })
@@ -194,13 +193,14 @@ impl Accounts {
                         .gap(px(6.))
                         .text_size(px(11.))
                         .when(self.working, |d| {
-                            d.child(icon("refresh-cw", 12.).with_animation(
+                            d.child(crate::pulse::looping(
                                 "account-editor-spinner",
-                                gpui::Animation::new(Duration::from_secs(1)).repeat(),
-                                |icon, delta| {
-                                    icon.with_transformation(gpui::Transformation::rotate(
-                                        gpui::percentage(delta),
-                                    ))
+                                std::time::Duration::from_secs(1),
+                                crate::pulse::Rate::Smooth,
+                                move |delta| {
+                                    icon("refresh-cw", 12.).with_transformation(
+                                        gpui::Transformation::rotate(gpui::percentage(delta)),
+                                    )
                                 },
                             ))
                         })

@@ -1,7 +1,7 @@
 //! Compact semantic tool captions with clickable file targets.
 use super::{TranscriptView, tasks};
 use crate::{markdown, theme::*};
-use gpui::{Animation, AnimationExt, AnyElement, Context, Div, Role, div, prelude::*, px, rgb};
+use gpui::{AnyElement, Context, Div, Role, div, prelude::*, px, rgb};
 use monocode_core::tool::{CommandStep, ToolCall, ToolState};
 
 /// Shell plumbing that says nothing about what a chained command was for.
@@ -94,17 +94,10 @@ impl TranscriptView {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(
-                            crate::session_mark::spinner_dots(0).with_animation(
-                                gpui::SharedString::from(format!("compaction-loader:{identity}")),
-                                Animation::new(std::time::Duration::from_millis(1_200))
-                                    .repeat()
-                                    .with_max_fps(30.),
-                                |_, phase| {
-                                    crate::session_mark::spinner_dots((phase * 1_200.) as u64)
-                                },
-                            ),
-                        )
+                        .child(crate::session_mark::spinner(
+                            gpui::SharedString::from(format!("compaction-loader:{identity}")),
+                            crate::pulse::Rate::Half,
+                        ))
                         .into_any_element()
                 } else {
                     let glyph = match tool.state {

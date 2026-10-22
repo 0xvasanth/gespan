@@ -1,7 +1,7 @@
 //! Native counterpart of HarnessUpdateNotice.tsx. The parent positions this
 //! entity in the shared top-right notification stack.
 use crate::theme::*;
-use gpui::{AnimationExt, Context, EventEmitter, Render, Role, Window, div, prelude::*, px};
+use gpui::{Context, EventEmitter, Render, Role, Window, div, prelude::*, px};
 use monocode_core::{
     harness_updates::{self, Update},
     provider::Kind,
@@ -245,18 +245,16 @@ impl Render for HarnessUpdates {
                             .items_center()
                             .gap(px(6.))
                             .when(updating, |el| {
-                                el.child(
-                                    icon("loader", 12.).with_animation(
-                                        "harness-update-spinner",
-                                        gpui::Animation::new(std::time::Duration::from_secs(1))
-                                            .repeat(),
-                                        |icon, delta| {
-                                            icon.with_transformation(gpui::Transformation::rotate(
-                                                gpui::percentage(delta),
-                                            ))
-                                        },
-                                    ),
-                                )
+                                el.child(crate::pulse::looping(
+                                    "harness-update-spinner",
+                                    std::time::Duration::from_secs(1),
+                                    crate::pulse::Rate::Smooth,
+                                    move |delta| {
+                                        icon("loader", 12.).with_transformation(
+                                            gpui::Transformation::rotate(gpui::percentage(delta)),
+                                        )
+                                    },
+                                ))
                             })
                             .child(if updating {
                                 "Updating"

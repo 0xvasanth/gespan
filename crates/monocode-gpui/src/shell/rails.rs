@@ -169,15 +169,8 @@ impl Shell {
                 }
                 _ => {}
             }
+            // A working agent's spinner keeps itself turning on the shared clock.
             animating |= !self.rails.motions[&id].settled(now);
-            // A working agent's spinner turns on an open rail.
-            if open
-                && let Rail::Agents(summary) = &rail
-                && summary.live
-                && summary.tasks.iter().any(|t| t.status == "running")
-            {
-                animating = true;
-            }
         }
         self.rails.motions.retain(|id, _| seen.contains(id));
         self.rails.started = started;
@@ -261,7 +254,6 @@ impl Shell {
         summary: &monocode_core::orchestration::Summary,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let spin = monocode_core::time::now_ms();
         div()
             .pt_1()
             .pb_1()
@@ -342,7 +334,12 @@ impl Shell {
                                 d.child(icon("circle-alert", 12.).text_color(tone))
                             })
                             .when(working, |d| {
-                                d.child(crate::session_mark::spinner_dots(spin))
+                                d.child(crate::pulse::looping(
+                                    SharedString::from(format!("rail-spinner-{lead}-{ix}")),
+                                    crate::session_mark::SPINNER_PERIOD,
+                                    crate::pulse::Rate::Half,
+                                    crate::session_mark::spinner_at,
+                                ))
                             })
                             .when(done && !alert, |d| {
                                 d.child(icon("check", 12.).text_color(tone))

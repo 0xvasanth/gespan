@@ -1,9 +1,6 @@
 use super::*;
 use crate::theme::*;
-use gpui::{
-    Animation, AnimationExt, AnyElement, FontWeight, Role, SharedString, Transformation, div,
-    percentage, px,
-};
+use gpui::{AnyElement, FontWeight, Role, SharedString, div, px};
 
 impl Accounts {
     pub(crate) fn has_modal_auth(&self) -> bool {
@@ -133,19 +130,18 @@ impl Accounts {
                         d.cursor_pointer().hover(|s| s.bg(content(0.85)))
                     })
                     .when(running, |d| {
-                        d.child(
-                            icon("refresh-cw", 14.)
-                                .text_color(button_text)
-                                .with_animation(
-                                    "footer-provider-auth-spinner",
-                                    Animation::new(Duration::from_secs(1)).repeat(),
-                                    |icon, delta| {
-                                        icon.with_transformation(Transformation::rotate(
-                                            percentage(delta),
-                                        ))
-                                    },
-                                ),
-                        )
+                        d.child(crate::pulse::looping(
+                            "footer-provider-auth-spinner",
+                            std::time::Duration::from_secs(1),
+                            crate::pulse::Rate::Smooth,
+                            move |delta| {
+                                icon("refresh-cw", 14.)
+                                    .text_color(button_text)
+                                    .with_transformation(gpui::Transformation::rotate(
+                                        gpui::percentage(delta),
+                                    ))
+                            },
+                        ))
                     })
                     .when(complete, |d| {
                         d.child(icon("check", 14.).text_color(button_text))

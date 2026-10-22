@@ -134,7 +134,7 @@ impl ApprovalNotices {
         cx: &mut Context<Self>,
     ) {
         self.track_pending(sessions);
-        self.notices.clear();
+        let previous = std::mem::take(&mut self.notices);
         for session in sessions {
             if session.inbox_ask || session.orchestration_worker || session.conversation_focused {
                 continue;
@@ -148,7 +148,11 @@ impl ApprovalNotices {
                 self.notices.push((session.clone(), input.clone()));
             }
         }
-        cx.notify();
+        // Shell syncs on every render; notifying unchanged notices would
+        // dirty the shell again and redraw the window every frame.
+        if self.notices != previous {
+            cx.notify();
+        }
     }
     pub(crate) fn is_empty(&self) -> bool {
         self.notices.is_empty()

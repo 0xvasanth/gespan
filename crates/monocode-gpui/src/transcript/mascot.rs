@@ -1,6 +1,6 @@
 //! ProjectMascot / SubagentMascot: the React transcript's two-frame pixel faces.
 use crate::theme::content;
-use gpui::{Animation, AnimationExt, AnyElement, canvas, div, prelude::*, px, rgb};
+use gpui::{AnyElement, canvas, div, prelude::*, px, rgb};
 use monocode_core::tool::ToolState;
 use std::time::Duration;
 
@@ -121,12 +121,13 @@ fn project_mascot(name: &str, active: bool) -> AnyElement {
     let index = hash as usize % REST.len();
     let slot = div().size(px(12.)).flex_shrink_0();
     if active {
-        // AnimationExt freezes repeating animations at phase zero and stops
-        // requesting frames when the platform's reduced-motion setting is on.
-        slot.with_animation(
+        // Two poses, so the low clock rate is plenty. Reduced motion holds
+        // the first pose and stops asking for frames.
+        crate::pulse::looping(
             "subagent-mascot",
-            Animation::new(Duration::from_millis(460)).repeat(),
-            move |slot, phase| slot.child(sprite(index, phase >= 0.5)),
+            Duration::from_millis(460),
+            crate::pulse::Rate::Low,
+            move |phase| slot.child(sprite(index, phase >= 0.5)),
         )
         .into_any_element()
     } else {

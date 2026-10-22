@@ -1,22 +1,26 @@
 //! A session's provider mark, working spinner, circled done check and amber
 //! attention mark, for sidebar rows and title tabs.
+use crate::pulse::{self, Rate};
 use crate::theme::*;
-use gpui::{AnyElement, Context, Hsla, Render, Role, Task, Window, div, prelude::*, px, rgb};
+use gpui::{AnyElement, Context, ElementId, Hsla, Render, Role, Window, div, prelude::*, px, rgb};
 use std::f32::consts::TAU;
 use std::time::Duration;
 
-/// The spinner repaints at about 30fps so its fades stay smooth.
-const TICK_MS: u64 = 33;
 /// One wave across the grid, as TerminalSpinner's `monocode-spinner-wave`.
-const CYCLE_SECS: f32 = 1.2;
+pub(crate) const SPINNER_PERIOD: Duration = Duration::from_millis(1_200);
 /// Slate, peach and pink, top row to bottom.
 const ROWS: [u32; 3] = [0x6f84a3, 0xe8b583, 0xe47fa6];
 
-/// TerminalSpinner's 12px 3×3 grid at `elapsed_ms` into its animation: a soft
-/// wave washes from the top-left corner to the bottom-right, and dots off the
+/// The working spinner turning on the shared clock at `rate`.
+pub(crate) fn spinner(id: impl Into<ElementId>, rate: Rate) -> pulse::Looping {
+    pulse::looping(id, SPINNER_PERIOD, rate, spinner_at)
+}
+
+/// TerminalSpinner's 12px 3×3 grid at `fraction` of its period: a soft wave
+/// washes from the top-left corner to the bottom-right, and dots off the
 /// center diagonal peak dimmer.
-pub(crate) fn spinner_dots(elapsed_ms: u64) -> gpui::Div {
-    let phase = (elapsed_ms % 1_200) as f32 / 1000. / CYCLE_SECS * TAU;
+pub(crate) fn spinner_at(fraction: f32) -> gpui::Div {
+    let phase = fraction * TAU;
     div()
         .size(px(12.))
         .flex()
@@ -56,8 +60,6 @@ pub(crate) struct SessionMark {
     side: f32,
     provider: String,
     state: State,
-    frame: usize,
-    animation: Option<Task<()>>,
 }
 impl SessionMark {
     pub(crate) fn new(provider: String) -> Self {
@@ -65,8 +67,6 @@ impl SessionMark {
             side: 16.,
             provider,
             state: State::Idle,
-            frame: 0,
-            animation: None,
         }
     }
     /// A title tab's mark. Tabs paint inside their own cached frame, so they
@@ -93,29 +93,7 @@ impl SessionMark {
             return;
         }
         self.provider = provider.to_owned();
-        if self.state != state {
-            self.animation = None;
-            self.frame = 0;
-            if state == State::Working {
-                self.animation = Some(cx.spawn(async move |this, cx| {
-                    loop {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(TICK_MS))
-                            .await;
-                        if this
-                            .update(cx, |this, cx| {
-                                this.frame = this.frame.wrapping_add(1);
-                                cx.notify();
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                }));
-            }
-            self.state = state;
-        }
+        self.state = state;
         cx.notify();
     }
 }
@@ -124,8 +102,10 @@ impl Render for SessionMark {
         let side = self.side;
         let mark: AnyElement = match self.state {
             State::Idle => provider_icon(&self.provider, side).into_any_element(),
-            State::Working => spinner_dots(self.frame as u64 * TICK_MS)
+            // Its own small view, so the clock repaints only the mark.
+            State::Working => div()
                 .id("session-working")
+                .child(spinner("session-working-spinner", Rate::Smooth))
                 .role(Role::Image)
                 .aria_label("Working")
                 .into_any_element(),
@@ -158,19 +138,17 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     #[gpui::test]
-    fn spinner_advances_each_tick_and_stops_after_completion(cx: &mut TestAppContext) {
-        let mark = cx.new(|_| SessionMark::new("codex".into()));
+    fn working_mark_spins_on_the_shared_clock_and_stops_after_completion(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(false));
+        let (mark, cx) = cx.add_window_view(|_, _| SessionMark::new("codex".into()));
         mark.update(cx, |mark, cx| mark.set("codex", State::Working, cx));
         cx.run_until_parked();
-        cx.executor().advance_clock(Duration::from_millis(TICK_MS));
-        cx.run_until_parked();
-        assert_eq!(mark.read_with(cx, |mark, _| mark.frame), 1);
+        cx.update(|_, cx| assert!(pulse::running(cx)));
         mark.update(cx, |mark, cx| mark.set("codex", State::Done, cx));
-        cx.executor().advance_clock(Duration::from_millis(160));
         cx.run_until_parked();
-        mark.read_with(cx, |mark, _| {
-            assert_eq!(mark.frame, 0);
-            assert!(mark.animation.is_none());
-        });
+        // Two background-paced strides: one notifies, the next finds no loop.
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        cx.update(|_, cx| assert!(!pulse::running(cx)));
     }
 }

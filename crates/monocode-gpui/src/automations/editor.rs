@@ -1,6 +1,5 @@
 use super::*;
 use chrono::{Local, TimeZone};
-use gpui::AnimationExt;
 
 pub(super) fn toggle(id: impl Into<gpui::ElementId>, on: bool) -> gpui::Stateful<gpui::Div> {
     div()
@@ -1185,24 +1184,22 @@ impl Automations {
                                     .text_color(color)
                                     .bg(fill)
                                     .when(run.status == "running", |d| {
-                                        d.child(
-                                            icon("loader", 10.).text_color(color).with_animation(
-                                                SharedString::from(format!(
-                                                    "automation-run-spinner-{index}"
-                                                )),
-                                                gpui::Animation::new(
-                                                    std::time::Duration::from_secs(1),
-                                                )
-                                                .repeat(),
-                                                |icon, delta| {
-                                                    icon.with_transformation(
+                                        d.child(crate::pulse::looping(
+                                            SharedString::from(format!(
+                                                "automation-run-spinner-{index}"
+                                            )),
+                                            std::time::Duration::from_secs(1),
+                                            crate::pulse::Rate::Smooth,
+                                            move |delta| {
+                                                icon("loader", 10.)
+                                                    .text_color(color)
+                                                    .with_transformation(
                                                         gpui::Transformation::rotate(
                                                             gpui::percentage(delta),
                                                         ),
                                                     )
-                                                },
-                                            ),
-                                        )
+                                            },
+                                        ))
                                     })
                                     .child(label),
                             ),

@@ -138,7 +138,9 @@ impl Focusable for Arcade {
 impl Render for Arcade {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.tick(cx.reduce_motion());
-        if !cx.reduce_motion() || self.playing {
+        // The engine steps at most every 33ms, so repaint on the shared 30fps
+        // clock. A game in play keeps running under reduced motion.
+        if !crate::pulse::request(crate::pulse::Rate::Smooth, window, cx) && self.playing {
             window.request_animation_frame();
         }
         let frame = self.frame.clone();

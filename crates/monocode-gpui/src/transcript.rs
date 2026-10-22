@@ -27,9 +27,9 @@ use crate::{
     theme::*,
 };
 use gpui::{
-    Animation, AnimationExt, AvailableSpace, Bounds, ClipboardItem, Context, FollowMode,
-    ListAlignment, ListOffset, ListState, Pixels, Role, SharedString, Transformation, Window,
-    canvas, div, list, percentage, prelude::*, px, rgb, size,
+    AvailableSpace, Bounds, ClipboardItem, Context, FollowMode, ListAlignment, ListOffset,
+    ListState, Pixels, Role, SharedString, Transformation, Window, canvas, div, list, percentage,
+    prelude::*, px, rgb, size,
 };
 use monocode_core::tool::{ToolCall, ToolState, tasks::Panel};
 use monocode_core::transcript::Row;
@@ -4377,19 +4377,10 @@ impl TranscriptView {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .child(
-                                        crate::session_mark::spinner_dots(0).with_animation(
-                                            ("phase-loader", group),
-                                            Animation::new(std::time::Duration::from_millis(1_200))
-                                                .repeat()
-                                                .with_max_fps(30.),
-                                            |_, phase| {
-                                                crate::session_mark::spinner_dots(
-                                                    (phase * 1_200.) as u64,
-                                                )
-                                            },
-                                        ),
-                                    )
+                                    .child(crate::session_mark::spinner(
+                                        ("phase-loader", group),
+                                        crate::pulse::Rate::Half,
+                                    ))
                                     .group_hover("activity-phase", |s| s.opacity(0.))
                                     .into_any_element()
                             } else {
