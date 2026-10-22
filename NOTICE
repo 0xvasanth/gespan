@@ -9,3 +9,12 @@ gpui-pre-platform 0.3.9 (Zed snapshot
 Copyright 2022 - 2025 Zed Industries, Inc.
 License: https://www.apache.org/licenses/LICENSE-2.0
 License text: docs/native/LICENSE-GPUI-APACHE
+
+vendor/gpui-pre-apple contains gpui-pre-apple 0.3.9 (Zed snapshot
+93d745668805029476e6d7fbb19652116fed51de), copyright Zed Industries,
+licensed under Apache-2.0 (license included). Monocode modifications include
+source-over alpha blending, backdrop blur, edge fades, text reveal, rounded
+clipping, project-background compositing, shadow clipping, and font-weight
+matching in the text system.
+Source: https://github.com/zed-industries/zed/tree/93d745668805029476e6d7fbb19652116fed51de/crates/gpui_apple
+License text: vendor/gpui-pre-apple/LICENSE-APACHE
