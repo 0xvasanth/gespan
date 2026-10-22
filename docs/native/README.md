@@ -7,6 +7,8 @@ uses React/Tauri. Native builds have their own Cargo workspace and lockfile.
 
 - Node.js 22+ and a current stable Rust toolchain.
 - On macOS, Xcode with macOS components.
+- Linux core checks need D-Bus headers and pkg-config (`libdbus-1-dev` and
+  `pkg-config` on Debian/Ubuntu).
 - At least one installed, signed-in agent CLI. See [provider setup](../providers.md).
 
 The native commands do not require `npm install` or a frontend build.

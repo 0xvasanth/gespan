@@ -570,13 +570,15 @@ fn merge_projects(old: Option<&Value>, current: &Value, source: &Value) -> Value
     Value::Array(merged)
 }
 fn decode_webkit_value(bytes: &[u8]) -> Option<String> {
-    if !bytes.len().is_multiple_of(2) {
+    let (pairs, remainder) = bytes.as_chunks::<2>();
+    if !remainder.is_empty() {
         return None;
     }
     String::from_utf16(
-        &bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        &pairs
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
             .collect::<Vec<_>>(),
     )
     .ok()

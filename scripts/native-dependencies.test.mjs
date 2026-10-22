@@ -7,6 +7,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const buildScript = new URL("../crates/monocode-gpui/build.rs", import.meta.url);
+// The first Cargo build on a fresh Windows runner can exceed one minute.
+const cargoTimeout = process.platform === "win32" ? 180_000 : 60_000;
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "monocode-dependency-guard-"));
@@ -27,10 +29,11 @@ edition = "2024"
       cwd: root,
       env: { ...process.env, CARGO_TARGET_DIR: join(root, "target"), CARGO_TERM_COLOR: "never" },
       encoding: "utf8",
-      timeout: 60_000,
+      timeout: cargoTimeout,
     });
-    assert.ifError(result.error);
-    return { status: result.status, output: result.stdout + result.stderr };
+    const output = (result.stdout ?? "") + (result.stderr ?? "");
+    assert.equal(result.error, undefined, `${result.error?.message}\n${output}`);
+    return { status: result.status, output };
   };
   const addDependency = async (optional) => {
     await mkdir(join(root, "capture/src"), { recursive: true });

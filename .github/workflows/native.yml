@@ -39,6 +39,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Install Linux core dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libdbus-1-dev pkg-config
       - run: npm run native:test:dev
       - run: cargo clippy --manifest-path crates/monocode-gpui/Cargo.toml --locked -p monocode-core --all-targets --profile native-dev -- -D warnings
       - run: cargo test --manifest-path crates/monocode-gpui/Cargo.toml --locked -p monocode-core --profile native-dev
