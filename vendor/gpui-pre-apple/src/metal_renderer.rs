@@ -35,7 +35,19 @@ use objc2_core_video::{
 };
 use parking_lot::Mutex;
 
-use std::{cell::Cell, ffi::c_void, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
+use std::{
+    cell::Cell,
+    ffi::c_void,
+    mem,
+    mem::MaybeUninit,
+    ops::Range,
+    ptr, slice,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 // Exported to metal
 pub(crate) type PointF = gpui::Point<f32>;
@@ -50,6 +62,36 @@ const PATH_SAMPLE_COUNT: u32 = 4;
 /// Metal requires the offset a buffer is bound at to be 256-byte aligned.
 const INSTANCE_BUFFER_ALIGNMENT: usize = 256;
 const MAX_INSTANCE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
+const DEFAULT_INSTANCE_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+/// A frame that grew the instance buffers raises it for good otherwise; this
+/// long under a quarter of it halves it again.
+const INSTANCE_BUFFER_SHRINK_AFTER: Duration = Duration::from_secs(5);
+/// Effect textures (edge fades, haze, frosted popovers) unused this long are
+/// dropped at the next frame and made again when the effect returns.
+const SCRATCH_IDLE: Duration = Duration::from_secs(2);
+
+static SCRATCH_BYTES: AtomicU64 = AtomicU64::new(0);
+static INSTANCE_BUFFER_BYTES: AtomicU64 = AtomicU64::new(DEFAULT_INSTANCE_BUFFER_SIZE as u64);
+
+/// GPU memory, for diagnostics.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GpuMemory {
+    /// Everything this process has allocated on the system GPU.
+    pub allocated: u64,
+    /// The instance buffer size each frame starts from.
+    pub instance_buffer: u64,
+    /// Effect textures the renderers keep between frames.
+    pub scratch: u64,
+}
+
+pub fn gpu_memory() -> GpuMemory {
+    GpuMemory {
+        allocated: metal::Device::system_default()
+            .map_or(0, |device| device.current_allocated_size()),
+        instance_buffer: INSTANCE_BUFFER_BYTES.load(Ordering::Relaxed),
+        scratch: SCRATCH_BYTES.load(Ordering::Relaxed),
+    }
+}
 
 pub type Context = Arc<Mutex<InstanceBufferPool>>;
 pub type Renderer = MetalRenderer;
@@ -67,13 +109,15 @@ pub unsafe fn new_renderer(
 pub struct InstanceBufferPool {
     buffer_size: usize,
     buffers: Vec<metal::Buffer>,
+    light_since: Option<Instant>,
 }
 
 impl Default for InstanceBufferPool {
     fn default() -> Self {
         Self {
-            buffer_size: 2 * 1024 * 1024,
+            buffer_size: DEFAULT_INSTANCE_BUFFER_SIZE,
             buffers: Vec::new(),
+            light_since: None,
         }
     }
 }
@@ -87,6 +131,23 @@ impl InstanceBufferPool {
     pub(crate) fn reset(&mut self, buffer_size: usize) {
         self.buffer_size = buffer_size;
         self.buffers.clear();
+        self.light_since = None;
+        INSTANCE_BUFFER_BYTES.store(buffer_size as u64, Ordering::Relaxed);
+    }
+
+    /// Halve the buffers after a quiet spell. Buffers still in flight at the
+    /// old size are dropped when they come back.
+    fn note_frame(&mut self, used: usize) {
+        if self.buffer_size <= DEFAULT_INSTANCE_BUFFER_SIZE
+            || used.saturating_mul(4) > self.buffer_size
+        {
+            self.light_since = None;
+            return;
+        }
+        let since = *self.light_since.get_or_insert_with(Instant::now);
+        if since.elapsed() >= INSTANCE_BUFFER_SHRINK_AFTER {
+            self.reset((self.buffer_size / 2).max(DEFAULT_INSTANCE_BUFFER_SIZE));
+        }
     }
 
     pub(crate) fn acquire(
@@ -142,11 +203,14 @@ pub struct MetalRenderer {
     /// The snapshot and blurred copy of the last backdrop region, reused
     /// while a popover keeps its size.
     backdrop_scratch: Option<(metal::Texture, metal::Texture)>,
+    backdrop_used: Option<Instant>,
     edge_fade_pipeline_state: metal::RenderPipelineState,
     text_reveal_pipeline_state: metal::RenderPipelineState,
     edge_fade_scratch: Vec<(metal::Texture, metal::Texture)>,
+    edge_fade_used: Vec<Instant>,
     background_pipeline_state: metal::RenderPipelineState,
     background_blurs: Vec<(metal::Texture, metal::Texture)>,
+    background_blur_used: Vec<Instant>,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
@@ -457,11 +521,14 @@ impl MetalRenderer {
             backdrop_composite_pipeline_state,
             backdrop_kernels: Vec::new(),
             backdrop_scratch: None,
+            backdrop_used: None,
             edge_fade_pipeline_state,
             text_reveal_pipeline_state,
             edge_fade_scratch: Vec::new(),
+            edge_fade_used: Vec::new(),
             background_pipeline_state,
             background_blurs: Vec::new(),
+            background_blur_used: Vec::new(),
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
@@ -626,6 +693,10 @@ impl MetalRenderer {
             viewport_size,
         )?;
 
+        let used = writer.used();
+        self.instance_buffer_pool.lock().note_frame(used);
+        self.release_idle_scratch();
+
         let instance_buffer_pool = self.instance_buffer_pool.clone();
         let instance_buffer = Cell::new(Some(writer.finish()));
         let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
@@ -770,6 +841,37 @@ impl MetalRenderer {
             command_buffer.commit();
             Ok(())
         })
+    }
+
+    /// Drop effect textures no recent frame drew with. Encoded frames keep
+    /// their own references until the GPU finishes with them.
+    fn release_idle_scratch(&mut self) {
+        let now = Instant::now();
+        let idle = |used: &Instant| now.duration_since(*used) >= SCRATCH_IDLE;
+        // Nested effects use every shallower depth, so only the deepest go.
+        while self.edge_fade_used.last().is_some_and(idle) {
+            self.edge_fade_used.pop();
+            self.edge_fade_scratch.pop();
+        }
+        self.edge_fade_scratch.truncate(self.edge_fade_used.len());
+        while self.background_blur_used.last().is_some_and(idle) {
+            self.background_blur_used.pop();
+            self.background_blurs.pop();
+        }
+        self.background_blurs.truncate(self.background_blur_used.len());
+        if self.backdrop_used.as_ref().is_none_or(idle) {
+            self.backdrop_scratch = None;
+            self.backdrop_used = None;
+        }
+        let bytes = self
+            .edge_fade_scratch
+            .iter()
+            .chain(&self.background_blurs)
+            .chain(&self.backdrop_scratch)
+            .map(|(a, b)| texture_bytes(a) + texture_bytes(b))
+            .sum::<u64>();
+        // Several windows share the total; the last frame's renderer reports.
+        SCRATCH_BYTES.store(bytes, Ordering::Relaxed);
     }
 
     fn draw_primitives_to_texture(
@@ -1125,6 +1227,7 @@ impl MetalRenderer {
                 self.edge_fade_scratch[depth] = pair;
             }
         }
+        touch(&mut self.edge_fade_used, depth);
         let region = Bounds::new(
             point(ScaledPixels(left), ScaledPixels(top)),
             size(ScaledPixels(width as f32), ScaledPixels(height as f32)),
@@ -1249,6 +1352,7 @@ impl MetalRenderer {
                 }
                 self.background_blurs[depth] = (make(), make());
             }
+            touch(&mut self.background_blur_used, depth);
             let (soft, strong) = &self.background_blurs[depth];
             let (soft_kernel, strong_kernel) = kernels.as_ref().unwrap();
             for (kernel, destination) in [(soft_kernel, soft), (strong_kernel, strong)] {
@@ -1365,6 +1469,7 @@ impl MetalRenderer {
             };
             self.backdrop_scratch = Some((new_texture(), new_texture()));
         }
+        self.backdrop_used = Some(Instant::now());
         let kernel = self.gaussian_kernel(sigma);
         let (original, blurred) = self
             .backdrop_scratch
@@ -2269,6 +2374,10 @@ struct InstanceBufferWriter {
 }
 
 impl InstanceBufferWriter {
+    fn used(&self) -> usize {
+        self.filled.iter().map(|(_, written)| *written).sum::<usize>() + self.offset
+    }
+
     fn new(
         device: &metal::Device,
         pool: &Arc<Mutex<InstanceBufferPool>>,
@@ -2480,6 +2589,18 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
     fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
         self.renderer.sprite_atlas().clone()
     }
+}
+
+fn touch(used: &mut Vec<Instant>, depth: usize) {
+    let now = Instant::now();
+    if used.len() <= depth {
+        used.resize(depth + 1, now);
+    }
+    used[depth] = now;
+}
+
+fn texture_bytes(texture: &metal::TextureRef) -> u64 {
+    texture.width() * texture.height() * 4
 }
 
 #[cfg(test)]

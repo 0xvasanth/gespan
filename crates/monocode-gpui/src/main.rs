@@ -31,6 +31,8 @@ mod inbox;
 mod input;
 mod markdown;
 mod markdown_model;
+#[cfg(target_os = "macos")]
+mod memory_log;
 #[cfg(all(test, target_os = "macos"))]
 mod metal_tests;
 mod mobile;
@@ -366,6 +368,8 @@ fn main() {
             cx.set_global(title_raster);
             image_memory::init(cx);
             input::bind(cx);
+            #[cfg(target_os = "macos")]
+            memory_log::start(cx);
             image_lightbox::bind(cx);
             composer_completion::bind(cx);
             file_editor::bind(cx);
