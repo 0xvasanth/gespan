@@ -18,3 +18,13 @@ clipping, project-background compositing, shadow clipping, and font-weight
 matching in the text system.
 Source: https://github.com/zed-industries/zed/tree/93d745668805029476e6d7fbb19652116fed51de/crates/gpui_apple
 License text: vendor/gpui-pre-apple/LICENSE-APACHE
+
+vendor/gpui-pre, vendor/gpui-pre-linux and vendor/gpui-pre-windows contain
+gpui-pre 0.3.9 components from the same Zed snapshot, copyright Zed Industries,
+licensed under Apache-2.0 (LICENSE-APACHE included in each directory).
+Monocode removes the unused zed-scap dependency and its feature links from their
+manifests, and rejects screen-capture builds in gpui-pre/build.rs pending license
+review. The retained framework code remains Apache-2.0.
+Unused upstream examples and their demo assets are omitted, together with four
+upstream SVG tests requiring font fixtures absent from the published crate.
+The small EXIF image regression fixture is retained under tests/assets.
