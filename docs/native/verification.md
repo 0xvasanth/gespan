@@ -43,6 +43,31 @@ Reopening Tauri after native use of the live production database remains a manua
 check. Concurrent shared-data startup, scheduled tasks and phone connections
 remain unverified and deferred.
 
+## Desktop preference migration — October 23, 2026
+
+On Linux, all 27 automated desktop preference tests and strict core Clippy (`--all-targets`,
+`--profile native-dev`, `-D warnings`) passed. The installed Linux WebKitGTK
+preference store was readable. Synthetic fixtures verified that WebView2 reads
+preserve source filenames and contents with the source database both open/locked
+and closed, and that empty origins do not hide saved preferences. A WebKitGTK
+fixture also verified eight saved projects reach the restored native workspace.
+The full core suite passed serially: 557 passed, 1 ignored. The initial parallel
+run failed two provider-process fixtures; both passed in a serial rerun and in
+the full serial suite.
+
+The Windows-only module's conditional-compilation path passed an isolated
+`-D warnings` check on Linux. This was not a native Windows build. Real WebView2
+profile compatibility, a Windows build and Windows execution remain unverified.
+Copies of actively written LevelDB files are best-effort and may be incomplete
+or unreadable; close Tauri before first-launch preference restoration.
+
+The installed-profile integration test is ignored by default because it reads
+personal storage. To run that read-only check explicitly:
+
+```sh
+cargo test --manifest-path crates/monocode-gpui/Cargo.toml --locked -p monocode-core --profile native-dev installed_desktop_dir_reads -- --ignored
+```
+
 ## Local checks
 
 Run the complete native check from the repository root:

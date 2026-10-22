@@ -78,9 +78,18 @@ Support, Linux's XDG data directory, or Windows' `%APPDATA%`. The app uses the
 existing desktop schema and session IDs. GPUI preferences are saved beside the
 database in `monocode.db.gpui.json`.
 
-On macOS, supported desktop preferences and workspace state are read from the
-installed app. Native preference edits are stored separately. Some desktop
-layout concepts still need native support; see [preview limitations](parity.md).
+Supported desktop preferences and workspace state are read from the installed
+app's webview localStorage on macOS and Linux. The Windows WebView2 reader is
+implemented and covered by synthetic fixtures on Linux; reading a real Windows
+profile remains unverified. Native preference edits are stored separately.
+Some desktop layout concepts still need native support; see
+[preview limitations](parity.md).
+
+The Windows reader always opens a temporary copy of localStorage. Copying while
+Tauri is writing is best-effort: an inconsistent copy can leave desktop
+preferences incomplete or unavailable for that launch. Close Tauri before
+starting GPUI for the first time. See [verification](verification.md) for
+recorded checks.
 
 To inspect the installed database without opening a window or changing it, use
 the executable from a release build:
