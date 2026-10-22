@@ -56,7 +56,6 @@ fn artifact(value: &Value, cx: &mut Context<crate::transcript::TranscriptView>) 
 pub(crate) fn launch(
     id: i64,
     view: Option<&crate::transcript::LaunchView>,
-    spin: f32,
     cx: &mut Context<crate::transcript::TranscriptView>,
 ) -> AnyElement {
     let title = view.map_or("Agent session".to_string(), |v| v.title.clone());
@@ -74,11 +73,21 @@ pub(crate) fn launch(
         }),
         None => ("", "chatting", content(0.45)),
     };
-    let mark = icon(glyph, 16.).text_color(color);
-    let mark = if glyph == "loader-03" && !cx.reduce_motion() {
-        mark.with_transformation(gpui::Transformation::rotate(gpui::percentage(spin.fract())))
+    // A working session's loader turns on the shared clock.
+    let mark = if glyph == "loader-03" {
+        crate::pulse::looping(
+            gpui::SharedString::from(format!("launch-loader-{id}")),
+            std::time::Duration::from_secs(1),
+            crate::pulse::Rate::Smooth,
+            move |turn| {
+                icon(glyph, 16.)
+                    .text_color(color)
+                    .with_transformation(gpui::Transformation::rotate(gpui::percentage(turn)))
+            },
+        )
+        .into_any_element()
     } else {
-        mark
+        icon(glyph, 16.).text_color(color).into_any_element()
     };
     let project = view
         .map(|v| {
@@ -161,7 +170,7 @@ pub(crate) fn render(
                     harness: value["harness"].as_str().unwrap_or_default().into(),
                     cwd: value["cwd"].as_str().unwrap_or_default().into(),
                 });
-            return launch(id, view.as_ref(), 0., cx);
+            return launch(id, view.as_ref(), cx);
         }
         _ => {}
     }

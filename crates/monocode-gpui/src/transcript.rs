@@ -173,6 +173,8 @@ impl UiRow {
     }
 }
 const TOP_INSET: f32 = 20.;
+/// Streamed text reveals and fades on this cadence (30fps).
+const STREAM_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 // Saved drafts are presentation rows, outside the provider transcript.
 const SAVED_DRAFT_START: usize = usize::MAX - 1;
 const BOTTOM_INSET: f32 = 40.;
@@ -478,7 +480,7 @@ pub(crate) struct TranscriptView {
     review: Option<gpui::AnyView>,
     /// The card has changes or an error to show, so it takes a row.
     review_shown: bool,
-    /// A clock for the cards' spinners.
+    /// A clock for the tool and task shimmers.
     started_at: Instant,
     /// One clock per frame for row motion. The list measures rows and the
     /// footer re-measures them; mixed times leave the spacer a few pixels
@@ -1580,7 +1582,6 @@ impl TranscriptView {
         let first =
             ix == 0 || !matches!(self.rows[ix - 1].body, Body::Launch(_) | Body::MonoCard(_));
         let view = self.launches.get(&id).cloned();
-        let spin = self.started_at.elapsed().as_secs_f32();
         div()
             .w_full()
             .flex()
@@ -1593,7 +1594,7 @@ impl TranscriptView {
                     .px_4()
                     .pt(px(if first { 4. } else { 0. }))
                     .pb(px(if card_after { 8. } else { 12. }))
-                    .child(crate::monos::cards::launch(id, view.as_ref(), spin, cx)),
+                    .child(crate::monos::cards::launch(id, view.as_ref(), cx)),
             )
             .into_any_element()
     }
@@ -1824,21 +1825,20 @@ impl TranscriptView {
         }
         false
     }
+    /// Motions a person started: these run at the display's full rate.
     fn chat_animating(&self) -> bool {
         !self.entrances.is_empty()
             || !self.pending_entrances.is_empty()
-            || (self.launches.values().any(|l| l.state == "working")
-                && self
-                    .rows
-                    .iter()
-                    .rev()
-                    .take(200)
-                    .any(|r| matches!(r.body, Body::Launch(_))))
-            || self.follow.offset.abs() >= 0.25
             || self.reactions.values().any(|(_, born)| born.is_some())
             || self
                 .hovered_turn
                 .is_some_and(|(_, since)| since.elapsed().as_secs_f32() < HOVER_FADE)
+    }
+    /// Motion the stream drives: words revealing and fading in and the tail
+    /// easing after growth. Only while one is under way, never for as long as
+    /// the provider is busy: a stalled stream must not keep redrawing.
+    fn stream_animating(&self, now: Instant) -> bool {
+        self.reveals.values().any(|r| r.active(now)) || self.follow.offset.abs() >= 0.25
     }
     fn action_hover(
         &mut self,
@@ -3661,25 +3661,32 @@ impl TranscriptView {
         merged
     }
     fn schedule_frame(&mut self, resized: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.visible || cx.reduce_motion() || self.frame_scheduled {
+            return;
+        }
         let now = Instant::now();
-        if self.visible
-            && !cx.reduce_motion()
-            && (resized
-                || self.streaming
-                || !self.motions.is_empty()
-                || self.agent_panels.animating()
-                || self
-                    .prompt_rise
-                    .is_some_and(|(_, born)| born.elapsed().as_secs_f32() < 0.88)
-                || self.reveals.values().any(|r| r.active(now))
-                || self.chat_animating())
-            && !self.frame_scheduled
-        {
+        let smooth = resized
+            || !self.motions.is_empty()
+            || self.agent_panels.animating()
+            || self
+                .prompt_rise
+                .is_some_and(|(_, born)| born.elapsed().as_secs_f32() < 0.88)
+            || self.chat_animating();
+        if smooth {
             self.frame_scheduled = true;
             let view = cx.entity().downgrade();
             window.on_next_frame(move |_, cx| {
                 let _ = view.update(cx, |this, cx| this.animate_frame(cx));
             });
+        } else if self.stream_animating(now) {
+            // Each step re-lays out the live tail of a long transcript, so
+            // streamed text reveals at 30fps rather than the display's rate.
+            self.frame_scheduled = true;
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(STREAM_FRAME).await;
+                let _ = this.update(cx, |this, cx| this.animate_frame(cx));
+            })
+            .detach();
         }
     }
     fn animate_frame(&mut self, cx: &mut Context<Self>) {

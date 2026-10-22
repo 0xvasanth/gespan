@@ -53,6 +53,8 @@ impl Element for Shimmer {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // The sweep keeps its view repainting on the shared clock while shown.
+        crate::pulse::request(crate::pulse::Rate::Smooth, window, cx);
         self.text.prepaint(None, None, bounds, state, window, cx);
     }
     fn paint(
