@@ -312,6 +312,7 @@ impl ModelList {
             _changed: changed,
         };
         list.highlighted = list.current_index(cx);
+        list.probe_installed(cx);
         list.discover(
             match list.tab {
                 ModelTab::Harness(kind) => kind,
@@ -337,6 +338,40 @@ impl ModelList {
     pub(crate) fn allow_provider_switch(mut self, allowed: bool) -> Self {
         self.switch_allowed = allowed;
         self
+    }
+    /// Like the Tauri picker, hide providers whose CLI isn't installed once the
+    /// probe settles. The session's own provider always stays.
+    fn probe_installed(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test) || self.remote_project.is_some() {
+            return;
+        }
+        let work = cx.background_executor().spawn(async move {
+            Kind::ALL
+                .into_iter()
+                .filter(|kind| monocode_core::provider::resolve(*kind).is_none())
+                .collect::<Vec<_>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let missing = work.await;
+            let _ = this.update(cx, |this, cx| {
+                for kind in missing {
+                    if !this.missing.contains(&kind) {
+                        this.missing.push(kind);
+                    }
+                }
+                if let ModelTab::Harness(selected) = this.tab
+                    && selected != this.provider
+                    && this.missing.contains(&selected)
+                {
+                    this.tab = ModelTab::Harness(this.provider);
+                }
+                if this.query(cx).is_empty() {
+                    this.highlighted = this.current_index(cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
     fn discover(&mut self, kind: Kind, cx: &mut Context<Self>) {
         if cfg!(test) || self.loading.contains(&kind) {
@@ -763,7 +798,8 @@ impl Render for ModelList {
                                             .is_some_and(|providers| providers.contains(kind))
                                 } else {
                                     *kind == self.provider
-                                        || !self.hidden.iter().any(|id| id == kind.id())
+                                        || (!self.hidden.iter().any(|id| id == kind.id())
+                                            && !self.missing.contains(kind))
                                 }
                             })
                             .map(|kind| self.tab(ModelTab::Harness(kind), cx)),

@@ -181,12 +181,14 @@ fn exec(request: &Request, args: &[&str], cancel: &AtomicBool) -> Result<String,
     for stream in [Box::new(stdout) as Box<dyn Read + Send>, Box::new(stderr)] {
         let output = output.clone();
         readers.push(thread::spawn(move || {
-            let mut text = String::new();
-            let _ = stream.take(8 * 1024 * 1024).read_to_string(&mut text);
+            // Lossy, as in Tauri: one invalid byte must not discard the whole
+            // stream (and with it the version line).
+            let mut bytes = Vec::new();
+            let _ = stream.take(8 * 1024 * 1024).read_to_end(&mut bytes);
             output
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .push_str(&text);
+                .push_str(&String::from_utf8_lossy(&bytes));
         }));
     }
     let started = Instant::now();
@@ -225,10 +227,15 @@ fn exec(request: &Request, args: &[&str], cancel: &AtomicBool) -> Result<String,
 }
 fn generation(request: &Request, cancel: &AtomicBool) -> Result<bool, String> {
     let output = exec(request, &["--version"], cancel)?;
-    let re = regex::Regex::new(r"\b(\d+)\.(\d+)\.(\d+)\b").unwrap();
-    let version = re
-        .captures(&output)
-        .ok_or("Unable to determine OpenCode version. MonoCode requires v1.14.19 or newer.")?;
+    // No word boundaries: `v1.14.20` and ANSI-colored output must still match,
+    // as with the Tauri parser.
+    let re = regex::Regex::new(r"(\d+)\.(\d+)\.(\d+)").unwrap();
+    let version = re.captures(&output).ok_or_else(|| {
+        format!(
+            "Unable to determine OpenCode version from {:?}. MonoCode requires v1.14.19 or newer.",
+            output.trim().chars().take(200).collect::<String>()
+        )
+    })?;
     let components: Vec<u64> = (1..=3).map(|ix| version[ix].parse().unwrap_or(0)).collect();
     match components[0] {
         1 if components.as_slice() >= [1, 14, 19].as_slice() => Ok(false),
