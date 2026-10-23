@@ -49,6 +49,7 @@ import { discoverOpenCodeModels } from "../src/integrations/harness/providers/op
 import { discoverPiModels, discoverOmpModels } from "../src/integrations/harness/providers/pi/piCatalog";
 import { discoverFxModels } from "../src/integrations/harness/providers/fx/fxCatalog";
 import { discoverHermesModels } from "../src/integrations/harness/providers/hermes/hermesCatalog";
+import { discoverKiroModels } from "../src/integrations/harness/providers/kiro/kiroCatalog";
 import { discoverAntigravityModels } from "../src/integrations/harness/providers/antigravity/antigravityCatalog";
 import { discoverDevinModels } from "../src/integrations/harness/providers/devin/devinCatalog";
 import { setHarnessModels, type AgentModel } from "../src/features/sessions/model/models";
@@ -61,6 +62,7 @@ import {
   resolveFxBinary,
   resolveGrokBinary,
   resolveHermesBinary,
+  resolveKiroBinary,
   resolveOmpBinary,
   resolveOpenCodeBinary,
   resolvePiBinary,
@@ -79,6 +81,7 @@ const resolveBinary: Record<RemoteProvider, () => Promise<{ path: string }>> = {
   omp: () => resolveOmpBinary(),
   fx: () => resolveFxBinary(),
   hermes: () => resolveHermesBinary(),
+  kiro: () => resolveKiroBinary(),
   antigravity: () => resolveAntigravityBinary(),
   devin: () => resolveDevinBinary(),
 };
@@ -95,6 +98,7 @@ const discoverModels: Record<RemoteProvider, (cwd: string) => Promise<AgentModel
   omp: discoverOmpModels,
   fx: discoverFxModels,
   hermes: discoverHermesModels,
+  kiro: discoverKiroModels,
   antigravity: discoverAntigravityModels,
   devin: discoverDevinModels,
 };

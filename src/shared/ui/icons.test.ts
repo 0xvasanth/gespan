@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { HarnessIcon } from "../../features/sessions/ui/HarnessIcon";
+import {
+  HarnessIcon,
+  MONOCHROME_HARNESSES,
+} from "../../features/sessions/ui/HarnessIcon";
 import { FilePlus, FoldVertical, UnfoldVertical } from "./icons";
 
 const SRC = fileURLToPath(new URL("../..", import.meta.url));
@@ -61,5 +64,17 @@ describe("hugeicons imports", () => {
     );
     expect(html).toContain("items-center justify-center");
     expect(html).toContain("size-[72%]");
+  });
+
+  it("tints the Kiro mark with currentColor through the shared mask", () => {
+    const html = renderToStaticMarkup(
+      createElement(HarnessIcon, {
+        harness: "kiro",
+        className: "size-4 shrink-0",
+      }),
+    );
+    expect(html).toContain("bg-current");
+    expect(html).toMatch(/mask-image:url\(/);
+    expect(MONOCHROME_HARNESSES.has("kiro")).toBe(true);
   });
 });
