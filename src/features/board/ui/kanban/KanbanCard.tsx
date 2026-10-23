@@ -7,15 +7,18 @@ import type { KanbanDragData } from "./kanbanMove";
 /**
  * Sortable wrapper for one card; the whole card is the drag handle. While it
  * is the active item its slot collapses to a 2px accent line, so the line
- * marks where the card will land as neighbours slide apart.
+ * marks where the card will land as neighbours slide apart. Enter on the
+ * focused card opens it; Space picks it up.
  */
 export function KanbanCard({
   card,
   renderCard,
+  onOpen,
   reducedMotion,
 }: {
   card: BoardCard;
   renderCard: (card: BoardCard) => ReactNode;
+  onOpen?: (card: BoardCard) => void;
   reducedMotion: boolean;
 }) {
   const data: KanbanDragData = { kind: "card", cardId: card.id };
@@ -36,6 +39,19 @@ export function KanbanCard({
       ref={setNodeRef}
       {...attributes}
       {...listeners}
+      onKeyDown={(event) => {
+        listeners?.onKeyDown?.(event);
+        if (
+          onOpen &&
+          event.key === "Enter" &&
+          event.target === event.currentTarget &&
+          !event.defaultPrevented &&
+          !event.nativeEvent.isComposing
+        ) {
+          event.preventDefault();
+          onOpen(card);
+        }
+      }}
       aria-roledescription="card"
       aria-label={`Card #${card.number}, ${card.title}`}
       data-kanban-card={card.id}

@@ -512,6 +512,7 @@ function BoardContent({
             renderColumnFooter={renderColumnFooter}
             onCardMove={onCardMove}
             onColumnMove={onColumnMove}
+            onCardOpen={(card) => setOpenCard({ id: card.id })}
             trailing={trailing}
           />
         ) : null}

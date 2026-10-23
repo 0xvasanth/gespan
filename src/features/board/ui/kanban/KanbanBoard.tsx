@@ -61,6 +61,8 @@ export type KanbanBoardProps = {
   renderColumnFooter: (column: BoardColumn) => ReactNode; // "+ Add card" / composer
   onCardMove: (cardId: string, to: DropTarget) => void;
   onColumnMove: (columnId: string, index: number) => void;
+  /** Enter on a focused card; Space picks it up. */
+  onCardOpen?: (card: BoardCard) => void;
   /** Rendered after the last column inside the scroller (the add-column button). */
   trailing?: ReactNode;
 };
@@ -87,6 +89,13 @@ const lockColumnsToRow: Modifier = ({ active, transform }) =>
 
 const MEASURING = { droppable: { strategy: MeasuringStrategy.Always } };
 
+// Space picks up and drops; Enter is left to open a focused card.
+const KEYBOARD_CODES = {
+  start: ["Space"],
+  cancel: ["Escape"],
+  end: ["Space", "Enter"],
+};
+
 const OVERLAY_CLASS =
   "rounded-lg rotate-[1.5deg] shadow-[0_16px_36px_-10px_rgb(0_0_0/0.45)] motion-reduce:rotate-0";
 
@@ -103,6 +112,7 @@ export function KanbanBoard({
   renderColumnFooter,
   onCardMove,
   onColumnMove,
+  onCardOpen,
   trailing,
 }: KanbanBoardProps) {
   const reducedMotion = useReducedMotion();
@@ -154,6 +164,7 @@ export function KanbanBoard({
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
+      keyboardCodes: KEYBOARD_CODES,
     }),
   );
 
@@ -237,6 +248,7 @@ export function KanbanBoard({
               isDropTarget={activeCard?.columnId === column.id}
               reducedMotion={reducedMotion}
               renderCard={renderCard}
+              onCardOpen={drag ? undefined : onCardOpen}
               renderColumnHeader={renderColumnHeader}
               renderColumnFooter={renderColumnFooter}
             />

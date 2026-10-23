@@ -208,6 +208,47 @@ describe("KanbanBoard", () => {
       return el;
     }
 
+    it("opens a focused card with Enter instead of picking it up", async () => {
+      const onCardOpen = vi.fn();
+      render({ onCardOpen });
+      const el = container.querySelector<HTMLElement>(
+        "[data-kanban-card='c12']",
+      )!;
+      act(() => el.focus());
+      key(el, "Enter", "Enter");
+      await flush();
+      expect(container.querySelector("[data-dragging]")).toBeNull();
+      expect(onCardOpen).toHaveBeenCalledTimes(1);
+      expect(onCardOpen).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "c12" }),
+      );
+      // Space still picks the card up, and doesn't open it.
+      key(el, "Space", " ");
+      await flush();
+      expect(container.querySelector("[data-dragging='']")).not.toBeNull();
+      expect(onCardOpen).toHaveBeenCalledTimes(1);
+      // Enter while dragging drops the card; it doesn't open it.
+      key(el, "Enter", "Enter");
+      await flush();
+      expect(container.querySelector("[data-dragging]")).toBeNull();
+      expect(onCardOpen).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores Enter from a control inside the card", async () => {
+      const onCardOpen = vi.fn();
+      render({
+        onCardOpen,
+        renderCard: (c) =>
+          createElement("button", { type: "button", "data-inner": c.id }, "…"),
+      });
+      const inner = container.querySelector<HTMLElement>("[data-inner='c12']")!;
+      act(() => inner.focus());
+      key(inner, "Enter", "Enter");
+      await flush();
+      expect(onCardOpen).not.toHaveBeenCalled();
+      expect(container.querySelector("[data-dragging]")).toBeNull();
+    });
+
     it("announces cancel with the drag-start position", async () => {
       render();
       const el = await pickUp("c12");

@@ -29,6 +29,7 @@ export function KanbanColumn({
   isDropTarget,
   reducedMotion,
   renderCard,
+  onCardOpen,
   renderColumnHeader,
   renderColumnFooter,
 }: {
@@ -37,6 +38,7 @@ export function KanbanColumn({
   isDropTarget: boolean;
   reducedMotion: boolean;
   renderCard: (card: BoardCard) => ReactNode;
+  onCardOpen?: (card: BoardCard) => void;
   renderColumnHeader: (column: BoardColumn, count: number) => ReactNode;
   renderColumnFooter: (column: BoardColumn) => ReactNode;
 }) {
@@ -94,6 +96,7 @@ export function KanbanColumn({
               key={card.id}
               card={card}
               renderCard={renderCard}
+              onOpen={onCardOpen}
               reducedMotion={reducedMotion}
             />
           ))}

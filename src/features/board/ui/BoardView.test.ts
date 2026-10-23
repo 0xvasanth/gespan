@@ -275,6 +275,28 @@ describe("BoardView", () => {
     expect(columnEl("backlog").querySelector("textarea")).toBeNull();
   });
 
+  it("opens a focused card's detail with Enter", async () => {
+    await renderBoard();
+    const wrapper = columnEl("backlog").querySelector<HTMLElement>(
+      "[data-kanban-card='c1']",
+    )!;
+    // Enter on the card's own menu button opens the menu, not the card.
+    const menu = wrapper.querySelector<HTMLButtonElement>(
+      'button[aria-label="Card actions for #1"]',
+    )!;
+    act(() => menu.focus());
+    press(menu, "Enter", { code: "Enter" });
+    await flush();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    act(() => wrapper.focus());
+    press(wrapper, "Enter", { code: "Enter" });
+    await flush();
+    expect(wrapper.hasAttribute("data-dragging")).toBe(false);
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("Card #1");
+  });
+
   it("disables Delete column while the column holds cards", async () => {
     await renderBoard();
     const deleteItem = (columnId: string) => {
