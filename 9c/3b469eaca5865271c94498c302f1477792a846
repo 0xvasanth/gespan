@@ -1,0 +1,83 @@
+mobile/src/features/workspace/WorkspaceProvider.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 28,41,558,671-672
+mobile/src/features/background/AsciiField.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 5,150
+mobile/tests/WorkspaceProvider.test.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 36-37
+mobile/src/features/connection/ConnectionProvider.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 17,34,38,114,291,298
+mobile/src/features/workspace/projectPick.ts
+  s_ccb41beff89445::t_d231c8c8c42a55 6
+mobile/src/features/files/CodeView.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 26,445,453,461,482
+mobile/src/features/connection/selection.ts
+  s_ccb41beff89445::t_d231c8c8c42a55 1,4-5,8,12,19,24-25,29,33,37
+mobile/src/features/sessions/SessionScreen.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 201,235,393
+mobile/src/features/connection/WorkspacePicker.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 19,28,34-35,54,60,86,88,109,115-117,119,121-123,125-128,160
+mobile/src/ui/SegmentedSwitch.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 46
+mobile/src/ui/SceneFade.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 8
+mobile/tests/watchUpdates.test.ts
+  s_ccb41beff89445::t_d231c8c8c42a55 54-55
+mobile/src/features/changes/diffTheme.ts
+  s_ccb41beff89445::t_7a3a0b7670d763 6
+mobile/src/features/sessions/SessionCard.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 139
+mobile/README.md
+  s_ccb41beff89445::t_d231c8c8c42a55 21,24,28
+mobile/src/app/settings/workspace.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 6
+mobile/src/features/workspace/types.ts
+  s_ccb41beff89445::t_d231c8c8c42a55 1,93,101,114,185
+mobile/tests/WorkspacePicker.test.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 21-22,25
+mobile/src/app/settings/_layout.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 8,51-52
+src/test/noMonoReferences.test.ts
+  s_ccb41beff89445::t_3331790c2a97d9 21,63
+  s_ccb41beff89445::t_b4e4e52f33bdd4 1-20,22-62,64-95
+mobile/tests/connection.test.ts
+  s_ccb41beff89445::t_d231c8c8c42a55 9,13,17,20,23,28,30,32,37,40
+mobile/src/features/mascots/PixelMascot.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 32,34,65
+mobile/src/features/sessions/Transcript.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 63,337
+mobile/src/features/sessions/TranscriptTurn.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 31,55,63,86,266,345,428-429,439,441,444,685,719
+mobile/modules/rebase-link/ios/NativeTranscriptView.swift
+  s_ccb41beff89445::t_74a7df0c28b048 283,587
+mobile/src/app/index.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 8,18,21,29
+mobile/src/app/settings/index.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 6,178,181
+docs/agent-access.md
+  s_ccb41beff89445::t_7a3a0b7670d763 12-13
+mobile/src/features/changes/ChangesView.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 17,590
+mobile/src/features/sessions/Composer.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 83
+mobile/src/features/sessions/Markdown.tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 373,397
+  s_ccb41beff89445::t_7a3a0b7670d763 24
+README.md
+  s_ccb41beff89445::t_7a3a0b7670d763 39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9c3b469eaca5865271c94498c302f1477792a846",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
