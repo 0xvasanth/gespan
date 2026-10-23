@@ -134,6 +134,9 @@ describe("onLinkedWork", () => {
     invoke.mockReset();
   });
 
+  const callsFor = (command: string) =>
+    invoke.mock.calls.filter(([cmd]) => cmd === command);
+
   function mockBackend(cards: BoardCard[]) {
     invoke.mockImplementation(async (command: string, args?: { boardId?: string }) => {
       if (command === "board_cards_for_link") return cards;
@@ -163,7 +166,23 @@ describe("onLinkedWork", () => {
       index: Number.MAX_SAFE_INTEGER,
       actor: "system",
     });
-    expect(invoke).not.toHaveBeenCalledWith("board_card_record", expect.anything());
+    expect(invoke).toHaveBeenCalledWith("board_card_record", {
+      cardId: "c1",
+      kind: "started",
+    });
+    expect(invoke).toHaveBeenCalledWith("board_card_record", {
+      cardId: "c2",
+      kind: "started",
+    });
+    expect(callsFor("board_card_record")).toHaveLength(2);
+    // The event is recorded after the move, per card.
+    for (const cardId of ["c1", "c2"]) {
+      const calls = invoke.mock.calls.filter(([, args]) => args?.cardId === cardId);
+      expect(calls.map(([cmd]) => cmd)).toEqual([
+        "board_card_move",
+        "board_card_record",
+      ]);
+    }
   });
 
   it("records the event instead of moving when the card must stay", async () => {
@@ -175,6 +194,7 @@ describe("onLinkedWork", () => {
       cardId: "c1",
       kind: "started",
     });
+    expect(callsFor("board_card_record")).toHaveLength(1);
     expect(invoke).not.toHaveBeenCalledWith("board_card_move", expect.anything());
   });
 
@@ -220,6 +240,11 @@ describe("onLinkedWork", () => {
     });
 
     await expect(onLinkedWork("session", "s1", "started")).rejects.toThrow("boom");
+
+    // c1's move failed, so its event is not recorded; c2 is moved and recorded.
+    expect(callsFor("board_card_record")).toEqual([
+      ["board_card_record", { cardId: "c2", kind: "started" }],
+    ]);
 
     expect(invoke).toHaveBeenCalledWith("board_card_move", {
       cardId: "c2",

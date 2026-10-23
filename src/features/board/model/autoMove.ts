@@ -42,8 +42,9 @@ export function autoMoveTarget(
 }
 
 /**
- * Applies the auto-move rule to every card linked to this work. Each card's
- * event is recorded either way. One failing card does not stop the others;
+ * Applies the auto-move rule to every card linked to this work. The event is
+ * always recorded on the card: after a move (which logs its own "moved" row)
+ * and when the card stays. One failing card does not stop the others;
  * the first error is rethrown after all cards were handled.
  */
 export async function onLinkedWork(
@@ -71,9 +72,8 @@ export async function onLinkedWork(
       const target = current ? autoMoveTarget(columns, current, event) : null;
       if (target) {
         await moveCard(card.id, target.id, Number.MAX_SAFE_INTEGER, "system");
-      } else {
-        await recordCardEvent(card.id, event);
       }
+      await recordCardEvent(card.id, event);
     } catch (error) {
       if (!failed) {
         failed = true;

@@ -43,13 +43,22 @@ export type BoardDetail = {
   cards: BoardCard[];
 };
 
+export type BoardActivityKind =
+  | "created"
+  | "edited"
+  | "moved"
+  | "linked"
+  | "unlinked"
+  | "deleted"
+  | LinkedWorkEvent;
+
 /** Activity rows store column names (not ids) in fromColumn/toColumn. */
 export type BoardActivity = {
   id: string;
   boardId: string;
   cardId: string | null;
-  kind: string;
-  actor: string;
+  kind: BoardActivityKind;
+  actor: BoardActor;
   fromColumn: string | null;
   toColumn: string | null;
   detail: string | null;
