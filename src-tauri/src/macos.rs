@@ -860,7 +860,7 @@ pub(crate) fn prefer_bundle_dock_icon() {
     unsafe { app.setApplicationIconImage(None) };
     app.dockTile().display();
     // Tauri assigns the embedded bitmap after Ready. Clear again so Icon
-    // Services keeps the composed AppIcon (squircle fill + artwork).
+    // Services keeps the bundle's icon.icns.
     unsafe {
         let _: () = msg_send![
             &app,
@@ -954,7 +954,6 @@ fn write_dev_bundle_icons(
     )
     .map_err(|e| e.to_string())?;
     std::fs::write(resources.join("AppIcon.icns"), DEV_ICNS).map_err(|e| e.to_string())?;
-    std::fs::write(resources.join("Assets.car"), DEV_ASSETS_CAR).map_err(|e| e.to_string())?;
     let _ = std::process::Command::new("/usr/bin/touch")
         .arg(app)
         .status();
@@ -970,8 +969,6 @@ const DEV_BUNDLE_NAME_ENV: &str = "REBASE_DEV_APP_NAME";
 const DEV_BUNDLE_ID: &str = "com.rebase.desktop";
 #[cfg(debug_assertions)]
 const DEV_ICNS: &[u8] = include_bytes!("../icons/icon.icns");
-#[cfg(debug_assertions)]
-const DEV_ASSETS_CAR: &[u8] = include_bytes!("../macos/Assets.car");
 #[cfg(debug_assertions)]
 fn dev_bundle_dir_name(app_name: &str) -> String {
     format!("{app_name}.app")
@@ -1032,8 +1029,6 @@ fn dev_bundle_plist(app_name: &str, version: &str, bundle_version: &str) -> Vec<
 	<key>CFBundleExecutable</key>
 	<string>rebase</string>
 	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
-	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.rebase.desktop</string>

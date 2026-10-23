@@ -50,9 +50,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": {
-      "macos/Assets.car": "Assets.car"
-    },
     "macOS": {
       "entitlements": "Entitlements.plist",
       "signingIdentity": "-"
