@@ -15,13 +15,13 @@ let missingResume = false;
 const spawnChild = vi.hoisted(() =>
   vi.fn(async (..._args: unknown[]) => undefined),
 );
-const prepareCodexMonoContext = vi.hoisted(() =>
+const prepareCodexPilotContext = vi.hoisted(() =>
   vi.fn(async (_input: unknown) => ({
-    config: { sqlite_home: "/private/mono" },
+    config: { sqlite_home: "/private/pilot" },
     hasThread: true,
   })),
 );
-vi.mock("./codexStore", () => ({ prepareCodexMonoContext }));
+vi.mock("./codexStore", () => ({ prepareCodexPilotContext }));
 
 function receive(message: unknown) {
   onLine?.(JSON.stringify(message));
@@ -114,7 +114,7 @@ beforeEach(() => {
   failTurn = false;
   missingResume = false;
   spawnChild.mockClear();
-  prepareCodexMonoContext.mockClear();
+  prepareCodexPilotContext.mockClear();
 });
 
 afterEach(async () => {
@@ -255,36 +255,36 @@ it("keeps a failed generation and its retry unsaved", async () => {
   ).toBe(true);
 });
 
-it("isolates Mono side questions from regular Codex threads and resumes them after restart", async () => {
+it("isolates Pilot side questions from regular Codex threads and resumes them after restart", async () => {
   await runCodexTextPrompt({
     cwd: "/repo",
     ephemeral: false,
     prompt: "Regular side question",
   });
   expect(spawnChild.mock.calls[0][6]).toBeUndefined();
-  expect(prepareCodexMonoContext).not.toHaveBeenCalled();
+  expect(prepareCodexPilotContext).not.toHaveBeenCalled();
   await runCodexTextPrompt({
     cwd: "/repo",
     ephemeral: false,
-    codexStore: "mono",
-    prompt: "Mono side question",
+    codexStore: "pilot",
+    prompt: "Pilot side question",
   });
-  expect(spawnChild.mock.calls[1][6]).toBe("mono");
+  expect(spawnChild.mock.calls[1][6]).toBe("pilot");
   expect(threadStarts()[1].params).toMatchObject({
-    config: { sqlite_home: "/private/mono" },
+    config: { sqlite_home: "/private/pilot" },
   });
   expect(threadStarts()[1].params).not.toHaveProperty("ephemeral");
   await stopCodexTextPrompt();
   await runCodexTextPrompt({
     cwd: "/repo",
     ephemeral: false,
-    codexStore: "mono",
+    codexStore: "pilot",
     threadId: "thread_2",
     prompt: "Continue",
   });
   expect(sent.find((m) => m.method === "thread/resume")?.params).toMatchObject({
     threadId: "thread_2",
-    config: { sqlite_home: "/private/mono" },
+    config: { sqlite_home: "/private/pilot" },
   });
   expect(threadStarts()).toHaveLength(2);
 });
@@ -295,8 +295,8 @@ it("reports private side-question resume failures without replacing saved contex
     runCodexTextPrompt({
       cwd: "/repo",
       ephemeral: false,
-      codexStore: "mono",
-      threadId: "saved-mono",
+      codexStore: "pilot",
+      threadId: "saved-pilot",
       prompt: "Continue",
     }),
   ).rejects.toThrow("thread not found");

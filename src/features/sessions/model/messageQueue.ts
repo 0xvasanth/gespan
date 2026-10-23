@@ -48,12 +48,12 @@ export function canDispatchQueuedHead(session: Session): boolean {
   return true;
 }
 
-/** Monos deliver one waiting follow-up at a time after the provider is ready. */
+/** Pilots deliver one waiting follow-up at a time after the provider is ready. */
 export function canSteerQueuedHead(session: Session): boolean {
   const head = queuedHead(session);
   return (
     !!head &&
-    !head.monoSessionCompletion &&
+    !head.pilotSessionCompletion &&
     !!session.busy &&
     !!session.turnReady &&
     !session.worktreePreparing &&
@@ -82,7 +82,7 @@ export function queuedMessageForSubmit(
     (entry) => entry.id === messageId,
   );
   if (!message) return undefined;
-  if (mode === "steer") return message.monoSessionCompletion ? undefined : message;
+  if (mode === "steer") return message.pilotSessionCompletion ? undefined : message;
   if (queuedHead(session)?.id !== messageId) return undefined;
   if (!canDispatchQueuedHead(session)) return undefined;
   return message;

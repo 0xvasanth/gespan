@@ -167,8 +167,8 @@ export type HarnessSessionInput = {
   runtimeMode: RuntimeMode;
   /** Keep provider context in memory; Rebase owns the saved transcript. */
   ephemeral?: boolean;
-  /** Persist Codex context in Rebase's private Mono store. */
-  codexStore?: "mono";
+  /** Persist Codex context in Rebase's private Pilot store. */
+  codexStore?: "pilot";
   intent?: TurnIntent;
   /**
    * This session drives Rebase's control CLI, which reaches the app over

@@ -54,8 +54,8 @@ export type BlockRole =
   | "system"
   | "handoff";
 
-/** A session created by a Mono during this conversation turn. */
-export type MonoSpawnedSession = {
+/** A session created by a Pilot during this conversation turn. */
+export type PilotSpawnedSession = {
   sessionId: string;
   cwd: string;
   title: string;
@@ -263,25 +263,25 @@ export type Attachment = {
   previewUrl?: string;
 };
 
-export type MonoSessionCompletion = {
+export type PilotSessionCompletion = {
   sessionId: string;
   title: string;
   status: "completed" | "failed" | "cancelled";
-  /** A single report covering several sessions launched in one Mono turn. */
+  /** A single report covering several sessions launched in one Pilot turn. */
   sessionCount?: number;
 };
 
 export type QueuedMessage = {
   id: string;
-  /** User bubble already shown optimistically in a Mono's conversation. */
+  /** User bubble already shown optimistically in a Pilot's conversation. */
   blockId?: string;
   text: string;
   attachments: Attachment[];
   noteCard?: NoteComposerCard;
   handoffCard?: HandoffComposerCard;
   intent?: TurnIntent;
-  /** An app notification that must wait for an idle Mono, never steer its work. */
-  monoSessionCompletion?: MonoSessionCompletion;
+  /** An app notification that must wait for an idle Pilot, never steer its work. */
+  pilotSessionCompletion?: PilotSessionCompletion;
   /** Delivery failed; the message remains available to retry or edit. */
   error?: string;
 };
@@ -371,10 +371,10 @@ export type Block = {
    * conversation rather than the user narrating their own agents.
    */
   internal?: boolean;
-  /** Hidden app prompt that starts a separate completion report in a Mono chat. */
-  monoSessionCompletion?: MonoSessionCompletion;
+  /** Hidden app prompt that starts a separate completion report in a Pilot chat. */
+  pilotSessionCompletion?: PilotSessionCompletion;
   /** Accepted session launches, kept on the originating user turn. */
-  monoSpawnedSessions?: MonoSpawnedSession[];
+  pilotSpawnedSessions?: PilotSpawnedSession[];
   handoff?: HandoffMeta;
   secondOpinion?: SecondOpinionMeta;
   /** Independent read-only side conversations anchored to this user turn. */
@@ -392,15 +392,15 @@ export type Block = {
    */
   notice?: "error" | "interrupt";
   statusKey?: string;
-  /** Posted to a Mono's chat by one of its habits, outside any turn. */
-  monoHabit?: { id: string; name: string; at: number };
-  /** A card a Mono put in its chat; see `features/monos/model/monoCards`. */
-  monoCard?: import("../../monos/model/monoCards").MonoCard;
+  /** Posted to a Pilot's chat by one of its habits, outside any turn. */
+  pilotHabit?: { id: string; name: string; at: number };
+  /** A card a Pilot put in its chat; see `features/pilots/model/pilotCards`. */
+  pilotCard?: import("../../pilots/model/pilotCards").PilotCard;
   /**
-   * The emoji a Mono answered this user message with. Drawn from its reply
-   * when the chat renders; see `features/monos/model/monoReaction`.
+   * The emoji a Pilot answered this user message with. Drawn from its reply
+   * when the chat renders; see `features/pilots/model/pilotReaction`.
    */
-  monoReaction?: string;
+  pilotReaction?: string;
 };
 
 export type RuntimeMode =
@@ -458,8 +458,8 @@ export type Session = {
   /** Project / working directory for this session. */
   cwd: string;
   blocks: Block[];
-  /** Mono-only database window. Older blocks are fetched separately by the viewer. */
-  monoTranscript?: { before: number | null; firstBlockId: string | null };
+  /** Pilot-only database window. Older blocks are fetched separately by the viewer. */
+  pilotTranscript?: { before: number | null; firstBlockId: string | null };
   /** True while a harness turn is in flight. */
   busy?: boolean;
   /** The provider has accepted this turn and can take live follow-ups. */
@@ -481,7 +481,7 @@ export type Session = {
   usageLimit?: UsageLimit;
   /**
    * Lives only in memory: never saved, never listed with the project's chats.
-   * A Mono's habit runs are, and disappear when the run ends.
+   * A Pilot's habit runs are, and disappear when the run ends.
    */
   ephemeral?: boolean;
   /** Provider-side conversation id (Cursor ACP session id). */

@@ -31,7 +31,7 @@ function deferred<T>() {
 }
 const catalog = (id: string) => ({
   projects: [],
-  monos: [],
+  pilots: [],
   sessions: [{ id }],
 });
 

@@ -44,12 +44,12 @@ import { TerminalSpinner } from "../../features/sessions/ui/TerminalSpinner";
 import { TabLabel } from "../../shared/ui/TabLabel";
 import { WindowControls } from "./WindowControls";
 import { PixelMascot } from "../../features/projects/ui/PixelMascot";
-import { MonoRailMascot } from "../../features/monos/ui/MonoRailMascot";
+import { PilotRailMascot } from "../../features/pilots/ui/PilotRailMascot";
 import {
-  MONO_STATUS_LABEL,
-  type MonoLook,
-  type MonoState,
-} from "../../features/monos/model/mono";
+  PILOT_STATUS_LABEL,
+  type PilotLook,
+  type PilotState,
+} from "../../features/pilots/model/pilot";
 import { IS_MAC, IS_WIN, MOD, SHIFT } from "../../platform/tauri/platform";
 import { useTrafficLightsVisible } from "../../platform/tauri/useTrafficLightsVisible";
 import type { RecentProject } from "../../features/projects/model/recents";
@@ -78,8 +78,8 @@ const APP_VIEW_ICONS = {
 export type Tab = {
   id: string;
   appView?: AppView;
-  /** A Mono open as a tab; its name is the title. */
-  mono?: { mascot: string; color: string; status: MonoState["status"] };
+  /** A Pilot open as a tab; its name is the title. */
+  pilot?: { mascot: string; color: string; status: PilotState["status"] };
   /** Project folder name, e.g. `agent-terminal`. */
   project: string;
   /** Focused conversation title; empty for a fresh session. */
@@ -116,20 +116,20 @@ type Props = {
   activeId: string;
   cwd: string;
   /**
-   * The Mono filling the main area. It takes the tabs' place, and nothing
+   * The Pilot filling the main area. It takes the tabs' place, and nothing
    * project-scoped belongs beside it.
    */
-  mono?: { look: MonoLook; state: MonoState };
+  pilot?: { look: PilotLook; state: PilotState };
   /**
    * Takes the tabs' place, as the inset layout's Settings does with its
    * breadcrumb and actions.
    */
   content?: ReactNode;
-  /** Shows or hides the Mono's overview panel beside its chat. */
-  onToggleMonoOverview?: () => void;
-  monoOverviewOpen?: boolean;
-  onOpenMonoSettings?: () => void;
-  /** The full-height Mono panel owns these while it is open. */
+  /** Shows or hides the Pilot's overview panel beside its chat. */
+  onTogglePilotOverview?: () => void;
+  pilotOverviewOpen?: boolean;
+  onOpenPilotSettings?: () => void;
+  /** The full-height Pilot panel owns these while it is open. */
   hideWindowControls?: boolean;
   projectRailOpen?: boolean;
   sessionSidebarOpen?: boolean;
@@ -188,7 +188,7 @@ export function tabCopy(tab: Tab): {
     const headline = APP_VIEW_LABELS[tab.appView];
     return { headline, meta: "", tooltip: headline };
   }
-  if (tab.mono) return { headline: tab.title, meta: "", tooltip: tab.title };
+  if (tab.pilot) return { headline: tab.title, meta: "", tooltip: tab.title };
   const project = tab.project.trim() || "~";
   const conversation = tab.title.trim();
   const file = tab.files[0] ?? "";
@@ -416,11 +416,11 @@ function TitleTabItem({
       >
         {AppViewIcon ? (
           <AppViewIcon className="size-3.5 shrink-0" strokeWidth={1.75} />
-        ) : tab.mono ? (
-          <MonoRailMascot
-            name={tab.mono.mascot}
-            color={tab.mono.color}
-            status={tab.mono.status}
+        ) : tab.pilot ? (
+          <PilotRailMascot
+            name={tab.pilot.mascot}
+            color={tab.pilot.color}
+            status={tab.pilot.status}
             className="size-3.5 shrink-0"
           />
         ) : tab.harnesses.length > 0 ? (
@@ -670,8 +670,8 @@ export function TabVisitNav({
   );
 }
 
-/** A Mono's overview toggle and settings, beside its conversation. */
-export function MonoViewActions({
+/** A Pilot's overview toggle and settings, beside its conversation. */
+export function PilotViewActions({
   name,
   overviewOpen,
   onToggleOverview,
@@ -744,11 +744,11 @@ function TitleBarComponent({
   tabs,
   activeId,
   cwd,
-  mono,
+  pilot,
   content,
-  onToggleMonoOverview,
-  monoOverviewOpen = false,
-  onOpenMonoSettings,
+  onTogglePilotOverview,
+  pilotOverviewOpen = false,
+  onOpenPilotSettings,
   hideWindowControls = false,
   projectRailOpen = true,
   sessionSidebarOpen = true,
@@ -788,7 +788,7 @@ function TitleBarComponent({
   const paneDropArmed = useRef(false);
   const appTabIds = useRef(new Set<string>());
   appTabIds.current = new Set(
-    tabs.filter((tab) => tab.appView || tab.mono).map((tab) => tab.id),
+    tabs.filter((tab) => tab.appView || tab.pilot).map((tab) => tab.id),
   );
   const externalTabDrop = useMemo<
     ReorderExternalDrop<string> | undefined
@@ -901,7 +901,7 @@ function TitleBarComponent({
     const activeName = activeTab
       ? activeTab.appView
         ? APP_VIEW_LABELS[activeTab.appView]
-        : activeTab.mono
+        : activeTab.pilot
           ? activeTab.title
           : activeTab.files[0]
             ? basename(activeTab.files[0])
@@ -1044,18 +1044,18 @@ function TitleBarComponent({
     !inset && railClosed && Boolean(onSelectProject) && !showCurrentProject;
   const showTrailingActions =
     !inset &&
-    !mono &&
+    !pilot &&
     projectless &&
     railClosed &&
     Boolean(onOpenInbox || onOpenNotes || onOpenSettings);
   const showRightPanelToggle = inset && Boolean(onToggleRightPanel);
-  // A Mono's own overview holds its changes; app views have none beside them.
-  const rightPanelOff = !!mono || rightPanelUnavailable;
+  // A Pilot's own overview holds its changes; app views have none beside them.
+  const rightPanelOff = !!pilot || rightPanelUnavailable;
   const changesDot = rightPanelDot && !rightPanelOff;
   const trailingControls =
     showTrailingActions ||
     showRightPanelToggle ||
-    (mono && (onToggleMonoOverview || onOpenMonoSettings)) ||
+    (pilot && (onTogglePilotOverview || onOpenPilotSettings)) ||
     (!IS_MAC && !hideWindowControls) ? (
       <div className="flex h-full shrink-0 items-stretch">
         {showRightPanelToggle ? (
@@ -1087,12 +1087,12 @@ function TitleBarComponent({
             </IconButton>
           </div>
         ) : null}
-        {mono && (onToggleMonoOverview || onOpenMonoSettings) ? (
-          <MonoViewActions
-            name={mono.look.name}
-            overviewOpen={monoOverviewOpen}
-            onToggleOverview={onToggleMonoOverview}
-            onOpenSettings={onOpenMonoSettings}
+        {pilot && (onTogglePilotOverview || onOpenPilotSettings) ? (
+          <PilotViewActions
+            name={pilot.look.name}
+            overviewOpen={pilotOverviewOpen}
+            onToggleOverview={onTogglePilotOverview}
+            onOpenSettings={onOpenPilotSettings}
             className="px-3"
           />
         ) : null}
@@ -1127,7 +1127,7 @@ function TitleBarComponent({
       data-inset-title-bar={inset || undefined}
       className={`flex h-10 shrink-0 select-none items-stretch${
         inset ? "" : " border-b border-stroke"
-      }${compactRail && !mono && !inset ? " body-glass" : ""}`}
+      }${compactRail && !pilot && !inset ? " body-glass" : ""}`}
       data-tauri-drag-region="deep"
     >
       {inset ? (
@@ -1167,9 +1167,9 @@ function TitleBarComponent({
       ) : compactRail ? (
         <div
           data-compact-title-nav
-          // A full Mono's title bar starts beside the 48px compact rail.
+          // A full Pilot's title bar starts beside the 48px compact rail.
           className={`flex shrink-0 items-center ${
-            trafficLightsVisible ? (mono ? "pl-[22px]" : "pl-[70px]") : "pl-1.5"
+            trafficLightsVisible ? (pilot ? "pl-[22px]" : "pl-[70px]") : "pl-1.5"
           }`}
         >
           <TabVisitNav
@@ -1231,8 +1231,8 @@ function TitleBarComponent({
       >
         {content ? (
           content
-        ) : mono && !inset ? (
-          <MonoTitle look={mono.look} state={mono.state} />
+        ) : pilot && !inset ? (
+          <PilotTitle look={pilot.look} state={pilot.state} />
         ) : (
           <div
             className="relative h-full min-w-0 flex-1 overflow-hidden"
@@ -1368,11 +1368,11 @@ function TitleBarComponent({
 
 export const TitleBar = memo(TitleBarComponent);
 
-/** In a Mono's view the title bar names it and shows its status. */
-function MonoTitle({ look, state }: { look: MonoLook; state: MonoState }) {
+/** In a Pilot's view the title bar names it and shows its status. */
+function PilotTitle({ look, state }: { look: PilotLook; state: PilotState }) {
   return (
     <div
-      data-mono-title
+      data-pilot-title
       className="flex min-w-0 flex-1 items-center gap-2 px-4"
     >
       <PixelMascot
@@ -1386,12 +1386,12 @@ function MonoTitle({ look, state }: { look: MonoLook; state: MonoState }) {
         {look.name}
       </span>
       <span
-        data-mono-status={state.status}
+        data-pilot-status={state.status}
         className={`shrink-0 text-[12px] ${
           state.status === "needs-you" ? "text-accent" : "text-content/45"
         }`}
       >
-        {MONO_STATUS_LABEL[state.status]}
+        {PILOT_STATUS_LABEL[state.status]}
       </span>
     </div>
   );

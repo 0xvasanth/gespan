@@ -80,14 +80,14 @@ describe("mobile transcript", () => {
     expect(turn.footer).toBeUndefined();
   });
 
-  it("signs a Mono's turn, hides its work and stamps the day", () => {
+  it("signs a Pilot's turn, hides its work and stamps the day", () => {
     const [turn] = mobileTranscript(
       session([
         prompt("u", "Check the build"),
         tool("t", "Read src/app.ts"),
         reply("a", "All green."),
       ]),
-      { busy: false, mono: { name: "Pip" } },
+      { busy: false, pilot: { name: "Pip" } },
     );
     expect(turn.stampAt).toBe(at);
     expect(turn.items.map((item) => item.type)).toEqual([
@@ -98,10 +98,10 @@ describe("mobile transcript", () => {
     expect(turn.items[1]).toMatchObject({ label: "Pip", entries: [] });
   });
 
-  it("pins a Mono's reaction to the message it answers", () => {
+  it("pins a Pilot's reaction to the message it answers", () => {
     const [turn] = mobileTranscript(
       session([prompt("u", "thanks!"), reply("a", "<reaction>👍</reaction>")]),
-      { busy: false, mono: { name: "Pip" } },
+      { busy: false, pilot: { name: "Pip" } },
     );
     expect(turn.items).toEqual([
       expect.objectContaining({ type: "user", reaction: "👍" }),

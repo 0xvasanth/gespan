@@ -63,28 +63,28 @@ import {
 } from "../model/transcriptJump";
 import { EmptySession } from "./EmptySession";
 import {
-  monoForSession,
-  monoLook,
-  monosSnapshot,
-  subscribeMonos,
-} from "../../monos/model/mono";
-import { MonoHeader } from "../../monos/ui/MonoHeader";
-import { MonoComposer } from "../../monos/ui/MonoComposer";
-import type { LaunchedSessionView } from "../../monos/model/monoSpawnedSessions";
+  pilotForSession,
+  pilotLook,
+  pilotsSnapshot,
+  subscribePilots,
+} from "../../pilots/model/pilot";
+import { PilotHeader } from "../../pilots/ui/PilotHeader";
+import { PilotComposer } from "../../pilots/ui/PilotComposer";
+import type { LaunchedSessionView } from "../../pilots/model/pilotSpawnedSessions";
 import { ModelControlPills, ModelPicker } from "./ModelPicker";
 import { ContextMeter } from "./ContextMeter";
 import { UsageChips } from "../../../app/shell/UsageFooter";
 import type { RateLimitProvider } from "../../providers/model/rateLimits";
-import { MonoUsageLimitNotice } from "../../monos/ui/MonoUsageLimitNotice";
+import { PilotUsageLimitNotice } from "../../pilots/ui/PilotUsageLimitNotice";
 import { QuestionForm } from "./QuestionForm";
 import {
-  monoMessageDeliveries,
-  monoPendingTranscriptBlocks,
-  visibleMonoCompletionMessages,
-} from "../../monos/model/monoMessaging";
+  pilotMessageDeliveries,
+  pilotPendingTranscriptBlocks,
+  visiblePilotCompletionMessages,
+} from "../../pilots/model/pilotMessaging";
 import { MessageQueue } from "./MessageQueue";
-import { useMonoTranscript } from "../../monos/hooks/useMonoTranscript";
-import { MONO_PAGE_TURNS } from "../data/sessionStore";
+import { usePilotTranscript } from "../../pilots/hooks/usePilotTranscript";
+import { PILOT_PAGE_TURNS } from "../data/sessionStore";
 import { useComposerDockMotion } from "./useComposerDockMotion";
 import { MOD } from "../../../platform/tauri/platform";
 import {
@@ -113,7 +113,7 @@ import {
   subscribeProjectChatBackground,
 } from "../../projects/model/projectChatBackground";
 import { useProjectBackgroundEffect } from "../../projects/ui/useProjectBackgroundEffect";
-import { monoChatBackground } from "../../monos/model/monoBackground";
+import { pilotChatBackground } from "../../pilots/model/pilotBackground";
 import { GradientBlurBackground } from "../../settings/ui/GradientBlurBackground";
 import {
   loadChatBackgroundPath,
@@ -136,25 +136,25 @@ export type SessionPaneProps = {
   inSplit: boolean;
   composerFocused: boolean;
   composerFocusToken?: number;
-  onShowMonoActivity?: (
+  onShowPilotActivity?: (
     sessionId: string,
     turnId: string,
     blocks: Block[],
   ) => void;
-  monoActivityTurnId?: string;
-  /** Open a session a Mono's turn launched, in the Mono's sidebar. */
-  onOpenMonoSession?: (
+  pilotActivityTurnId?: string;
+  /** Open a session a Pilot's turn launched, in the Pilot's sidebar. */
+  onOpenPilotSession?: (
     sessionId: string,
     turnId: string,
     blocks: Block[],
     launchedId: string,
   ) => void;
-  /** Live status of the sessions this Mono launched, by id. */
-  monoLaunchedSessions?: ReadonlyMap<string, LaunchedSessionView>;
-  /** The launched session open in the Mono's sidebar. */
-  openMonoSessionId?: string;
-  /** Shows plan usage by a Mono's composer; off where a footer shows it. */
-  monoComposerUsage?: boolean;
+  /** Live status of the sessions this Pilot launched, by id. */
+  pilotLaunchedSessions?: ReadonlyMap<string, LaunchedSessionView>;
+  /** The launched session open in the Pilot's sidebar. */
+  openPilotSessionId?: string;
+  /** Shows plan usage by a Pilot's composer; off where a footer shows it. */
+  pilotComposerUsage?: boolean;
   recents: RecentProject[];
   hideProjectPicker?: boolean;
   onFocus: (sessionId: string) => void;
@@ -358,12 +358,12 @@ const LocalSessionPane = memo(function LocalSessionPane({
   onOpenFile,
   onOpenDiff,
   onCommitChanges,
-  onShowMonoActivity,
-  monoActivityTurnId,
-  onOpenMonoSession,
-  monoLaunchedSessions,
-  openMonoSessionId,
-  monoComposerUsage = true,
+  onShowPilotActivity,
+  pilotActivityTurnId,
+  onOpenPilotSession,
+  pilotLaunchedSessions,
+  openPilotSessionId,
+  pilotComposerUsage = true,
   onOpenPlan,
   onBuildPlan,
   onSecondOpinion,
@@ -394,14 +394,14 @@ const LocalSessionPane = memo(function LocalSessionPane({
     [session.blocks, session.busy],
   );
   const messageDeliveries = useMemo(
-    () => monoMessageDeliveries(session),
+    () => pilotMessageDeliveries(session),
     [session.queuedMessages, session.queueStatus],
   );
   const recallLastTurnRef = useRef<(() => void) | null>(null);
   const remote = remoteSession;
-  // A Mono's chat is a running conversation; what was said stays said.
+  // A Pilot's chat is a running conversation; what was said stays said.
   const editLastTurnSupported =
-    !remote && !monoForSession(session.id) && canEditLastTurn(session);
+    !remote && !pilotForSession(session.id) && canEditLastTurn(session);
   const turnRecall = editLastTurnSupported ? lastTurnRecall(session) : null;
   const draftBlock = sessionDraftBlock(session);
   useSyncExternalStore(
@@ -420,12 +420,12 @@ const LocalSessionPane = memo(function LocalSessionPane({
     loadNewThreadBackgroundEffect,
   );
   // Renames, instructions and mascot picks re-render the agent's look.
-  useSyncExternalStore(subscribeMonos, monosSnapshot);
-  const mono = monoForSession(session.id);
-  const agent = mono ? monoLook(mono) : undefined;
-  // A Mono shows only its own background, never the project's or the app's.
-  const projectBackground = mono
-    ? monoChatBackground(mono.id)
+  useSyncExternalStore(subscribePilots, pilotsSnapshot);
+  const pilot = pilotForSession(session.id);
+  const agent = pilot ? pilotLook(pilot) : undefined;
+  // A Pilot shows only its own background, never the project's or the app's.
+  const projectBackground = pilot
+    ? pilotChatBackground(pilot.id)
     : loadProjectChatBackgroundSettings(projectKey(session.cwd));
   const projectBackgroundUrl = useProjectBackgroundEffect(
     projectBackground?.path ?? null,
@@ -528,9 +528,9 @@ const LocalSessionPane = memo(function LocalSessionPane({
   const onJumpToBottomReady = useCallback((jump: () => void) => {
     jumpToBottomRef.current = jump;
   }, []);
-  const monoTranscript = useMonoTranscript(
+  const pilotTranscript = usePilotTranscript(
     session,
-    !!monoForSession(session.id),
+    !!pilotForSession(session.id),
   );
   const revealBlockRef = useRef<((blockId: string) => boolean) | null>(null);
   const onRevealReady = useCallback((reveal: (blockId: string) => boolean) => {
@@ -555,13 +555,13 @@ const LocalSessionPane = memo(function LocalSessionPane({
     async (blockId: string | null, query?: string) => {
       if (navigateBlockRef.current?.(blockId, query)) return true;
       if (!blockId) return false;
-      if (!(await monoTranscript.reveal(blockId))) return false;
+      if (!(await pilotTranscript.reveal(blockId))) return false;
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => resolve()),
       );
       return navigateBlockRef.current?.(blockId, query) ?? false;
     },
-    [monoTranscript.reveal],
+    [pilotTranscript.reveal],
   );
   const jumpRequest = useSyncExternalStore(
     subscribeTranscriptJump,
@@ -641,7 +641,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
     remote ||
     !!session.inboxAsk ||
     !!session.worktreeRemoved ||
-    monoTranscript.viewingOlderPage ||
+    pilotTranscript.viewingOlderPage ||
     !!draftBlock;
   const showDeckProjectPicker = isEmpty && !looksLikeProject(session.cwd);
   // The agent's input always sits at the bottom, like a chat.
@@ -914,7 +914,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
             {remoteSessionLoading ? null : isEmpty ? (
               agent ? (
                 <div className="scrollbar-none h-full min-h-0 overflow-y-auto">
-                  <MonoHeader agent={agent} greeting />
+                  <PilotHeader agent={agent} greeting />
                 </div>
               ) : session.inboxAsk ? (
                 <div className="scrollbar-none h-full min-h-0 overflow-y-auto">
@@ -947,28 +947,28 @@ const LocalSessionPane = memo(function LocalSessionPane({
                 >
                   <AgentTranscript
                     blocks={
-                      agent && !monoTranscript.viewingOlderPage
-                        ? monoPendingTranscriptBlocks(
+                      agent && !pilotTranscript.viewingOlderPage
+                        ? pilotPendingTranscriptBlocks(
                             session,
-                            monoTranscript.blocks,
+                            pilotTranscript.blocks,
                           )
-                        : monoTranscript.blocks
+                        : pilotTranscript.blocks
                     }
                     sessionId={remoteSession ? undefined : session.id}
-                    historicalBlockIds={monoTranscript.historicalBlockIds}
-                    initialTurns={agent ? MONO_PAGE_TURNS : undefined}
-                    pageSize={agent ? MONO_PAGE_TURNS : undefined}
-                    hasEarlier={monoTranscript.hasEarlier}
+                    historicalBlockIds={pilotTranscript.historicalBlockIds}
+                    initialTurns={agent ? PILOT_PAGE_TURNS : undefined}
+                    pageSize={agent ? PILOT_PAGE_TURNS : undefined}
+                    hasEarlier={pilotTranscript.hasEarlier}
                     loadEarlierOnScroll={!!agent}
                     onLoadEarlier={
-                      agent ? monoTranscript.loadEarlier : undefined
+                      agent ? pilotTranscript.loadEarlier : undefined
                     }
                     onReturnToLatest={
-                      monoTranscript.viewingOlderPage
-                        ? monoTranscript.latest
+                      pilotTranscript.viewingOlderPage
+                        ? pilotTranscript.latest
                         : undefined
                     }
-                    busy={!!session.busy && !monoTranscript.viewingOlderPage}
+                    busy={!!session.busy && !pilotTranscript.viewingOlderPage}
                     visible={visible}
                     cwd={workCwd}
                     agentName={agent?.name}
@@ -985,16 +985,16 @@ const LocalSessionPane = memo(function LocalSessionPane({
                       agent ? () => onResumeQueue(session.id) : undefined
                     }
                     onShowWork={
-                      agent && onShowMonoActivity
+                      agent && onShowPilotActivity
                         ? (turnId, blocks) =>
-                            onShowMonoActivity(session.id, turnId, blocks)
+                            onShowPilotActivity(session.id, turnId, blocks)
                         : undefined
                     }
-                    activeWorkTurnId={monoActivityTurnId}
+                    activeWorkTurnId={pilotActivityTurnId}
                     onOpenSession={
-                      agent && onOpenMonoSession
+                      agent && onOpenPilotSession
                         ? (turnId, blocks, launchedId) =>
-                            onOpenMonoSession(
+                            onOpenPilotSession(
                               session.id,
                               turnId,
                               blocks,
@@ -1002,9 +1002,9 @@ const LocalSessionPane = memo(function LocalSessionPane({
                             )
                         : undefined
                     }
-                    launchedSessions={monoLaunchedSessions}
-                    openSessionId={openMonoSessionId}
-                    // A Mono's turn keeps copy, save as note and the time.
+                    launchedSessions={pilotLaunchedSessions}
+                    openSessionId={openPilotSessionId}
+                    // A Pilot's turn keeps copy, save as note and the time.
                     daySeparators={!!agent}
                     hideTurnMetrics={!!agent}
                     harness={session.harness}
@@ -1070,7 +1070,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                     onScrollerChange={setTranscriptScroller}
                     editingLastTurn={editingLastTurn}
                     onEditLastTurn={
-                      editLastTurnSupported && !monoTranscript.viewingOlderPage
+                      editLastTurnSupported && !pilotTranscript.viewingOlderPage
                         ? () => {
                             onFocus(session.id);
                             recallLastTurnRef.current?.();
@@ -1110,7 +1110,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                     visible={visible}
                     focused={focused}
                     onNavigate={navigateBlock}
-                    onSearch={monoTranscript.search}
+                    onSearch={pilotTranscript.search}
                     side={
                       session.linkedWorkItemUpdateCard &&
                       session.linkedWorkItemUpdateCard.status !== "loading"
@@ -1119,7 +1119,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                     }
                   />
                 ) : null}
-                {/* One mark per message would crowd a Mono's endless chat. */}
+                {/* One mark per message would crowd a Pilot's endless chat. */}
                 {agent ? null : (
                   <PromptOutline
                     blocks={session.blocks}
@@ -1132,8 +1132,8 @@ const LocalSessionPane = memo(function LocalSessionPane({
                 <TranscriptJumpToBottom
                   visibility={jumpVisibility}
                   onJump={() => {
-                    if (monoTranscript.viewingOlderPage) {
-                      monoTranscript.latest();
+                    if (pilotTranscript.viewingOlderPage) {
+                      pilotTranscript.latest();
                       requestAnimationFrame(() => jumpToBottomRef.current?.());
                     } else jumpToBottomRef.current?.();
                   }}
@@ -1151,7 +1151,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
               {agent ? (
                 <>
                   <MessageQueue
-                    messages={visibleMonoCompletionMessages(session)}
+                    messages={visiblePilotCompletionMessages(session)}
                     status={session.queueStatus}
                     sendingId={session.sendingQueuedMessageId}
                     onDelete={(messageId) =>
@@ -1170,7 +1170,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                     />
                   ) : null}
                   {session.usageLimit ? (
-                    <MonoUsageLimitNotice
+                    <PilotUsageLimitNotice
                       session={session}
                       onModelChange={(harness, model) =>
                         onModelChange(session.id, harness, model)
@@ -1187,7 +1187,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                       }
                     />
                   ) : null}
-                  <MonoComposer
+                  <PilotComposer
                     key={session.id}
                     sessionId={session.id}
                     name={agent.name}
@@ -1207,14 +1207,14 @@ const LocalSessionPane = memo(function LocalSessionPane({
                       onSubmit(session.id, text, attachments)
                     }
                     // The plan's usage, as the session footer shows it,
-                    // which a Mono in full view covers. Its account moves
+                    // which a Pilot in full view covers. Its account moves
                     // with the usage-limit notice, not here. A narrow chat
                     // drops it first, then shows the model controls as icons.
                     tools={
-                      monoComposerUsage ? (
+                      pilotComposerUsage ? (
                         <div className="flex shrink-0 items-center gap-0.5 text-[11px] text-content/55 @max-md:hidden">
                           <UsageChips
-                            providers={monoUsageProviders(session.harness)}
+                            providers={pilotUsageProviders(session.harness)}
                             session={{
                               id: session.id,
                               harness: session.harness,
@@ -1257,7 +1257,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                             onModelSettingsChange(session.id, settings)
                           }
                         />
-                        {/* A Mono is one long conversation; this is how full
+                        {/* A Pilot is one long conversation; this is how full
                             its current thread is. It rotates threads itself,
                             so there is nothing to compact here. */}
                         <div className="grid size-6.5 place-items-center rounded-md transition-colors hover:bg-content/8">
@@ -1294,8 +1294,8 @@ const LocalSessionPane = memo(function LocalSessionPane({
   );
 });
 
-/** The providers whose plan usage a Mono on `harness` shows by its composer. */
-function monoUsageProviders(harness: HarnessId): RateLimitProvider[] {
+/** The providers whose plan usage a Pilot on `harness` shows by its composer. */
+function pilotUsageProviders(harness: HarnessId): RateLimitProvider[] {
   return harness === "claude" ||
     harness === "codex" ||
     harness === "opencode" ||

@@ -451,7 +451,7 @@ type UserTurnExtra = {
   rebase?: boolean;
   intent?: Block["intent"];
   appRequestId?: string;
-  monoSessionCompletion?: Block["monoSessionCompletion"];
+  pilotSessionCompletion?: Block["pilotSessionCompletion"];
 };
 
 function userTurnFields(extra?: UserTurnExtra) {
@@ -463,8 +463,8 @@ function userTurnFields(extra?: UserTurnExtra) {
     ...(extra?.rebase ? { rebase: true } : {}),
     ...(extra?.intent ? { intent: extra.intent } : {}),
     ...(extra?.appRequestId ? { appRequestId: extra.appRequestId } : {}),
-    ...(extra?.monoSessionCompletion
-      ? { monoSessionCompletion: extra.monoSessionCompletion }
+    ...(extra?.pilotSessionCompletion
+      ? { pilotSessionCompletion: extra.pilotSessionCompletion }
       : {}),
   };
 }
@@ -753,7 +753,7 @@ function upsertKeyedStatus(
   const trimmed = text.trim();
   const turnStart = lastMatchingBlock(
     session.blocks,
-    // Mono outbox bubbles and mid-turn follow-ups do not start a new turn.
+    // Pilot outbox bubbles and mid-turn follow-ups do not start a new turn.
     (block) =>
       block.role === "user" &&
       (block.sentAt == null || block.startedAt != null) &&

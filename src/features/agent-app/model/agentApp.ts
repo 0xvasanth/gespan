@@ -45,8 +45,8 @@ import { sessionConversationPage, type SessionReadOptions } from "./sessionConve
 import {
   CARD_FIELDS,
   parseCard,
-  type MonoCard,
-} from "../../monos/model/monoCards";
+  type PilotCard,
+} from "../../pilots/model/pilotCards";
 import {
   HABITS_MAX,
   checkHabitsNow,
@@ -56,13 +56,13 @@ import {
   newHabit,
   nextHabitRunAt,
   type Habit,
-} from "../../monos/model/monoHabits";
+} from "../../pilots/model/pilotHabits";
 import {
   memoryWithinBudget,
-  MonoFileConflict,
+  PilotFileConflict,
   type AgentFilePath,
-  type MonoFiles,
-} from "../../monos/model/monoFiles";
+  type PilotFiles,
+} from "../../pilots/model/pilotFiles";
 import {
   addMemoryEntry,
   archiveMemoryEntries,
@@ -74,7 +74,7 @@ import {
   sinceDate,
   supersedeMemoryEntry,
   topicName,
-} from "../../monos/model/monoMemory";
+} from "../../pilots/model/pilotMemory";
 
 export type AppSessionListing = {
   id: string;
@@ -96,7 +96,7 @@ export type AgentAppHost = {
     launch: QuickLaunch,
     id: string,
     placement?: AppSessionPlacement,
-    notifyMonoId?: string,
+    notifyPilotId?: string,
   ): Promise<void>;
   sessions(cwd: string): Promise<AppSessionListing[]>;
   session(id: string): Promise<Session | null>;
@@ -105,7 +105,7 @@ export type AgentAppHost = {
     id: string,
     prompt: string,
     requestId: string,
-    notifyMonoId?: string,
+    notifyPilotId?: string,
   ): Promise<{ alreadySubmitted: boolean }>;
   draft(
     id: string,
@@ -128,38 +128,38 @@ export type AgentAppHost = {
   artifact?(id: string): Promise<Artifact | null>;
   saveArtifact?(artifact: ArtifactUpsert): Promise<Artifact>;
   postArtifact?(sourceSessionId: string, card: ArtifactCard): void | Promise<void>;
-  /** Whether the session is a Mono's own conversation, which owns memory. */
-  isMono(sessionId: string): boolean;
+  /** Whether the session is a Pilot's own conversation, which owns memory. */
+  isPilot(sessionId: string): boolean;
   /**
-   * The Mono a session works for: its own conversation or one of its habit
+   * The Pilot a session works for: its own conversation or one of its habit
    * runs. Its projects are the ones it may name with "project".
    */
-  monoOf?(sessionId: string): {
+  pilotOf?(sessionId: string): {
     id: string;
     projects: readonly string[];
     showStartedSessionsInSidebar?: boolean;
     /** Files the sessions it starts into a folder named after it. */
     folder?: { name: string; color: string };
   } | undefined;
-  /** A hidden run of one of a Mono's habits: it may remember, not schedule. */
+  /** A hidden run of one of a Pilot's habits: it may remember, not schedule. */
   isHabitRun?(sessionId: string): boolean;
-  /** Puts a card in the Mono's chat, or holds it for a habit run's report. */
-  postCard?(sourceSessionId: string, card: MonoCard): void;
+  /** Puts a card in the Pilot's chat, or holds it for a habit run's report. */
+  postCard?(sourceSessionId: string, card: PilotCard): void;
   habits?: {
-    load(monoId: string): Promise<Habit[]>;
+    load(pilotId: string): Promise<Habit[]>;
     update<T>(
-      monoId: string,
+      pilotId: string,
       change: (habits: Habit[]) => { habits: Habit[]; result: T },
     ): Promise<T>;
   };
-  agentFiles(monoId: string): Promise<MonoFiles>;
+  agentFiles(pilotId: string): Promise<PilotFiles>;
   readAgentFile(
-    monoId: string,
+    pilotId: string,
     path: AgentFilePath,
   ): Promise<{ text: string | null; hash: string }>;
-  /** Throws `MonoFileConflict` when the file moved past `hash`. */
+  /** Throws `PilotFileConflict` when the file moved past `hash`. */
   writeAgentFile(
-    monoId: string,
+    pilotId: string,
     path: AgentFilePath,
     text: string,
     hash: string,
@@ -249,17 +249,17 @@ function completionRecipient(
   source: Session,
   input: Record<string, unknown>,
   host: AgentAppHost,
-  defaultForMono = false,
+  defaultForPilot = false,
 ): string | undefined {
   const requested = input.notifyOnComplete;
   if (requested !== undefined && typeof requested !== "boolean")
     throw new Error("notifyOnComplete must be a boolean");
-  const isMono = host.isMono(source.id);
-  if (!(requested ?? (defaultForMono && isMono && !input.draft)))
+  const isPilot = host.isPilot(source.id);
+  if (!(requested ?? (defaultForPilot && isPilot && !input.draft)))
     return undefined;
-  if (!isMono)
+  if (!isPilot)
     throw new Error(
-      "Completion notifications are only available in a Mono's chat",
+      "Completion notifications are only available in a Pilot's chat",
     );
   if (input.draft === true)
     throw new Error("An unsent draft cannot send a completion notification");
@@ -293,7 +293,7 @@ function noteTags(value: unknown): string[] {
 }
 
 /**
- * The project an action works in. A session works in its own; a Mono works on
+ * The project an action works in. A session works in its own; a Pilot works on
  * several, so it names one with "project" (its path or name), and may leave it
  * out when it has one project or is in one of its own.
  */
@@ -302,44 +302,44 @@ function requireProject(
   input: Record<string, unknown>,
   host: AgentAppHost,
 ): string {
-  const mono = host.monoOf?.(source.id);
+  const pilot = host.pilotOf?.(source.id);
   const named = optionalString(input.project, "project", 4096);
-  if (!mono) {
-    if (named) throw new Error("project is only for a Mono");
+  if (!pilot) {
+    if (named) throw new Error("project is only for a Pilot");
     if (!looksLikeProject(source.cwd))
       throw new Error("Choose a project folder in this session first");
     return source.cwd;
   }
   const choices = () =>
-    mono.projects.length
-      ? mono.projects.map((path) => `${projectName(path)} (${path})`).join(", ")
+    pilot.projects.length
+      ? pilot.projects.map((path) => `${projectName(path)} (${path})`).join(", ")
       : "none yet; the user adds them from your details panel";
   if (named) {
-    const byPath = mono.projects.find(
+    const byPath = pilot.projects.find(
       (path) => pathKey(path) === pathKey(named),
     );
-    const byName = mono.projects.filter(
+    const byName = pilot.projects.filter(
       (path) => projectName(path) === named,
     );
     const match = byPath ?? (byName.length === 1 ? byName[0] : undefined);
     if (!match) throw new Error(`Not one of your projects. Yours: ${choices()}`);
     return match;
   }
-  const own = mono.projects.find(
+  const own = pilot.projects.find(
     (path) => pathKey(path) === pathKey(source.cwd),
   );
   if (own) return own;
-  if (mono.projects.length === 1) return mono.projects[0];
+  if (pilot.projects.length === 1) return pilot.projects[0];
   throw new Error(`Pass "project" to choose one. Yours: ${choices()}`);
 }
 
-/** A Mono's chat lives outside its projects; project access follows its roster. */
+/** A Pilot's chat lives outside its projects; project access follows its roster. */
 export function canAccessAgentAppProject(
   source: Session,
   cwd: string,
-  monoProjects?: readonly string[],
+  pilotProjects?: readonly string[],
 ): boolean {
-  return (monoProjects ?? [source.cwd]).some(
+  return (pilotProjects ?? [source.cwd]).some(
     (project) => pathKey(project) === pathKey(cwd),
   );
 }
@@ -372,10 +372,10 @@ export function notePreview(body: string): string {
 }
 
 /**
- * Puts a session a Mono started into the sidebar folder named after it,
+ * Puts a session a Pilot started into the sidebar folder named after it,
  * making that folder in its color the first time.
  */
-function fileInMonoFolder(
+function fileInPilotFolder(
   cwd: string,
   sessionId: string,
   folder: { name: string; color: string },
@@ -463,16 +463,16 @@ function startLaunch(
   const worktreeCwd = optionalString(input.worktreeCwd, "worktreeCwd");
   if (worktreeCwd && workspaceMode !== "current")
     throw new Error("worktreeCwd requires workspaceMode current");
-  const startingMono = host.monoOf?.(source.id);
+  const startingPilot = host.pilotOf?.(source.id);
   const currentWorktree =
     worktreeCwd ||
     (pathKey(cwd) === pathKey(source.cwd) ? source.worktreeCwd : undefined);
   return {
     cwd,
     prompt,
-    // Only a Mono's own preference hides what it starts. A regular session
-    // with /operator has no Mono, and its launches belong in the sidebar.
-    ...(startingMono && startingMono.showStartedSessionsInSidebar !== true
+    // Only a Pilot's own preference hides what it starts. A regular session
+    // with /operator has no Pilot, and its launches belong in the sidebar.
+    ...(startingPilot && startingPilot.showStartedSessionsInSidebar !== true
       ? { sidebarHidden: true }
       : {}),
     ...(draft ? { draft: true } : {}),
@@ -485,8 +485,8 @@ function startLaunch(
       ...(requestedSettings as Record<string, string>),
     }),
     runtimeMode: runtimeMode as Session["runtimeMode"],
-    // A Mono delegates work without navigating the user out of their chat.
-    reveal: host.isMono(source.id) ? false : reveal,
+    // A Pilot delegates work without navigating the user out of their chat.
+    reveal: host.isPilot(source.id) ? false : reveal,
     workspaceMode,
     ...(workspaceMode === "current" && currentWorktree
       ? { worktreeCwd: currentWorktree }
@@ -507,13 +507,13 @@ async function handleSoul(
   input: Record<string, unknown>,
   host: AgentAppHost,
 ): Promise<unknown> {
-  const monoId = host.isMono(source.id)
-    ? host.monoOf?.(source.id)?.id
+  const pilotId = host.isPilot(source.id)
+    ? host.pilotOf?.(source.id)?.id
     : undefined;
-  if (!monoId)
-    throw new Error("Only a Mono's own conversation can manage its soul");
+  if (!pilotId)
+    throw new Error("Only a Pilot's own conversation can manage its soul");
   if (action === "soul.read") {
-    const files = await host.agentFiles(monoId);
+    const files = await host.agentFiles(pilotId);
     return { file: "SOUL.md", text: files.soul, hash: files.soulHash };
   }
   if (typeof input.text !== "string" || input.text.length > 240_000)
@@ -521,14 +521,14 @@ async function handleSoul(
   const expectedHash = requiredString(input.expectedHash, "expectedHash", 128);
   try {
     const hash = await host.writeAgentFile(
-      monoId,
+      pilotId,
       "SOUL.md",
       input.text,
       expectedHash,
     );
     return { file: "SOUL.md", updated: true, hash };
   } catch (error) {
-    if (error instanceof MonoFileConflict)
+    if (error instanceof PilotFileConflict)
       throw new Error(
         "SOUL.md changed since you read it. Run soul.read and reapply the user's requested changes to the current text before calling soul.update again.",
       );
@@ -542,12 +542,12 @@ async function handleSoul(
  */
 async function editAgentFile<T>(
   host: AgentAppHost,
-  monoId: string,
+  pilotId: string,
   path: AgentFilePath,
   edit: (text: string) => { text: string; result: T },
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
-    const current = await host.readAgentFile(monoId, path);
+    const current = await host.readAgentFile(pilotId, path);
     const fallback =
       current.text == null && path !== "MEMORY.md"
         ? `# ${path.slice("memory/".length, -".md".length)}\n\n`
@@ -555,10 +555,10 @@ async function editAgentFile<T>(
     const next = edit(current.text ?? fallback);
     try {
       if (next.text !== (current.text ?? ""))
-        await host.writeAgentFile(monoId, path, next.text, current.hash);
+        await host.writeAgentFile(pilotId, path, next.text, current.hash);
       return next.result;
     } catch (error) {
-      if (!(error instanceof MonoFileConflict) || attempt >= 2)
+      if (!(error instanceof PilotFileConflict) || attempt >= 2)
         throw error;
     }
   }
@@ -571,21 +571,21 @@ async function editAgentFile<T>(
  */
 async function keepMemoryInBudget(
   host: AgentAppHost,
-  monoId: string,
+  pilotId: string,
   keep: string,
   date: string,
 ): Promise<string[]> {
-  const memory = await host.readAgentFile(monoId, "MEMORY.md");
+  const memory = await host.readAgentFile(pilotId, "MEMORY.md");
   const fitted = fitMemoryBudget(memory.text ?? "", keep, date);
   if (!fitted.moved.length) return [];
-  await editAgentFile(host, monoId, "memory/archive.md", (archive) => ({
+  await editAgentFile(host, pilotId, "memory/archive.md", (archive) => ({
     text: archiveMemoryEntries(archive, fitted.moved, date),
     result: undefined,
   }));
   try {
-    await host.writeAgentFile(monoId, "MEMORY.md", fitted.text, memory.hash);
+    await host.writeAgentFile(pilotId, "MEMORY.md", fitted.text, memory.hash);
   } catch (error) {
-    if (!(error instanceof MonoFileConflict)) throw error;
+    if (!(error instanceof PilotFileConflict)) throw error;
     return [];
   }
   return fitted.moved;
@@ -597,15 +597,15 @@ async function handleMemory(
   input: Record<string, unknown>,
   host: AgentAppHost,
 ): Promise<unknown> {
-  const monoId = host.monoOf?.(source.id)?.id;
-  if (!monoId) throw new Error("Memory belongs to the Mono's conversation");
+  const pilotId = host.pilotOf?.(source.id)?.id;
+  if (!pilotId) throw new Error("Memory belongs to the Pilot's conversation");
   const path = memoryPath(input.topic);
   const date = memoryDate(host.now?.() ?? new Date());
   const until = optionalString(input.until, "until", 10);
   const report = async (result: Record<string, unknown>, keep?: string) => {
     const moved =
       path === "MEMORY.md" && keep
-        ? await keepMemoryInBudget(host, monoId, keep, date)
+        ? await keepMemoryInBudget(host, pilotId, keep, date)
         : [];
     return {
       file: path,
@@ -628,7 +628,7 @@ async function handleMemory(
               requiredString(input.since, "since", 20),
               host.now?.() ?? new Date(),
             );
-      const files = await host.agentFiles(monoId);
+      const files = await host.agentFiles(pilotId);
       const paths: AgentFilePath[] = [
         "MEMORY.md",
         ...files.topics.map((topic) => `memory/${topic}.md` as const),
@@ -640,7 +640,7 @@ async function handleMemory(
           text:
             file === "MEMORY.md"
               ? files.memory
-              : ((await host.readAgentFile(monoId, file)).text ?? ""),
+              : ((await host.readAgentFile(pilotId, file)).text ?? ""),
         })),
       );
       const hits = searchMemory(texts, query, { since });
@@ -650,11 +650,11 @@ async function handleMemory(
     }
     case "memory.read": {
       if (path !== "MEMORY.md") {
-        const topic = await host.readAgentFile(monoId, path);
+        const topic = await host.readAgentFile(pilotId, path);
         if (topic.text == null) throw new Error("No such memory topic");
         return { file: path, text: topic.text };
       }
-      const files = await host.agentFiles(monoId);
+      const files = await host.agentFiles(pilotId);
       const budget = memoryWithinBudget(files.memory);
       return {
         file: path,
@@ -666,7 +666,7 @@ async function handleMemory(
     }
     case "memory.add": {
       const entry = memoryEntry(requiredString(input.fact, "fact"), date, until);
-      const added = await editAgentFile(host, monoId, path, (text) => {
+      const added = await editAgentFile(host, pilotId, path, (text) => {
         const next = addMemoryEntry(text, entry);
         return { text: next.text, result: next.added };
       });
@@ -677,7 +677,7 @@ async function handleMemory(
     case "memory.replace": {
       const find = requiredString(input.find, "find", 2000);
       const entry = memoryEntry(requiredString(input.fact, "fact"), date, until);
-      await editAgentFile(host, monoId, path, (text) => ({
+      await editAgentFile(host, pilotId, path, (text) => ({
         text: supersedeMemoryEntry(text, find, entry, date),
         result: undefined,
       }));
@@ -685,7 +685,7 @@ async function handleMemory(
     }
     case "memory.remove": {
       const find = requiredString(input.find, "find", 2000);
-      const removed = await editAgentFile(host, monoId, path, (text) => {
+      const removed = await editAgentFile(host, pilotId, path, (text) => {
         const next = removeMemoryEntry(text, find);
         return { text: next.text, result: next.removed };
       });
@@ -722,11 +722,11 @@ async function handleHabits(
 ): Promise<unknown> {
   const habits = host.habits;
   // A habit's own run cannot schedule more runs.
-  const monoId = host.isMono(source.id)
-    ? host.monoOf?.(source.id)?.id
+  const pilotId = host.isPilot(source.id)
+    ? host.pilotOf?.(source.id)?.id
     : undefined;
-  if (!habits || !monoId)
-    throw new Error("Only a Mono's own conversation can manage its habits");
+  if (!habits || !pilotId)
+    throw new Error("Only a Pilot's own conversation can manage its habits");
   const now = host.now?.() ?? new Date();
   const find = (list: Habit[]) => {
     const id = requiredString(input.id, "id", 128);
@@ -736,14 +736,14 @@ async function handleHabits(
   };
   switch (action) {
     case "habits.list":
-      return { habits: (await habits.load(monoId)).map(habitView) };
+      return { habits: (await habits.load(pilotId)).map(habitView) };
     case "habits.add": {
       const name = requiredString(input.name, "name", 80);
       const instructions = requiredString(input.instructions, "instructions", 4_000);
       const schedule = habitSchedule(input.schedule);
-      const habit = await habits.update(monoId, (list) => {
+      const habit = await habits.update(pilotId, (list) => {
         if (list.length >= HABITS_MAX)
-          throw new Error(`A Mono can have at most ${HABITS_MAX} habits`);
+          throw new Error(`A Pilot can have at most ${HABITS_MAX} habits`);
         const created = newHabit(
           { name, instructions, schedule },
           now.getTime(),
@@ -772,7 +772,7 @@ async function handleHabits(
       };
       if (input.enabled !== undefined && typeof input.enabled !== "boolean")
         throw new Error("enabled must be true or false");
-      const habit = await habits.update(monoId, (list) => {
+      const habit = await habits.update(pilotId, (list) => {
         const current = find(list);
         const next: Habit = {
           ...current,
@@ -797,7 +797,7 @@ async function handleHabits(
         throw new Error(
           `That habit is already running (started ${new Date(running).toLocaleTimeString()}); its result will be posted here when it ends`,
         );
-      const habit = await habits.update(monoId, (list) => {
+      const habit = await habits.update(pilotId, (list) => {
         const next = { ...find(list), runRequested: true };
         return {
           habits: list.map((entry) => (entry.id === next.id ? next : entry)),
@@ -811,7 +811,7 @@ async function handleHabits(
       };
     }
     case "habits.remove": {
-      const removed = await habits.update(monoId, (list) => {
+      const removed = await habits.update(pilotId, (list) => {
         const habit = find(list);
         return {
           habits: list.filter((entry) => entry.id !== habit.id),
@@ -838,8 +838,8 @@ async function handleArtifacts(
   input: Record<string, unknown>,
   host: AgentAppHost,
 ): Promise<unknown> {
-  if (!(host.isMono(source.id) || host.isHabitRun?.(source.id)))
-    throw new Error("Only a Mono can create or read artifacts");
+  if (!(host.isPilot(source.id) || host.isHabitRun?.(source.id)))
+    throw new Error("Only a Pilot can create or read artifacts");
   if (!host.artifact) throw new Error("Artifacts are unavailable");
   if (action === "artifacts.list") {
     if (!host.artifacts) throw new Error("Artifacts are unavailable");
@@ -959,14 +959,14 @@ export async function handleAgentApp(
   if (action === "chat.card") {
     if (
       !host.postCard ||
-      !(host.isMono(source.id) || host.isHabitRun?.(source.id))
+      !(host.isPilot(source.id) || host.isHabitRun?.(source.id))
     )
-      throw new Error("Only a Mono can put cards in its chat");
+      throw new Error("Only a Pilot can put cards in its chat");
     const card = parseCard(input);
     host.postCard(source.id, card);
     return {
       posted: card.type,
-      note: host.isMono(source.id)
+      note: host.isPilot(source.id)
         ? "It shows in the chat where you are in your reply."
         : "It goes out with your report, after its text; if you stay quiet, it is dropped.",
     };
@@ -995,7 +995,7 @@ export async function handleAgentApp(
     }
     case "sessions.read": {
       const id = requiredString(input.sessionId, "sessionId", 256);
-      const target = id === source.id && host.isMono?.(id)
+      const target = id === source.id && host.isPilot?.(id)
         ? source : await projectSession(source, id, input, host);
       const options = {
         before: optionalString(input.before, "before", 256),
@@ -1007,7 +1007,7 @@ export async function handleAgentApp(
     case "sessions.send": {
       const id = requiredString(input.sessionId, "sessionId", 256);
       const prompt = agentPrompt(input.prompt);
-      const notifyMonoId = completionRecipient(source, input, host);
+      const notifyPilotId = completionRecipient(source, input, host);
       if (id === source.id)
         throw new Error(
           "Use the current conversation to continue this session",
@@ -1019,13 +1019,13 @@ export async function handleAgentApp(
         id,
         prompt,
         `app-${source.id}-${requestId}`,
-        ...(notifyMonoId ? [notifyMonoId] : []),
+        ...(notifyPilotId ? [notifyPilotId] : []),
       );
       return {
         sessionId: id,
         submitted: true,
         ...result,
-        ...(notifyMonoId ? { notifyOnComplete: true } : {}),
+        ...(notifyPilotId ? { notifyOnComplete: true } : {}),
       };
     }
     case "sessions.draft": {
@@ -1054,7 +1054,7 @@ export async function handleAgentApp(
       const target = await projectSession(source, id, input, host);
       if (
         target.orchestrationLeadId ||
-        host.isMono(id) ||
+        host.isPilot(id) ||
         host.isHabitRun?.(id)
       )
         throw new Error("Only regular project sessions can be managed here");
@@ -1075,7 +1075,7 @@ export async function handleAgentApp(
           "request ID must use letters, digits, underscores or hyphens",
         );
       const launch = startLaunch(source, input, host);
-      const notifyMonoId = completionRecipient(source, input, host, true);
+      const notifyPilotId = completionRecipient(source, input, host, true);
       if (input.worktreeCwd !== undefined) {
         const chosen = (await host.worktrees(launch.cwd)).worktrees.find(
           (tree) =>
@@ -1107,13 +1107,13 @@ export async function handleAgentApp(
           launch,
           id,
           { direction: placement as SplitDir, besideSessionId },
-          ...(notifyMonoId ? [notifyMonoId] : []),
+          ...(notifyPilotId ? [notifyPilotId] : []),
         );
-      else if (notifyMonoId) await host.start(launch, id, undefined, notifyMonoId);
+      else if (notifyPilotId) await host.start(launch, id, undefined, notifyPilotId);
       else await host.start(launch, id);
-      const folder = host.monoOf?.(source.id)?.folder;
+      const folder = host.pilotOf?.(source.id)?.folder;
       if (folder && !launch.sidebarHidden)
-        fileInMonoFolder(launch.cwd, id, folder);
+        fileInPilotFolder(launch.cwd, id, folder);
       return {
         id,
         cwd: launch.cwd,
@@ -1121,7 +1121,7 @@ export async function handleAgentApp(
         model: launch.model,
         submitted: !launch.draft,
         draft: !!launch.draft,
-        ...(notifyMonoId ? { notifyOnComplete: true } : {}),
+        ...(notifyPilotId ? { notifyOnComplete: true } : {}),
       };
     }
     case "worktrees.list":

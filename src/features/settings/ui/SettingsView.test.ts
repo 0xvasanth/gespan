@@ -28,11 +28,11 @@ import {
 } from "../../sessions/model/session";
 import { saveMaskEmails, saveShowRemainingUsage } from "../model/displayPrefs";
 import {
-  createMono,
-  findMono,
-  monoLook,
-  updateMono,
-} from "../../monos/model/mono";
+  createPilot,
+  findPilot,
+  pilotLook,
+  updatePilot,
+} from "../../pilots/model/pilot";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async () => undefined),
@@ -126,29 +126,29 @@ afterEach(async () => {
 });
 
 describe("settings pages", () => {
-  it("saves each Mono's session visibility and restores it when settings reopen", async () => {
-    const mono = createMono();
-    const other = createMono();
+  it("saves each Pilot's session visibility and restores it when settings reopen", async () => {
+    const pilot = createPilot();
+    const other = createPilot();
     const toggle = (id: string) =>
       container.querySelector<HTMLButtonElement>(
-        `[role="switch"][aria-label="Show sessions started by ${monoLook(findMono(id)!).name} in sidebar"]`,
+        `[role="switch"][aria-label="Show sessions started by ${pilotLook(findPilot(id)!).name} in sidebar"]`,
       )!;
-    await render("monos");
-    // Off until turned on: a Mono's sessions stay in its overview.
-    expect(toggle(mono.id).getAttribute("aria-checked")).toBe("false");
+    await render("pilots");
+    // Off until turned on: a Pilot's sessions stay in its overview.
+    expect(toggle(pilot.id).getAttribute("aria-checked")).toBe("false");
     expect(toggle(other.id).getAttribute("aria-checked")).toBe("false");
-    await act(async () => toggle(mono.id).click());
-    expect(toggle(mono.id).getAttribute("aria-checked")).toBe("true");
-    expect(findMono(mono.id)?.showStartedSessionsInSidebar).toBe(true);
+    await act(async () => toggle(pilot.id).click());
+    expect(toggle(pilot.id).getAttribute("aria-checked")).toBe("true");
+    expect(findPilot(pilot.id)?.showStartedSessionsInSidebar).toBe(true);
     expect(toggle(other.id).getAttribute("aria-checked")).toBe("false");
     await render("general");
-    await render("monos");
-    expect(toggle(mono.id).getAttribute("aria-checked")).toBe("true");
-    await act(async () => updateMono(mono.id, (entry) => ({
+    await render("pilots");
+    expect(toggle(pilot.id).getAttribute("aria-checked")).toBe("true");
+    await act(async () => updatePilot(pilot.id, (entry) => ({
       ...entry,
       showStartedSessionsInSidebar: false,
     })));
-    expect(toggle(mono.id).getAttribute("aria-checked")).toBe("false");
+    expect(toggle(pilot.id).getAttribute("aria-checked")).toBe("false");
   });
 
   it("blurs account emails by default and hides them when settings reopen", async () => {

@@ -628,7 +628,7 @@ describe("settings navigation", () => {
       "providers",
       "mcp",
       "skills",
-      "monos",
+      "pilots",
       "inbox",
       "archive",
       "worktrees",

@@ -67,11 +67,11 @@ describe.each([
     "rebase:live-agents-enabled-change",
   ],
   [
-    "rebase.monosEnabled",
-    settings.loadMonosEnabled,
-    settings.saveMonosEnabled,
+    "rebase.pilotsEnabled",
+    settings.loadPilotsEnabled,
+    settings.savePilotsEnabled,
     true,
-    "rebase:monos-enabled-change",
+    "rebase:pilots-enabled-change",
   ],
   [
     "rebase.closeToTray",

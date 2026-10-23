@@ -18,7 +18,7 @@ describe("sessionConversationPage", () => {
           role: "user",
           text: "Hidden app instructions",
           internal: true,
-          monoSessionCompletion: {
+          pilotSessionCompletion: {
             sessionId: "worker",
             title: "API fix",
             status: "completed",

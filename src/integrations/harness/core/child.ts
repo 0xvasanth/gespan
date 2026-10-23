@@ -38,7 +38,7 @@ export function prepareRebasexStore(
   providerAccountId?: string,
   threadId?: string,
 ): Promise<{ home: string; hasThread: boolean }> {
-  return invoke("codex_mono_store_prepare", { providerAccountId, threadId });
+  return invoke("codex_pilot_store_prepare", { providerAccountId, threadId });
 }
 
 export function copyRebasexThreads(
@@ -47,7 +47,7 @@ export function copyRebasexThreads(
   paths: string[],
   sqliteHome?: string,
 ): Promise<void> {
-  return invoke("codex_mono_store_copy", {
+  return invoke("codex_pilot_store_copy", {
     providerAccountId,
     threadId,
     paths,
@@ -75,7 +75,7 @@ export function restoreRebasexAgentState(
   providerAccountId: string | undefined,
   threadId: string,
 ): Promise<void> {
-  return invoke("codex_mono_store_restore_agent_state", {
+  return invoke("codex_pilot_store_restore_agent_state", {
     providerAccountId,
     threadId,
   });
@@ -354,7 +354,7 @@ export async function spawnChild(
   cwd: string,
   account?: { provider: "claude" | "codex"; id: string },
   binaryProvider?: ConfigurableBinaryProvider,
-  codexStore?: "mono",
+  codexStore?: "pilot",
   /** `devin acp` only: start with an approval rule for every edit. */
   devinAskEdits?: boolean,
 ): Promise<void> {

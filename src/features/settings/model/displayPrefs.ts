@@ -4,13 +4,13 @@ import { readFlag, writeFlag } from "./storageFlags";
 const SHOW_REMAINING_USAGE_KEY = "rebase.showRemainingUsage";
 const MASK_EMAILS_KEY = "rebase.maskEmails";
 const COMPOSER_AUTOCORRECT_KEY = "rebase.composerAutocorrect";
-const RAIL_MONOS_PINNED_KEY = "rebase.railMonosPinned";
+const RAIL_PILOTS_PINNED_KEY = "rebase.railPilotsPinned";
 export const PACED_REVEAL_KEY = "rebase.pacedReveal";
 
 export const SHOW_REMAINING_USAGE_DEFAULT = false;
 export const MASK_EMAILS_DEFAULT = true;
 export const COMPOSER_AUTOCORRECT_DEFAULT = true;
-export const RAIL_MONOS_PINNED_DEFAULT = false;
+export const RAIL_PILOTS_PINNED_DEFAULT = false;
 
 /** Fired on `window` whenever the usage meter direction flips (detail: boolean). */
 export const SHOW_REMAINING_USAGE_CHANGE_EVENT =
@@ -20,8 +20,8 @@ export const MASK_EMAILS_CHANGE_EVENT = "rebase:maskemailschange";
 /** Fired on `window` whenever composer autocorrect flips (detail: boolean). */
 export const COMPOSER_AUTOCORRECT_CHANGE_EVENT =
   "rebase:composerautocorrectchange";
-/** Fired on `window` whenever Monos are pinned to or unpinned from the icon rail (detail: boolean). */
-export const RAIL_MONOS_PINNED_CHANGE_EVENT = "rebase:railmonospinnedchange";
+/** Fired on `window` whenever Pilots are pinned to or unpinned from the icon rail (detail: boolean). */
+export const RAIL_PILOTS_PINNED_CHANGE_EVENT = "rebase:railpilotspinnedchange";
 
 function flagStore(key: string, fallback: boolean, event: string) {
   // Holds a saved value only while storage failed to keep it, so the switch
@@ -68,10 +68,10 @@ const composerAutocorrect = flagStore(
   COMPOSER_AUTOCORRECT_DEFAULT,
   COMPOSER_AUTOCORRECT_CHANGE_EVENT,
 );
-const railMonosPinned = flagStore(
-  RAIL_MONOS_PINNED_KEY,
-  RAIL_MONOS_PINNED_DEFAULT,
-  RAIL_MONOS_PINNED_CHANGE_EVENT,
+const railPilotsPinned = flagStore(
+  RAIL_PILOTS_PINNED_KEY,
+  RAIL_PILOTS_PINNED_DEFAULT,
+  RAIL_PILOTS_PINNED_CHANGE_EVENT,
 );
 const pacedReveal = flagStore(
   PACED_REVEAL_KEY,
@@ -102,14 +102,14 @@ export const saveMaskEmails = maskEmails.save;
 export const subscribeMaskEmails = maskEmails.subscribe;
 export const useMaskEmails = maskEmails.useFlag;
 
-/** Session and mono composers spell check and autocorrect what you type. */
+/** Session and pilot composers spell check and autocorrect what you type. */
 export const loadComposerAutocorrect = composerAutocorrect.load;
 export const saveComposerAutocorrect = composerAutocorrect.save;
 export const subscribeComposerAutocorrect = composerAutocorrect.subscribe;
 export const useComposerAutocorrect = composerAutocorrect.useFlag;
 
-/** Monos sit at the top of the icon rail instead of inside the project picker. */
-export const loadRailMonosPinned = railMonosPinned.load;
-export const saveRailMonosPinned = railMonosPinned.save;
-export const subscribeRailMonosPinned = railMonosPinned.subscribe;
-export const useRailMonosPinned = railMonosPinned.useFlag;
+/** Pilots sit at the top of the icon rail instead of inside the project picker. */
+export const loadRailPilotsPinned = railPilotsPinned.load;
+export const saveRailPilotsPinned = railPilotsPinned.save;
+export const subscribeRailPilotsPinned = railPilotsPinned.subscribe;
+export const useRailPilotsPinned = railPilotsPinned.useFlag;

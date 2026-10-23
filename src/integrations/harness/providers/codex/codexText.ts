@@ -17,7 +17,7 @@ import {
 } from "./codexProtocol";
 import type { HarnessEvent } from "../../core/types";
 import { JsonRpcClient, type JsonRpcId } from "../../core/jsonRpc";
-import { prepareCodexMonoContext } from "./codexStore";
+import { prepareCodexPilotContext } from "./codexStore";
 import type { TextPromptInput } from "../../core/registry";
 
 import { mergeStream, streamTextDelta } from "../../core/streamText";
@@ -35,7 +35,7 @@ type LiveText = {
   providerAccountId?: string;
   threadId: string;
   ephemeral: boolean;
-  codexStore?: "mono";
+  codexStore?: "pilot";
   storeConfig?: Record<string, unknown>;
   model: string;
   effort: string;
@@ -199,7 +199,7 @@ async function ensureLive(input: {
   model?: string;
   modelSettings?: Record<string, string>;
   ephemeral?: boolean;
-  codexStore?: "mono";
+  codexStore?: "pilot";
   threadId?: string;
   onThreadId?: (threadId: string) => void;
 }): Promise<LiveText> {
@@ -278,13 +278,13 @@ async function startLive(
   serviceTier?: string,
   requestedThreadId?: string,
   ephemeral = true,
-  codexStore?: "mono",
+  codexStore?: "pilot",
 ): Promise<LiveText> {
   await dropLive();
   const { path } = await resolveCodexBinary();
   const store =
-    codexStore === "mono"
-      ? await prepareCodexMonoContext({
+    codexStore === "pilot"
+      ? await prepareCodexPilotContext({
           sessionId: TEXT_CHILD_ID,
           path,
           cwd,
@@ -381,15 +381,15 @@ async function openThread(
   cwd: string,
   requestedThreadId: string | undefined,
   ephemeral: boolean,
-  preparedStore?: Awaited<ReturnType<typeof prepareCodexMonoContext>>,
+  preparedStore?: Awaited<ReturnType<typeof prepareCodexPilotContext>>,
 ): Promise<void> {
   let opened: { thread?: { id?: string } } | undefined;
   let hasSavedContext = false;
-  if (session.codexStore === "mono") {
+  if (session.codexStore === "pilot") {
     const { path } = await resolveCodexBinary();
     const store =
       preparedStore ??
-      (await prepareCodexMonoContext({
+      (await prepareCodexPilotContext({
         sessionId: TEXT_CHILD_ID,
         path,
         cwd,

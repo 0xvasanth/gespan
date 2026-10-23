@@ -516,7 +516,7 @@ export async function claimDueAutomations(
   const claimed: DueAutomationRun[] = [];
   for (const automation of due) {
     const triggers = automationTriggers(automation);
-    // Bound each polling pass so a long offline period cannot monopolize the
+    // Bound each polling pass so a long offline period cannot pilotpolize the
     // webview. Any remaining overdue occurrences stay due for the next pass.
     for (const occurrence of overdueTriggerOccurrences(
       triggers,

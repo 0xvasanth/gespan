@@ -37,7 +37,7 @@ import {
   loadPinnedProjects,
   sameProjectPath,
 } from "../../projects/model/recents";
-import { listMonos, monoLook, monoState } from "../../monos/model/mono";
+import { listPilots, pilotLook, pilotState } from "../../pilots/model/pilot";
 import { displayPath, pathKey, projectName } from "../../../shared/lib/paths";
 import {
   getSession,
@@ -92,12 +92,12 @@ export async function mobileCatalog(
   live: readonly Session[],
   runtimeMode?: RuntimeMode,
 ) {
-  const roster = listMonos();
+  const roster = listPilots();
   const paths = [
     ...new Set([
       ...loadRecents().map((project) => project.path),
       ...loadPinnedProjects(),
-      ...roster.flatMap((mono) => mono.projects),
+      ...roster.flatMap((pilot) => pilot.projects),
     ]),
   ].filter((path) => path && path !== "~");
   const colors = loadTabGroupColors();
@@ -139,7 +139,7 @@ export async function mobileCatalog(
       session.inboxAsk ||
       session.orchestrationLeadId ||
       session.sidebarHidden ||
-      roster.some((mono) => mono.sessionId === session.id)
+      roster.some((pilot) => pilot.sessionId === session.id)
     )
       continue;
     if (paths.some((path) => sameProjectPath(path, session.cwd)))
@@ -166,12 +166,12 @@ export async function mobileCatalog(
         live: true,
       });
   }
-  const monos = await Promise.all(
-    roster.map(async (mono) => {
+  const pilots = await Promise.all(
+    roster.map(async (pilot) => {
       const session =
-        live.find((session) => session.id === mono.sessionId) ??
-        (mono.sessionId
-          ? await getSession(mono.sessionId).catch(() => undefined)
+        live.find((session) => session.id === pilot.sessionId) ??
+        (pilot.sessionId
+          ? await getSession(pilot.sessionId).catch(() => undefined)
           : undefined);
       const messages = session ? mobileMessages(session) : [];
       const last = messages[messages.length - 1];
@@ -180,16 +180,16 @@ export async function mobileCatalog(
             ?.startedAt ?? 0)
         : 0;
       return {
-        id: mono.id,
-        name: monoLook(mono).name,
-        mascot: mono.mascot,
-        color: mono.color,
-        projectIds: mono.projects.map(mobileProjectId),
+        id: pilot.id,
+        name: pilotLook(pilot).name,
+        mascot: pilot.mascot,
+        color: pilot.color,
+        projectIds: pilot.projects.map(mobileProjectId),
         unread: 0,
-        status: session ? monoState(session).status : "idle",
+        status: session ? pilotState(session).status : "idle",
         busy: !!session?.busy,
-        live: live.some((current) => current.id === mono.sessionId),
-        sessionId: mono.sessionId,
+        live: live.some((current) => current.id === pilot.sessionId),
+        sessionId: pilot.sessionId,
         harness: session?.harness,
         model: session?.model,
         lastMessage: last?.text ?? "",
@@ -199,7 +199,7 @@ export async function mobileCatalog(
   );
   return {
     projects,
-    monos,
+    pilots,
     sessions: [...sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt),
   };
 }
@@ -251,12 +251,12 @@ export async function mobileConversation(
   saved?: Map<string, Session>,
   range?: (turnIds: string[]) => [number, number],
 ) {
-  const mono = id.startsWith("mono:")
-    ? listMonos().find((mono) => mono.id === id.slice(5))
+  const pilot = id.startsWith("pilot:")
+    ? listPilots().find((pilot) => pilot.id === id.slice(5))
     : undefined;
-  if (id.startsWith("mono:") && !mono)
-    throw new Error("Mono is no longer available");
-  const sessionId = mono ? mono.sessionId : id;
+  if (id.startsWith("pilot:") && !pilot)
+    throw new Error("Pilot is no longer available");
+  const sessionId = pilot ? pilot.sessionId : id;
   const session = sessionId
     ? (live.find((session) => session.id === sessionId) ??
       (await readSaved(sessionId, saved)))
@@ -267,7 +267,7 @@ export async function mobileConversation(
     turns: session
       ? mobileTranscript(session, {
           busy: !!session.busy,
-          mono: mono ? { name: monoLook(mono).name } : undefined,
+          pilot: pilot ? { name: pilotLook(pilot).name } : undefined,
           pendingQuestion: !!session.pendingQuestion,
           backgroundTasks: session.backgroundTasks,
           range,
@@ -294,10 +294,10 @@ export async function mobileModels(
   );
   let current: Session | undefined;
   if (params.conversationId) {
-    const mono = params.conversationId.startsWith("mono:")
-      ? listMonos().find((mono) => mono.id === params.conversationId!.slice(5))
+    const pilot = params.conversationId.startsWith("pilot:")
+      ? listPilots().find((pilot) => pilot.id === params.conversationId!.slice(5))
       : undefined;
-    const sessionId = mono ? mono.sessionId : params.conversationId;
+    const sessionId = pilot ? pilot.sessionId : params.conversationId;
     current = sessionId
       ? (live.find((session) => session.id === sessionId) ??
         (await readSaved(sessionId, saved)) ??
@@ -434,7 +434,7 @@ function mobileProjectPaths() {
   return [
     ...loadRecents().map((project) => project.path),
     ...loadPinnedProjects(),
-    ...listMonos().flatMap((mono) => mono.projects),
+    ...listPilots().flatMap((pilot) => pilot.projects),
   ];
 }
 

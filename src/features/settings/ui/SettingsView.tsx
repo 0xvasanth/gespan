@@ -261,11 +261,11 @@ import {
   usePacedReveal,
   saveMaskEmails,
   saveNewLayoutPromptDismissed,
-  saveRailMonosPinned,
+  saveRailPilotsPinned,
   saveShowRemainingUsage,
   useComposerAutocorrect,
   useMaskEmails,
-  useRailMonosPinned,
+  useRailPilotsPinned,
   useShowRemainingUsage,
 } from "../model/displayPrefs";
 import {
@@ -325,17 +325,17 @@ import { ProjectLogoIcon } from "../../projects/ui/ProjectLogoIcon";
 import { ProjectMascot } from "../../projects/ui/ProjectMascot";
 import { PixelMascot } from "../../projects/ui/PixelMascot";
 import {
-  defaultMonoName,
-  listMonos,
-  monoLook,
-  monoProjectsPhrase,
-  monosSnapshot,
-  subscribeMonos,
-  updateMono,
-  type Mono,
-} from "../../monos/model/mono";
-import { resetMonoDefaults } from "../../monos/model/monoFiles";
-import { ConfirmReset } from "../../monos/ui/ConfirmReset";
+  defaultPilotName,
+  listPilots,
+  pilotLook,
+  pilotProjectsPhrase,
+  pilotsSnapshot,
+  subscribePilots,
+  updatePilot,
+  type Pilot,
+} from "../../pilots/model/pilot";
+import { resetPilotDefaults } from "../../pilots/model/pilotFiles";
+import { ConfirmReset } from "../../pilots/ui/ConfirmReset";
 import {
   filterKeybindings,
   currentKeybindings,
@@ -352,11 +352,11 @@ import {
   loadLiveAgentsEnabled,
   loadModelControls,
   loadNotesEnabled,
-  loadMonosEnabled,
-  loadMonoMenuBarIcon,
+  loadPilotsEnabled,
+  loadPilotMenuBarIcon,
   loadKeybindingOverrides,
-  saveMonoMenuBarIcon,
-  subscribeMonoMenuBarIcon,
+  savePilotMenuBarIcon,
+  subscribePilotMenuBarIcon,
   loadQuickComposerEnabled,
   loadQuickComposerShortcut,
   loadTabAnimationsEnabled,
@@ -375,8 +375,8 @@ import {
   saveLiveAgentsEnabled,
   saveModelControls,
   saveNotesEnabled,
-  saveMonosEnabled,
-  subscribeMonosEnabled,
+  savePilotsEnabled,
+  subscribePilotsEnabled,
   saveKeybindingOverride,
   validateKeybindingShortcut,
   saveQuickComposerEnabled,
@@ -655,7 +655,7 @@ export function SettingsView({
               ) : null}
               {section === "chat" ? <ChatPage /> : null}
               {section === "keybindings" ? <KeybindingsPage /> : null}
-              {section === "monos" ? <MonosPage /> : null}
+              {section === "pilots" ? <PilotsPage /> : null}
               {section === "mcp" ? (
                 <McpSettings cwd={cwd} recents={recents} />
               ) : null}
@@ -1199,7 +1199,7 @@ function ChatPage() {
         <Row
           id="composer-autocorrect"
           label="Autocorrect"
-          description="Spell check and autocorrect prompts in session and mono composers. Turn this off to keep the text exactly as typed."
+          description="Spell check and autocorrect prompts in session and pilot composers. Turn this off to keep the text exactly as typed."
         >
           <Toggle
             label="Autocorrect"
@@ -4236,68 +4236,68 @@ function formatDate(value: number): string {
   }
 }
 
-/** Monos on or off, and each Mono the user has. */
-function MonosPage() {
+/** Pilots on or off, and each Pilot the user has. */
+function PilotsPage() {
   const enabled = useSyncExternalStore(
-    subscribeMonosEnabled,
-    loadMonosEnabled,
+    subscribePilotsEnabled,
+    loadPilotsEnabled,
     () => true,
   );
   const menuBarIcon = useSyncExternalStore(
-    subscribeMonoMenuBarIcon,
-    loadMonoMenuBarIcon,
+    subscribePilotMenuBarIcon,
+    loadPilotMenuBarIcon,
     () => true,
   );
-  const railPinned = useRailMonosPinned();
-  const snapshot = useSyncExternalStore(subscribeMonos, monosSnapshot);
-  const monos = useMemo(() => listMonos(), [snapshot]);
+  const railPinned = useRailPilotsPinned();
+  const snapshot = useSyncExternalStore(subscribePilots, pilotsSnapshot);
+  const pilots = useMemo(() => listPilots(), [snapshot]);
 
   return (
     <>
-      <Group title="Monos">
+      <Group title="Pilots">
         <Row
-          id="monos-enabled"
-          label="Show monos"
+          id="pilots-enabled"
+          label="Show pilots"
           description="Agents of your own on the project rail. Each works on the projects you give it, remembers what matters and picks up habits it runs on its own. Turn this off to hide them."
         >
-          <Toggle label="Show monos" on={enabled} onChange={saveMonosEnabled} />
+          <Toggle label="Show pilots" on={enabled} onChange={savePilotsEnabled} />
         </Row>
         <Row
-          id="rail-monos-pinned"
-          label="Pin monos to the icon rail"
-          description="When the project rail is collapsed to icons, show each Mono at the top of the rail, above a divider, instead of inside the project picker."
+          id="rail-pilots-pinned"
+          label="Pin pilots to the icon rail"
+          description="When the project rail is collapsed to icons, show each Pilot at the top of the rail, above a divider, instead of inside the project picker."
         >
           <Toggle
-            label="Pin monos to the icon rail"
+            label="Pin pilots to the icon rail"
             on={railPinned}
-            onChange={saveRailMonosPinned}
+            onChange={saveRailPilotsPinned}
             disabled={!enabled}
           />
         </Row>
         {IS_MAC && (
           <Row
-            id="mono-menu-bar-icon"
+            id="pilot-menu-bar-icon"
             label="Menu bar icon"
-            description="Chat with a Mono or open the quick composer from the macOS menu bar. Turn this off to hide the icon."
+            description="Chat with a Pilot or open the quick composer from the macOS menu bar. Turn this off to hide the icon."
           >
             <Toggle
               label="Menu bar icon"
               on={menuBarIcon}
-              onChange={saveMonoMenuBarIcon}
+              onChange={savePilotMenuBarIcon}
             />
           </Row>
         )}
       </Group>
       <Group
-        id="mono-list"
-        title="Your monos"
-        description="Choose whether new sessions started by each Mono appear in the sidebar. Hidden sessions remain saved and can be opened from the Mono's chat. Add a Mono with the plus on the rail and choose its projects from its details."
+        id="pilot-list"
+        title="Your pilots"
+        description="Choose whether new sessions started by each Pilot appear in the sidebar. Hidden sessions remain saved and can be opened from the Pilot's chat. Add a Pilot with the plus on the rail and choose its projects from its details."
       >
-        {monos.length ? (
-          monos.map((mono) => <MonoRow key={mono.id} mono={mono} />)
+        {pilots.length ? (
+          pilots.map((pilot) => <PilotRow key={pilot.id} pilot={pilot} />)
         ) : (
           <p className="px-4 py-3.5 text-[12px] text-content/45">
-            No monos yet.
+            No pilots yet.
           </p>
         )}
       </Group>
@@ -4305,8 +4305,8 @@ function MonosPage() {
   );
 }
 
-function MonoRow({ mono }: { mono: Mono }) {
-  const look = monoLook(mono);
+function PilotRow({ pilot }: { pilot: Pilot }) {
+  const look = pilotLook(pilot);
   return (
     <Row
       label={
@@ -4322,30 +4322,30 @@ function MonoRow({ mono }: { mono: Mono }) {
       }
       description={
         look.projects.length
-          ? `Works on ${monoProjectsPhrase(look.projects)}`
+          ? `Works on ${pilotProjectsPhrase(look.projects)}`
           : "No projects yet"
       }
     >
       <span className="text-[12px] leading-5 text-content/50">
-        Show Mono spawned session on the sidebar
+        Show Pilot spawned session on the sidebar
       </span>
       <Toggle
         label={`Show sessions started by ${look.name} in sidebar`}
-        on={mono.showStartedSessionsInSidebar === true}
+        on={pilot.showStartedSessionsInSidebar === true}
         onChange={(on) =>
-          updateMono(mono.id, (entry) => ({
+          updatePilot(pilot.id, (entry) => ({
             ...entry,
             showStartedSessionsInSidebar: on,
           }))
         }
       />
       <ConfirmReset
-        label="Reset Mono"
+        label="Reset Pilot"
         title={`Reset ${look.name} to its defaults?`}
-        body={`Its soul goes back to the default and its name to ${defaultMonoName(look.mascot)}. Changes to its soul can't be recovered.`}
+        body={`Its soul goes back to the default and its name to ${defaultPilotName(look.mascot)}. Changes to its soul can't be recovered.`}
         kept="Its conversation, projects, memory and habits will be kept."
-        failure="Could not reset the Mono."
-        onConfirm={() => resetMonoDefaults(mono.id)}
+        failure="Could not reset the Pilot."
+        onConfirm={() => resetPilotDefaults(pilot.id)}
       >
         {(open, ref) => (
           <button

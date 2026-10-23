@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { isMonoSession } from "../../monos/model/mono";
-import { sanitizeMonoSpawnedSessions } from "../../monos/model/monoSpawnedSessions";
+import { isPilotSession } from "../../pilots/model/pilot";
+import { sanitizePilotSpawnedSessions } from "../../pilots/model/pilotSpawnedSessions";
 import {
   isWeakToolTitle,
   titleFromToolInput,
@@ -80,7 +80,7 @@ export type SessionSummary = {
 
 type SessionRecord = {
   sidebarHidden?: boolean;
-  monoTranscript?: Session["monoTranscript"];
+  pilotTranscript?: Session["pilotTranscript"];
   orchestrationLeadId?: string;
   id: string;
   cwd: string;
@@ -136,8 +136,8 @@ export function shouldPersistSession(session: Session): boolean {
     !isRemoteProjectPath(session.cwd) &&
     session.cwd !== "~" &&
     (session.blocks.some((block) => block.role === "user") ||
-      (isMonoSession(session.id) &&
-        (session.blocks.length > 0 || !!session.monoTranscript)))
+      (isPilotSession(session.id) &&
+        (session.blocks.length > 0 || !!session.pilotTranscript)))
   );
 }
 
@@ -189,11 +189,11 @@ function persistableMeta(
   };
 }
 
-function sanitizeMonoSessionCompletion(
+function sanitizePilotSessionCompletion(
   value: unknown,
-): Block["monoSessionCompletion"] {
+): Block["pilotSessionCompletion"] {
   if (!value || typeof value !== "object") return undefined;
-  const completion = value as NonNullable<Block["monoSessionCompletion"]>;
+  const completion = value as NonNullable<Block["pilotSessionCompletion"]>;
   if (
     typeof completion.sessionId !== "string" ||
     !isPersistableId(completion.sessionId) ||
@@ -254,8 +254,8 @@ function sanitizeQueuedMessages(value: unknown): QueuedMessage[] {
         })
       : [];
     const noteMeta = sanitizeNoteCard(message.noteCard);
-    const completion = sanitizeMonoSessionCompletion(
-      message.monoSessionCompletion,
+    const completion = sanitizePilotSessionCompletion(
+      message.pilotSessionCompletion,
     );
     const noteCard =
       noteMeta && typeof message.noteCard?.body === "string"
@@ -287,7 +287,7 @@ function sanitizeQueuedMessages(value: unknown): QueuedMessage[] {
         attachments,
         ...(noteCard ? { noteCard } : {}),
         ...(handoffCard ? { handoffCard } : {}),
-        ...(completion ? { monoSessionCompletion: completion } : {}),
+        ...(completion ? { pilotSessionCompletion: completion } : {}),
         ...(["default", "plan", "build", "orchestrate"].includes(
           message.intent ?? "",
         )
@@ -382,12 +382,12 @@ export async function upsertSession(
   if (!shouldPersistSession(session) || deletedSessionIds.has(session.id)) {
     return null;
   }
-  const mono = !!session.monoTranscript || isMonoSession(session.id);
-  const snapshot = mono
-    ? session.blocks.filter((block) => monoPersistedBlock(block) !== null)
+  const pilot = !!session.pilotTranscript || isPilotSession(session.id);
+  const snapshot = pilot
+    ? session.blocks.filter((block) => pilotPersistedBlock(block) !== null)
     : session.blocks;
-  // Mono writes sanitize only the changed suffix inside the serialized queue.
-  const payload = mono
+  // Pilot writes sanitize only the changed suffix inside the serialized queue.
+  const payload = pilot
     ? persistableMeta(session)
     : sanitizeSessionForPersist(session);
   if (session.orchestrationLeadId) {
@@ -397,8 +397,8 @@ export async function upsertSession(
   }
   const summary = await enqueueSessionWrite(session.id, async () => {
     if (deletedSessionIds.has(session.id)) return null;
-    if (mono) {
-      const previous = monoSavedBlocks.get(session.id);
+    if (pilot) {
+      const previous = pilotSavedBlocks.get(session.id);
       let same = 0;
       if (previous) {
         while (
@@ -410,11 +410,11 @@ export async function upsertSession(
       }
       const changed =
         !previous || same !== previous.length || same !== snapshot.length;
-      const summary = await invoke<SessionSummary>("mono_session_upsert", {
+      const summary = await invoke<SessionSummary>("pilot_session_upsert", {
         session: {
           ...payload,
           blocks: changed
-            ? snapshot.slice(same).map((block) => monoPersistedBlock(block)!)
+            ? snapshot.slice(same).map((block) => pilotPersistedBlock(block)!)
             : [],
         },
         afterBlockId: same > 0 ? snapshot[same - 1].id : null,
@@ -422,12 +422,12 @@ export async function upsertSession(
           same === 0
             ? previous !== undefined
               ? (previous[0]?.id ?? null)
-              : (session.monoTranscript?.firstBlockId ?? null)
+              : (session.pilotTranscript?.firstBlockId ?? null)
             : null,
         blocksChanged: changed,
         appendOnly: previous?.length === 0,
       });
-      monoSavedBlocks.set(session.id, snapshot);
+      pilotSavedBlocks.set(session.id, snapshot);
       return summary;
     }
     return invoke<SessionSummary>("session_upsert", {
@@ -551,31 +551,31 @@ export function cancelSessionSearch(searchOwner: string): Promise<void> {
   return invoke<void>("cancel_session_search", { searchOwner });
 }
 
-const monoSavedBlocks = new Map<string, Block[]>();
-const monoBlockPayloads = new WeakMap<Block, Block | null>();
-function monoPersistedBlock(block: Block): Block | null {
-  if (monoBlockPayloads.has(block)) return monoBlockPayloads.get(block)!;
+const pilotSavedBlocks = new Map<string, Block[]>();
+const pilotBlockPayloads = new WeakMap<Block, Block | null>();
+function pilotPersistedBlock(block: Block): Block | null {
+  if (pilotBlockPayloads.has(block)) return pilotBlockPayloads.get(block)!;
   const payload = sanitizeBlock(block);
-  monoBlockPayloads.set(block, payload);
+  pilotBlockPayloads.set(block, payload);
   return payload;
 }
 
-export const MONO_PAGE_TURNS = 10;
-export type MonoTranscriptPage = {
+export const PILOT_PAGE_TURNS = 10;
+export type PilotTranscriptPage = {
   blocks: Block[];
   before: number | null;
   hasNewer: boolean;
 };
 
-export async function getMonoTranscriptPage(
+export async function getPilotTranscriptPage(
   sessionId: string,
   options: {
     before?: number;
     beforeBlockId?: string;
     aroundBlockId?: string;
   } = {},
-): Promise<MonoTranscriptPage> {
-  const page = await invoke<MonoTranscriptPage>("mono_session_page", {
+): Promise<PilotTranscriptPage> {
+  const page = await invoke<PilotTranscriptPage>("pilot_session_page", {
     sessionId,
     before: options.before ?? null,
     beforeBlockId: options.beforeBlockId ?? null,
@@ -589,11 +589,11 @@ export async function getMonoTranscriptPage(
   };
 }
 
-export function findMonoTranscript(
+export function findPilotTranscript(
   sessionId: string,
   query: string,
 ): Promise<string[]> {
-  return invoke("mono_session_find", { sessionId, query });
+  return invoke("pilot_session_find", { sessionId, query });
 }
 
 export async function getSession(sessionId: string): Promise<Session | null> {
@@ -604,14 +604,14 @@ export async function getSession(sessionId: string): Promise<Session | null> {
 /** Read the saved conversation without waiting for optional provider-log repairs. */
 export async function readSession(sessionId: string): Promise<Session | null> {
   const record = await invoke<SessionRecord | null>(
-    isMonoSession(sessionId) ? "mono_session_get" : "session_get",
+    isPilotSession(sessionId) ? "pilot_session_get" : "session_get",
     {
       sessionId,
     },
   );
   if (!record) return null;
   const session = recordToSession(record);
-  if (session.monoTranscript) monoSavedBlocks.set(sessionId, session.blocks);
+  if (session.pilotTranscript) pilotSavedBlocks.set(sessionId, session.blocks);
   return session;
 }
 
@@ -827,7 +827,7 @@ export async function deleteSession(
     await enqueueSessionWrite(sessionId, () =>
       invoke<void>("session_delete", { sessionId, imagePaths }),
     );
-    monoSavedBlocks.delete(sessionId);
+    pilotSavedBlocks.delete(sessionId);
     const tombstone = setTimeout(
       () => deletedSessionIds.delete(sessionId),
       60_000,
@@ -846,7 +846,7 @@ export async function discardDraftSessionRecord(
   await enqueueSessionWrite(sessionId, () =>
     invoke<void>("session_delete", { sessionId, imagePaths: [] }),
   );
-  monoSavedBlocks.delete(sessionId);
+  pilotSavedBlocks.delete(sessionId);
 }
 
 export async function setSessionArchived(
@@ -964,17 +964,17 @@ function sanitizeBlock(
   if (block.durationMs != null) next.durationMs = block.durationMs;
   if (
     (block.role === "assistant" || block.role === "approval") &&
-    typeof block.monoHabit?.id === "string" &&
-    block.monoHabit.id.trim() &&
-    typeof block.monoHabit.name === "string" &&
-    block.monoHabit.name.trim() &&
-    typeof block.monoHabit.at === "number" &&
-    Number.isFinite(block.monoHabit.at)
+    typeof block.pilotHabit?.id === "string" &&
+    block.pilotHabit.id.trim() &&
+    typeof block.pilotHabit.name === "string" &&
+    block.pilotHabit.name.trim() &&
+    typeof block.pilotHabit.at === "number" &&
+    Number.isFinite(block.pilotHabit.at)
   ) {
-    next.monoHabit = {
-      id: block.monoHabit.id,
-      name: block.monoHabit.name,
-      at: block.monoHabit.at,
+    next.pilotHabit = {
+      id: block.pilotHabit.id,
+      name: block.pilotHabit.name,
+      at: block.pilotHabit.at,
     };
   }
   if (block.role === "user" && typeof block.sentAt === "number")
@@ -1009,12 +1009,12 @@ function sanitizeBlock(
   // Without this the transcript would show the app's orchestration turns as
   // the user's own after a reload.
   if (block.role === "user" && block.internal) next.internal = true;
-  const completion = sanitizeMonoSessionCompletion(block.monoSessionCompletion);
+  const completion = sanitizePilotSessionCompletion(block.pilotSessionCompletion);
   if (block.role === "user" && block.internal && completion)
-    next.monoSessionCompletion = completion;
-  const spawned = sanitizeMonoSpawnedSessions(block.monoSpawnedSessions);
+    next.pilotSessionCompletion = completion;
+  const spawned = sanitizePilotSpawnedSessions(block.pilotSpawnedSessions);
   if (block.role === "user" && spawned.length)
-    next.monoSpawnedSessions = spawned;
+    next.pilotSpawnedSessions = spawned;
   const turnMetrics = sanitizeTurnMetrics(block.turnMetrics);
   if (block.role === "user" && turnMetrics) next.turnMetrics = turnMetrics;
   if (block.tool) next.tool = block.tool;
@@ -1503,7 +1503,7 @@ function recordToSession(record: SessionRecord): Session {
     ...(queuedMessages.length
       ? { queuedMessages, queueStatus: "paused" as const }
       : {}),
-    ...(record.monoTranscript ? { monoTranscript: record.monoTranscript } : {}),
+    ...(record.pilotTranscript ? { pilotTranscript: record.pilotTranscript } : {}),
     busy: false,
     orchestrationLeadId:
       record.orchestrationLeadId ??

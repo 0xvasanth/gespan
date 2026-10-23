@@ -345,7 +345,7 @@ describe("AgentTranscript collapsed work", () => {
     expect(markup).not.toContain("Claude Opus 5 worked for 9s");
   });
 
-  it("credits a Mono's turns to the Mono, whichever model ran them", () => {
+  it("credits a Pilot's turns to the Pilot, whichever model ran them", () => {
     const blocks: Block[] = [
       {
         id: "user",
@@ -363,17 +363,17 @@ describe("AgentTranscript collapsed work", () => {
     const markup = renderToStaticMarkup(
       createElement(AgentTranscript, {
         blocks,
-        agentName: "MonoCat",
+        agentName: "PilotCat",
         harness: "claude",
         model: "claude:opus-5",
       }),
     );
 
-    expect(markup).toContain("MonoCat worked for 9s");
+    expect(markup).toContain("PilotCat worked for 9s");
     expect(markup).not.toContain("Claude Sonnet 5 worked for 9s");
   });
 
-  it("marks when a Mono's messages were sent, and keeps its footer to copy, note and time", () => {
+  it("marks when a Pilot's messages were sent, and keeps its footer to copy, note and time", () => {
     const now = new Date(2026, 9, 5, 12).getTime();
     vi.setSystemTime(now);
     const turn = (id: string, startedAt: number): Block[] => [
@@ -395,7 +395,7 @@ describe("AgentTranscript collapsed work", () => {
     const markup = renderToStaticMarkup(
       createElement(AgentTranscript, {
         blocks,
-        agentName: "MonoCat",
+        agentName: "PilotCat",
         daySeparators: true,
         hideTurnMetrics: true,
         onSaveNote: () => {},
@@ -854,14 +854,14 @@ describe("AgentTranscript collapsed work", () => {
   });
 });
 
-describe("Mono inline work", () => {
-  function renderMono(blocks: Block[], busy = false) {
+describe("Pilot inline work", () => {
+  function renderPilot(blocks: Block[], busy = false) {
     return renderToStaticMarkup(
       createElement(AgentTranscript, {
         blocks,
         busy,
         inlineWork: true,
-        agentName: "MonoCat",
+        agentName: "PilotCat",
         onApproval: () => {},
       }),
     );
@@ -898,16 +898,16 @@ describe("Mono inline work", () => {
             ]
           : []),
       ];
-      const markup = renderMono(blocks, busy);
+      const markup = renderPilot(blocks, busy);
       const header = markup.indexOf(
-        busy ? "Running command…" : "MonoCat worked for 9s",
+        busy ? "Running command…" : "PilotCat worked for 9s",
       );
-      expect(header).toBeGreaterThanOrEqual(markup.indexOf("MonoCat"));
+      expect(header).toBeGreaterThanOrEqual(markup.indexOf("PilotCat"));
       expect(markup).not.toContain("I will check the first part.");
       expect(markup).not.toContain(
         "The first part passed. Checking the next part.",
       );
-      expect(markup.match(/data-mono-work/g)).toHaveLength(1);
+      expect(markup.match(/data-pilot-work/g)).toHaveLength(1);
       if (!busy)
         expect(markup.indexOf("Everything passed.")).toBeGreaterThan(header);
       expect(markup).not.toContain("hidden-detail-");
@@ -920,7 +920,7 @@ describe("Mono inline work", () => {
   it.each([true, false])(
     "keeps a single tool call in the activity trail (busy=%s)",
     (busy) => {
-      const markup = renderMono(
+      const markup = renderPilot(
         [
           { id: "user", role: "user", text: "Run this", durationMs: 1_000 },
           {
@@ -931,7 +931,7 @@ describe("Mono inline work", () => {
         busy,
       );
       expect(markup).toContain(
-        busy ? "Running command…" : "MonoCat worked for 1s",
+        busy ? "Running command…" : "PilotCat worked for 1s",
       );
       expect(markup).not.toContain("hidden-detail-single");
       expect(markup).not.toContain("aria-expanded");
@@ -946,13 +946,13 @@ describe("Mono inline work", () => {
       durationMs: 1_000,
     };
     const approval = tool("approval", { requestId: 1 });
-    const waiting = renderMono([user, approval], true);
+    const waiting = renderPilot([user, approval], true);
     expect(waiting).toContain("hidden-detail-approval");
     expect(waiting).toContain("Allow</button>");
     expect(waiting).toContain("Deny</button>");
     expect(waiting).toContain("Waiting for approval…");
     expect(waiting).not.toContain('aria-label="Show the steps');
-    const approved = renderMono([
+    const approved = renderPilot([
       user,
       {
         ...approval,
@@ -960,13 +960,13 @@ describe("Mono inline work", () => {
         tool: { kind: "shell", status: "completed" },
       },
     ]);
-    expect(approved).toContain("MonoCat worked for 1s");
+    expect(approved).toContain("PilotCat worked for 1s");
     expect(approved).not.toContain("hidden-detail-approval");
     expect(approved).not.toContain("Allow</button>");
   });
 
   it("keeps delegated tool work compact, including failed runs", () => {
-    const markup = renderMono([
+    const markup = renderPilot([
       { id: "user", role: "user", text: "Delegate this", durationMs: 1_000 },
       { id: "intro", role: "assistant", text: "I will ask for a review." },
       {

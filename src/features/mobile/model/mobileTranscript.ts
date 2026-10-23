@@ -1,8 +1,8 @@
-import { monoReactionBlocks } from "../../monos/model/monoReaction";
+import { pilotReactionBlocks } from "../../pilots/model/pilotReaction";
 import { visibleUserPrompt } from "../../orchestration/model/orchestration";
 import { isEmojiOnlyMessage } from "../../sessions/model/emojiMessage";
 import { resolveModel } from "../../sessions/model/models";
-import { monoWorkStatus } from "../../sessions/model/monoWorkStatus";
+import { pilotWorkStatus } from "../../sessions/model/pilotWorkStatus";
 import {
   isOperatorUserTurn,
   operatorUserPrompt,
@@ -21,8 +21,8 @@ import {
   foldableWork,
   isNoticeBlock,
   isProseBlock,
-  monoTurnLatestStart,
-  monoTurnRuns,
+  pilotTurnLatestStart,
+  pilotTurnRuns,
   needsApproval,
   opensNewStretch,
   toolCallLabel,
@@ -62,7 +62,7 @@ export type MobileTurnItem =
       compact?: boolean;
     }
   | { type: "text"; id: string; text: string; streaming?: boolean }
-  /** The turn's status line: the fold line, or a Mono's signature. */
+  /** The turn's status line: the fold line, or a Pilot's signature. */
   | {
       type: "header";
       id: string;
@@ -83,7 +83,7 @@ export type MobileTurnItem =
 
 export type MobileTurn = {
   id: string;
-  /** A day stamp above the turn, for a Mono's conversation kept over days. */
+  /** A day stamp above the turn, for a Pilot's conversation kept over days. */
   stampAt?: number;
   items: MobileTurnItem[];
   /** When the answer landed, for the line under a settled turn. */
@@ -91,7 +91,7 @@ export type MobileTurn = {
   footer?: boolean;
   /** What the footer's copy button copies: the turn's replies, as on desktop. */
   copyText?: string;
-  /** Token accounting for the footer's metrics button; Monos leave it out. */
+  /** Token accounting for the footer's metrics button; Pilots leave it out. */
   metrics?: TurnMetrics;
   durationMs?: number;
 };
@@ -101,7 +101,7 @@ const MAX_STEPS = 40;
 
 type Options = {
   busy: boolean;
-  mono?: { name: string };
+  pilot?: { name: string };
   pendingQuestion?: boolean;
   backgroundTasks?: string[];
   /**
@@ -116,15 +116,15 @@ export function mobileTranscript(
   session: Session,
   options: Options,
 ): MobileTurn[] {
-  const inlineWork = !!options.mono;
+  const inlineWork = !!options.pilot;
   const blocks = inlineWork
-    ? monoReactionBlocks(session.blocks)
+    ? pilotReactionBlocks(session.blocks)
     : session.blocks;
   const cache = new TranscriptTurnCache();
   const turns = cache.group(blocks, false, inlineWork);
   const activeTurnIndex = turns.reduce(
     (latest, turn, index) =>
-      turn[0].monoHabit || turn[0].role === "handoff" ? latest : index,
+      turn[0].pilotHabit || turn[0].role === "handoff" ? latest : index,
     -1,
   );
   const model = resolveModel(session.harness, session.model).name;
@@ -139,19 +139,19 @@ export function mobileTranscript(
   ];
   return turns.slice(first, end).map((turn, offset) => {
     const index = first + offset;
-    const runs = inlineWork ? monoTurnRuns(turn) : [turn];
+    const runs = inlineWork ? pilotTurnRuns(turn) : [turn];
     const userBlock = inlineWork
-      ? monoTurnUserBlock(runs[0])
+      ? pilotTurnUserBlock(runs[0])
       : turnUserBlock(turn);
     const lastRun =
-      runs.length > 1 ? monoTurnUserBlock(runs[runs.length - 1]) : userBlock;
-    const habit = turn[0].monoHabit;
-    const agentName = options.mono?.name;
+      runs.length > 1 ? pilotTurnUserBlock(runs[runs.length - 1]) : userBlock;
+    const habit = turn[0].pilotHabit;
+    const agentName = options.pilot?.name;
     const standaloneReply =
       !userBlock && !!(agentName || habit) && turn.some(isProseBlock);
     const durationMs =
       runs.length > 1
-        ? sumDurations(runs.map((run) => monoTurnUserBlock(run)?.durationMs))
+        ? sumDurations(runs.map((run) => pilotTurnUserBlock(run)?.durationMs))
         : userBlock?.durationMs;
     const settled = !(
       options.busy &&
@@ -164,9 +164,9 @@ export function mobileTranscript(
     const previousAt = !previous
       ? undefined
       : inlineWork
-        ? monoTurnLatestStart(previous)
+        ? pilotTurnLatestStart(previous)
         : (turnUserBlock(previous)?.startedAt ??
-          previous[0].monoHabit?.at ??
+          previous[0].pilotHabit?.at ??
           previous[0].startedAt);
     const stampAt =
       inlineWork && startedAt != null && opensNewStretch(startedAt, previousAt)
@@ -179,7 +179,7 @@ export function mobileTranscript(
       items.every(
         (item) => item.type === "block" && item.block.role === "user",
       ) &&
-      items.some((item) => item.type === "block" && !!item.block.monoReaction);
+      items.some((item) => item.type === "block" && !!item.block.pilotReaction);
     const fold = inlineWork ? undefined : foldableWork(items);
     const firstWork =
       habit || standaloneReply
@@ -240,7 +240,7 @@ export function mobileTranscript(
         const activity = turn.filter(
           (block) => !block.internal && !block.draft,
         );
-        let label = monoWorkStatus(activity, true).label;
+        let label = pilotWorkStatus(activity, true).label;
         if (options.pendingQuestion && !activity.some(needsApproval))
           label = "Waiting for answers…";
         else if (options.backgroundTasks?.length)
@@ -271,7 +271,7 @@ export function mobileTranscript(
       if (showHeader && itemIndex === headerAt) out.push(header());
       if (fold && itemIndex >= fold.start && itemIndex <= fold.end) return;
       if (item.type !== "block") {
-        // A Mono's process lives in its status line; only what needs you shows.
+        // A Pilot's process lives in its status line; only what needs you shows.
         if (inlineWork) {
           for (const block of item.blocks.filter(needsApproval))
             out.push({
@@ -347,7 +347,7 @@ function blockItem(block: Block, cwd: string): MobileTurnItem | null {
       id: block.id,
       text,
       at: block.sentAt ?? block.startedAt,
-      ...(block.monoReaction ? { reaction: block.monoReaction } : {}),
+      ...(block.pilotReaction ? { reaction: block.pilotReaction } : {}),
       ...(text && isEmojiOnlyMessage(text) ? { emojiOnly: true } : {}),
       ...(block.attachments?.length
         ? { attachments: block.attachments.length }
@@ -438,7 +438,7 @@ function turnUserBlock(blocks: Block[]): Block | undefined {
 }
 
 /** As AgentTranscript: the run's latest started prompt, hidden ones included. */
-function monoTurnUserBlock(blocks: Block[]): Block | undefined {
+function pilotTurnUserBlock(blocks: Block[]): Block | undefined {
   return (
     [...blocks]
       .reverse()

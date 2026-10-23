@@ -8,21 +8,21 @@ import {
   mobileNewSession,
   mobileProjectId,
 } from "../features/mobile/model/mobileWorkspace";
-import { readMonoConversation } from "../features/monos/model/monoConversation";
+import { readPilotConversation } from "../features/pilots/model/pilotConversation";
 import {
-  resumeMonoUsageLimit,
-  switchMonoUsageLimitAccount,
-} from "../features/monos/model/monoUsageLimit";
+  resumePilotUsageLimit,
+  switchPilotUsageLimitAccount,
+} from "../features/pilots/model/pilotUsageLimit";
 import {
-  acknowledgeMonoMessage,
-  enqueueMonoMessage,
-} from "../features/monos/model/monoMessaging";
+  acknowledgePilotMessage,
+  enqueuePilotMessage,
+} from "../features/pilots/model/pilotMessaging";
 import {
-  dismissQueuedMonoSessionCompletion,
-  enqueueMonoSessionCompletion,
-  monoSessionCompletionResult,
-  MonoSessionCompletionBatches,
-} from "../features/monos/model/monoSessionCompletion";
+  dismissQueuedPilotSessionCompletion,
+  enqueuePilotSessionCompletion,
+  pilotSessionCompletionResult,
+  PilotSessionCompletionBatches,
+} from "../features/pilots/model/pilotSessionCompletion";
 import { acceptQuickLaunch } from "./model/quickLaunchSession";
 import { useWorkspaceNavigation } from "./hooks/useWorkspaceNavigation";
 import { useIdleSessionDetach } from "./hooks/useIdleSessionDetach";
@@ -110,7 +110,7 @@ import { NewLayoutNotice } from "./shell/NewLayoutNotice";
 import { WhatsNewDialog } from "./shell/WhatsNewDialog";
 import { ProviderSignInDialog } from "../features/sessions/ui/ProviderSignInDialog";
 import {
-  MonoViewActions,
+  PilotViewActions,
   TitleBar,
   type Tab as TitleTab,
 } from "./shell/TitleBar";
@@ -119,8 +119,8 @@ import {
   appViewForTab,
   appViewTabId,
   isViewTab,
-  monoForTab,
-  monoTabId,
+  pilotForTab,
+  pilotTabId,
   nextDisplayedTabAfterClose,
   reconcileTitleTabOrder,
   type AppView,
@@ -128,23 +128,23 @@ import {
 import { AppViewSurface } from "../features/workspace/ui/AppViewSurface";
 import { WindowControls } from "./shell/WindowControls";
 import {
-  MonoOverview,
-  type MonoOverviewTab,
-} from "../features/monos/ui/MonoOverview";
-import { MonoSettingsDialog } from "../features/monos/ui/MonoSettingsDialog";
-import { MonoActivityView } from "../features/monos/ui/MonoActivityView";
+  PilotOverview,
+  type PilotOverviewTab,
+} from "../features/pilots/ui/PilotOverview";
+import { PilotSettingsDialog } from "../features/pilots/ui/PilotSettingsDialog";
+import { PilotActivityView } from "../features/pilots/ui/PilotActivityView";
 import {
   launchedSessionState,
-  monoSpawnedSessions,
-  recordMonoSpawnedSession,
+  pilotSpawnedSessions,
+  recordPilotSpawnedSession,
   type LaunchedSessionState,
   type LaunchedSessionView,
-} from "../features/monos/model/monoSpawnedSessions";
-import { groupMonoTurns } from "../features/sessions/model/transcriptActivity";
+} from "../features/pilots/model/pilotSpawnedSessions";
+import { groupPilotTurns } from "../features/sessions/model/transcriptActivity";
 import {
-  resolveMonoActivity,
-  type MonoActivitySelection,
-} from "../features/monos/model/monoActivity";
+  resolvePilotActivity,
+  type PilotActivitySelection,
+} from "../features/pilots/model/pilotActivity";
 import { MenuBar } from "./shell/MenuBar";
 import { FilePicker } from "../features/files/ui/FilePicker";
 import {
@@ -523,7 +523,7 @@ import {
   type RuntimeMode,
   type PlanStatus,
   type SecondOpinionMeta,
-  type MonoSpawnedSession,
+  type PilotSpawnedSession,
   type Session,
   type UsageLimit,
   type WorkspaceMode,
@@ -616,37 +616,37 @@ import {
   operatorEnabledInThread,
 } from "../features/sessions/model/operatorCommand";
 import {
-  createMono,
-  findMono,
-  monoWorksOn,
-  isMonoSession,
-  listMonos,
-  loadOpenMono,
-  monoForSession,
-  monoLook,
-  monosSnapshot,
-  monoState,
-  removeMono,
-  saveOpenMono,
-  subscribeMonos,
-  type MonoState,
-} from "../features/monos/model/mono";
+  createPilot,
+  findPilot,
+  pilotWorksOn,
+  isPilotSession,
+  listPilots,
+  loadOpenPilot,
+  pilotForSession,
+  pilotLook,
+  pilotsSnapshot,
+  pilotState,
+  removePilot,
+  saveOpenPilot,
+  subscribePilots,
+  type PilotState,
+} from "../features/pilots/model/pilot";
 import {
-  loadMonoFiles,
-  MONO_PROMPT_VERSION,
+  loadPilotFiles,
+  PILOT_PROMPT_VERSION,
   planAgentContext,
-  monoContext,
-  monoTurn,
+  pilotContext,
+  pilotTurn,
   readAgentFile,
   recordAgentContext,
   writeAgentFile,
-} from "../features/monos/model/monoFiles";
-import { useMonoHabits } from "./hooks/useMonoHabits";
-import { useFloatingMono } from "./hooks/useFloatingMono";
+} from "../features/pilots/model/pilotFiles";
+import { usePilotHabits } from "./hooks/usePilotHabits";
+import { useFloatingPilot } from "./hooks/useFloatingPilot";
 import {
   dropRelays,
   habitPostsContext,
-  habitRunMono,
+  habitRunPilot,
   isHabitRun,
   noteHabitRunLaunch,
   relayApproval,
@@ -654,18 +654,18 @@ import {
   loadHabits,
   unseenHabitPosts,
   updateHabits,
-} from "../features/monos/model/monoHabits";
+} from "../features/pilots/model/pilotHabits";
 import {
-  loadMonoRotation,
+  loadPilotRotation,
   planRotation,
   rotationReason,
-  saveMonoRotation,
-} from "../features/monos/model/monoRotation";
+  savePilotRotation,
+} from "../features/pilots/model/pilotRotation";
 import {
-  detachMonoTabs,
-  ensureMonoSession,
-  resetMonoSession,
-} from "../features/monos/model/monoWorkspace";
+  detachPilotTabs,
+  ensurePilotSession,
+  resetPilotSession,
+} from "../features/pilots/model/pilotWorkspace";
 import {
   warmNativeSkills,
   isNativeCommandPrompt,
@@ -694,7 +694,7 @@ import {
   removeArtifactCard,
   ARTIFACT_DELETED_EVENT,
 } from "../features/artifacts/artifacts";
-import type { MonoChangesRequest } from "../features/monos/ui/MonoChangesView";
+import type { PilotChangesRequest } from "../features/pilots/ui/PilotChangesView";
 import {
   claimDueAutomations,
   listAutomations,
@@ -783,8 +783,8 @@ import {
   loadFileTabMode,
   loadLiveAgentsEnabled,
   loadNotesEnabled,
-  loadMonosEnabled,
-  subscribeMonosEnabled,
+  loadPilotsEnabled,
+  subscribePilotsEnabled,
   loadDiffViewer,
   loadFollowUpBehavior,
   loadIdleAgentLimit,
@@ -911,7 +911,7 @@ type SubmitOptions = ComposerTurnOptions & {
   appRequestId?: string;
   /** An app request that may arrive mid-turn, steering or queuing as one typed here would. */
   followsUp?: boolean;
-  monoSessionCompletion?: Block["monoSessionCompletion"];
+  pilotSessionCompletion?: Block["pilotSessionCompletion"];
   onSettled?: (outcome: ControlOutcome) => void;
   /** Generate a fresh title even when this is not the session's first turn. */
   refreshTitle?: boolean;
@@ -1051,7 +1051,7 @@ function filesInWorkspaceTabs(tabs: readonly WorkspaceTab[]): FilePaneTab[] {
   ]);
 }
 
-/** Stable empty tab list for the title bar while a Mono is in full view. */
+/** Stable empty tab list for the title bar while a Pilot is in full view. */
 const NO_TITLE_TABS: [] = [];
 
 /** Native sheet. `window.confirm` is swallowed when a macOS menu accelerator fires. */
@@ -1067,9 +1067,9 @@ function titleTabsEqual(a: TitleTab[], b: TitleTab[]): boolean {
       other != null &&
       tab.id === other.id &&
       tab.appView === other.appView &&
-      tab.mono?.mascot === other.mono?.mascot &&
-      tab.mono?.color === other.mono?.color &&
-      tab.mono?.status === other.mono?.status &&
+      tab.pilot?.mascot === other.pilot?.mascot &&
+      tab.pilot?.color === other.pilot?.color &&
+      tab.pilot?.status === other.pilot?.status &&
       tab.project === other.project &&
       tab.title === other.title &&
       tab.sessionCount === other.sessionCount &&
@@ -1167,28 +1167,28 @@ function Workspace({
   const [activeTabId, setActiveTabIdState] = useState(
     () => windowTransfer?.activeTabId ?? resumed?.activeTabId ?? seed.tab.id,
   );
-  const [monoViewId, setMonoViewId] = useState<string | null>(null);
-  // A Mono opens with its overview beside the chat until it is hidden.
-  const [monoOverviewOpen, setMonoOverviewOpen] = useState(true);
-  const [monoOverviewTab, setMonoOverviewTab] =
-    useState<MonoOverviewTab>("sessions");
-  const monoOverviewOpenRef = useRef(monoOverviewOpen);
-  monoOverviewOpenRef.current = monoOverviewOpen;
-  const monoOverviewTabRef = useRef(monoOverviewTab);
-  monoOverviewTabRef.current = monoOverviewTab;
-  // The Mono whose settings dialog is open; another Mono's view closes it.
-  const [monoSettingsFor, setMonoSettingsFor] = useState<string | null>(null);
+  const [pilotViewId, setPilotViewId] = useState<string | null>(null);
+  // A Pilot opens with its overview beside the chat until it is hidden.
+  const [pilotOverviewOpen, setPilotOverviewOpen] = useState(true);
+  const [pilotOverviewTab, setPilotOverviewTab] =
+    useState<PilotOverviewTab>("sessions");
+  const pilotOverviewOpenRef = useRef(pilotOverviewOpen);
+  pilotOverviewOpenRef.current = pilotOverviewOpen;
+  const pilotOverviewTabRef = useRef(pilotOverviewTab);
+  pilotOverviewTabRef.current = pilotOverviewTab;
+  // The Pilot whose settings dialog is open; another Pilot's view closes it.
+  const [pilotSettingsFor, setPilotSettingsFor] = useState<string | null>(null);
   // A document opened from the chat shows on the overview's Documents tab,
   // the same page the tab opens it on.
-  const onOpenMonoArtifact = useCallback((_sessionId: string, id: string) => {
-    setMonoShownSession(null);
-    setMonoOverviewDocument(id);
-    setMonoOverviewTab("documents");
-    setMonoOverviewOpen(true);
+  const onOpenPilotArtifact = useCallback((_sessionId: string, id: string) => {
+    setPilotShownSession(null);
+    setPilotOverviewDocument(id);
+    setPilotOverviewTab("documents");
+    setPilotOverviewOpen(true);
   }, []);
   // What the overview's Changes tab was last asked to show.
-  const [monoChangesRequest, setMonoChangesRequest] =
-    useState<MonoChangesRequest>({});
+  const [pilotChangesRequest, setPilotChangesRequest] =
+    useState<PilotChangesRequest>({});
   useEffect(() => {
     const listening = listen<string>(
       ARTIFACT_DELETED_EVENT,
@@ -1201,46 +1201,46 @@ function Workspace({
           sessionsRef.current = updated;
           setSessions(updated);
         }
-        setMonoOverviewDocument((current) => (current === id ? null : current));
+        setPilotOverviewDocument((current) => (current === id ? null : current));
       },
     );
     return () => {
       void listening.then((unlisten) => unlisten());
     };
   }, []);
-  const [monoActivity, setMonoActivity] =
-    useState<MonoActivitySelection | null>(null);
+  const [pilotActivity, setPilotActivity] =
+    useState<PilotActivitySelection | null>(null);
   // A launched session or a document open over the overview's list. Hiding
   // the overview leaves them, so it opens on its list again.
-  const [monoShownSession, setMonoShownSession] = useState<string | null>(null);
-  const [monoOverviewDocument, setMonoOverviewDocument] = useState<
+  const [pilotShownSession, setPilotShownSession] = useState<string | null>(null);
+  const [pilotOverviewDocument, setPilotOverviewDocument] = useState<
     string | null
   >(null);
   useEffect(() => {
-    if (monoOverviewOpen) return;
-    setMonoShownSession(null);
-    setMonoOverviewDocument(null);
-  }, [monoOverviewOpen]);
-  // Whether the shown session, rather than the Mono's chat, holds focus.
-  const [monoShownSessionFocused, setMonoShownSessionFocused] = useState(false);
-  const shownMonoSessionId =
-    monoViewId && monoOverviewOpen && monoShownSession
-      ? monoShownSession
+    if (pilotOverviewOpen) return;
+    setPilotShownSession(null);
+    setPilotOverviewDocument(null);
+  }, [pilotOverviewOpen]);
+  // Whether the shown session, rather than the Pilot's chat, holds focus.
+  const [pilotShownSessionFocused, setPilotShownSessionFocused] = useState(false);
+  const shownPilotSessionId =
+    pilotViewId && pilotOverviewOpen && pilotShownSession
+      ? pilotShownSession
       : undefined;
-  const shownMonoSessionIdRef = useRef(shownMonoSessionId);
-  shownMonoSessionIdRef.current = shownMonoSessionId;
+  const shownPilotSessionIdRef = useRef(shownPilotSessionId);
+  shownPilotSessionIdRef.current = shownPilotSessionId;
   // A turn's activity shows on the overview's Activity tab; picking the shown
   // one again clears it.
-  const onShowMonoActivity = useCallback(
+  const onShowPilotActivity = useCallback(
     (sessionId: string, turnId: string, blocks: Block[]) => {
       const shown =
-        monoOverviewOpenRef.current &&
-        monoOverviewTabRef.current === "activity";
-      setMonoShownSession(null);
-      setMonoOverviewDocument(null);
-      setMonoOverviewTab("activity");
-      setMonoOverviewOpen(true);
-      setMonoActivity((previous) =>
+        pilotOverviewOpenRef.current &&
+        pilotOverviewTabRef.current === "activity";
+      setPilotShownSession(null);
+      setPilotOverviewDocument(null);
+      setPilotOverviewTab("activity");
+      setPilotOverviewOpen(true);
+      setPilotActivity((previous) =>
         shown && previous?.sessionId === sessionId && previous.turnId === turnId
           ? null
           : { sessionId, turnId, blocks },
@@ -1248,15 +1248,15 @@ function Workspace({
     },
     [],
   );
-  const monoViewIdRef = useRef(monoViewId);
-  monoViewIdRef.current = monoViewId;
-  const monoViewRequest = useRef(0);
-  const closeMonoView = useCallback(() => {
-    monoViewRequest.current += 1;
-    monoViewIdRef.current = null;
-    saveOpenMono(undefined);
-    setMonoViewId(null);
-    setMonoActivity(null);
+  const pilotViewIdRef = useRef(pilotViewId);
+  pilotViewIdRef.current = pilotViewId;
+  const pilotViewRequest = useRef(0);
+  const closePilotView = useCallback(() => {
+    pilotViewRequest.current += 1;
+    pilotViewIdRef.current = null;
+    saveOpenPilot(undefined);
+    setPilotViewId(null);
+    setPilotActivity(null);
   }, []);
   const [composerFocused, setComposerFocused] = useState(() => {
     if (windowTransfer) return true;
@@ -1311,8 +1311,8 @@ function Workspace({
   const [notesViewOpen, setNotesViewOpen] = useState(false);
   const [automationsViewOpen, setAutomationsViewOpen] = useState(false);
   const [openAppViews, setOpenAppViews] = useState<AppView[]>([]);
-  // Monos open as title tabs in the inset layout, by Mono id.
-  const [openMonoTabs, setOpenMonoTabs] = useState<string[]>([]);
+  // Pilots open as title tabs in the inset layout, by Pilot id.
+  const [openPilotTabs, setOpenPilotTabs] = useState<string[]>([]);
   const [titleTabOrder, setTitleTabOrder] = useState(() =>
     tabs.map((tab) => tab.id),
   );
@@ -1444,21 +1444,21 @@ function Workspace({
   });
   const [updateNotice, setUpdateNotice] = useState(installedUpdate);
   const [whatsNewVersion, setWhatsNewVersion] = useState<string | null>(null);
-  const monosEnabled = useSyncExternalStore(
-    subscribeMonosEnabled,
-    loadMonosEnabled,
+  const pilotsEnabled = useSyncExternalStore(
+    subscribePilotsEnabled,
+    loadPilotsEnabled,
     () => true,
   );
-  const monosSnap = useSyncExternalStore(subscribeMonos, monosSnapshot);
-  // A deleted Mono, or Monos turned off, drop their tabs.
-  const shownMonoTabs = useMemo(
+  const pilotsSnap = useSyncExternalStore(subscribePilots, pilotsSnapshot);
+  // A deleted Pilot, or Pilots turned off, drop their tabs.
+  const shownPilotTabs = useMemo(
     () =>
-      insetLayout && monosEnabled
-        ? openMonoTabs.filter((monoId) => findMono(monoId))
+      insetLayout && pilotsEnabled
+        ? openPilotTabs.filter((pilotId) => findPilot(pilotId))
         : [],
     // The roster is read through its snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [insetLayout, monosEnabled, openMonoTabs, monosSnap],
+    [insetLayout, pilotsEnabled, openPilotTabs, pilotsSnap],
   );
   useLayoutEffect(() => {
     if (!insetLayout) return;
@@ -1466,14 +1466,14 @@ function Workspace({
       reconcileTitleTabOrder(order, [
         ...tabs.map((tab) => tab.id),
         ...openAppViews.map(appViewTabId),
-        ...shownMonoTabs.map(monoTabId),
+        ...shownPilotTabs.map(pilotTabId),
       ]),
     );
-  }, [insetLayout, tabs, openAppViews, shownMonoTabs]);
-  /** A Mono hides the terminal, so reaching for one leaves it. */
-  const leaveCoveringMono = useCallback(() => {
-    if (monoViewIdRef.current) closeMonoView();
-  }, [closeMonoView]);
+  }, [insetLayout, tabs, openAppViews, shownPilotTabs]);
+  /** A Pilot hides the terminal, so reaching for one leaves it. */
+  const leaveCoveringPilot = useCallback(() => {
+    if (pilotViewIdRef.current) closePilotView();
+  }, [closePilotView]);
   const [providerSignInRequest, setProviderSignInRequest] = useState<{
     key: string;
     sessionId: string;
@@ -1567,7 +1567,7 @@ function Workspace({
   useLayoutEffect(() => commitTabSwitch(activeTabId), [activeTabId]);
 
   useLayoutEffect(() => {
-    const migration = detachMonoTabs(
+    const migration = detachPilotTabs(
       tabs,
       sessions,
       activeTabId,
@@ -1581,8 +1581,8 @@ function Workspace({
     setSessions(sessionsRef.current);
     setActiveTabIdState(migration.activeTabId);
     if (migration.agentViewId) {
-      monoViewIdRef.current = migration.agentViewId;
-      setMonoViewId(migration.agentViewId);
+      pilotViewIdRef.current = migration.agentViewId;
+      setPilotViewId(migration.agentViewId);
     }
   }, [tabs, sessions, activeTabId, projectCwd]);
 
@@ -1647,7 +1647,7 @@ function Workspace({
         activateTab(id, undefined, "workspace");
       } else {
         // A newly created tab has not rendered into tabsRef yet.
-        closeMonoView();
+        closePilotView();
         setActiveTabIdState(id);
         setComposerFocused(true);
       }
@@ -1659,10 +1659,10 @@ function Workspace({
   const setActiveTabId = useCallback(
     (id: string) => {
       workspaceNavigation.cancel();
-      closeMonoView();
+      closePilotView();
       setActiveTabIdState(id);
     },
-    [workspaceNavigation.cancel, closeMonoView],
+    [workspaceNavigation.cancel, closePilotView],
   );
 
   const projectCwdRef = useRef(projectCwd);
@@ -1674,7 +1674,7 @@ function Workspace({
   const foregroundSurfaceRef = useRef<{
     workspaceVisible: boolean;
     standaloneSessionId?: string;
-    /** A session shown beside the Mono's chat. */
+    /** A session shown beside the Pilot's chat. */
     sideSessionId?: string;
   }>({ workspaceVisible: true });
   foregroundSurfaceRef.current = {
@@ -1684,14 +1684,14 @@ function Workspace({
       !notesViewOpen &&
       !automationsViewOpen &&
       !settingsOpen &&
-      !monoViewId,
+      !pilotViewId,
     standaloneSessionId: inboxViewOpen
       ? inboxAskPortal?.sessionId
       : !searchViewOpen &&
           !notesViewOpen &&
           !automationsViewOpen &&
           !settingsOpen
-        ? (monoViewId ?? undefined)
+        ? (pilotViewId ?? undefined)
         : undefined,
     sideSessionId:
       !inboxViewOpen &&
@@ -1699,7 +1699,7 @@ function Workspace({
       !notesViewOpen &&
       !automationsViewOpen &&
       !settingsOpen
-        ? shownMonoSessionId
+        ? shownPilotSessionId
         : undefined,
   };
   const notesViewOpenRef = useRef(notesViewOpen);
@@ -1941,16 +1941,16 @@ function Workspace({
 
   useEffect(() => {
     let cancelled = false;
-    // Retain known existing Mono threads before hiding their original entries.
+    // Retain known existing Pilot threads before hiding their original entries.
     // Sending a turn uses the same migration lock, so it can safely overlap.
     void (async () => {
-      for (const mono of listMonos()) {
+      for (const pilot of listPilots()) {
         if (cancelled) return;
-        if (!mono.sessionId) continue;
+        if (!pilot.sessionId) continue;
         try {
           const session =
-            sessionsRef.current.find((s) => s.id === mono.sessionId) ??
-            (await getSession(mono.sessionId));
+            sessionsRef.current.find((s) => s.id === pilot.sessionId) ??
+            (await getSession(pilot.sessionId));
           if (
             !session ||
             cancelled ||
@@ -1982,14 +1982,14 @@ function Workspace({
           }
         } catch (error) {
           // Keep the original context intact; the next native operation retries.
-          console.warn("Could not migrate saved Mono Codex context", error);
+          console.warn("Could not migrate saved Pilot Codex context", error);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [monosSnap]);
+  }, [pilotsSnap]);
 
   useEffect(() => {
     void probeHarnessAvailability();
@@ -2029,17 +2029,17 @@ function Workspace({
     sessions.find(
       (session) => activeTab && leafIds(activeTab.layout).includes(session.id),
     );
-  const monoViewSession = monoViewId
-    ? sessions.find((session) => session.id === monoViewId)
+  const pilotViewSession = pilotViewId
+    ? sessions.find((session) => session.id === pilotViewId)
     : undefined;
-  const monoCovers = !!monoViewId;
-  // The open Mono's title tab, in the inset layout.
-  const monoViewTabId = useMemo(() => {
-    const monoId = monoViewId ? monoForSession(monoViewId)?.id : undefined;
-    return monoId ? monoTabId(monoId) : undefined;
+  const pilotCovers = !!pilotViewId;
+  // The open Pilot's title tab, in the inset layout.
+  const pilotViewTabId = useMemo(() => {
+    const pilotId = pilotViewId ? pilotForSession(pilotViewId)?.id : undefined;
+    return pilotId ? pilotTabId(pilotId) : undefined;
     // The roster is read through its snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monoViewId, monosSnap]);
+  }, [pilotViewId, pilotsSnap]);
   const activeTabSessionIds = activeTab ? leafIds(activeTab.layout) : [];
   const activeLinkedWorkItemPanel = activeTab
     ? (linkedWorkItemPanels.get(activeTab.focusedId) ??
@@ -2106,7 +2106,7 @@ function Workspace({
   }, [activeSkillCwd, active?.id, active?.harness]);
 
   const activeFile = activeTab ? focusedFileTab(activeTab) : undefined;
-  // A Mono belongs to no project, so its view keeps the project in place.
+  // A Pilot belongs to no project, so its view keeps the project in place.
   const sidebarCwd =
     activeFile?.projectCwd ?? activeFile?.cwd ?? active?.cwd ?? projectCwd;
   const sidebarCwdRef = useRef(sidebarCwd);
@@ -2230,9 +2230,9 @@ function Workspace({
   }, [activeHarness]);
 
   // The footer's usage follows what is in view: under the inset layout a
-  // Mono's tab keeps the footer, which then reads the Mono's model.
+  // Pilot's tab keeps the footer, which then reads the Pilot's model.
   const usageSource =
-    insetLayout && monoViewSession ? monoViewSession : active;
+    insetLayout && pilotViewSession ? pilotViewSession : active;
   const usageProviders = useMemo(() => {
     if (
       usageSource?.harness === "claude" ||
@@ -2335,14 +2335,14 @@ function Workspace({
 
   const activeSessionId = inboxViewOpen
     ? inboxAskPortal?.sessionId
-    : shownMonoSessionId && monoShownSessionFocused
-      ? shownMonoSessionId
-      : (monoViewSession?.id ?? active?.id);
+    : shownPilotSessionId && pilotShownSessionFocused
+      ? shownPilotSessionId
+      : (pilotViewSession?.id ?? active?.id);
   const activeSessionIdRef = useRef(activeSessionId);
   activeSessionIdRef.current = activeSessionId;
 
   // Sessions that belong in the UI: a habit's hidden run is not one of them,
-  // and asks through its Mono's chat rather than on its own.
+  // and asks through its Pilot's chat rather than on its own.
   const promptableSessions = useMemo(
     () => sessions.filter((session) => !session.ephemeral),
     [sessions],
@@ -2358,17 +2358,17 @@ function Workspace({
     busySessionIds,
     activeSessionId,
   );
-  const monoSessionIds = useMemo(
+  const pilotSessionIds = useMemo(
     () =>
       new Set(
-        listMonos().flatMap((mono) => (mono.sessionId ? [mono.sessionId] : [])),
+        listPilots().flatMap((pilot) => (pilot.sessionId ? [pilot.sessionId] : [])),
       ),
     // The roster is read through its snapshot.
-    [monosSnap],
+    [pilotsSnap],
   );
-  // How many replies each Mono has that the user has not read, for the rail.
-  const monoReplies = useUnseenReplyCounts(
-    monoSessionIds,
+  // How many replies each Pilot has that the user has not read, for the rail.
+  const pilotReplies = useUnseenReplyCounts(
+    pilotSessionIds,
     busySessionIds,
     activeSessionId,
   );
@@ -2380,13 +2380,13 @@ function Workspace({
             promptableSessions,
             unseenFinishedIds,
             new Set(
-              listMonos().flatMap((mono) =>
-                mono.sessionId ? [mono.sessionId] : [],
+              listPilots().flatMap((pilot) =>
+                pilot.sessionId ? [pilot.sessionId] : [],
               ),
             ),
           )
         : [],
-    [liveAgentsEnabled, promptableSessions, unseenFinishedIds, monosSnap],
+    [liveAgentsEnabled, promptableSessions, unseenFinishedIds, pilotsSnap],
   );
   // Rebuilt for every streamed batch; identity only moves when a row does.
   const liveAgents = useStableValue(liveAgentRows);
@@ -2394,10 +2394,10 @@ function Workspace({
   const hiddenApprovalToasts = useMemo(
     () =>
       hiddenApprovalNotices(
-        monoViewId
-          ? promptableSessions.filter((session) => session.id !== monoViewId)
+        pilotViewId
+          ? promptableSessions.filter((session) => session.id !== pilotViewId)
           : promptableSessions,
-        monoCovers ? "" : activeTabId,
+        pilotCovers ? "" : activeTabId,
         tabs,
         composerFocused,
       ),
@@ -2406,8 +2406,8 @@ function Workspace({
       activeTabId,
       tabs,
       composerFocused,
-      monoViewId,
-      monoCovers,
+      pilotViewId,
+      pilotCovers,
     ],
   );
   const [reminderNoticesHeight, setReminderNoticesHeight] = useState(0);
@@ -2468,10 +2468,10 @@ function Workspace({
     flushForegroundHarnessEvents();
   }, [
     activeTabId,
-    monoViewId,
+    pilotViewId,
     inboxViewOpen,
     inboxAskPortal?.sessionId,
-    shownMonoSessionId,
+    shownPilotSessionId,
     searchViewOpen,
     notesViewOpen,
     automationsViewOpen,
@@ -2499,7 +2499,7 @@ function Workspace({
         event.preventDefault();
         if (
           IS_MAC &&
-          (await invoke<boolean>("mono_chat_keep_alive").catch(() => false))
+          (await invoke<boolean>("pilot_chat_keep_alive").catch(() => false))
         ) {
           flushHarnessEvents();
           void persistLiveTranscripts(sessionsRef.current);
@@ -2808,7 +2808,7 @@ function Workspace({
       reason: "session" | "workspace" = "session",
     ) => {
       if (id !== activeTabIdRef.current) beginTabSwitch(id);
-      closeMonoView();
+      closePilotView();
       const tab = tabsRef.current.find((entry) => entry.id === id);
       const nextFocusedId =
         tab &&
@@ -3173,7 +3173,7 @@ function Workspace({
 
   const onSplit = useCallback(
     (dir: SplitDir) => {
-      closeMonoView();
+      closePilotView();
       if (!activeTab) return;
       const session = newDefaultSession(
         sessionDefaults?.cwd ?? projectCwd,
@@ -3299,7 +3299,7 @@ function Workspace({
 
   const onToggleProjectTerminal = useCallback(() => {
     if (!isLocalProject(projectCwd)) return;
-    leaveCoveringMono();
+    leaveCoveringPilot();
     const dock = findProjectTerminal(projectTerminalsRef.current, projectCwd);
     if (!dock) {
       openProjectTerminal(terminalCwd);
@@ -3316,7 +3316,7 @@ function Workspace({
   }, [
     terminalCwd,
     focusProjectTerminal,
-    leaveCoveringMono,
+    leaveCoveringPilot,
     openProjectTerminal,
     projectCwd,
   ]);
@@ -3561,9 +3561,9 @@ function Workspace({
         const close = () => {
           setTabs(next);
           // View tabs still need a valid workspace to return to underneath;
-          // a Mono's opens over it, so it moves there without revealing it.
+          // a Pilot's opens over it, so it moves there without revealing it.
           if (nextActiveTabId) {
-            if (nextId && monoForTab(nextId)) {
+            if (nextId && pilotForTab(nextId)) {
               setActiveTabIdState(nextActiveTabId);
             } else if (!nextId || appViewForTab(nextId)) {
               activateTab(nextActiveTabId);
@@ -4088,7 +4088,7 @@ function Workspace({
   );
 
   const onCloseAllTabs = useCallback(() => {
-    closeMonoView();
+    closePilotView();
     const tab = tabsRef.current.find(
       (entry) => entry.id === activeTabIdRef.current,
     );
@@ -4160,8 +4160,8 @@ function Workspace({
 
   const onClosePane = useCallback(
     (sessionId?: string) => {
-      if (monoViewIdRef.current) {
-        closeMonoView();
+      if (pilotViewIdRef.current) {
+        closePilotView();
         setComposerFocused(true);
         return;
       }
@@ -4216,7 +4216,7 @@ function Workspace({
     },
     [
       activeTab,
-      closeMonoView,
+      closePilotView,
       onCloseFile,
       onCloseTab,
       onClearTabSession,
@@ -4255,9 +4255,9 @@ function Workspace({
 
   const onCloseTitleTab = useCallback(
     (id: string) => {
-      // The inset layout shows a Mono as its own tab, which closing another
+      // The inset layout shows a Pilot as its own tab, which closing another
       // tab leaves alone.
-      if (!insetLayoutRef.current) closeMonoView();
+      if (!insetLayoutRef.current) closePilotView();
       const closePlan = planWorkspaceTabClose({
         tabs: tabsRef.current,
         sessions: sessionsRef.current,
@@ -4315,7 +4315,7 @@ function Workspace({
   ]);
 
   const onNext = useCallback(() => {
-    if (monoViewIdRef.current) {
+    if (pilotViewIdRef.current) {
       activateTab(activeTabId);
       return;
     }
@@ -4325,7 +4325,7 @@ function Workspace({
   }, [activateTab, activeTabId, deckProjectTabs]);
 
   const onPrev = useCallback(() => {
-    if (monoViewIdRef.current) {
+    if (pilotViewIdRef.current) {
       activateTab(activeTabId);
       return;
     }
@@ -4340,7 +4340,7 @@ function Workspace({
   }, [activateTab, activeTabId, deckProjectTabs]);
 
   const onVisitBack = useCallback(() => {
-    if (monoViewIdRef.current) {
+    if (pilotViewIdRef.current) {
       activateTab(activeTabIdRef.current);
       return;
     }
@@ -4358,7 +4358,7 @@ function Workspace({
   }, [activateTab, commitTabVisit]);
 
   const onVisitForward = useCallback(() => {
-    if (monoViewIdRef.current) {
+    if (pilotViewIdRef.current) {
       activateTab(activeTabIdRef.current);
       return;
     }
@@ -4388,27 +4388,27 @@ function Workspace({
 
   const onFocusPane = useCallback(
     (paneId: string) => {
-      if (paneId === monoViewIdRef.current) {
-        setMonoShownSessionFocused(false);
+      if (paneId === pilotViewIdRef.current) {
+        setPilotShownSessionFocused(false);
         setProjectTerminalFocused(false);
         setComposerFocused(true);
         return;
       }
-      if (paneId === shownMonoSessionIdRef.current) {
-        setMonoShownSessionFocused(true);
+      if (paneId === shownPilotSessionIdRef.current) {
+        setPilotShownSessionFocused(true);
         setProjectTerminalFocused(false);
         setComposerFocused(true);
         return;
       }
-      // Over the Mono, only its sidebar holds panes outside the workspace: a
+      // Over the Pilot, only its sidebar holds panes outside the workspace: a
       // launched session sliding away as another opens. Its late focus must
-      // not close the Mono and send that session to its project.
+      // not close the Pilot and send that session to its project.
       if (
-        monoViewIdRef.current &&
+        pilotViewIdRef.current &&
         !tabsRef.current.some((tab) => leafIds(tab.layout).includes(paneId))
       )
         return;
-      closeMonoView();
+      closePilotView();
       if (
         tabsRef.current.find((tab) => tab.id === activeTabIdRef.current)
           ?.focusedId !== paneId
@@ -4431,7 +4431,7 @@ function Workspace({
         sessionsRef.current.some((session) => session.id === paneId),
       );
     },
-    [inboxAskPortal, closeMonoView],
+    [inboxAskPortal, closePilotView],
   );
 
   const onOpenDiff = useCallback(
@@ -4491,28 +4491,28 @@ function Workspace({
     [activeTabId],
   );
 
-  // A Mono view covers the workspace, so its session changes open on the
+  // A Pilot view covers the workspace, so its session changes open on the
   // overview's Changes tab instead of in a project tab hidden behind it.
-  const openMonoChanges = useCallback((request: MonoChangesRequest) => {
-    setMonoShownSession(null);
-    setMonoOverviewDocument(null);
-    setMonoChangesRequest(request);
-    setMonoOverviewTab("changes");
-    setMonoOverviewOpen(true);
+  const openPilotChanges = useCallback((request: PilotChangesRequest) => {
+    setPilotShownSession(null);
+    setPilotOverviewDocument(null);
+    setPilotChangesRequest(request);
+    setPilotOverviewTab("changes");
+    setPilotOverviewOpen(true);
   }, []);
-  const onOpenMonoDiff = useCallback(
+  const onOpenPilotDiff = useCallback(
     (path?: string, session?: { sessionId: string; cwd: string }) => {
       if (!session) {
         onOpenDiff(path);
         return;
       }
-      openMonoChanges({ path });
+      openPilotChanges({ path });
     },
-    [onOpenDiff, openMonoChanges],
+    [onOpenDiff, openPilotChanges],
   );
-  const onCommitMonoChanges = useCallback(
-    () => openMonoChanges({}),
-    [openMonoChanges],
+  const onCommitPilotChanges = useCallback(
+    () => openPilotChanges({}),
+    [openPilotChanges],
   );
 
   const onOpenWorkingTreeDiff = useCallback(
@@ -5051,17 +5051,17 @@ function Workspace({
     setComposerFocused(true);
   }, [inboxAskPortal, inboxViewOpen]);
 
-  /** The last Mono opened, which the shortcut brings back. */
-  const lastMonoIdRef = useRef<string | undefined>(undefined);
+  /** The last Pilot opened, which the shortcut brings back. */
+  const lastPilotIdRef = useRef<string | undefined>(undefined);
 
-  /** A Mono's conversation is a view over the existing workspace tabs. */
-  const onOpenMono = useCallback(
-    async (monoId: string) => {
-      setMonoActivity(null);
+  /** A Pilot's conversation is a view over the existing workspace tabs. */
+  const onOpenPilot = useCallback(
+    async (pilotId: string) => {
+      setPilotActivity(null);
       workspaceNavigation.cancel();
-      const request = ++monoViewRequest.current;
-      lastMonoIdRef.current = monoId;
-      const session = await ensureMonoSession(monoId, {
+      const request = ++pilotViewRequest.current;
+      lastPilotIdRef.current = pilotId;
+      const session = await ensurePilotSession(pilotId, {
         home: homeDir,
         load: ensureOpenSession,
         create: (path) => newDefaultSession(path),
@@ -5070,26 +5070,26 @@ function Workspace({
           setSessions(sessionsRef.current);
         },
       });
-      if (!session || request !== monoViewRequest.current) return;
-      // What the last Mono had open over its overview is its own; another
-      // Mono opens on its list.
-      if (monoViewIdRef.current !== session.id) {
-        setMonoShownSession(null);
-        setMonoShownSessionFocused(false);
-        setMonoOverviewDocument(null);
+      if (!session || request !== pilotViewRequest.current) return;
+      // What the last Pilot had open over its overview is its own; another
+      // Pilot opens on its list.
+      if (pilotViewIdRef.current !== session.id) {
+        setPilotShownSession(null);
+        setPilotShownSessionFocused(false);
+        setPilotOverviewDocument(null);
       }
-      monoViewIdRef.current = session.id;
-      saveOpenMono(monoId);
-      // App views close with the Mono's arrival, not before the await, so
+      pilotViewIdRef.current = session.id;
+      saveOpenPilot(pilotId);
+      // App views close with the Pilot's arrival, not before the await, so
       // the workspace tab never shows between them.
       setSearchViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
-      setMonoViewId(session.id);
+      setPilotViewId(session.id);
       if (insetLayoutRef.current) {
-        setOpenMonoTabs((current) =>
-          current.includes(monoId) ? current : [...current, monoId],
+        setOpenPilotTabs((current) =>
+          current.includes(pilotId) ? current : [...current, pilotId],
         );
       }
       setProjectTerminalFocused(false);
@@ -5099,46 +5099,46 @@ function Workspace({
     [ensureOpenSession, workspaceNavigation.cancel],
   );
 
-  // A Mono open when the app last closed opens again; a moved window keeps
+  // A Pilot open when the app last closed opens again; a moved window keeps
   // what it carried.
-  const reopenedMono = useRef(false);
+  const reopenedPilot = useRef(false);
   useEffect(() => {
-    if (reopenedMono.current) return;
-    reopenedMono.current = true;
-    if (windowTransfer || !monosEnabled) return;
-    const monoId = loadOpenMono();
-    if (monoId && findMono(monoId)) void onOpenMono(monoId);
-    else if (monoId) saveOpenMono(undefined);
-  }, [monosEnabled, onOpenMono, windowTransfer]);
+    if (reopenedPilot.current) return;
+    reopenedPilot.current = true;
+    if (windowTransfer || !pilotsEnabled) return;
+    const pilotId = loadOpenPilot();
+    if (pilotId && findPilot(pilotId)) void onOpenPilot(pilotId);
+    else if (pilotId) saveOpenPilot(undefined);
+  }, [pilotsEnabled, onOpenPilot, windowTransfer]);
 
-  /** The shortcut opens the last Mono, or the first on the rail. */
-  const onToggleMono = useCallback(() => {
-    if (monoViewIdRef.current) {
-      closeMonoView();
+  /** The shortcut opens the last Pilot, or the first on the rail. */
+  const onTogglePilot = useCallback(() => {
+    if (pilotViewIdRef.current) {
+      closePilotView();
       setComposerFocused(true);
       return;
     }
-    if (!monosEnabled) return;
-    const last = lastMonoIdRef.current;
-    const monoId =
-      (last && findMono(last) ? last : undefined) ?? listMonos()[0]?.id;
-    if (monoId) void onOpenMono(monoId);
-  }, [closeMonoView, monosEnabled, onOpenMono]);
+    if (!pilotsEnabled) return;
+    const last = lastPilotIdRef.current;
+    const pilotId =
+      (last && findPilot(last) ? last : undefined) ?? listPilots()[0]?.id;
+    if (pilotId) void onOpenPilot(pilotId);
+  }, [closePilotView, pilotsEnabled, onOpenPilot]);
 
-  /** A new Mono opens straight away, ready to be told what it works on. */
-  const onCreateMono = useCallback((projects?: readonly string[]) => {
-    const monoId = createMono(projects).id;
-    setMonoSettingsFor(monoId);
-    void onOpenMono(monoId);
-  }, [onOpenMono]);
+  /** A new Pilot opens straight away, ready to be told what it works on. */
+  const onCreatePilot = useCallback((projects?: readonly string[]) => {
+    const pilotId = createPilot(projects).id;
+    setPilotSettingsFor(pilotId);
+    void onOpenPilot(pilotId);
+  }, [onOpenPilot]);
 
-  const onResetMono = useCallback(
+  const onResetPilot = useCallback(
     async (sessionId: string): Promise<void> => {
       const current = sessionsRef.current.find(
         (session) => session.id === sessionId,
       );
-      if (!current || !isMonoSession(sessionId))
-        throw new Error("This Mono's conversation is no longer available.");
+      if (!current || !isPilotSession(sessionId))
+        throw new Error("This Pilot's conversation is no longer available.");
       if (removingSessionIds.current.has(sessionId))
         throw new Error("This conversation is already being reset.");
 
@@ -5146,7 +5146,7 @@ function Workspace({
       pendingPersist.current.delete(sessionId);
       invalidateLoadedSession(sessionId);
       try {
-        await resetMonoSession(current, {
+        await resetPilotSession(current, {
           stop: async (id) => {
             const latest = (await stopSessionForRemoval(id)) ?? current;
             const stopped = {
@@ -5189,10 +5189,10 @@ function Workspace({
             setStoredLinkedSessions((history) =>
               history.filter((entry) => entry.id !== sessionId),
             );
-            if (monoViewIdRef.current === sessionId) {
-              monoViewRequest.current += 1;
-              monoViewIdRef.current = fresh.id;
-              setMonoViewId(fresh.id);
+            if (pilotViewIdRef.current === sessionId) {
+              pilotViewRequest.current += 1;
+              pilotViewIdRef.current = fresh.id;
+              setPilotViewId(fresh.id);
               setComposerFocused(true);
               setComposerFocusToken((token) => token + 1);
             }
@@ -5210,9 +5210,9 @@ function Workspace({
       workspaceNavigation.cancel();
       let session = await ensureOpenSession(sessionId);
       if (!session || session.inboxAsk) return;
-      const mono = monoForSession(session.id);
-      if (mono) {
-        await onOpenMono(mono.id);
+      const pilot = pilotForSession(session.id);
+      if (pilot) {
+        await onOpenPilot(pilot.id);
         return;
       }
       const parentId =
@@ -5248,60 +5248,60 @@ function Workspace({
     [
       appendTab,
       ensureOpenSession,
-      onOpenMono,
+      onOpenPilot,
       focusOpenSession,
       replaceBlankPaneWithSession,
       revealLinkedSessionUpdate,
     ],
   );
 
-  const onOpenMonoLaunchedSession = useCallback(
+  const onOpenPilotLaunchedSession = useCallback(
     async (sessionId: string) => {
       const session = await ensureOpenSession(sessionId);
       if (!session) throw new Error("This session is no longer available.");
-      closeMonoView();
+      closePilotView();
       setSidebarTab("sessions", session.cwd);
       await onSelectHistorySession(sessionId);
     },
-    [ensureOpenSession, closeMonoView, setSidebarTab, onSelectHistorySession],
+    [ensureOpenSession, closePilotView, setSidebarTab, onSelectHistorySession],
   );
 
   // A launched session opens over the overview, where it can be followed,
   // answered or stopped without leaving the chat. Back lands on every session
-  // the Mono started; opening the one already shown hides it again.
-  const showMonoLaunchedSession = useCallback(
-    async (monoSessionId: string, launchedId: string) => {
-      if (shownMonoSessionIdRef.current === launchedId) {
-        setMonoShownSession(null);
+  // the Pilot started; opening the one already shown hides it again.
+  const showPilotLaunchedSession = useCallback(
+    async (pilotSessionId: string, launchedId: string) => {
+      if (shownPilotSessionIdRef.current === launchedId) {
+        setPilotShownSession(null);
         return;
       }
       // Load it first, then switch in one step: the overview goes straight
       // from what it shows to this session, never through the list.
       const session = await ensureOpenSession(launchedId).catch(() => null);
-      if (monoViewIdRef.current !== monoSessionId) return;
-      setMonoOverviewTab("sessions");
-      setMonoOverviewDocument(null);
-      setMonoOverviewOpen(true);
+      if (pilotViewIdRef.current !== pilotSessionId) return;
+      setPilotOverviewTab("sessions");
+      setPilotOverviewDocument(null);
+      setPilotOverviewOpen(true);
       // One that is gone leaves the sessions list open, which says so.
       if (!session) {
-        setMonoShownSession(null);
+        setPilotShownSession(null);
         return;
       }
-      setMonoShownSession(launchedId);
-      setMonoShownSessionFocused(true);
+      setPilotShownSession(launchedId);
+      setPilotShownSessionFocused(true);
       setProjectTerminalFocused(false);
       setComposerFocused(true);
     },
     [ensureOpenSession],
   );
-  const onOpenMonoSession = useCallback(
+  const onOpenPilotSession = useCallback(
     (
-      monoSessionId: string,
+      pilotSessionId: string,
       _turnId: string,
       _blocks: Block[],
       launchedId: string,
-    ) => showMonoLaunchedSession(monoSessionId, launchedId),
-    [showMonoLaunchedSession],
+    ) => showPilotLaunchedSession(pilotSessionId, launchedId),
+    [showPilotLaunchedSession],
   );
 
   const openReminderSession = useCallback(
@@ -5910,7 +5910,7 @@ function Workspace({
           sessions: sessionsRef.current,
           projectTerminalFocused: projectTerminalFocusedRef.current,
           surfaceOpen: Boolean(
-            monoViewIdRef.current ||
+            pilotViewIdRef.current ||
             searchViewOpenRef.current ||
             inboxViewOpenRef.current ||
             notesViewOpenRef.current ||
@@ -6063,37 +6063,37 @@ function Workspace({
     [onRemoveHistorySession],
   );
 
-  /** Deletes the Mono's conversation, then the Mono. Its files stay on disk. */
-  const onDeleteMono = useCallback(
-    async (monoId: string) => {
-      const mono = findMono(monoId);
-      if (!mono) return;
-      const { name } = monoLook(mono);
+  /** Deletes the Pilot's conversation, then the Pilot. Its files stay on disk. */
+  const onDeletePilot = useCallback(
+    async (pilotId: string) => {
+      const pilot = findPilot(pilotId);
+      if (!pilot) return;
+      const { name } = pilotLook(pilot);
       const confirmed = await ask(
         `Delete ${name}? Its conversation will be deleted and its habits stop. This can’t be undone.`,
         { title: "Rebase", kind: "warning" },
       );
       if (!confirmed) return;
-      if (mono.sessionId) {
-        if (monoViewIdRef.current === mono.sessionId) closeMonoView();
+      if (pilot.sessionId) {
+        if (pilotViewIdRef.current === pilot.sessionId) closePilotView();
         if (
           sessionsRef.current.some(
-            (session) => session.id === mono.sessionId,
+            (session) => session.id === pilot.sessionId,
           ) ||
-          history.some((entry) => entry.id === mono.sessionId)
+          history.some((entry) => entry.id === pilot.sessionId)
         ) {
           const removed = await onRemoveHistorySession(
-            mono.sessionId,
+            pilot.sessionId,
             "delete",
             true,
           );
           if (!removed) return;
         }
       }
-      removeMono(monoId);
-      if (lastMonoIdRef.current === monoId) lastMonoIdRef.current = undefined;
+      removePilot(pilotId);
+      if (lastPilotIdRef.current === pilotId) lastPilotIdRef.current = undefined;
     },
-    [closeMonoView, history, onRemoveHistorySession],
+    [closePilotView, history, onRemoveHistorySession],
   );
 
   const onDeleteHistorySessions = useCallback(
@@ -6455,11 +6455,11 @@ function Workspace({
 
   const onSelectWorkspace = useCallback(
     (focus?: WorktreeFocus) => {
-      closeMonoView();
+      closePilotView();
       setProjectCwd(sidebarCwdRef.current);
       workspaceNavigation.selectWorkspace(sidebarCwdRef.current, focus);
     },
-    [workspaceNavigation.selectWorkspace, closeMonoView],
+    [workspaceNavigation.selectWorkspace, closePilotView],
   );
 
   /**
@@ -6544,14 +6544,14 @@ function Workspace({
 
   const onSelectProject = useCallback(
     (path: string) => {
-      closeMonoView();
+      closePilotView();
       workspaceNavigation.cancel();
       openProjects([path]);
       workspaceNavigation.selectProject(path);
     },
     [
       openProjects,
-      closeMonoView,
+      closePilotView,
       workspaceNavigation.cancel,
       workspaceNavigation.selectProject,
     ],
@@ -6832,7 +6832,7 @@ function Workspace({
 
   const onOpenFile = useCallback<OpenFileFn>(
     (path, navigation, options) => {
-      closeMonoView();
+      closePilotView();
       void (async () => {
         const fileCwd = gitCwdRef.current;
         const fileProjectCwd = sidebarCwdRef.current;
@@ -6909,7 +6909,7 @@ function Workspace({
         setComposerFocused(false);
       })();
     },
-    [activateTab, insertBesideActive, closeMonoView],
+    [activateTab, insertBesideActive, closePilotView],
   );
 
   const onOpenPlan = useCallback(
@@ -6976,7 +6976,7 @@ function Workspace({
   );
 
   const onSelectFileSurface = useCallback((paneId: string, fileId: string) => {
-    closeMonoView();
+    closePilotView();
     setTabs((prev) =>
       prev.map((tab) => {
         const found = findSurfacePane(tab, paneId);
@@ -7036,8 +7036,8 @@ function Workspace({
             next = { ...next, pendingSwitch: undefined };
           }
           return recoverLimit
-            ? isMonoSession(sessionId)
-              ? resumeMonoUsageLimit(next)
+            ? isPilotSession(sessionId)
+              ? resumePilotUsageLimit(next)
               : resumeUsageLimitedSession(next)
             : next;
         }),
@@ -7341,20 +7341,20 @@ function Workspace({
         flushHarnessEvents();
         return false;
       }
-      // The Mono has app access in every turn, without the command.
-      const mono = isMonoSession(sessionId);
-      const queuedMonoMessage =
-        mono && options?.queuedMessageId
+      // The Pilot has app access in every turn, without the command.
+      const pilot = isPilotSession(sessionId);
+      const queuedPilotMessage =
+        pilot && options?.queuedMessageId
           ? current.queuedMessages?.find(
               (message) => message.id === options.queuedMessageId,
             )
           : undefined;
       const operatorAccess =
         operatorCommand.matched ||
-        mono ||
+        pilot ||
         operatorEnabledInThread(current.blocks);
-      const monoFirstTurn =
-        mono &&
+      const pilotFirstTurn =
+        pilot &&
         !current.blocks.some((block) => block.role === "user" && !block.draft);
       const promptText = operatorCommand.matched
         ? operatorCommand.text.trim() ||
@@ -7370,16 +7370,16 @@ function Workspace({
 
       const pendingSwitch = pendingComposerSwitch(current);
 
-      // A Mono accepts consecutive messages before its provider is connected.
+      // A Pilot accepts consecutive messages before its provider is connected.
       // The pending head is delivered once ready; later messages cannot overtake it.
       if (
-        mono &&
+        pilot &&
         !options?.queuedMessageId &&
         (current.busy || current.queuedMessages?.length)
       ) {
         const next = sessionsRef.current.map((session) =>
           session.id === sessionId
-            ? enqueueMonoMessage(
+            ? enqueuePilotMessage(
                 {
                   ...session,
                   inboxCard: rawCommand ? session.inboxCard : undefined,
@@ -7404,7 +7404,7 @@ function Workspace({
         return true;
       }
 
-      if (mono && current.busy && options?.queuedMessageId) {
+      if (pilot && current.busy && options?.queuedMessageId) {
         const message = current.queuedMessages?.find(
           (entry) => entry.id === options.queuedMessageId,
         );
@@ -7457,7 +7457,7 @@ function Workspace({
             }),
           delivered: () => {
             change((session) =>
-              acknowledgeMonoMessage(session, message, {
+              acknowledgePilotMessage(session, message, {
                 mode: "follow-up",
                 text: submittedText,
                 attachments: displayAttachments(attachments),
@@ -7505,9 +7505,9 @@ function Workspace({
               // behind it, so hand it to the agent now.
               current.backgroundTasks?.length
               ? "steer"
-              : // Messaging a Mono mid-reply is like texting a friend twice:
+              : // Messaging a Pilot mid-reply is like texting a friend twice:
                 // it reads the new message now, or right after if it can't.
-                mono
+                pilot
                 ? steerable
                   ? "steer"
                   : "queue"
@@ -7667,18 +7667,18 @@ function Workspace({
         });
       }
 
-      // A Mono's chat never ends, but the provider session behind it does:
+      // A Pilot's chat never ends, but the provider session behind it does:
       // once it fills most of the model's context window, this turn starts
       // a fresh one, briefed on where the conversation was.
-      const monoRotationReason =
-        mono && !pendingSwitch && !editedResend
+      const pilotRotationReason =
+        pilot && !pendingSwitch && !editedResend
           ? rotationReason(current)
           : undefined;
-      const monoRotation = monoRotationReason
+      const pilotRotation = pilotRotationReason
         ? planRotation(
             current.blocks,
-            loadMonoRotation(sessionId),
-            monoRotationReason,
+            loadPilotRotation(sessionId),
+            pilotRotationReason,
             Date.now(),
           )
         : undefined;
@@ -7744,11 +7744,11 @@ function Workspace({
           ? { appRequestId: options.appRequestId }
           : {}),
         // The orchestrator writes these turns, not the user; hide them.
-        ...(options?.managed || options?.monoSessionCompletion
+        ...(options?.managed || options?.pilotSessionCompletion
           ? { internal: true }
           : {}),
-        ...(options?.monoSessionCompletion
-          ? { monoSessionCompletion: options.monoSessionCompletion }
+        ...(options?.pilotSessionCompletion
+          ? { pilotSessionCompletion: options.pilotSessionCompletion }
           : {}),
       };
       const live = isLiveHarness(current.harness);
@@ -7821,7 +7821,7 @@ function Workspace({
                 busy: false,
                 blocks: [
                   ...next.blocks,
-                  ...(queuedMonoMessage?.blockId
+                  ...(queuedPilotMessage?.blockId
                     ? []
                     : [
                         {
@@ -7854,8 +7854,8 @@ function Workspace({
                 pendingSwitch.from,
                 next.harness,
               );
-              return queuedMonoMessage
-                ? acknowledgeMonoMessage(prepared, queuedMonoMessage, {
+              return queuedPilotMessage
+                ? acknowledgePilotMessage(prepared, queuedPilotMessage, {
                     mode: "new-turn",
                     text: visibleText,
                     attachments: visible,
@@ -7863,10 +7863,10 @@ function Workspace({
                   })
                 : appendUser(prepared, visibleText, visible, cards);
             }
-            return queuedMonoMessage
-              ? acknowledgeMonoMessage(
+            return queuedPilotMessage
+              ? acknowledgePilotMessage(
                   { ...next, title: titled },
-                  queuedMonoMessage,
+                  queuedPilotMessage,
                   {
                     mode: "new-turn",
                     text: visibleText,
@@ -8246,7 +8246,7 @@ function Workspace({
                 providerAccountId,
                 runtimeMode: current.runtimeMode,
                 ephemeral: current.ephemeral === true,
-                codexStore: mono ? "mono" : undefined,
+                codexStore: pilot ? "pilot" : undefined,
                 controlsAgents:
                   operatorAccess ||
                   orchestrator.run(sessionId)?.status === "active",
@@ -8300,7 +8300,7 @@ function Workspace({
               providerAccountId,
               runtimeMode: current.runtimeMode,
               ephemeral: current.ephemeral === true,
-              codexStore: mono ? "mono" : undefined,
+              codexStore: pilot ? "pilot" : undefined,
               intent: intent === "orchestrate" ? "plan" : intent,
               // A /operator user turn enables app access for this thread;
               // orchestration leads retain their separate control access.
@@ -8327,7 +8327,7 @@ function Workspace({
                 : turnPrompt,
             ),
           );
-          if (monoRotation) {
+          if (pilotRotation) {
             if (current.harness === "codex" && current.providerSessionId) {
               await migrateRebasexSession({
                 sessionId,
@@ -8348,14 +8348,14 @@ function Workspace({
             current = fresh(current);
             sessionsRef.current = sessionsRef.current.map(fresh);
             setSessions((prev) => prev.map(fresh));
-            saveMonoRotation(sessionId, monoRotation.rotation);
+            savePilotRotation(sessionId, pilotRotation.rotation);
           }
           // The agent's soul and memory live in its folder. A native session
           // is handed them once, and memory again only when it changes.
-          const monoRecord = mono ? monoForSession(sessionId) : undefined;
-          const agentLook = monoRecord ? monoLook(monoRecord) : undefined;
-          const agentFiles = monoRecord
-            ? await loadMonoFiles(monoRecord.id).catch(() => undefined)
+          const pilotRecord = pilot ? pilotForSession(sessionId) : undefined;
+          const agentLook = pilotRecord ? pilotLook(pilotRecord) : undefined;
+          const agentFiles = pilotRecord
+            ? await loadPilotFiles(pilotRecord.id).catch(() => undefined)
             : undefined;
           // Who it is counts as part of its soul: a rename or a change to its
           // projects is handed over too, and so is a change to the fixed rules.
@@ -8364,7 +8364,7 @@ function Workspace({
               ...agentFiles,
               soulHash: `${agentFiles.soulHash}:${agentLook.name}:${agentLook.projects
                 .map((project) => project.path)
-                .join("|")}:${MONO_PROMPT_VERSION}`,
+                .join("|")}:${PILOT_PROMPT_VERSION}`,
             };
           const agentPlan = handedFiles
             ? planAgentContext(
@@ -8373,15 +8373,15 @@ function Workspace({
                 handedFiles,
               )
             : undefined;
-          const handAgent = agentPlan ? agentPlan.soul : monoFirstTurn;
+          const handAgent = agentPlan ? agentPlan.soul : pilotFirstTurn;
           // What the app adds to the user's message rather than them.
           const appContext: string[] = [];
-          if (monoRotation) {
-            appContext.push(monoRotation.brief(sessionId));
+          if (pilotRotation) {
+            appContext.push(pilotRotation.brief(sessionId));
           }
-          // Habit posts land in the chat outside any turn, so the Mono's
+          // Habit posts land in the chat outside any turn, so the Pilot's
           // session has not seen them; the next message carries them once.
-          const habitPosts = mono ? unseenHabitPosts(current.blocks) : [];
+          const habitPosts = pilot ? unseenHabitPosts(current.blocks) : [];
           if (habitPosts.length) {
             appContext.push(habitPostsContext(habitPosts));
           }
@@ -8391,7 +8391,7 @@ function Workspace({
             agentPlan &&
             (agentPlan.soul || agentPlan.memory)
           ) {
-            appContext.push(monoContext(agentLook, agentFiles, agentPlan));
+            appContext.push(pilotContext(agentLook, agentFiles, agentPlan));
           }
           if (operatorCommand.matched || handAgent) {
             const cli = `${shellPath(await invoke<string>("app_cli_path"))} app`;
@@ -8399,9 +8399,9 @@ function Workspace({
               `<rebase_app>\n${handAgent ? "App access is always enabled in this thread." : "The user's Operator command enables app access in this thread, including later turns without the command."} You can start sessions, list and create project worktrees, choose a new session's checkout, read, continue, stop, archive or delete other project sessions, save unsent drafts, organize session folders, and read or write saved notes through its local CLI. Run \`${cli} --help\` when you need the exact commands and JSON fields. When reading another session, start with its latest two or three user/assistant exchanges. Request older exchanges with nextBefore or a larger excerpt only if needed. The CLI uses a session credential already in your environment; never print it. New sessions inherit this session's permission mode unless runtimeMode is set explicitly. For a new session with a draft, call sessions.start with its prompt and draft:true; do not submit a seed prompt. Sessions you start appear in the user's sidebar under this session without opening; the user opens them when they want. Only set placement right or down, or reveal:true, when the user asks to see a session open or side by side. The returned ID can be used as besideSessionId to split its pane again or moved into a folder immediately. A normal sessions.start submits its prompt but returns after acceptance, so do not wait for that agent to finish before organizing it.\n</rebase_app>`,
             );
           }
-          // A Mono reads who it is ahead of the message, so it never takes it
+          // A Pilot reads who it is ahead of the message, so it never takes it
           // for something the user pasted. A command must stay first.
-          if (mono && !rawCommand) sendText = monoTurn(sendText, appContext);
+          if (pilot && !rawCommand) sendText = pilotTurn(sendText, appContext);
           else if (appContext.length)
             sendText += `\n\n${appContext.join("\n\n")}`;
           await sendTurn(sendText);
@@ -8555,7 +8555,7 @@ function Workspace({
               (s) => s.id === sessionId,
             );
             const visible = sessionId === activeSessionIdRef.current;
-            // A habit's hidden run speaks through its Mono's chat instead.
+            // A habit's hidden run speaks through its Pilot's chat instead.
             if (finished && !isHabitRun(sessionId))
               void announceSessionFinished(finished, visible);
           }, 0);
@@ -8635,44 +8635,44 @@ function Workspace({
   );
 
   // onApproval is created once; it reaches the current helper through this.
-  const decideMonoBlockRef = useRef<
+  const decidePilotBlockRef = useRef<
     (
-      monoId: string,
+      pilotId: string,
       blockId: string,
       decided: "allow" | "deny" | "cancelled",
     ) => void
   >(() => {});
-  /** Adds a block to a Mono's chat outside any turn, once no reply is streaming. */
-  const appendToMono = (
-    monoId: string,
+  /** Adds a block to a Pilot's chat outside any turn, once no reply is streaming. */
+  const appendToPilot = (
+    pilotId: string,
     block: Block,
-    then?: (mono: Session) => void,
+    then?: (pilot: Session) => void,
     attempt = 0,
   ) => {
-    const mono = sessionsRef.current.find((session) => session.id === monoId);
-    if (!mono) return;
-    if (mono.busy && attempt < 120) {
+    const pilot = sessionsRef.current.find((session) => session.id === pilotId);
+    if (!pilot) return;
+    if (pilot.busy && attempt < 120) {
       window.setTimeout(
-        () => appendToMono(monoId, block, then, attempt + 1),
+        () => appendToPilot(pilotId, block, then, attempt + 1),
         5_000,
       );
       return;
     }
-    const next: Session = { ...mono, blocks: [...mono.blocks, block] };
+    const next: Session = { ...pilot, blocks: [...pilot.blocks, block] };
     sessionsRef.current = sessionsRef.current.map((session) =>
-      session.id === monoId ? next : session,
+      session.id === pilotId ? next : session,
     );
     setSessions(sessionsRef.current);
     persistSession(next);
     then?.(next);
   };
-  const decideMonoBlock = (
-    monoId: string,
+  const decidePilotBlock = (
+    pilotId: string,
     blockId: string,
     decided: "allow" | "deny" | "cancelled",
   ) => {
     const decide = (session: Session) =>
-      session.id === monoId
+      session.id === pilotId
         ? {
             ...session,
             blocks: session.blocks.map((block) =>
@@ -8685,12 +8685,12 @@ function Workspace({
     sessionsRef.current = sessionsRef.current.map(decide);
     setSessions(sessionsRef.current);
     persistSession(
-      sessionsRef.current.find((session) => session.id === monoId),
+      sessionsRef.current.find((session) => session.id === pilotId),
     );
   };
-  decideMonoBlockRef.current = decideMonoBlock;
+  decidePilotBlockRef.current = decidePilotBlock;
 
-  useMonoHabits({
+  usePilotHabits({
     sessions: () => sessionsRef.current,
     open: async (id) => (await ensureOpenSession(id)) ?? undefined,
     add: (session) => {
@@ -8719,47 +8719,47 @@ function Workspace({
       );
       setSessions(sessionsRef.current);
     },
-    post: (monoId, habit, text, name, artifacts, launches) =>
-      appendToMono(
-        monoId,
+    post: (pilotId, habit, text, name, artifacts, launches) =>
+      appendToPilot(
+        pilotId,
         {
           id: crypto.randomUUID(),
           role: "assistant",
           text,
-          monoHabit: { id: habit.id, name: habit.name, at: Date.now() },
+          pilotHabit: { id: habit.id, name: habit.name, at: Date.now() },
           ...(artifacts?.length ? { artifactCards: artifacts } : {}),
-          ...(launches?.length ? { monoSpawnedSessions: launches } : {}),
+          ...(launches?.length ? { pilotSpawnedSessions: launches } : {}),
         },
         (posted) => {
-          monoReplies.noteReply(monoId);
+          pilotReplies.noteReply(pilotId);
           void announceSessionFinished(
             { ...posted, title: name },
-            monoId === activeSessionIdRef.current,
+            pilotId === activeSessionIdRef.current,
           );
         },
       ),
     // The chat shows it like any approval, and the usual approval banner
-    // fires for the Mono; the answer is routed back in onApproval.
-    askApproval: (monoId, habit, runId, block) => {
+    // fires for the Pilot; the answer is routed back in onApproval.
+    askApproval: (pilotId, habit, runId, block) => {
       const blockId = crypto.randomUUID();
       const requestId = relayApproval({
-        monoId,
+        pilotId,
         runId,
         requestId: block.approval!.requestId,
         blockId,
       });
-      appendToMono(monoId, {
+      appendToPilot(pilotId, {
         id: blockId,
         role: "approval",
         text: block.text,
         ...(block.tool ? { tool: block.tool } : {}),
         approval: { requestId },
-        monoHabit: { id: habit.id, name: habit.name, at: Date.now() },
+        pilotHabit: { id: habit.id, name: habit.name, at: Date.now() },
       });
     },
     endApprovals: (runId) => {
       for (const relay of dropRelays(runId))
-        decideMonoBlock(relay.monoId, relay.blockId, "cancelled");
+        decidePilotBlock(relay.pilotId, relay.blockId, "cancelled");
     },
   });
 
@@ -8919,25 +8919,25 @@ function Workspace({
     [appendTab, focusOpenSession, submitSession],
   );
 
-  const queueMonoSessionCompletion = useCallback(
+  const queuePilotSessionCompletion = useCallback(
     async (
-      monoId: string,
+      pilotId: string,
       message: QueuedMessage,
       current: () => QueuedMessage | undefined = () => message,
     ) => {
-      if (!isMonoSession(monoId) || removingSessionIds.current.has(monoId))
+      if (!isPilotSession(pilotId) || removingSessionIds.current.has(pilotId))
         return;
       if (
-        !(await ensureOpenSession(monoId)) ||
-        removingSessionIds.current.has(monoId)
+        !(await ensureOpenSession(pilotId)) ||
+        removingSessionIds.current.has(pilotId)
       )
         return;
       setSessions((previous) => {
         const latest = current();
         return latest
           ? previous.map((session) =>
-              session.id === monoId
-                ? enqueueMonoSessionCompletion(session, latest)
+              session.id === pilotId
+                ? enqueuePilotSessionCompletion(session, latest)
                 : session,
             )
           : previous;
@@ -8945,21 +8945,21 @@ function Workspace({
     },
     [ensureOpenSession],
   );
-  const queueMonoSessionCompletionRef = useRef(queueMonoSessionCompletion);
-  queueMonoSessionCompletionRef.current = queueMonoSessionCompletion;
-  const monoCompletionBatches = useRef<MonoSessionCompletionBatches | null>(
+  const queuePilotSessionCompletionRef = useRef(queuePilotSessionCompletion);
+  queuePilotSessionCompletionRef.current = queuePilotSessionCompletion;
+  const pilotCompletionBatches = useRef<PilotSessionCompletionBatches | null>(
     null,
   );
-  if (!monoCompletionBatches.current) {
-    monoCompletionBatches.current = new MonoSessionCompletionBatches(
-      (monoId, message, current) =>
-        queueMonoSessionCompletionRef.current(monoId, message, current),
+  if (!pilotCompletionBatches.current) {
+    pilotCompletionBatches.current = new PilotSessionCompletionBatches(
+      (pilotId, message, current) =>
+        queuePilotSessionCompletionRef.current(pilotId, message, current),
     );
   }
   useEffect(() => {
-    monoCompletionBatches.current!.closeInactive(({ monoId, turn }) => {
-      const mono = sessionsRef.current.find((session) => session.id === monoId);
-      return !!mono?.busy && turnGen.current.get(monoId) === turn;
+    pilotCompletionBatches.current!.closeInactive(({ pilotId, turn }) => {
+      const pilot = sessionsRef.current.find((session) => session.id === pilotId);
+      return !!pilot?.busy && turnGen.current.get(pilotId) === turn;
     });
   }, [sessions]);
 
@@ -9065,7 +9065,7 @@ function Workspace({
       )
         throw new Error("Enter a message under 100,000 characters");
       if (method === "session.start") {
-        const paths = [...loadRecents().map((project) => project.path), ...loadPinnedProjects(), ...listMonos().flatMap((mono) => mono.projects)];
+        const paths = [...loadRecents().map((project) => project.path), ...loadPinnedProjects(), ...listPilots().flatMap((pilot) => pilot.projects)];
         const cwd = paths.find((path) => mobileProjectId(path) === params.projectId);
         if (!cwd) throw new Error("Project is no longer available");
         const id = String(params.sessionId ?? "");
@@ -9089,13 +9089,13 @@ function Workspace({
         return { sessionId: session.id };
       }
       const conversationId = String(params.conversationId ?? "");
-      const mono = conversationId.startsWith("mono:") ? findMono(conversationId.slice(5)) : undefined;
-      if (conversationId.startsWith("mono:") && !mono) throw new Error("Mono is no longer available");
+      const pilot = conversationId.startsWith("pilot:") ? findPilot(conversationId.slice(5)) : undefined;
+      if (conversationId.startsWith("pilot:") && !pilot) throw new Error("Pilot is no longer available");
       if (method === "session.rename") {
         // As the sidebar's rename, which also renames a session that isn't open.
         const title = typeof params.title === "string" ? params.title.trim() : "";
         if (!title || title.length > 200) throw new Error("Enter a title under 200 characters");
-        if (mono) throw new Error("A Mono's conversation can't be renamed");
+        if (pilot) throw new Error("A Pilot's conversation can't be renamed");
         await onRenameHistorySession(conversationId, title);
         return { sessionId: conversationId };
       }
@@ -9103,21 +9103,21 @@ function Workspace({
         // As the CLI's delete and archive: no desktop dialogs, and the worktree stays.
         const mode = method === "session.archive" ? "archive" : "delete";
         const verb = mode === "archive" ? "archived" : "deleted";
-        const target = mono ? undefined : await ensureOpenSessionRef.current(conversationId);
-        if (!target || target.orchestrationLeadId || isMonoSession(target.id) || isHabitRun(target.id))
+        const target = pilot ? undefined : await ensureOpenSessionRef.current(conversationId);
+        if (!target || target.orchestrationLeadId || isPilotSession(target.id) || isHabitRun(target.id))
           throw new Error(`This session can't be ${verb} from the phone`);
         if (!(await onRemoveHistorySession(target.id, mode, true, "cli")))
           throw new Error(`Session could not be ${verb}; another session operation is in progress`);
         return { sessionId: target.id };
       }
-      const monoSession = mono ? await ensureMonoSession(mono.id, {
+      const pilotSession = pilot ? await ensurePilotSession(pilot.id, {
         home: homeDir,
         load: ensureOpenSessionRef.current,
         create: (path) => newDefaultSession(path),
         add: (created) => updateSessionState(sessionsRef, setSessions, (current) => [...current, created]),
       }) : undefined;
-      const sessionId = monoSession?.id ?? conversationId;
-      const session = monoSession ?? await ensureOpenSessionRef.current(sessionId);
+      const sessionId = pilotSession?.id ?? conversationId;
+      const session = pilotSession ?? await ensureOpenSessionRef.current(sessionId);
       if (!session) throw new Error("Session is no longer available");
       if (method === "session.cancel") {
         await onStop(session.id);
@@ -9324,7 +9324,7 @@ function Workspace({
       if (
         !(
           canDispatchQueuedHead(session) ||
-          (monoForSession(session.id) &&
+          (pilotForSession(session.id) &&
             canSteerQueuedHead(session) &&
             canSteerHarness(session.harness) &&
             !consumeOperatorCommand(queued[0].text).matched)
@@ -9351,7 +9351,7 @@ function Workspace({
             head.id !== next.id ||
             !(
               canDispatchQueuedHead(latest) ||
-              (monoForSession(latest.id) &&
+              (pilotForSession(latest.id) &&
                 canSteerQueuedHead(latest) &&
                 canSteerHarness(latest.harness) &&
                 !consumeOperatorCommand(head.text).matched)
@@ -9380,16 +9380,16 @@ function Workspace({
                 noteCard: head.noteCard,
                 handoffCard: head.handoffCard,
                 intent: head.intent,
-                ...(head.monoSessionCompletion
+                ...(head.pilotSessionCompletion
                   ? {
-                      monoSessionCompletion: head.monoSessionCompletion,
+                      pilotSessionCompletion: head.pilotSessionCompletion,
                       appRequestId: head.id,
                     }
                   : {}),
               },
             );
             // A preflight rejection must not repeatedly retry or hide the message.
-            if (!accepted && monoForSession(session.id)) {
+            if (!accepted && pilotForSession(session.id)) {
               const current = sessionsRef.current.find(
                 (entry) => entry.id === session.id,
               );
@@ -9548,18 +9548,18 @@ function Workspace({
       );
       if (
         !session ||
-        (session.busy && !monoForSession(sessionId)) ||
+        (session.busy && !pilotForSession(sessionId)) ||
         session.queueStatus !== "paused" ||
         !session.queuedMessages?.length
       ) {
         return;
       }
-      if (monoForSession(sessionId)) {
+      if (pilotForSession(sessionId)) {
         setSessions((prev) =>
           prev.map((entry) =>
             entry.id === sessionId
               ? entry.usageLimit
-                ? resumeMonoUsageLimit(entry)
+                ? resumePilotUsageLimit(entry)
                 : {
                     ...entry,
                     queueStatus: "active",
@@ -9619,10 +9619,10 @@ function Workspace({
         (entry) => entry.id === sessionId,
       );
       if (!session?.usageLimit || session.busy) return;
-      if (isMonoSession(sessionId)) {
+      if (isPilotSession(sessionId)) {
         setSessions((prev) =>
           prev.map((entry) =>
-            entry.id === sessionId ? resumeMonoUsageLimit(entry) : entry,
+            entry.id === sessionId ? resumePilotUsageLimit(entry) : entry,
           ),
         );
         return;
@@ -9648,14 +9648,14 @@ function Workspace({
         usageLimitSwitching.current.has(sessionId)
       )
         return;
-      const mono = isMonoSession(sessionId);
+      const pilot = isPilotSession(sessionId);
       // Copy the native transcript so the other account resumes the very same
-      // provider session. Mono Codex threads live in a private store instead.
+      // provider session. Pilot Codex threads live in a private store instead.
       let carried = false;
       if (
         session.providerSessionId &&
         (session.harness === "claude" ||
-          (session.harness === "codex" && !mono))
+          (session.harness === "codex" && !pilot))
       ) {
         usageLimitSwitching.current.add(sessionId);
         try {
@@ -9692,11 +9692,11 @@ function Workspace({
         )
           return;
       }
-      if (mono) {
+      if (pilot) {
         updateSessionState(sessionsRef, setSessions, (sessions) =>
           sessions.map((entry) =>
             entry.id === sessionId
-              ? switchMonoUsageLimitAccount(entry, accountId, carried)
+              ? switchPilotUsageLimitAccount(entry, accountId, carried)
               : entry,
           ),
         );
@@ -10034,7 +10034,7 @@ function Workspace({
         model: model || undefined,
         modelSettings: input.thread.modelSettings ?? input.source.modelSettings,
         ephemeral: false,
-        codexStore: isMonoSession(input.source.id) ? "mono" : undefined,
+        codexStore: isPilotSession(input.source.id) ? "pilot" : undefined,
         threadId: input.thread.providerThreadId,
         onThreadId: (providerThreadId) => {
           if (controller.signal.aborted) return;
@@ -10568,9 +10568,9 @@ function Workspace({
               : undefined,
             runtimeMode: current.runtimeMode,
             ephemeral: current.ephemeral === true,
-            codexStore: isMonoSession(sessionId) ? "mono" : undefined,
+            codexStore: isPilotSession(sessionId) ? "pilot" : undefined,
             controlsAgents:
-              isMonoSession(sessionId) ||
+              isPilotSession(sessionId) ||
               operatorEnabledInThread(current.blocks) ||
               orchestrator.run(sessionId)?.status === "active",
             onEvent: (event) => {
@@ -10670,7 +10670,7 @@ function Workspace({
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
       const focusedBusySessionId = () => {
-        const agentId = monoViewIdRef.current;
+        const agentId = pilotViewIdRef.current;
         if (agentId) {
           return sessionsRef.current.find((session) => session.id === agentId)
             ?.busy
@@ -10721,10 +10721,10 @@ function Workspace({
       const session = sessionsRef.current.find((s) => s.id === sessionId);
       if (!session || session.worktreeRemoved) return;
       // An approval a habit's hidden run asked for, put to the user in the
-      // Mono's chat: answer the run, and settle the question in the chat.
-      if (isMonoSession(sessionId)) {
+      // Pilot's chat: answer the run, and settle the question in the chat.
+      if (isPilotSession(sessionId)) {
         const asked = session.blocks.find(
-          (block) => block.monoHabit && block.approval?.requestId === requestId,
+          (block) => block.pilotHabit && block.approval?.requestId === requestId,
         );
         if (asked) {
           const relay = takeRelayedApproval(sessionId, requestId);
@@ -10738,7 +10738,7 @@ function Workspace({
               relay.requestId,
               decision,
             );
-          decideMonoBlockRef.current(
+          decidePilotBlockRef.current(
             sessionId,
             asked.id,
             relay && run
@@ -11224,18 +11224,18 @@ function Workspace({
             throw new Error("Request ID was already used with different input");
           return previous.promise;
         }
-        const sourceMono =
-          monoForSession(source.id) ?? findMono(habitRunMono(source.id) ?? "");
+        const sourcePilot =
+          pilotForSession(source.id) ?? findPilot(habitRunPilot(source.id) ?? "");
         const canAccessProject = (cwd: string) =>
-          canAccessAgentAppProject(source, cwd, sourceMono?.projects);
+          canAccessAgentAppProject(source, cwd, sourcePilot?.projects);
         const sourceTurn = turnGen.current.get(source.id) ?? 0;
-        const sourceTurns = isMonoSession(source.id)
-          ? groupMonoTurns(source.blocks)
+        const sourceTurns = isPilotSession(source.id)
+          ? groupPilotTurns(source.blocks)
           : [];
         const sourceTurnId = sourceTurns[sourceTurns.length - 1]?.[0]?.id;
-        const rememberSession = (entry: MonoSpawnedSession) => {
+        const rememberSession = (entry: PilotSpawnedSession) => {
           // A habit run is thrown away when it ends; its launches go on the
-          // report it posts to the Mono's chat instead.
+          // report it posts to the Pilot's chat instead.
           if (isHabitRun(source.id)) {
             noteHabitRunLaunch(source.id, entry);
             return;
@@ -11243,7 +11243,7 @@ function Workspace({
           if (!sourceTurnId) return;
           const next = sessionsRef.current.map((session) =>
             session.id === source.id
-              ? recordMonoSpawnedSession(session, sourceTurnId, entry)
+              ? recordPilotSpawnedSession(session, sourceTurnId, entry)
               : session,
           );
           if (
@@ -11256,14 +11256,14 @@ function Workspace({
           setSessions(next);
         };
         const monitorCompletion = (
-          monoId: string,
+          pilotId: string,
           sessionId: string,
           requestId: string,
           project: string,
           prompt: string,
         ) => {
-          const settle = monoCompletionBatches.current!.watch(
-            { monoId, turn: sourceTurn },
+          const settle = pilotCompletionBatches.current!.watch(
+            { pilotId, turn: sourceTurn },
             requestId,
             sessionId,
             { awaitAcceptance: true },
@@ -11271,7 +11271,7 @@ function Workspace({
           return Object.assign(
             (outcome: ControlOutcome) =>
               settle(
-                monoSessionCompletionResult({
+                pilotSessionCompletionResult({
                   requestId,
                   sessionId,
                   project,
@@ -11286,13 +11286,13 @@ function Workspace({
           );
         };
         const dismissCompletion = (sessionId: string) => {
-          if (!isMonoSession(source.id)) return;
-          monoCompletionBatches.current!.dismissSession(source.id, sessionId);
+          if (!isPilotSession(source.id)) return;
+          pilotCompletionBatches.current!.dismissSession(source.id, sessionId);
           flushSync(() =>
             setSessions((previous) =>
               previous.map((session) =>
                 session.id === source.id
-                  ? dismissQueuedMonoSessionCompletion(session, sessionId)
+                  ? dismissQueuedPilotSessionCompletion(session, sessionId)
                   : session,
               ),
             ),
@@ -11304,7 +11304,7 @@ function Workspace({
           payload.action,
           payload.input,
           {
-            start: async (launch, id, placement, notifyMonoId) => {
+            start: async (launch, id, placement, notifyPilotId) => {
               const rememberLaunch = () => {
                 const created =
                   sessionsRef.current.find((session) => session.id === id) ??
@@ -11348,9 +11348,9 @@ function Workspace({
               }
               if (existing && sessionDraftBlock(existing))
                 throw new Error("Session ID already has a different draft");
-              const onSettled = notifyMonoId
+              const onSettled = notifyPilotId
                 ? monitorCompletion(
-                    notifyMonoId,
+                    notifyPilotId,
                     id,
                     id,
                     launch.cwd,
@@ -11367,7 +11367,7 @@ function Workspace({
                   id,
                   placement,
                   onSettled,
-                  !!placement || (!isMonoSession(source.id) && launch.reveal),
+                  !!placement || (!isPilotSession(source.id) && launch.reveal),
                 );
                 rememberLaunch();
                 onSettled?.accept();
@@ -11421,10 +11421,10 @@ function Workspace({
                 : null;
             },
             readConversation: async (target, options) =>
-              isMonoSession(target.id)
-                ? readMonoConversation(target, options)
+              isPilotSession(target.id)
+                ? readPilotConversation(target, options)
                 : sessionConversationPage(target, options),
-            send: async (id, prompt, requestId, notifyMonoId) => {
+            send: async (id, prompt, requestId, notifyPilotId) => {
               const target = await ensureOpenSessionRef.current(id);
               if (
                 !target ||
@@ -11464,9 +11464,9 @@ function Workspace({
                 throw new Error(
                   "Session already has a draft; send or remove it first",
                 );
-              const onSettled = notifyMonoId
+              const onSettled = notifyPilotId
                 ? monitorCompletion(
-                    notifyMonoId,
+                    notifyPilotId,
                     id,
                     requestId,
                     target.cwd,
@@ -11544,7 +11544,7 @@ function Workspace({
               if (
                 target.orchestrationLeadId ||
                 !canAccessProject(target.cwd) ||
-                isMonoSession(id) ||
+                isPilotSession(id) ||
                 isHabitRun(id)
               )
                 throw new Error("Session is unavailable in this project");
@@ -11558,7 +11558,7 @@ function Workspace({
                 !target ||
                 target.orchestrationLeadId ||
                 !canAccessProject(target.cwd) ||
-                isMonoSession(id) ||
+                isPilotSession(id) ||
                 isHabitRun(id)
               )
                 throw new Error("Session is unavailable in this project");
@@ -11612,22 +11612,22 @@ function Workspace({
               setSessions(sessionsRef.current);
               if (!isHabitRun(sessionId)) await upsertSession(updated);
             },
-            isMono: (id) => isMonoSession(id),
+            isPilot: (id) => isPilotSession(id),
             isHabitRun: (id) => isHabitRun(id),
-            monoOf: (id) => {
-              const mono =
-                monoForSession(id) ?? findMono(habitRunMono(id) ?? "");
+            pilotOf: (id) => {
+              const pilot =
+                pilotForSession(id) ?? findPilot(habitRunPilot(id) ?? "");
               return (
-                mono && {
-                  id: mono.id,
-                  projects: mono.projects,
+                pilot && {
+                  id: pilot.id,
+                  projects: pilot.projects,
                   showStartedSessionsInSidebar:
-                    mono.showStartedSessionsInSidebar,
-                  ...(mono.useSidebarFolders
+                    pilot.showStartedSessionsInSidebar,
+                  ...(pilot.useSidebarFolders
                     ? {
                         folder: {
-                          name: monoLook(mono).name,
-                          color: mono.color,
+                          name: pilotLook(pilot).name,
+                          color: pilot.color,
                         },
                       }
                     : {}),
@@ -11635,10 +11635,10 @@ function Workspace({
               );
             },
             habits: { load: loadHabits, update: updateHabits },
-            agentFiles: (monoId) => loadMonoFiles(monoId),
-            readAgentFile: (monoId, path) => readAgentFile(monoId, path),
-            writeAgentFile: (monoId, path, text, hash) =>
-              writeAgentFile(monoId, path, text, hash),
+            agentFiles: (pilotId) => loadPilotFiles(pilotId),
+            readAgentFile: (pilotId, path) => readAgentFile(pilotId, path),
+            writeAgentFile: (pilotId, path, text, hash) =>
+              writeAgentFile(pilotId, path, text, hash),
           },
         );
         appReceipts.current.set(key, { signature, promise });
@@ -11896,22 +11896,22 @@ function Workspace({
               files: [],
             }))
         : []),
-      ...shownMonoTabs.flatMap((monoId): TitleTab[] => {
-        const mono = findMono(monoId);
-        // Like the sidebar's Monos, a Mono's tab shows in the projects it
+      ...shownPilotTabs.flatMap((pilotId): TitleTab[] => {
+        const pilot = findPilot(pilotId);
+        // Like the sidebar's Pilots, a Pilot's tab shows in the projects it
         // works on; it keeps its place for when the project comes back.
-        if (!mono || !monoWorksOn(mono, sidebarCwd)) return [];
-        const look = monoLook(mono);
-        const session = mono.sessionId
-          ? sessions.find((entry) => entry.id === mono.sessionId)
+        if (!pilot || !pilotWorksOn(pilot, sidebarCwd)) return [];
+        const look = pilotLook(pilot);
+        const session = pilot.sessionId
+          ? sessions.find((entry) => entry.id === pilot.sessionId)
           : undefined;
         return [
           {
-            id: monoTabId(monoId),
-            mono: {
+            id: pilotTabId(pilotId),
+            pilot: {
               mascot: look.mascot,
               color: look.color,
-              status: session ? monoState(session).status : "idle",
+              status: session ? pilotState(session).status : "idle",
             },
             project: "",
             title: look.name,
@@ -11926,13 +11926,13 @@ function Workspace({
     ],
     insetLayout ? titleTabOrder : [],
   );
-  // Like a browser, a Mono or app tab can be the only tab. The project's lone
+  // Like a browser, a Pilot or app tab can be the only tab. The project's lone
   // blank session tab stays underneath, out of the strip, until closing the
   // last of them shows it again.
   const shownViewTabId = settingsOpen
     ? undefined
-    : monoCovers
-      ? monoViewTabId
+    : pilotCovers
+      ? pilotViewTabId
       : activeAppView
         ? appViewTabId(activeAppView)
         : undefined;
@@ -12140,9 +12140,9 @@ function Workspace({
   const onOpenSearch = useCallback(() => {
     workspaceNavigation.cancel();
     startTransition(() => {
-      // With the Mono closed in the same commit, no frame shows the
+      // With the Pilot closed in the same commit, no frame shows the
       // workspace tab between the two views.
-      closeMonoView();
+      closePilotView();
       rememberAppView("search");
       setFilePickerOpen(false);
       setSettingsOpen(false);
@@ -12161,7 +12161,7 @@ function Workspace({
   const onOpenInbox = useCallback(() => {
     workspaceNavigation.cancel();
     startTransition(() => {
-      closeMonoView();
+      closePilotView();
       rememberAppView("inbox");
       setFilePickerOpen(false);
       setSettingsOpen(false);
@@ -12279,7 +12279,7 @@ function Workspace({
     workspaceNavigation.cancel();
     if (!loadNotesEnabled()) return;
     startTransition(() => {
-      closeMonoView();
+      closePilotView();
       rememberAppView("notes");
       setFilePickerOpen(false);
       setSettingsOpen(false);
@@ -12297,7 +12297,7 @@ function Workspace({
   const onOpenAutomations = useCallback(() => {
     workspaceNavigation.cancel();
     startTransition(() => {
-      closeMonoView();
+      closePilotView();
       rememberAppView("automations");
       setFilePickerOpen(false);
       setSettingsOpen(false);
@@ -12438,8 +12438,8 @@ function Workspace({
       setAutomationsViewOpen(false);
       return;
     }
-    if (monoViewIdRef.current) {
-      closeMonoView();
+    if (pilotViewIdRef.current) {
+      closePilotView();
       setComposerFocused(true);
       return;
     }
@@ -12447,7 +12447,7 @@ function Workspace({
   }, [
     onCloseSettings,
     onVisitBack,
-    closeMonoView,
+    closePilotView,
     searchViewOpen,
     settingsOpen,
     inboxViewOpen,
@@ -12586,9 +12586,9 @@ function Workspace({
 
   const onSelectTitleTab = useCallback(
     (id: string) => {
-      const monoId = monoForTab(id);
-      if (monoId) {
-        void onOpenMono(monoId);
+      const pilotId = pilotForTab(id);
+      if (pilotId) {
+        void onOpenPilot(pilotId);
         return;
       }
       const view = appViewForTab(id);
@@ -12611,7 +12611,7 @@ function Workspace({
     },
     [
       activateTab,
-      onOpenMono,
+      onOpenPilot,
       onOpenSearch,
       onOpenInbox,
       onOpenNotes,
@@ -12623,8 +12623,8 @@ function Workspace({
     tabs: insetLayout ? titleTabs : [],
     activeId: settingsOpen
       ? ""
-      : monoCovers
-        ? (monoViewTabId ?? "")
+      : pilotCovers
+        ? (pilotViewTabId ?? "")
         : activeAppView
           ? appViewTabId(activeAppView)
           : activeTabId,
@@ -12652,35 +12652,35 @@ function Workspace({
       if (nextId) navigation.select?.(nextId);
     });
   }, []);
-  /** Closing a Mono's tab puts its view away when it is the one shown. */
-  const onCloseMonoTab = useCallback(
-    (monoId: string, selectNeighbor = true) => {
+  /** Closing a Pilot's tab puts its view away when it is the one shown. */
+  const onClosePilotTab = useCallback(
+    (pilotId: string, selectNeighbor = true) => {
       const navigation = displayedTabNavigation.current;
-      const id = monoTabId(monoId);
+      const id = pilotTabId(pilotId);
       const showing = navigation.activeId === id;
       const nextId =
         selectNeighbor && showing
           ? nextDisplayedTabAfterClose(navigation.tabs, navigation.activeId, id)
           : undefined;
       startTransition(() => {
-        setOpenMonoTabs((current) =>
-          current.filter((entry) => entry !== monoId),
+        setOpenPilotTabs((current) =>
+          current.filter((entry) => entry !== pilotId),
         );
         setTitleTabOrder((current) => current.filter((entry) => entry !== id));
         if (nextId) navigation.select?.(nextId);
-        else if (showing) closeMonoView();
+        else if (showing) closePilotView();
       });
     },
-    [closeMonoView],
+    [closePilotView],
   );
   const closeViewTab = useCallback(
     (id: string, selectNeighbor?: boolean) => {
       const view = appViewForTab(id);
       if (view) onCloseAppView(view, selectNeighbor);
-      const monoId = monoForTab(id);
-      if (monoId) onCloseMonoTab(monoId, selectNeighbor);
+      const pilotId = pilotForTab(id);
+      if (pilotId) onClosePilotTab(pilotId, selectNeighbor);
     },
-    [onCloseAppView, onCloseMonoTab],
+    [onCloseAppView, onClosePilotTab],
   );
   const onCloseDisplayedTab = useCallback(
     (id: string) => {
@@ -12748,13 +12748,13 @@ function Workspace({
     [onReorderTabs],
   );
   const onCloseVisibleTab = useCallback(() => {
-    if (insetLayout && monoCovers && monoViewTabId) closeViewTab(monoViewTabId);
+    if (insetLayout && pilotCovers && pilotViewTabId) closeViewTab(pilotViewTabId);
     else if (insetLayout && activeAppView) onCloseAppView(activeAppView);
     else onCloseFocused();
   }, [
     insetLayout,
-    monoCovers,
-    monoViewTabId,
+    pilotCovers,
+    pilotViewTabId,
     activeAppView,
     closeViewTab,
     onCloseAppView,
@@ -12767,8 +12767,8 @@ function Workspace({
         return;
       }
       const current =
-        monoCovers && monoViewTabId
-          ? monoViewTabId
+        pilotCovers && pilotViewTabId
+          ? pilotViewTabId
           : activeAppView
             ? appViewTabId(activeAppView)
             : activeTabId;
@@ -12779,8 +12779,8 @@ function Workspace({
     },
     [
       insetLayout,
-      monoCovers,
-      monoViewTabId,
+      pilotCovers,
+      pilotViewTabId,
       activeAppView,
       activeTabId,
       titleTabs,
@@ -12840,7 +12840,7 @@ function Workspace({
     onFocusDir,
     onToggleSidebar,
     onToggleSessionSidebar: onToggleSessionSidebarShortcut,
-    onToggleMono,
+    onTogglePilot,
     onGoToFile,
     onOpenCommandPalette,
     onReload,
@@ -12872,7 +12872,7 @@ function Workspace({
     onFocusDir,
     onToggleSidebar,
     onToggleSessionSidebar: onToggleSessionSidebarShortcut,
-    onToggleMono,
+    onTogglePilot,
     onGoToFile,
     onOpenCommandPalette,
     onReload,
@@ -13099,8 +13099,8 @@ function Workspace({
           run("toggle_sidebar", a.onToggleSidebar);
         else if (shortcut === "App: Toggle Session Sidebar")
           run("toggle_session_sidebar", a.onToggleSessionSidebar);
-        else if (shortcut === "App: Toggle Mono")
-          run("toggle_mono", a.onToggleMono);
+        else if (shortcut === "App: Toggle Pilot")
+          run("toggle_pilot", a.onTogglePilot);
         else if (shortcut === "App: Go to File")
           run("go_to_file", a.onGoToFile);
         else if (shortcut === "App: Command Palette")
@@ -13237,7 +13237,7 @@ function Workspace({
       projectCwdRef.current,
     );
     const el = dockGridRef.current;
-    if (!dock || !el || monoViewIdRef.current) return;
+    if (!dock || !el || pilotViewIdRef.current) return;
     dockDragSize.current = size;
     applyDockGridStyle(el, dock.side, size);
   }, []);
@@ -13256,21 +13256,21 @@ function Workspace({
   const [dockClosing, setDockClosing] = useState<string | null>(null);
   const dockClosingShown =
     dockClosing != null &&
-    !monoCovers &&
+    !pilotCovers &&
     !!currentProjectDock &&
     !currentProjectDock.open &&
     sameProjectPath(dockClosing, projectCwd);
   useLayoutEffect(() => {
-    if (monoCovers) dockDragSize.current = null;
+    if (pilotCovers) dockDragSize.current = null;
     if (dockDragSize.current != null) return;
     const el = dockGridRef.current;
     if (!el) return;
     const dock = currentProjectDock;
-    const open = dockVisible && !monoCovers && !!dock;
+    const open = dockVisible && !pilotCovers && !!dock;
     const side = dock && (open || dockClosingShown) ? dock.side : null;
     const size = dock?.size ?? 0;
     // Only a dock opening or closing in place slides; a project switch or a
-    // mono covering the workspace shows or hides it at once.
+    // pilot covering the workspace shows or hides it at once.
     const previous = dockWasOpen.current;
     const inPlace = !!previous && sameProjectPath(previous.path, projectCwd);
     dockWasOpen.current = { path: projectCwd, open };
@@ -13291,7 +13291,7 @@ function Workspace({
       previous.open &&
       !open &&
       dock &&
-      !monoCovers
+      !pilotCovers
     ) {
       setDockClosing(projectCwd);
       return;
@@ -13360,7 +13360,7 @@ function Workspace({
     currentProjectDock,
     dockVisible,
     dockClosingShown,
-    monoCovers,
+    pilotCovers,
     insetLayout,
     projectCwd,
   ]);
@@ -13407,9 +13407,9 @@ function Workspace({
     [openSettings],
   );
 
-  useFloatingMono(sessions, monosSnap, monosEnabled, {
-    open: (monoId) =>
-      ensureMonoSession(monoId, {
+  useFloatingPilot(sessions, pilotsSnap, pilotsEnabled, {
+    open: (pilotId) =>
+      ensurePilotSession(pilotId, {
         home: homeDir,
         load: ensureOpenSession,
         create: newDefaultSession,
@@ -13423,15 +13423,15 @@ function Workspace({
     approval: onApproval,
     question: onQuestionReply,
     questionInteraction: onQuestionInteraction,
-    reveal: onOpenMono,
-    openArtifact: async (monoId, id) => {
-      await onOpenMono(monoId);
-      const sessionId = findMono(monoId)?.sessionId;
-      if (sessionId) onOpenMonoArtifact(sessionId, id);
+    reveal: onOpenPilot,
+    openArtifact: async (pilotId, id) => {
+      await onOpenPilot(pilotId);
+      const sessionId = findPilot(pilotId)?.sessionId;
+      if (sessionId) onOpenPilotArtifact(sessionId, id);
     },
     openFile: onOpenFile,
     resume: onUsageLimitResume,
-    create: () => createMono().id,
+    create: () => createPilot().id,
   });
 
   const sessionPaneProps = {
@@ -13492,62 +13492,62 @@ function Workspace({
   };
 
   // Renames, mascot picks and new projects show up on the rail.
-  const monoViewMono = monoViewId ? monoForSession(monoViewId) : undefined;
-  const selectedMonoActivity = resolveMonoActivity(
-    monoActivity,
-    monoViewSession,
+  const pilotViewPilot = pilotViewId ? pilotForSession(pilotViewId) : undefined;
+  const selectedPilotActivity = resolvePilotActivity(
+    pilotActivity,
+    pilotViewSession,
   );
   // The chat marks the turn whose activity the overview is showing.
-  const monoActivityShownTurnId =
-    monoOverviewOpen && monoOverviewTab === "activity"
-      ? selectedMonoActivity?.turnId
+  const pilotActivityShownTurnId =
+    pilotOverviewOpen && pilotOverviewTab === "activity"
+      ? selectedPilotActivity?.turnId
       : undefined;
-  const monoViewBlocks = monoViewSession?.blocks;
-  const monoViewBusy = !!monoViewSession?.busy;
-  const monoViewCwd = monoViewSession ? sessionWorkCwd(monoViewSession) : "";
-  const monoEditedPaths = useMemo(
+  const pilotViewBlocks = pilotViewSession?.blocks;
+  const pilotViewBusy = !!pilotViewSession?.busy;
+  const pilotViewCwd = pilotViewSession ? sessionWorkCwd(pilotViewSession) : "";
+  const pilotEditedPaths = useMemo(
     () =>
-      monoViewBlocks && !monoViewBusy
-        ? sessionEditPaths(monoViewBlocks)
+      pilotViewBlocks && !pilotViewBusy
+        ? sessionEditPaths(pilotViewBlocks)
         : undefined,
-    [monoViewBlocks, monoViewBusy],
+    [pilotViewBlocks, pilotViewBusy],
   );
   // The session's changes, on the overview's tab instead of under a message.
-  const monoChangeTotals = useSessionChangeTotals(
-    monoViewSession?.id ?? "",
-    monoViewCwd,
+  const pilotChangeTotals = useSessionChangeTotals(
+    pilotViewSession?.id ?? "",
+    pilotViewCwd,
     {
-      enabled: !monoViewSession?.worktreeRemoved,
-      busy: monoViewBusy,
-      editedPaths: monoEditedPaths,
+      enabled: !pilotViewSession?.worktreeRemoved,
+      busy: pilotViewBusy,
+      editedPaths: pilotEditedPaths,
     },
   );
-  const monoLaunches = useMemo(
-    () => (monoViewBlocks ? monoSpawnedSessions(monoViewBlocks) : []),
-    [monoViewBlocks],
+  const pilotLaunches = useMemo(
+    () => (pilotViewBlocks ? pilotSpawnedSessions(pilotViewBlocks) : []),
+    [pilotViewBlocks],
   );
-  const monoDocuments = useMemo(
-    () => (monoViewBlocks ? artifactCards(monoViewBlocks) : []),
-    [monoViewBlocks],
+  const pilotDocuments = useMemo(
+    () => (pilotViewBlocks ? artifactCards(pilotViewBlocks) : []),
+    [pilotViewBlocks],
   );
-  const monoActivityView =
-    monoViewSession && selectedMonoActivity ? (
-      <MonoActivityView
-        key={selectedMonoActivity.turnId}
-        blocks={selectedMonoActivity.blocks}
-        live={selectedMonoActivity.live}
-        cwd={sessionWorkCwd(monoViewSession)}
+  const pilotActivityView =
+    pilotViewSession && selectedPilotActivity ? (
+      <PilotActivityView
+        key={selectedPilotActivity.turnId}
+        blocks={selectedPilotActivity.blocks}
+        live={selectedPilotActivity.live}
+        cwd={sessionWorkCwd(pilotViewSession)}
         onApproval={
-          monoViewSession.worktreeRemoved
+          pilotViewSession.worktreeRemoved
             ? undefined
             : (requestId, decision) =>
-                onApproval(monoViewSession.id, requestId, decision)
+                onApproval(pilotViewSession.id, requestId, decision)
         }
         onOpenFile={onOpenFile}
         onOpenDiff={onOpenDiff}
       />
     ) : null;
-  // Status for the cards of the sessions the open Mono launched, rebuilt only
+  // Status for the cards of the sessions the open Pilot launched, rebuilt only
   // when one changes state or title rather than on every streamed token. One
   // that is no longer open cannot be running, so it reads as done.
   // A card names its session as the sidebar does. One that is not open has
@@ -13557,7 +13557,7 @@ function Workspace({
     ReadonlyMap<string, string>
   >(() => new Map());
   const unopenedLaunchesKey = JSON.stringify(
-    monoLaunches.flatMap((launch) =>
+    pilotLaunches.flatMap((launch) =>
       storedLaunchTitles.has(launch.sessionId) ||
       sessions.some((entry) => entry.id === launch.sessionId)
         ? []
@@ -13584,8 +13584,8 @@ function Workspace({
       current = false;
     };
   }, [unopenedLaunchesKey]);
-  const monoLaunchesKey = JSON.stringify(
-    monoLaunches.map((launch) => {
+  const pilotLaunchesKey = JSON.stringify(
+    pilotLaunches.map((launch) => {
       const live = sessions.find((entry) => entry.id === launch.sessionId);
       return live
         ? [launch.sessionId, launchedSessionState(live), live.title]
@@ -13596,48 +13596,48 @@ function Workspace({
           ];
     }),
   );
-  const monoLaunchedSessions = useMemo(
+  const pilotLaunchedSessions = useMemo(
     () =>
       new Map<string, LaunchedSessionView>(
         (
-          JSON.parse(monoLaunchesKey) as [
+          JSON.parse(pilotLaunchesKey) as [
             string,
             LaunchedSessionState,
             string,
           ][]
         ).map(([id, state, title]) => [id, { state, title }]),
       ),
-    [monoLaunchesKey],
+    [pilotLaunchesKey],
   );
-  const monoShownSessionPane = shownMonoSessionId
-    ? sessions.find((session) => session.id === shownMonoSessionId)
+  const pilotShownSessionPane = shownPilotSessionId
+    ? sessions.find((session) => session.id === shownPilotSessionId)
     : undefined;
-  const monoShownSessionActive =
-    !!monoShownSessionPane && monoShownSessionFocused;
-  const monoShownSessionView = monoShownSessionPane
+  const pilotShownSessionActive =
+    !!pilotShownSessionPane && pilotShownSessionFocused;
+  const pilotShownSessionView = pilotShownSessionPane
     ? {
-        sessionId: monoShownSessionPane.id,
+        sessionId: pilotShownSessionPane.id,
         title: sessionDisplayTitle(
-          monoShownSessionPane.title,
-          monoShownSessionPane.harness,
+          pilotShownSessionPane.title,
+          pilotShownSessionPane.harness,
         ),
         pane: (
           <SessionPane
             {...sessionPaneProps}
-            session={monoShownSessionPane}
-            // The Mono view covers the workspace, so a review opens
+            session={pilotShownSessionPane}
+            // The Pilot view covers the workspace, so a review opens
             // beside the chat rather than in a hidden tab.
-            onOpenDiff={onOpenMonoDiff}
-            // The Mono runs this session; handing it off or asking for a
+            onOpenDiff={onOpenPilotDiff}
+            // The Pilot runs this session; handing it off or asking for a
             // second opinion belongs in its own tab.
             onSecondOpinion={undefined}
             onHandoff={undefined}
-            visible={monoCovers}
-            focused={monoShownSessionActive && !projectTerminalFocused}
+            visible={pilotCovers}
+            focused={pilotShownSessionActive && !projectTerminalFocused}
             inSplit={false}
             addToChatTarget={false}
             composerFocused={
-              monoShownSessionActive &&
+              pilotShownSessionActive &&
               composerFocused &&
               !projectTerminalFocused
             }
@@ -13646,130 +13646,130 @@ function Workspace({
         ),
       }
     : undefined;
-  const monoOverviewPanel =
-    monoViewMono && monoViewSession ? (
-      <MonoOverview
-        key={monoViewMono.id}
-        open={monoOverviewOpen}
-        monoId={monoViewMono.id}
-        cwd={monoViewSession.cwd}
-        agent={monoLook(monoViewMono)}
-        state={monoState(monoViewSession)}
-        launches={monoLaunches}
+  const pilotOverviewPanel =
+    pilotViewPilot && pilotViewSession ? (
+      <PilotOverview
+        key={pilotViewPilot.id}
+        open={pilotOverviewOpen}
+        pilotId={pilotViewPilot.id}
+        cwd={pilotViewSession.cwd}
+        agent={pilotLook(pilotViewPilot)}
+        state={pilotState(pilotViewSession)}
+        launches={pilotLaunches}
         sessions={sessions}
         history={history}
-        documents={monoDocuments}
-        activity={monoActivityView}
+        documents={pilotDocuments}
+        activity={pilotActivityView}
         changes={{
-          sessionId: monoViewSession.id,
-          cwd: monoViewCwd,
-          totals: monoChangeTotals,
-          request: monoChangesRequest,
-          textHarness: monoViewSession.harness,
-          projects: monoViewMono.projects,
+          sessionId: pilotViewSession.id,
+          cwd: pilotViewCwd,
+          totals: pilotChangeTotals,
+          request: pilotChangesRequest,
+          textHarness: pilotViewSession.harness,
+          projects: pilotViewPilot.projects,
         }}
-        tab={monoOverviewTab}
-        onTabChange={setMonoOverviewTab}
+        tab={pilotOverviewTab}
+        onTabChange={setPilotOverviewTab}
         onOpenSession={(sessionId) =>
-          showMonoLaunchedSession(monoViewSession.id, sessionId)
+          showPilotLaunchedSession(pilotViewSession.id, sessionId)
         }
-        shownSession={monoShownSessionView}
+        shownSession={pilotShownSessionView}
         // Back lands on every session it started.
         onBackFromSession={() => {
-          setMonoShownSession(null);
-          setMonoShownSessionFocused(false);
+          setPilotShownSession(null);
+          setPilotShownSessionFocused(false);
         }}
-        onOpenSessionInWorkspace={onOpenMonoLaunchedSession}
+        onOpenSessionInWorkspace={onOpenPilotLaunchedSession}
         onOpenDocument={(id) => {
-          setMonoShownSession(null);
-          setMonoOverviewDocument(id);
+          setPilotShownSession(null);
+          setPilotOverviewDocument(id);
         }}
-        shownDocumentId={monoOverviewDocument ?? undefined}
-        onBackFromDocument={() => setMonoOverviewDocument(null)}
+        shownDocumentId={pilotOverviewDocument ?? undefined}
+        onBackFromDocument={() => setPilotOverviewDocument(null)}
         onOpenFile={onOpenFile}
-        onClose={() => setMonoOverviewOpen(false)}
-        windowControls={monoCovers && !IS_MAC ? <WindowControls /> : undefined}
+        onClose={() => setPilotOverviewOpen(false)}
+        windowControls={pilotCovers && !IS_MAC ? <WindowControls /> : undefined}
       />
     ) : null;
-  const monoSettingsDialog =
-    monoCovers &&
-    monoViewMono &&
-    monoViewSession &&
-    monoSettingsFor === monoViewMono.id ? (
-      <MonoSettingsDialog
-        key={monoViewMono.id}
-        monoId={monoViewMono.id}
-        agent={monoLook(monoViewMono)}
-        status={monoState(monoViewSession).status}
-        cwd={monoViewSession.cwd}
-        harness={monoViewSession.harness}
-        model={monoViewSession.model}
-        modelSettings={monoViewSession.modelSettings}
-        runtimeMode={monoViewSession.runtimeMode}
-        busy={!!monoViewSession.busy}
+  const pilotSettingsDialog =
+    pilotCovers &&
+    pilotViewPilot &&
+    pilotViewSession &&
+    pilotSettingsFor === pilotViewPilot.id ? (
+      <PilotSettingsDialog
+        key={pilotViewPilot.id}
+        pilotId={pilotViewPilot.id}
+        agent={pilotLook(pilotViewPilot)}
+        status={pilotState(pilotViewSession).status}
+        cwd={pilotViewSession.cwd}
+        harness={pilotViewSession.harness}
+        model={pilotViewSession.model}
+        modelSettings={pilotViewSession.modelSettings}
+        runtimeMode={pilotViewSession.runtimeMode}
+        busy={!!pilotViewSession.busy}
         onModelChange={(harness, model) =>
-          onModelChange(monoViewSession.id, harness, model)
+          onModelChange(pilotViewSession.id, harness, model)
         }
         onModelSettingsChange={(settings) =>
-          onModelSettingsChange(monoViewSession.id, settings)
+          onModelSettingsChange(pilotViewSession.id, settings)
         }
         onRuntimeModeChange={(mode) =>
-          onRuntimeModeChange(monoViewSession.id, mode)
+          onRuntimeModeChange(pilotViewSession.id, mode)
         }
-        onReset={() => onResetMono(monoViewSession.id)}
-        onClose={() => setMonoSettingsFor(null)}
+        onReset={() => onResetPilot(pilotViewSession.id)}
+        onClose={() => setPilotSettingsFor(null)}
       />
     ) : null;
-  const monoRailState = useMemo(() => {
-    const states = new Map<string, MonoState>();
+  const pilotRailState = useMemo(() => {
+    const states = new Map<string, PilotState>();
     const unseen = new Map<string, number>();
-    for (const mono of listMonos()) {
-      const session = mono.sessionId
-        ? sessions.find((entry) => entry.id === mono.sessionId)
+    for (const pilot of listPilots()) {
+      const session = pilot.sessionId
+        ? sessions.find((entry) => entry.id === pilot.sessionId)
         : undefined;
-      if (session) states.set(mono.id, monoState(session));
-      const count = mono.sessionId
-        ? monoReplies.counts.get(mono.sessionId)
+      if (session) states.set(pilot.id, pilotState(session));
+      const count = pilot.sessionId
+        ? pilotReplies.counts.get(pilot.sessionId)
         : undefined;
-      if (count) unseen.set(mono.id, count);
+      if (count) unseen.set(pilot.id, count);
     }
     return { states, unseen };
     // The roster is read through its snapshot.
-  }, [monosSnap, sessions, monoReplies.counts]);
-  const monoRail = useStableValue(monoRailState);
+  }, [pilotsSnap, sessions, pilotReplies.counts]);
+  const pilotRail = useStableValue(pilotRailState);
   const busyProjectPaths = useStableValue(
     promptableSessions.flatMap((session) =>
       session.busy && session.cwd ? [session.cwd] : [],
     ),
   );
-  const onOpenRailMono = useCallback(
-    (monoId: string) => void onOpenMono(monoId),
-    [onOpenMono],
+  const onOpenRailPilot = useCallback(
+    (pilotId: string) => void onOpenPilot(pilotId),
+    [onOpenPilot],
   );
-  const onDeleteRailMono = useCallback(
-    (monoId: string) => void onDeleteMono(monoId),
-    [onDeleteMono],
+  const onDeleteRailPilot = useCallback(
+    (pilotId: string) => void onDeletePilot(pilotId),
+    [onDeletePilot],
   );
   // The memoized sidebar only skips a streamed batch if this keeps identity.
-  const sidebarMonos = useMemo(
+  const sidebarPilots = useMemo(
     () =>
-      monosEnabled
+      pilotsEnabled
         ? {
-            activeId: monoViewMono?.id,
-            states: monoRail.states,
-            unseenCounts: monoRail.unseen,
-            onOpen: onOpenRailMono,
-            onCreate: onCreateMono,
-            onDelete: onDeleteRailMono,
+            activeId: pilotViewPilot?.id,
+            states: pilotRail.states,
+            unseenCounts: pilotRail.unseen,
+            onOpen: onOpenRailPilot,
+            onCreate: onCreatePilot,
+            onDelete: onDeleteRailPilot,
           }
         : undefined,
     [
-      monosEnabled,
-      monoViewMono?.id,
-      monoRail,
-      onOpenRailMono,
-      onCreateMono,
-      onDeleteRailMono,
+      pilotsEnabled,
+      pilotViewPilot?.id,
+      pilotRail,
+      onOpenRailPilot,
+      onCreatePilot,
+      onDeleteRailPilot,
     ],
   );
   const onDismissUpdate = useCallback(() => setUpdateNotice(null), []);
@@ -13784,7 +13784,7 @@ function Workspace({
   const compactRailActive = compactProjectRail && !projectRailOpen;
   const compactTitleNavigation =
     IS_MAC && compactRailActive && !chromeSurfaceOpen;
-  const compactTitleBar = compactTitleNavigation && !monoCovers;
+  const compactTitleBar = compactTitleNavigation && !pilotCovers;
   // The inset layout keeps its tabs across the top of the window at all
   // times, with the rail and the card below them.
   const titleBarSpansWindow = insetLayout || compactTitleBar;
@@ -13794,7 +13794,7 @@ function Workspace({
     insetLayout &&
     (rightPanelOpen || rightPanelClosing) &&
     !settingsOpen &&
-    !monoCovers &&
+    !pilotCovers &&
     !activeAppView &&
     looksLikeProject(sidebarCwd);
   // The right panel grows from the card's edge and pushes the workspace. Its
@@ -13868,27 +13868,27 @@ function Workspace({
   const showRightPanelToggle =
     insetLayout && !settingsOpen && looksLikeProject(sidebarCwd);
   rightPanelToggleRef.current =
-    showRightPanelToggle && !(monoCovers && monoViewMono) && !activeAppView
+    showRightPanelToggle && !(pilotCovers && pilotViewPilot) && !activeAppView
       ? onToggleRightPanel
       : null;
   const rightPanelChanges = useProjectDiffStats(
     gitCwd || sidebarCwd,
     showRightPanelToggle && isLocalProject(sidebarCwd),
   );
-  const onToggleMonoOverview = () => setMonoOverviewOpen(!monoOverviewOpen);
-  const onOpenMonoViewSettings = monoViewMono
-    ? () => setMonoSettingsFor(monoViewMono.id)
+  const onTogglePilotOverview = () => setPilotOverviewOpen(!pilotOverviewOpen);
+  const onOpenPilotViewSettings = pilotViewPilot
+    ? () => setPilotSettingsFor(pilotViewPilot.id)
     : undefined;
-  // A new session takes over from a Mono in view.
+  // A new session takes over from a Pilot in view.
   const onNewFromTitleBar = () => {
-    if (monoViewIdRef.current) closeMonoView();
+    if (pilotViewIdRef.current) closePilotView();
     onNew();
   };
   const workspaceTitleBar = (
     <TitleBar
-      // A Mono in full view stands apart from the project's tabs, except
+      // A Pilot in full view stands apart from the project's tabs, except
       // in the inset layout, where it is one of them.
-      tabs={monoCovers && !insetLayout ? NO_TITLE_TABS : titleTabs}
+      tabs={pilotCovers && !insetLayout ? NO_TITLE_TABS : titleTabs}
       content={
         insetLayout && settingsOpen ? (
           <div
@@ -13898,24 +13898,24 @@ function Workspace({
           />
         ) : undefined
       }
-      mono={
-        monoCovers && monoViewMono && monoViewSession
-          ? { look: monoLook(monoViewMono), state: monoState(monoViewSession) }
+      pilot={
+        pilotCovers && pilotViewPilot && pilotViewSession
+          ? { look: pilotLook(pilotViewPilot), state: pilotState(pilotViewSession) }
           : undefined
       }
-      // The inset layout keeps these in the Mono's pane, under its tab.
-      onToggleMonoOverview={
-        monoCovers && !insetLayout ? onToggleMonoOverview : undefined
+      // The inset layout keeps these in the Pilot's pane, under its tab.
+      onTogglePilotOverview={
+        pilotCovers && !insetLayout ? onTogglePilotOverview : undefined
       }
-      monoOverviewOpen={monoOverviewOpen}
-      onOpenMonoSettings={
-        monoCovers && !insetLayout ? onOpenMonoViewSettings : undefined
+      pilotOverviewOpen={pilotOverviewOpen}
+      onOpenPilotSettings={
+        pilotCovers && !insetLayout ? onOpenPilotViewSettings : undefined
       }
-      hideWindowControls={monoCovers && monoOverviewOpen && !!monoOverviewPanel}
+      hideWindowControls={pilotCovers && pilotOverviewOpen && !!pilotOverviewPanel}
       activeId={
-        monoViewSession
+        pilotViewSession
           ? insetLayout
-            ? (monoViewTabId ?? "")
+            ? (pilotViewTabId ?? "")
             : ""
           : insetLayout && activeAppView
             ? appViewTabId(activeAppView)
@@ -13932,7 +13932,7 @@ function Workspace({
       }
       rightPanelDot={(rightPanelChanges?.files ?? 0) > 0}
       rightPanelUnavailable={!!activeAppView}
-      canGoBack={!!monoViewId || tabVisitNav.canBack}
+      canGoBack={!!pilotViewId || tabVisitNav.canBack}
       canGoForward={tabVisitNav.canForward}
       onGoBack={onRailBack}
       onGoForward={onRailForward}
@@ -13980,7 +13980,7 @@ function Workspace({
       tab={insetLayout ? "sessions" : sidebarTab}
       onTabChange={setSidebarTab}
       rightPanel={
-        insetLayout && !settingsOpen && !monoCovers
+        insetLayout && !settingsOpen && !pilotCovers
           ? {
               host: rightPanelHost,
               open: rightPanelOpen || rightPanelClosing,
@@ -14021,7 +14021,7 @@ function Workspace({
       onFileMoved={onFileMoved}
       onFileDeleted={onFileDeleted}
       canGoBack={
-        !!monoViewId ||
+        !!pilotViewId ||
         tabVisitNav.canBack ||
         searchViewOpen ||
         settingsOpen ||
@@ -14048,8 +14048,8 @@ function Workspace({
       onSelectProject={onSelectProject}
       onOpenProject={pickProject}
       onRemoveProject={onRemoveProject}
-      monos={sidebarMonos}
-      monoViewActive={monoCovers}
+      pilots={sidebarPilots}
+      pilotViewActive={pilotCovers}
       onNew={onNew}
       openSessions={openProjectSessions}
       onNewTerminal={onNewTerminal}
@@ -14088,7 +14088,7 @@ function Workspace({
 
   const usageFooter =
     (chromeSurfaceOpen && !(insetLayout && activeAppView)) ||
-    (monoCovers && !insetLayout) ? null : (
+    (pilotCovers && !insetLayout) ? null : (
       <UsageFooter
         pressureSlot={setPressureChipHost}
         providers={usageProviders}
@@ -14096,24 +14096,24 @@ function Workspace({
         project={usageSource?.cwd ?? projectCwd}
         onSelectAccount={onSelectProviderAccount}
         onManageAccounts={() => openSettings("providers", "provider-accounts")}
-        // A Mono in full view has no terminal of its own.
-        terminals={monoCovers ? undefined : runningTerminals}
-        terminalOpen={!monoCovers && runningTerminalOpen}
+        // A Pilot in full view has no terminal of its own.
+        terminals={pilotCovers ? undefined : runningTerminals}
+        terminalOpen={!pilotCovers && runningTerminalOpen}
         onToggleTerminal={onToggleRunningTerminal}
         onNewTerminal={
-          !monoCovers && isLocalProject(projectCwd) ? onNewTerminal : undefined
+          !pilotCovers && isLocalProject(projectCwd) ? onNewTerminal : undefined
         }
         onToggleProjectTerminal={
-          !monoCovers && isLocalProject(projectCwd)
+          !pilotCovers && isLocalProject(projectCwd)
             ? onToggleProjectTerminal
             : undefined
         }
         projectTerminalActive={
-          !monoCovers &&
+          !pilotCovers &&
           !!currentProjectDock &&
           currentProjectDock.pane.files.length > 0
         }
-        projectTerminalOpen={!monoCovers && !!currentProjectDock?.open}
+        projectTerminalOpen={!pilotCovers && !!currentProjectDock?.open}
         inset={insetLayout}
       />
     );
@@ -14243,7 +14243,7 @@ function Workspace({
                             {projectTerminals.map((dock) => {
                               const show =
                                 (dock.open || dockClosingShown) &&
-                                !monoCovers &&
+                                !pilotCovers &&
                                 sameProjectPath(dock.projectPath, projectCwd);
                               return (
                                 <div
@@ -14291,10 +14291,10 @@ function Workspace({
                                     key={tab.id}
                                     data-workspace-tab={tab.id}
                                     aria-hidden={
-                                      tab.id !== activeTabId || monoCovers
+                                      tab.id !== activeTabId || pilotCovers
                                     }
                                     className={
-                                      tab.id === activeTabId && !monoCovers
+                                      tab.id === activeTabId && !pilotCovers
                                         ? "absolute inset-0 flex h-full min-h-0 flex-col"
                                         : "hidden"
                                     }
@@ -14305,7 +14305,7 @@ function Workspace({
                                         visible={
                                           tab.id === activeTabId &&
                                           !inboxViewOpen &&
-                                          !monoCovers
+                                          !pilotCovers
                                         }
                                         layout={tab.layout}
                                         sessions={sessions}
@@ -14317,7 +14317,7 @@ function Workspace({
                                         fileErrorCounts={fileErrorCounts}
                                         focusedId={
                                           tab.id === activeTabId &&
-                                          !monoViewId &&
+                                          !pilotViewId &&
                                           !inboxViewOpen &&
                                           !tab.diffFocused &&
                                           !projectTerminalFocused
@@ -14332,7 +14332,7 @@ function Workspace({
                                         composerFocused={
                                           composerFocused &&
                                           !projectTerminalFocused &&
-                                          !monoViewId
+                                          !pilotViewId
                                         }
                                         composerFocusToken={composerFocusToken}
                                         onSelectFile={onSelectFileSurface}
@@ -14361,14 +14361,14 @@ function Workspace({
                                 ))}
                                 {sessions
                                   .filter((session) =>
-                                    isMonoSession(session.id),
+                                    isPilotSession(session.id),
                                   )
                                   .map((session) => {
-                                    const visible = monoViewId === session.id;
+                                    const visible = pilotViewId === session.id;
                                     return (
                                       <div
                                         key={session.id}
-                                        data-mono-view={session.id}
+                                        data-pilot-view={session.id}
                                         aria-hidden={!visible}
                                         inert={!visible || undefined}
                                         className={
@@ -14379,15 +14379,15 @@ function Workspace({
                                       >
                                         {insetLayout &&
                                         visible &&
-                                        monoViewMono ? (
-                                          <MonoViewActions
-                                            name={monoLook(monoViewMono).name}
-                                            overviewOpen={monoOverviewOpen}
+                                        pilotViewPilot ? (
+                                          <PilotViewActions
+                                            name={pilotLook(pilotViewPilot).name}
+                                            overviewOpen={pilotOverviewOpen}
                                             onToggleOverview={
-                                              onToggleMonoOverview
+                                              onTogglePilotOverview
                                             }
                                             onOpenSettings={
-                                              onOpenMonoViewSettings
+                                              onOpenPilotViewSettings
                                             }
                                             // The overview header's row, so both share a centre line.
                                             className="absolute right-2.5 top-0 z-10 h-10"
@@ -14400,7 +14400,7 @@ function Workspace({
                                           focused={
                                             visible &&
                                             !projectTerminalFocused &&
-                                            !monoShownSessionActive
+                                            !pilotShownSessionActive
                                           }
                                           inSplit={false}
                                           addToChatTarget={visible}
@@ -14408,30 +14408,30 @@ function Workspace({
                                             visible &&
                                             composerFocused &&
                                             !projectTerminalFocused &&
-                                            !monoShownSessionActive
+                                            !pilotShownSessionActive
                                           }
                                           composerFocusToken={
                                             composerFocusToken
                                           }
-                                          onShowMonoActivity={
-                                            onShowMonoActivity
+                                          onShowPilotActivity={
+                                            onShowPilotActivity
                                           }
-                                          onOpenArtifact={onOpenMonoArtifact}
-                                          onOpenDiff={onOpenMonoDiff}
-                                          onCommitChanges={onCommitMonoChanges}
-                                          monoActivityTurnId={
-                                            monoActivityShownTurnId
+                                          onOpenArtifact={onOpenPilotArtifact}
+                                          onOpenDiff={onOpenPilotDiff}
+                                          onCommitChanges={onCommitPilotChanges}
+                                          pilotActivityTurnId={
+                                            pilotActivityShownTurnId
                                           }
-                                          onOpenMonoSession={onOpenMonoSession}
-                                          monoLaunchedSessions={
+                                          onOpenPilotSession={onOpenPilotSession}
+                                          pilotLaunchedSessions={
                                             visible
-                                              ? monoLaunchedSessions
+                                              ? pilotLaunchedSessions
                                               : undefined
                                           }
-                                          openMonoSessionId={shownMonoSessionId}
+                                          openPilotSessionId={shownPilotSessionId}
                                           // The inset footer stays under a
-                                          // Mono and shows its usage.
-                                          monoComposerUsage={!insetLayout}
+                                          // Pilot and shows its usage.
+                                          pilotComposerUsage={!insetLayout}
                                         />
                                       </div>
                                     );
@@ -14457,7 +14457,7 @@ function Workspace({
                                 !inboxViewOpen &&
                                 !notesViewOpen &&
                                 !automationsViewOpen &&
-                                !monoViewId &&
+                                !pilotViewId &&
                                 activeLinkedWorkItemPanel?.sessionId ===
                                   panel.sessionId
                               }
@@ -14468,8 +14468,8 @@ function Workspace({
                           ))}
                         </main>
                       </div>
-                      {monoCovers ? monoOverviewPanel : null}
-                      {monoSettingsDialog}
+                      {pilotCovers ? pilotOverviewPanel : null}
+                      {pilotSettingsDialog}
                     </div>
                   </div>
                   {searchViewOpen ||

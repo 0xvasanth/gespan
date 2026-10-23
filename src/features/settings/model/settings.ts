@@ -26,7 +26,7 @@ export type SettingsSectionId =
   | "providers"
   | "mcp"
   | "skills"
-  | "monos"
+  | "pilots"
   | "inbox"
   | "worktrees"
   | "archive";
@@ -120,12 +120,12 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     keywords: "skill instructions prompt",
   },
   {
-    id: "monos",
+    id: "pilots",
     group: "agents",
-    label: "Monos",
+    label: "Pilots",
     description:
       "The resident agent beside your tabs, and which projects have one.",
-    keywords: "mono resident agent mascot claim project title bar",
+    keywords: "pilot resident agent mascot claim project title bar",
   },
   {
     id: "inbox",
@@ -194,23 +194,23 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     keywords: "claude tools connections oauth authenticate login add remove",
   },
   {
-    id: "monos-enabled",
-    section: "monos",
-    label: "Show monos",
-    keywords: "mono agent rail hide",
+    id: "pilots-enabled",
+    section: "pilots",
+    label: "Show pilots",
+    keywords: "pilot agent rail hide",
   },
   {
-    id: "rail-monos-pinned",
-    section: "monos",
-    label: "Pin monos to the icon rail",
-    keywords: "mono rail compact collapsed icons top divider project picker",
+    id: "rail-pilots-pinned",
+    section: "pilots",
+    label: "Pin pilots to the icon rail",
+    keywords: "pilot rail compact collapsed icons top divider project picker",
   },
   {
-    id: "mono-list",
-    section: "monos",
-    label: "Your monos",
+    id: "pilot-list",
+    section: "pilots",
+    label: "Your pilots",
     keywords:
-      "mono reset soul name projects sessions sidebar visibility hidden show",
+      "pilot reset soul name projects sessions sidebar visibility hidden show",
   },
   {
     id: "project-worktrees",
@@ -852,53 +852,53 @@ export function subscribeNotesEnabled(onStoreChange: () => void) {
     window.removeEventListener(NOTES_ENABLED_CHANGE_EVENT, onStoreChange);
 }
 
-const MONOS_ENABLED_KEY = "rebase.monosEnabled";
+const PILOTS_ENABLED_KEY = "rebase.pilotsEnabled";
 
-export const MONOS_ENABLED_DEFAULT = true;
+export const PILOTS_ENABLED_DEFAULT = true;
 
-/** Fired on `window` when monos are shown or hidden. */
-export const MONOS_ENABLED_CHANGE_EVENT = "rebase:monos-enabled-change";
+/** Fired on `window` when pilots are shown or hidden. */
+export const PILOTS_ENABLED_CHANGE_EVENT = "rebase:pilots-enabled-change";
 
-/** Whether monos show in the title bar at all, across every project. */
-export function loadMonosEnabled(): boolean {
-  return readFlag(MONOS_ENABLED_KEY) ?? MONOS_ENABLED_DEFAULT;
+/** Whether pilots show in the title bar at all, across every project. */
+export function loadPilotsEnabled(): boolean {
+  return readFlag(PILOTS_ENABLED_KEY) ?? PILOTS_ENABLED_DEFAULT;
 }
 
-export function saveMonosEnabled(value: boolean) {
-  writeFlag(MONOS_ENABLED_KEY, value);
+export function savePilotsEnabled(value: boolean) {
+  writeFlag(PILOTS_ENABLED_KEY, value);
   if (typeof window === "undefined") return;
   window.dispatchEvent(
-    new CustomEvent<boolean>(MONOS_ENABLED_CHANGE_EVENT, { detail: value }),
+    new CustomEvent<boolean>(PILOTS_ENABLED_CHANGE_EVENT, { detail: value }),
   );
 }
 
-export function subscribeMonosEnabled(onStoreChange: () => void) {
+export function subscribePilotsEnabled(onStoreChange: () => void) {
   if (typeof window === "undefined") return () => {};
-  window.addEventListener(MONOS_ENABLED_CHANGE_EVENT, onStoreChange);
+  window.addEventListener(PILOTS_ENABLED_CHANGE_EVENT, onStoreChange);
   return () =>
-    window.removeEventListener(MONOS_ENABLED_CHANGE_EVENT, onStoreChange);
+    window.removeEventListener(PILOTS_ENABLED_CHANGE_EVENT, onStoreChange);
 }
 
-const MONO_MENU_BAR_KEY = "rebase.monoMenuBarIcon";
+const PILOT_MENU_BAR_KEY = "rebase.pilotMenuBarIcon";
 
 /** Fired on `window` when the menu bar icon is shown or hidden. */
-export const MONO_MENU_BAR_CHANGE_EVENT = "rebase:mono-menu-bar-change";
+export const PILOT_MENU_BAR_CHANGE_EVENT = "rebase:pilot-menu-bar-change";
 
-export function loadMonoMenuBarIcon(): boolean {
-  return readFlag(MONO_MENU_BAR_KEY) ?? true;
+export function loadPilotMenuBarIcon(): boolean {
+  return readFlag(PILOT_MENU_BAR_KEY) ?? true;
 }
 
-export function saveMonoMenuBarIcon(value: boolean) {
-  writeFlag(MONO_MENU_BAR_KEY, value);
+export function savePilotMenuBarIcon(value: boolean) {
+  writeFlag(PILOT_MENU_BAR_KEY, value);
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(MONO_MENU_BAR_CHANGE_EVENT));
+  window.dispatchEvent(new CustomEvent(PILOT_MENU_BAR_CHANGE_EVENT));
 }
 
-export function subscribeMonoMenuBarIcon(onStoreChange: () => void) {
+export function subscribePilotMenuBarIcon(onStoreChange: () => void) {
   if (typeof window === "undefined") return () => {};
-  window.addEventListener(MONO_MENU_BAR_CHANGE_EVENT, onStoreChange);
+  window.addEventListener(PILOT_MENU_BAR_CHANGE_EVENT, onStoreChange);
   return () =>
-    window.removeEventListener(MONO_MENU_BAR_CHANGE_EVENT, onStoreChange);
+    window.removeEventListener(PILOT_MENU_BAR_CHANGE_EVENT, onStoreChange);
 }
 
 const QUICK_COMPOSER_ENABLED_KEY = "rebase.quickComposerEnabled";
@@ -1171,7 +1171,7 @@ export const KEYBINDINGS: KeybindingRow[] = [
     when: "Always",
   },
   { command: "App: Switch Model", keys: `${MOD}.`, when: "Always" },
-  { command: "App: Toggle Mono", keys: `${MOD}I`, when: "Project with a mono" },
+  { command: "App: Toggle Pilot", keys: `${MOD}I`, when: "Project with a pilot" },
   {
     command: "Composer: Toggle Workspace",
     keys: `${MOD}${SHIFT}G`,

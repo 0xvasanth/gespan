@@ -32,7 +32,7 @@ export function artifactLabel(kind: ArtifactKind): string {
 
 /** Where the app's own scheme serves an `html` artifact to its sandboxed frame. */
 export function htmlArtifactUrl(id: string): string {
-  return convertFileSrc(id, "monoartifact");
+  return convertFileSrc(id, "pilotartifact");
 }
 
 export function getArtifact(id: string): Promise<Artifact | null> {

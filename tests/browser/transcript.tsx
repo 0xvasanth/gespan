@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AgentTranscript } from "../../src/features/sessions/ui/AgentTranscript";
-import { MonoComposer } from "../../src/features/monos/ui/MonoComposer";
+import { PilotComposer } from "../../src/features/pilots/ui/PilotComposer";
 import { MessageQueue } from "../../src/features/sessions/ui/MessageQueue";
-import { visibleMonoCompletionMessages } from "../../src/features/monos/model/monoMessaging";
+import { visiblePilotCompletionMessages } from "../../src/features/pilots/model/pilotMessaging";
 import {
   newSession,
   type Block,
@@ -67,15 +67,15 @@ function Fixture() {
   );
 }
 
-const monoAnswer =
+const pilotAnswer =
   "A reply arriving in chunks that should glide smoothly as the conversation grows. ".repeat(
     35,
   );
 
-function MonoFixture() {
+function PilotFixture() {
   const history = blocks.slice(-12);
   const prompt: Block = {
-    id: "mono-prompt",
+    id: "pilot-prompt",
     role: "user",
     text: "Explain this in detail",
   };
@@ -83,15 +83,15 @@ function MonoFixture() {
   const [conversation, setConversation] = useState<Block[]>([
     ...history,
     prompt,
-    { id: "mono-answer", role: "assistant", text: monoAnswer, streaming: true },
+    { id: "pilot-answer", role: "assistant", text: pilotAnswer, streaming: true },
   ]);
   useEffect(() => {
     Object.assign(window, {
-      completeMonoReply: (text = monoAnswer) => {
+      completePilotReply: (text = pilotAnswer) => {
         setConversation([
           ...history,
           prompt,
-          { id: "mono-answer", role: "assistant", text, streaming: false },
+          { id: "pilot-answer", role: "assistant", text, streaming: false },
         ]);
         setBusy(false);
       },
@@ -103,15 +103,15 @@ function MonoFixture() {
         <AgentTranscript
           blocks={conversation}
           busy={busy}
-          agentName="Mono"
+          agentName="Pilot"
           agentMascot={{ mascot: "crab", color: "#aaf" }}
           bottomAligned
           inlineWork
         />
       </div>
-      <MonoComposer
-        sessionId="browser-mono"
-        name="Mono"
+      <PilotComposer
+        sessionId="browser-pilot"
+        name="Pilot"
         enabled={false}
         onSubmit={() => false}
         controls={<span className="h-6.5">Model · Effort · Context</span>}
@@ -120,13 +120,13 @@ function MonoFixture() {
   );
 }
 
-function MonoCompletionFixture() {
+function PilotCompletionFixture() {
   const history = new URLSearchParams(location.search).has("short")
     ? []
     : blocks.slice(-12);
   const start = Date.now();
   const launched = {
-    sessionId: "app-mono-review",
+    sessionId: "app-pilot-review",
     cwd: "/repo",
     title: "Review the changes",
     harness: "codex" as const,
@@ -135,31 +135,31 @@ function MonoCompletionFixture() {
   const original: Block[] = [
     ...history,
     {
-      id: "mono-request",
+      id: "pilot-request",
       role: "user",
       text: "Start a review session and report back",
       startedAt: start,
       durationMs: 1000,
-      monoSpawnedSessions: [launched],
+      pilotSpawnedSessions: [launched],
     },
     {
-      id: "mono-launch",
+      id: "pilot-launch",
       role: "tool",
       text: "Start a session",
       tool: { kind: "execute", status: "completed" },
     },
     {
-      id: "mono-handoff",
+      id: "pilot-handoff",
       role: "assistant",
       text: "I started the review session. I’ll report back when it finishes.",
     },
   ];
   const completion: Block = {
-    id: "mono-completion",
+    id: "pilot-completion",
     role: "user",
     text: "Review complete",
     internal: true,
-    appRequestId: "mono-completion-batch-review",
+    appRequestId: "pilot-completion-batch-review",
     startedAt: start + 5000,
   };
   const [conversation, setConversation] = useState(original);
@@ -169,13 +169,13 @@ function MonoCompletionFixture() {
   const [state, setState] = useState<"working" | "done">("working");
   useEffect(() => {
     Object.assign(window, {
-      queueMonoCompletion: () => {
+      queuePilotCompletion: () => {
         setNotifications([
           {
             id: completion.id,
             text: completion.text,
             attachments: [],
-            monoSessionCompletion: {
+            pilotSessionCompletion: {
               sessionId: launched.sessionId,
               title: launched.title,
               status: "completed",
@@ -184,18 +184,18 @@ function MonoCompletionFixture() {
         ]);
         setState("done");
       },
-      beginMonoCompletion: () => {
+      beginPilotCompletion: () => {
         setNotifications([]);
         setConversation([...original, completion]);
         setBusy(true);
         setState("done");
       },
-      finishMonoCompletion: () => {
+      finishPilotCompletion: () => {
         setConversation([
           ...original,
           { ...completion, durationMs: 1000 },
           {
-            id: "mono-report",
+            id: "pilot-report",
             role: "assistant",
             text: "The review is complete. Here are the results. ".repeat(40),
           },
@@ -210,7 +210,7 @@ function MonoCompletionFixture() {
         <AgentTranscript
           blocks={conversation}
           busy={busy}
-          agentName="Mono"
+          agentName="Pilot"
           agentMascot={{ mascot: "crab", color: "#aaf" }}
           bottomAligned
           inlineWork
@@ -222,7 +222,7 @@ function MonoCompletionFixture() {
         />
       </div>
       <MessageQueue
-        messages={visibleMonoCompletionMessages({
+        messages={visiblePilotCompletionMessages({
           ...session,
           blocks: conversation,
           busy,
@@ -232,9 +232,9 @@ function MonoCompletionFixture() {
         variant="messages"
         onResume={() => {}}
       />
-      <MonoComposer
-        sessionId="completion-mono"
-        name="Mono"
+      <PilotComposer
+        sessionId="completion-pilot"
+        name="Pilot"
         enabled={false}
         onSubmit={() => false}
         controls={<span className="h-6.5">Model · Effort · Context</span>}
@@ -244,9 +244,9 @@ function MonoCompletionFixture() {
 }
 
 const params = new URLSearchParams(location.search);
-const mono = params.has("mono");
-const completion = params.has("monoCompletion");
-if (mono || completion) root.style.width = "540px";
+const pilot = params.has("pilot");
+const completion = params.has("pilotCompletion");
+if (pilot || completion) root.style.width = "540px";
 createRoot(host).render(
-  completion ? <MonoCompletionFixture /> : mono ? <MonoFixture /> : <Fixture />,
+  completion ? <PilotCompletionFixture /> : pilot ? <PilotFixture /> : <Fixture />,
 );

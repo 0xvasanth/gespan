@@ -17,12 +17,12 @@ export function consumeOperatorCommand(text: string): {
   matched: boolean;
 } {
   // Keep the old spellings as unlisted aliases for existing drafts and threads.
-  const match = text.match(/^\s*\/(?:operator|mono|rebase)(?=\s|$)\s*/i);
+  const match = text.match(/^\s*\/(?:operator|pilot|rebase)(?=\s|$)\s*/i);
   if (!match) return { text, matched: false };
   return { text: text.slice(match[0].length), matched: true };
 }
 
-const LEGACY_COMMAND = /^\s*\/(?:mono|rebase)(?=\s|$)\s*/i;
+const LEGACY_COMMAND = /^\s*\/(?:pilot|rebase)(?=\s|$)\s*/i;
 
 /** A submitted /operator turn keeps CLI access available in later turns. */
 export function isOperatorUserTurn(block: Block): boolean {

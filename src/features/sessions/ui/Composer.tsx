@@ -572,7 +572,7 @@ export function Composer({
             ...(supportsBtwHarness(harness) ? [BTW_COMMAND] : []),
             ...skills.filter(
               (skill) =>
-                ![OPERATOR_COMMAND.name, "mono", "rebase"].includes(
+                ![OPERATOR_COMMAND.name, "pilot", "rebase"].includes(
                   skill.name,
                 ) &&
                 (skill.kind === "native" ||

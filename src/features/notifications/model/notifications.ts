@@ -5,7 +5,7 @@ import {
   allowsProjectNotification,
   type NotificationSubject,
 } from "./notificationPreferences";
-import { monoReplyText } from "../../monos/model/monoReaction";
+import { pilotReplyText } from "../../pilots/model/pilotReaction";
 import { knownNotificationProject } from "./notificationProjects";
 
 const KEY = "rebase.notifications";
@@ -204,7 +204,7 @@ export function notificationText(
   return {
     title,
     subtitle,
-    body: clip((reply && monoReplyText(reply.text)) || `${harness} finished`),
+    body: clip((reply && pilotReplyText(reply.text)) || `${harness} finished`),
   };
 }
 
