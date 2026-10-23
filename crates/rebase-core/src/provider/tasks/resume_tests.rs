@@ -346,6 +346,10 @@ fn a_known_but_finished_dispatch_gets_one_continuation_block_per_turn() {
     );
     assert_eq!(run.steps.len(), 2);
     assert_eq!(run.resume_of.as_deref(), Some(AGENT));
+    // Nothing reports when stray work ends: the block must not stay Running
+    // (the runtime would later settle it as failed).
+    assert_eq!(blocks[0].state, ToolState::Completed);
+    assert_eq!(run.steps[0].state, Some(ToolState::Running));
 }
 
 #[test]
@@ -452,4 +456,146 @@ fn the_title_comes_from_the_name_never_the_activity() {
         panic!()
     };
     assert_eq!(loaded.display_name(), "Correctness review");
+}
+
+fn late_child(p: &mut Protocol, parent: &str, id: &str) -> String {
+    let events = p
+        .frame(
+            json!({"type":"assistant","parent_tool_use_id":parent,"message":{"id":id,"content":[
+                {"type":"tool_use","id":id,"name":"Bash","input":{"command":"pwd"}}
+            ]}}),
+            &mut Vec::new(),
+        )
+        .unwrap();
+    match events.last() {
+        Some(Event::Tool(block)) => block.id.clone(),
+        other => panic!("child frame not attached: {other:?}"),
+    }
+}
+fn markers(events: &[Event]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Interjection {
+                text, custom_type, ..
+            } if custom_type == "task-notification" => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn synthetic_block_ids_are_unique_across_turns_and_processes() {
+    let init = json!({"type":"system","subtype":"init","session_id":"s"});
+    // Two turns of one process, each with stray work for the same parent.
+    let mut p = claude();
+    p.request.settings.agent_runs = persisted_turn_one();
+    p.seed_agent_runs();
+    p.frame(init.clone(), &mut Vec::new()).unwrap();
+    let first = late_child(&mut p, AGENT, "late-1");
+    let first_unknown = late_child(&mut p, "toolu_unknown", "lost-1");
+    p.frame(init.clone(), &mut Vec::new()).unwrap();
+    let second = late_child(&mut p, AGENT, "late-2");
+    let second_unknown = late_child(&mut p, "toolu_unknown", "lost-2");
+    // A new process (or warm reuse) starts its own Protocol at turn 1 again.
+    let mut q = claude();
+    q.request.settings.agent_runs = persisted_turn_one();
+    q.seed_agent_runs();
+    q.frame(init, &mut Vec::new()).unwrap();
+    let third = late_child(&mut q, AGENT, "late-3");
+    let third_unknown = late_child(&mut q, "toolu_unknown", "lost-3");
+    for id in [&first, &second, &third] {
+        assert!(id.starts_with("continued:"), "{id}");
+    }
+    for id in [&first_unknown, &second_unknown, &third_unknown] {
+        assert!(id.starts_with("background:"), "{id}");
+    }
+    let mut ids = vec![
+        &first,
+        &second,
+        &third,
+        &first_unknown,
+        &second_unknown,
+        &third_unknown,
+    ];
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 6, "a synthetic block id repeated: {ids:?}");
+    // Within one turn the same parent keeps one block.
+    assert_eq!(late_child(&mut q, AGENT, "late-4"), third);
+}
+
+#[test]
+fn a_user_follow_up_after_the_notification_is_not_marked_as_a_wake() {
+    let frames = frames();
+    let mut p = claude();
+    p.request.settings.agent_runs = persisted_turn_one();
+    p.seed_agent_runs();
+    // Through the resumed agent's task_notification (line 195).
+    replay(&mut p, &frames[TURN_ONE..line(196)]);
+    assert!(p.claude_resume_at.is_some(), "inside the wake window");
+    let sent = p
+        .steer(
+            crate::follow_up::Message {
+                id: "follow-up".into(),
+                text: "Thanks, what next?".into(),
+                ..Default::default()
+            },
+            &mut Vec::new(),
+        )
+        .unwrap();
+    assert!(matches!(sent.as_slice(), [Event::FollowUp(_)]), "{sent:?}");
+    // The turn that answers the user starts, streams and finishes.
+    let answer = replay(&mut p, &frames[line(196)..line(238)]);
+    assert!(markers(&answer.concat()).is_empty());
+    let user_result = p
+        .frame(
+            json!({"type":"result","subtype":"success","result":"Here is what is next."}),
+            &mut Vec::new(),
+        )
+        .unwrap();
+    assert!(markers(&user_result).is_empty());
+    // Claude's own wake is still marked, by its result's origin.
+    let wake = p.frame(frames[line(238)].clone(), &mut Vec::new()).unwrap();
+    assert_eq!(markers(&wake), [summary(&frames, SEND)]);
+}
+
+#[test]
+fn claudes_own_wake_after_a_restart_is_still_marked_when_it_starts() {
+    let frames = frames();
+    let mut p = claude();
+    p.request.settings.agent_runs = persisted_turn_one();
+    p.seed_agent_runs();
+    let events = replay(&mut p, &frames[TURN_ONE..]);
+    assert_eq!(
+        markers(&events[line(197) - TURN_ONE]),
+        [summary(&frames, SEND)]
+    );
+    assert_eq!(markers(&events.concat()).len(), 1);
+}
+
+#[test]
+fn tauri_written_agent_rows_seed_the_registry() {
+    let frames = frames();
+    // The Tauri app's block: agentRun with nativeIds and no agentId.
+    let block = json!({
+        "id":"tauri-block","role":"tool","text":"Run echo and sleep sequence",
+        "tool":{"callId":AGENT,"kind":"agent","title":"Run echo and sleep sequence","status":"completed"},
+        "agentRun":{"name":"Run echo and sleep sequence","nativeIds":[AGENT_ID],"steps":[]}
+    });
+    let rows = crate::store::project_desktop_blocks(&[block]).unwrap();
+    assert!(rows.iter().any(|row| row.role == "tool"));
+    let runs = crate::tool::tasks::agent_runs(&rows);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].id, AGENT);
+    let Some(Panel::Agent(seeded)) = runs[0].panel() else {
+        panic!()
+    };
+    assert_eq!(seeded.agent_id, None);
+    assert_eq!(seeded.ids, [AGENT_ID]);
+    let mut p = claude();
+    p.request.settings.agent_runs = runs;
+    p.seed_agent_runs();
+    replay(&mut p, &frames[TURN_ONE..]);
+    assert_resumed_run(&p, &frames);
 }

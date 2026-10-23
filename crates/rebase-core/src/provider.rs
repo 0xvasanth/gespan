@@ -424,9 +424,13 @@ impl Protocol {
                 // Claude woke itself after a background task's notification:
                 // lead its follow-up with that notification, so the answer is
                 // not read as a reply to the user. Task 3 renders the marker.
-                if let Some(summary) = self.activities.wake_summary.take() {
-                    if self.claude_resume_at.is_some() {
-                        activity_events.push(Self::wake_marker(summary));
+                // A turn the user started gets no marker; the summary stays for
+                // the result-origin fallback should Claude still wake itself.
+                if !std::mem::take(&mut self.activities.user_turn_pending) {
+                    if let Some(summary) = self.activities.wake_summary.take() {
+                        if self.claude_resume_at.is_some() {
+                            activity_events.push(Self::wake_marker(summary));
+                        }
                     }
                 }
                 self.claude_result_seen = false;

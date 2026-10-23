@@ -20,6 +20,12 @@ pub(super) struct Activities {
     pub(super) registry: super::agent_registry::AgentRegistry,
     /// Claude `system/init` frames seen; one per turn, user- or self-started.
     turn: u64,
+    /// Unique per provider operation, so synthetic block ids never repeat in
+    /// a session even though `turn` restarts with every `Protocol`.
+    scope: Option<String>,
+    /// The user wrote a follow-up after Claude yielded: the next turn answers
+    /// them, so it must not lead with a background-wake marker.
+    pub(super) user_turn_pending: bool,
     /// The summary of the background task whose notification may wake Claude.
     pub(super) wake_summary: Option<String>,
 }
@@ -749,9 +755,10 @@ impl Protocol {
         if let Some(target) = self.claude_placed(parent, agent_hint) {
             return target;
         }
+        let scope = self.synthetic_scope();
         let registry = &mut self.activities.registry;
         if let Some(name) = registry.dispatch_name(parent).map(str::to_owned) {
-            let id = format!("{CONTINUED_PREFIX}{parent}:{}", self.activities.turn);
+            let id = format!("{CONTINUED_PREFIX}{parent}:{scope}");
             if !self.tools.contains_key(&id) {
                 let agent = registry
                     .dispatch_agent(parent)
@@ -770,11 +777,14 @@ impl Protocol {
                     resume_of: Some(parent.into()),
                     ..AgentRun::default()
                 }));
+                // Like the fallback block: its steps carry their own state, and
+                // a run that never reports again must not be settled as failed.
+                tool.state = ToolState::Completed;
                 self.tools.insert(id.clone(), tool);
             }
             return id;
         }
-        let id = format!("{FALLBACK_PREFIX}{parent}");
+        let id = format!("{FALLBACK_PREFIX}{parent}:{scope}");
         self.tools.entry(id.clone()).or_insert_with(|| {
             let mut tool = ToolCall::new(&id, "Agent");
             tool.panel = Some(Panel::Agent(AgentRun {
@@ -789,6 +799,19 @@ impl Protocol {
         });
         id
     }
+    /// `<operation>-<turn>`: one synthetic block per parent and turn, unique
+    /// across the session's processes and warm reuses.
+    fn synthetic_scope(&mut self) -> String {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let operation = self.activities.scope.get_or_insert_with(|| {
+            format!(
+                "{:x}{:x}",
+                crate::time::now_ms(),
+                SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )
+        });
+        format!("{operation}-{}", self.activities.turn)
+    }
     /// Rules 1 and 2 only: an existing block, never a new one.
     fn claude_placed(&mut self, parent: &str, agent_hint: Option<&str>) -> Option<String> {
         if let Some(tool) = self.tools.get(parent) {
@@ -796,10 +819,13 @@ impl Protocol {
                 return Some(parent.into());
             }
         }
+        // A continuation belongs to one (parent, turn); a later turn gets its own.
+        let this_turn = format!(":{}", self.synthetic_scope());
         let registry = &self.activities.registry;
         registry
             .target_for_parent(parent)
             .or_else(|| agent_hint.and_then(|agent| registry.target_for_agent(agent)))
+            .filter(|target| !target.starts_with(CONTINUED_PREFIX) || target.ends_with(&this_turn))
             .filter(|target| self.tools.contains_key(target))
     }
     /// A child tool_result completes the step it answers, wherever that step lives.
@@ -1294,7 +1320,7 @@ mod tests {
         assert_eq!(tool(&done).output, "Provider reported failure");
         // Work this session cannot place is shown, never merged into the run.
         let orphan = p.frame(json!({"type":"assistant","parent_tool_use_id":"unknown","message":{"id":"x","content":[{"type":"text","text":"Unattributed child"}]}}), &mut Vec::new()).unwrap();
-        assert_eq!(tool(&orphan).id, "background:unknown");
+        assert!(tool(&orphan).id.starts_with("background:unknown:"));
         let Some(Panel::Agent(run)) = p.tools["agent"].panel() else {
             panic!()
         };
