@@ -40,7 +40,7 @@ function invokedCommands(): Map<string, string> {
   for (const file of sourceFiles(join(root, "src"))) {
     const text = readFileSync(file, "utf8");
     for (const match of text.matchAll(re)) {
-      if (match[1].includes(":")) continue; // plugin commands
+      if (/^plugin:/.test(match[1])) continue; // Tauri plugin commands
       found.set(match[1], file);
     }
   }
