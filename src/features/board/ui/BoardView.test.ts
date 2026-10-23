@@ -25,8 +25,17 @@ import {
 } from "../../settings/model/settings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+// Delivers `rebase:board-changed` the way the backend emits it.
+const events = vi.hoisted(() => ({
+  listeners: new Set<(event: { payload: unknown }) => void>(),
+}));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(() => Promise.resolve(() => undefined)),
+  listen: vi.fn(
+    (_name: string, handler: (event: { payload: unknown }) => void) => {
+      events.listeners.add(handler);
+      return Promise.resolve(() => events.listeners.delete(handler));
+    },
+  ),
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn() }));
 
@@ -123,6 +132,7 @@ beforeEach(() => {
     clear: () => stored.clear(),
   });
   kanban.props = null;
+  events.listeners.clear();
   handlers = {
     board_list: () => [BOARD],
     board_get: () => fixture(),
@@ -178,6 +188,15 @@ const cardIdsIn = (id: string) =>
   [...columnEl(id).querySelectorAll("[data-kanban-card]")].map((el) =>
     el.getAttribute("data-kanban-card"),
   );
+
+function emitBoardChanged(boardId: string) {
+  for (const listener of [...events.listeners]) {
+    listener({ payload: { boardId } });
+  }
+}
+
+/** A board_get that never answers: nothing but local state can change the board. */
+const hang = () => new Promise<never>(() => undefined);
 
 const commands = (cmd: string) =>
   vi.mocked(invoke).mock.calls.filter(([name]) => name === cmd);
@@ -356,6 +375,9 @@ describe("BoardView", () => {
 
   it("moves a card optimistically and puts it back when the move fails", async () => {
     await renderBoard();
+    // The refetch after the failure never answers, so only the restore can
+    // put the card back.
+    handlers.board_get = hang;
     let reject!: (error: unknown) => void;
     handlers.board_card_move = () =>
       new Promise((_, fail) => {
@@ -375,11 +397,37 @@ describe("BoardView", () => {
 
     await act(async () => reject("database is locked"));
     await flush();
+    expect(commands("board_get")).toHaveLength(2);
     expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
     expect(cardIdsIn("review")).toEqual([]);
     expect(
       container.ownerDocument.querySelector('[role="alert"]')?.textContent,
-    ).toContain("database is locked");
+    ).toContain("Couldn't move the card: database is locked");
+  });
+
+  it("puts a column back when its move fails", async () => {
+    await renderBoard();
+    handlers.board_get = hang;
+    let reject!: (error: unknown) => void;
+    handlers.board_column_move = () =>
+      new Promise((_, fail) => {
+        reject = fail;
+      });
+    const order = () =>
+      [...container.querySelectorAll("[data-kanban-column]")].map((el) =>
+        el.getAttribute("data-kanban-column"),
+      );
+
+    act(() => kanban.props!.onColumnMove("done", 0));
+    expect(order()).toEqual(["done", "backlog", "progress", "review"]);
+
+    await act(async () => reject("database is locked"));
+    await flush();
+    expect(commands("board_get")).toHaveLength(2);
+    expect(order()).toEqual(["backlog", "progress", "review", "done"]);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "Couldn't move the column: database is locked",
+    );
   });
 
   it("moves a column optimistically and calls board_column_move", async () => {
@@ -395,6 +443,90 @@ describe("BoardView", () => {
       columnId: "done",
       index: 0,
     });
+  });
+});
+
+describe("BoardView board delete", () => {
+  const OTHER = { id: "b2", name: "Releases", createdAt: 2, updatedAt: 2 };
+
+  function otherFixture(): BoardDetail {
+    return {
+      board: OTHER,
+      columns: [{ ...column("todo2", "Todo", 0, "todo"), boardId: "b2" }],
+      cards: [],
+    };
+  }
+
+  /** Boards as the backend holds them; delete emits board-changed first. */
+  function backend(initial: (typeof BOARD)[]) {
+    let boards = initial;
+    handlers.board_list = () => boards;
+    handlers.board_get = (args) => {
+      const id = String(args.boardId);
+      if (!boards.some((board) => board.id === id)) {
+        throw "Board not found";
+      }
+      return id === "b1" ? fixture() : otherFixture();
+    };
+    handlers.board_delete = (args) => {
+      boards = boards.filter((board) => board.id !== args.boardId);
+      emitBoardChanged(String(args.boardId));
+    };
+  }
+
+  async function deleteOpenBoard() {
+    vi.mocked(ask).mockResolvedValue(true);
+    const menu = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Board actions"]',
+    )!;
+    act(() => menu.click());
+    const item = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((el) => el.textContent === "Delete board")!;
+    await act(async () => item.click());
+    await flush();
+    await flush();
+  }
+
+  it("opens another board without an error when the open board is deleted", async () => {
+    backend([BOARD, OTHER]);
+    await renderBoard();
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
+
+    await deleteOpenBoard();
+    expect(commands("board_delete")[0][1]).toEqual({ boardId: "b1" });
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(commands("board_list").length).toBeGreaterThan(1);
+    expect(
+      [...container.querySelectorAll("[data-kanban-column]")].map((el) =>
+        el.getAttribute("data-kanban-column"),
+      ),
+    ).toEqual(["todo2"]);
+    expect(localStorage.getItem("rebase:open-board")).toBe("b2");
+  });
+
+  it("shows the empty state without an error when the last board is deleted", async () => {
+    backend([BOARD]);
+    await renderBoard();
+    await deleteOpenBoard();
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).toContain("No boards yet");
+    expect(localStorage.getItem("rebase:open-board")).toBeNull();
+  });
+
+  it("still reports a failed reload of a board that exists", async () => {
+    backend([BOARD, OTHER]);
+    await renderBoard();
+    handlers.board_get = () => {
+      throw "database is locked";
+    };
+    act(() => emitBoardChanged("b1"));
+    await flush();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "Couldn't load the board: database is locked",
+    );
+    // The board stays open with what it last showed.
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
   });
 });
 

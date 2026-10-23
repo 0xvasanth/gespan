@@ -221,7 +221,19 @@ function BoardContent({
           ),
       );
     } catch (cause) {
-      if (ticket === request.current) fail("Couldn't load the board")(cause);
+      const stale = () => ticket !== request.current || openIdRef.current !== id;
+      if (stale()) return;
+      // Deleting the board (here or elsewhere) also signals a change to it:
+      // a board that is no longer listed is gone, not broken, so open
+      // another one quietly.
+      const list = await listBoards().catch(() => null);
+      if (stale()) return;
+      if (list && !list.some((board) => board.id === id)) {
+        setBoards(list);
+        setOpenId(pickBoard(list, null));
+        return;
+      }
+      fail("Couldn't load the board")(cause);
     }
   }, [fail]);
 
