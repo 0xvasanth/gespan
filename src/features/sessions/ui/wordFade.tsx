@@ -6,7 +6,7 @@ export { PACED_REVEAL_KEY } from "../../settings/model/displayPrefs";
 /*
  * Smooth uneven provider bursts locally, independently of app-shell updates.
  * Already loaded text appears immediately. The unpaced fallback remains
- * available with localStorage["monocode.pacedReveal"] = "0".
+ * available with localStorage["rebase.pacedReveal"] = "0".
  */
 
 /** How long one word takes to fade in while paced. */

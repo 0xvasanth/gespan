@@ -18,8 +18,8 @@ export type ArtifactUpsert = Omit<Artifact, "createdAt" | "updatedAt">;
 export type ArtifactCard = Pick<Artifact, "id" | "kind" | "title"> & {
   summary?: string;
 };
-export const ARTIFACTS_CHANGED_EVENT = "monocode:artifacts-changed";
-export const ARTIFACT_DELETED_EVENT = "monocode:artifact-deleted";
+export const ARTIFACTS_CHANGED_EVENT = "rebase:artifacts-changed";
+export const ARTIFACT_DELETED_EVENT = "rebase:artifact-deleted";
 
 export function artifactLabel(kind: ArtifactKind): string {
   switch (kind) {

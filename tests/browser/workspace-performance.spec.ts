@@ -15,7 +15,7 @@ type WorkspaceFixture = Window & {
 // Invitation behavior is covered separately by layout-opt-in.spec.ts.
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("monocode.newLayoutPromptDismissed", "1");
+    localStorage.setItem("rebase.newLayoutPromptDismissed", "1");
   });
 });
 
@@ -23,7 +23,7 @@ test("switches six large sessions through the workspace shortcut", async ({
   page,
 }, testInfo) => {
   test.skip(
-    !process.env.MONOCODE_PERFORMANCE,
+    !process.env.REBASE_PERFORMANCE,
     "Run with the release performance configuration",
   );
   test.setTimeout(120_000);
@@ -131,7 +131,7 @@ test("switches six large sessions through the workspace shortcut", async ({
     }),
   );
   const navigation = await page.evaluate(() =>
-    performance.getEntriesByName("monocode:tab-switch").map((entry) => ({
+    performance.getEntriesByName("rebase:tab-switch").map((entry) => ({
       duration: entry.duration,
       detail: (entry as PerformanceMeasure).detail,
     })),

@@ -241,7 +241,7 @@ jobs:
           done
           dnf install -y "${bundle[0]}"
           rpm -q "$(rpm -qp --queryformat '%{NAME}' "${bundle[0]}")"
-          command -v monocode
+          command -v rebase
 
       - name: Upload rpm for the clean install check
         # Ship and test the EL 10 build. Fedora 43's glibc is newer, so a
@@ -293,12 +293,12 @@ jobs:
             rpm -q "$dep" >/dev/null || { echo "dnf did not install $dep" >&2; exit 1; }
           done
           rpm -q "$(rpm -qp --queryformat '%{NAME}' "${bundle[0]}")"
-          test -x /usr/bin/monocode
+          test -x /usr/bin/rebase
           # ldd -r can exit non-zero on GTK/WebKit plugin symbols; fail only
           # when a library or GLIBC version is actually missing.
-          loader_output="$(ldd -r /usr/bin/monocode 2>&1 || true)"
+          loader_output="$(ldd -r /usr/bin/rebase 2>&1 || true)"
           printf '%s\n' "$loader_output"
           if grep -q 'not found' <<<"$loader_output"; then
-            echo "monocode cannot load on EL 10" >&2
+            echo "rebase cannot load on EL 10" >&2
             exit 1
           fi

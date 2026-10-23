@@ -14,7 +14,7 @@ import {
   devinThoughtLevel,
 } from "./devinProtocol";
 
-const TEXT_CHILD_PREFIX = "monocode-devin-text-";
+const TEXT_CHILD_PREFIX = "rebase-devin-text-";
 const REQUEST_TIMEOUT_MS = 30_000;
 const PROMPT_TIMEOUT_MS = 5 * 60_000;
 const DELETE_TIMEOUT_MS = 5_000;

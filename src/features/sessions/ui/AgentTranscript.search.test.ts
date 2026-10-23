@@ -136,12 +136,12 @@ it("paints matching words and clears them when find closes", () => {
   });
   expect(
     registry
-      .get("monocode-transcript-search-current")
+      .get("rebase-transcript-search-current")
       ?.ranges.map((range) => range.toString()),
   ).toEqual(["can you"]);
   expect(
     registry
-      .get("monocode-transcript-search-match")
+      .get("rebase-transcript-search-match")
       ?.ranges.map((range) => range.toString()),
   ).toEqual(["can you"]);
 

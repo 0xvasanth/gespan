@@ -47,7 +47,7 @@ const option = (name: string, fallback: string): string => {
   return args[i + 1];
 };
 const directory = resolve(
-  option("data-dir", join(homedir(), ".monocode-host")),
+  option("data-dir", join(homedir(), ".rebase-host")),
 );
 const port = Number(option("port", "3774"));
 const statePath = join(directory, "running.json");
@@ -75,7 +75,7 @@ async function main() {
     return;
   }
   if (command === "help" || command === "--help") {
-    console.log(`MonoCode Host (experimental; Node 24+; Windows/Linux/macOS)
+    console.log(`Rebase Host (experimental; Node 24+; Windows/Linux/macOS)
   serve                 Run in foreground on 127.0.0.1
   start                 Run detached from this terminal
   service install       Install/start the persistent user service
@@ -297,7 +297,7 @@ Connect another computer using an SSH forward to the loopback port.`);
       void stop();
     });
     console.log(
-      `MonoCode Host ${store.environmentId} listening on 127.0.0.1:${port}`,
+      `Rebase Host ${store.environmentId} listening on 127.0.0.1:${port}`,
     );
     console.log(
       `Providers: ${available.join(", ") || "none found; install and authenticate a supported provider on this host"}`,

@@ -2,7 +2,7 @@ import { modelsFor } from "../../../../features/sessions/model/models";
 import {
   killChild,
   resolveCodexBinary,
-  restoreMonoCodexAgentState,
+  restoreRebasexAgentState,
   spawnChild,
   unwatchChild,
   watchChild,
@@ -22,7 +22,7 @@ import type { TextPromptInput } from "../../core/registry";
 
 import { mergeStream, streamTextDelta } from "../../core/streamText";
 
-const TEXT_CHILD_ID = "monocode-codex-text";
+const TEXT_CHILD_ID = "rebase-codex-text";
 const INIT_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 45_000;
 const TEXT_RUNTIME_MODE = "supervised" as const;
@@ -355,8 +355,8 @@ async function startLive(
       "initialize",
       {
         clientInfo: {
-          name: "monocode-text",
-          title: "MonoCode",
+          name: "rebase-text",
+          title: "Rebase",
           version: "0.1.0",
         },
         capabilities: { experimentalApi: true },
@@ -399,7 +399,7 @@ async function openThread(
     session.storeConfig = store.config;
     hasSavedContext = store.hasThread;
     if (requestedThreadId && hasSavedContext)
-      await restoreMonoCodexAgentState(
+      await restoreRebasexAgentState(
         session.providerAccountId,
         requestedThreadId,
       );

@@ -119,7 +119,7 @@ describe("file picker command mode", () => {
     expect(
       dialog.querySelector('[role="listbox"][aria-label="Commands"]'),
     ).not.toBeNull();
-    expect(dialog.textContent).toContain("Reload MonoCode");
+    expect(dialog.textContent).toContain("Reload Rebase");
     expect(dialog.textContent).toContain(reloadActionHint());
     expect(rankProjectFiles).not.toHaveBeenCalled();
   });
@@ -138,7 +138,7 @@ describe("file picker command mode", () => {
     rankProjectFiles.mockClear();
     inputText(input, ">");
     expect(dialog.getAttribute("aria-label")).toBe("Command Palette");
-    expect(dialog.textContent).toContain("Reload MonoCode");
+    expect(dialog.textContent).toContain("Reload Rebase");
     expect(rankProjectFiles).not.toHaveBeenCalled();
 
     inputText(input, "App");
@@ -157,7 +157,7 @@ describe("file picker command mode", () => {
     inputText(input, "> rmc");
     const reload = [
       ...dialog.querySelectorAll<HTMLButtonElement>("button"),
-    ].find((button) => button.textContent?.includes("Reload MonoCode"))!;
+    ].find((button) => button.textContent?.includes("Reload Rebase"))!;
     expect(reload).not.toBeUndefined();
     expect(reload.querySelectorAll(".text-accent")).toHaveLength(3);
 

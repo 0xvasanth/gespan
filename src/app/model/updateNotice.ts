@@ -1,4 +1,4 @@
-const INSTALLED_UPDATE_KEY = "monocode.installedUpdate";
+const INSTALLED_UPDATE_KEY = "rebase.installedUpdate";
 
 export type UpdateNoticeStore = Pick<
   Storage,

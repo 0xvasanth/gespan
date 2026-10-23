@@ -405,7 +405,7 @@ function syncLabel(status: GitStatus) {
 /** An older desktop doesn't know the commit sheet's requests; say what fixes it. */
 function updateHint(error: string) {
   return /unsupported/i.test(error)
-    ? "Update Monocode on your desktop to commit from here."
+    ? "Update Rebase on your desktop to commit from here."
     : error;
 }
 

@@ -22,7 +22,7 @@ import {
 import { asRecord } from "../../../integrations/harness/providers/codex/codexProtocol";
 import { JsonRpcClient } from "../../../integrations/harness/core/jsonRpc";
 
-const USAGE_CHILD_ID = "monocode-codex-usage";
+const USAGE_CHILD_ID = "rebase-codex-usage";
 const DISCOVERY_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 12_000;
 
@@ -313,8 +313,8 @@ async function runCodexAccountRequest<T>(
           "initialize",
           {
             clientInfo: {
-              name: "monocode",
-              title: "MonoCode",
+              name: "rebase",
+              title: "Rebase",
               version: "0.1.0",
             },
             capabilities: { experimentalApi: true },

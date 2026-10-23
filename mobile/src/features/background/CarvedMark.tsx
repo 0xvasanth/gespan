@@ -1,10 +1,10 @@
 import MaskedView from "@react-native-masked-view/masked-view";
 import { Image, StyleSheet, View } from "react-native";
 
-import { MONOCODE_MARK, MONOCODE_MARK_INVERSE } from "@/ui/brand";
+import { REBASE_MARK, REBASE_MARK_INVERSE } from "@/ui/brand";
 
 /**
- * The Monocode mark cut into the background image, lit from above: a darker
+ * The Rebase mark cut into the background image, lit from above: a darker
  * floor where it is cut, a shadow under its top edges, and a faint light along
  * its bottom edges. The mark's own translucency sets how deep each part goes.
  */
@@ -14,12 +14,12 @@ export function CarvedMark({ size }: { size: number }) {
     <View style={box} accessibilityIgnoresInvertColors>
       {/* The lower lip of the cut catches the light, just below the mark. */}
       <Image
-        source={MONOCODE_MARK}
+        source={REBASE_MARK}
         tintColor="#ffffff"
         style={[StyleSheet.absoluteFill, styles.rim]}
       />
       <Image
-        source={MONOCODE_MARK}
+        source={REBASE_MARK}
         tintColor="#000000"
         style={[StyleSheet.absoluteFill, styles.floor]}
       />
@@ -27,10 +27,10 @@ export function CarvedMark({ size }: { size: number }) {
           through the mark: the shadow its top edges cast into it. */}
       <MaskedView
         style={StyleSheet.absoluteFill}
-        maskElement={<Image source={MONOCODE_MARK} style={box} />}
+        maskElement={<Image source={REBASE_MARK} style={box} />}
       >
         <Image
-          source={MONOCODE_MARK_INVERSE}
+          source={REBASE_MARK_INVERSE}
           tintColor="#000000"
           blurRadius={2}
           style={[StyleSheet.absoluteFill, styles.shadow]}

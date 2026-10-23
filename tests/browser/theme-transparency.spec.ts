@@ -11,8 +11,8 @@ test("keeps the window opaque when its workspace theme or color scheme changes",
       value: "MacIntel",
       configurable: true,
     });
-    localStorage.setItem("monocode.insetLayout", "1");
-    localStorage.setItem("monocode.colorScheme", "dark");
+    localStorage.setItem("rebase.insetLayout", "1");
+    localStorage.setItem("rebase.colorScheme", "dark");
   });
   await page.goto("/tests/browser/workspace-performance.html");
   await expect(page.locator(".inset-shell")).toBeVisible({ timeout: 15_000 });
@@ -73,7 +73,7 @@ test("keeps the window opaque when its workspace theme or color scheme changes",
     await expect(transparent).not.toBeChecked();
     await expect(root).not.toHaveClass(/has-native-glass/);
     expect(
-      await page.evaluate(() => localStorage.getItem("monocode.insetGlass")),
+      await page.evaluate(() => localStorage.getItem("rebase.insetGlass")),
     ).toBe("0");
     await expect
       .poll(() =>

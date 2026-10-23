@@ -37,7 +37,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   localStorage.setItem(
-    "monocode.providerAccounts.v1",
+    "rebase.providerAccounts.v1",
     JSON.stringify({
       codex: [{ id: "account-work", provider: "codex", label: "Work" }],
     }),

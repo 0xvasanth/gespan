@@ -24,7 +24,7 @@ async function generateSessionTitle(
     });
     return parseGeneratedSessionTitle(output, input.message);
   } catch (error) {
-    console.debug("[monocode] session title", error);
+    console.debug("[rebase] session title", error);
     return null;
   }
 }

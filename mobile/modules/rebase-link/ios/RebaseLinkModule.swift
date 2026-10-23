@@ -1,9 +1,9 @@
 import ExpoModulesCore
-import MonocodeLinkCore
+import RebaseLinkCore
 
-public class MonocodeLinkModule: Module {
+public class RebaseLinkModule: Module {
   public func definition() -> ModuleDefinition {
-    Name("MonocodeLink")
+    Name("RebaseLink")
     Constant("nativeTranscriptVersion") { 1 }
     View(NativeTranscriptView.self) {
       Events("onStatus", "onAction", "onScrollState")
@@ -29,10 +29,10 @@ public class MonocodeLinkModule: Module {
     }
     AsyncFunction("execute") { (input: String) -> String in
       return input.withCString { pointer in
-        guard let output = monocode_link_call(pointer) else {
+        guard let output = rebase_link_call(pointer) else {
           return "{\"ok\":false,\"error\":\"Native connection failed\"}"
         }
-        defer { monocode_link_free(output) }
+        defer { rebase_link_free(output) }
         return String(cString: output)
       }
     }.runOnQueue(.global(qos: .userInitiated))

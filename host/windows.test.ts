@@ -27,7 +27,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 const temporary = () => {
-  const dir = mkdtempSync(join(tmpdir(), "monocode-win-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "rebase-win-test-"));
   directories.push(dir);
   return dir;
 };
@@ -64,7 +64,7 @@ it("runs npm provider entry points directly with literal arguments and bundled N
 
 it("uses an unlimited, unelevated per-user task and preserves literal paths", () => {
   const options = {
-    directory: "C:\\Users\\Nick's $PC\\.monocode-host",
+    directory: "C:\\Users\\Nick's $PC\\.rebase-host",
     executable: "C:\\Runtime\\node.exe",
     entry: "C:\\Runtime\\host.mjs",
     port: 3774,

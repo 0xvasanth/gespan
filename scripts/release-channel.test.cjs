@@ -59,7 +59,7 @@ test("beta builds require an isolated R2 endpoint and HTTPS", () => {
 });
 
 test("the CLI exports the same channel used for feed publication", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "monocode-release-channel-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rebase-release-channel-"));
   try {
     const envFile = path.join(dir, "github-env");
     execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs")], {

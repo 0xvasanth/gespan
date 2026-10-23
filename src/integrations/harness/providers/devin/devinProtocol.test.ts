@@ -185,7 +185,7 @@ describe("devin auth helpers", () => {
 });
 
 describe("devin modes", () => {
-  it("maps MonoCode access levels onto Devin session modes", () => {
+  it("maps Rebase access levels onto Devin session modes", () => {
     expect(devinModeId("supervised")).toBe("accept-edits");
     expect(devinModeId("auto-accept-edits")).toBe("accept-edits");
     expect(devinModeId("auto")).toBe("smart");

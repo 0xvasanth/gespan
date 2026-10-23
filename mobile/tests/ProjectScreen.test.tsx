@@ -296,7 +296,7 @@ vi.mock("@/ui/usePushedIn", () => ({
 
 const project: Project = {
   id: "project",
-  name: "Monocode",
+  name: "Rebase",
   path: "/repo",
   machine: "desktop",
   branch: "main",
@@ -340,7 +340,7 @@ describe("new session composer workspace", () => {
   it("keeps circular Android project/settings controls after switching projects", () => {
     desktop.os = "android";
     render();
-    for (const label of ["Switch project, Monocode", "Settings"]) {
+    for (const label of ["Switch project, Rebase", "Settings"]) {
       expect(button(label).style.borderRadius).toBe("22px");
       expect(button(label).hasAttribute("data-glass")).toBe(true);
     }
@@ -370,7 +370,7 @@ describe("new session composer workspace", () => {
     const renderAvatar = desktop.header.headerLeft as () => ReactNode;
     act(() => root.render(<>{renderAvatar()}</>));
     expect(desktop.headerTarget).toBe(target);
-    expect(button("Switch project, Monocode").hasAttribute("data-glass")).toBe(
+    expect(button("Switch project, Rebase").hasAttribute("data-glass")).toBe(
       true,
     );
   });

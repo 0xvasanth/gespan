@@ -16,44 +16,44 @@ import {
   clearPreparedNewThreadBackground,
 } from "./newThreadBackgroundEffects";
 
-const ACCENT_COLOR_KEY = "monocode.accentColor";
-const THEME_HUE_KEY = "monocode.themeHue";
-const THEME_SATURATION_KEY = "monocode.themeSaturation";
-const THEME_DARK_LIGHTNESS_KEY = "monocode.themeDarkLightness";
-const OPACITY_KEY = "monocode.sidebarOpacity";
-const BLUR_KEY = "monocode.sidebarBlur";
-const PROJECT_RAIL_OPEN_KEY = "monocode.projectRailOpen";
-const SESSION_SIDEBAR_OPEN_KEY = "monocode.sessionSidebarOpen";
-const RIGHT_PANEL_OPEN_KEY = "monocode.rightPanelOpen";
-const RIGHT_PANEL_TAB_KEY = "monocode.rightPanelTab";
-const RIGHT_PANEL_TAB_ORDER_KEY = "monocode.rightPanelTabOrder";
-const RIGHT_PANEL_WIDTH_KEY = "monocode.rightPanelWidth";
-const BODY_KEY = "monocode.bodyGlass";
-const INSET_LAYOUT_KEY = "monocode.insetLayout";
-const INSET_GLASS_KEY = "monocode.insetGlass";
-const SCHEME_KEY = "monocode.colorScheme";
-const WORKSPACE_THEME_KEY = "monocode.workspaceTheme";
-const SIDEBAR_TAB_ORDER_KEY = "monocode.sidebarTabOrder";
-const PROJECT_RAIL_WIDTH_KEY = "monocode.projectRailWidth";
-const TRANSCRIPT_LAYOUT_KEY = "monocode.transcriptLayout";
-const TRANSCRIPT_ANCHOR_KEY = "monocode.transcriptAnchor";
-const CHAT_BACKGROUND_PATH_KEY = "monocode.chatBackgroundPath";
-const CHAT_BACKGROUND_OPACITY_KEY = "monocode.chatBackgroundOpacity";
-const CHAT_BACKGROUND_EMPTY_OPACITY_KEY = "monocode.chatBackgroundEmptyOpacity";
+const ACCENT_COLOR_KEY = "rebase.accentColor";
+const THEME_HUE_KEY = "rebase.themeHue";
+const THEME_SATURATION_KEY = "rebase.themeSaturation";
+const THEME_DARK_LIGHTNESS_KEY = "rebase.themeDarkLightness";
+const OPACITY_KEY = "rebase.sidebarOpacity";
+const BLUR_KEY = "rebase.sidebarBlur";
+const PROJECT_RAIL_OPEN_KEY = "rebase.projectRailOpen";
+const SESSION_SIDEBAR_OPEN_KEY = "rebase.sessionSidebarOpen";
+const RIGHT_PANEL_OPEN_KEY = "rebase.rightPanelOpen";
+const RIGHT_PANEL_TAB_KEY = "rebase.rightPanelTab";
+const RIGHT_PANEL_TAB_ORDER_KEY = "rebase.rightPanelTabOrder";
+const RIGHT_PANEL_WIDTH_KEY = "rebase.rightPanelWidth";
+const BODY_KEY = "rebase.bodyGlass";
+const INSET_LAYOUT_KEY = "rebase.insetLayout";
+const INSET_GLASS_KEY = "rebase.insetGlass";
+const SCHEME_KEY = "rebase.colorScheme";
+const WORKSPACE_THEME_KEY = "rebase.workspaceTheme";
+const SIDEBAR_TAB_ORDER_KEY = "rebase.sidebarTabOrder";
+const PROJECT_RAIL_WIDTH_KEY = "rebase.projectRailWidth";
+const TRANSCRIPT_LAYOUT_KEY = "rebase.transcriptLayout";
+const TRANSCRIPT_ANCHOR_KEY = "rebase.transcriptAnchor";
+const CHAT_BACKGROUND_PATH_KEY = "rebase.chatBackgroundPath";
+const CHAT_BACKGROUND_OPACITY_KEY = "rebase.chatBackgroundOpacity";
+const CHAT_BACKGROUND_EMPTY_OPACITY_KEY = "rebase.chatBackgroundEmptyOpacity";
 const CHAT_BACKGROUND_SESSION_OPACITY_KEY =
-  "monocode.chatBackgroundSessionOpacity";
-const CHAT_BACKGROUND_SCOPE_KEY = "monocode.chatBackgroundScope";
-const NEW_THREAD_BACKGROUND_EFFECT_KEY = "monocode.newThreadBackgroundEffect";
-const CHANGES_VIEW_KEY = "monocode.changesView";
-const DIFF_PALETTE_KEY = "monocode.diffPalette";
-const SHOW_EXCLUDED_FILES_KEY = "monocode.showExcludedFiles";
+  "rebase.chatBackgroundSessionOpacity";
+const CHAT_BACKGROUND_SCOPE_KEY = "rebase.chatBackgroundScope";
+const NEW_THREAD_BACKGROUND_EFFECT_KEY = "rebase.newThreadBackgroundEffect";
+const CHANGES_VIEW_KEY = "rebase.changesView";
+const DIFF_PALETTE_KEY = "rebase.diffPalette";
+const SHOW_EXCLUDED_FILES_KEY = "rebase.showExcludedFiles";
 let chatBackgroundRevision = Date.now();
 let nativeGlassReady = false;
 let glassFadeTimer: number | undefined;
 let glassSyncGeneration = 0;
 
 export const CHAT_BACKGROUND_PATH_CHANGE_EVENT =
-  "monocode:chat-background-path-change";
+  "rebase:chat-background-path-change";
 
 export type ColorScheme = "dark" | "light";
 export type ThemePreference = ColorScheme | "system";
@@ -99,7 +99,7 @@ export const THEME_PREFERENCE_DEFAULT: ThemePreference = "dark";
 export const ACCENT_COLOR_DEFAULT = null;
 
 /** Fired on `window` whenever the color scheme flips (detail: ColorScheme). */
-export const SCHEME_CHANGE_EVENT = "monocode:schemechange";
+export const SCHEME_CHANGE_EVENT = "rebase:schemechange";
 
 export const TRANSCRIPT_LAYOUT_DEFAULT: TranscriptLayout = "chat";
 
@@ -110,16 +110,16 @@ export const DIFF_PALETTE_DEFAULT: DiffPalette = "default";
 export const TRANSCRIPT_ANCHOR_DEFAULT = true;
 
 /** Fired on `window` whenever prompt-to-top anchoring flips (detail: boolean). */
-export const TRANSCRIPT_ANCHOR_CHANGE_EVENT = "monocode:transcriptanchorchange";
+export const TRANSCRIPT_ANCHOR_CHANGE_EVENT = "rebase:transcriptanchorchange";
 
 /** Fired on `window` whenever the transcript layout flips (detail: TranscriptLayout). */
-export const TRANSCRIPT_LAYOUT_CHANGE_EVENT = "monocode:transcriptlayoutchange";
+export const TRANSCRIPT_LAYOUT_CHANGE_EVENT = "rebase:transcriptlayoutchange";
 
 export const SHOW_EXCLUDED_FILES_DEFAULT = false;
 
 /** Fired on `window` whenever the explorer excluded-files setting flips (detail: boolean). */
 export const SHOW_EXCLUDED_FILES_CHANGE_EVENT =
-  "monocode:showexcludedfileschange";
+  "rebase:showexcludedfileschange";
 
 export type SidebarTabId = "files" | "sessions" | "changes" | "inbox";
 
@@ -164,7 +164,7 @@ export const INSET_LAYOUT_DEFAULT = false;
 export const INSET_GLASS_DEFAULT = true;
 
 /** Fired on `window` when the inset layout setting flips. */
-export const INSET_LAYOUT_CHANGE_EVENT = "monocode:inset-layout-change";
+export const INSET_LAYOUT_CHANGE_EVENT = "rebase:inset-layout-change";
 
 /** The inset layout's fixed glass: the 80% tint over the blur and the blur
  * radius its macOS window sets. The shell grey comes from the

@@ -346,8 +346,8 @@ function scopeLabel(skill: Skill): string {
   if (skill.kind === "native") {
     return skill.origin ? `${skill.source} · ${skill.origin}` : skill.source;
   }
-  if (skill.kind === "builtin") return "monocode";
+  if (skill.kind === "builtin") return "rebase";
   if (skill.scope === "user") return "personal";
-  if (skill.source !== "agents" && skill.source !== "monocode") return skill.source;
+  if (skill.source !== "agents" && skill.source !== "rebase") return skill.source;
   return "project";
 }

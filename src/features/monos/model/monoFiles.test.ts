@@ -111,13 +111,13 @@ it("says how to keep memory and update the soul only at the user's request", () 
     mascot: "skull",
     color: "#fff",
     projects: [
-      { path: "/code/monocode", name: "monocode" },
+      { path: "/code/rebase", name: "rebase" },
       { path: "/code/site", name: "site" },
     ],
   };
   const full = monoContext(look, files(), { soul: true, memory: true });
-  expect(full).toContain("You are Skull, a Mono in MonoCode");
-  expect(full).toContain("these 2 projects (monocode and site)");
+  expect(full).toContain("You are Skull, a Mono in Rebase");
+  expect(full).toContain("these 2 projects (rebase and site)");
   expect(full).toContain("- site: /code/site");
   expect(full).toContain("Be brief.");
   expect(full).toContain(
@@ -233,10 +233,10 @@ it("reads a migrated Mono's old project folder once, then its own", async () => 
 it("puts what the app adds ahead of the user's message, marked as its own", () => {
   expect(monoTurn("what is this", [])).toBe("what is this");
   const turn = monoTurn("what is this", ["<mono>\nYou are Cat.\n</mono>"]);
-  expect(turn.startsWith("<monocode_context>")).toBe(true);
+  expect(turn.startsWith("<rebase_context>")).toBe(true);
   expect(turn).toContain("they did not write it");
   expect(turn.indexOf("You are Cat.")).toBeLessThan(
     turn.indexOf("what is this"),
   );
-  expect(turn.endsWith("</monocode_context>\n\nwhat is this")).toBe(true);
+  expect(turn.endsWith("</rebase_context>\n\nwhat is this")).toBe(true);
 });

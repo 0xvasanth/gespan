@@ -32,8 +32,8 @@ describe("sessionConversationPage", () => {
       expect(page.turns[0].assistant?.text).toBe("It uses a queue.");
       expect(page.turns[1].user.text).toBe(
         sessionCount
-          ? "MonoCode: results from 3 sessions"
-          : "MonoCode: session completed: API fix",
+          ? "Rebase: results from 3 sessions"
+          : "Rebase: session completed: API fix",
       );
       expect(page.turns[1].assistant?.text).toBe("The API fix passed tests.");
       expect(JSON.stringify(page)).not.toContain("Hidden app instructions");
@@ -89,7 +89,7 @@ describe("sessionConversationPage", () => {
 
   it("omits drafts and shows the latest assistant response in each exchange", () => {
     const session = conversation([
-      { id: "u", role: "user", text: "/monocode list notes" },
+      { id: "u", role: "user", text: "/rebase list notes" },
       { id: "a1", role: "assistant", text: "Working" },
       { id: "a2", role: "assistant", text: "Done" },
       { id: "draft", role: "user", text: "unsent", draft: true },

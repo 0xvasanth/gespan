@@ -2,7 +2,7 @@
 // No text, commands, paths, or session content is recorded.
 const enabled =
   typeof localStorage !== "undefined" &&
-  localStorage.getItem("monocode.measureNavigation") === "1";
+  localStorage.getItem("rebase.measureNavigation") === "1";
 let pending: { id: string; start: number } | undefined;
 let frame = 0;
 
@@ -22,9 +22,9 @@ export function commitTabSwitch(id: string) {
       pending = undefined;
       // The second frame is an upper bound on presentation, not a claim that
       // JavaScript can observe the compositor's exact presentation timestamp.
-      if (performance.getEntriesByName("monocode:tab-switch").length >= 100)
-        performance.clearMeasures("monocode:tab-switch");
-      performance.measure("monocode:tab-switch", {
+      if (performance.getEntriesByName("rebase:tab-switch").length >= 100)
+        performance.clearMeasures("rebase:tab-switch");
+      performance.measure("rebase:tab-switch", {
         start: sample.start,
         end: performance.now(),
         detail: { commitMs: commit - sample.start },

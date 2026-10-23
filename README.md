@@ -1,18 +1,18 @@
 <p align="center">
-  <img src="public/monocode.png" alt="MonoCode" width="88" />
+  <img src="public/rebase.png" alt="Rebase" width="88" />
 </p>
 
-<h1 align="center">MonoCode</h1>
+<h1 align="center">Rebase</h1>
 
 <p align="center">
   <strong>A GUI for your coding agents.</strong>
 </p>
 
 <p align="center">
-  <img width="1680" height="1050" alt="MonoCode with agent sessions open side by side" src="https://github.com/user-attachments/assets/2cd4a6ec-eb1e-4b45-8627-a76442ea3874" />
+  <img width="1680" height="1050" alt="Rebase with agent sessions open side by side" src="https://github.com/user-attachments/assets/2cd4a6ec-eb1e-4b45-8627-a76442ea3874" />
 </p>
 
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity, Pi, omp, fx, Hermes Agent, and Devin. If they’re installed and logged in, MonoCode can run them. Tabs are sessions. The composer is the input. MonoCode does not sell tokens.
+Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity, Pi, omp, fx, Hermes Agent, and Devin. If they’re installed and logged in, Rebase can run them. Tabs are sessions. The composer is the input. Rebase does not sell tokens.
 
 ## Install
 
@@ -20,12 +20,12 @@ Install and sign in to at least one supported agent first. See [provider setup](
 
 | Platform | Download |
 | --- | --- |
-| macOS, Apple Silicon | [MonoCode.dmg](https://dl.usemono.dev/MonoCode.dmg) |
-| macOS, Intel | [MonoCode_x64.dmg](https://dl.usemono.dev/MonoCode_x64.dmg) |
-| Linux, x86_64 | [.deb, .rpm, or AppImage](https://github.com/hardbeat920/monocode/releases/latest) |
-| Windows, x86_64 | [Installer](https://github.com/hardbeat920/monocode/releases/latest) |
+| macOS, Apple Silicon | [Rebase.dmg](https://dl.usemono.dev/Rebase.dmg) |
+| macOS, Intel | [Rebase_x64.dmg](https://dl.usemono.dev/Rebase_x64.dmg) |
+| Linux, x86_64 | [.deb, .rpm, or AppImage](https://github.com/hardbeat920/rebase/releases/latest) |
+| Windows, x86_64 | [Installer](https://github.com/hardbeat920/rebase/releases/latest) |
 
-On macOS, open the DMG and drag MonoCode to Applications. On Windows, run the installer. See [Linux setup](docs/install.md) for dependencies and package instructions.
+On macOS, open the DMG and drag Rebase to Applications. On Windows, run the installer. See [Linux setup](docs/install.md) for dependencies and package instructions.
 
 ## Get started
 
@@ -38,7 +38,7 @@ Open a project folder, choose an agent, and send a message. Each tab is a sessio
 
 Monos are experimental agents that work across your projects. They keep a memory and can run scheduled tasks you set up with them.
 
-MonoCode is still early. If something breaks, [report a bug](https://github.com/hardbeat920/monocode/issues).
+Rebase is still early. If something breaks, [report a bug](https://github.com/hardbeat920/rebase/issues).
 
 ## Guides
 
@@ -62,9 +62,9 @@ Small, focused contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md
 
 ## Contributors
 
-Thanks to everyone who contributes to MonoCode!
+Thanks to everyone who contributes to Rebase!
 
-[![MonoCode contributors](https://contrib.rocks/image?repo=hardbeat920/monocode)](https://github.com/hardbeat920/monocode/graphs/contributors)
+[![Rebase contributors](https://contrib.rocks/image?repo=hardbeat920/rebase)](https://github.com/hardbeat920/rebase/graphs/contributors)
 
 Contributor image by [contrib.rocks](https://contrib.rocks).
 

@@ -39,7 +39,7 @@ it("isolates unfinished creates by tab and keeps their original first message on
 
 it("can recover commands saved by the earlier desktop", () => {
   localStorage.setItem(
-    'monocode.remote-command.v1:["project","env"]:create-1',
+    'rebase.remote-command.v1:["project","env"]:create-1',
     JSON.stringify(create),
   );
   expect(pendingRemoteCommand("project", "env", null, "first-tab")).toEqual(

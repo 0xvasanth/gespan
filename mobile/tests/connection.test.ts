@@ -56,7 +56,7 @@ const invitation = {
 };
 function link(value: unknown) {
   return (
-    "monocode://pair?i=" +
+    "rebase://pair?i=" +
     Buffer.from(JSON.stringify(value)).toString("base64url")
   );
 }

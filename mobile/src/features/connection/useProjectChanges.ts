@@ -38,7 +38,7 @@ export function useProjectChanges(projectId: string, enabled: boolean, worktreeP
           // A desktop that predates worktrees answers with the checkout's
           // changes; say so rather than show them as the worktree's.
           if (value.worktreePath !== worktreePath)
-            throw new Error("Update or reload Monocode on your desktop to see this worktree's changes.");
+            throw new Error("Update or reload Rebase on your desktop to see this worktree's changes.");
           const key = keyFor(projectId, worktreePath);
           // Unchanged, the screen showing them needn't render again.
           const before = lastRead.get(key);

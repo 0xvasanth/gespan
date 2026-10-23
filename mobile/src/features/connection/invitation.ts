@@ -7,9 +7,9 @@ export type Invitation = Omit<Desktop, "deviceId"> & {
 export function parseInvitation(text: string): Invitation {
   if (text.length > 12_000) throw new Error("This pairing code is too large");
   const url = new URL(text.trim());
-  if (url.protocol !== "monocode:" || url.hostname !== "pair")
+  if (url.protocol !== "rebase:" || url.hostname !== "pair")
     throw new Error(
-      "Scan a Monocode pairing code from desktop Settings → Connections",
+      "Scan a Rebase pairing code from desktop Settings → Connections",
     );
   const code = url.searchParams.get("i");
   if (!code || !/^[A-Za-z0-9_-]+$/.test(code))

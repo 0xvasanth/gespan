@@ -51,8 +51,8 @@ test("opens the first project from a collapsed projectless sidebar", async ({
   page,
 }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("monocode.insetLayout", "1");
-    localStorage.setItem("monocode.sessionSidebarOpen", "0");
+    localStorage.setItem("rebase.insetLayout", "1");
+    localStorage.setItem("rebase.sessionSidebarOpen", "0");
   });
   await page.goto("/tests/browser/workspace-performance.html?empty");
   const sidebar = page.locator(".inset-sidebar");
@@ -91,7 +91,7 @@ test("opts in from the invitation and switches back without changing glass", asy
   page,
 }, testInfo) => {
   await page.addInitScript(() => {
-    localStorage.setItem("monocode.insetGlass", "0");
+    localStorage.setItem("rebase.insetGlass", "0");
   });
   await page.goto("/tests/browser/workspace-performance.html");
   const notice = page.getByRole("status", { name: "Try the new layout" });
@@ -145,7 +145,7 @@ test("opts in from the invitation and switches back without changing glass", asy
   await resizer.hover();
   await expect(resizer).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   expect(
-    await page.evaluate(() => localStorage.getItem("monocode.insetGlass")),
+    await page.evaluate(() => localStorage.getItem("rebase.insetGlass")),
   ).toBe("0");
 
   await page.reload();
@@ -182,7 +182,7 @@ test("keeps the classic workspace after turning off the new layout and leaving S
   page,
 }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("monocode.insetLayout", "1");
+    localStorage.setItem("rebase.insetLayout", "1");
   });
   await page.goto("/tests/browser/workspace-performance.html");
   await expect(page.locator(".inset-shell")).toBeVisible({ timeout: 15_000 });

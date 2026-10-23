@@ -16,7 +16,7 @@ import {
 import { INTERRUPT_MESSAGE } from "./inFlight";
 import type { Block, ToolPreview } from "./session";
 import { allModels } from "./models";
-import { monoCodeWorkSummary } from "./monocodeToolCall";
+import { rebaseWorkSummary } from "./rebaseToolCall";
 
 export type ToolCallState = "pending" | "accepted" | "rejected";
 
@@ -1067,7 +1067,7 @@ function currentWorkKind(steps: Block[]): ActivityWorkKind | undefined {
  * "N notes" clause; a group holding nothing but notes is just that clause.
  */
 export function workSummaryLine(steps: Block[], live = false): string {
-  const appSummary = monoCodeWorkSummary(steps, live);
+  const appSummary = rebaseWorkSummary(steps, live);
   if (appSummary) return appSummary;
   const tally = tallySteps(steps);
   const notes =

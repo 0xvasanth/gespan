@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { AgentMarkdown } from "./AgentMarkdown";
 
 /**
- * https://github.com/hardbeat920/monocode/issues/591 - Markdown reads a single
+ * https://github.com/hardbeat920/rebase/issues/591 - Markdown reads a single
  * newline as a soft break, which HTML collapses to a space, so consecutive
  * lines in a note ran together into one line of prose. A document is written
  * with hard-wrapped lines, so the preview shows each newline as a line break.

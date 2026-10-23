@@ -276,9 +276,9 @@ describe("filterTabsForProject", () => {
 
 describe("planWorkspaceTabClose", () => {
   const sessions = [
-    session("m1", "/projects/monocode"),
+    session("m1", "/projects/rebase"),
     session("r1", "/projects/ruler"),
-    session("m2", "/projects/monocode"),
+    session("m2", "/projects/rebase"),
   ];
   const tabs = [tab("tm1", "m1"), tab("tr1", "r1"), tab("tm2", "m2")];
 
@@ -383,8 +383,8 @@ describe("planWorkspaceTabClose", () => {
 
 describe("applyPlaceSessionOnPane", () => {
   const sessions = [
-    session("m1", "/projects/monocode"),
-    session("m2", "/projects/monocode"),
+    session("m1", "/projects/rebase"),
+    session("m2", "/projects/rebase"),
     session("r1", "/projects/ruler"),
   ];
 
@@ -409,7 +409,7 @@ describe("applyPlaceSessionOnPane", () => {
   });
 
   it("replaces a blank target instead of splitting it", () => {
-    const blank = session("blank", "/projects/monocode");
+    const blank = session("blank", "/projects/rebase");
     const next = applyPlaceSessionOnPane({
       tabs: [tab("tm1", "blank")],
       sessions: [...sessions, blank],
@@ -462,9 +462,9 @@ describe("applyPlaceSessionOnPane", () => {
 
 describe("applyPlaceTabOnPane", () => {
   const sessions = [
-    session("target", "/projects/monocode"),
-    session("source", "/projects/monocode"),
-    session("other", "/projects/monocode"),
+    session("target", "/projects/rebase"),
+    session("source", "/projects/rebase"),
+    session("other", "/projects/rebase"),
   ];
 
   it("turns a separate tab into a split beside the target pane", () => {
@@ -485,8 +485,8 @@ describe("applyPlaceTabOnPane", () => {
 
   it("keeps every pane and the nested layout of the dragged tab", () => {
     const file = newFileTab(
-      "/projects/monocode/readme.md",
-      "/projects/monocode",
+      "/projects/rebase/readme.md",
+      "/projects/rebase",
     );
     const pane = { id: "editor", files: [file], activeFileId: file.id };
     const source: WorkspaceTab = {
@@ -522,7 +522,7 @@ describe("applyPlaceTabOnPane", () => {
   });
 
   it("replaces a blank target without leaving its session mounted", () => {
-    const blank = session("blank", "/projects/monocode");
+    const blank = session("blank", "/projects/rebase");
     const next = applyPlaceTabOnPane({
       tabs: [tab("target-tab", "blank"), tab("source-tab", "source")],
       sessions: [...sessions, blank],
@@ -569,8 +569,8 @@ describe("applyDetachPaneToTab", () => {
     (kind) => {
       const file =
         kind === "editor"
-          ? newFileTab("/projects/monocode/readme.md", "/projects/monocode")
-          : newTerminalFile("/projects/monocode");
+          ? newFileTab("/projects/rebase/readme.md", "/projects/rebase")
+          : newTerminalFile("/projects/rebase");
       const pane = { id: `${kind}-pane`, files: [file], activeFileId: file.id };
       const source: WorkspaceTab = {
         ...tab("source-tab", "chat"),

@@ -34,14 +34,14 @@ export function readHarnessTextFile(path: string): Promise<string> {
   });
 }
 
-export function prepareMonoCodexStore(
+export function prepareRebasexStore(
   providerAccountId?: string,
   threadId?: string,
 ): Promise<{ home: string; hasThread: boolean }> {
   return invoke("codex_mono_store_prepare", { providerAccountId, threadId });
 }
 
-export function copyMonoCodexThreads(
+export function copyRebasexThreads(
   providerAccountId: string | undefined,
   threadId: string,
   paths: string[],
@@ -71,7 +71,7 @@ export function transferProviderSession(
   });
 }
 
-export function restoreMonoCodexAgentState(
+export function restoreRebasexAgentState(
   providerAccountId: string | undefined,
   threadId: string,
 ): Promise<void> {
@@ -576,7 +576,7 @@ export function inspectHarnessBinary(
   });
 }
 
-/** Runs the CLI's own self-update against the binary MonoCode uses. */
+/** Runs the CLI's own self-update against the binary Rebase uses. */
 export async function updateHarnessCli(
   provider: ConfigurableBinaryProvider,
 ): Promise<void> {

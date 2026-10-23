@@ -1,12 +1,12 @@
 name: Feature request
-description: Suggest an idea or improvement for MonoCode
+description: Suggest an idea or improvement for Rebase
 title: "[Feature]: "
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve MonoCode.
+        Thanks for helping improve Rebase.
 
   - type: textarea
     id: problem
@@ -21,7 +21,7 @@ body:
     id: solution
     attributes:
       label: Proposed solution
-      description: What would you like MonoCode to do?
+      description: What would you like Rebase to do?
     validations:
       required: true
 

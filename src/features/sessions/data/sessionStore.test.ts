@@ -379,13 +379,13 @@ describe("sanitizeSessionForPersist", () => {
       "list notes",
       [],
       {
-        monocode: true,
+        rebase: true,
       },
     );
     expect(sanitizeSessionForPersist(submitted).blocks[0]).toMatchObject({
       role: "user",
       text: "list notes",
-      monocode: true,
+      rebase: true,
     });
   });
 
@@ -721,7 +721,7 @@ describe("sanitizeSessionForPersist", () => {
       {
         id: "i1",
         role: "system",
-        text: "Turn interrupted when MonoCode quit.",
+        text: "Turn interrupted when Rebase quit.",
         notice: "interrupt",
       },
       {

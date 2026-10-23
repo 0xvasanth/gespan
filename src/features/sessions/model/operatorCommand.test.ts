@@ -30,7 +30,7 @@ describe("Operator composer command", () => {
       text: "Explain /operator",
       matched: false,
     });
-    for (const alias of ["/mono", "/monocode"]) {
+    for (const alias of ["/mono", "/rebase"]) {
       expect(consumeOperatorCommand(`${alias} list notes`)).toEqual({
         text: "list notes",
         matched: true,
@@ -41,7 +41,7 @@ describe("Operator composer command", () => {
   it("keeps access for later turns when a submitted user turn enabled it", () => {
     expect(
       operatorEnabledInThread([
-        { id: "first", role: "user", text: "list notes", monocode: true },
+        { id: "first", role: "user", text: "list notes", rebase: true },
         { id: "reply", role: "assistant", text: "Here are your notes." },
         { id: "followup", role: "user", text: "Start two sessions" },
       ]),
@@ -53,12 +53,12 @@ describe("Operator composer command", () => {
           role: "user",
           text: "list notes",
           draft: true,
-          monocode: true,
+          rebase: true,
         },
         { id: "other", role: "user", text: "Explain /operator" },
       ]),
     ).toBe(false);
-    for (const alias of ["/mono", "/monocode"]) {
+    for (const alias of ["/mono", "/rebase"]) {
       const legacy = {
         id: "legacy",
         role: "user" as const,

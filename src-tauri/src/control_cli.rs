@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-const USAGE: &str = r#"MonoCode local control — supervise this orchestration run from the lead agent.
+const USAGE: &str = r#"Rebase local control — supervise this orchestration run from the lead agent.
 
 Usage: {exe} control ACTION [--json JSON | --input FILE|-] [--request-id ID]
 
@@ -56,7 +56,7 @@ for corrections -> review each task -> finish.
 
 When paused, list, get and wait still return the reason and recovery steps.
 Do not keep polling or retry mutations. Explain the pause and ask the user to
-click Resume in MonoCode. Resume continues interrupted workers in their
+click Resume in Rebase. Resume continues interrupted workers in their
 retained checkouts. A policy-blocked worker remains stopped until message,
 retry or cancel explicitly resolves it.
 
@@ -71,10 +71,10 @@ failed response reports the ID it used whenever the outcome is unknown — a
 timeout, say. Retry that exact call with --request-id ID; retrying a delegate
 under a fresh ID instead would queue a second worker.
 
-Tasks run inside the MonoCode app, not in this process. Exiting this CLI, or a
+Tasks run inside the Rebase app, not in this process. Exiting this CLI, or a
 failure here, never cancels a task that was already accepted.
 
-MonoCode sets MONOCODE_CONTROL_ENDPOINT and MONOCODE_CONTROL_TOKEN for the lead
+Rebase sets REBASE_CONTROL_ENDPOINT and REBASE_CONTROL_TOKEN for the lead
 agent's process only. They are already in your environment; never print them.
 "#;
 
@@ -116,7 +116,7 @@ const APP_ACTIONS: [&str; 32] = [
     "habits.remove",
     "chat.card",
 ];
-const APP_USAGE: &str = r#"MonoCode app access — use in a thread enabled by /operator.
+const APP_USAGE: &str = r#"Rebase app access — use in a thread enabled by /operator.
 
 Usage: {exe} app ACTION [--json JSON | --input FILE|-] [--request-id ID]
 
@@ -139,7 +139,7 @@ Actions:
                   in the calling Mono's chat. It waits until that Mono is idle.
   sessions.draft {"sessionId":"...","prompt":"..."}
                   Save an unsent draft in an idle project session. Existing
-                  drafts are preserved; send or remove one in MonoCode first.
+                  drafts are preserved; send or remove one in Rebase first.
                   Reuse --request-id on retries.
   sessions.start {"prompt":"...","harness":"codex","model":"codex:...",
                   "effort":"high","reveal":false,
@@ -184,7 +184,7 @@ Actions:
                   unchanged. Reuse --request-id on retries.
   sessions.archive {"sessionId":"..."}
                   Stop the session if running, save its conversation, and
-                  archive it. It can be restored from MonoCode's archive.
+                  archive it. It can be restored from Rebase's archive.
                   Open files, terminals and worktrees are kept.
                   Reuse --request-id on retries.
   sessions.delete {"sessionId":"..."}
@@ -264,7 +264,7 @@ Actions:
                   the user must start it before it is scheduled.
 
 The output is one JSON line: {"ok":true,"result":...} or {"ok":false,"error":"..."}.
-Use --input - to pass JSON on stdin. Never print MonoCode credentials.
+Use --input - to pass JSON on stdin. Never print Rebase credentials.
 Keep the same --request-id when retrying a call after an uncertain result.
 "#;
 
@@ -293,14 +293,14 @@ fn quoted(value: &str) -> String {
 pub fn help() -> String {
     let exe = std::env::current_exe()
         .map(|path| quoted(&path.to_string_lossy()))
-        .unwrap_or_else(|_| "monocode".into());
+        .unwrap_or_else(|_| "rebase".into());
     USAGE.replace("{exe}", &exe)
 }
 
 pub fn app_help() -> String {
     let exe = std::env::current_exe()
         .map(|path| quoted(&path.to_string_lossy()))
-        .unwrap_or_else(|_| "monocode".into());
+        .unwrap_or_else(|_| "rebase".into());
     APP_USAGE.replace("{exe}", &exe)
 }
 
@@ -393,34 +393,34 @@ fn sent(error: impl Into<String>) -> Failure {
 
 fn send(action: &str, input: &Value, request_id: &str, app_mode: bool) -> Result<Value, Failure> {
     let endpoint_key = if app_mode {
-        "MONOCODE_APP_ENDPOINT"
+        "REBASE_APP_ENDPOINT"
     } else {
-        "MONOCODE_CONTROL_ENDPOINT"
+        "REBASE_CONTROL_ENDPOINT"
     };
     let token_key = if app_mode {
-        "MONOCODE_APP_TOKEN"
+        "REBASE_APP_TOKEN"
     } else {
-        "MONOCODE_CONTROL_TOKEN"
+        "REBASE_CONTROL_TOKEN"
     };
     let endpoint = std::env::var(endpoint_key).map_err(|_| {
         unsent(if app_mode {
-            "No MonoCode app connection. Start this agent turn in MonoCode."
+            "No Rebase app connection. Start this agent turn in Rebase."
         } else {
-            "No MonoCode connection. Confirm the Orchestrator proposal in MonoCode first."
+            "No Rebase connection. Confirm the Orchestrator proposal in Rebase first."
         })
     })?;
     let token = std::env::var(token_key)
-        .map_err(|_| unsent("No MonoCode session credential. Start the agent from MonoCode."))?;
+        .map_err(|_| unsent("No Rebase session credential. Start the agent from Rebase."))?;
     let address: SocketAddr = endpoint
         .parse()
-        .map_err(|_| unsent("Invalid MonoCode endpoint"))?;
+        .map_err(|_| unsent("Invalid Rebase endpoint"))?;
     if !address.ip().is_loopback() {
-        return Err(unsent("MonoCode control only connects to localhost"));
+        return Err(unsent("Rebase control only connects to localhost"));
     }
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))
         .map_err(|error| {
             unsent(format!(
-                "Cannot connect to MonoCode at {address}: {error}. The app may have restarted, or this agent's sandbox may be blocking localhost."
+                "Cannot connect to Rebase at {address}: {error}. The app may have restarted, or this agent's sandbox may be blocking localhost."
             ))
         })?;
     stream
@@ -440,11 +440,11 @@ fn send(action: &str, input: &Value, request_id: &str, app_mode: bool) -> Result
     BufReader::new(stream)
         .take(max_response + 1)
         .read_line(&mut line)
-        .map_err(|e| sent(format!("No reply from MonoCode: {e}")))?;
+        .map_err(|e| sent(format!("No reply from Rebase: {e}")))?;
     if line.len() > max_response as usize {
-        return Err(sent("MonoCode response is too large"));
+        return Err(sent("Rebase response is too large"));
     }
-    serde_json::from_str(&line).map_err(|_| sent("MonoCode returned an invalid response"))
+    serde_json::from_str(&line).map_err(|_| sent("Rebase returned an invalid response"))
 }
 
 fn read_capped(mut source: impl Read) -> Result<String, String> {
@@ -615,18 +615,18 @@ mod tests {
     #[test]
     fn quotes_the_control_path_only_when_the_shell_needs_it() {
         assert_eq!(
-            quoted("/Applications/MonoCode.app/Contents/MacOS/monocode"),
-            "/Applications/MonoCode.app/Contents/MacOS/monocode"
+            quoted("/Applications/Rebase.app/Contents/MacOS/rebase"),
+            "/Applications/Rebase.app/Contents/MacOS/rebase"
         );
-        assert_eq!(quoted("/Users/a b/MonoCode"), "'/Users/a b/MonoCode'");
-        assert_eq!(quoted("C:\\Tools\\monocode.exe"), "C:\\Tools\\monocode.exe");
+        assert_eq!(quoted("/Users/a b/Rebase"), "'/Users/a b/Rebase'");
+        assert_eq!(quoted("C:\\Tools\\rebase.exe"), "C:\\Tools\\rebase.exe");
         assert_eq!(
-            quoted("C:\\Program Files\\MonoCode\\monocode.exe"),
-            "\"C:\\Program Files\\MonoCode\\monocode.exe\""
+            quoted("C:\\Program Files\\Rebase\\rebase.exe"),
+            "\"C:\\Program Files\\Rebase\\rebase.exe\""
         );
         // A backslash escapes in a POSIX shell, so bare would rewrite the path.
-        assert_eq!(quoted("/Users/a\\b/MonoCode"), "'/Users/a\\b/MonoCode'");
-        assert_eq!(quoted("/Users/it's/MonoCode"), r"'/Users/it'\''s/MonoCode'");
+        assert_eq!(quoted("/Users/a\\b/Rebase"), "'/Users/a\\b/Rebase'");
+        assert_eq!(quoted("/Users/it's/Rebase"), r"'/Users/it'\''s/Rebase'");
     }
     #[test]
     fn app_mode_exposes_only_app_actions_and_safe_request_ids() {

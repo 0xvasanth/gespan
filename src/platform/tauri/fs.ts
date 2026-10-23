@@ -156,7 +156,7 @@ export type DiscoveredSkill = {
     | "hermes"
     | "antigravity"
     | "devin"
-    | "monocode";
+    | "rebase";
 };
 
 export function listSkills(
@@ -461,7 +461,7 @@ export function isCheckoutBlockedByChanges(message: string): boolean {
   );
 }
 
-const GIT_CHANGED = "monocode-git-changed";
+const GIT_CHANGED = "rebase-git-changed";
 
 /** Tell git UIs (diff pane, branch picker) to reload after a local git mutation. */
 export function notifyGitChanged({ invalidatePending = true } = {}) {

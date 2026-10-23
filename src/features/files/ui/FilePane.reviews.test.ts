@@ -57,7 +57,7 @@ let root: Root;
 let props: ComponentProps<typeof FilePane>;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const storage = new Map([["monocode.diffViewer", "unified"]]);
+  const storage = new Map([["rebase.diffViewer", "unified"]]);
   vi.stubGlobal("localStorage", {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => storage.set(key, value),

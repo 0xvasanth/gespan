@@ -16,7 +16,7 @@ const deleteGeneratedImages = vi.hoisted(() => vi.fn(async () => undefined));
 const spawnChild = vi.hoisted(() =>
   vi.fn(async (..._args: unknown[]) => undefined),
 );
-const restoreMonoCodexAgentState = vi.hoisted(() =>
+const restoreRebasexAgentState = vi.hoisted(() =>
   vi.fn(async (..._args: unknown[]) => undefined),
 );
 const prepareCodexMonoContext = vi.hoisted(() =>
@@ -33,7 +33,7 @@ vi.mock("./codexStore", () => ({ prepareCodexMonoContext }));
 vi.mock("../../core/child", () => ({
   resolveCodexBinary: async () => ({ path: "/fake/codex" }),
   spawnChild,
-  restoreMonoCodexAgentState,
+  restoreRebasexAgentState,
   killChild: async () => undefined,
   unwatchChild: () => undefined,
   watchChild: (_id: string, line: (l: string) => void) => {
@@ -183,7 +183,7 @@ describe("codex live turn sequence", () => {
     saveGeneratedImage.mockClear();
     deleteGeneratedImages.mockClear();
     spawnChild.mockClear();
-    restoreMonoCodexAgentState.mockClear();
+    restoreRebasexAgentState.mockClear();
     prepareCodexMonoContext.mockClear();
   });
 
@@ -318,7 +318,7 @@ describe("codex live turn sequence", () => {
     expect(hasLiveCodexSession("codex-live", true)).toBe(false);
     expect(prepareCodexMonoContext).not.toHaveBeenCalled();
     expect(spawnChild.mock.calls[0][6]).toBeUndefined();
-    expect(restoreMonoCodexAgentState).not.toHaveBeenCalled();
+    expect(restoreRebasexAgentState).not.toHaveBeenCalled();
     notify("turn/completed", { turn: { id: "turn_1", status: "completed" } });
     await turn;
   });
@@ -352,7 +352,7 @@ describe("codex live turn sequence", () => {
     expect(prepareCodexMonoContext).toHaveBeenLastCalledWith(
       expect.objectContaining({ threadId: "thr_1" }),
     );
-    expect(restoreMonoCodexAgentState).toHaveBeenCalledWith(undefined, "thr_1");
+    expect(restoreRebasexAgentState).toHaveBeenCalledWith(undefined, "thr_1");
     notify("turn/completed", { turn: { id: "turn_1", status: "completed" } });
     await next.turn;
   });
@@ -371,7 +371,7 @@ describe("codex live turn sequence", () => {
       config: { sqlite_home: "/private/mono" },
     });
     expect(parse().some((m) => m.method === "thread/start")).toBe(false);
-    expect(restoreMonoCodexAgentState).toHaveBeenCalledWith("work", "thr_1");
+    expect(restoreRebasexAgentState).toHaveBeenCalledWith("work", "thr_1");
     expect(prepareCodexMonoContext).toHaveBeenCalledWith(
       expect.objectContaining({ providerAccountId: "work", threadId: "thr_1" }),
     );

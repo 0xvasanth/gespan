@@ -15,7 +15,7 @@ import {
   type DevinThoughtLevels,
 } from "./devinProtocol";
 
-const PROBE_ID = "monocode-devin-probe";
+const PROBE_ID = "rebase-devin-probe";
 const DISCOVERY_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const THOUGHT_PROBE_BUDGET_MS = 20_000;
@@ -30,7 +30,7 @@ export function refreshDevinCatalog(): Promise<void> {
       if (models.length > 0) setHarnessModels("devin", models);
     })
     .catch((error: unknown) => {
-      console.debug("[monocode] devin catalog", error);
+      console.debug("[rebase] devin catalog", error);
     })
     .finally(() => {
       inflight = null;

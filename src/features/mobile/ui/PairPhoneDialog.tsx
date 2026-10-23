@@ -20,7 +20,7 @@ const LINEUP = [
 const iconButton =
   "grid size-7 place-items-center rounded-md text-content/45 hover:bg-content/8 hover:text-content disabled:opacity-40";
 
-/** Shows a one-use pairing code for the MonoCode mobile app to scan. */
+/** Shows a one-use pairing code for the Rebase mobile app to scan. */
 export function PairPhoneDialog({
   image,
   url,
@@ -71,7 +71,7 @@ export function PairPhoneDialog({
           Connect a phone to this desktop
         </h3>
         <p className="mt-1.5 text-center text-[12px] leading-relaxed text-content/50">
-          Open MonoCode on your phone, tap{" "}
+          Open Rebase on your phone, tap{" "}
           <span className="font-medium text-content/80">
             Connect to desktop
           </span>
@@ -84,7 +84,7 @@ export function PairPhoneDialog({
               <img
                 src={image}
                 className={`size-full [image-rendering:pixelated] ${expired ? "opacity-15 blur-[2px]" : ""}`}
-                alt="Scan this one-use pairing code in the MonoCode mobile app"
+                alt="Scan this one-use pairing code in the Rebase mobile app"
               />
             ) : null}
             {expired && (

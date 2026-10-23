@@ -11,7 +11,7 @@ import { AsciiField } from "@/features/background/AsciiField";
 import { FadingBackground } from "@/features/background/FadingBackground";
 import type { EmptyBackground } from "@/features/background/useEmptyBackground";
 import type { Project } from "@/features/workspace/types";
-import { MONOCODE_MARK } from "@/ui/brand";
+import { REBASE_MARK } from "@/ui/brand";
 import { themedStyles } from "@/ui/theme";
 
 import { COMPOSER_FADE, useSessionLayout } from "./SessionScreen";
@@ -28,7 +28,7 @@ const ACCESSORY_GAP = 10;
 /** The photo is drawn a moment after the screen opens, so it eases in slower. */
 const BACKGROUND_ENTER = FadeIn.duration(520).easing(Easing.out(Easing.quad));
 
-// Empty conversation: a dimmed Monocode logo above the prompt, and the
+// Empty conversation: a dimmed Rebase logo above the prompt, and the
 // project's name under it, over the background set for it on this phone, or
 // a still frame of the connect screen's ASCII field where no photo is set.
 export function EmptySession({
@@ -92,7 +92,7 @@ export function EmptySession({
       >
         <Animated.View style={[styles.intro, fade]}>
           <Image
-            source={MONOCODE_MARK}
+            source={REBASE_MARK}
             style={styles.mark}
             accessibilityIgnoresInvertColors
           />

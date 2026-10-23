@@ -1,22 +1,22 @@
 [package]
-name = "monocode"
+name = "rebase"
 version.workspace = true
 edition.workspace = true
-description = "MonoCode — one UI for every agent harness"
+description = "Rebase — one UI for every agent harness"
 authors = ["Nick"]
-repository = "https://github.com/hardbeat920/monocode"
+repository = "https://github.com/0xvasanth/rebase"
 homepage = "https://usemono.dev"
 license.workspace = true
 
 [lib]
-name = "monocode_lib"
+name = "rebase_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-monocode-mobile-link = { path = "../crates/mobile-link" }
+rebase-mobile-link = { path = "../crates/mobile-link" }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = ["sync", "time"] }
 if-addrs = "0.15"

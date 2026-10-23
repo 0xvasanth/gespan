@@ -24,7 +24,7 @@ pub use transport::{
 pub type LinkResult<T> = Result<T, String>;
 pub const VERSION: u32 = 1;
 pub const PORT: u16 = 38416;
-pub const ALPN: &[u8] = b"monocode-mobile/1";
+pub const ALPN: &[u8] = b"rebase-mobile/1";
 /// Room for a message's attachments: the phone caps them at 24 MiB of base64.
 pub const REQUEST_LIMIT: usize = 32 * 1024 * 1024;
 pub const RESPONSE_LIMIT: usize = 8 * 1024 * 1024;
@@ -38,7 +38,7 @@ pub struct Identity {
 impl Identity {
     pub fn generate() -> LinkResult<Self> {
         let key = rcgen::KeyPair::generate().map_err(|e| e.to_string())?;
-        let cert = rcgen::CertificateParams::new(vec!["monocode.local".into()])
+        let cert = rcgen::CertificateParams::new(vec!["rebase.local".into()])
             .map_err(|e| e.to_string())?
             .self_signed(&key)
             .map_err(|e| e.to_string())?;
@@ -64,7 +64,7 @@ impl Identity {
     }
 }
 fn proof_message(invitation: &str) -> Vec<u8> {
-    format!("monocode-mobile-enroll/v1:{invitation}").into_bytes()
+    format!("rebase-mobile-enroll/v1:{invitation}").into_bytes()
 }
 pub fn verify_proof(certificate: &str, invitation: &str, proof: &str) -> LinkResult<String> {
     let der = decode(certificate)?;

@@ -1,5 +1,5 @@
 export const EXPLORER_FILE_POINTER_DRAG_EVENT =
-  "monocode:explorer-file-pointer-drag";
+  "rebase:explorer-file-pointer-drag";
 
 export type ExplorerFilePointerDragDetail =
   | { type: "move" | "drop"; path: string; x: number; y: number }

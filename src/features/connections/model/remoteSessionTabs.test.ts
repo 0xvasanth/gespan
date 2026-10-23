@@ -4,12 +4,12 @@ import { newTab, splitPane } from "../../workspace/model/layout";
 import { rememberRemoteSession } from "./connections";
 import { findRemoteSessionTab } from "./remoteSessionTabs";
 
-const project = "remote://host/Users/me/code/monocode";
+const project = "remote://host/Users/me/code/rebase";
 const sessionId = "host-session";
 
 beforeEach(() => localStorage.clear());
 
-it.each(["monocode", "monocode-local"])(
+it.each(["rebase", "rebase-local"])(
   "opens the remote tab instead of a local %s tab with a stale binding",
   (name) => {
     const local = { id: "local-shell", cwd: `/Users/me/code/${name}` };
@@ -32,7 +32,7 @@ it.each(["monocode", "monocode-local"])(
 );
 
 it("opens a new remote tab when the only binding belongs to a local tab", () => {
-  const local = { id: "local-shell", cwd: "/Users/me/code/monocode" };
+  const local = { id: "local-shell", cwd: "/Users/me/code/rebase" };
   rememberRemoteSession(local.id, sessionId);
 
   expect(
@@ -41,8 +41,8 @@ it("opens a new remote tab when the only binding belongs to a local tab", () => 
 });
 
 it.each([
-  "remote://other-host/Users/me/code/monocode",
-  "remote://host/Users/me/other/monocode",
+  "remote://other-host/Users/me/code/rebase",
+  "remote://host/Users/me/other/rebase",
 ])("does not select the matching session ID from %s", (otherProject) => {
   const other = { id: "other-shell", cwd: otherProject };
   rememberRemoteSession(other.id, sessionId);
@@ -53,7 +53,7 @@ it.each([
 });
 
 it("selects the remote pane in a mixed-project split tab", () => {
-  const local = { id: "local-shell", cwd: "/Users/me/code/monocode" };
+  const local = { id: "local-shell", cwd: "/Users/me/code/rebase" };
   const remote = { id: "remote-shell", cwd: project };
   const tab = newTab(local.id);
   tab.layout = splitPane(tab.layout, local.id, "right", remote.id);

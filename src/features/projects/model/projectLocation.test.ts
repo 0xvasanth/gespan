@@ -35,22 +35,22 @@ beforeEach(() => {
 describe("project location synchronization", () => {
   it("records an identity and uses it to follow a rename", async () => {
     vi.mocked(resolveProjectLocation)
-      .mockResolvedValueOnce({ path: "/work/monocode", identity: "unix:1:2" })
+      .mockResolvedValueOnce({ path: "/work/rebase", identity: "unix:1:2" })
       .mockResolvedValueOnce({
-        path: "/work/monocode-personal",
+        path: "/work/rebase-personal",
         identity: "unix:1:2",
       });
 
-    await rememberProjectLocation("/work/monocode");
-    await expect(synchronizeProjectLocation("/work/monocode")).resolves.toEqual(
+    await rememberProjectLocation("/work/rebase");
+    await expect(synchronizeProjectLocation("/work/rebase")).resolves.toEqual(
       {
-        path: "/work/monocode-personal",
+        path: "/work/rebase-personal",
         identity: "unix:1:2",
         moved: true,
       },
     );
     expect(resolveProjectLocation).toHaveBeenLastCalledWith(
-      "/work/monocode",
+      "/work/rebase",
       "unix:1:2",
     );
   });

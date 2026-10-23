@@ -5,13 +5,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Block } from "./session";
 
 afterEach(() => {
-  localStorage.removeItem("monocode.measureStreaming");
+  localStorage.removeItem("rebase.measureStreaming");
   vi.unstubAllGlobals();
   vi.resetModules();
 });
 
 it("reports receive-to-commit separately from delayed reveal and excludes hidden output", async () => {
-  localStorage.setItem("monocode.measureStreaming", "1");
+  localStorage.setItem("rebase.measureStreaming", "1");
   let now = 0;
   const measure = vi.fn();
   const frames: FrameRequestCallback[] = [];
@@ -66,7 +66,7 @@ it("reports receive-to-commit separately from delayed reveal and excludes hidden
     frames.shift()!(now);
     now = 230;
     frames.shift()!(now);
-    expect(measure).toHaveBeenCalledWith("monocode:stream-visible", {
+    expect(measure).toHaveBeenCalledWith("rebase:stream-visible", {
       start: 0,
       end: 230,
       detail: { queueMs: 10, commitMs: 0, revealMs: 200, presentationMs: 20 },

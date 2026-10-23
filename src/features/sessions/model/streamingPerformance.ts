@@ -4,7 +4,7 @@ import type { Block } from "./session";
 
 const enabled =
   typeof localStorage !== "undefined" &&
-  localStorage.getItem("monocode.measureStreaming") === "1";
+  localStorage.getItem("rebase.measureStreaming") === "1";
 const arrivals = new WeakMap<HarnessEvent, number>();
 type Sample = {
   received: number;
@@ -103,12 +103,12 @@ export function useStreamPresentation(
           if (!showing.current || document.hidden) return;
           const presented = performance.now();
           if (
-            performance.getEntriesByName("monocode:stream-visible").length >=
+            performance.getEntriesByName("rebase:stream-visible").length >=
             300
           )
-            performance.clearMeasures("monocode:stream-visible");
+            performance.clearMeasures("rebase:stream-visible");
           for (const sample of shown)
-            performance.measure("monocode:stream-visible", {
+            performance.measure("rebase:stream-visible", {
               start: sample.received,
               end: presented,
               detail: {

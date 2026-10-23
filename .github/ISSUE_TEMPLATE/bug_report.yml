@@ -1,16 +1,16 @@
 name: Bug report
-description: Report a problem in MonoCode
+description: Report a problem in Rebase
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        MonoCode supports macOS, Linux, and Windows.
+        Rebase supports macOS, Linux, and Windows.
 
   - type: input
     id: version
     attributes:
-      label: MonoCode version
+      label: Rebase version
       placeholder: "0.1.0"
     validations:
       required: true

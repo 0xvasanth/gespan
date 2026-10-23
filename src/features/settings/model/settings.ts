@@ -15,7 +15,7 @@ import {
 } from "../../quick-composer/model/quickComposerShortcut";
 import { readFlag, writeFlag } from "./storageFlags";
 
-const SECTION_KEY = "monocode.settingsSection";
+const SECTION_KEY = "rebase.settingsSection";
 
 export type SettingsSectionId =
   | "general"
@@ -55,7 +55,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     group: "app",
     label: "General",
     description:
-      "The build you are running, how MonoCode reaches you, and the panels it shows.",
+      "The build you are running, how Rebase reaches you, and the panels it shows.",
     keywords: "version update sounds notifications notes rail",
   },
   {
@@ -98,7 +98,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     group: "agents",
     label: "Providers",
     description:
-      "Provider accounts, agent CLIs MonoCode can drive, and the model new sessions start with.",
+      "Provider accounts, agent CLIs Rebase can drive, and the model new sessions start with.",
     keywords:
       "account sign in login model harness claude codex gemini cli default hooks",
   },
@@ -650,19 +650,19 @@ export function saveSettingsSection(id: SettingsSectionId) {
   }
 }
 
-const COMPOSER_RUNNER_KEY = "monocode.composerRunner";
+const COMPOSER_RUNNER_KEY = "rebase.composerRunner";
 
-const FOLLOW_UP_BEHAVIOR_KEY = "monocode.followUpBehavior";
+const FOLLOW_UP_BEHAVIOR_KEY = "rebase.followUpBehavior";
 
-const COMPOSER_EFFORT_VISIBLE_KEY = "monocode.composerEffortVisible";
+const COMPOSER_EFFORT_VISIBLE_KEY = "rebase.composerEffortVisible";
 
-const MODEL_CONTROLS_KEY = "monocode.modelControls";
+const MODEL_CONTROLS_KEY = "rebase.modelControls";
 
-const FILE_TAB_MODE_KEY = "monocode.fileTabMode";
+const FILE_TAB_MODE_KEY = "rebase.fileTabMode";
 
-const TAB_ANIMATIONS_ENABLED_KEY = "monocode.tabAnimationsEnabled";
+const TAB_ANIMATIONS_ENABLED_KEY = "rebase.tabAnimationsEnabled";
 
-const COLLAPSED_PROJECT_RAIL_MODE_KEY = "monocode.collapsedProjectRailMode";
+const COLLAPSED_PROJECT_RAIL_MODE_KEY = "rebase.collapsedProjectRailMode";
 
 export type FollowUpBehavior = "steer" | "queue";
 
@@ -725,7 +725,7 @@ export const COLLAPSED_PROJECT_RAIL_MODE_DEFAULT: CollapsedProjectRailMode =
   "compact";
 
 export const COLLAPSED_PROJECT_RAIL_MODE_CHANGE_EVENT =
-  "monocode:collapsed-project-rail-mode-change";
+  "rebase:collapsed-project-rail-mode-change";
 
 export function loadCollapsedProjectRailMode(): CollapsedProjectRailMode {
   try {
@@ -771,7 +771,7 @@ export type ModelControls = "menu" | "beside";
 export const MODEL_CONTROLS_DEFAULT: ModelControls = "menu";
 
 /** Fired on `window` when the composer model controls setting flips. */
-export const MODEL_CONTROLS_CHANGE_EVENT = "monocode:model-controls-change";
+export const MODEL_CONTROLS_CHANGE_EVENT = "rebase:model-controls-change";
 
 export function loadModelControls(): ModelControls {
   try {
@@ -812,7 +812,7 @@ export function subscribeModelControls(onStoreChange: () => void) {
 export const COMPOSER_RUNNER_DEFAULT = true;
 
 /** Fired on `window` when the composer mascot setting flips. */
-export const COMPOSER_RUNNER_CHANGE_EVENT = "monocode:composer-runner-change";
+export const COMPOSER_RUNNER_CHANGE_EVENT = "rebase:composer-runner-change";
 
 export function loadComposerRunner(): boolean {
   return readFlag(COMPOSER_RUNNER_KEY) ?? COMPOSER_RUNNER_DEFAULT;
@@ -826,12 +826,12 @@ export function saveComposerRunner(value: boolean) {
   );
 }
 
-const NOTES_ENABLED_KEY = "monocode.notesEnabled";
+const NOTES_ENABLED_KEY = "rebase.notesEnabled";
 
 export const NOTES_ENABLED_DEFAULT = true;
 
 /** Fired on `window` when the Notes UI setting flips. */
-export const NOTES_ENABLED_CHANGE_EVENT = "monocode:notes-enabled-change";
+export const NOTES_ENABLED_CHANGE_EVENT = "rebase:notes-enabled-change";
 
 export function loadNotesEnabled(): boolean {
   return readFlag(NOTES_ENABLED_KEY) ?? NOTES_ENABLED_DEFAULT;
@@ -852,12 +852,12 @@ export function subscribeNotesEnabled(onStoreChange: () => void) {
     window.removeEventListener(NOTES_ENABLED_CHANGE_EVENT, onStoreChange);
 }
 
-const MONOS_ENABLED_KEY = "monocode.monosEnabled";
+const MONOS_ENABLED_KEY = "rebase.monosEnabled";
 
 export const MONOS_ENABLED_DEFAULT = true;
 
 /** Fired on `window` when monos are shown or hidden. */
-export const MONOS_ENABLED_CHANGE_EVENT = "monocode:monos-enabled-change";
+export const MONOS_ENABLED_CHANGE_EVENT = "rebase:monos-enabled-change";
 
 /** Whether monos show in the title bar at all, across every project. */
 export function loadMonosEnabled(): boolean {
@@ -879,10 +879,10 @@ export function subscribeMonosEnabled(onStoreChange: () => void) {
     window.removeEventListener(MONOS_ENABLED_CHANGE_EVENT, onStoreChange);
 }
 
-const MONO_MENU_BAR_KEY = "monocode.monoMenuBarIcon";
+const MONO_MENU_BAR_KEY = "rebase.monoMenuBarIcon";
 
 /** Fired on `window` when the menu bar icon is shown or hidden. */
-export const MONO_MENU_BAR_CHANGE_EVENT = "monocode:mono-menu-bar-change";
+export const MONO_MENU_BAR_CHANGE_EVENT = "rebase:mono-menu-bar-change";
 
 export function loadMonoMenuBarIcon(): boolean {
   return readFlag(MONO_MENU_BAR_KEY) ?? true;
@@ -901,8 +901,8 @@ export function subscribeMonoMenuBarIcon(onStoreChange: () => void) {
     window.removeEventListener(MONO_MENU_BAR_CHANGE_EVENT, onStoreChange);
 }
 
-const QUICK_COMPOSER_ENABLED_KEY = "monocode.quickComposerEnabled";
-const QUICK_COMPOSER_SHORTCUT_KEY = "monocode.quickComposerShortcut";
+const QUICK_COMPOSER_ENABLED_KEY = "rebase.quickComposerEnabled";
+const QUICK_COMPOSER_SHORTCUT_KEY = "rebase.quickComposerShortcut";
 
 export const QUICK_COMPOSER_ENABLED_DEFAULT = true;
 
@@ -937,13 +937,13 @@ export function saveQuickComposerShortcut(value: string) {
   }
 }
 
-const LIVE_AGENTS_ENABLED_KEY = "monocode.liveAgentsEnabled";
+const LIVE_AGENTS_ENABLED_KEY = "rebase.liveAgentsEnabled";
 
 export const LIVE_AGENTS_ENABLED_DEFAULT = true;
 
 /** Fired on `window` when the working-agents rail card setting flips. */
 export const LIVE_AGENTS_ENABLED_CHANGE_EVENT =
-  "monocode:live-agents-enabled-change";
+  "rebase:live-agents-enabled-change";
 
 export function loadLiveAgentsEnabled(): boolean {
   return readFlag(LIVE_AGENTS_ENABLED_KEY) ?? LIVE_AGENTS_ENABLED_DEFAULT;
@@ -966,7 +966,7 @@ export function subscribeLiveAgentsEnabled(onStoreChange: () => void) {
     window.removeEventListener(LIVE_AGENTS_ENABLED_CHANGE_EVENT, onStoreChange);
 }
 
-const CLOSE_TO_TRAY_KEY = "monocode.closeToTray";
+const CLOSE_TO_TRAY_KEY = "rebase.closeToTray";
 
 export const CLOSE_TO_TRAY_DEFAULT = true;
 
@@ -980,13 +980,13 @@ export function saveCloseToTray(value: boolean) {
   writeFlag(CLOSE_TO_TRAY_KEY, value);
 }
 
-const GRID_ARCADE_ENABLED_KEY = "monocode.gridArcadeEnabled";
+const GRID_ARCADE_ENABLED_KEY = "rebase.gridArcadeEnabled";
 
 export const GRID_ARCADE_ENABLED_DEFAULT = true;
 
 /** Fired on `window` when the empty-session games setting flips. */
 export const GRID_ARCADE_ENABLED_CHANGE_EVENT =
-  "monocode:grid-arcade-enabled-change";
+  "rebase:grid-arcade-enabled-change";
 
 export function loadGridArcadeEnabled(): boolean {
   return readFlag(GRID_ARCADE_ENABLED_KEY) ?? GRID_ARCADE_ENABLED_DEFAULT;
@@ -1009,14 +1009,14 @@ export function subscribeGridArcadeEnabled(onStoreChange: () => void) {
     window.removeEventListener(GRID_ARCADE_ENABLED_CHANGE_EVENT, onStoreChange);
 }
 
-const DIFF_VIEWER_KEY = "monocode.diffViewer";
+const DIFF_VIEWER_KEY = "rebase.diffViewer";
 
 export type DiffViewer = "editor" | "unified";
 
 export const DIFF_VIEWER_DEFAULT: DiffViewer = "editor";
 
 /** Fired on `window` when the working-tree diff layout flips. */
-export const DIFF_VIEWER_CHANGE_EVENT = "monocode:diff-viewer-change";
+export const DIFF_VIEWER_CHANGE_EVENT = "rebase:diff-viewer-change";
 
 function isDiffViewer(value: unknown): value is DiffViewer {
   return value === "editor" || value === "unified";
@@ -1051,7 +1051,7 @@ export function subscribeDiffViewer(onStoreChange: () => void) {
     window.removeEventListener(DIFF_VIEWER_CHANGE_EVENT, onStoreChange);
 }
 
-const FORMAT_ON_SAVE_KEY = "monocode.formatOnSave";
+const FORMAT_ON_SAVE_KEY = "rebase.formatOnSave";
 
 export const FORMAT_ON_SAVE_DEFAULT = true;
 
@@ -1063,8 +1063,8 @@ export function saveFormatOnSave(value: boolean) {
   writeFlag(FORMAT_ON_SAVE_KEY, value);
 }
 
-const AUTOSAVE_KEY = "monocode.autosave";
-const AUTOSAVE_CHANGE_EVENT = "monocode:autosave-change";
+const AUTOSAVE_KEY = "rebase.autosave";
+const AUTOSAVE_CHANGE_EVENT = "rebase:autosave-change";
 
 export const AUTOSAVE_DEFAULT = false;
 
@@ -1094,7 +1094,7 @@ export function subscribeAutosave(onStoreChange: () => void) {
   };
 }
 
-const CLAUDE_HOOKS_KEY = "monocode.claudeHooks";
+const CLAUDE_HOOKS_KEY = "rebase.claudeHooks";
 
 export const CLAUDE_HOOKS_DEFAULT = true;
 
@@ -1106,7 +1106,7 @@ export function saveClaudeHooks(value: boolean) {
   writeFlag(CLAUDE_HOOKS_KEY, value);
 }
 
-const IDLE_AGENT_LIMIT_KEY = "monocode.idleAgentLimit";
+const IDLE_AGENT_LIMIT_KEY = "rebase.idleAgentLimit";
 
 /** How many finished conversations keep their agent CLI warm. */
 export const IDLE_AGENT_LIMITS = [0, 1, 2, 3, 5] as const;
@@ -1255,8 +1255,8 @@ export const KEYBINDINGS: KeybindingRow[] = [
   { command: "Editor: Replace", keys: `${MOD}${ALT}F`, when: "editorFocus" },
 ];
 
-const KEYBINDING_OVERRIDES_KEY = "monocode.keybindingOverrides";
-const KEYBINDINGS_CHANGE_EVENT = "monocode:keybindings-change";
+const KEYBINDING_OVERRIDES_KEY = "rebase.keybindingOverrides";
+const KEYBINDINGS_CHANGE_EVENT = "rebase:keybindings-change";
 
 export type KeybindingOverride = {
   disabled?: boolean;

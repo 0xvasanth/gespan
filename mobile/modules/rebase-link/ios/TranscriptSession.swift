@@ -1,6 +1,6 @@
 import CryptoKit
 import Foundation
-import MonocodeLinkCore
+import RebaseLinkCore
 import UIKit
 
 enum TranscriptNative {
@@ -8,10 +8,10 @@ enum TranscriptNative {
     let data = try JSONSerialization.data(withJSONObject: input)
     let request = String(decoding: data, as: UTF8.self)
     let response: String = try request.withCString { pointer in
-      guard let output = monocode_link_call(pointer) else {
+      guard let output = rebase_link_call(pointer) else {
         throw failure("Native connection failed")
       }
-      defer { monocode_link_free(output) }
+      defer { rebase_link_free(output) }
       return String(cString: output)
     }
     guard let bytes = response.data(using: .utf8),
@@ -23,7 +23,7 @@ enum TranscriptNative {
     return envelope["result"] ?? NSNull()
   }
   static func failure(_ message: String) -> NSError {
-    NSError(domain: "MonocodeTranscript", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    NSError(domain: "RebaseTranscript", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
   }
 }
 
@@ -86,7 +86,7 @@ final class TranscriptSession {
     cacheURL = directory.appendingPathComponent(name + ".json")
   }
   func start() {
-    DispatchQueue(label: "monocode.transcript.worker", qos: .userInitiated).async { [self] in run()
+    DispatchQueue(label: "rebase.transcript.worker", qos: .userInitiated).async { [self] in run()
     }
   }
 

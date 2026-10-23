@@ -63,7 +63,7 @@ export async function generateGrokPrContent(
     });
     parsed = parsePrContent(output);
   } catch (error) {
-    console.debug("[monocode] pr content", error);
+    console.debug("[rebase] pr content", error);
   }
   const title =
     parsed?.title ||
@@ -89,7 +89,7 @@ export async function generateGrokBranchName(
     });
     return parseBranchName(output);
   } catch (error) {
-    console.debug("[monocode] branch name", error);
+    console.debug("[rebase] branch name", error);
     return null;
   }
 }

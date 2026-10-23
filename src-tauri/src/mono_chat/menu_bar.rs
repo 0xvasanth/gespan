@@ -48,7 +48,7 @@ pub(super) const ACTIONS: [Action; 2] = [
     },
     Action {
         id: "mono-chat-quit",
-        title: "Quit MonoCode",
+        title: "Quit Rebase",
         symbol: "power",
         destructive: true,
     },
@@ -176,7 +176,7 @@ define_class!(
     /// row draws the hover pill and forwards clicks to the item's action.
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
-    #[name = "MonoCodeMenuRow"]
+    #[name = "RebaseMenuRow"]
     struct MenuRow;
 
     impl MenuRow {

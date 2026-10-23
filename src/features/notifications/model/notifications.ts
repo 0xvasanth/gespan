@@ -8,15 +8,15 @@ import {
 import { monoReplyText } from "../../monos/model/monoReaction";
 import { knownNotificationProject } from "./notificationProjects";
 
-const KEY = "monocode.notifications";
+const KEY = "rebase.notifications";
 
 /** Off until the user opts in; enabling asks the OS for permission. */
 export const NOTIFICATIONS_DEFAULT = false;
 
-export const NOTIFICATIONS_CHANGE_EVENT = "monocode:notifications-change";
+export const NOTIFICATIONS_CHANGE_EVENT = "rebase:notifications-change";
 
 /** Rust emits this with the session id when a notification is clicked. */
-export const NOTIFICATION_CLICK_EVENT = "monocode:notification-click";
+export const NOTIFICATION_CLICK_EVENT = "rebase:notification-click";
 
 export type NotificationPermission =
   "prompt" | "granted" | "denied" | "unsupported";
@@ -170,7 +170,7 @@ export function notificationText(
   session: Session,
   event: NotificationEvent,
 ): NotificationText {
-  const title = "MonoCode";
+  const title = "Rebase";
   const subtitle = sessionDisplayTitle(session.title, session.harness);
   const harness = HARNESS_TITLE[session.harness];
   if (event !== "finished") {

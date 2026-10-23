@@ -220,7 +220,7 @@ fn validate_tool<'a>(
     processes: &HashMap<u32, Process>,
     roots: &'a [ProcessRoot],
 ) -> Result<&'a ProcessRoot, String> {
-    let root = owner(pid, processes, roots).ok_or("This process is no longer owned by MonoCode")?;
+    let root = owner(pid, processes, roots).ok_or("This process is no longer owned by Rebase")?;
     if identity(root.pid) != root.identity {
         return Err("The owning agent has exited or changed".into());
     }
@@ -231,7 +231,7 @@ fn validate_tool<'a>(
         return Err("This process has exited or changed; refresh the list".into());
     }
     if !live_descendant(pid, root.pid, root.identity.as_deref().unwrap_or_default()) {
-        return Err("This process is no longer owned by MonoCode".into());
+        return Err("This process is no longer owned by Rebase".into());
     }
     Ok(root)
 }

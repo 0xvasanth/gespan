@@ -899,11 +899,11 @@ html.has-chat-background.chat-background-effect-ready.chat-background-gradient-b
   flex-shrink: 0;
 }
 
-::highlight(monocode-transcript-search-match) {
+::highlight(rebase-transcript-search-match) {
   background-color: color-mix(in srgb, #e2c08d 46%, transparent);
 }
 
-::highlight(monocode-transcript-search-current) {
+::highlight(rebase-transcript-search-current) {
   background-color: color-mix(in srgb, var(--color-accent) 62%, transparent);
 }
 
@@ -1072,7 +1072,7 @@ html.has-user-accent .user-message-bubble {
  * halo, a golden sheen sweeps across it, and sparkles drift up from a glow at
  * its base, twinkling as they rise and fading out past the top edge.
  */
-.monocode-sparkles {
+.rebase-sparkles {
   --sparkle-color: #fde68a;
   --sparkle-glow: rgb(251 191 36 / 0.9);
   position: absolute;
@@ -1080,15 +1080,15 @@ html.has-user-accent .user-message-bubble {
   overflow: hidden;
   border-radius: inherit;
   pointer-events: none;
-  animation: monocode-halo 2400ms 150ms ease-out both;
+  animation: rebase-halo 2400ms 150ms ease-out both;
 }
 
-html.theme-light .monocode-sparkles {
+html.theme-light .rebase-sparkles {
   --sparkle-color: #f59e0b;
   --sparkle-glow: rgb(217 119 6 / 0.55);
 }
 
-.monocode-sparkles::before {
+.rebase-sparkles::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -1100,10 +1100,10 @@ html.theme-light .monocode-sparkles {
     transparent 70%
   );
   transform: translateX(-120%);
-  animation: monocode-sheen 1100ms 300ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: rebase-sheen 1100ms 300ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
-.monocode-sparkles::after {
+.rebase-sparkles::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -1112,21 +1112,21 @@ html.theme-light .monocode-sparkles {
     rgb(251 191 36 / 0.35),
     transparent 70%
   );
-  animation: monocode-ember-glow 2200ms 100ms ease-out both;
+  animation: rebase-ember-glow 2200ms 100ms ease-out both;
 }
 
-.monocode-sparkle {
+.rebase-sparkle {
   position: absolute;
   top: 0;
   bottom: 0;
   left: var(--x);
   z-index: 1;
   width: 0;
-  animation: monocode-rise var(--duration) var(--delay)
+  animation: rebase-rise var(--duration) var(--delay)
     cubic-bezier(0.3, 0.6, 0.4, 1) both;
 }
 
-.monocode-sparkle-glyph {
+.rebase-sparkle-glyph {
   position: absolute;
   bottom: calc(var(--size) * -1);
   left: calc(var(--size) / -2);
@@ -1134,15 +1134,15 @@ html.theme-light .monocode-sparkles {
   height: var(--size);
   color: var(--sparkle-color);
   filter: drop-shadow(0 0 3px var(--sparkle-glow));
-  animation: monocode-twinkle var(--duration) var(--delay) ease-in-out both;
+  animation: rebase-twinkle var(--duration) var(--delay) ease-in-out both;
 }
 
-.monocode-sparkle-ember {
+.rebase-sparkle-ember {
   border-radius: 9999px;
   background: radial-gradient(circle, #fffbeb, var(--sparkle-color) 70%);
 }
 
-@keyframes monocode-rise {
+@keyframes rebase-rise {
   from {
     transform: translate(0, 0);
   }
@@ -1151,7 +1151,7 @@ html.theme-light .monocode-sparkles {
   }
 }
 
-@keyframes monocode-twinkle {
+@keyframes rebase-twinkle {
   0% {
     opacity: 0;
     transform: scale(0.2) rotate(0deg);
@@ -1174,7 +1174,7 @@ html.theme-light .monocode-sparkles {
   }
 }
 
-@keyframes monocode-halo {
+@keyframes rebase-halo {
   0% {
     box-shadow:
       0 0 0 0 rgb(245 158 11 / 0),
@@ -1192,13 +1192,13 @@ html.theme-light .monocode-sparkles {
   }
 }
 
-@keyframes monocode-sheen {
+@keyframes rebase-sheen {
   to {
     transform: translateX(120%);
   }
 }
 
-@keyframes monocode-ember-glow {
+@keyframes rebase-ember-glow {
   0% {
     opacity: 0;
   }
@@ -1211,7 +1211,7 @@ html.theme-light .monocode-sparkles {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .monocode-sparkles {
+  .rebase-sparkles {
     display: none;
   }
 }
@@ -1256,7 +1256,7 @@ html.theme-light .monocode-sparkles {
     color-mix(in srgb, var(--mode-glow) 35%, transparent),
     transparent 70%
   );
-  animation: monocode-ember-glow 2200ms 100ms ease-out both;
+  animation: rebase-ember-glow 2200ms 100ms ease-out both;
 }
 
 @keyframes turn-mode-halo {
@@ -1306,7 +1306,7 @@ html.theme-light .plan-steps {
   left: var(--x);
   z-index: 2;
   width: 0;
-  animation: monocode-rise var(--duration) var(--delay)
+  animation: rebase-rise var(--duration) var(--delay)
     cubic-bezier(0.3, 0.6, 0.4, 1) both;
 }
 
@@ -1357,7 +1357,7 @@ html.theme-light .plan-steps {
   left: var(--x);
   z-index: 1;
   width: 0;
-  animation: monocode-rise var(--duration) var(--delay)
+  animation: rebase-rise var(--duration) var(--delay)
     cubic-bezier(0.3, 0.6, 0.4, 1) both;
 }
 
@@ -1371,7 +1371,7 @@ html.theme-light .plan-steps {
   border-radius: 9999px;
   background: radial-gradient(circle, #fefce8, var(--mode-color) 70%);
   box-shadow: 0 0 5px var(--mode-glow);
-  animation: monocode-twinkle var(--duration) var(--delay) ease-in-out both;
+  animation: rebase-twinkle var(--duration) var(--delay) ease-in-out both;
 }
 
 @keyframes plan-step-dot {
@@ -1735,9 +1735,9 @@ input,
 .inbox-pr-diff,
 .unified-diff,
 .inbox-comment-md,
-.monocode-terminal,
-.monocode-terminal .xterm,
-.monocode-terminal .xterm-viewport {
+.rebase-terminal,
+.rebase-terminal .xterm,
+.rebase-terminal .xterm-viewport {
   user-select: text;
 }
 
@@ -3122,43 +3122,43 @@ html.theme-light .mono-pill {
   }
 }
 
-.monocode-terminal {
+.rebase-terminal {
   box-sizing: border-box;
   overflow: hidden;
   /* Shell padding; full-screen TUIs use the alt buffer and drop to 0. */
   padding: 8px 10px;
 }
 
-.monocode-terminal--alt-screen {
+.rebase-terminal--alt-screen {
   padding: 0;
 }
 
-.monocode-terminal--alt-screen .monocode-terminal-host,
-.monocode-terminal--alt-screen .xterm,
-.monocode-terminal--alt-screen .xterm-viewport,
-.monocode-terminal--alt-screen .xterm-scrollable-element {
+.rebase-terminal--alt-screen .rebase-terminal-host,
+.rebase-terminal--alt-screen .xterm,
+.rebase-terminal--alt-screen .xterm-viewport,
+.rebase-terminal--alt-screen .xterm-scrollable-element {
   width: 100%;
   height: 100%;
 }
 
-.monocode-terminal--alt-screen .xterm .xterm-scrollable-element > .scrollbar {
+.rebase-terminal--alt-screen .xterm .xterm-scrollable-element > .scrollbar {
   display: none !important;
 }
 
-.monocode-terminal .xterm {
+.rebase-terminal .xterm {
   padding: 0;
 }
 
-.monocode-terminal .xterm-viewport {
+.rebase-terminal .xterm-viewport {
   background: transparent !important;
   overflow: hidden;
 }
 
-.monocode-terminal .xterm-scrollable-element > .shadow {
+.rebase-terminal .xterm-scrollable-element > .shadow {
   display: none !important;
 }
 
-.monocode-terminal .xterm-screen {
+.rebase-terminal .xterm-screen {
   user-select: text;
 }
 

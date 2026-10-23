@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { HarnessId, RuntimeMode } from "../../sessions/model/session";
 
-export const AUTOMATIONS_CHANGED = "monocode:automations-changed";
-const LOCAL_CHANGED = "monocode:automations-local-changed";
+export const AUTOMATIONS_CHANGED = "rebase:automations-changed";
+const LOCAL_CHANGED = "rebase:automations-local-changed";
 
 export type AutomationWorkspaceMode = "current" | "worktree" | "existing";
 export type AutomationScheduleKind = "hourly" | "daily" | "weekdays" | "weekly";

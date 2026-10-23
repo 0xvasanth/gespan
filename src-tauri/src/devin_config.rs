@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn writes_each_config_once_by_content() {
         let dir =
-            std::env::temp_dir().join(format!("monocode-devin-config-{}", std::process::id()));
+            std::env::temp_dir().join(format!("rebase-devin-config-{}", std::process::id()));
         let first = write_once(&dir, "{}").unwrap();
         assert_eq!(write_once(&dir, "{}").unwrap(), first);
         assert_eq!(std::fs::read_to_string(&first).unwrap(), "{}");

@@ -7,7 +7,7 @@ test("keeps many processes compact, with details and stop controls on demand", a
 }, testInfo) => {
   test.setTimeout(60_000);
   await page.addInitScript(() =>
-    localStorage.setItem("monocode.insetLayout", "1"),
+    localStorage.setItem("rebase.insetLayout", "1"),
   );
   await page.goto("/tests/browser/workspace-performance.html");
   await expect(page.locator(".inset-shell")).toBeVisible({ timeout: 15_000 });

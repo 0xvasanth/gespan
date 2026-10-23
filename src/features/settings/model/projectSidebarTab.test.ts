@@ -6,7 +6,7 @@ import {
   saveProjectSidebarTab,
 } from "./projectSidebarTab";
 
-const KEY = "monocode.projectSidebarTabs.v1";
+const KEY = "rebase.projectSidebarTabs.v1";
 
 beforeEach(() => {
   const data = new Map<string, string>();
@@ -40,7 +40,7 @@ describe("project Workspace tab", () => {
 
   it("uses the first visible tab in the global order for a new project", () => {
     localStorage.setItem(
-      "monocode.sidebarTabOrder",
+      "rebase.sidebarTabOrder",
       JSON.stringify(["inbox", "files", "sessions", "changes"]),
     );
     expect(loadProjectSidebarTab("/work/new")).toBe("files");

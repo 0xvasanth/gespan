@@ -96,7 +96,7 @@ describe("existing providers over headless process I/O", () => {
   let engine: HostEngine;
   beforeAll(async () => {
     directory = realpathSync(
-      mkdtempSync(join(tmpdir(), "monocode-provider-test-")),
+      mkdtempSync(join(tmpdir(), "rebase-provider-test-")),
     );
     fixtureHome.path = directory;
     const configHome = join(directory, ".config");
@@ -279,7 +279,7 @@ describe("existing providers over headless process I/O", () => {
         expect(args).toContain("acp");
         const configPath = args[args.indexOf("--config") + 1];
         expect(dirname(configPath)).toBe(
-          join(directory, ".monocode-host", "devin"),
+          join(directory, ".rebase-host", "devin"),
         );
         expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
           agent: { model: "swe-2-high" },

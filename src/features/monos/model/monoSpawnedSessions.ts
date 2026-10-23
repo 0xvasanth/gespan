@@ -1,5 +1,5 @@
 import { unwrapShellCommand } from "../../../integrations/harness/core/shellIntent";
-import { monoCodeToolCall } from "../../sessions/model/monocodeToolCall";
+import { rebaseToolCall } from "../../sessions/model/rebaseToolCall";
 import {
   HARNESSES,
   sessionDraftBlock,
@@ -90,7 +90,7 @@ function sessionReceipt(block: Block): SessionReceipt {
         ? block.tool.preview.title
         : (block.tool.title ?? block.text);
     const call = command
-      ? monoCodeToolCall({
+      ? rebaseToolCall({
           ...block,
           tool: {
             ...block.tool,

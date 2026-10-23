@@ -31,7 +31,7 @@ export function devinModeId(
 
 /**
  * Supervised children start with an `ask` rule for every write, so workspace
- * edits reach MonoCode's approval prompt instead of being accepted silently.
+ * edits reach Rebase's approval prompt instead of being accepted silently.
  * The rule is process-wide: changing it restarts the child.
  */
 export function devinAsksBeforeEdits(runtimeMode: RuntimeMode): boolean {
@@ -784,7 +784,7 @@ export function devinSessionTitle(params: unknown): string | null {
 
 /**
  * Slash commands from `available_commands_update`. Devin also lists every
- * installed skill there; MonoCode already discovers those from disk.
+ * installed skill there; Rebase already discovers those from disk.
  */
 export function devinCommandsFromUpdate(params: unknown): NativeCommand[] | null {
   const update = updateOf(params);

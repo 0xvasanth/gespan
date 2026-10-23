@@ -1,4 +1,4 @@
-# Monocode mobile
+# Rebase mobile
 
 The Expo app lives in this directory and has its own npm dependencies and lockfile. The app pairs with the desktop over QUIC and shows its real workspace. Use a Node.js LTS release for development.
 
@@ -33,7 +33,7 @@ Remote connections go directly to the desktop. Automatic NAT-PMP/UPnP router map
 
 Workspace lists refresh while the phone is active. Opening a conversation reads its latest 200 user/assistant blocks from the desktop, with active conversation updates, text sending, starting sessions and stopping turns. The changes view reads real Git changes on demand. Agent approvals and questions still need attention on the desktop. The app retains the workspace list for offline navigation and keeps failed-send drafts; it does not queue commands offline.
 
-The transport is an Expo local native module in `modules/monocode-link`, built by `scripts/build-native-link.mjs`. **Expo Go cannot load it**; rebuild the development app after changing native code. `npm run native:ios` and `npm run native:android` build the library separately. Generated native libraries and platform folders are ignored by Git.
+The transport is an Expo local native module in `modules/rebase-link`, built by `scripts/build-native-link.mjs`. **Expo Go cannot load it**; rebuild the development app after changing native code. `npm run native:ios` and `npm run native:android` build the library separately. Generated native libraries and platform folders are ignored by Git.
 
 ## Switch provider accounts
 

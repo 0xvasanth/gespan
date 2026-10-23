@@ -34,7 +34,7 @@ import {
 import { flushSync } from "react-dom";
 import { AttachmentChip } from "./AttachmentChip";
 import { GeneratedImage } from "./GeneratedImage";
-import { MonocodeSparkles } from "./MonocodeSparkles";
+import { RebaseSparkles } from "./RebaseSparkles";
 import { OrchestratorConstellation } from "./OrchestratorConstellation";
 import { PlanStepsBurst } from "./PlanStepsBurst";
 import { settleCatchUpFades } from "./wordFade";
@@ -165,10 +165,10 @@ import {
 } from "../model/transcriptActivity";
 import { lastUserTurnBlock } from "../model/editLastTurn";
 import {
-  monoCodeToolCall,
-  monoCodeWorkSummary,
-  type MonoCodeToolCall,
-} from "../model/monocodeToolCall";
+  rebaseToolCall,
+  rebaseWorkSummary,
+  type RebaseToolCall,
+} from "../model/rebaseToolCall";
 import {
   isOperatorUserTurn,
   operatorUserPrompt,
@@ -2570,11 +2570,11 @@ function UserMessageBlock({
   const textRef = useRef<HTMLElement>(null);
   const card = block.secondOpinion;
   const note = block.noteCard;
-  const monocode = isOperatorUserTurn(block);
+  const rebase = isOperatorUserTurn(block);
   const text =
     card && card.kind !== "handoff"
       ? ""
-      : visibleUserPrompt(monocode ? operatorUserPrompt(block) : block.text);
+      : visibleUserPrompt(rebase ? operatorUserPrompt(block) : block.text);
   const messageLink = text ? parseUserMessageLink(text) : null;
   const displayText = messageLink
     ? `${messageLink.beforeText}${messageLink.afterText}`
@@ -2702,7 +2702,7 @@ function UserMessageBlock({
     bubbleTail &&
     chat &&
     textOnly &&
-    !monocode &&
+    !rebase &&
     !messageLink &&
     isEmojiOnlyMessage(displayText)
   ) {
@@ -2766,7 +2766,7 @@ function UserMessageBlock({
           {bubbleEmpty ? null : (
             <div
               data-draft={block.draft ? "true" : undefined}
-              data-monocode={monocode ? "true" : undefined}
+              data-rebase={rebase ? "true" : undefined}
               data-chat-message={photos.length ? undefined : block.id}
               data-chat-message-role={photos.length ? undefined : "user"}
               className={`user-message-bubble relative min-w-0 px-3 py-2 font-sans text-content transition-[background-color] duration-200 ${
@@ -2880,8 +2880,8 @@ function UserMessageBlock({
                   </span>
                 </div>
               ) : null}
-              {monocode ? (
-                <MonocodeSparkles
+              {rebase ? (
+                <RebaseSparkles
                   blockId={block.id}
                   startedAt={block.startedAt}
                 />
@@ -3709,7 +3709,7 @@ function ActivityPhaseGroup({
   }, [phase.steps]);
   const turnFor = useStepQueue();
   const title = activityPhaseTitle(phase, active);
-  const monoCodePhase = !!monoCodeWorkSummary(phase.steps, active);
+  const rebasePhase = !!rebaseWorkSummary(phase.steps, active);
   // Opening a group on purpose is also how you read the line that titled it,
   // whole. The auto-open while it runs is a live view, not a reading one, and
   // a one-line note the header already shows in full has nothing to add.
@@ -3724,7 +3724,7 @@ function ActivityPhaseGroup({
   if (!phase.headline && phase.steps.length === 1) {
     return (
       <div className="flex min-w-0 items-start gap-1.5">
-        {monoCodePhase ? null : (
+        {rebasePhase ? null : (
           <ActivityPhaseIcon kind={phase.kind} className="mt-[7px]" />
         )}
         <div className="min-w-0 flex-1">
@@ -3779,8 +3779,8 @@ function ActivityPhaseGroup({
          * between them leaves both half-drawn on top of each other.
          */}
         <span className="relative flex size-3.5 shrink-0 items-center justify-center">
-          {monoCodePhase ? (
-            <MonoCodeMark className="size-3.5 group-hover:opacity-0" />
+          {rebasePhase ? (
+            <RebaseMark className="size-3.5 group-hover:opacity-0" />
           ) : (
             <ActivityPhaseIcon
               kind={phase.kind}
@@ -4590,10 +4590,10 @@ function ActivityToolRow({
 }) {
   const [errorOpen, setErrorOpen] = useState(false);
   const output = useToolDetail(block, errorOpen);
-  const appCall = monoCodeToolCall(block);
+  const appCall = rebaseToolCall(block);
   if (appCall) {
     return (
-      <MonoCodeCallRow block={block} call={appCall} onApproval={onApproval} />
+      <RebaseCallRow block={block} call={appCall} onApproval={onApproval} />
     );
   }
   const label = toolCallLabel(block, cwd);
@@ -4670,18 +4670,18 @@ function ActivityToolRow({
   );
 }
 
-function MonoCodeMark({ className = "size-4" }: { className?: string }) {
-  return <img src="/monocode.png" alt="" className={`shrink-0 ${className}`} />;
+function RebaseMark({ className = "size-4" }: { className?: string }) {
+  return <img src="/rebase.png" alt="" className={`shrink-0 ${className}`} />;
 }
 
-/** MonoCode commands read like the other activity rows; failures expose their output. */
-function MonoCodeCallRow({
+/** Rebase commands read like the other activity rows; failures expose their output. */
+function RebaseCallRow({
   block,
   call,
   onApproval,
 }: {
   block: Block;
-  call: MonoCodeToolCall;
+  call: RebaseToolCall;
   onApproval?: (requestId: number, decision: ApprovalDecision) => void;
 }) {
   const state = toolCallState(block);
@@ -4693,7 +4693,7 @@ function MonoCodeCallRow({
     block.tool?.preview?.output?.trim();
   const hasError = state === "rejected" && (!!output || stored.omitted);
   const pendingApproval = needsApproval(block);
-  const command = `monocode app ${call.action}`;
+  const command = `rebase app ${call.action}`;
   const verb = pendingApproval
     ? "Run"
     : state === "pending"
@@ -4710,7 +4710,7 @@ function MonoCodeCallRow({
         className={`flex min-w-0 max-w-full items-center gap-1 rounded bg-content/6 px-1 font-mono text-[13px] ${state === "rejected" ? "text-red-400" : "text-content/70"}`}
         title={command}
       >
-        <MonoCodeMark className="size-3.5" />
+        <RebaseMark className="size-3.5" />
         <span className="min-w-0 truncate">{command}</span>
       </span>
       <ToolCallStatusIcon state={state} />
@@ -4723,12 +4723,12 @@ function MonoCodeCallRow({
     </>
   );
   return (
-    <div data-monocode-tool-call={call.action} className="min-w-0">
+    <div data-rebase-tool-call={call.action} className="min-w-0">
       {hasError ? (
         <button
           type="button"
           aria-expanded={errorOpen}
-          aria-label={`${errorOpen ? "Hide" : "Show"} error details for MonoCode: ${call.label}`}
+          aria-label={`${errorOpen ? "Hide" : "Show"} error details for Rebase: ${call.label}`}
           onClick={() => setErrorOpen((value) => !value)}
           className="flex w-full min-w-0 items-center gap-1.5 py-1 text-left"
         >
@@ -4891,11 +4891,11 @@ function ToolCall({
 
   const frame = embedded ? "py-0.5" : "px-4 py-1";
 
-  const appCall = monoCodeToolCall(block);
+  const appCall = rebaseToolCall(block);
   if (appCall) {
     return (
       <div className={frame}>
-        <MonoCodeCallRow block={block} call={appCall} onApproval={onApproval} />
+        <RebaseCallRow block={block} call={appCall} onApproval={onApproval} />
       </div>
     );
   }

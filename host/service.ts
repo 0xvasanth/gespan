@@ -11,7 +11,7 @@ import {
 } from "./windows";
 
 const exec = promisify(execFile);
-const LABEL = "com.monocode.host";
+const LABEL = "com.rebase.host";
 type ServiceOptions = {
   directory: string;
   port: number;
@@ -85,7 +85,7 @@ const unitQuote = (value: string) =>
   `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%").replaceAll("\n", "\\n")}"`;
 export function systemdUnit(options: ServiceOptions, path: string): string {
   return `[Unit]
-Description=MonoCode Host
+Description=Rebase Host
 After=network.target
 
 [Service]
@@ -206,10 +206,10 @@ export async function uninstallService(
     const env = systemdEnvironment(user.uid);
     await run(
       "systemctl",
-      ["--user", "disable", "--now", "monocode-host.service"],
+      ["--user", "disable", "--now", "rebase-host.service"],
       env,
     ).catch(ignore);
-    await rm(join(home, ".config/systemd/user/monocode-host.service"), {
+    await rm(join(home, ".config/systemd/user/rebase-host.service"), {
       force: true,
     });
     await run("systemctl", ["--user", "daemon-reload"], env).catch(ignore);
@@ -221,7 +221,7 @@ export async function uninstallService(
     await (system.powershell ?? runPowerShell)(windowsUninstallScript());
     return [];
   }
-  throw new Error("MonoCode Host supports Windows, Linux and macOS");
+  throw new Error("Rebase Host supports Windows, Linux and macOS");
 }
 
 export async function installService(
@@ -251,7 +251,7 @@ export async function installService(
       await run("launchctl", ["print", domain]);
     } catch {
       throw new Error(
-        "Sign in at the Mac's desktop once, then reconnect. MonoCode Host runs as a login service; keep the Mac signed in and awake.",
+        "Sign in at the Mac's desktop once, then reconnect. Rebase Host runs as a login service; keep the Mac signed in and awake.",
       );
     }
     const folder = join(homedir(), "Library/LaunchAgents");
@@ -296,7 +296,7 @@ export async function installService(
     }
     const folder = join(homedir(), ".config/systemd/user");
     await mkdir(folder, { recursive: true });
-    const file = join(folder, "monocode-host.service");
+    const file = join(folder, "rebase-host.service");
     try {
       await readFile(file);
     } catch {
@@ -305,13 +305,13 @@ export async function installService(
     await run("systemctl", ["--user", "daemon-reload"], env);
     await run(
       "systemctl",
-      ["--user", "enable", "--now", "monocode-host.service"],
+      ["--user", "enable", "--now", "rebase-host.service"],
       env,
     );
   } else if (process.platform === "win32") {
     await runPowerShell(windowsTaskScript(options, process.env.PATH ?? ""));
   } else {
-    throw new Error("MonoCode Host supports Windows, Linux and macOS");
+    throw new Error("Rebase Host supports Windows, Linux and macOS");
   }
   for (let attempt = 0; attempt < 50; attempt++) {
     try {

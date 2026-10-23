@@ -4,7 +4,7 @@ test.use({ viewport: { width: 1300, height: 900 } });
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("monocode.insetLayout", "1");
+    localStorage.setItem("rebase.insetLayout", "1");
   });
 });
 

@@ -52,21 +52,21 @@ import {
 } from "./settings";
 import { IS_MAC, MOD, SHIFT } from "../../../platform/tauri/platform";
 
-const KEY = "monocode.composerRunner";
-const MODEL_CONTROLS_KEY = "monocode.modelControls";
-const LEGACY_EFFORT_VISIBLE_KEY = "monocode.composerEffortVisible";
-const NOTES_KEY = "monocode.notesEnabled";
-const KEYBINDING_OVERRIDES_KEY = "monocode.keybindingOverrides";
-const QUICK_COMPOSER_SHORTCUT_KEY = "monocode.quickComposerShortcut";
-const LIVE_AGENTS_KEY = "monocode.liveAgentsEnabled";
-const GRID_ARCADE_KEY = "monocode.gridArcadeEnabled";
-const DIFF_VIEWER_KEY = "monocode.diffViewer";
-const FORMAT_ON_SAVE_KEY = "monocode.formatOnSave";
-const AUTOSAVE_KEY = "monocode.autosave";
-const FILE_TAB_MODE_KEY = "monocode.fileTabMode";
-const FOLLOW_UP_BEHAVIOR_KEY = "monocode.followUpBehavior";
-const TAB_ANIMATIONS_KEY = "monocode.tabAnimationsEnabled";
-const COLLAPSED_PROJECT_RAIL_MODE_KEY = "monocode.collapsedProjectRailMode";
+const KEY = "rebase.composerRunner";
+const MODEL_CONTROLS_KEY = "rebase.modelControls";
+const LEGACY_EFFORT_VISIBLE_KEY = "rebase.composerEffortVisible";
+const NOTES_KEY = "rebase.notesEnabled";
+const KEYBINDING_OVERRIDES_KEY = "rebase.keybindingOverrides";
+const QUICK_COMPOSER_SHORTCUT_KEY = "rebase.quickComposerShortcut";
+const LIVE_AGENTS_KEY = "rebase.liveAgentsEnabled";
+const GRID_ARCADE_KEY = "rebase.gridArcadeEnabled";
+const DIFF_VIEWER_KEY = "rebase.diffViewer";
+const FORMAT_ON_SAVE_KEY = "rebase.formatOnSave";
+const AUTOSAVE_KEY = "rebase.autosave";
+const FILE_TAB_MODE_KEY = "rebase.fileTabMode";
+const FOLLOW_UP_BEHAVIOR_KEY = "rebase.followUpBehavior";
+const TAB_ANIMATIONS_KEY = "rebase.tabAnimationsEnabled";
+const COLLAPSED_PROJECT_RAIL_MODE_KEY = "rebase.collapsedProjectRailMode";
 
 describe("follow-up behavior setting", () => {
   beforeEach(mockLocalStorage);

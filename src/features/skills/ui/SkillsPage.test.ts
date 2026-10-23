@@ -514,7 +514,7 @@ describe("Settings skill preview", () => {
     expect(
       container
         .querySelector(
-          '[aria-label="Include Personal guide in MonoCode catalog"]',
+          '[aria-label="Include Personal guide in Rebase catalog"]',
         )
         ?.getAttribute("aria-checked"),
     ).toBe("false");

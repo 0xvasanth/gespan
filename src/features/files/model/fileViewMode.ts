@@ -1,6 +1,6 @@
 import type { MarkdownViewMode } from "../../sessions/ui/MarkdownModeToggle";
 
-const KEY = "monocode.fileViewMode";
+const KEY = "rebase.fileViewMode";
 
 // Holds a choice only while storage failed to keep it, so later files in this
 // window still open in that view when localStorage is unavailable.

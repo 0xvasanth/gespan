@@ -1529,8 +1529,8 @@ function SidebarComponent({
               },
               {
                 kind: "item" as const,
-                id: "copy-monocode-session-id",
-                label: "MonoCode session ID",
+                id: "copy-rebase-session-id",
+                label: "Rebase session ID",
               },
             ],
           },
@@ -1675,7 +1675,7 @@ function SidebarComponent({
       setRenamingSessionId(sessionId);
       return;
     }
-    if (id === "copy-harness-session-id" || id === "copy-monocode-session-id") {
+    if (id === "copy-harness-session-id" || id === "copy-rebase-session-id") {
       const value =
         id === "copy-harness-session-id" ? providerSessionId : sessionId;
       if (value) {

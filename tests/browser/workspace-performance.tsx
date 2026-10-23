@@ -245,10 +245,10 @@ if (nativeInvoke) {
   );
 }
 
-localStorage.setItem("monocode.pacedReveal", "0");
-localStorage.setItem("monocode.diffViewer", "unified");
-localStorage.setItem("monocode.measureNavigation", "1");
-localStorage.setItem("monocode.measureStreaming", "1");
+localStorage.setItem("rebase.pacedReveal", "0");
+localStorage.setItem("rebase.diffViewer", "unified");
+localStorage.setItem("rebase.measureNavigation", "1");
+localStorage.setItem("rebase.measureStreaming", "1");
 const sessions = Array.from({ length: 6 }, (_, index) => {
   const blocks: Block[] = Array.from({ length: 100 }, (_, turn) => [
     {
@@ -429,13 +429,13 @@ const resetMetrics = () => {
 };
 const metrics = () => ({
   navigation: performance
-    .getEntriesByName("monocode:tab-switch")
+    .getEntriesByName("rebase:tab-switch")
     .map((entry) => ({
       duration: entry.duration,
       detail: (entry as PerformanceMeasure).detail,
     })),
   streaming: performance
-    .getEntriesByName("monocode:stream-visible")
+    .getEntriesByName("rebase:stream-visible")
     .map((entry) => ({
       duration: entry.duration,
       detail: (entry as PerformanceMeasure).detail,
@@ -444,7 +444,7 @@ const metrics = () => ({
 });
 const saveMetrics = () =>
   nativeInvoke?.("write_text_file", {
-    path: "/private/tmp/monocode-native-metrics.json",
+    path: "/private/tmp/rebase-native-metrics.json",
     content: JSON.stringify(metrics()),
   });
 const startLoad = async () => {

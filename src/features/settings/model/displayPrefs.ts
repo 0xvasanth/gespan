@@ -1,11 +1,11 @@
 import { useSyncExternalStore } from "react";
 import { readFlag, writeFlag } from "./storageFlags";
 
-const SHOW_REMAINING_USAGE_KEY = "monocode.showRemainingUsage";
-const MASK_EMAILS_KEY = "monocode.maskEmails";
-const COMPOSER_AUTOCORRECT_KEY = "monocode.composerAutocorrect";
-const RAIL_MONOS_PINNED_KEY = "monocode.railMonosPinned";
-export const PACED_REVEAL_KEY = "monocode.pacedReveal";
+const SHOW_REMAINING_USAGE_KEY = "rebase.showRemainingUsage";
+const MASK_EMAILS_KEY = "rebase.maskEmails";
+const COMPOSER_AUTOCORRECT_KEY = "rebase.composerAutocorrect";
+const RAIL_MONOS_PINNED_KEY = "rebase.railMonosPinned";
+export const PACED_REVEAL_KEY = "rebase.pacedReveal";
 
 export const SHOW_REMAINING_USAGE_DEFAULT = false;
 export const MASK_EMAILS_DEFAULT = true;
@@ -14,14 +14,14 @@ export const RAIL_MONOS_PINNED_DEFAULT = false;
 
 /** Fired on `window` whenever the usage meter direction flips (detail: boolean). */
 export const SHOW_REMAINING_USAGE_CHANGE_EVENT =
-  "monocode:showremainingusagechange";
+  "rebase:showremainingusagechange";
 /** Fired on `window` whenever email masking flips (detail: boolean). */
-export const MASK_EMAILS_CHANGE_EVENT = "monocode:maskemailschange";
+export const MASK_EMAILS_CHANGE_EVENT = "rebase:maskemailschange";
 /** Fired on `window` whenever composer autocorrect flips (detail: boolean). */
 export const COMPOSER_AUTOCORRECT_CHANGE_EVENT =
-  "monocode:composerautocorrectchange";
+  "rebase:composerautocorrectchange";
 /** Fired on `window` whenever Monos are pinned to or unpinned from the icon rail (detail: boolean). */
-export const RAIL_MONOS_PINNED_CHANGE_EVENT = "monocode:railmonospinnedchange";
+export const RAIL_MONOS_PINNED_CHANGE_EVENT = "rebase:railmonospinnedchange";
 
 function flagStore(key: string, fallback: boolean, event: string) {
   // Holds a saved value only while storage failed to keep it, so the switch
@@ -76,16 +76,16 @@ const railMonosPinned = flagStore(
 const pacedReveal = flagStore(
   PACED_REVEAL_KEY,
   true,
-  "monocode:pacedrevealchange",
+  "rebase:pacedrevealchange",
 );
 export const loadPacedReveal = pacedReveal.load;
 export const savePacedReveal = pacedReveal.save;
 export const usePacedReveal = pacedReveal.useFlag;
 
 const newLayoutPromptDismissed = flagStore(
-  "monocode.newLayoutPromptDismissed",
+  "rebase.newLayoutPromptDismissed",
   false,
-  "monocode:newlayoutpromptdismissedchange",
+  "rebase:newlayoutpromptdismissedchange",
 );
 export const saveNewLayoutPromptDismissed = newLayoutPromptDismissed.save;
 export const useNewLayoutPromptDismissed = newLayoutPromptDismissed.useFlag;

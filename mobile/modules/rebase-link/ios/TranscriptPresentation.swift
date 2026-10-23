@@ -124,7 +124,7 @@ enum TranscriptTypography {
         if let name = TranscriptArtwork.inlineFileName(value) {
           if style.fileLinks {
             attributes[.link] =
-              "monocode-file:" + value.trimmingCharacters(in: .whitespacesAndNewlines)
+              "rebase-file:" + value.trimmingCharacters(in: .whitespacesAndNewlines)
             attributes[.foregroundColor] = UIColor.transcriptHex(style.fileRef)
           }
           let icon = TranscriptInlineIcon(

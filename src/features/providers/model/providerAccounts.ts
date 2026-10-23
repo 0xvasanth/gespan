@@ -1,9 +1,9 @@
 import { pathKey } from "../../../shared/lib/paths";
 import type { HarnessId } from "../../sessions/model/session";
 
-const ACCOUNTS_KEY = "monocode.providerAccounts.v1";
-const SELECTIONS_KEY = "monocode.providerAccountSelections.v1";
-const CHANGE_EVENT = "monocode-provider-accounts-changed";
+const ACCOUNTS_KEY = "rebase.providerAccounts.v1";
+const SELECTIONS_KEY = "rebase.providerAccountSelections.v1";
+const CHANGE_EVENT = "rebase-provider-accounts-changed";
 
 export const DEFAULT_PROVIDER_ACCOUNT_ID = "default";
 const DEFAULT_PROVIDER_ACCOUNT_LABEL = "Default account";

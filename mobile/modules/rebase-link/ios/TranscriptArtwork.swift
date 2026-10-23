@@ -23,7 +23,7 @@ final class TranscriptArtwork {
   private init() {
     let host = Bundle(for: BundleAnchor.self)
     let bundle =
-      host.url(forResource: "MonocodeTranscriptAssets", withExtension: "bundle")
+      host.url(forResource: "RebaseTranscriptAssets", withExtension: "bundle")
       .flatMap(Bundle.init(url:)) ?? Bundle.main
     let url = bundle.url(forResource: "transcript-artwork", withExtension: "json")
     let data = url.flatMap { try? Data(contentsOf: $0) }
@@ -97,5 +97,5 @@ final class TranscriptInlineIcon {
 }
 
 extension NSAttributedString.Key {
-  static let transcriptIcon = NSAttributedString.Key("MonocodeTranscriptIcon")
+  static let transcriptIcon = NSAttributedString.Key("RebaseTranscriptIcon")
 }

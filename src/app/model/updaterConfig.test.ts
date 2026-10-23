@@ -50,8 +50,8 @@ describe("updater", () => {
       currentVersion: "0.1.23",
     });
     expect(message).toHaveBeenCalledWith(
-      expect.stringContaining("https://github.com/hardbeat920/monocode/releases/latest"),
-      { title: "MonoCode" },
+      expect.stringContaining("https://github.com/hardbeat920/rebase/releases/latest"),
+      { title: "Rebase" },
     );
   });
 
@@ -68,10 +68,10 @@ describe("updater", () => {
 
   it.each(["deb", "rpm"] as const)("names one %s installer and the releases URL", (kind) => {
     const hint = packageManagerHint(kind);
-    expect(hint).toContain("https://github.com/hardbeat920/monocode/releases/latest");
+    expect(hint).toContain("https://github.com/hardbeat920/rebase/releases/latest");
     expect(hint).not.toMatch(/[*<>]/);
     expect(hint).toContain("Replace the file name");
-    expect(hint).toContain(kind === "deb" ? "sudo apt install ./MonoCode_X.Y.Z_amd64.deb" : "sudo dnf install ./MonoCode-X.Y.Z-1.x86_64.rpm");
+    expect(hint).toContain(kind === "deb" ? "sudo apt install ./Rebase_X.Y.Z_amd64.deb" : "sudo dnf install ./Rebase-X.Y.Z-1.x86_64.rpm");
   });
 
   it.each([
@@ -88,7 +88,7 @@ describe("updater", () => {
     });
     expect(check).not.toHaveBeenCalled();
     expect(message).toHaveBeenCalledWith(expect.stringContaining(hint), {
-      title: "MonoCode",
+      title: "Rebase",
     });
   });
 
@@ -124,7 +124,7 @@ describe("updater", () => {
     });
     expect(message).toHaveBeenCalledWith(
       expect.stringContaining("aren't available for this install yet"),
-      { title: "MonoCode" },
+      { title: "Rebase" },
     );
   });
 });

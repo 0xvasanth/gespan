@@ -18,16 +18,16 @@ function stubStorage(entries: [string, string][]) {
 
 it("turns each project's Mono into one of its own that works on that project", async () => {
   const stored = stubStorage([
-    ["monocode:project-agents", JSON.stringify({ "/code/app": "chat-1" })],
+    ["rebase:project-agents", JSON.stringify({ "/code/app": "chat-1" })],
     [
-      "monocode:project-agent-profiles",
+      "rebase:project-agent-profiles",
       JSON.stringify({
         "/code/app": { name: "Skull", claim: "claimed" },
         "/code/site": { claim: "claimed" },
         "/code/off": { claim: "declined" },
       }),
     ],
-    ["monocode:tab-group:mascots", JSON.stringify({ "/code/app": "skull" })],
+    ["rebase:tab-group:mascots", JSON.stringify({ "/code/app": "skull" })],
   ]);
   const { isMonoSession, listMonos, monoForSession } = await import("./mono");
 
@@ -50,7 +50,7 @@ it("turns each project's Mono into one of its own that works on that project", a
 });
 
 it("migrates only once, so a deleted Mono stays deleted", async () => {
-  stubStorage([["monocode:monos", JSON.stringify({ "/code/app": "chat-1" })]]);
+  stubStorage([["rebase:monos", JSON.stringify({ "/code/app": "chat-1" })]]);
   const mono = await import("./mono");
   const [only] = mono.listMonos();
   mono.removeMono(only.id);

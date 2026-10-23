@@ -145,7 +145,7 @@ const render = (changed = 14, target: SessionSummary | undefined = session) =>
       <>
         <SessionTitle
           title={session.title}
-          subtitle="monocode · android-fixes"
+          subtitle="rebase · android-fixes"
         />
         <SessionToolbar
           projectId="project"
@@ -186,7 +186,7 @@ it("keeps the title start visible with end truncation and no iOS negative margin
   expect(title.parentElement!.style.width).toBe("");
   expect(title.parentElement!.style.minWidth).toBe("0");
   const subtitle = [...container.querySelectorAll("span")].find(
-    (item) => item.textContent === "monocode · android-fixes",
+    (item) => item.textContent === "rebase · android-fixes",
   )!;
   expect(subtitle.dataset.ellipsis).toBe("middle");
 });

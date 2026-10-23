@@ -17,8 +17,8 @@ const mock = vi.hoisted(() => ({
 
 vi.mock("../../core/child", () => ({
   acquireHarnessBridge: async () => mock.release,
-  prepareMonoCodexStore: mock.prepare,
-  copyMonoCodexThreads: mock.copy,
+  prepareRebasexStore: mock.prepare,
+  copyRebasexThreads: mock.copy,
   spawnChild: mock.spawn,
   killChild: mock.kill,
   watchChild: (id: string, line: (line: string) => void) =>

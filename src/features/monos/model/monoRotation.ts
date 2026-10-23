@@ -210,7 +210,7 @@ export function planRotation(
   return { rotation, brief };
 }
 
-const ROTATIONS_KEY = "monocode:mono-rotations";
+const ROTATIONS_KEY = "rebase:mono-rotations";
 
 function readRotations(): Record<string, MonoRotation> {
   try {

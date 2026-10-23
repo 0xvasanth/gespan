@@ -61,7 +61,7 @@ describe("DocumentImage", () => {
   it("shows a project image through a blob URL with its attributes", async () => {
     readProjectImage.mockResolvedValue(PNG);
     await show(".github/readme/hero.png", {
-      title: "MonoCode",
+      title: "Rebase",
       width: "600",
       align: "right",
     });
@@ -73,7 +73,7 @@ describe("DocumentImage", () => {
     const image = container.querySelector("img")!;
     expect(image.getAttribute("src")).toBe("blob:test/1");
     expect(image.getAttribute("alt")).toBe("Hero");
-    expect(image.getAttribute("title")).toBe("MonoCode");
+    expect(image.getAttribute("title")).toBe("Rebase");
     expect(image.getAttribute("width")).toBe("600");
     expect(image.getAttribute("align")).toBe("right");
     expect(image.style.maxWidth).toBe("100%");

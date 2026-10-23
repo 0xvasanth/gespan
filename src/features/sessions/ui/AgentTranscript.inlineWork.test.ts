@@ -348,7 +348,7 @@ it("shows reused sessions in the requesting Mono after its handoff reply, before
   ];
   const receipt = (id: string, action: string, result: unknown): Block => ({
     ...tool(id),
-    text: `monocode app ${action}`,
+    text: `rebase app ${action}`,
     tool: { status: "completed", detail: JSON.stringify({ ok: true, result }) },
   });
   const blocks: Block[] = [

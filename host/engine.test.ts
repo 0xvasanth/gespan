@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 function setup(harness: "codex" | "claude" = "codex") {
-  const directory = mkdtempSync(join(tmpdir(), "monocode-engine-test-"));
+  const directory = mkdtempSync(join(tmpdir(), "rebase-engine-test-"));
   const store = new HostStore(join(directory, "host.db"));
   const project = store.addProject(directory, "Test");
   const turns: Array<{ input: SendTurnInput; finish: () => void }> = [];

@@ -1,6 +1,6 @@
 # Contributing
 
-MonoCode is early and I’m the only maintainer, so small and focused lands much faster than large and ambitious. Past that, the door is open - bug reports and fixes are genuinely welcome.
+Rebase is early and I’m the only maintainer, so small and focused lands much faster than large and ambitious. Past that, the door is open - bug reports and fixes are genuinely welcome.
 
 Please don’t open PRs that add a new provider right now. The existing harnesses still need to agree on a few patterns, and a new adapter would copy whatever is there today. See [New providers](#new-providers).
 
@@ -10,7 +10,7 @@ Development is focused on the Rust + GPUI migration. The React/Tauri app on `mai
 
 - Bug fixes, security fixes, documentation improvements, and changes useful to both apps are still welcome on `main`.
 - Larger Tauri-specific features and refactors are temporarily deferred during the migration.
-- Target GPUI contributions at `mc/migrate-monocode-to-gpui`. See [the native guide](https://github.com/hardbeat920/monocode/blob/mc/migrate-monocode-to-gpui/docs/native/README.md) for setup and checks.
+- Target GPUI contributions at `mc/migrate-rebase-to-gpui`. See [the native guide](https://github.com/hardbeat920/rebase/blob/mc/migrate-rebase-to-gpui/docs/native/README.md) for setup and checks.
 
 Before starting a larger change, open an issue so we can agree on the scope and target branch and avoid duplicated work. Existing PRs will be reviewed individually.
 
@@ -34,7 +34,7 @@ npm run tauri dev
 - `src/shared/` - reusable UI, hooks, and small utilities that contain no feature behavior
 - `src-tauri/src/` - the Rust side: PTYs, filesystem and git, session storage, native window
 
-`src/integrations/harness/` is the most useful place to start if you want to fix something real. Each folder under `providers/` has an adapter (`claudeAdapter.ts`) that implements the shared `HarnessAdapter` lifecycle from `core/registry.ts`, and a protocol module (`claudeProtocol.ts`) that translates the CLI’s output into MonoCode’s own event types. The protocol modules are pure functions with unit tests beside them, so you can fix a Codex parsing bug with only Claude Code installed. That’s for the providers we already ship - please don’t add a new one yet.
+`src/integrations/harness/` is the most useful place to start if you want to fix something real. Each folder under `providers/` has an adapter (`claudeAdapter.ts`) that implements the shared `HarnessAdapter` lifecycle from `core/registry.ts`, and a protocol module (`claudeProtocol.ts`) that translates the CLI’s output into Rebase’s own event types. The protocol modules are pure functions with unit tests beside them, so you can fix a Codex parsing bug with only Claude Code installed. That’s for the providers we already ship - please don’t add a new one yet.
 
 ## Before you push
 

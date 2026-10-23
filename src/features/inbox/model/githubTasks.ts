@@ -275,14 +275,14 @@ export function githubStatus(): Promise<GithubStatus> {
   return invoke<GithubStatus>("git_github_status");
 }
 
-/** Whether the active GitHub CLI account has starred MonoCode. */
-export function githubMonocodeStarStatus(): Promise<GithubStarStatus> {
-  return invoke<GithubStarStatus>("github_monocode_star_status");
+/** Whether the active GitHub CLI account has starred Rebase. */
+export function githubRebaseStarStatus(): Promise<GithubStarStatus> {
+  return invoke<GithubStarStatus>("github_rebase_star_status");
 }
 
-/** Star MonoCode for the active GitHub CLI account. */
-export function starMonocodeOnGithub(): Promise<void> {
-  return invoke<void>("github_star_monocode");
+/** Star Rebase for the active GitHub CLI account. */
+export function starRebaseOnGithub(): Promise<void> {
+  return invoke<void>("github_star_rebase");
 }
 
 export async function githubRepo(cwd: string): Promise<string> {

@@ -209,7 +209,7 @@ fn call(input: &str) -> String {
 /// # Safety
 /// `input` must point to a live, NUL-terminated UTF-8 string for the call's duration.
 #[no_mangle]
-pub unsafe extern "C" fn monocode_link_call(input: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn rebase_link_call(input: *const c_char) -> *mut c_char {
     let output = if input.is_null() {
         call("")
     } else {
@@ -218,16 +218,16 @@ pub unsafe extern "C" fn monocode_link_call(input: *const c_char) -> *mut c_char
     CString::new(output).unwrap().into_raw()
 }
 /// # Safety
-/// `output` must be a pointer returned by `monocode_link_call`, freed exactly once.
+/// `output` must be a pointer returned by `rebase_link_call`, freed exactly once.
 #[no_mangle]
-pub unsafe extern "C" fn monocode_link_free(output: *mut c_char) {
+pub unsafe extern "C" fn rebase_link_free(output: *mut c_char) {
     if !output.is_null() {
         drop(CString::from_raw(output));
     }
 }
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn Java_expo_modules_monocodelink_MonocodeLinkModule_nativeCall(
+pub extern "system" fn Java_expo_modules_rebaselink_RebaseLinkModule_nativeCall(
     mut env: jni::JNIEnv,
     _: jni::objects::JObject,
     input: jni::objects::JString,

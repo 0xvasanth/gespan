@@ -73,7 +73,7 @@ describe("harness login", () => {
     const login = loginHarness("claude");
     await vi.waitFor(() => expect(child.watchChild).toHaveBeenCalledOnce());
     expect(child.spawnChild).toHaveBeenCalledWith(
-      "monocode-provider-login-test-window-claude",
+      "rebase-provider-login-test-window-claude",
       "/bin/claude",
       ["auth", "login"],
       "/home/alice",
@@ -91,7 +91,7 @@ describe("harness login", () => {
     const login = loginHarness("codex", "account-work");
     await vi.waitFor(() => expect(child.watchChild).toHaveBeenCalledOnce());
     expect(child.spawnChild).toHaveBeenCalledWith(
-      "monocode-provider-login-test-window-codex-account-work",
+      "rebase-provider-login-test-window-codex-account-work",
       "/bin/codex",
       ["login"],
       "/home/alice",

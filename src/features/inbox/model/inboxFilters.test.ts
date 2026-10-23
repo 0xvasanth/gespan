@@ -664,7 +664,7 @@ function mockLocalStorage() {
 }
 
 describe("inbox connection cache", () => {
-  const KEY = "monocode.inboxConnections";
+  const KEY = "rebase.inboxConnections";
   beforeEach(mockLocalStorage);
 
   it("round-trips the last known connect state", () => {

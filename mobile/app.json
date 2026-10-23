@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "MonoCode",
-    "slug": "monocode-mobile",
+    "name": "Rebase",
+    "slug": "rebase-mobile",
     "owner": "hardbeat920",
     "version": "1.0.0",
     "runtimeVersion": {
@@ -9,14 +9,14 @@
     },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "monocode",
+    "scheme": "rebase",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/app.icon",
-      "bundleIdentifier": "com.hardbeat920.monocode-mobile",
+      "bundleIdentifier": "com.rebase.mobile",
       "infoPlist": {
-        "CFBundleDisplayName": "Monocode",
-        "NSLocalNetworkUsageDescription": "Connect securely to your paired Monocode desktop."
+        "CFBundleDisplayName": "Rebase",
+        "NSLocalNetworkUsageDescription": "Connect securely to your paired Rebase desktop."
       }
     },
     "android": {
@@ -62,7 +62,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Scan the pairing code from your Monocode desktop.",
+          "cameraPermission": "Scan the pairing code from your Rebase desktop.",
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": true
         }
@@ -71,13 +71,13 @@
         "expo-image-picker",
         {
           "photosPermission": "Choose photos to attach to messages, or as the background of new sessions.",
-          "cameraPermission": "Scan the pairing code from your Monocode desktop."
+          "cameraPermission": "Scan the pairing code from your Rebase desktop."
         }
       ],
       [
         "expo-audio",
         {
-          "microphonePermission": "Dictate messages to your Monocode sessions.",
+          "microphonePermission": "Dictate messages to your Rebase sessions.",
           "recordAudioAndroid": false,
           "enableBackgroundRecording": false,
           "enableBackgroundPlayback": false

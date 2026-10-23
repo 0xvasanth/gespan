@@ -7,7 +7,7 @@ import { hasMobileAttachments, mobileAttachments } from "./mobileAttachments";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 beforeEach(() => {
-  vi.mocked(invoke).mockReset().mockResolvedValue("/tmp/monocode-attachments/notes.txt");
+  vi.mocked(invoke).mockReset().mockResolvedValue("/tmp/rebase-attachments/notes.txt");
   URL.createObjectURL = vi.fn(() => "blob:preview");
   URL.revokeObjectURL = vi.fn();
 });
@@ -23,7 +23,7 @@ describe("mobileAttachments", () => {
     expect(notes).toMatchObject({
       name: "notes.txt",
       kind: "file",
-      path: "/tmp/monocode-attachments/notes.txt",
+      path: "/tmp/rebase-attachments/notes.txt",
     });
     expect(invoke).toHaveBeenCalledWith("write_attachment", { name: "notes.txt", data: btoa("hello") });
   });

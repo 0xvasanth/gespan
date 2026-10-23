@@ -32,12 +32,12 @@ replaceFirst(
 // top-level object repeats the same name/version pair.
 replaceFirst(
   join(root, "package-lock.json"),
-  /^(\{\n\s*"name": "monocode-desktop",\n\s*"version": ")[^"]+(")/,
+  /^(\{\n\s*"name": "rebase-desktop",\n\s*"version": ")[^"]+(")/,
   `$1${version}$2`,
 );
 replaceFirst(
   join(root, "package-lock.json"),
-  /("packages": \{\n\s*"": \{\n\s*"name": "monocode-desktop",\n\s*"version": ")[^"]+(")/,
+  /("packages": \{\n\s*"": \{\n\s*"name": "rebase-desktop",\n\s*"version": ")[^"]+(")/,
   `$1${version}$2`,
 );
 replaceFirst(
@@ -52,7 +52,7 @@ replaceFirst(
 );
 replaceFirst(
   join(root, "Cargo.lock"),
-  /(name = "monocode"\nversion = ")[^"]+(")/,
+  /(name = "rebase"\nversion = ")[^"]+(")/,
   `$1${version}$2`,
 );
 

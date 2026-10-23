@@ -13,7 +13,7 @@ import {
 import {
   killChild,
   resolveCodexBinary,
-  restoreMonoCodexAgentState,
+  restoreRebasexAgentState,
   spawnChild,
   unwatchChild,
   watchChild,
@@ -473,7 +473,7 @@ export function bindCodexSession(
   });
 }
 
-export async function migrateMonoCodexSession(input: {
+export async function migrateRebasexSession(input: {
   sessionId: string;
   threadId: string;
   cwd: string;
@@ -663,8 +663,8 @@ async function ensureLive(input: HarnessSessionInput): Promise<Live> {
   try {
     await rpc.request("initialize", {
       clientInfo: {
-        name: "monocode",
-        title: "MonoCode",
+        name: "rebase",
+        title: "Rebase",
         version: "0.1.0",
       },
       capabilities: {
@@ -675,7 +675,7 @@ async function ensureLive(input: HarnessSessionInput): Promise<Live> {
     });
     await rpc.notify("initialized", undefined);
     if (store?.hasThread && canResume && resume) {
-      await restoreMonoCodexAgentState(
+      await restoreRebasexAgentState(
         input.providerAccountId,
         resume.threadId,
       );
@@ -939,7 +939,7 @@ function handleNotification(
   const mapped = mapCodexNotification(method, params);
   if (mapped.diagnostic) {
     console.debug(
-      `[monocode] codex ${live.threadId} ${method}`,
+      `[rebase] codex ${live.threadId} ${method}`,
       mapped.diagnostic,
     );
   }
@@ -1452,7 +1452,7 @@ async function handleServerRequest(
       if (!live.cancelled && !live.muteUpdates)
         live.onEvent({
           type: "status",
-          text: "This MCP server requested a form or browser sign-in that MonoCode does not support yet. Complete it in the server's own interface.",
+          text: "This MCP server requested a form or browser sign-in that Rebase does not support yet. Complete it in the server's own interface.",
         });
       await live.rpc.respond(id, {
         action: "cancel",

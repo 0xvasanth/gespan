@@ -152,7 +152,7 @@ describe("previewable file view mode", () => {
   });
 
   it("opens in the view saved by an earlier run", async () => {
-    storage.set("monocode.fileViewMode", "source");
+    storage.set("rebase.fileViewMode", "source");
 
     const file = await open("/repo/restarted.md");
     expect(file.selected()).toBe("Source");

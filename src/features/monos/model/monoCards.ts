@@ -148,7 +148,7 @@ type SessionIndex = {
 };
 
 const index: SessionIndex = { sessions: new Map() };
-const INDEX_CHANGED = "monocode:mono-card-sessions";
+const INDEX_CHANGED = "rebase:mono-card-sessions";
 
 /** The app keeps session cards current by publishing what they point at. */
 export function publishCardSessions(
@@ -173,7 +173,7 @@ export function subscribeCardSessions(onChange: () => void): () => void {
   return () => window.removeEventListener(INDEX_CHANGED, onChange);
 }
 
-const DECLINED_KEY = "monocode:mono-declined-habits";
+const DECLINED_KEY = "rebase:mono-declined-habits";
 
 /** Habit suggestions the user said no to, by the card's block id. */
 export function declinedHabitCards(): Set<string> {

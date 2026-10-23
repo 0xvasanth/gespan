@@ -306,7 +306,7 @@ export async function startDevinAcp(
       {
         protocolVersion: 1,
         clientCapabilities: DEVIN_CLIENT_CAPABILITIES,
-        clientInfo: { name: "monocode", version: "0.1.0" },
+        clientInfo: { name: "rebase", version: "0.1.0" },
       },
       INIT_TIMEOUT_MS,
     );
@@ -404,7 +404,7 @@ async function startLive(input: HarnessSessionInput, startup: Startup): Promise<
       emit({ type: "session.ended", code });
     },
     (line) => {
-      console.debug("[monocode] devin stderr", line);
+      console.debug("[rebase] devin stderr", line);
     },
   );
 

@@ -36,10 +36,10 @@ export type Catalog = {
   addresses?: Desktop["addresses"];
 };
 const EMPTY: Catalog = { projects: [], monos: [], sessions: [] };
-const PAIRING = "monocode.mobile.pairing";
-const IDENTITY = "monocode.mobile.identity";
+const PAIRING = "rebase.mobile.pairing";
+const IDENTITY = "rebase.mobile.identity";
 const key = (fingerprint: string, kind: string) =>
-  `monocode.mobile.${fingerprint}.${kind}`;
+  `rebase.mobile.${fingerprint}.${kind}`;
 type Connection = {
   restoring: boolean;
   pairing: Pairing | null;

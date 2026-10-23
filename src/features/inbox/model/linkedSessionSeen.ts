@@ -1,4 +1,4 @@
-const KEY = "monocode.linkedSessionSeen";
+const KEY = "rebase.linkedSessionSeen";
 const MAX_ENTRIES = 500;
 
 type SeenMap = Record<string, number>;

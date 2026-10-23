@@ -161,7 +161,7 @@ pub struct OmpAssistantText {
     concat: String,
 }
 
-/// Recover displayed OMP custom messages that older MonoCode builds omitted
+/// Recover displayed OMP custom messages that older Rebase builds omitted
 /// from their persisted transcript. The provider id is already stored with the
 /// session; matching the original JSONL keeps the repair deterministic instead
 /// of guessing from neighbouring reasoning text.
@@ -1261,7 +1261,7 @@ pub enum GitHubStarStatus {
     Unavailable,
 }
 
-const MONOCODE_STAR_ENDPOINT: &str = "/user/starred/hardbeat920/monocode";
+const REBASE_STAR_ENDPOINT: &str = "/user/starred/hardbeat920/rebase";
 
 /// Whether the GitHub CLI is installed and has an active authenticated account.
 #[tauri::command]
@@ -1298,18 +1298,18 @@ fn git_github_status_for() -> GitHubStatus {
     }
 }
 
-/// Whether the active GitHub CLI account has starred the MonoCode repository.
+/// Whether the active GitHub CLI account has starred the Rebase repository.
 #[tauri::command]
-pub async fn github_monocode_star_status() -> Result<GitHubStarStatus, String> {
-    tauri::async_runtime::spawn_blocking(github_monocode_star_status_for)
+pub async fn github_rebase_star_status() -> Result<GitHubStarStatus, String> {
+    tauri::async_runtime::spawn_blocking(github_rebase_star_status_for)
         .await
         .map_err(|error| error.to_string())
 }
 
-fn github_monocode_star_status_for() -> GitHubStarStatus {
+fn github_rebase_star_status_for() -> GitHubStarStatus {
     let result = gh_run(
         Path::new("."),
-        &["api", "--silent", MONOCODE_STAR_ENDPOINT],
+        &["api", "--silent", REBASE_STAR_ENDPOINT],
         true,
     );
     github_star_status_from_result(result)
@@ -1323,13 +1323,13 @@ fn github_star_status_from_result(result: Result<String, String>) -> GitHubStarS
     }
 }
 
-/// Star the MonoCode repository for the active GitHub CLI account.
+/// Star the Rebase repository for the active GitHub CLI account.
 #[tauri::command]
-pub async fn github_star_monocode() -> Result<(), String> {
+pub async fn github_star_rebase() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(|| {
         gh_run(
             Path::new("."),
-            &["api", "--silent", "--method", "PUT", MONOCODE_STAR_ENDPOINT],
+            &["api", "--silent", "--method", "PUT", REBASE_STAR_ENDPOINT],
             true,
         )
         .map(|_| ())
@@ -2801,7 +2801,7 @@ impl Drop for GitSelectionIndex {
 
 fn git_selected_context_for(root: &Path, paths: &[String]) -> Result<GitStagedContext, String> {
     let paths = git_selected_paths(root, paths)?;
-    let index_dir = std::env::temp_dir().join(format!("monocode-git-selection-{}", Uuid::new_v4()));
+    let index_dir = std::env::temp_dir().join(format!("rebase-git-selection-{}", Uuid::new_v4()));
     let directory = std::fs::DirBuilder::new();
     #[cfg(unix)]
     let directory = {
@@ -2874,7 +2874,7 @@ fn with_signing_hint(error: String) -> String {
         return error;
     }
     format!(
-        "{error}\n\nGit couldn't sign this commit. MonoCode runs git without a terminal, \
+        "{error}\n\nGit couldn't sign this commit. Rebase runs git without a terminal, \
          so your signer needs a GUI passphrase prompt (e.g. pinentry-mac) or an unlocked agent."
     )
 }
@@ -3409,7 +3409,7 @@ fn with_temp_markdown(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let path = std::env::temp_dir().join(format!("monocode-comment-{stamp}.md"));
+    let path = std::env::temp_dir().join(format!("rebase-comment-{stamp}.md"));
     std::fs::write(&path, body).map_err(|error| error.to_string())?;
     let path_str = path.to_string_lossy().into_owned();
     let result = run(&path_str);
@@ -4341,7 +4341,7 @@ fn git_pr_create_for(root: &Path, input: &GitPrCreateInput) -> Result<String, St
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let body_path = std::env::temp_dir().join(format!("monocode-pr-{stamp}.md"));
+    let body_path = std::env::temp_dir().join(format!("rebase-pr-{stamp}.md"));
     std::fs::write(&body_path, input.body.trim()).map_err(|e| e.to_string())?;
     let result = gh_checked(
         root,
@@ -5779,7 +5779,7 @@ fn write_attachment_sync(name: &str, data: &str) -> Result<String, String> {
             MAX_ATTACHMENT_EMBED_BYTES / 1024 / 1024
         ));
     }
-    let dir = std::env::temp_dir().join("monocode-attachments");
+    let dir = std::env::temp_dir().join("rebase-attachments");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -6033,7 +6033,7 @@ fn write_text_file_sync(path: &str, content: &str) -> Result<(), String> {
     let mut temporary = None;
     for attempt in 0..100 {
         let candidate = parent.join(format!(
-            ".{name}.monocode-{}-{stamp}-{attempt}.tmp",
+            ".{name}.rebase-{}-{stamp}-{attempt}.tmp",
             std::process::id()
         ));
         match std::fs::OpenOptions::new()
@@ -6163,7 +6163,7 @@ fn rename_path_sync(path: &str, name: &str) -> Result<String, String> {
             .unwrap_or_default()
             .as_nanos();
         let tmp = parent.join(format!(
-            ".{}.monocode-rename-{stamp}",
+            ".{}.rebase-rename-{stamp}",
             file_label(&from, "tmp")
         ));
         std::fs::rename(&from, &tmp).map_err(|e| e.to_string())?;
@@ -6706,8 +6706,8 @@ mod tests {
     #[test]
     fn project_location_follows_a_sibling_rename() {
         let parent = tmp("project-location-rename");
-        let original = parent.0.join("monocode");
-        let renamed = parent.0.join("monocode-personal");
+        let original = parent.0.join("rebase");
+        let renamed = parent.0.join("rebase-personal");
         std::fs::create_dir(&original).unwrap();
 
         let first = resolve_project_location_sync(&path_to_js(&original), None)
@@ -6742,7 +6742,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let dir =
-            std::env::temp_dir().join(format!("monocode-editor-{}-{stamp}", std::process::id()));
+            std::env::temp_dir().join(format!("rebase-editor-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("example.rs");
         std::fs::write(&path, "fn old() {}\n").unwrap();
@@ -6859,7 +6859,7 @@ mod tests {
                 .as_nanos();
             let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
             let dir = std::env::temp_dir().join(format!(
-                "monocode-{label}-{}-{stamp}-{seq}",
+                "rebase-{label}-{}-{stamp}-{seq}",
                 std::process::id()
             ));
             match std::fs::create_dir(&dir) {
@@ -7259,8 +7259,8 @@ mod tests {
                 return false;
             }
         }
-        git(dir, &["config", "user.name", "MonoCode"])
-            && git(dir, &["config", "user.email", "monocode@test"])
+        git(dir, &["config", "user.name", "Rebase"])
+            && git(dir, &["config", "user.email", "rebase@test"])
             && git(dir, &["config", "commit.gpgsign", "false"])
             && git(dir, &["config", "core.autocrlf", "false"])
     }
@@ -7298,18 +7298,18 @@ mod tests {
         Command::new("git")
             .args([
                 "-c",
-                "user.name=MonoCode",
+                "user.name=Rebase",
                 "-c",
-                "user.email=monocode@test",
+                "user.email=rebase@test",
                 "-c",
                 "commit.gpgsign=false",
             ])
             .args(args)
             .current_dir(dir)
-            .env("GIT_AUTHOR_NAME", "MonoCode")
-            .env("GIT_AUTHOR_EMAIL", "monocode@test")
-            .env("GIT_COMMITTER_NAME", "MonoCode")
-            .env("GIT_COMMITTER_EMAIL", "monocode@test")
+            .env("GIT_AUTHOR_NAME", "Rebase")
+            .env("GIT_AUTHOR_EMAIL", "rebase@test")
+            .env("GIT_COMMITTER_NAME", "Rebase")
+            .env("GIT_COMMITTER_EMAIL", "rebase@test")
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
@@ -8484,8 +8484,8 @@ mod tests {
                 .status()
                 .map(|status| !status.success())
                 .unwrap_or(true)
-            || !git(&b.0, &["config", "user.name", "MonoCode"])
-            || !git(&b.0, &["config", "user.email", "monocode@test"])
+            || !git(&b.0, &["config", "user.name", "Rebase"])
+            || !git(&b.0, &["config", "user.email", "rebase@test"])
             || !git(&b.0, &["config", "commit.gpgsign", "false"])
             || !git(&b.0, &["config", "core.autocrlf", "false"])
             || !git(&b.0, &["checkout", "--", "."])
@@ -8531,7 +8531,7 @@ mod tests {
     #[test]
     fn pr_head_filter_qualifies_branch_with_repo_owner() {
         assert_eq!(
-            github_pr_head_filter("hardbeat920/monocode", "main").as_deref(),
+            github_pr_head_filter("hardbeat920/rebase", "main").as_deref(),
             Some("hardbeat920:main")
         );
     }
@@ -8539,27 +8539,27 @@ mod tests {
     #[test]
     fn parse_github_repositories_includes_a_forks_parent() {
         let json = r#"{
-            "nameWithOwner": "EricRasputin/monocode-eric",
+            "nameWithOwner": "EricRasputin/rebase-eric",
             "parent": {
-                "name": "monocode",
+                "name": "rebase",
                 "owner": { "login": "hardbeat920" }
             }
         }"#;
         assert_eq!(
             parse_github_repositories(json).unwrap(),
-            vec!["EricRasputin/monocode-eric", "hardbeat920/monocode"]
+            vec!["EricRasputin/rebase-eric", "hardbeat920/rebase"]
         );
     }
 
     #[test]
     fn parse_github_repositories_keeps_a_normal_repo_single() {
         let json = r#"{
-            "nameWithOwner": "hardbeat920/monocode",
+            "nameWithOwner": "hardbeat920/rebase",
             "parent": null
         }"#;
         assert_eq!(
             parse_github_repositories(json).unwrap(),
-            vec!["hardbeat920/monocode"]
+            vec!["hardbeat920/rebase"]
         );
     }
 
@@ -8700,10 +8700,10 @@ mod tests {
     #[test]
     fn split_github_repo_reads_owner_and_name() {
         assert_eq!(
-            split_github_repo(" hardbeat920/monocode ").unwrap(),
-            ("hardbeat920".into(), "monocode".into())
+            split_github_repo(" hardbeat920/rebase ").unwrap(),
+            ("hardbeat920".into(), "rebase".into())
         );
-        assert!(split_github_repo("monocode").is_err());
+        assert!(split_github_repo("rebase").is_err());
         assert!(split_github_repo("acme/web extra").is_err());
     }
 
@@ -9502,7 +9502,7 @@ mod tests {
         for args in [
             ["config", "commit.gpgsign", "true"],
             ["config", "gpg.format", "openpgp"],
-            ["config", "gpg.program", "/nonexistent/monocode-gpg"],
+            ["config", "gpg.program", "/nonexistent/rebase-gpg"],
         ] {
             assert!(git(&dir.0, &args));
         }

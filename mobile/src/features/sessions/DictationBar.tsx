@@ -113,7 +113,7 @@ export function DictationBar({ onClose }: { onClose: (words: string | null) => v
         stage.current = "done";
         Alert.alert(
           "Microphone access",
-          "Monocode needs the microphone to take dictation.",
+          "Rebase needs the microphone to take dictation.",
           permission.canAskAgain
             ? [{ text: "OK" }]
             : [

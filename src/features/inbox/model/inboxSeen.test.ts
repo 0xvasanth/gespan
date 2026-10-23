@@ -11,7 +11,7 @@ import {
   seedInboxSeenIfNeeded,
 } from "./inboxSeen";
 
-const KEY = "monocode.inboxSeen";
+const KEY = "rebase.inboxSeen";
 
 function mockLocalStorage() {
   const data = new Map<string, string>();

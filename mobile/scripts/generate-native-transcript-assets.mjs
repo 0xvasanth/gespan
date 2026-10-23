@@ -73,7 +73,7 @@ try {
     for (const [name, data] of batch) images[name] = data;
   }
 } finally { await browser.close(); }
-const output = resolve(mobile, "modules/monocode-link/ios/Resources");
+const output = resolve(mobile, "modules/rebase-link/ios/Resources");
 mkdirSync(output, { recursive: true });
 writeFileSync(resolve(output, "transcript-artwork.json"), JSON.stringify({
   generatedFrom: "providerSvgs.ts, @hugeicons/core-free-icons, react-material-icon-theme",

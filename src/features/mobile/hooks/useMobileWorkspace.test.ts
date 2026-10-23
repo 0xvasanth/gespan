@@ -66,7 +66,7 @@ describe("new mobile session publication", () => {
     );
     desktop.listen.mockImplementation(
       async (event: string, handler: typeof request) => {
-        if (event === "monocode-mobile-request") request = handler;
+        if (event === "rebase-mobile-request") request = handler;
         return () => {};
       },
     );

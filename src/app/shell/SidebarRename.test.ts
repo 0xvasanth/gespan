@@ -254,7 +254,7 @@ describe("inset session previews", () => {
       title: "Review hover previews",
       harness: "claude",
       model: "claude:sonnet-4.6",
-      repo: "monocode",
+      repo: "rebase",
       branch: "feature/session-preview",
       worktreeCwd: "/workspace/worktrees/session-preview",
       additions: 42,
@@ -885,27 +885,27 @@ describe("sidebar session IDs", () => {
     await act(async () => copyHarnessId.click());
     expect(copyText).toHaveBeenNthCalledWith(1, "harness-session-2");
 
-    const monocodeMenu = openCopyIdMenu("session-2");
-    const copyMonoCodeId = Array.from(
-      monocodeMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-    ).find((item) => item.textContent === "MonoCode session ID")!;
-    expect(copyMonoCodeId.disabled).toBe(false);
-    await act(async () => copyMonoCodeId.click());
+    const rebaseMenu = openCopyIdMenu("session-2");
+    const copyRebaseId = Array.from(
+      rebaseMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ).find((item) => item.textContent === "Rebase session ID")!;
+    expect(copyRebaseId.disabled).toBe(false);
+    await act(async () => copyRebaseId.click());
     expect(copyText).toHaveBeenNthCalledWith(2, "session-2");
   });
 
-  it("keeps the MonoCode ID available before the harness supplies an ID", async () => {
+  it("keeps the Rebase ID available before the harness supplies an ID", async () => {
     act(() => render());
     const copyMenu = openCopyIdMenu("session-1");
     const copyHarnessId = Array.from(
       copyMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
     ).find((item) => item.textContent === "Harness session ID")!;
-    const copyMonoCodeId = Array.from(
+    const copyRebaseId = Array.from(
       copyMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-    ).find((item) => item.textContent === "MonoCode session ID")!;
+    ).find((item) => item.textContent === "Rebase session ID")!;
     expect(copyHarnessId.disabled).toBe(true);
-    expect(copyMonoCodeId.disabled).toBe(false);
-    await act(async () => copyMonoCodeId.click());
+    expect(copyRebaseId.disabled).toBe(false);
+    await act(async () => copyRebaseId.click());
     expect(copyText).toHaveBeenCalledExactlyOnceWith("session-1");
   });
 });
@@ -1080,7 +1080,7 @@ describe("sidebar reorder affordances", () => {
       },
     ];
     localStorage.setItem(
-      "monocode.sessionFolders",
+      "rebase.sessionFolders",
       JSON.stringify({
         "/workspace/project": [
           {
@@ -1206,7 +1206,7 @@ describe("sidebar pinned sessions", () => {
     expect(group.querySelector('[data-session-card="session-1"]')).toBeNull();
     expect(
       JSON.parse(
-        localStorage.getItem("monocode.pinnedSessionsCollapsed") ?? "{}",
+        localStorage.getItem("rebase.pinnedSessionsCollapsed") ?? "{}",
       ),
     ).toEqual({ "/workspace/project": true });
   });

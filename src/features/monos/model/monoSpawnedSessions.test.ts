@@ -37,7 +37,7 @@ it("attaches accepted launches to their originating turn without mutating or dup
   expect(recordMonoSpawnedSession(mono, "reply", launch)).toBe(mono);
 });
 
-function receipt(command = "monocode app sessions.start", ok = true): Block {
+function receipt(command = "rebase app sessions.start", ok = true): Block {
   return {
     id: "call",
     role: "tool",
@@ -56,7 +56,7 @@ it("recovers confirmed launches from older chats, including shell wrappers, and 
   expect(monoSpawnedSessions([receipt()])).toEqual([launch]);
   expect(
     monoSpawnedSessions([
-      receipt("/bin/zsh -lc 'monocode app sessions.start'"),
+      receipt("/bin/zsh -lc 'rebase app sessions.start'"),
     ]),
   ).toEqual([launch]);
   expect(
@@ -78,8 +78,8 @@ it("does not turn failed, pending, unrelated or truncated output into session li
   expect(
     monoSpawnedSessions([
       receipt(undefined, false),
-      receipt("monocode app sessions.read"),
-      receipt("echo monocode app sessions.start"),
+      receipt("rebase app sessions.read"),
+      receipt("echo rebase app sessions.start"),
       { ...call, role: "assistant" },
       { ...call, tool: { ...call.tool, status: "in_progress" } },
       { ...call, tool: { ...call.tool, detail: '{"ok":true,"result":' } },
@@ -96,7 +96,7 @@ function appReceipt(action: string, result: unknown): Block {
       status: "completed",
       preview: {
         kind: "shell",
-        title: `/bin/zsh -lc 'monocode app ${action}'`,
+        title: `/bin/zsh -lc 'rebase app ${action}'`,
       },
       detail: JSON.stringify({ ok: true, result }),
     },

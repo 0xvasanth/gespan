@@ -10,8 +10,8 @@ use std::sync::{
 };
 use std::time::Duration;
 
-const ADDRESS: &str = "MONOCODE_SSH_ASKPASS_ADDRESS";
-const SECRET: &str = "MONOCODE_SSH_ASKPASS_SECRET";
+const ADDRESS: &str = "REBASE_SSH_ASKPASS_ADDRESS";
+const SECRET: &str = "REBASE_SSH_ASKPASS_SECRET";
 
 #[derive(Serialize, Deserialize)]
 struct Request {
@@ -135,7 +135,7 @@ impl Askpass {
                 std::env::current_exe().map_err(|e| e.to_string())?,
             )
             .env("SSH_ASKPASS_REQUIRE", "force")
-            .env("DISPLAY", "monocode:0")
+            .env("DISPLAY", "rebase:0")
             .env(ADDRESS, self.address.to_string())
             .env(SECRET, &self.secret);
         Ok(())

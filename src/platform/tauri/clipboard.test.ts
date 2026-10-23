@@ -94,7 +94,7 @@ it("rejects clipboard files whose decoded bytes exceed the attachment limit", ()
       },
     ]),
   );
-  const html = `<div data-monocode-files="${payload}"></div>`;
+  const html = `<div data-rebase-files="${payload}"></div>`;
 
   expect(
     messageFilesFromClipboard({
