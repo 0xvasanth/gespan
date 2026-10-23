@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="104 104 816 816" width="512" height="512">
+  <title>Rebase</title>
+  <desc>Eight rounded blocks run clockwise from near-white to deep purple around a terminal prompt. Transparent background; each block has a thin outline in its own darker shade so the light blocks stay visible on white.</desc>
+  <rect id="left-top" x="146.5" y="314.5" width="163" height="163" rx="21.5" fill="#ede9fe" stroke="#92909d" stroke-width="5"/>
+  <rect id="top-left" x="314.5" y="146.5" width="163" height="163" rx="21.5" fill="#c0affc" stroke="#776c9c" stroke-width="5"/>
+  <rect id="top-right" x="546.5" y="146.5" width="163" height="163" rx="21.5" fill="#af97fa" stroke="#6c5d9b" stroke-width="5"/>
+  <rect id="right-top" x="714.5" y="314.5" width="163" height="163" rx="21.5" fill="#9f7ef8" stroke="#624e99" stroke-width="5"/>
+  <rect id="right-bottom" x="714.5" y="546.5" width="163" height="163" rx="21.5" fill="#8f64f6" stroke="#583e98" stroke-width="5"/>
+  <rect id="bottom-right" x="546.5" y="714.5" width="163" height="163" rx="21.5" fill="#7e47ea" stroke="#4e2c91" stroke-width="5"/>
+  <rect id="bottom-left" x="314.5" y="714.5" width="163" height="163" rx="21.5" fill="#6e2ada" stroke="#441a87" stroke-width="5"/>
+  <rect id="left-bottom" x="146.5" y="546.5" width="163" height="163" rx="21.5" fill="#5b22b4" stroke="#38156f" stroke-width="5"/>
+  <rect id="prompt" x="430.5" y="430.5" width="163" height="163" rx="21.5" fill="#ede9fe" stroke="#92909d" stroke-width="5"/>
+  <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M475.69 478.56 L506.38 506.38 L475.69 534.38" stroke-width="12.44"/>
+    <path d="M512.12 542.88 H548.25" stroke-width="13"/>
+  </g>
+</svg>

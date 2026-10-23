@@ -1,39 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- Rebase icon: purple/violet grid with terminal prompt on black -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Rebase icon</title>
+  <desc>Eight blocks run clockwise from near-white to deep purple around a terminal prompt, on black.</desc>
   <rect width="1024" height="1024" fill="#000"/>
-
-  <!-- Row 1: 2 blocks -->
-  <rect x="312" y="150" width="136" height="148" rx="4" fill="#B9A0FA"/>
-  <rect x="450" y="150" width="148" height="148" rx="4" fill="#B6A0FA"/>
-
-  <!-- Row 2: 3 blocks + center prompt -->
-  <rect x="150" y="314" width="148" height="134" rx="4" fill="#EDE9FE"/>
-  <!-- center prompt block -->
-  <rect x="450" y="300" width="148" height="148" rx="8" fill="#DBD2FD"/>
-  <text x="524" y="390" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="72" font-weight="600" fill="#1E1B4B" text-anchor="middle">
-    &gt;_
-  </text>
-  <rect x="750" y="314" width="130" height="134" rx="4" fill="#9F7EF8"/>
-
-  <!-- Row 3: 2 wide blocks on sides -->
-  <rect x="150" y="450" width="148" height="148" rx="4" fill="#8F68CE"/>
-  <rect x="750" y="450" width="130" height="148" rx="4" fill="#936CF4"/>
-
-  <!-- Row 4: 3 blocks -->
-  <rect x="150" y="600" width="148" height="110" rx="4" fill="#5B22B4"/>
-  <rect x="600" y="600" width="148" height="148" rx="4" fill="#8554EF"/>
-  <rect x="750" y="600" width="130" height="112" rx="4" fill="#8E62F5"/>
-
-  <!-- Row 5: 2 blocks -->
-  <rect x="312" y="750" width="136" height="130" rx="4" fill="#6D29D9"/>
-  <rect x="450" y="750" width="148" height="130" rx="4" fill="#783DE4"/>
-
-  <!-- Additional blocks for the cross pattern -->
-  <rect x="300" y="300" width="148" height="148" rx="4" fill="#D7CDFC"/>
-  <rect x="300" y="450" width="148" height="148" rx="4" fill="#D2C5F2"/>
-  <rect x="300" y="600" width="148" height="148" rx="4" fill="#6928D1"/>
-  <rect x="450" y="300" width="148" height="148" rx="4" fill="#DBD2FD"/>
-  <rect x="600" y="150" width="112" height="148" rx="4" fill="#AD95F9"/>
-  <rect x="600" y="300" width="148" height="148" rx="4" fill="#A384F8"/>
-  <rect x="600" y="750" width="112" height="130" rx="4" fill="#7D46E8"/>
+  <rect id="left-top" x="144" y="312" width="168" height="168" rx="24" fill="#ede9fe"/>
+  <rect id="top-left" x="312" y="144" width="168" height="168" rx="24" fill="#c0affc"/>
+  <rect id="top-right" x="544" y="144" width="168" height="168" rx="24" fill="#af97fa"/>
+  <rect id="right-top" x="712" y="312" width="168" height="168" rx="24" fill="#9f7ef8"/>
+  <rect id="right-bottom" x="712" y="544" width="168" height="168" rx="24" fill="#8f64f6"/>
+  <rect id="bottom-right" x="544" y="712" width="168" height="168" rx="24" fill="#7e47ea"/>
+  <rect id="bottom-left" x="312" y="712" width="168" height="168" rx="24" fill="#6e2ada"/>
+  <rect id="left-bottom" x="144" y="544" width="168" height="168" rx="24" fill="#5b22b4"/>
+  <rect id="prompt" x="428" y="428" width="168" height="168" rx="24" fill="#ede9fe"/>
+  <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M475.69 478.56 L506.38 506.38 L475.69 534.38" stroke-width="12.44"/>
+    <path d="M512.12 542.88 H548.25" stroke-width="13"/>
+  </g>
 </svg>
