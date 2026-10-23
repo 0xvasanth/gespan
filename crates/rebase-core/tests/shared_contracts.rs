@@ -113,7 +113,7 @@ fn pilot_tables_match_tauri() {
 fn storage_keys_are_rebase() {
     let bad: Vec<_> = offenders(|l| l.contains("\"monocode:") || l.contains("\"monocode."))
         .into_iter()
-        .filter(|l| !l.contains("monocode.png") && !l.contains("monocode.local"))
+        .filter(|l| !l.contains("monocode.local"))
         .collect();
     assert!(bad.is_empty(), "{bad:#?}");
     let all: String = native_sources().into_iter().map(|(_, t)| t).collect();

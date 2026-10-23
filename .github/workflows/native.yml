@@ -16,6 +16,22 @@ on:
       - 'package.json'
       - '.github/workflows/native.yml'
       - '.github/workflows/native-release.yml'
+      # Tauri files the shared-contract tests read; drift must fail this workflow.
+      - 'src-tauri/src/remote_bootstrap.sh'
+      - 'src-tauri/src/remote_bootstrap.ps1'
+      - 'src-tauri/src/ssh_askpass.rs'
+      - 'src-tauri/src/remote_ssh.rs'
+      - 'host/windows-acl.ps1'
+      - 'host/package.mjs'
+      - 'src-tauri/src/session_store.rs'
+      - 'src-tauri/src/pilot_transcript.rs'
+      - 'src-tauri/src/codex_pilot_store.rs'
+      - 'src-tauri/src/mobile_access.rs'
+      - 'src-tauri/tauri.conf.json'
+      - 'src-tauri/src/checkpoint/turn.rs'
+      - 'src-tauri/src/pilot.rs'
+      - 'src/features/pilots/model/pilot.ts'
+      - 'src/integrations/harness/core/register.ts'
 
 permissions:
   contents: read

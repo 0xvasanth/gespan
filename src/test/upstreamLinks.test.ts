@@ -23,7 +23,10 @@ const NATIVE_SKIP = [
   /^vendor\//,
   /^crates\/[^/]+\/target\//,
   /^scripts\/native-dependencies\.test\.mjs$/, // asserts the untouched vendored build.rs message
-  /^crates\/rebase-core\/tests\/shared_contracts\.rs$/, // asserts the legacy MonoCode values are gone
+];
+// Lines that name a legacy value on purpose, to assert it is gone.
+const NATIVE_LINE_ALLOW: { file: string; line: RegExp }[] = [
+  { file: "crates/rebase-core/tests/shared_contracts.rs", line: /monocode|dev\.usemono|hardbeat920/i },
 ];
 
 const EXCLUDED = [
@@ -71,7 +74,7 @@ describe("upstream links", () => {
         continue;
       }
       text.split("\n").forEach((line, i) => {
-        if (NATIVE_FORBIDDEN.test(line)) hits.push(`${rel}:${i + 1}`);
+        if (NATIVE_FORBIDDEN.test(line) && !NATIVE_LINE_ALLOW.some((a) => a.file === rel && a.line.test(line))) hits.push(`${rel}:${i + 1}`);
       });
     }
     expect(hits).toEqual([]);

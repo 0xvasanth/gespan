@@ -59,7 +59,7 @@ function stripTypography(text: string): string {
 const ALLOWED: { file: string; line: RegExp; why: string }[] = [
   { file: "src/test/noMonoReferences.test.ts", line: /./, why: "this guard names the pattern it forbids" },
   { file: "src/test/sharedContracts.test.ts", line: /./, why: "asserts the GPUI app no longer reads the legacy MonoCode values" },
-  { file: "crates/rebase-core/tests/shared_contracts.rs", line: /./, why: "asserts the GPUI app no longer reads the legacy MonoCode values" },
+  { file: "crates/rebase-core/tests/shared_contracts.rs", line: /monocode|mono_|\bmonos?\b|mono[A-Z]|railMonos|hardbeat920|mono:|dev\.usemono/i, why: "asserts the GPUI app no longer reads the legacy MonoCode values" },
   { file: "scripts/native-dependencies.test.mjs", line: /Screen capture is disabled in Monocode/, why: "asserts the message of the untouched vendored GPUI build.rs" },
   { file: "src/test/upstreamLinks.test.ts", line: /usemono|monocode/i, why: "this guard names the upstream URL it forbids" },
   { file: "mobile/src/ui/theme.ts", line: /./, why: "the unrelated monochrome-style \"mono\" theme (brief)" },
