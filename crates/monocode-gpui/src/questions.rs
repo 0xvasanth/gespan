@@ -789,6 +789,9 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use monocode_core::agent::{QuestionItem, QuestionOption};
     use std::{cell::RefCell, rc::Rc};
+
+    type Replies = Rc<RefCell<Vec<Option<Vec<Vec<String>>>>>>;
+
     fn option(label: &str) -> QuestionOption {
         QuestionOption {
             id: label.to_lowercase(),
@@ -796,13 +799,7 @@ mod tests {
             description: String::new(),
         }
     }
-    fn card(
-        cx: &mut TestAppContext,
-    ) -> (
-        gpui::WindowHandle<QuestionCard>,
-        Rc<RefCell<Vec<Option<Vec<Vec<String>>>>>>,
-        Subscription,
-    ) {
+    fn card(cx: &mut TestAppContext) -> (gpui::WindowHandle<QuestionCard>, Replies, Subscription) {
         cx.update(|cx| cx.set_reduce_motion(true));
         let request = Question {
             id: "r".into(),
