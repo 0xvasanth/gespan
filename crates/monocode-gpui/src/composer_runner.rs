@@ -3,6 +3,8 @@ use crate::{popover::AnchorSlot, transcript::TranscriptView};
 use gpui::{Context, Entity, Render, Window, canvas, div, point, prelude::*, px, size};
 use serde::Deserialize;
 use std::time::Instant;
+/// Matches the shared pulse clock's 30fps tick.
+const TICK_MS: f64 = 1000. / 30.;
 #[derive(Clone, Default, Deserialize)]
 struct Frame {
     active: bool,
@@ -35,6 +37,8 @@ pub(crate) struct Runner {
     color: u32,
     transcript: Entity<TranscriptView>,
     frame: Frame,
+    /// The physics tick `frame` was stepped at.
+    stepped: Option<u64>,
 }
 impl Runner {
     pub fn new(transcript: Entity<TranscriptView>, cx: &mut Context<Self>) -> Self {
@@ -55,6 +59,7 @@ impl Runner {
             color: 0x459cf7,
             transcript,
             frame: Default::default(),
+            stepped: None,
         }
     }
     pub fn configure(
@@ -91,11 +96,16 @@ impl Render for Runner {
         let top = bounds.top().as_f32() + 64.;
         let obstacle=self.transcript.read(cx).jump_bounds().filter(|b|b.right()>bounds.left()&&b.left()<bounds.right()&&b.bottom().as_f32()>=top-48.&&b.top().as_f32()<=top+12.).map(|b|serde_json::json!({"left":(b.left()-bounds.left()).as_f32(),"right":(b.right()-bounds.left()).as_f32(),"height":(top-b.top().as_f32()+10.).max(28.)}));
         let reduced = cx.reduce_motion();
-        let result = self.context.with(|cx| {
+        // Reading the transcript re-renders this view on every streamed
+        // token. Physics advance on a fixed tick instead, so those extra
+        // renders repaint the same frame rather than nudging the runner
+        // forward at uneven intervals.
+        let tick = (self.started.elapsed().as_secs_f64() * 1000. / TICK_MS) as u64;
+        let result = (self.stepped != Some(tick)).then(|| self.context.with(|cx| {
             let o: rquickjs::Object = cx.globals().get("NativeArcade")?;
             let f: rquickjs::Function = o.get("runnerFrame")?;
             f.call::<_, String>((
-                self.started.elapsed().as_secs_f64() * 1000.,
+                tick as f64 * TICK_MS,
                 width,
                 self.busy,
                 obstacle
@@ -104,16 +114,19 @@ impl Render for Runner {
                 reduced,
                 self.name,
             ))
-        });
-        if let Ok(json) = result
-            && let Ok(frame) = serde_json::from_str(&json)
-        {
-            self.frame = frame;
+        }));
+        if let Some(result) = result {
+            self.stepped = Some(tick);
+            if let Ok(json) = result
+                && let Ok(frame) = serde_json::from_str(&json)
+            {
+                self.frame = frame;
+            }
         }
-        // Each frame steps the physics in JS and repaints the conversation
-        // around it, so the pixel-art runner moves at 15fps.
+        // It covers ground quickly, so it needs the full 30fps to read as
+        // running rather than hopping.
         if self.busy || self.frame.active {
-            crate::pulse::request(crate::pulse::Rate::Half, window, cx);
+            crate::pulse::request(crate::pulse::Rate::Smooth, window, cx);
         }
         let frame = self.frame.clone();
         let color: gpui::Hsla = gpui::rgb(self.color).into();
@@ -133,6 +146,12 @@ impl Render for Runner {
                                   alpha: f32,
                                   window: &mut Window| {
                         let unit = side / 8.;
+                        // Whole device pixels, so the art doesn't shimmer as
+                        // it crosses pixel boundaries.
+                        let scale = window.scale_factor();
+                        let snap = |v: f32| (v * scale).round() / scale;
+                        let left = snap(x - side / 2.);
+                        let top = snap(64. - y - side);
                         let mut ink = color;
                         ink.a *= alpha;
                         for (iy, row) in rows.iter().enumerate() {
@@ -140,13 +159,13 @@ impl Render for Runner {
                                 if pixel != b'#' {
                                     continue;
                                 }
-                                let px_x = x - side / 2.
+                                let px_x = left
                                     + if facing < 0 {
                                         (7 - ix) as f32 * unit
                                     } else {
                                         ix as f32 * unit
                                     };
-                                let px_y = 64. - y - side + iy as f32 * unit;
+                                let px_y = top + iy as f32 * unit;
                                 if px_y >= 64. {
                                     continue;
                                 }

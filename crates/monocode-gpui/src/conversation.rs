@@ -2580,9 +2580,11 @@ impl Conversation {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<Entity<crate::composer_runner::Runner>> {
-        if cx
-            .try_global::<crate::settings::Preferences>()
-            .is_some_and(|p| !p.composer_mascot)
+        // A Mono already signs its turns with its own mascot.
+        if self.settings.mono.is_some()
+            || cx
+                .try_global::<crate::settings::Preferences>()
+                .is_some_and(|p| !p.composer_mascot)
         {
             return None;
         }
