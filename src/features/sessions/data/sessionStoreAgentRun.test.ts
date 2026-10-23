@@ -52,16 +52,29 @@ describe("agentRun fields shared with Rebase Native", () => {
   beforeEach(() => invoke.mockReset());
 
   it("keeps Native's new fields when Tauri appends a step and saves", async () => {
+    // The exact shape Native's `desktop_agent` writes (tool/tasks.rs).
     const session = await load({
       name: "Resumed · Review",
-      steps: [{ id: "a", kind: "tool", text: "ls", status: "completed" }],
+      model: null,
+      agentType: null,
+      nativeIds: ["agent-x"],
+      nativeBrief: "Check the parser",
+      steps: [
+        {
+          id: "a",
+          kind: "tool",
+          text: "ls",
+          detail: "",
+          status: "completed",
+          toolKind: "execute",
+          detailOmitted: false,
+          nativePresentation: { nativeName: "Bash", nativeInput: '{"command":"ls"}' },
+        },
+      ],
       agentId: "agent-x",
       resumeOf: "toolu_agent",
       activity: "Reading src",
       continuation: true,
-      // Fields Tauri does not model survive too.
-      nativeIds: ["agent-x"],
-      nativeBrief: "Check the parser",
     });
     const updated = applyHarnessEvent(session, {
       type: "agent.step",
@@ -73,6 +86,7 @@ describe("agentRun fields shared with Rebase Native", () => {
     });
     const saved = sanitizeSessionForPersist(updated).blocks[1].agentRun;
     expect(saved?.steps.map((step) => step.id)).toEqual(["a", "b"]);
+    // Step-level Native fields (nativePresentation) are a known follow-up.
     expect(saved).toMatchObject({
       agentId: "agent-x",
       resumeOf: "toolu_agent",

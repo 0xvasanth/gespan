@@ -223,6 +223,7 @@ export function applyHarnessEvent(
         id: crypto.randomUUID(),
         role: "system",
         text: event.text,
+        ...(event.sentAt !== undefined ? { sentAt: event.sentAt } : {}),
         interjection: {
           customType: event.customType,
           ...(event.severity ? { severity: event.severity } : {}),

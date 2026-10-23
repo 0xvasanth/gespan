@@ -341,10 +341,17 @@ export async function steerClaudeTurn(input: SteerTurnInput): Promise<void> {
   const content = (message.message as { content: unknown[] }).content;
   if (content.length === 0) return;
 
-  await writeJson(input.sessionId, message);
   // After Claude yielded, the next turn answers this message. Mid-turn,
-  // Claude folds it into the current turn instead.
-  if (live.turnResultSeen) live.userTurnPending = true;
+  // Claude folds it into the current turn instead. Set before writing: the
+  // answering turn's init can arrive before the write resolves.
+  const pending = live.turnResultSeen && !live.userTurnPending;
+  if (pending) live.userTurnPending = true;
+  try {
+    await writeJson(input.sessionId, message);
+  } catch (error) {
+    if (pending) live.userTurnPending = false;
+    throw error;
+  }
 }
 
 export function respondClaudeApproval(
@@ -460,10 +467,16 @@ export function restoreClaudeAgentRuns(
   threadId: string,
   blocks: readonly Block[],
 ): void {
-  if (!threadId || registryByThread.has(threadId)) return;
+  if (!threadId) return;
   const providerSessionId = resumeByThread.get(threadId)?.sessionId;
   if (!providerSessionId) return;
-  const registry = new AgentRegistry();
+  // Seeding is additive and marks nothing active, like Native's seed at every
+  // process start, so it merges into a registry this app already holds.
+  const retained = registryByThread.get(threadId);
+  const registry =
+    retained?.providerSessionId === providerSessionId
+      ? retained.registry
+      : new AgentRegistry();
   registry.seedFromBlocks(blocks);
   registryByThread.set(threadId, { providerSessionId, registry });
 }
@@ -1405,6 +1418,12 @@ function handleAgentLifecycle(
 
   const updated = parseTaskUpdated(rec);
   if (updated) {
+    if (isEndedStatus(updated.status)) {
+      const owner = taskOwner(live, undefined, updated.taskId);
+      if (owner && live.registry.isResume(owner)) {
+        live.registry.noteFinished(updated.taskId);
+      }
+    }
     const task = live.agentTasks.get(updated.taskId);
     if (task && updated.backgrounded !== undefined) {
       task.backgrounded = updated.backgrounded;
@@ -1417,10 +1436,6 @@ function handleAgentLifecycle(
       background.description = updated.description;
     }
     if (isTerminalAgentTaskStatus(updated.status)) {
-      const owner = taskOwner(live, undefined, updated.taskId);
-      if (owner && live.registry.isResume(owner)) {
-        live.registry.noteFinished(updated.taskId);
-      }
       settleBackgroundRow(
         live,
         updated.taskId,
@@ -1500,11 +1515,15 @@ function handleToolProgress(live: Live, rec: Record<string, unknown>): void {
   if (!(own && isAgentToolName(own.name)) && progress.parentToolUseId) {
     // A sub-agent's call in flight: a step wherever that agent's work goes.
     const parentId = progress.parentToolUseId;
+    // Nothing to show: route nothing, so no empty block opens.
+    if (!progress.toolName) {
+      if (liveParent(live, parentId)) touchLiveParent(live, parentId);
+      return;
+    }
     const target =
       live.stepOwners.get(progress.toolUseId) ??
       routeChild(live, parentId, stringField(rec, "agent_id"));
     if (target === parentId) touchLiveParent(live, parentId);
-    if (!progress.toolName) return;
     live.onEvent({
       type: "agent.step",
       callId: target,
@@ -1548,8 +1567,11 @@ function handleToolProgress(live: Live, rec: Record<string, unknown>): void {
  */
 function liveParent(live: Live, parentId: string): InFlightTool | undefined {
   const parent = live.toolsById.get(parentId);
-  if (!parent || !isAgentToolName(parent.name)) return undefined;
-  if (live.doneTools.has(parentId)) return undefined;
+  if (!parent) return undefined;
+  // An agent call, or a SendMessage that became a resumed agent run.
+  const agent =
+    isAgentToolName(parent.name) || live.resumedBlocks.has(parentId);
+  if (!agent || live.doneTools.has(parentId)) return undefined;
   return parent;
 }
 
@@ -1687,6 +1709,46 @@ function noteStep(
   steps.add(stepId);
 }
 
+/** Rebase Native bounds a child result to 16 KiB before storing it. */
+const MAX_CHILD_DETAIL_BYTES = 16 * 1024;
+
+function boundDetail(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= MAX_CHILD_DETAIL_BYTES) return text;
+  // Cut on a character boundary at or below the limit.
+  return new TextDecoder()
+    .decode(bytes.slice(0, MAX_CHILD_DETAIL_BYTES))
+    .replace(/\uFFFD$/, "");
+}
+
+/**
+ * Rebase Native's terminal set: any status it can read other than running.
+ * Unknown statuses are not terminal.
+ */
+function isEndedStatus(status: string | undefined): boolean {
+  switch ((status ?? "").toLowerCase()) {
+    case "completed":
+    case "complete":
+    case "done":
+    case "finished":
+    case "closed":
+    case "stopped":
+    case "failed":
+    case "error":
+    case "errored":
+    case "notfound":
+    case "not_found":
+    case "interrupted":
+    case "cancelled":
+    case "canceled":
+    case "killed":
+    case "aborted":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function stepCount(live: Live, block: string): number {
   return live.toolSteps.get(block)?.size ?? 0;
 }
@@ -1704,9 +1766,12 @@ function noteSubagentTool(
 ): void {
   const parentId = stringField(rec, "parent_tool_use_id");
   if (!parentId) return;
+  if (!id) {
+    if (liveParent(live, parentId)) touchLiveParent(live, parentId);
+    return;
+  }
   const target = routeChild(live, parentId, stringField(rec, "agent_id"));
   if (target === parentId) touchLiveParent(live, parentId);
-  if (!id) return;
   const preview = previewFromTool(name, input);
   live.onEvent({
     type: "agent.step",
@@ -1731,7 +1796,18 @@ function noteSubagentNarration(live: Live, rec: Record<string, unknown>): void {
   if (!parentId) return;
   const thinking = assistantThinkingBlocks(rec).join("").trim();
   const text = assistantTextBlocks(rec).join("").trim();
-  if (!thinking && !text && !liveParent(live, parentId)) return;
+  if (!thinking && !text) {
+    // Only a live parent's model is worth noting; nothing else to place.
+    const model = stringField(asRecord(rec.message), "model");
+    if (model && liveParent(live, parentId))
+      live.onEvent({
+        type: "tool.updated",
+        callId: parentId,
+        kind: "agent",
+        agentModel: model,
+      });
+    return;
+  }
   const target = routeChild(live, parentId, stringField(rec, "agent_id"));
   const model = stringField(asRecord(rec.message), "model");
   if (model && target === parentId)
@@ -1773,6 +1849,8 @@ function noteSubagentResults(live: Live, rec: Record<string, unknown>): void {
   if (!parentId) return;
   for (const result of toolResultsFromUserMessage(rec)) {
     const status = result.isError ? "failed" : "completed";
+    // The output is the step's detail whatever the outcome, as in Native.
+    const detail = boundDetail(result.text);
     const owner = live.stepOwners.get(result.toolUseId);
     if (owner) {
       live.onEvent({
@@ -1782,7 +1860,7 @@ function noteSubagentResults(live: Live, rec: Record<string, unknown>): void {
         kind: "tool",
         text: "",
         status,
-        ...(result.isError && result.text ? { detail: result.text } : {}),
+        ...(detail ? { detail } : {}),
       });
       continue;
     }
@@ -1794,7 +1872,7 @@ function noteSubagentResults(live: Live, rec: Record<string, unknown>): void {
       kind: "tool",
       text: "Tool result",
       status,
-      ...(result.text ? { detail: result.text } : {}),
+      ...(detail ? { detail } : {}),
     });
     noteStep(live, target, result.toolUseId, "tool");
   }
@@ -1903,7 +1981,7 @@ function noteResumedNotification(
   notice: ClaudeAgentTaskNotification,
 ): void {
   if (live.backgrounded.delete(notice.taskId) && live.turnResultSeen) {
-    live.wakeSummary = notice.summary || undefined;
+    live.wakeSummary = notice.summary || notice.description || undefined;
   }
   const owner = taskOwner(live, notice.toolUseId, notice.taskId);
   if (!owner || !live.registry.isResume(owner)) return;
@@ -1925,7 +2003,12 @@ function noteResumedNotification(
  */
 function emitWakeMarker(live: Live, text: string): void {
   if (live.muteUpdates) return;
-  live.onEvent({ type: "interjection", text, customType: "task-notification" });
+  live.onEvent({
+    type: "interjection",
+    text,
+    customType: "task-notification",
+    sentAt: Date.now(),
+  });
 }
 
 function isBackgroundedAgentTool(live: Live, toolUseId: string): boolean {

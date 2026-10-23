@@ -15,6 +15,7 @@ import type {
   CompactContextInput,
   ApprovalDecision,
 } from "../src/integrations/harness/core/types";
+import type { Block } from "../src/features/sessions/model/session";
 import type { UserQuestionReply } from "../src/features/sessions/model/userQuestion";
 import type { RemoteProvider } from "../src/features/connections/model/protocol";
 import type { GeneratedSessionTitle } from "../src/features/sessions/model/sessionTitle";
@@ -41,6 +42,12 @@ export interface HostProvider {
   cancel(id: string): Promise<void>;
   stop(id: string): Promise<void>;
   bind(id: string, providerId: string, cwd: string): void;
+  /**
+   * Seed provider agent-run state from the session's blocks after a bind. The
+   * host forgets the provider after every turn, so the transcript it holds is
+   * what lets a later turn place work from agents dispatched earlier.
+   */
+  restoreAgentRuns?(id: string, blocks: Block[]): void;
   approve(id: string, request: number, decision: ApprovalDecision): void;
   answer(id: string, request: number, reply: UserQuestionReply): void;
   generateTitle?(input: {
@@ -69,6 +76,7 @@ export const hostProviders: Record<RemoteProvider, HostProvider> = {
     cancel: claude.cancelClaudeTurn,
     stop: claude.forgetClaudeSession,
     bind: claude.bindClaudeSession,
+    restoreAgentRuns: claude.restoreClaudeAgentRuns,
     approve: claude.respondClaudeApproval,
     answer: claude.respondClaudeQuestion,
     generateTitle: generateClaudeSessionTitle,

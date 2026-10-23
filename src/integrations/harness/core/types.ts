@@ -35,7 +35,12 @@ export type HarnessEvent =
       /** The same tasks with what each card can show and where it leads. */
       details?: BackgroundTaskDetail[];
     }
-  | ({ type: "interjection"; text: string } & InterjectionMeta)
+  | ({
+      type: "interjection";
+      text: string;
+      /** When the row was written (epoch ms); Rebase Native stamps its rows. */
+      sentAt?: number;
+    } & InterjectionMeta)
   | { type: "message.delta"; text: string }
   | { type: "message.completed" }
   | {

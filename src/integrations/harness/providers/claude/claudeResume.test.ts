@@ -553,3 +553,149 @@ describe("Claude resumed background agents", () => {
     assertResumedRun(sessionFrom(events, blocks));
   });
 });
+
+describe("Claude resumed background agents: parity details", () => {
+  it("stores each child result's output on its step", async () => {
+    const events: HarnessEvent[] = [];
+    await replayTurnOne("s1", events);
+    const { turn } = await openTurn("s1", events);
+    feed(events, lines(TURN_ONE + 1));
+    await turn;
+    const steps = toolSteps(run(sessionFrom(events), SEND));
+    expect(steps[0].detail).toBe("resumed-1");
+    // Output is stored whatever the outcome; failure is still the status.
+    expect(steps[0].status).toBe("completed");
+  });
+
+  it("merges a later seed into a registry the app already holds", async () => {
+    const blocks = await persistedTurnOne();
+    // An earlier bind left an empty registry for this thread.
+    rebind("s2", []);
+    restoreClaudeAgentRuns("s2", blocks);
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1));
+    await turn;
+    assertResumedRun(sessionFrom(events, blocks));
+  });
+
+  it("seeds through the real bindHarnessSession hook", async () => {
+    const blocks = await persistedTurnOne();
+    const { ensureClaudeRegistered } = await import("./claudeAdapter");
+    const { bindHarnessSession } = await import("../../core/registry");
+    ensureClaudeRegistered();
+    bindHarnessSession("claude", "s2", PROVIDER_SESSION, "/repo", undefined, blocks);
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1));
+    await turn;
+    assertResumedRun(sessionFrom(events, blocks));
+  });
+
+  it("treats a running resumption as a live parent", async () => {
+    const events: HarnessEvent[] = [];
+    await replayTurnOne("s1", events);
+    const { turn } = await openTurn("s1", events);
+    feed(events, lines(TURN_ONE + 1, 175));
+    feed(events, [lateChild(SEND, "under-send")]);
+    expect(stepOwner(events, "under-send")).toBe(SEND);
+    feed(events, lines(176));
+    await turn;
+  });
+
+  it("ends the resumption on any terminal status, as Native does", async () => {
+    rebind("s2", await persistedTurnOne());
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1, 175));
+    feed(events, [
+      JSON.stringify({
+        type: "system",
+        subtype: "task_updated",
+        task_id: AGENT_ID,
+        patch: { status: "cancelled" },
+      }),
+      lateChild(AGENT, "after-cancel"),
+    ]);
+    expect(stepOwner(events, "after-cancel").startsWith(`continued:${AGENT}:`)).toBe(true);
+    feed(events, [
+      JSON.stringify({
+        type: "system",
+        subtype: "task_notification",
+        task_id: AGENT_ID,
+        tool_use_id: SEND,
+        status: "cancelled",
+      }),
+      // Claude takes the thread back up, then yields with nothing running.
+      INIT,
+      JSON.stringify({ type: "result", subtype: "success" }),
+    ]);
+    await turn;
+  });
+
+  it("falls back to the task description for the wake marker", async () => {
+    const events: HarnessEvent[] = [];
+    await replayTurnOne("s1", events);
+    const { turn } = await openTurn("s1", events);
+    const notice = JSON.parse(FRAMES[194]) as Record<string, unknown>;
+    delete notice.summary;
+    notice.description = NAME;
+    const perLine = feed(events, [
+      ...lines(TURN_ONE + 1, 194),
+      JSON.stringify(notice),
+      ...lines(196),
+    ]);
+    await turn;
+    expect(markers(perLine.flat())).toEqual([NAME]);
+  });
+
+  it("opens no synthetic block for a frame it cannot attach", async () => {
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s1", events);
+    feed(events, [
+      JSON.stringify({
+        type: "tool_progress",
+        tool_use_id: "child",
+        parent_tool_use_id: "toolu_unknown",
+      }),
+    ]);
+    expect(
+      events.some((event) => event.type === "tool.started"),
+    ).toBe(false);
+    feed(events, [JSON.stringify({ type: "result", subtype: "success" })]);
+    await turn;
+  });
+
+  it("stamps the wake marker row with sentAt, as Native does", async () => {
+    const events: HarnessEvent[] = [];
+    await replayTurnOne("s1", events);
+    const { turn } = await openTurn("s1", events);
+    feed(events, lines(TURN_ONE + 1));
+    await turn;
+    const row = sessionFrom(events).blocks.find(
+      (b) => b.interjection?.customType === "task-notification",
+    );
+    expect(typeof row?.sentAt).toBe("number");
+  });
+
+  it("marks the user's turn before its write resolves", async () => {
+    rebind("s2", await persistedTurnOne());
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1, 195));
+    // Claude starts the answering turn before the write settles.
+    const steer = steerClaudeTurn({
+      sessionId: "s2",
+      cwd: "/repo",
+      model: "claude:claude-sonnet-5",
+      text: "Thanks, what next?",
+    });
+    const answer = feed(events, lines(196, 237));
+    await steer;
+    expect(markers(answer.flat())).toEqual([]);
+    feed(events, [
+      JSON.stringify({ type: "result", subtype: "success", session_id: PROVIDER_SESSION }),
+    ]);
+    await turn;
+  });
+});

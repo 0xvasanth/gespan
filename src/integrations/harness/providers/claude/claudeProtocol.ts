@@ -733,6 +733,7 @@ export type ClaudeAgentTaskNotification = {
   toolUseId?: string;
   status: string;
   summary: string;
+  description?: string;
   ambient: boolean;
 };
 
@@ -752,6 +753,9 @@ export function parseTaskNotification(
     toolUseId: stringField(rec, "tool_use_id"),
     status: stringField(rec, "status") ?? "completed",
     summary: stringField(rec, "summary") ?? "",
+    ...(stringField(rec, "description")
+      ? { description: stringField(rec, "description") }
+      : {}),
     ambient: rec.ambient === true,
   };
 }
