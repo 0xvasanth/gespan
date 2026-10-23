@@ -1008,7 +1008,7 @@ function GeneralPage({
         <Row
           id="board"
           label="Board"
-          description="A Kanban board for tracking work. Cards can link to sessions, Pilots and Flow runs, and move on their own as that work starts and finishes."
+          description="A Kanban board for tracking work. Cards can link to sessions and Pilots, and move on their own as that work starts and finishes."
         >
           <Toggle label="Board" on={boardEnabled} onChange={onBoardEnabled} />
         </Row>

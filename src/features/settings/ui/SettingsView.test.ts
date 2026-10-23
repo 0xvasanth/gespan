@@ -706,6 +706,11 @@ describe("settings pages", () => {
 
     const ids = renderedSettingIds();
     expect(ids.indexOf("board")).toBe(ids.indexOf("notes") + 1);
+
+    // Cards link to sessions and Pilots; Flow runs aren't linkable.
+    const row = container.querySelector('[data-setting-id="board"]')!;
+    expect(row.textContent).toContain("Cards can link to sessions and Pilots");
+    expect(row.textContent).not.toContain("Flow");
   });
 
   it("finds the Board setting by its search keywords", () => {
