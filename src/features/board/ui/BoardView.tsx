@@ -36,7 +36,12 @@ import {
 import { BoardCardItem } from "./BoardCardItem";
 import { BoardColumnHeader } from "./BoardColumnHeader";
 import { MenuButton, MenuItem, NameInput } from "./boardControls";
-import { linkValue, resolveLink, type BoardLinkTarget } from "./boardFormat";
+import {
+  errorText,
+  linkValue,
+  resolveLink,
+  type BoardLinkTarget,
+} from "./boardFormat";
 import { CardComposer } from "./CardComposer";
 import { CardDetail } from "./CardDetail";
 import { KanbanBoard } from "./kanban/KanbanBoard";
@@ -74,9 +79,6 @@ function pickBoard(boards: readonly Board[], preferred: string | null) {
   return boards[0]?.id ?? null;
 }
 
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
-
 const BUTTON =
   "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-content/15 px-2.5 text-[12px] text-content/80 hover:border-content/30 hover:bg-content/10 hover:text-content";
 
@@ -88,7 +90,8 @@ type Props = {
   onToggleSidebar?: () => void;
   /** Sessions and Pilots a card can link to, with their live status. */
   linkTargets: readonly BoardLinkTarget[];
-  onOpenLinkedWork: (target: BoardLinkTarget) => void;
+  /** Rejects when the work can't be opened; the board shows the error. */
+  onOpenLinkedWork: (target: BoardLinkTarget) => Promise<void>;
 };
 
 export function BoardView({
@@ -162,8 +165,22 @@ function BoardContent({
 
   const fail = useCallback(
     (what: string) => (cause: unknown) =>
-      setError(`${what}: ${message(cause)}`),
+      setError(`${what}: ${errorText(cause)}`),
     [],
+  );
+
+  const openLinkedWork = useCallback(
+    (target: BoardLinkTarget) => {
+      const failed = fail("Couldn't open linked work");
+      try {
+        // Called now, so navigation starts in this tick; a synchronous throw
+        // lands in the same toast as a rejection.
+        void onOpenLinkedWork(target).catch(failed);
+      } catch (cause) {
+        failed(cause);
+      }
+    },
+    [fail, onOpenLinkedWork],
   );
 
   const loadBoards = useCallback(
@@ -329,7 +346,7 @@ function BoardContent({
       done={columnsById.get(card.columnId)?.role === "done"}
       link={resolveLink(card, targetsByValue)}
       onOpen={() => setOpenCard({ id: card.id })}
-      onOpenLinkedWork={onOpenLinkedWork}
+      onOpenLinkedWork={openLinkedWork}
       onRename={() => setOpenCard({ id: card.id, focus: "title" })}
       onLink={() => setOpenCard({ id: card.id, focus: "link" })}
       onDelete={() =>
@@ -510,7 +527,7 @@ function BoardContent({
           onClose={() => setOpenCard(null)}
           onOpenLinkedWork={(target) => {
             setOpenCard(null);
-            onOpenLinkedWork(target);
+            openLinkedWork(target);
           }}
           onError={setError}
         />

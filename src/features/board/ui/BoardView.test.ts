@@ -158,7 +158,7 @@ async function renderBoard(
   const props: ComponentProps<typeof BoardView> = {
     onClose: vi.fn(),
     linkTargets: [],
-    onOpenLinkedWork: vi.fn(),
+    onOpenLinkedWork: vi.fn(() => Promise.resolve()),
     ...overrides,
   };
   await act(async () => {
@@ -374,10 +374,57 @@ describe("BoardView linked work", () => {
     const open = linked.querySelector<HTMLButtonElement>(
       'button[aria-label="Open linked work"]',
     )!;
-    act(() => open.click());
+    await act(async () => open.click());
     expect(props.onOpenLinkedWork).toHaveBeenCalledWith(target);
-    // The button doesn't also open the card.
+    // The button doesn't also open the card, and success shows no error.
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("shows the error toast when opening linked work fails", async () => {
+    handlers.board_get = () => linkedFixture();
+    const target = { kind: "session" as const, id: "s1", label: "Fix login" };
+    const onOpenLinkedWork = vi.fn(() =>
+      Promise.reject(new Error("This conversation is no longer available.")),
+    );
+    await renderBoard({ linkTargets: [target], onOpenLinkedWork });
+    const alert = () => document.querySelector('[role="alert"]');
+
+    // From the card's hover action.
+    const linked = columnEl("backlog").querySelector(
+      "[data-kanban-card='c1']",
+    )!;
+    await act(async () =>
+      linked
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Open linked work"]',
+        )!
+        .click(),
+    );
+    await flush();
+    expect(onOpenLinkedWork).toHaveBeenCalledWith(target);
+    expect(alert()?.textContent).toContain(
+      "Couldn't open linked work: This conversation is no longer available.",
+    );
+    act(() => alert()!.querySelector<HTMLButtonElement>("button")!.click());
+    expect(alert()).toBeNull();
+
+    // From the card detail's button.
+    act(() =>
+      columnEl("backlog")
+        .querySelector<HTMLElement>("[data-board-card='c1']")!
+        .click(),
+    );
+    await flush();
+    const detailButton = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+    ].find((button) => button.textContent?.includes("Open linked work"))!;
+    await act(async () => detailButton.click());
+    await flush();
+    expect(onOpenLinkedWork).toHaveBeenCalledTimes(2);
+    expect(alert()?.textContent).toContain(
+      "Couldn't open linked work: This conversation is no longer available.",
+    );
   });
 
   it("marks a link whose work is gone, including Flow runs", async () => {

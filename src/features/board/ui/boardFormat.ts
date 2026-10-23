@@ -65,6 +65,11 @@ export function parseLinkValue(
   return null;
 }
 
+/** A command failure as text: Tauri rejects with strings, JS with Errors. */
+export function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Compact time since `ms`: "just now", "2m ago", "3h ago", "4d ago". */
 export function relativeTime(ms: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.round((now - ms) / 1000));

@@ -17,6 +17,7 @@ import {
 import { LinkChip } from "./BoardCardItem";
 import {
   activityText,
+  errorText,
   LINK_KIND_LABEL,
   linkValue,
   parseLinkValue,
@@ -55,7 +56,16 @@ export function CardDetail({
 }) {
   const [title, setTitle] = useState(card.title);
   const [body, setBody] = useState(card.body);
-  const [activity, setActivity] = useState<BoardActivity[]>([]);
+  // Null until the first load answers; `failed` keeps a failed load from
+  // reading as an empty history.
+  const [activity, setActivity] = useState<{
+    rows: BoardActivity[];
+    failed: boolean;
+  } | null>(null);
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onErrorRef.current = onError;
+  });
   const titleField = useRef<HTMLInputElement>(null);
   const linkRow = useRef<HTMLDivElement>(null);
   // What was last saved, so blur and close don't both write the same edit.
@@ -80,16 +90,25 @@ export function CardDetail({
     const load = () =>
       listActivity(card.boardId, card.id, ACTIVITY_LIMIT)
         .then((rows) => {
-          if (live) setActivity(rows);
+          if (live) setActivity({ rows, failed: false });
         })
-        .catch(() => undefined);
+        .catch((error) => {
+          if (!live) return;
+          setActivity((current) => ({
+            rows: current?.rows ?? [],
+            failed: true,
+          }));
+          onErrorRef.current(
+            `Couldn't load activity for card #${card.number}: ${errorText(error)}`,
+          );
+        });
     void load();
     const stop = subscribeBoard(card.boardId, () => void load());
     return () => {
       live = false;
       stop();
     };
-  }, [card.boardId, card.id]);
+  }, [card.boardId, card.id, card.number]);
 
   const options = useMemo((): SearchableSelectOption[] => {
     const linkable = linkTargets.filter(
@@ -116,14 +135,14 @@ export function CardDetail({
     }
     saved.current = { title: nextTitle, body };
     updateCard(card.id, nextTitle, body).catch((error) =>
-      onError(`Couldn't save card #${card.number}: ${String(error)}`),
+      onError(`Couldn't save card #${card.number}: ${errorText(error)}`),
     );
   };
 
   const changeLink = (value: string) => {
     linkCard(card.id, value === NO_LINK ? null : parseLinkValue(value)).catch(
       (error) =>
-        onError(`Couldn't link card #${card.number}: ${String(error)}`),
+        onError(`Couldn't link card #${card.number}: ${errorText(error)}`),
     );
   };
 
@@ -131,7 +150,7 @@ export function CardDetail({
     deleteCard(card.id)
       .then(onClose)
       .catch((error) =>
-        onError(`Couldn't delete card #${card.number}: ${String(error)}`),
+        onError(`Couldn't delete card #${card.number}: ${errorText(error)}`),
       );
   };
 
@@ -210,17 +229,22 @@ export function CardDetail({
         </div>
         <div className="flex flex-col gap-1">
           <span className="text-[11px] text-content/50">Activity</span>
-          {activity.length ? (
+          {activity?.rows.length ? (
             <ol data-card-activity="" className="flex flex-col gap-1">
-              {activity.map((row) => (
+              {activity.rows.map((row) => (
                 <li key={row.id} className="text-[12px] text-content/70">
                   {activityText(row)}
                 </li>
               ))}
             </ol>
-          ) : (
+          ) : null}
+          {activity?.failed ? (
+            <span className="text-[12px] text-diff-del-fg/80">
+              Couldn't load activity
+            </span>
+          ) : activity && !activity.rows.length ? (
             <span className="text-[12px] text-content/45">No activity yet</span>
-          )}
+          ) : null}
         </div>
         <div className="flex justify-end">
           <button

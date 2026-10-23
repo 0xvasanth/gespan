@@ -13906,30 +13906,15 @@ function Workspace({
     // The Pilot roster is read through its snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardShown, busySessionKey, history, pilotsEnabled, pilotRail, pilotsSnap]);
+  // Rejections reach the board's error toast.
   const onOpenBoardLinkedWork = useCallback(
-    (target: BoardLinkTarget) => {
-      if (target.kind === "pilot") {
-        void onOpenPilot(target.id);
-        return;
-      }
-      if (target.kind !== "session") return;
-      void (async () => {
-        const session = await ensureOpenSession(target.id);
-        if (!session) return;
-        setBoardViewOpen(false);
-        setSearchViewOpen(false);
-        setInboxViewOpen(false);
-        setNotesViewOpen(false);
-        setAutomationsViewOpen(false);
-        setSettingsOpen(false);
-        setFilePickerOpen(false);
-        setSidebarTab("sessions", session.cwd);
-        setProjectCwd(session.cwd);
-        setRecents(rememberProject(session.cwd));
-        await onSelectHistorySession(target.id);
-      })().catch(console.error);
+    async (target: BoardLinkTarget) => {
+      if (target.kind === "pilot") await onOpenPilot(target.id);
+      else if (target.kind === "session") {
+        await onOpenAutomationSession(target.id);
+      } else throw new Error("This linked work can't be opened yet.");
     },
-    [ensureOpenSession, onOpenPilot, onSelectHistorySession],
+    [onOpenAutomationSession, onOpenPilot],
   );
   const onDismissUpdate = useCallback(() => setUpdateNotice(null), []);
 
