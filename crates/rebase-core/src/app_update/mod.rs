@@ -19,6 +19,11 @@ use std::{
 
 pub const APP_ID: &str = "com.rebase.native";
 pub const CHANNEL: &str = "native-preview";
+/// Signed feed on the fixed `native-latest` GitHub release. It is separate from
+/// the Tauri app's `releases/latest` feed. Builds may override it with
+/// `REBASE_NATIVE_UPDATER_ENDPOINT`.
+pub const DEFAULT_ENDPOINT: &str =
+    "https://github.com/0xvasanth/rebase/releases/download/native-latest/latest.json";
 const MAX_FEED: u64 = 2 * 1024 * 1024;
 const MAX_PACKAGE: u64 = 1024 * 1024 * 1024;
 

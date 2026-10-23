@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED } = require("./release-channel.cjs");
+const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -88,6 +88,7 @@ test("the CLI exports the same channel used for feed publication", () => {
   }
 });
 
+const R2_NAMES = ["R2_PUBLIC_BASE_URL", "R2_ACCOUNT_ID", "R2_BUCKET_NAME", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"];
 const fullR2 = {
   R2_PUBLIC_BASE_URL: "https://cdn.example.com",
   R2_ACCOUNT_ID: "acct",
@@ -129,4 +130,74 @@ test("the r2 CLI exports R2_ENABLED and fails for an incomplete beta", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the native feed is the fixed native-latest release, separate from Tauri's releases/latest", () => {
+  assert.equal(GITHUB_NATIVE_FEED, "https://github.com/0xvasanth/rebase/releases/download/native-latest/latest.json");
+  assert.notEqual(GITHUB_NATIVE_FEED, GITHUB_STABLE_FEED);
+  // R2 and the Tauri override never leak into the native endpoint.
+  assert.equal(nativeUpdaterEndpoint({}), GITHUB_NATIVE_FEED);
+  assert.equal(
+    nativeUpdaterEndpoint({
+      GITHUB_REF_NAME: "native-v0.16.0-preview.2",
+      R2_PUBLIC_BASE_URL: "https://cdn.example.com",
+      TAURI_UPDATER_ENDPOINT: "https://updates.example.com/stable.json",
+      NATIVE_UPDATER_ENDPOINT: "  ",
+    }),
+    GITHUB_NATIVE_FEED,
+  );
+});
+
+test("the native endpoint can be overridden, but only with HTTPS", () => {
+  assert.equal(
+    nativeUpdaterEndpoint({ NATIVE_UPDATER_ENDPOINT: "https://mirror.example.com/native.json" }),
+    "https://mirror.example.com/native.json",
+  );
+  assert.throws(() => nativeUpdaterEndpoint({ NATIVE_UPDATER_ENDPOINT: "http://mirror.example.com/native.json" }), /HTTPS/);
+});
+
+test("native packages are referenced from the versioned native-v release, not the feed release", () => {
+  assert.equal(
+    nativeAssetBase({ GITHUB_REF_NAME: "native-v0.16.0-preview.2" }),
+    "https://github.com/0xvasanth/rebase/releases/download/native-v0.16.0-preview.2",
+  );
+  for (const ref of ["v0.9.1", "native-latest", "native-v", "", undefined]) {
+    assert.throws(() => nativeAssetBase({ GITHUB_REF_NAME: ref }), /native-v/);
+  }
+});
+
+test("native R2 mirroring is optional and only enabled when every secret is present", () => {
+  assert.deepEqual(nativeR2Status({}), { enabled: false, missing: R2_NAMES });
+  assert.deepEqual(nativeR2Status(fullR2), { enabled: true, missing: [] });
+  const { R2_BUCKET_NAME, ...rest } = fullR2;
+  assert.deepEqual(nativeR2Status(rest), { enabled: false, missing: ["R2_BUCKET_NAME"] });
+  assert.equal(nativeR2Status({ ...fullR2, R2_ACCOUNT_ID: "  " }).enabled, false);
+});
+
+test("native builds still require the updater pubkey", () => {
+  assert.throws(() => updaterPubkey({}), /TAURI_UPDATER_PUBKEY/);
+});
+
+test("the native-config CLI exports the endpoint and fails without a pubkey", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-config-"));
+  const envFile = path.join(dir, "env");
+  fs.writeFileSync(envFile, "");
+  const run = (env) => execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "native-config"], {
+    env: { PATH: process.env.PATH, GITHUB_ENV: envFile, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.throws(() => run({}), (error) => /TAURI_UPDATER_PUBKEY/.test(error.stderr));
+  run({ TAURI_UPDATER_PUBKEY: "pub" });
+  const written = fs.readFileSync(envFile, "utf8");
+  assert.match(written, new RegExp(`REBASE_NATIVE_UPDATER_ENDPOINT=${GITHUB_NATIVE_FEED}\n`));
+  assert.match(written, /REBASE_NATIVE_UPDATER_PUBKEY=pub\n/);
+});
+
+test("the native-r2 CLI exports R2_ENABLED=false when secrets are absent", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-r2-"));
+  const envFile = path.join(dir, "env");
+  fs.writeFileSync(envFile, "");
+  execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "native-r2"], {
+    env: { PATH: process.env.PATH, GITHUB_ENV: envFile }, encoding: "utf8",
+  });
+  assert.equal(fs.readFileSync(envFile, "utf8"), "R2_ENABLED=false\n");
 });

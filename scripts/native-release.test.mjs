@@ -11,7 +11,7 @@ const artifacts = nativeTargets.map((target) => ({
 function manifest(changes = {}) {
   return nativeManifest({
     version: "0.16.0-preview.2",
-    baseUrl: "https://dl.example.test/",
+    assetBaseUrl: "https://dl.example.test/releases/download/native-v0.16.0-preview.2",
     artifacts,
     ...changes,
   });
@@ -28,7 +28,7 @@ test("all native architectures and installation types have isolated versioned UR
   for (const artifact of Object.values(result.platforms)) {
     assert.match(
       artifact.url,
-      /^https:\/\/dl\.example\.test\/native-preview\/0\.16\.0-preview\.2\//,
+      /^https:\/\/dl\.example\.test\/releases\/download\/native-v0\.16\.0-preview\.2\/[^/]+$/,
     );
     assert.ok(artifact.url.includes("%20"));
   }
@@ -74,12 +74,12 @@ test("production tags and insecure download bases cannot create native releases"
   ]) {
     assert.throws(() => manifest({ version }), /native preview version/);
   }
-  for (const baseUrl of [
+  for (const assetBaseUrl of [
     "http://dl.example.test",
     "https://user:secret@dl.example.test",
     "https://dl.example.test?channel=stable",
   ]) {
-    assert.throws(() => manifest({ baseUrl }), /HTTPS URL/);
+    assert.throws(() => manifest({ assetBaseUrl }), /HTTPS URL/);
   }
 });
 test("preview sequence fits native Windows version resources", () => {

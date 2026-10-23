@@ -79,7 +79,7 @@ impl Updater {
         let setup = (|| {
             let endpoint = option_env!("REBASE_NATIVE_UPDATER_ENDPOINT")
                 .filter(|v| !v.is_empty())
-                .ok_or("Automatic updates aren’t configured for this build")?;
+                .unwrap_or(app_update::DEFAULT_ENDPOINT);
             let key = option_env!("REBASE_NATIVE_UPDATER_PUBKEY")
                 .filter(|v| !v.is_empty())
                 .ok_or("This build has no update verification key")?;

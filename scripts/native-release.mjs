@@ -2,7 +2,10 @@ import { spawnSync } from "node:child_process";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { previewVersion } from "./package-native.mjs";
+
+const { nativeAssetBase } = createRequire(import.meta.url)("./release-channel.cjs");
 
 export const nativeTargets = [
   "darwin-aarch64-app",
@@ -12,9 +15,9 @@ export const nativeTargets = [
   "linux-x86_64-deb",
   "linux-x86_64-rpm",
 ];
-export function nativeManifest({ version, baseUrl, artifacts, notes = "" }) {
+export function nativeManifest({ version, assetBaseUrl, artifacts, notes = "" }) {
   previewVersion(version);
-  const base = new URL(baseUrl);
+  const base = new URL(assetBaseUrl);
   if (
     base.protocol !== "https:" ||
     base.username ||
@@ -23,7 +26,7 @@ export function nativeManifest({ version, baseUrl, artifacts, notes = "" }) {
     base.hash
   )
     throw new Error(
-      "The native download base must be an HTTPS URL without credentials, query or fragment",
+      "The native asset base must be an HTTPS URL without credentials, query or fragment",
     );
   const platforms = {};
   for (const artifact of artifacts) {
@@ -40,7 +43,7 @@ export function nativeManifest({ version, baseUrl, artifacts, notes = "" }) {
     if (!artifact.signature?.trim())
       throw new Error(`Missing signature for ${artifact.target}`);
     platforms[artifact.target] = {
-      url: `${base.href.replace(/\/$/, "")}/native-preview/${version}/${encodeURIComponent(artifact.filename)}`,
+      url: `${base.href.replace(/\/$/, "")}/${encodeURIComponent(artifact.filename)}`,
       signature: artifact.signature.trim(),
     };
   }
@@ -59,9 +62,12 @@ export function nativeManifest({ version, baseUrl, artifacts, notes = "" }) {
 export async function prepareNativeRelease(directory, env = process.env) {
   const version = env.REBASE_NATIVE_VERSION;
   previewVersion(version);
-  if (!env.TAURI_SIGNING_PRIVATE_KEY || !env.TAURI_UPDATER_PUBKEY)
+  const missing = ["TAURI_SIGNING_PRIVATE_KEY", "TAURI_UPDATER_PUBKEY"].filter(
+    (name) => !env[name],
+  );
+  if (missing.length)
     throw new Error(
-      "The existing Tauri signing key and public key are required",
+      `The existing Tauri signing secrets are required; missing: ${missing.join(", ")}`,
     );
   directory = resolve(directory);
   const records = [];
@@ -104,7 +110,7 @@ export async function prepareNativeRelease(directory, env = process.env) {
   }
   const manifest = nativeManifest({
     version,
-    baseUrl: env.R2_PUBLIC_BASE_URL,
+    assetBaseUrl: nativeAssetBase(env),
     artifacts: records,
     notes:
       env.NATIVE_RELEASE_NOTES ||

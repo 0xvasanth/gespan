@@ -61,6 +61,35 @@ under `crates/rebase-gpui/target/release/`. `CARGO_TARGET_DIR` and
 The **Rebase Native Preview** GitHub Actions workflow runs checks and build
 verification.
 
+## Releases and the update feed
+
+Pushing a `native-v<version>` tag runs **Native preview release**. It builds and
+signs every platform package, then publishes to GitHub Releases:
+
+- The versioned `native-v<version>` release (a prerelease, never marked latest)
+  holds the packages and their `.sig` files. It is immutable once published; use
+  a new preview tag to ship a fix.
+- A fixed `native-latest` release holds only `latest.json`. The workflow creates
+  it if missing and overwrites the asset on every native release. The signed
+  feed's package URLs point at the versioned release's assets.
+
+The app's default endpoint is therefore
+`https://github.com/0xvasanth/rebase/releases/download/native-latest/latest.json`.
+GitHub's `releases/latest` serves the Tauri app's stable `v*` releases, so the
+native feed deliberately uses its own tag and never competes with it. Set
+`REBASE_NATIVE_UPDATER_ENDPOINT` at build time (HTTPS only) to override the
+default.
+
+Required repository secrets: `TAURI_UPDATER_PUBKEY` (embedded in the app),
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, plus the
+Apple signing secrets. Cloudflare R2 is optional: when all of `R2_PUBLIC_BASE_URL`,
+`R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
+are set, packages and `latest.json` are also mirrored under `native-preview/`;
+otherwise that step is skipped. The channel logic lives in
+`scripts/release-channel.cjs` and is tested in `scripts/release-channel.test.cjs`.
+
+The macOS app icon is `src-tauri/icons/icon.icns`, shared with the Tauri app.
+
 ## Data and configuration
 
 Development stores `rebase.db` under:

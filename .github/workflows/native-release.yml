@@ -38,7 +38,6 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 2
       TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
-      R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,11 +59,9 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#native-v}"
           node --input-type=module -e 'import { previewVersion } from "./scripts/package-native.mjs"; previewVersion(process.argv[1]);' "$VERSION"
-          test -n "$TAURI_UPDATER_PUBKEY"
-          test -n "$R2_PUBLIC_BASE_URL"
           echo "REBASE_NATIVE_VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "REBASE_NATIVE_UPDATER_ENDPOINT=${R2_PUBLIC_BASE_URL%/}/native-preview/latest.json" >> "$GITHUB_ENV"
-          echo "REBASE_NATIVE_UPDATER_PUBKEY=$TAURI_UPDATER_PUBKEY" >> "$GITHUB_ENV"
+          # Requires TAURI_UPDATER_PUBKEY; the endpoint defaults to the GitHub native-latest feed.
+          node scripts/release-channel.cjs native-config
       - name: Install native Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -148,7 +145,6 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 2
       TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
-      R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
     steps:
       - run: dnf install -y git
       - uses: actions/checkout@v4
@@ -169,11 +165,9 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#native-v}"
           node --input-type=module -e 'import { previewVersion } from "./scripts/package-native.mjs"; previewVersion(process.argv[1]);' "$VERSION"
-          test -n "$TAURI_UPDATER_PUBKEY"
-          test -n "$R2_PUBLIC_BASE_URL"
           echo "REBASE_NATIVE_VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "REBASE_NATIVE_UPDATER_ENDPOINT=${R2_PUBLIC_BASE_URL%/}/native-preview/latest.json" >> "$GITHUB_ENV"
-          echo "REBASE_NATIVE_UPDATER_PUBKEY=$TAURI_UPDATER_PUBKEY" >> "$GITHUB_ENV"
+          # Requires TAURI_UPDATER_PUBKEY; the endpoint defaults to the GitHub native-latest feed.
+          node scripts/release-channel.cjs native-config
       - run: cargo test --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core --profile native-dev app_update
       - run: cargo build --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-gpui --release
       - run: node scripts/package-native.mjs rpm crates/rebase-gpui/target/release/rebase-gpui native-dist x86_64
@@ -197,6 +191,8 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
       R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: auto
@@ -227,10 +223,11 @@ jobs:
           REBASE_NATIVE_VERSION="${GITHUB_REF_NAME#native-v}" node scripts/native-release.mjs native-dist
       - name: Verify the signed feed and all packages with the native client
         run: cargo run --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core --example verify_native_update --profile native-dev -- native-dist
+      - name: Check optional R2 mirror
+        run: node scripts/release-channel.cjs native-r2
       - name: Publish native preview assets
         run: |
           set -euo pipefail
-          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           node --input-type=module -e 'import { readFileSync } from "node:fs"; for (const file of JSON.parse(readFileSync("native-dist/release-files.json"))) console.log(file);' > "$RUNNER_TEMP/native-files.txt"
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --draft --prerelease --latest=false --target "$GITHUB_SHA" --title "Rebase Native ${REBASE_NATIVE_VERSION}" --notes-file docs/native/preview-release-notes.md
@@ -242,11 +239,23 @@ jobs:
           fi
           FILES=()
           while IFS= read -r file; do
-            aws s3 cp "native-dist/$file" "s3://${R2_BUCKET_NAME}/native-preview/${REBASE_NATIVE_VERSION}/$file" --cache-control 'public,max-age=31536000,immutable' --endpoint-url "$ENDPOINT"
             FILES+=("native-dist/$file")
           done < "$RUNNER_TEMP/native-files.txt"
           gh release upload "$GITHUB_REF_NAME" "${FILES[@]}" --clobber
           gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease --latest=false
-          # This is the only mutable feed written by the native release job.
-          # Publish after every platform asset and the GitHub release exist.
+          # latest.json references the assets of the versioned release above, so
+          # the fixed native-latest release only ever holds this one feed file.
+          # Publish it after every platform asset exists.
+          if ! gh release view native-latest >/dev/null 2>&1; then
+            gh release create native-latest --prerelease --latest=false --target "$GITHUB_SHA" --title "Rebase Native update feed" --notes 'Update feed for Rebase Native. Contains only latest.json; packages live on the native-v* releases.'
+          fi
+          gh release upload native-latest native-dist/latest.json --clobber
+      - name: Mirror native preview to R2 (optional)
+        if: env.R2_ENABLED == 'true'
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          while IFS= read -r file; do
+            aws s3 cp "native-dist/$file" "s3://${R2_BUCKET_NAME}/native-preview/${REBASE_NATIVE_VERSION}/$file" --cache-control 'public,max-age=31536000,immutable' --endpoint-url "$ENDPOINT"
+          done < "$RUNNER_TEMP/native-files.txt"
           aws s3 cp native-dist/latest.json "s3://${R2_BUCKET_NAME}/native-preview/latest.json" --content-type application/json --cache-control 'no-store,max-age=0,must-revalidate' --endpoint-url "$ENDPOINT"

@@ -48,9 +48,48 @@ function r2Status(env) {
   return { enabled: missing.length === 0, missing };
 }
 
-module.exports = { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED };
+// Rebase Native has its own fixed feed: the `native-latest` release holds only
+// latest.json (overwritten per native-v* release), so it never competes with
+// the Tauri app for /releases/latest. Packages stay on the versioned native-v*
+// release, which latest.json points at.
+const GITHUB_RELEASES = "https://github.com/0xvasanth/rebase/releases/download";
+const GITHUB_NATIVE_FEED = `${GITHUB_RELEASES}/native-latest/latest.json`;
 
-if (require.main === module && process.argv[2] === "r2") {
+function nativeUpdaterEndpoint(env) {
+  const endpoint = (env.NATIVE_UPDATER_ENDPOINT || "").trim() || GITHUB_NATIVE_FEED;
+  if (new URL(endpoint).protocol !== "https:") throw new Error("Native updater endpoints must use HTTPS");
+  return endpoint;
+}
+
+function nativeAssetBase(env) {
+  const tag = env.GITHUB_REF_NAME || "";
+  if (!/^native-v.+/.test(tag)) throw new Error("Expected a native release tag such as native-v0.16.0-preview.2");
+  return `${GITHUB_RELEASES}/${tag}`;
+}
+
+// R2 only mirrors the native packages; it is optional and enabled when complete.
+function nativeR2Status(env) {
+  const missing = R2_REQUIRED.filter((name) => !(env[name] || "").trim());
+  return { enabled: missing.length === 0, missing };
+}
+
+module.exports = {
+  releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED,
+  GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status,
+};
+
+if (require.main === module && process.argv[2] === "native-config") {
+  if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
+  const pubkey = updaterPubkey(process.env);
+  const endpoint = nativeUpdaterEndpoint(process.env);
+  fs.appendFileSync(process.env.GITHUB_ENV, `REBASE_NATIVE_UPDATER_ENDPOINT=${endpoint}\nREBASE_NATIVE_UPDATER_PUBKEY=${pubkey}\n`);
+  console.log(`Native updater endpoint: ${endpoint}`);
+} else if (require.main === module && process.argv[2] === "native-r2") {
+  const { enabled, missing } = nativeR2Status(process.env);
+  if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
+  fs.appendFileSync(process.env.GITHUB_ENV, `R2_ENABLED=${enabled}\n`);
+  console.log(enabled ? "R2 mirror enabled" : `R2 mirror disabled (missing: ${missing.join(", ")})`);
+} else if (require.main === module && process.argv[2] === "r2") {
   const { enabled, missing } = r2Status(process.env);
   if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
   fs.appendFileSync(process.env.GITHUB_ENV, `R2_ENABLED=${enabled}\n`);

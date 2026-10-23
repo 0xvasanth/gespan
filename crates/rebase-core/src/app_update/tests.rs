@@ -103,6 +103,16 @@ fn update_endpoints_require_https_and_a_valid_embedded_key() {
     .is_err());
 }
 #[test]
+fn default_endpoint_is_the_native_latest_release_not_the_tauri_feed() {
+    assert_eq!(
+        DEFAULT_ENDPOINT,
+        "https://github.com/0xvasanth/rebase/releases/download/native-latest/latest.json"
+    );
+    assert!(!DEFAULT_ENDPOINT.contains("/releases/latest/"));
+    // The shipped default must itself be accepted by the client's HTTPS checks.
+    assert!(Config::new(DEFAULT_ENDPOINT, KEY, "0.16.0-preview.1").is_ok());
+}
+#[test]
 fn unsigned_tauri_production_feed_is_never_accepted_as_native() {
     assert!(verify_feed(
         br#"{"version":"99.0.0","platforms":{}}"#,
