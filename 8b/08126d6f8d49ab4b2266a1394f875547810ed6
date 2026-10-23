@@ -1,0 +1,30 @@
+crates/rebase-core/Cargo.toml
+  s_ccb41beff89445::t_b3a5df2e883154 26
+src/test/noMonoReferences.test.ts
+  s_ccb41beff89445::t_b3a5df2e883154 62
+NOTICE
+  s_ccb41beff89445::t_b3a5df2e883154 16,22,32
+src/test/upstreamLinks.test.ts
+  s_ccb41beff89445::t_e7b52d187190ec 27-29,77
+  s_ccb41beff89445::t_8121562b021583 26
+crates/rebase-core/tests/shared_contracts.rs
+  s_ccb41beff89445::t_b3a5df2e883154 116
+.github/workflows/native.yml
+  s_ccb41beff89445::t_b3a5df2e883154 19-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8b08126d6f8d49ab4b2266a1394f875547810ed6",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
