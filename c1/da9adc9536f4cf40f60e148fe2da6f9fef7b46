@@ -1,7 +1,24 @@
+src/features/sessions/model/transcriptActivity.test.ts
+  s_3d6000c3007319::t_04bed29df2367f 369-397
+src/features/sessions/ui/AgentTranscript.inlineWork.test.ts
+  s_3d6000c3007319::t_bf53233425ee12 928
+  s_3d6000c3007319::t_04bed29df2367f 910-927,929-935
+src/features/sessions/model/transcriptActivity.ts
+  s_3d6000c3007319::t_04bed29df2367f 552-554,569,575,591,594-598,607,619-664
 ---
 {
   "schema_version": "authorship/3.0.0",
   "git_ai_version": "1.7.5",
   "base_commit_sha": "c1da9adc9536f4cf40f60e148fe2da6f9fef7b46",
-  "prompts": {}
+  "prompts": {},
+  "sessions": {
+    "s_3d6000c3007319": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d7ce5de9-52e0-4565-a35c-874563a61ab4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
 }
