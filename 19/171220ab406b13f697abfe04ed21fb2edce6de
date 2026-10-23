@@ -1,0 +1,31 @@
+LICENSE
+  s_3d6000c3007319::t_07a5303238a16d 4
+CONTRIBUTING.md
+  s_3d6000c3007319::t_07a5303238a16d 54
+README.md
+  s_3d6000c3007319::t_4e3fef4c239721 30-31
+.github/dependabot.yml
+  s_3d6000c3007319::t_4e3fef4c239721 1-38
+package.json
+  s_3d6000c3007319::t_07a5303238a16d 3-13
+src-tauri/Cargo.toml
+  s_3d6000c3007319::t_07a5303238a16d 6
+.github/CODEOWNERS
+  s_3d6000c3007319::t_4e3fef4c239721 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "19171220ab406b13f697abfe04ed21fb2edce6de",
+  "prompts": {},
+  "sessions": {
+    "s_3d6000c3007319": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d7ce5de9-52e0-4565-a35c-874563a61ab4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
