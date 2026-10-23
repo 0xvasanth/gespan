@@ -1,0 +1,63 @@
+src/features/board/ui/boardFormat.test.ts
+  s_0de52fe47ecaaa::t_61a8a49005e677 65-68,72-83
+  s_0de52fe47ecaaa::t_20c6c0c61abaea 1-64,69-71,84-126
+src/features/board/ui/CardDetail.tsx
+  s_0de52fe47ecaaa::t_720efdf1a220cf 1-16,18-23,25-60,63-65,67-110,112-113,118-206,208-238
+  s_0de52fe47ecaaa::t_38ba5ddcd93eba 207
+  s_0de52fe47ecaaa::t_09d85b0032241f 17,24
+  s_0de52fe47ecaaa::t_af8c25f41a23a9 61-62,66,111,114-117
+src/features/board/ui/CardComposer.tsx
+  s_0de52fe47ecaaa::t_8a7e06d7412d7f 1-95
+src/features/board/ui/BoardView.test.ts
+  s_0de52fe47ecaaa::t_fdd653608ee2e4 54-56
+  s_0de52fe47ecaaa::t_61a8a49005e677 155-163,165,168,341-423,425-427
+  s_0de52fe47ecaaa::t_2339ede60d6272 1-53,57-154,164,166-167,169-323,327-340,424,428-488
+  s_0de52fe47ecaaa::t_b09a0d43df7dfb 324-326
+src/features/board/ui/BoardColumnHeader.tsx
+  s_0de52fe47ecaaa::t_d186735034fea8 1-132
+src/features/board/ui/boardFormat.ts
+  s_0de52fe47ecaaa::t_09d85b0032241f 3,32-48
+  s_0de52fe47ecaaa::t_7afb2445940299 1-2,4-31,49-108
+src/app/shell/ProjectRail.tsx
+  s_0de52fe47ecaaa::t_6e9534bc1e2635 132-134,176-177,374,460-468
+  s_0de52fe47ecaaa::t_9282e5785c4c05 8
+src/app/shell/TitleBar.tsx
+  s_0de52fe47ecaaa::t_5e7267e2b7f3bc 8,77
+src/app/shell/Sidebar.tsx
+  s_0de52fe47ecaaa::t_83054c1ad660e7 33,376-377,383,491,497,992,2478-2483,2627,2632,3252-3253,3288-3289,3433,3438,3453,3458,3533-3537,3580-3581,3615-3616,3658,3810-3817
+src/app/App.tsx
+  s_0de52fe47ecaaa::t_52557e617fd6ed 710,12525,13868-13933,14760-14773
+  s_0de52fe47ecaaa::t_d7b8f3e66924dc 784,800,895-901,1324,1339-1341,1366-1370,1463,1706,1714,1723,1732-1733,1765-1768,1777,1779,2470,2509,5957,11931-11935,12363,12372-12388,12421,12484,12522,12541,12688,12708,12742,13074,13163,13941-13942,14190-14191,14222,14228,14336-14337,14346-14347,14355,14626
+  s_0de52fe47ecaaa::t_edd306cce4c0f1 3025,3042,3071,3111,5125,5268,5354,6532,8919,9066,11918,12159,12169,12186,12204,12224,12238,12344,12389-12391,12398,12430,12523,12550,12698
+  s_0de52fe47ecaaa::t_b67d5e25d76a64 12524,14774-14776
+src/features/board/ui/boardControls.tsx
+  s_0de52fe47ecaaa::t_c05761aed976c6 1-189
+src/features/board/ui/BoardCardItem.tsx
+  s_0de52fe47ecaaa::t_bb3ea9ec349ca7 1-8,14-26,35-44,46-152
+  s_0de52fe47ecaaa::t_09d85b0032241f 9-13
+  s_0de52fe47ecaaa::t_38ba5ddcd93eba 27-34,45
+src/features/workspace/model/appViewTabs.ts
+  s_0de52fe47ecaaa::t_663d54dcfb1c85 6
+src/shared/ui/icons.tsx
+  s_0de52fe47ecaaa::t_67f5fa4832fb82 65,233
+src/features/board/ui/BoardView.tsx
+  s_0de52fe47ecaaa::t_f56517d7420d61 1-37,40-163,166-193,200-211,216-226,231-521
+  s_0de52fe47ecaaa::t_b09a0d43df7dfb 38-39,164-165,194-199,227-230
+  s_0de52fe47ecaaa::t_46a1bf0d3f36b1 212-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c9a27e2e059914fa14a302d2858a29b0d2cb8ff",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
