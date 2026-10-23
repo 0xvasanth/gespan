@@ -584,7 +584,11 @@ impl Protocol {
                 tasks.push(BackgroundTask {
                     id: id.into(),
                     description: text(&value["description"])
-                        .unwrap_or(if command.is_some() { "Background command" } else { "Background task" })
+                        .unwrap_or(if command.is_some() {
+                            "Background command"
+                        } else {
+                            "Background task"
+                        })
                         .into(),
                     agent: is_agent_task(value["task_type"].as_str()),
                     command,
@@ -598,7 +602,10 @@ impl Protocol {
                     }
                 }
                 let status = patch["status"].as_str().unwrap_or("").to_lowercase();
-                if matches!(status.as_str(), "completed" | "failed" | "killed" | "stopped") {
+                if matches!(
+                    status.as_str(),
+                    "completed" | "failed" | "killed" | "stopped"
+                ) {
                     tasks.retain(|task| task.id != id);
                 }
             }
@@ -626,7 +633,9 @@ impl Protocol {
             if !tasks.iter().any(|task| task.id == id) {
                 tasks.push(BackgroundTask {
                     id: id.into(),
-                    description: text(&row["description"]).unwrap_or("Background task").into(),
+                    description: text(&row["description"])
+                        .unwrap_or("Background task")
+                        .into(),
                     agent: is_agent_task(row["task_type"].as_str()),
                     command: None,
                     started_at: crate::time::now_ms(),
@@ -977,7 +986,11 @@ mod tests {
         // Work the agent is still doing in the foreground is not background.
         assert_eq!(tick(&mut p), None);
 
-        p.frame(json!({"type":"result","result":"Started it."}), &mut Vec::new()).unwrap();
+        p.frame(
+            json!({"type":"result","result":"Started it."}),
+            &mut Vec::new(),
+        )
+        .unwrap();
         let tasks = tick(&mut p).unwrap();
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0].description, "Start dev server");
@@ -987,9 +1000,16 @@ mod tests {
 
         p.frame(json!({"type":"system","subtype":"task_updated","task_id":"review","patch":{"status":"completed"}}), &mut Vec::new()).unwrap();
         let tasks = tick(&mut p).unwrap();
-        assert_eq!(tasks.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["dev"]);
+        assert_eq!(
+            tasks.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+            ["dev"]
+        );
 
-        p.frame(json!({"type":"system","subtype":"background_tasks_changed","tasks":[]}), &mut Vec::new()).unwrap();
+        p.frame(
+            json!({"type":"system","subtype":"background_tasks_changed","tasks":[]}),
+            &mut Vec::new(),
+        )
+        .unwrap();
         assert_eq!(tick(&mut p), Some(Vec::new()));
     }
 }

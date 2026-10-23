@@ -398,18 +398,9 @@ impl Shell {
                 ),
             )
             .children(live_agents)
-            .when(
-                !self.workspace.project_rail_open
-                    && self.notification_state.installed.read(cx).is_visible(),
-                |d| {
-                    d.child(
-                        div()
-                            .mx_2()
-                            .mt_2()
-                            .child(self.notification_state.installed.clone()),
-                    )
-                },
-            )
+            .when(!self.workspace.project_rail_open, |d| {
+                d.child(self.app_update_footer(cx))
+            })
             .children(self.classic_worktree_popover(cx))
             .children(self.classic_session_preview(cx))
             .into_any()

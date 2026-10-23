@@ -15,6 +15,7 @@ on:
       - 'scripts/native-settings/**'
       - 'package.json'
       - '.github/workflows/native.yml'
+      - '.github/workflows/native-release.yml'
 
 permissions:
   contents: read

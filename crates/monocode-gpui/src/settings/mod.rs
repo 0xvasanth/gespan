@@ -102,6 +102,7 @@ pub(crate) struct MonoSetting {
 
 pub(crate) enum SettingsEvent {
     WhatsNew,
+    CheckAppUpdates,
     CheckHarnessUpdates,
     ManageInboxProvider(String),
     Changed(Box<Preferences>),

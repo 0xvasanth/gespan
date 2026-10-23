@@ -321,17 +321,7 @@ impl Shell {
                     .child(rows),
             )
             .children(self.live_agents_preview(cx))
-            .when(
-                self.notification_state.installed.read(cx).is_visible(),
-                |d| {
-                    d.child(
-                        div()
-                            .mx_2()
-                            .mt_2()
-                            .child(self.notification_state.installed.clone()),
-                    )
-                },
-            )
+            .child(self.app_update_footer(cx))
             .child(self.project_rail_footer(compact, cx))
             .into_any_element()
     }

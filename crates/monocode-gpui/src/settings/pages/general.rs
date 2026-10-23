@@ -146,7 +146,7 @@ impl SettingsView {
                 )],
             ));
         }
-        let version = env!("CARGO_PKG_VERSION");
+        let version = crate::notifications::updater::version();
         let about = vec![
             self.row(
                 Some("update"),
@@ -164,7 +164,7 @@ impl SettingsView {
                             .text_color(content(0.45))
                             .child(version),
                     ),
-                Some("View release notes and check for agent updates.".into()),
+                Some("View release notes and check for app and agent updates.".into()),
                 vec![
                     div()
                         .flex()
@@ -190,9 +190,21 @@ impl SettingsView {
                             })),
                         )
                         .child(
-                            secondary_button("check-updates", "Check for updates", false, true)
+                            secondary_button("check-updates", "Check for updates", false, false)
                                 .child(icon("refresh-cw", 14.).text_color(content(0.7)))
-                                .child("Check for updates"),
+                                .child("Check for updates")
+                                .on_click(cx.listener(|_, _, _, cx| {
+                                    cx.emit(crate::settings::SettingsEvent::CheckAppUpdates)
+                                })),
+                        )
+                        .into_any_element(),
+                    div()
+                        .w_full()
+                        .children(
+                            cx.try_global::<crate::notifications::updater::Shared>()
+                                .map(|shared| {
+                                    crate::notifications::updater::row(shared.0.clone(), cx)
+                                }),
                         )
                         .into_any_element(),
                 ],

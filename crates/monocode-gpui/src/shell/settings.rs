@@ -154,7 +154,12 @@ impl Shell {
                     }
                 }
                 SettingsEvent::WhatsNew => {
-                    this.open_whats_new(env!("CARGO_PKG_VERSION").into(), cx)
+                    this.open_whats_new(crate::notifications::updater::version().into(), cx)
+                }
+                SettingsEvent::CheckAppUpdates => {
+                    this.notification_state
+                        .updater
+                        .update(cx, |updater, cx| updater.check(true, cx));
                 }
                 SettingsEvent::CheckHarnessUpdates => {
                     let hidden = this.workspace.preferences.hidden_providers.clone();

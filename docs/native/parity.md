@@ -48,9 +48,9 @@ approval for every edit. Native Supervised mode does not add that guarantee.
 
 ## Platform and distribution
 
-macOS is the primary preview target. Remaining work includes accessibility,
-IME and scroll profiling, crash/recovery testing, release signing, notarization
-and automatic updates.
+macOS is the primary verified preview target. Remaining verification includes
+accessibility, IME and scroll profiling, crash/recovery testing and actual
+packaged upgrades.
 
 Linux and Windows GUI builds and interaction have not been verified. In
 particular, HTML panels currently use a text fallback, native notification
@@ -58,4 +58,4 @@ delivery is unavailable, and media hosting still needs platform support.
 Windows close-to-tray behavior also needs implementation/verification.
 
 The preview workflow checks core on macOS, Linux and Windows, but checks/builds
-the GUI only on macOS. Native preview users build from source.
+the GUI only on macOS.

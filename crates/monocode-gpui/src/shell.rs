@@ -843,7 +843,7 @@ impl Shell {
         });
         let worktree_focus = workspace.worktree_focus.clone();
         let session_worktrees = sidebar_metadata.worktrees;
-        let notification_state = notifications::State::new(&workspace, cx);
+        let notification_state = notifications::State::new(&workspace, store.clone(), cx);
         let classic_session_search = classic_sidebar::session_search(cx);
         let classic_search_subscription =
             classic_sidebar::bind_session_search(&classic_session_search, cx);
@@ -5144,9 +5144,7 @@ impl Shell {
                     MenuItem::Separator,
                     self.project_notification_menu(path).into(),
                     MenuItem::Separator,
-                    MenuAction::new("archive", "Archive")
-                        .icon("archive")
-                        .into(),
+                    MenuAction::new("archive", "Archive").icon("archive").into(),
                     MenuAction::new("delete", "Delete")
                         .icon("trash")
                         .danger()
@@ -6232,17 +6230,7 @@ impl Shell {
                             )
                             .child(self.virtual_sidebar(cx))
                             .children(live_agents)
-                            .when(
-                                self.notification_state.installed.read(cx).is_visible(),
-                                |d| {
-                                    d.child(
-                                        div()
-                                            .mx_2()
-                                            .mt_2()
-                                            .child(self.notification_state.installed.clone()),
-                                    )
-                                },
-                            ),
+                            .child(self.app_update_footer(cx)),
                     ),
             )
             .when(!self.workspace.classic_layout, |d| {

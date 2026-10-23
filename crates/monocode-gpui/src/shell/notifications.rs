@@ -11,6 +11,7 @@ use crate::notifications::{
     layout_notice::{LayoutNotice, LayoutNoticeEvent},
     linked_activity::{Cleanup, LinkedActivity, LinkedActivityEvent},
     platform, reminders,
+    updater::{self, Event as UpdaterEvent, Updater},
 };
 use std::{sync::mpsc::Receiver, time::Duration};
 
@@ -21,6 +22,7 @@ pub(super) struct State {
     pub reminders: Entity<reminders::View>,
     pub layout: Entity<LayoutNotice>,
     pub installed: Entity<InstalledUpdateNotice>,
+    pub updater: Entity<Updater>,
     pub file_error: Entity<FileActionError>,
     pub reminder_error: Option<String>,
     pub github: Entity<GithubActivity>,
@@ -45,7 +47,7 @@ pub(super) struct State {
 }
 
 impl State {
-    pub(super) fn new(workspace: &Workspace, cx: &mut Context<Shell>) -> Self {
+    pub(super) fn new(workspace: &Workspace, store: Database, cx: &mut Context<Shell>) -> Self {
         Self {
             region: AnchorSlot::default(),
             harness: cx
@@ -59,6 +61,7 @@ impl State {
                 )
             }),
             installed: cx.new(|_| InstalledUpdateNotice::new(None)),
+            updater: updater::shared(store, cx),
             file_error: cx.new(|_| FileActionError::new()),
             reminder_error: None,
             github: cx.new(|_| GithubActivity::new(HashMap::new())),
@@ -85,6 +88,25 @@ impl State {
 }
 
 impl Shell {
+    pub(super) fn app_update_footer(&self, cx: &App) -> AnyElement {
+        let state = &self.notification_state;
+        div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .when(state.installed.read(cx).is_visible(), |d| {
+                d.child(div().mx_2().mt_2().child(state.installed.clone()))
+            })
+            .when(state.updater.read(cx).actionable(), |d| {
+                d.child(
+                    div()
+                        .mx_2()
+                        .mt_2()
+                        .child(updater::row(state.updater.clone(), cx)),
+                )
+            })
+            .into_any_element()
+    }
     pub(super) fn refresh_notification_permission(&mut self) {
         self.notification_state.permission_probe = Some(platform::permission());
     }
@@ -125,6 +147,19 @@ impl Shell {
 
     pub(super) fn bind_notices(&mut self, cx: &mut Context<Self>) {
         self.bind_linked_activity(cx);
+        self.observations.push(cx.subscribe(
+            &self.notification_state.updater,
+            |this, _, event: &UpdaterEvent, cx| {
+                if let UpdaterEvent::Error(error) = event {
+                    this.error = Some(error.clone());
+                }
+                this.invalidate_chrome(cx);
+                if let Some(settings) = &this.settings {
+                    settings.update(cx, |_, cx| cx.notify());
+                }
+                cx.notify();
+            },
+        ));
         self.observations.push(cx.subscribe(
             &self.notification_state.harness,
             |this, _, event, cx| {
@@ -844,7 +879,22 @@ impl Shell {
     }
 
     pub(super) fn open_whats_new(&mut self, version: String, cx: &mut Context<Self>) {
-        let view = cx.new(|_| WhatsNew::new(version));
+        let view = cx.new(|_| WhatsNew::new(version.clone()));
+        let weak = view.downgrade();
+        let store = self.store.clone();
+        let work = cx.background_executor().spawn(async move {
+            locked(&store).and_then(|store| store.setting("monocode.nativeReleaseNotes"))
+        });
+        cx.spawn(async move |_, cx| {
+            if let Ok(Some(raw)) = work.await
+                && let Ok(notes) = serde_json::from_str::<serde_json::Value>(&raw)
+                && notes["version"].as_str() == Some(version.as_str())
+                && let Some(body) = notes["body"].as_str()
+            {
+                let _ = weak.update(cx, |view, cx| view.set_release_notes(body, cx));
+            }
+        })
+        .detach();
         let events = cx.subscribe(&view, |this, _, _: &WhatsNewEvent, cx| {
             this.notification_state.whats_new = None;
             cx.notify();

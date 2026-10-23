@@ -10,7 +10,7 @@ use monocode_core::store::Store;
 use std::time::Instant;
 const MARKER: &str = "monocode.installedUpdate";
 
-/// Consume before parsing, matching React's one-launch marker semantics. The
+/// Show the marker once, after the expected version is actually running. The
 /// settings abstraction has no delete operation, so an empty value is cleared.
 pub(crate) fn consume_installed_update(store: &Store) -> Result<Option<String>, String> {
     let Some(raw) = store.setting(MARKER)? else {
@@ -19,14 +19,19 @@ pub(crate) fn consume_installed_update(store: &Store) -> Result<Option<String>, 
     if raw.is_empty() {
         return Ok(None);
     }
-    store.save_setting(MARKER, "")?;
     let parsed = serde_json::from_str::<serde_json::Value>(&raw).ok();
-    Ok(parsed
+    let version = parsed
         .as_ref()
         .and_then(|v| v["version"].as_str())
         .map(str::trim)
         .filter(|v| !v.is_empty())
-        .map(str::to_owned))
+        .map(str::to_owned);
+    // A cancelled/failed installer must never claim that the app was updated.
+    if version.as_deref() != Some(super::updater::version()) {
+        return Ok(None);
+    }
+    store.save_setting(MARKER, "")?;
+    Ok(version)
 }
 pub(crate) enum AppUpdateEvent {
     Open(String),
@@ -208,6 +213,16 @@ pub(crate) struct WhatsNew {
 }
 impl EventEmitter<WhatsNewEvent> for WhatsNew {}
 impl WhatsNew {
+    pub(crate) fn set_release_notes(&mut self, body: &str, cx: &mut Context<Self>) {
+        if !body.trim().is_empty() {
+            self.rows = markdown_model::parse_full(body)
+                .blocks
+                .iter()
+                .flat_map(|b| markdown::rows(&b.block))
+                .collect();
+            cx.notify();
+        }
+    }
     pub(crate) fn new(version: String) -> Self {
         let notes = release_notes(&version);
         let date = notes.as_ref().and_then(|n| n.date.clone());
@@ -227,6 +242,7 @@ impl WhatsNew {
         }
     }
 }
+
 impl Render for WhatsNew {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let description = format!(
@@ -323,5 +339,29 @@ impl Render for WhatsNew {
             )
             .child(body.relative())
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn installed_notice_requires_the_running_version_and_is_consumed_once() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        store
+            .save_setting(MARKER, r#"{"version":"99.0.0-preview.1"}"#)
+            .unwrap();
+        assert!(consume_installed_update(&store).unwrap().is_none());
+        store
+            .save_setting(
+                MARKER,
+                &serde_json::json!({"version": super::super::updater::version()}).to_string(),
+            )
+            .unwrap();
+        assert_eq!(
+            consume_installed_update(&store).unwrap().as_deref(),
+            Some(super::super::updater::version())
+        );
+        assert!(consume_installed_update(&store).unwrap().is_none());
     }
 }

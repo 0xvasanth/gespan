@@ -46,6 +46,11 @@ rm -f "$native_licenses/Geist-OFL.txt"
 # Launch the binary itself: an exec'ing launcher changes the pid version, and macOS
 # then refuses the menu bar item. The app reads MonocodeDataMode from Info.plist.
 native_executable="monocode-gpui"
+native_short_version="${native_version%%-*}"
+native_build_version="$native_short_version"
+if [[ "$native_version" == *-preview.* ]]; then
+  native_build_version="${native_version##*-preview.}"
+fi
 rm -f "$native_bundle/Contents/MacOS/monocode-launcher"
 cat > "$native_bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -57,12 +62,19 @@ cat > "$native_bundle/Contents/Info.plist" <<PLIST
 <key>CFBundleName</key><string>Monocode Native</string>
 <key>CFBundleDisplayName</key><string>Monocode Native</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>$native_version</string>
-<key>CFBundleVersion</key><string>$native_version</string>
+<key>CFBundleShortVersionString</key><string>$native_short_version</string>
+<key>CFBundleVersion</key><string>$native_build_version</string>
+<key>MonocodeNativeVersion</key><string>$native_version</string>
 <key>CFBundleIconFile</key><string>monocode.icns</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
-codesign --force --sign - "$native_bundle"
+native_identity="${MONOCODE_NATIVE_SIGNING_IDENTITY:--}"
+if [ "$native_identity" = - ]; then
+  codesign --force --sign - "$native_bundle"
+else
+  codesign --force --sign "$native_identity" --options runtime --timestamp \
+    --entitlements src-tauri/Entitlements.plist "$native_bundle"
+fi
 printf 'App: %s\n' "$native_bundle"

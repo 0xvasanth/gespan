@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 mod accounts;
 mod activity;
 mod arcade;
@@ -97,6 +102,9 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 actions!(application, [Quit]);
 fn quit(cx: &mut App) {
+    if notifications::updater::defer_quit(cx) {
+        return;
+    }
     let shutdown = cx
         .background_executor()
         .spawn(async { monocode_core::process::shutdown_all() });
@@ -150,6 +158,13 @@ fn main() {
         std::process::exit(code);
     }
     let cli_args: Vec<_> = std::env::args().skip(1).collect();
+    if cli_args
+        .first()
+        .is_some_and(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("Monocode Native {}", notifications::updater::version());
+        return;
+    }
     if cli_args.first().is_some_and(|a| a == "visual-mcp") {
         if let Err(error) = monocode_core::visual_bridge::mcp_stdio() {
             eprintln!("{error}");

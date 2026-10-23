@@ -52,14 +52,14 @@ open "crates/monocode-gpui/target/release/Monocode Native.app"
 ```
 
 The app has a separate name and application ID (`dev.usemono.gpui`) so it can be
-installed alongside MonoCode. It is signed locally, without Apple notarization
-or automatic updates. Linux and Windows builds produce a standalone executable
+installed alongside MonoCode. Local source builds are signed locally, without
+Apple notarization or configured automatic updates. Linux and Windows builds
+produce a standalone executable
 under `crates/monocode-gpui/target/release/`. `CARGO_TARGET_DIR` and
 `CARGO_BUILD_TARGET` can change these output paths.
 
-The native preview is currently distributed as source. The **Monocode Native
-Preview** GitHub Actions workflow runs checks and build verification. Production
-release tags and updater feeds still use Tauri.
+The **Monocode Native Preview** GitHub Actions workflow runs checks and build
+verification.
 
 ## Data and configuration
 
