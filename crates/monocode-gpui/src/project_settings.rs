@@ -173,6 +173,7 @@ pub(crate) struct AppearanceControls {
     name: Entity<Input>,
     custom_color: Entity<Input>,
     custom_open: bool,
+    allow_logo: bool,
     busy: bool,
     error: Option<String>,
     _events: Vec<Subscription>,
@@ -225,10 +226,15 @@ impl AppearanceControls {
             name,
             custom_color,
             custom_open: false,
+            allow_logo: true,
             busy: false,
             error: None,
             _events: events,
         }
+    }
+    pub(crate) fn for_project_group(mut self) -> Self {
+        self.allow_logo = false;
+        self
     }
     pub(crate) fn focus(&self, cx: &App) -> FocusHandle {
         self.name.focus_handle(cx)
@@ -314,62 +320,64 @@ impl Render for AppearanceControls {
                     .bg(content(0.05))
                     .child(self.name.clone()),
             )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px(px(2.))
-                    .child(
-                        div()
-                            .id("choose-project-logo")
-                            .debug_selector(|| "choose-project-logo".into())
-                            .role(Role::Button)
-                            .aria_label("Choose project logo")
-                            .size(px(36.))
-                            .flex_shrink_0()
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(content(0.1))
-                            .bg(content(0.05))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .hover(|s| s.bg(content(0.1)))
-                            .child(project_icon(&self.appearance, &self.project, 20.))
-                            .on_click(cx.listener(|this, _, _, cx| this.choose_logo(cx))),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(px(11.))
-                            .line_height(px(16.5))
-                            .text_color(content(0.5))
-                            .child("Project logo")
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(px(12.))
-                                    .line_height(px(18.))
-                                    .text_color(content(0.7))
-                                    .child(if self.busy {
-                                        "Saving image…"
-                                    } else {
-                                        "Shown in tabs and composer"
-                                    }),
-                            ),
-                    )
-                    .when(self.appearance.logo.is_some(), |d| {
-                        d.child(
-                            icon_button("remove-project-logo", "Remove project logo", "trash")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.appearance.logo = None;
-                                    this.save(cx);
-                                })),
+            .when(self.allow_logo, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px(px(2.))
+                        .child(
+                            div()
+                                .id("choose-project-logo")
+                                .debug_selector(|| "choose-project-logo".into())
+                                .role(Role::Button)
+                                .aria_label("Choose project logo")
+                                .size(px(36.))
+                                .flex_shrink_0()
+                                .rounded_lg()
+                                .border_1()
+                                .border_color(content(0.1))
+                                .bg(content(0.05))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .hover(|s| s.bg(content(0.1)))
+                                .child(project_icon(&self.appearance, &self.project, 20.))
+                                .on_click(cx.listener(|this, _, _, cx| this.choose_logo(cx))),
                         )
-                    }),
-            )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(11.))
+                                .line_height(px(16.5))
+                                .text_color(content(0.5))
+                                .child("Project logo")
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .text_size(px(12.))
+                                        .line_height(px(18.))
+                                        .text_color(content(0.7))
+                                        .child(if self.busy {
+                                            "Saving image…"
+                                        } else {
+                                            "Shown in tabs and composer"
+                                        }),
+                                ),
+                        )
+                        .when(self.appearance.logo.is_some(), |d| {
+                            d.child(
+                                icon_button("remove-project-logo", "Remove project logo", "trash")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.appearance.logo = None;
+                                        this.save(cx);
+                                    })),
+                            )
+                        }),
+                )
+            })
             .child(
                 div()
                     .flex()

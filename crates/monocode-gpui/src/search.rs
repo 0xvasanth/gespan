@@ -46,6 +46,7 @@ pub(crate) struct SearchView {
     recent: Vec<String>,
     logos: HashMap<String, String>,
     classic: bool,
+    original_header: Option<f32>,
     files: Vec<monocode_core::files::ProjectFile>,
     scope: Scope,
     query: String,
@@ -118,6 +119,7 @@ impl SearchView {
             recent: sources.recent,
             logos: sources.logos,
             classic: sources.classic,
+            original_header: None,
             files: vec![],
             scope: Scope::All,
             query: String::new(),
@@ -142,6 +144,15 @@ impl SearchView {
     }
     pub(crate) fn set_classic(&mut self, classic: bool, cx: &mut Context<Self>) {
         self.classic = classic;
+        cx.notify();
+    }
+    /// Original SearchView owns a native title strip and reserves the leading
+    /// space occupied by the shared window navigation above its compact rail.
+    pub(crate) fn set_original_header(&mut self, inset: Option<f32>, cx: &mut Context<Self>) {
+        if self.original_header == inset {
+            return;
+        }
+        self.original_header = inset;
         cx.notify();
     }
     pub(crate) fn draft(&self, cx: &App) -> (String, Scope) {
@@ -561,6 +572,11 @@ impl Render for SearchView {
                     .into_any_element()
             })
             .collect();
+        let header = if self.original_header.is_some() {
+            crate::shell::titlebar_drag_area()
+        } else {
+            div()
+        };
         let loading = self.sessions_loading || self.files_loading;
         let stroke = content(if self.classic { 0.07 } else { 0.04 });
         let selection = if content(1.).l < 0.5 { 0.06 } else { 0.10 };
@@ -594,19 +610,29 @@ impl Render for SearchView {
                 cx.stop_propagation();
             }))
             .child(
-                div()
+                header
                     .id("app-search-header")
                     .debug_selector(|| "app-search-header".into())
                     .h(px(40.))
                     .flex_shrink_0()
                     .border_b_1()
                     .border_color(stroke)
-                    .px_3()
+                    .pl(px(self.original_header.unwrap_or(12.)))
+                    .pr_3()
                     .flex()
                     .items_center()
                     .gap_2()
                     .child(icon("search", 14.).text_color(content(0.5)))
-                    .child(div().flex_1().min_w_0().child(self.input.clone()))
+                    .child(
+                        div()
+                            .debug_selector(|| "app-search-field".into())
+                            .flex_1()
+                            .min_w_0()
+                            .when(self.original_header.is_some(), |d| {
+                                d.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            })
+                            .child(self.input.clone()),
+                    )
                     .when(loading, |d| {
                         d.child(crate::right_panel::spinner(
                             "app-search-loading",

@@ -171,13 +171,19 @@ pub(crate) fn diff_stat_width(stats: Option<&monocode_core::scm::DiffStats>) -> 
     (added.len() + deleted.len() + 2) as f32 * 6.5 + 18.
 }
 
+/// Fit the complete diff label together so one number cannot push the other
+/// outside its slot. Callers include any gap that scales with their text.
+pub(crate) fn diff_stat_scale(available: f32, natural: f32) -> f32 {
+    (available.max(0.) / natural.max(f32::EPSILON)).clamp(0.1, 1.)
+}
+
 pub(crate) fn diff_stat(
     stats: Option<&monocode_core::scm::DiffStats>,
     width: f32,
 ) -> Stateful<gpui::Div> {
     let added = format_integer(stats.map_or(0, |s| s.additions.max(0)));
     let deleted = format_integer(stats.map_or(0, |s| s.deletions.max(0)));
-    let scale = ((width - 18.) / (diff_stat_width(stats) - 18.)).clamp(0.1, 1.);
+    let scale = diff_stat_scale(width - 18., diff_stat_width(stats) - 18.);
     div()
         .id("project-diff-stat")
         .debug_selector(|| "project-diff-stat".into())
@@ -242,6 +248,7 @@ pub(crate) struct RightPanel {
     tab: RightTab,
     order: Vec<RightTab>,
     shown: bool,
+    sidebar_tab: Option<RightTab>,
     /// Classic reserves the title bar's height; rounded content starts at
     /// the card's top edge, below the window-wide title bar.
     top_inset: f32,
@@ -289,6 +296,7 @@ impl RightPanel {
             tab,
             order: RightTab::normalize(&order),
             shown: false,
+            sidebar_tab: None,
             top_inset: 0.,
             tab_width: TABS_WIDTH,
             drag: None,
@@ -334,8 +342,17 @@ impl RightPanel {
         cx.emit(PanelEvent::Tab(tab));
         cx.notify();
     }
+    pub(crate) fn set_sidebar_tab(&mut self, tab: Option<RightTab>, cx: &mut Context<Self>) {
+        if self.sidebar_tab != tab {
+            self.sidebar_tab = tab;
+            self.sync_panes(cx);
+        }
+    }
     fn sync_panes(&mut self, cx: &mut Context<Self>) {
-        let (shown, tab) = (self.shown, self.tab);
+        let (shown, tab) = match self.sidebar_tab {
+            Some(tab) => (true, tab),
+            None => (self.shown, self.tab),
+        };
         self.explorer.update(cx, |e, cx| {
             e.set_enabled(shown && tab == RightTab::Files, cx)
         });

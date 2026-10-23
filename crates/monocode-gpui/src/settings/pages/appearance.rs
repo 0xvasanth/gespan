@@ -255,7 +255,7 @@ impl SettingsView {
                 )
             })
             .collect();
-        let layout = vec![
+        let mut layout = vec![
             self.row(
                 Some("inset-layout"),
                 true,
@@ -264,20 +264,6 @@ impl SettingsView {
                 vec![self.toggle("inset-layout", "New layout", inset, false, cx, |_, on, cx| {
                     cx.emit(SettingsEvent::NewLayout(on))
                 })],
-            ),
-            self.row(
-                Some("collapsed-project-rail"),
-                false,
-                "Collapsed project rail",
-                Some("Keep project navigation available as a compact icon rail, or hide the rail completely.".into()),
-                vec![self.segmented(
-                    "collapsed-project-rail",
-                    "Collapsed project rail",
-                    &p.collapsed_project_rail,
-                    &[("compact", "Icon rail"), ("hidden", "Hidden")],
-                    cx,
-                    |this, v, cx| this.update(cx, |p| p.collapsed_project_rail = v.into()),
-                )],
             ),
             self.row(
                 Some("interface-scale"),
@@ -313,6 +299,29 @@ impl SettingsView {
                 )],
             ),
         ];
+        if inset {
+            layout.insert(
+                1,
+                self.row(
+                    Some("new-layout-style"),
+                    false,
+                    "Workspace style",
+                    Some("Choose a rounded card or a full-height boxy workspace.".into()),
+                    vec![self.segmented(
+                        "new-layout-style",
+                        "Workspace style",
+                        if self.ctx.new_layout_boxy {
+                            "boxy"
+                        } else {
+                            "rounded"
+                        },
+                        &[("rounded", "Rounded"), ("boxy", "Boxy")],
+                        cx,
+                        |_, value, cx| cx.emit(SettingsEvent::NewLayoutBoxy(value == "boxy")),
+                    )],
+                ),
+            );
+        }
         page.push(self.group(None, false, "Layout", None, None, layout));
         page
     }

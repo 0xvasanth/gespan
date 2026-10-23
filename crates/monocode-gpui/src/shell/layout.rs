@@ -1,7 +1,6 @@
-// The window's body in either layout. Inset (TitleBar.tsx's inset layout):
-// tabs across the window above a rounded card, the footer below it. Classic
-// (App.tsx without `insetLayout`): a full-height sidebar behind a rule, beside
-// a full-height workspace holding its tabs, body and bordered footer.
+// Navigation and frame style are independent. The original layout adds a
+// project rail beside the sessions sidebar. The new layout keeps one sidebar
+// and offers either an inset rounded card or the existing full-height boxy frame.
 use super::{CORNER_BUTTONS_WIDTH, CORNER_CONTROL_GAP, Shell, titlebar_drag_area};
 use crate::{
     popover::{Anchor, popover},
@@ -139,12 +138,34 @@ fn panel_button(enabled: bool, dot: bool) -> gpui::Stateful<gpui::Div> {
 }
 
 impl Shell {
-    /// `Workspace: Toggle Layout` (cmd-shift-l), until the settings view lands.
+    pub(super) fn classic_titlebar_spans_window(&self, cx: &gpui::App) -> bool {
+        cfg!(target_os = "macos")
+            && self.workspace.classic_layout
+            && !self.workspace.project_rail_open
+            && self.settings.is_none()
+            && !self.app_view_open()
+            && self.app_search.is_none()
+            && !self.mono_active(cx)
+    }
+    /// Switch navigation layouts without changing the new layout's frame style.
     pub(super) fn toggle_layout(&mut self, cx: &mut Context<Self>) {
         self.workspace.classic_layout = !self.workspace.classic_layout;
-        let classic = self.workspace.classic_layout;
-        if !classic && let Some(view) = self.active_app_view {
+        self.project_resize = None;
+        self.layout_changed(cx);
+        self.sync_settings(cx);
+    }
+    pub(super) fn layout_changed(&mut self, cx: &mut Context<Self>) {
+        let classic = self.workspace.boxy_layout();
+        if !self.workspace.classic_layout
+            && let Some(view) = self.active_app_view
+        {
             self.remember_title_tab(TitleTab::App(view));
+        }
+        if !self.workspace.classic_layout
+            && let Some(id) = self.monos.as_ref().and_then(|m| m.read(cx).active.clone())
+        {
+            self.remember_title_tab(self.mono_tab(id));
+            self.reveal_active_tab(cx);
         }
         if let Some(search) = &self.app_search {
             search.view.update(cx, |v, cx| v.set_classic(classic, cx));
@@ -154,6 +175,13 @@ impl Shell {
         self.resources
             .update(cx, |monitor, cx| monitor.set_classic(classic, cx));
         self.invalidate_chrome(cx);
+        self.drop_peek();
+        if !self.workspace.classic_layout && !self.query.is_empty() {
+            self.query.clear();
+            self.classic_session_search
+                .update(cx, |input, cx| input.set_text(String::new(), cx));
+        }
+        self.sync_right_panel(cx);
         self.fit_sidebar(cx);
         self.persist(cx);
         cx.notify();
@@ -167,7 +195,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let classic = self.workspace.classic_layout;
+        let classic = self.workspace.boxy_layout();
         self.usage_footer
             .update(cx, |footer, cx| footer.set_classic(classic, cx));
         self.resources
@@ -296,6 +324,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let sidebar_width = if !self.session_sidebar_available(cx) {
+            0.
+        } else {
+            sidebar_width
+        };
         // The right panel runs full height beside the workspace column, so
         // opening it pushes the tabs, body and footer together.
         let card = self.workspace_content(false, right_width, full, window, cx);
@@ -304,18 +337,34 @@ impl Shell {
             .clone()
             .filter(|_| right_shown && self.settings.is_none())
             .map(|panel| self.right_panel_frame(panel, right_width, full, cx));
-        let footer = self.footer_row(cx);
-        let tab_bar = self.titlebar(window, cx);
-        let navigation = self.navigation(cx);
-        let corner = self
-            .settings
-            .is_none()
-            .then(|| self.panel_toggle(window, cx));
-        div()
+        let footer = (!self.classic_surface_open(cx)).then(|| self.footer_row(cx));
+        let spans_window = self.classic_titlebar_spans_window(cx);
+        let original = self.workspace.classic_layout;
+        let compact_surface = cfg!(target_os = "macos")
+            && original
+            && !self.workspace.project_rail_open
+            && self.settings.is_none()
+            && self.classic_surface_open(cx);
+        let tab_bar = if spans_window || (original && self.app_search.is_some()) {
+            None
+        } else if original && self.app_view_open() {
+            Some(self.classic_app_surface_header(cx))
+        } else if original && self.mono_active(cx) {
+            Some(self.classic_mono_header(cx))
+        } else {
+            Some(self.titlebar(window, cx))
+        };
+        let show_navigation = !spans_window;
+        let navigation = show_navigation.then(|| self.navigation(cx));
+        let corner = (self.settings.is_none() && !original).then(|| self.panel_toggle(window, cx));
+        let body = div()
             .flex_1()
             .min_h_0()
             .flex()
             .relative()
+            .when(self.workspace.classic_layout, |d| {
+                d.child(self.project_rail_frame(cx))
+            })
             .when(sidebar_width > 0., |d| {
                 d.child(
                     div()
@@ -327,7 +376,12 @@ impl Shell {
                         .flex_shrink_0()
                         .overflow_hidden()
                         .border_r_1()
-                        .border_color(crate::right_panel::stroke())
+                        .border_color(if original {
+                            content(0.07)
+                        } else {
+                            crate::right_panel::stroke()
+                        })
+                        .when(original, |d| d.bg(pane_fill()))
                         .child(
                             // Full width while it slides; the frame clips it.
                             div()
@@ -339,15 +393,17 @@ impl Shell {
                                 .flex()
                                 .flex_col()
                                 .opacity(self.sidebar_fraction)
-                                .child(
-                                    // The traffic lights head the sidebar, where
-                                    // the window's top is; the toggle floats
-                                    // above them (see below).
-                                    titlebar_drag_area()
-                                        .w_full()
-                                        .h(px(TITLE_BAR_HEIGHT))
-                                        .flex_shrink_0(),
-                                )
+                                .when(!original, |d| {
+                                    d.child(
+                                        // The traffic lights head the sidebar, where
+                                        // the window's top is; the toggle floats
+                                        // above them (see below).
+                                        titlebar_drag_area()
+                                            .w_full()
+                                            .h(px(TITLE_BAR_HEIGHT))
+                                            .flex_shrink_0(),
+                                    )
+                                })
                                 .child(div().flex_1().min_h_0().child(self.sidebar_contents())),
                         ),
                 )
@@ -361,39 +417,70 @@ impl Shell {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .bg(pane_fill())
-                    .child(tab_bar)
+                    .when(!compact_surface, |d| d.bg(pane_fill()))
+                    .when(compact_surface, |d| {
+                        // Keep one continuous shell tint behind all traffic
+                        // lights; the content wash starts below the title bar.
+                        d.relative().child(
+                            div()
+                                .debug_selector(|| "classic-surface-background".into())
+                                .absolute()
+                                .top(px(TITLE_BAR_HEIGHT))
+                                .bottom_0()
+                                .left_0()
+                                .right_0()
+                                .bg(pane_fill()),
+                        )
+                    })
+                    .children(tab_bar)
                     .child(card)
-                    .child(
+                    .children(footer.map(|footer| {
                         footer
                             .h(px(28.))
                             .px_3()
                             .border_t_1()
-                            .border_color(crate::right_panel::stroke()),
-                    ),
+                            .border_color(crate::right_panel::stroke())
+                    })),
             )
             .children(self.sidebar_resize(cx))
             .children(panel.map(|panel| div().h_full().bg(pane_fill()).child(panel)))
-            .child(
-                // The traffic lights, toggle and arrows ride above the sidebar's
-                // header as in the inset title bar: the toggle holds still, and
-                // the arrows sit at the open sidebar's edge or after the toggle.
-                div().absolute().top_0().left_0().child(navigation),
-            )
-            .child(
-                // The right panel toggle holds the window's corner too, above
-                // the strip or an open panel's tab row.
-                div()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .h(px(TITLE_BAR_HEIGHT))
-                    .children(corner),
-            )
-            .into_any_element()
+            .when(show_navigation, |d| {
+                d.child(
+                    // The traffic lights, toggle and arrows ride above the sidebar's
+                    // header as in the inset title bar: the toggle holds still, and
+                    // the arrows sit at the open sidebar's edge or after the toggle.
+                    div().absolute().top_0().left_0().children(navigation),
+                )
+            })
+            .when(!spans_window, |d| {
+                d.child(
+                    // The right panel toggle holds the window's corner too, above
+                    // the strip or an open panel's tab row.
+                    div()
+                        .absolute()
+                        .top_0()
+                        .right_0()
+                        .h(px(TITLE_BAR_HEIGHT))
+                        .children(corner),
+                )
+            });
+        if spans_window {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(self.titlebar(window, cx))
+                .child(body)
+                .into_any_element()
+        } else {
+            body.into_any_element()
+        }
     }
     /// Classic: the corner's buttons, `pr-3` from the edge.
     pub(super) fn corner_room(&self, cx: &gpui::App) -> f32 {
+        if self.workspace.classic_layout && !self.mono_active(cx) {
+            return 0.;
+        }
         if self.mono_active(cx) {
             return if self.corner_tabs_shown() {
                 let minimum = if self.workspace.right_panel_width >= 312. {
@@ -551,11 +638,15 @@ impl Shell {
         }
     }
     fn sidebar_resize(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        (self.workspace.sidebar_visible && self.sidebar_slide.is_none()).then(|| {
+        (self.session_sidebar_available(cx)
+            && self.workspace.sidebar_visible
+            && self.sidebar_slide.is_none())
+        .then(|| {
             // The classic sidebar owns its right rule; the inset workspace
             // owns the rule just beyond the sidebar's edge.
-            let border = self.workspace.sidebar_width
-                + if self.workspace.classic_layout {
+            let border = self.project_rail_drawn_width()
+                + self.workspace.sidebar_width
+                + if self.workspace.boxy_layout() {
                     -0.5
                 } else {
                     0.5
@@ -655,7 +746,7 @@ impl Shell {
     }
     /// The usage chips with the terminal controls at the far end.
     fn footer_row(&mut self, cx: &mut Context<Self>) -> gpui::Div {
-        let height = if self.workspace.classic_layout {
+        let height = if self.workspace.boxy_layout() {
             28.
         } else {
             30.
@@ -664,7 +755,7 @@ impl Shell {
             .w_full()
             .h(px(30.))
             .flex_shrink_0()
-            .when(!self.workspace.classic_layout, |d| {
+            .when(!self.workspace.boxy_layout(), |d| {
                 d.overflow_hidden().bg(inset_chrome_wash())
             })
             .flex()
@@ -682,7 +773,7 @@ impl Shell {
         if !self.resources.read(cx).chip_shown() {
             return None;
         }
-        let classic = self.workspace.classic_layout;
+        let classic = self.workspace.boxy_layout();
         // The terminal group sits 8px on; alone, the chip takes its inset margin.
         let alone = self.app_view_open() || self.workspace.project.is_empty();
         Some(
@@ -741,7 +832,7 @@ impl Shell {
                 .bg(black(0.4))
                 .child(
                     popover("running-work-modal", anchor)
-                        .modal_surface(self.workspace.classic_layout)
+                        .modal_surface(self.workspace.boxy_layout())
                         .width(width)
                         .gap(0.)
                         .max_height(viewport.height.as_f32() - 32.)
@@ -894,7 +985,13 @@ mod tests {
                 .unwrap();
             visual.run_until_parked();
             assert!(visual.debug_bounds("right-panel-frame").is_none());
-            let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
+            let toggle = visual
+                .debug_bounds(if classic {
+                    "classic-mono-overview"
+                } else {
+                    "toggle-right-panel"
+                })
+                .unwrap();
             visual.simulate_click(toggle.center(), Default::default());
             visual.run_until_parked();
             assert!(visual.debug_bounds("mono-overview-panel").is_some());
@@ -950,20 +1047,31 @@ mod tests {
                 })
                 .unwrap();
             visual.run_until_parked();
-            assert_eq!(
-                visual.debug_bounds("right-panel-frame").unwrap(),
-                mono_bounds
-            );
+            if classic {
+                assert!(visual.debug_bounds("right-panel-frame").is_none());
+            } else {
+                assert_eq!(
+                    visual.debug_bounds("right-panel-frame").unwrap(),
+                    mono_bounds
+                );
+            }
             assert!(visual.debug_bounds("mono-overview-panel").is_none());
-            let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
-            visual.simulate_click(toggle.center(), Default::default());
-            visual.run_until_parked();
+            if !classic {
+                let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
+                visual.simulate_click(toggle.center(), Default::default());
+                visual.run_until_parked();
+            }
             window
                 .update(visual, |_, w, cx| {
                     manager.update(cx, |m, cx| m.open(&mono, w, cx))
                 })
                 .unwrap();
             visual.run_until_parked();
+            if classic {
+                let toggle = visual.debug_bounds("classic-mono-overview").unwrap();
+                visual.simulate_click(toggle.center(), Default::default());
+                visual.run_until_parked();
+            }
             assert!(visual.debug_bounds("right-panel-frame").is_none());
             window
                 .update(visual, |shell, _, _| {

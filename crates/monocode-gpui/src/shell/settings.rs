@@ -107,6 +107,7 @@ impl Shell {
                 .unwrap_or_default(),
             catalogs,
             classic: self.workspace.classic_layout,
+            new_layout_boxy: self.workspace.new_layout_boxy,
             cwd: self.workspace.project.clone(),
             project_label: self.project_label(&self.workspace.project),
             archived,
@@ -166,6 +167,11 @@ impl Shell {
                     if this.workspace.classic_layout == *on {
                         this.toggle_layout(cx);
                     }
+                    this.sync_settings(cx);
+                }
+                SettingsEvent::NewLayoutBoxy(boxy) => {
+                    this.workspace.new_layout_boxy = *boxy;
+                    this.layout_changed(cx);
                     this.sync_settings(cx);
                 }
                 SettingsEvent::OpenSession(id) => {

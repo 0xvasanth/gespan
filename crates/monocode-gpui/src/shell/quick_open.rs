@@ -101,7 +101,7 @@ impl Shell {
                 .bg(black(0.35))
                 .child(
                     popover("quick-open-modal", anchor)
-                        .modal_surface(self.workspace.classic_layout)
+                        .modal_surface(self.workspace.boxy_layout())
                         .width(width)
                         .gap(0.)
                         .priority(80)

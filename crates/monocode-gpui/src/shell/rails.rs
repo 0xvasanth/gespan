@@ -130,7 +130,12 @@ impl Shell {
     /// Moves each rail toward its open state. A rail the sidebar first shows
     /// is simply there; later changes grow and fold.
     pub(super) fn sync_rails(&mut self, ids: &[i64], cx: &mut Context<Self>) {
-        let (started, children) = self.started_groups(ids);
+        let (started, children) = if self.workspace.classic_layout {
+            // Original Sidebar.tsx leaves /operator launches in the list.
+            (HashMap::new(), HashSet::new())
+        } else {
+            self.started_groups(ids)
+        };
         let now = Instant::now();
         let mut animating = false;
         let mut seen = HashSet::new();
@@ -199,6 +204,9 @@ impl Shell {
     }
 
     fn session_card_at_depth(&self, id: i64, nested: bool, cx: &mut Context<Self>) -> AnyElement {
+        if self.workspace.classic_layout {
+            return self.classic_session_card_at_depth(id, nested, false, cx);
+        }
         let Some(rail) = self.rail(id, &self.rails.started) else {
             return if nested {
                 self.session_row_with(id, true, None, cx)
@@ -247,6 +255,462 @@ impl Shell {
             })
             .into_any_element()
     }
+
+    /// The original sidebar uses the full, three-line SessionCard. Folder
+    /// members omit only the model header. Orchestrated agents are contained
+    /// within their lead's card, between its title and workspace footer.
+    pub(super) fn classic_session_card_at_depth(
+        &self,
+        id: i64,
+        nested: bool,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let rail = self
+            .rail(id, &self.rails.started)
+            .filter(|rail| matches!(rail, Rail::Agents(_)));
+        let open = self
+            .rails
+            .motions
+            .get(&id)
+            .is_some_and(|motion| motion.open);
+        self.classic_session_row_with(
+            id,
+            nested,
+            compact,
+            rail.as_ref().map(|rail| (rail, open)),
+            cx,
+        )
+    }
+
+    fn classic_session_row_with(
+        &self,
+        id: i64,
+        nested: bool,
+        compact: bool,
+        rail: Option<(&Rail, bool)>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if let Some(row) = self.rename_row(&session_groups::RenameTarget::Session(id), cx) {
+            return row;
+        }
+        let work_item = self.work_item_badge(id, false, cx);
+        let agents = match rail {
+            Some((Rail::Agents(summary), true)) => Some(self.agents(id, summary, cx)),
+            _ => None,
+        };
+        let session = self.session_metadata(id, cx);
+        let selected = self.selected_sessions.contains(&id);
+        let active =
+            self.workspace.active == Some(id) && !self.mono_active(cx) && !self.app_view_open();
+        let draft = session.has_saved_draft();
+        let approval = session.needs_approval();
+        let orchestration = matches!(rail, Some((Rail::Agents(_), true)));
+        let header = !compact || orchestration;
+        let started_in_view = match rail {
+            Some((Rail::Started(children), _)) => children.iter().any(|child| {
+                self.selected_sessions.contains(child)
+                    || (self.workspace.active == Some(*child)
+                        && !self.mono_active(cx)
+                        && !self.app_view_open())
+            }),
+            _ => false,
+        };
+        let saved = self.session_details.get(&id);
+        let (model, branch) = self
+            .sessions
+            .get(&id)
+            .and_then(|view| view.read(cx).sidebar_details())
+            .unwrap_or_else(|| {
+                (
+                    crate::pickers::cached_model_name(
+                        Kind::from_id(&session.summary.provider),
+                        saved.and_then(|details| details.model.as_deref()),
+                    ),
+                    None,
+                )
+            });
+        let cwd = self
+            .session_worktrees
+            .get(&id)
+            .and_then(|cwd| cwd.as_deref())
+            .unwrap_or(&session.summary.cwd);
+        let branch = branch
+            .or_else(|| saved.and_then(|details| details.branch.clone()))
+            .or_else(|| {
+                let git = self.git.read(cx);
+                (git.root == cwd)
+                    .then(|| git.index.as_ref().and_then(|index| index.branch.clone()))
+                    .flatten()
+            });
+        let repo = std::path::Path::new(&session.summary.cwd)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&session.summary.cwd);
+        let git_label = if saved.is_some_and(|details| details.worktree_removed) {
+            "No branch".to_string()
+        } else {
+            match branch.filter(|branch| !branch.is_empty()) {
+                Some(branch) if !repo.is_empty() => format!("{repo}/{branch}"),
+                Some(branch) => branch,
+                None => repo.to_owned(),
+            }
+        };
+        let model = if session.summary.provider == "claude" {
+            model
+                .strip_prefix("Claude ")
+                .map(|name| SharedString::from(name.to_owned()))
+                .unwrap_or(model)
+        } else {
+            model
+        };
+        let status = self.classic_session_status(id, &session, cx);
+        let title = div()
+            .debug_selector(move || format!("session-title-{id}"))
+            .flex_1()
+            .min_w_0()
+            .h(px(17.875))
+            .text_size(px(13.))
+            .line_height(px(17.875))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(content(1.))
+            .child(crate::particle_text::particle_text(session.display_title()));
+        let body = div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .when(header, |d| {
+                d.child(
+                    div()
+                        .h(px(16.5))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap_1p5()
+                                .child(provider_icon(&session.summary.provider, 14.))
+                                .child(
+                                    div()
+                                        .debug_selector(move || format!("session-model-{id}"))
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_size(px(11.))
+                                        .line_height(px(16.5))
+                                        .text_color(content(0.5))
+                                        .child(model),
+                                ),
+                        )
+                        .child(status),
+                )
+            })
+            .child(
+                div()
+                    .when(header, |d| d.mt_1())
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .when(session.summary.pinned, |d| {
+                        d.child(icon("pin", 12.).text_color(content(0.45)))
+                    })
+                    .child(title)
+                    .when(!header, |d| {
+                        d.child(
+                            div()
+                                .pl_2()
+                                .child(self.classic_session_status(id, &session, cx)),
+                        )
+                    }),
+            )
+            .children(agents)
+            .child(
+                div()
+                    .mt_1()
+                    .h(px(20.))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_size(px(11.))
+                            .line_height(px(16.5))
+                            .text_color(content(0.45))
+                            .when(!git_label.is_empty(), |d| {
+                                d.child(icon("git-branch", 12.)).child(
+                                    div()
+                                        .debug_selector(move || format!("session-workspace-{id}"))
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(git_label),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .gap_px()
+                            .child(
+                                div()
+                                    .size(px(20.))
+                                    .when(self.session_hover == Some(id), |d| {
+                                        d.child(self.session_archive_button(id, &session, cx))
+                                    }),
+                            )
+                            .children(work_item)
+                            .when(
+                                self.automation_state.session_automations.contains_key(&id),
+                                |d| d.child(icon("zap", 12.).text_color(rgb(0xfbbf24))),
+                            )
+                            .when_some(rail, |d, (rail, _)| {
+                                d.child(
+                                    icon(
+                                        match rail {
+                                            Rail::Agents(_) => "share",
+                                            Rail::Started(_) => "cursor-magic",
+                                        },
+                                        13.,
+                                    )
+                                    .text_color(content(0.5)),
+                                )
+                            }),
+                    ),
+            );
+        let anchor = self
+            .session_row_bounds
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
+        self.sidebar_list.track_anchor(anchor.clone());
+        let mut selected_fill = crate::theme::accent_color();
+        selected_fill.a = 0.15;
+        div()
+            .id(("sidebar-session", id as usize))
+            .debug_selector(move || format!("sidebar-session-{id}"))
+            .group("session-row")
+            .role(Role::Button)
+            .aria_label(session.display_title())
+            .aria_selected(selected || active)
+            .aria_description(format!(
+                "{} conversation",
+                Kind::from_id(&session.summary.provider).label()
+            ))
+            .cursor(CursorStyle::Arrow)
+            .relative()
+            .w_full()
+            .border_1()
+            .border_color(content(0.))
+            .rounded_md()
+            .px(px(if nested { 6. } else { 10. }))
+            .pt(px(if compact { 6. } else { 8. }))
+            .pb(px(if orchestration {
+                10.
+            } else if compact {
+                6.
+            } else {
+                8.
+            }))
+            .flex()
+            .flex_col()
+            .text_color(content(0.8))
+            .when(selected, |d| d.bg(selected_fill))
+            .when(!selected && approval, |d| d.bg(content(0.2)))
+            .when(!selected && !approval && active, |d| d.bg(content(0.1)))
+            .when(
+                !selected && !approval && !active && (started_in_view || orchestration),
+                |d| d.bg(content(0.05)),
+            )
+            .when(draft || approval, |d| {
+                d.border_dashed()
+                    .border_color(content(if active || selected || approval {
+                        0.3
+                    } else {
+                        0.25
+                    }))
+            })
+            .when(!selected && !approval && !active, |d| {
+                d.hover(|s| s.bg(content(if orchestration { 0.1 } else { 0.05 })))
+            })
+            .when(
+                self.sidebar_drop == Some(session_groups::ListDrop::Session(id)),
+                |d| {
+                    let mut fill = crate::theme::accent_color();
+                    fill.a = 0.2;
+                    d.bg(fill)
+                },
+            )
+            .when(self.deleting.contains(&id), |d| d.opacity(0.5))
+            .child(body)
+            .child(anchor.probe())
+            .on_hover(cx.listener(move |this, hovered, window, cx| {
+                // Original cards carry their details inline, so hovering only
+                // warms the existing metadata path; it does not open a preview.
+                this.hover_session(id, anchor.clone(), *hovered, false, window, cx);
+            }))
+            .on_click(
+                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                    if std::mem::take(&mut this.skip_session_click) {
+                        return;
+                    }
+                    this.select_sidebar_session(id, event.modifiers(), window, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                    this.skip_session_click = false;
+                    this.tab_drag = None;
+                    this.pane_drag = Some(PaneDrag {
+                        source: DragSource::Session(id),
+                        start: event.position,
+                        position: event.position,
+                        active: false,
+                        over: None,
+                        insert: None,
+                    });
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    this.context_selection = !this.selected_sessions.contains(&id);
+                    if this.context_selection {
+                        this.selected_sessions.clear();
+                        this.selected_sessions.insert(id);
+                    }
+                    this.open_menu(
+                        MenuTarget::Session(id),
+                        Anchor::Point(event.position),
+                        window,
+                        cx,
+                    );
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// The original search applies the same fuzzy query independently to the
+    /// title, model, harness, and repository/branch fields.
+    pub(super) fn classic_session_matches_query(&self, id: i64, cx: &App) -> bool {
+        let query = self.query.trim();
+        if query.is_empty() {
+            return true;
+        }
+        let session = self.session_metadata(id, cx);
+        let saved = self.session_details.get(&id);
+        let live = self
+            .sessions
+            .get(&id)
+            .and_then(|view| view.read(cx).sidebar_details());
+        let model = live
+            .as_ref()
+            .map(|(model, _)| model.to_string())
+            .unwrap_or_else(|| {
+                crate::pickers::cached_model_name(
+                    Kind::from_id(&session.summary.provider),
+                    saved.and_then(|details| details.model.as_deref()),
+                )
+                .to_string()
+            });
+        let cwd = self
+            .session_worktrees
+            .get(&id)
+            .and_then(|cwd| cwd.as_deref())
+            .unwrap_or(&session.summary.cwd);
+        let branch = live
+            .and_then(|(_, branch)| branch)
+            .or_else(|| saved.and_then(|details| details.branch.clone()))
+            .or_else(|| {
+                let git = self.git.read(cx);
+                (git.root == cwd)
+                    .then(|| git.index.as_ref().and_then(|index| index.branch.clone()))
+                    .flatten()
+            });
+        let repo = std::path::Path::new(&session.summary.cwd)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let git = match branch {
+            Some(branch) if !repo.is_empty() => format!("{repo}/{branch}"),
+            Some(branch) => branch,
+            None => repo.to_owned(),
+        };
+        [
+            session.display_title(),
+            session.summary.title.clone(),
+            saved
+                .and_then(|details| details.model.clone())
+                .unwrap_or_default(),
+            model,
+            session.summary.provider.clone(),
+            git,
+        ]
+        .iter()
+        .any(|field| monocode_core::search::fuzzy(query, field).is_some())
+    }
+
+    fn classic_session_status(
+        &self,
+        id: i64,
+        session: &session_loading::Metadata<'_>,
+        _cx: &Context<Self>,
+    ) -> AnyElement {
+        let status = div()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap_1()
+            .text_size(px(11.))
+            .line_height(px(16.5))
+            .text_color(content(0.45));
+        if session.needs_approval() {
+            status
+                .text_color(rgb(0xfbbf24))
+                .child(icon("circle-alert", 12.))
+                .child(if self.orchestration_summaries.contains_key(&id) {
+                    "Needs input"
+                } else {
+                    "Need approval"
+                })
+                .into_any_element()
+        } else if session.responding() {
+            status
+                .text_color(crate::theme::accent_color())
+                .children(self.session_marks.get(&id).cloned())
+                .child("Working...")
+                .into_any_element()
+        } else if self.unseen_finished.contains(&id) {
+            status
+                .text_color(rgb(0x34d399))
+                .child(icon("check", 12.))
+                .child("Done")
+                .into_any_element()
+        } else if session.has_saved_draft() {
+            status
+                .text_color(content(0.55))
+                .child(icon("circle-dashed-hi", 12.))
+                .child("Draft")
+                .into_any_element()
+        } else {
+            status
+                .child(monocode_core::time::relative(
+                    session.summary.updated_at,
+                    monocode_core::time::now_ms(),
+                ))
+                .into_any_element()
+        }
+    }
     /// OrchestrationSidebarAgents, `tree`.
     fn agents(
         &self,
@@ -254,182 +718,275 @@ impl Shell {
         summary: &monocode_core::orchestration::Summary,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let classic = self.workspace.classic_layout;
         div()
-            .pt_1()
-            .pb_1()
+            .when(!classic, |d| d.pt_1().pb_1())
+            .when(classic, |d| {
+                d.mt_1p5().child(
+                    div()
+                        .mb_0p5()
+                        .px_0p5()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .text_size(px(11.))
+                        .line_height(px(16.5))
+                        .text_color(content(0.45))
+                        .child(format!(
+                            "{} {}",
+                            summary.tasks.len(),
+                            if summary.tasks.len() == 1 {
+                                "agent"
+                            } else {
+                                "agents"
+                            }
+                        ))
+                        .child(format!(
+                            "{}/{} done",
+                            summary
+                                .tasks
+                                .iter()
+                                .filter(|task| task.status == "completed")
+                                .count(),
+                            summary.tasks.len()
+                        )),
+                )
+            })
             .flex()
             .flex_col()
-            .children(summary.tasks.iter().enumerate().map(|(ix, task)| {
-                let needs_input = task.session.is_some_and(|s| {
-                    self.sessions
-                        .get(&s)
-                        .is_some_and(|v| v.read(cx).needs_approval())
-                });
-                let open = self.rails.open_tasks.contains(&(lead, ix)) || needs_input;
-                let label = task.label(summary, needs_input);
-                let working = summary.live && task.status == "running" && !needs_input;
-                let alert = needs_input || matches!(task.status.as_str(), "failed" | "blocked");
-                let done = task.status == "completed";
-                let tone: gpui::Hsla = if alert {
-                    rgb(0xfbbf24).into()
-                } else if working {
-                    accent_color()
-                } else if done {
-                    rgb(0x34d399).into()
-                } else {
-                    content(0.45)
-                };
-                let model = crate::pickers::model_name(
-                    Kind::from_id(&task.provider),
-                    task.model.as_deref(),
-                )
-                .to_string();
-                let group: SharedString = format!("rail-agent-{lead}-{ix}").into();
-                let header = div()
-                    .id(("rail-agent", (lead as usize) << 8 | ix))
-                    .debug_selector(move || format!("rail-agent-{lead}-{ix}"))
-                    .role(Role::Button)
-                    .aria_label(format!("Agent details: {}", task.title))
-                    .aria_expanded(open)
-                    .group(group.clone())
-                    .h(px(28.))
-                    .w_full()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .px(px(6.))
-                    .rounded_md()
-                    .cursor(CursorStyle::Arrow)
-                    .when(open, |d| d.bg(content(0.1)))
-                    .when(!open, |d| d.hover(|s| s.bg(content(0.1))))
-                    .child(
-                        div()
-                            .size(px(14.))
-                            .flex_shrink_0()
-                            .opacity(0.75)
-                            .child(provider_icon(&task.provider, 14.)),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .truncate()
-                            .text_size(px(13.))
-                            .text_color(content(if open { 1. } else { 0.55 }))
-                            .when(!open, |d| {
-                                d.group_hover(group.clone(), |s| s.text_color(content(0.8)))
-                            })
-                            .child(task.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .text_size(px(11.))
-                            .text_color(tone)
-                            .when(alert, |d| {
-                                d.child(icon("circle-alert", 12.).text_color(tone))
-                            })
-                            .when(working, |d| {
-                                d.child(crate::pulse::looping(
-                                    SharedString::from(format!("rail-spinner-{lead}-{ix}")),
-                                    crate::session_mark::SPINNER_PERIOD,
-                                    crate::pulse::Rate::Half,
-                                    crate::session_mark::spinner_at,
-                                ))
-                            })
-                            .when(done && !alert, |d| {
-                                d.child(icon("check", 12.).text_color(tone))
-                            })
-                            // On the rail the spinner says it on its own.
-                            .when(!working, |d| d.child(label)),
-                    )
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.rails.open_tasks.remove(&(lead, ix)) {
-                            this.rails.open_tasks.insert((lead, ix));
-                        }
-                        this.notify_sidebar(cx);
-                    }));
-                let worker = task.session;
-                let running = worker.is_some_and(|s| {
-                    summary.live
-                        && self
-                            .sessions
-                            .get(&s)
-                            .is_some_and(|v| v.read(cx).responding())
-                });
-                let solid = |id: &'static str, label: &'static str| {
-                    div()
-                        .id((id, (lead as usize) << 8 | ix))
-                        .role(Role::Button)
-                        .aria_label(label)
-                        .rounded(px(4.))
-                        .bg(content(0.15))
-                        .px(px(6.))
-                        .py(px(2.))
-                        .text_size(px(11.))
-                        .text_color(content(0.75))
-                        .cursor(CursorStyle::Arrow)
-                        .hover(|s| s.bg(content(0.25)).text_color(content(1.)))
-                        .child(label)
-                };
-                let details = div()
-                    .pl(px(6.))
-                    .pt(px(6.))
-                    .pb_3()
-                    .pr_2()
+            .child(
+                div()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
+                    .when(classic, |d| d.mx(px(-8.)).gap_px())
+                    .children(summary.tasks.iter().enumerate().map(|(ix, task)| {
+                        let needs_input = task.session.is_some_and(|s| {
+                            self.sessions
+                                .get(&s)
+                                .is_some_and(|v| v.read(cx).needs_approval())
+                        });
+                        let open = self.rails.open_tasks.contains(&(lead, ix)) || needs_input;
+                        let label = task.label(summary, needs_input);
+                        let working = summary.live && task.status == "running" && !needs_input;
+                        let alert =
+                            needs_input || matches!(task.status.as_str(), "failed" | "blocked");
+                        let done = task.status == "completed";
+                        let tone: gpui::Hsla = if alert {
+                            rgb(0xfbbf24).into()
+                        } else if working {
+                            accent_color()
+                        } else if done {
+                            rgb(0x34d399).into()
+                        } else {
+                            content(0.45)
+                        };
+                        let model = crate::pickers::model_name(
+                            Kind::from_id(&task.provider),
+                            task.model.as_deref(),
+                        )
+                        .to_string();
+                        let group: SharedString = format!("rail-agent-{lead}-{ix}").into();
+                        let header = div()
+                            .id(("rail-agent", (lead as usize) << 8 | ix))
+                            .debug_selector(move || format!("rail-agent-{lead}-{ix}"))
+                            .role(Role::Button)
+                            .aria_label(format!("Agent details: {}", task.title))
+                            .aria_expanded(open)
+                            .group(group.clone())
+                            .h(px(if classic { 28.5 } else { 28. }))
+                            .w_full()
                             .min_w_0()
                             .flex()
                             .items_center()
                             .gap(px(6.))
-                            .text_size(px(11.))
-                            .text_color(content(0.45))
-                            .child(provider_icon(&task.provider, 14.))
-                            .child(div().min_w_0().truncate().child(model)),
-                    )
-                    .when(worker.is_some() || running, |d| {
-                        d.child(
+                            .px(px(if classic { 8. } else { 6. }))
+                            .rounded_md()
+                            .cursor(CursorStyle::Arrow)
+                            .when(open && !classic, |d| d.bg(content(0.1)))
+                            .when(!open, |d| d.hover(|s| s.bg(content(0.1))))
+                            .child(
+                                div()
+                                    .size(px(14.))
+                                    .flex_shrink_0()
+                                    .relative()
+                                    .opacity(0.75)
+                                    .child(
+                                        div()
+                                            .when(classic && open, |d| d.invisible())
+                                            .when(classic, |d| {
+                                                d.group_hover(group.clone(), |s| s.invisible())
+                                            })
+                                            .child(provider_icon(&task.provider, 14.)),
+                                    )
+                                    .when(classic, |d| {
+                                        d.child(
+                                            div()
+                                                .absolute()
+                                                .top_0()
+                                                .left_0()
+                                                .size_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .invisible()
+                                                .when(open, |d| d.visible())
+                                                .group_hover(group.clone(), |s| s.visible())
+                                                .child(
+                                                    icon(
+                                                        if open {
+                                                            "chevron-down"
+                                                        } else {
+                                                            "chevron-right"
+                                                        },
+                                                        12.,
+                                                    )
+                                                    .text_color(content(0.45)),
+                                                ),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .truncate()
+                                    .text_size(px(if classic { 12. } else { 13. }))
+                                    .when(classic, |d| d.line_height(px(16.5)))
+                                    .text_color(content(if classic {
+                                        0.8
+                                    } else if open {
+                                        1.
+                                    } else {
+                                        0.55
+                                    }))
+                                    .when(!classic && !open, |d| {
+                                        d.group_hover(group.clone(), |s| s.text_color(content(0.8)))
+                                    })
+                                    .child(task.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .text_size(px(11.))
+                                    .when(classic, |d| d.line_height(px(16.5)))
+                                    .text_color(tone)
+                                    .when(alert, |d| {
+                                        d.child(icon("circle-alert", 12.).text_color(tone))
+                                    })
+                                    .when(working, |d| {
+                                        d.child(crate::pulse::looping(
+                                            SharedString::from(format!("rail-spinner-{lead}-{ix}")),
+                                            crate::session_mark::SPINNER_PERIOD,
+                                            crate::pulse::Rate::Half,
+                                            crate::session_mark::spinner_at,
+                                        ))
+                                    })
+                                    .when(done && !alert, |d| {
+                                        d.child(icon("check", 12.).text_color(tone))
+                                    })
+                                    // On the rail the spinner says it on its own.
+                                    .when(classic || !working, |d| d.child(label)),
+                            )
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if !this.rails.open_tasks.remove(&(lead, ix)) {
+                                    this.rails.open_tasks.insert((lead, ix));
+                                }
+                                this.notify_sidebar(cx);
+                            }));
+                        let worker = task.session;
+                        let running = worker.is_some_and(|s| {
+                            summary.live
+                                && self
+                                    .sessions
+                                    .get(&s)
+                                    .is_some_and(|v| v.read(cx).responding())
+                        });
+                        let solid = |id: &'static str, label: &'static str| {
                             div()
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap_1()
-                                .when_some(worker, |d, worker| {
-                                    d.child(solid("rail-agent-open", "See details").on_click(
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.open(worker, window, cx)
+                                .id((id, (lead as usize) << 8 | ix))
+                                .role(Role::Button)
+                                .aria_label(label)
+                                .rounded(px(4.))
+                                .bg(content(0.15))
+                                .px(px(6.))
+                                .py(px(2.))
+                                .text_size(px(11.))
+                                .text_color(content(0.75))
+                                .cursor(CursorStyle::Arrow)
+                                .hover(|s| s.bg(content(0.25)).text_color(content(1.)))
+                                .child(label)
+                        };
+                        let details = div()
+                            .pl(px(if classic { 26. } else { 6. }))
+                            .pt(px(if classic { 0. } else { 6. }))
+                            .pb_3()
+                            .pr_2()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .text_size(px(11.))
+                                    .text_color(content(0.45))
+                                    .child(provider_icon(&task.provider, 14.))
+                                    .child(div().min_w_0().truncate().child(model)),
+                            )
+                            .when(worker.is_some() || running, |d| {
+                                d.child(
+                                    div()
+                                        .flex()
+                                        .flex_wrap()
+                                        .items_center()
+                                        .gap_1()
+                                        .when_some(worker, |d, worker| {
+                                            d.child(
+                                                solid("rail-agent-open", "See details").on_click(
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.open(worker, window, cx)
+                                                    }),
+                                                ),
+                                            )
+                                        })
+                                        .when_some(worker.filter(|_| running), |d, worker| {
+                                            d.child(
+                                                solid("rail-agent-cancel", "Cancel task").on_click(
+                                                    cx.listener(move |this, _, _, cx| {
+                                                        if let Some(view) =
+                                                            this.sessions.get(&worker)
+                                                        {
+                                                            view.update(cx, |v, cx| {
+                                                                v.stop_if_busy(cx)
+                                                            });
+                                                        }
+                                                    }),
+                                                ),
+                                            )
                                         }),
-                                    ))
-                                })
-                                .when_some(worker.filter(|_| running), |d, worker| {
-                                    d.child(solid("rail-agent-cancel", "Cancel task").on_click(
-                                        cx.listener(move |this, _, _, cx| {
-                                            if let Some(view) = this.sessions.get(&worker) {
-                                                view.update(cx, |v, cx| v.stop_if_busy(cx));
-                                            }
-                                        }),
-                                    ))
-                                }),
-                        )
-                    });
-                step(
-                    ix + 1 == summary.tasks.len(),
-                    div()
-                        .flex()
-                        .flex_col()
-                        .child(header)
-                        .when(open, |d| d.child(details)),
-                )
-            }))
+                                )
+                            });
+                        let row = div()
+                            .flex()
+                            .flex_col()
+                            .when(classic, |d| {
+                                d.rounded_md().when(open, |d| d.bg(content(0.1)))
+                            })
+                            .child(header)
+                            .when(open, |d| d.child(details));
+                        if classic {
+                            row.into_any_element()
+                        } else {
+                            step(ix + 1 == summary.tasks.len(), row).into_any_element()
+                        }
+                    })),
+            )
             .into_any_element()
     }
 }

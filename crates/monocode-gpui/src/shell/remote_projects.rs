@@ -524,7 +524,7 @@ impl Shell {
                 .bg(black(0.3))
                 .child(
                     popover("remote-project-modal", anchor)
-                        .modal_surface(self.workspace.classic_layout)
+                        .modal_surface(self.workspace.boxy_layout())
                         .width(width)
                         .max_height(viewport.height.as_f32() * 0.7)
                         .gap(0.)

@@ -127,7 +127,7 @@ impl Shell {
                 .aria_label(format!("{count} working agents"))
                 .flex_shrink_0()
                 .px_2()
-                .when(self.workspace.classic_layout, |d| d.pb_2())
+                .when(self.workspace.boxy_layout(), |d| d.pb_2())
                 .child(
                     div()
                         .overflow_hidden()

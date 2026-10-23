@@ -197,7 +197,7 @@ impl Shell {
                     live,
                     projects,
                     recent,
-                    classic: self.workspace.classic_layout,
+                    classic: self.workspace.boxy_layout(),
                     logos: self
                         .workspace
                         .project_appearance

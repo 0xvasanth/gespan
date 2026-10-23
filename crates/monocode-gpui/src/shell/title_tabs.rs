@@ -83,7 +83,8 @@ impl Shell {
                     project,
                     worktree,
                 } => {
-                    *project == self.workspace.project
+                    !self.workspace.classic_layout
+                        && *project == self.workspace.project
                         && path_key(worktree) == path_key(self.working_copy())
                         && self.workspace.preferences.monos
                         && self
@@ -123,6 +124,9 @@ impl Shell {
     }
 
     pub(super) fn remember_title_tab(&mut self, tab: TitleTab) {
+        if self.workspace.classic_layout && matches!(tab, TitleTab::Mono { .. }) {
+            return;
+        }
         if !self.workspace.title_order.contains(&tab) {
             self.workspace.title_order.push(tab.clone());
         }
@@ -202,6 +206,16 @@ impl Shell {
     }
 
     pub(crate) fn close_mono_tab(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.classic_layout {
+            if self
+                .monos
+                .as_ref()
+                .is_some_and(|m| m.read(cx).active.as_deref() == Some(id))
+            {
+                self.classic_rail_back(window, cx);
+            }
+            return;
+        }
         self.close_title_tabs(&[self.mono_tab(id.into())], None, window, cx);
     }
 

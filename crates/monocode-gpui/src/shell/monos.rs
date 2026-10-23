@@ -13,6 +13,9 @@ pub(crate) struct MonoSession {
     pub model: SharedString,
 }
 impl Shell {
+    pub(crate) fn close_mono_overview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_right_panel_open(false, window, cx);
+    }
     #[cfg(test)]
     pub(crate) fn mono_manager(&self) -> Entity<crate::monos::Monos> {
         self.monos.as_ref().unwrap().clone()

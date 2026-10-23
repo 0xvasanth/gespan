@@ -12,9 +12,24 @@ enum Row {
     Folders,
     Group(Entry),
     Gap,
-    Heading { label: &'static str, first: bool },
+    Heading {
+        label: &'static str,
+        first: bool,
+    },
     Session(i64),
-    GroupedSession { id: i64, first: bool, last: bool },
+    GroupedSession {
+        id: i64,
+        first: bool,
+        last: bool,
+    },
+    ClassicGroupMember {
+        entry: Entry,
+        id: i64,
+        first: bool,
+        last: bool,
+    },
+    ClassicFolderNew(String),
+    ClassicGap(usize),
     Empty,
 }
 
@@ -242,17 +257,22 @@ impl Shell {
 
     fn sidebar_scope(&self) -> String {
         format!(
-            "{}\0{}\0{}\0{:?}\0{}\0{}",
+            "{}\0{}\0{}\0{:?}\0{}\0{}\0{}",
             self.workspace.project,
             self.working_copy(),
             self.query,
             self.workspace.session_filters,
             self.workspace.preferences.show_archived,
+            self.workspace.boxy_layout(),
             self.workspace.classic_layout
         )
     }
 
     pub(super) fn prepare_sidebar_list(&mut self, entries: &[Entry], cx: &App) {
+        if self.workspace.classic_layout {
+            self.prepare_classic_sidebar_list(entries);
+            return;
+        }
         let groups = self.project_groups();
         let now = monocode_core::time::now_ms();
         let mut rows = vec![Row::Navigation, Row::Monos];
@@ -340,12 +360,69 @@ impl Shell {
         self.sidebar_list.update(self.sidebar_scope(), rows);
     }
 
+    fn prepare_classic_sidebar_list(&mut self, entries: &[Entry]) {
+        let groups = self.project_groups();
+        // Original Sidebar.tsx: the list has p-1.5, gap-0.5 and pb-10.
+        // Its project navigation and Mono roster belong to the first rail.
+        let mut rows = vec![Row::ClassicGap(6)];
+        for (ix, entry) in entries.iter().enumerate() {
+            if ix > 0 {
+                rows.push(Row::ClassicGap(2));
+            }
+            let (members, collapsed) = match entry {
+                Entry::Session(id) => {
+                    rows.push(Row::Session(*id));
+                    continue;
+                }
+                Entry::Pinned { sessions } => (sessions, groups.pinned_collapsed),
+                Entry::Reminders {
+                    sessions,
+                    collapsed,
+                } => (sessions, *collapsed),
+                Entry::Folder { id, sessions } => (
+                    sessions,
+                    groups.folder(id).is_some_and(|folder| folder.collapsed),
+                ),
+            };
+            rows.push(Row::Group(entry.clone()));
+            let expanded = !collapsed || !self.query.is_empty();
+            if expanded {
+                let members: Vec<_> = members.to_vec();
+                rows.extend(
+                    members
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, id)| Row::ClassicGroupMember {
+                            entry: entry.clone(),
+                            id: *id,
+                            first: ix == 0,
+                            last: ix + 1 == members.len(),
+                        }),
+                );
+                if let Entry::Folder { id, .. } = entry {
+                    rows.push(Row::ClassicFolderNew(id.clone()));
+                }
+            }
+            if expanded || matches!(entries.get(ix + 1), Some(Entry::Session(_))) {
+                rows.push(Row::ClassicGap(6));
+            }
+        }
+        if entries.is_empty() {
+            rows.push(Row::Empty);
+        }
+        rows.push(Row::ClassicGap(40));
+        self.sidebar_list.update(self.sidebar_scope(), rows);
+    }
+
     fn sync_sidebar_list_visibility(&mut self) {
         // Open rails have variable height. Remeasure only materialized rows,
         // rather than scanning every session in the project every frame.
         for ix in self.sidebar_list.visible_rows.borrow_mut().drain(..) {
-            if let Some(Row::Session(id) | Row::GroupedSession { id, .. }) =
-                self.sidebar_list.rows.get(ix)
+            if let Some(
+                Row::Session(id)
+                | Row::GroupedSession { id, .. }
+                | Row::ClassicGroupMember { id, .. },
+            ) = self.sidebar_list.rows.get(ix)
                 && (self.rails.started.contains_key(id)
                     || self.orchestration_summaries.contains_key(id))
             {
@@ -365,7 +442,7 @@ impl Shell {
             .on_scroll_wheel(cx.listener(|this, _, _, cx| this.sidebar_scrolled(cx)))
             .child(sidebar_edge_mask(
                 self.sidebar_list.state.clone(),
-                !self.workspace.classic_layout,
+                !self.workspace.boxy_layout(),
                 true,
             ))
             .child(
@@ -377,7 +454,7 @@ impl Shell {
             )
             .child(sidebar_edge_mask(
                 self.sidebar_list.state.clone(),
-                !self.workspace.classic_layout,
+                !self.workspace.boxy_layout(),
                 false,
             ))
             .into_any()
@@ -428,6 +505,24 @@ impl Shell {
                     )
                     .into_any();
             }
+            Row::ClassicGroupMember {
+                entry,
+                id,
+                first,
+                last,
+            } => {
+                return div()
+                    .px(px(6.))
+                    .child(self.classic_group_member(&entry, id, first, last, cx))
+                    .into_any();
+            }
+            Row::ClassicFolderNew(id) => {
+                return div()
+                    .px(px(6.))
+                    .child(self.classic_folder_new_session(&id, cx))
+                    .into_any();
+            }
+            Row::ClassicGap(height) => return div().h(px(height as f32)).into_any(),
             Row::Empty => div()
                 .px_2()
                 .py_2()
@@ -440,7 +535,11 @@ impl Shell {
                 })
                 .into_any(),
         };
-        div().px_2().pb_px().child(content).into_any()
+        div()
+            .when(self.workspace.classic_layout, |d| d.px(px(6.)))
+            .when(!self.workspace.classic_layout, |d| d.px_2().pb_px())
+            .child(content)
+            .into_any()
     }
 }
 
@@ -498,12 +597,20 @@ impl Shell {
         cx.notify();
     }
 
-    fn sidebar_navigation(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn sidebar_navigation(&mut self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .w_full()
             .px_2()
-            .pt_1()
-            .pb_3()
+            .pt(px(if self.workspace.classic_layout {
+                2.
+            } else {
+                4.
+            }))
+            .pb(px(if self.workspace.classic_layout {
+                8.
+            } else {
+                12.
+            }))
             .flex()
             .flex_col()
             .gap_px()
@@ -514,7 +621,11 @@ impl Shell {
                     .group("rail-search")
                     .w_full()
                     .h(px(32.))
-                    .mb_1()
+                    .mb(px(if self.workspace.classic_layout {
+                        2.
+                    } else {
+                        4.
+                    }))
                     .px_1p5()
                     .rounded_md()
                     .border_1()
@@ -538,7 +649,7 @@ impl Shell {
                     .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
                     .on_hover(cx.listener(|this, hovered, _, cx| {
                         this.sidebar_hover = if *hovered { Some("Search") } else { None };
-                        this.sidebar_frame.update(cx, |_, cx| cx.notify());
+                        this.notify_navigation(cx);
                     }))
                     .on_mouse_down(
                         MouseButton::Left,
@@ -585,6 +696,11 @@ impl Shell {
                     _ => true,
                 })
                 .map(|(label, glyph)| {
+                    let glyph = if self.workspace.classic_layout && label == "Notes" {
+                        "file"
+                    } else {
+                        glyph
+                    };
                     let selected = self.app_view_label() == Some(label);
                     let unread = label == "Inbox"
                         && self
@@ -621,7 +737,16 @@ impl Shell {
                         })))
                         .child(div().flex_1().child(label))
                         .when(unread, |row| {
-                            row.child(div().size(px(6.)).rounded_full().bg(accent_color()))
+                            row.child(
+                                div()
+                                    .size(px(if self.workspace.classic_layout {
+                                        8.
+                                    } else {
+                                        6.
+                                    }))
+                                    .rounded_full()
+                                    .bg(accent_color()),
+                            )
                         })
                         .on_click(cx.listener(move |this, _, window, cx| match label {
                             "Inbox" => this.open_inbox(window, cx),
@@ -635,23 +760,56 @@ impl Shell {
                             } else if this.sidebar_hover == Some(label) {
                                 this.sidebar_hover = None;
                             }
-                            this.sidebar_frame.update(cx, |_, cx| cx.notify());
+                            this.notify_navigation(cx);
                         }))
                 }),
             )
             .into_any()
     }
-    fn sidebar_filter_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        icon_button("filter-sessions", "Filter sessions", "filter")
+    fn notify_navigation(&self, cx: &mut Context<Self>) {
+        if self.workspace.classic_layout {
+            self.projects_frame.update(cx, |_, cx| cx.notify());
+        } else {
+            self.sidebar_frame.update(cx, |_, cx| cx.notify());
+        }
+    }
+    pub(super) fn sidebar_filter_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self
+            .workspace
+            .session_filters
+            .active(self.workspace.preferences.show_archived)
+            || self.menu_open(&MenuTarget::SessionFilter);
+        let button = if self.workspace.classic_layout {
+            div()
+                .id("filter-sessions")
+                .role(Role::Button)
+                .aria_label("Filter sessions")
+                .aria_expanded(self.menu_open(&MenuTarget::SessionFilter))
+                .cursor(CursorStyle::Arrow)
+                .group("classic-filter")
+                .size(px(24.))
+                .flex_shrink_0()
+                .rounded_md()
+                .flex()
+                .items_center()
+                .justify_center()
+                .hover(|s| s.bg(content(0.1)))
+                .child(
+                    icon("filter", 12.)
+                        .text_color(content(if active { 1. } else { 0.5 }))
+                        .group_hover("classic-filter", |s| s.text_color(content(1.))),
+                )
+        } else {
+            icon_button("filter-sessions", "Filter sessions", "filter")
+        };
+        button
             .debug_selector(|| "sidebar-filter-button".into())
-            .mr(px(-5.))
-            .when(
-                self.workspace
-                    .session_filters
-                    .active(self.workspace.preferences.show_archived)
-                    || self.menu_open(&MenuTarget::SessionFilter),
-                |d| d.bg(content(0.1)),
-            )
+            .mr(px(if self.workspace.classic_layout {
+                0.
+            } else {
+                -5.
+            }))
+            .when(active, |d| d.bg(content(0.1)))
             .relative()
             .child(self.filter_anchor.probe())
             .on_click(cx.listener(|this, _, window, cx| {

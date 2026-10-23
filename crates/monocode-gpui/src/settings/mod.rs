@@ -48,6 +48,7 @@ pub(crate) struct SettingsContext {
     pub remote: Option<std::sync::Arc<monocode_core::remote::Connections>>,
     pub monos: Vec<MonoSetting>,
     pub classic: bool,
+    pub new_layout_boxy: bool,
     /// The selected project, or empty outside one.
     pub cwd: String,
     pub project_label: String,
@@ -72,6 +73,7 @@ impl PartialEq for SettingsContext {
         }
         self.monos == other.monos
             && self.classic == other.classic
+            && self.new_layout_boxy == other.new_layout_boxy
             && self.cwd == other.cwd
             && self.project_label == other.project_label
             && self.archived == other.archived
@@ -102,6 +104,7 @@ pub(crate) enum SettingsEvent {
     Changed(Box<Preferences>),
     /// The Appearance page's New layout switch.
     NewLayout(bool),
+    NewLayoutBoxy(bool),
     Section(Section),
     OpenSession(i64),
     Archive(i64, bool),

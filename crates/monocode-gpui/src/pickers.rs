@@ -889,8 +889,16 @@ impl Render for ModelList {
 
 pub(crate) enum ProjectPicked {
     Project(String),
+    Mono(String),
     New,
     Remote,
+}
+
+pub(crate) struct PickerMono {
+    pub id: String,
+    pub name: String,
+    pub mascot: String,
+    pub color: u32,
 }
 
 /// ProjectPickerPopover: a search field over the projects, the current one
@@ -899,6 +907,8 @@ pub(crate) struct ProjectPicker {
     appearance:
         std::collections::HashMap<String, monocode_core::project_appearance::ProjectAppearance>,
     projects: Vec<String>,
+    monos: Vec<PickerMono>,
+    active_mono: Option<String>,
     current: String,
     active: usize,
     allow_remote: bool,
@@ -921,6 +931,8 @@ impl ProjectPicker {
         Self {
             appearance: Default::default(),
             projects,
+            monos: Vec::new(),
+            active_mono: None,
             current: current.into(),
             active: 0,
             allow_remote: false,
@@ -945,6 +957,28 @@ impl ProjectPicker {
         self.appearance = appearance;
         self
     }
+    pub(crate) fn monos(
+        mut self,
+        monos: Vec<PickerMono>,
+        active: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        self.active_mono = active.filter(|id| monos.iter().any(|mono| &mono.id == id));
+        if !monos.is_empty() {
+            self.search.update(cx, |search, cx| {
+                search.set_placeholder("Search monos and projects...", cx)
+            });
+        }
+        self.monos = monos;
+        self
+    }
+    fn matching_monos(&self, cx: &gpui::App) -> Vec<&PickerMono> {
+        let query = self.search.read(cx).content.trim().to_lowercase();
+        self.monos
+            .iter()
+            .filter(|mono| mono.name.to_lowercase().contains(&query))
+            .collect()
+    }
     fn label(&self, path: &str) -> String {
         self.appearance
             .get(path)
@@ -964,14 +998,21 @@ impl ProjectPicker {
             .collect()
     }
     fn step(&mut self, direction: isize, cx: &mut Context<Self>) {
-        let count = self.matches(cx).len();
+        let count = self.matching_monos(cx).len() + self.matches(cx).len();
         if count > 0 {
             self.active = (self.active as isize + direction).clamp(0, count as isize - 1) as usize;
             cx.notify();
         }
     }
     fn pick(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if let Some(path) = self.matches(cx).into_iter().nth(ix) {
+        let monos = self.matching_monos(cx);
+        if let Some(mono) = monos.get(ix) {
+            cx.emit(ProjectPicked::Mono(mono.id.clone()));
+        } else if let Some(path) = self
+            .matches(cx)
+            .into_iter()
+            .nth(ix.saturating_sub(monos.len()))
+        {
             cx.emit(ProjectPicked::Project(path));
         }
     }
@@ -993,17 +1034,22 @@ impl Render for ProjectPicker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let matches = self.matches(cx);
         let focused = self.search.focus_handle(cx).is_focused(window);
-        let rows: Vec<AnyElement> = matches
+        let matching_monos = self.matching_monos(cx);
+        let mono_count = matching_monos.len();
+        let mut rows: Vec<AnyElement> = matching_monos
             .into_iter()
             .enumerate()
-            .map(|(ix, path)| {
+            .map(|(ix, mono)| {
                 let active = self.active == ix;
-                let current = path == self.current;
+                let current = self.active_mono.as_ref() == Some(&mono.id);
                 div()
-                    .id(("project-option", ix))
+                    .id(("project-picker-mono", ix))
+                    .debug_selector({
+                        let id = mono.id.clone();
+                        move || format!("project-picker-mono-{id}")
+                    })
                     .role(Role::ListBoxOption)
-                    .aria_label(self.label(&path))
-                    .aria_description(path.clone())
+                    .aria_label(format!("{}, Mono", mono.name))
                     .aria_selected(current)
                     .cursor(CursorStyle::Arrow)
                     .flex_shrink_0()
@@ -1030,39 +1076,30 @@ impl Render for ProjectPicker {
                                     .text_color(content(1.))
                                     .into_any_element()
                             } else {
-                                if path.starts_with("remote://") {
-                                    icon("globe", 14.)
-                                        .text_color(content(0.6))
-                                        .into_any_element()
-                                } else {
-                                    crate::project_settings::project_icon(
-                                        &self.appearance.get(&path).cloned().unwrap_or_default(),
-                                        &path,
-                                        14.,
-                                    )
-                                }
+                                crate::monos::avatar::avatar(
+                                    &mono.mascot,
+                                    mono.color,
+                                    "idle",
+                                    16.,
+                                    true,
+                                )
                             }),
                     )
                     .child(
                         div()
+                            .flex_1()
                             .min_w_0()
-                            .flex_shrink_0()
-                            .max_w(px(286. - 12. - 20. - 36.))
                             .truncate()
                             .text_size(px(13.))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(self.label(&path)),
+                            .child(mono.name.clone()),
                     )
                     .child(
                         div()
-                            .min_w_0()
-                            .flex_1()
-                            .max_w(px(112.))
-                            .truncate()
-                            .font_family("Menlo")
+                            .flex_shrink_0()
                             .text_size(px(11.))
                             .text_color(content(0.4))
-                            .child(pretty_parent(&path)),
+                            .child("Mono"),
                     )
                     .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                         if *hovered {
@@ -1071,12 +1108,92 @@ impl Render for ProjectPicker {
                         }
                     }))
                     .on_click(cx.listener(move |this, _, _, cx| this.pick(ix, cx)))
-                    .into_any()
+                    .into_any_element()
             })
             .collect();
+        rows.extend(matches.into_iter().enumerate().map(|(project_ix, path)| {
+            let ix = mono_count + project_ix;
+            let active = self.active == ix;
+            let current = self.active_mono.is_none() && path == self.current;
+            div()
+                .id(("project-option", ix))
+                .debug_selector(move || format!("project-picker-project-{project_ix}"))
+                .role(Role::ListBoxOption)
+                .aria_label(self.label(&path))
+                .aria_description(path.clone())
+                .aria_selected(current)
+                .cursor(CursorStyle::Arrow)
+                .flex_shrink_0()
+                .h(px(36.))
+                .px(px(10.))
+                .gap(px(10.))
+                .rounded(px(8.))
+                .flex()
+                .items_center()
+                .text_color(content(if active { 1. } else { 0.75 }))
+                .when(active, |d| d.bg(content(0.1)))
+                .when(!active, |d| {
+                    d.hover(|s| s.bg(content(0.05)).text_color(content(1.)))
+                })
+                .child(
+                    div()
+                        .size(px(16.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(if current {
+                            icon("check-2", 14.)
+                                .text_color(content(1.))
+                                .into_any_element()
+                        } else {
+                            if path.starts_with("remote://") {
+                                icon("globe", 14.)
+                                    .text_color(content(0.6))
+                                    .into_any_element()
+                            } else {
+                                crate::project_settings::project_icon(
+                                    &self.appearance.get(&path).cloned().unwrap_or_default(),
+                                    &path,
+                                    14.,
+                                )
+                            }
+                        }),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_shrink_0()
+                        .max_w(px(286. - 12. - 20. - 36.))
+                        .truncate()
+                        .text_size(px(13.))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(self.label(&path)),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .max_w(px(112.))
+                        .truncate()
+                        .font_family("Menlo")
+                        .text_size(px(11.))
+                        .text_color(content(0.4))
+                        .child(pretty_parent(&path)),
+                )
+                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    if *hovered {
+                        this.active = ix;
+                        cx.notify();
+                    }
+                }))
+                .on_click(cx.listener(move |this, _, _, cx| this.pick(ix, cx)))
+                .into_any()
+        }));
         let empty = rows.is_empty();
         div()
             .id("project-picker")
+            .debug_selector(|| "project-picker".into())
             .role(Role::Dialog)
             .aria_label("Project picker")
             .size_full()
@@ -1118,7 +1235,11 @@ impl Render for ProjectPicker {
                 div()
                     .id("project-list")
                     .role(Role::ListBox)
-                    .aria_label("Projects")
+                    .aria_label(if self.monos.is_empty() {
+                        "Projects"
+                    } else {
+                        "Monos and projects"
+                    })
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -1134,7 +1255,11 @@ impl Render for ProjectPicker {
                                 .justify_center()
                                 .text_size(px(12.))
                                 .text_color(content(0.45))
-                                .child("No projects found"),
+                                .child(if self.monos.is_empty() {
+                                    "No projects found"
+                                } else {
+                                    "No monos or projects found"
+                                }),
                         )
                     })
                     .children(rows),

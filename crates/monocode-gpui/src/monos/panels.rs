@@ -774,6 +774,58 @@ impl Monos {
             cx.notify();
         }
     }
+    /// MonoSidebarHeader lives in the base page, so routed pages replace its
+    /// tabs and close control together with the overview body.
+    pub(super) fn original_overview_header(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let owner = self.owner.clone();
+        div()
+            .id("original-mono-overview-header")
+            .debug_selector(|| "original-mono-overview-header".into())
+            .h(px(40.))
+            .flex_shrink_0()
+            // MonoSidebarHeader's pl-4 and OverviewTabs' -ml-2 combine
+            // into an 8px inset, keeping the tab icons aligned with actions.
+            .pl(px(8.))
+            .pr_3()
+            .border_b_1()
+            .border_color(content(0.07))
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .child(self.overview_controls(true, window, cx))
+            .child(
+                div()
+                    .id("original-hide-mono-overview")
+                    .debug_selector(|| "original-hide-mono-overview".into())
+                    .role(Role::Button)
+                    .aria_label("Hide overview")
+                    .aria_toggled(gpui::Toggled::True)
+                    .size(px(24.))
+                    .flex_shrink_0()
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(content(1.))
+                    .hover(|s| s.bg(content(0.1)))
+                    .child(icon("sidebar-right", 14.).text_color(content(1.)))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        let owner = owner.clone();
+                        cx.spawn(async move |_, cx| {
+                            let _ = owner.update_in(cx, |shell, window, cx| {
+                                shell.close_mono_overview(window, cx)
+                            });
+                        })
+                        .detach();
+                    })),
+            )
+            .into_any_element()
+    }
     pub(crate) fn overview_controls(
         &self,
         expand_label: bool,

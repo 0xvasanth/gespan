@@ -753,7 +753,7 @@ fn details_tabs_share_the_session_titlebar_in_both_layouts(cx: &mut TestAppConte
     for classic in [false, true] {
         s.window
             .update(visual, |shell, _, cx| {
-                shell.workspace.classic_layout = classic;
+                shell.workspace.new_layout_boxy = classic;
                 cx.notify();
             })
             .unwrap();
@@ -929,7 +929,7 @@ fn titlebar_divider_resizes_mono_details_and_closed_panels_keep_the_corner(
     for classic in [false, true] {
         s.window
             .update(visual, |shell, _, cx| {
-                shell.workspace.classic_layout = classic;
+                shell.workspace.new_layout_boxy = classic;
                 shell.git.update(cx, |g, cx| g.set_project("~".into(), cx));
                 cx.notify();
             })

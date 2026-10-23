@@ -2,6 +2,10 @@ mod accounts;
 mod app_commands;
 mod app_views;
 mod automation_runs;
+mod classic_sidebar;
+#[cfg(test)]
+mod classic_surface_tests;
+mod classic_surfaces;
 mod file_panes;
 mod idle_agents;
 #[cfg(test)]
@@ -13,6 +17,7 @@ pub(crate) mod monos;
 mod notifications;
 mod orchestration;
 mod picker_preferences;
+mod project_rail;
 mod project_settings;
 mod quick_composer;
 mod quick_open;
@@ -116,6 +121,7 @@ actions!(
 #[derive(Clone, Copy)]
 enum ChromeKind {
     Sidebar,
+    Projects,
     Tabs,
 }
 struct Chrome {
@@ -131,12 +137,22 @@ impl Render for Chrome {
             .update(cx, |shell, cx| match kind {
                 ChromeKind::Sidebar => {
                     let sidebar = shell.sidebar(cx);
-                    if shell.space_slide.is_some() || shell.spaces_nudge.is_some() {
+                    if shell.space_slide.is_some()
+                        || shell.spaces_nudge.is_some()
+                        || shell.classic_tabs.animating()
+                    {
                         window.request_animation_frame();
                     }
                     sidebar
                 }
                 ChromeKind::Tabs => shell.tabs(window, cx),
+                ChromeKind::Projects => {
+                    let rail = shell.project_rail(cx);
+                    if shell.project_rail_animating() {
+                        window.request_animation_frame();
+                    }
+                    rail
+                }
             })
             .unwrap_or_else(|_| div().into_any())
     }
@@ -201,7 +217,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-d"), SplitRight, context),
         KeyBinding::new(&format!("{modifier}-j"), ToggleTerminal, context),
         KeyBinding::new(&format!("{modifier}-`"), NewTerminal, context),
-        // Until the settings view lands: the classic layout in place of the inset card.
+        // Switch between the original two-sidebar layout and the new layout.
         KeyBinding::new(&format!("{modifier}-shift-l"), ToggleLayout, context),
         KeyBinding::new(&format!("{modifier}-shift-d"), SplitDown, context),
         KeyBinding::new(&format!("{modifier}-alt-left"), FocusPaneLeft, context),
@@ -264,6 +280,10 @@ pub(crate) enum MenuTarget {
     Folder(String),
     /// The sidebar project header's menu.
     Header,
+    /// The original project rail's local or remote folder menu.
+    ProjectRailAdd,
+    CompactProjectPicker,
+    ProjectRailGroup(String),
     SessionFilter,
     SidebarOptions,
     /// A project's actions; `rail` adds the project rail's grouping and pinning.
@@ -393,6 +413,7 @@ struct SashDrag {
 #[derive(Clone, PartialEq)]
 enum ResizeTarget {
     Sidebar,
+    Projects,
     RightPanel,
     Dock(String),
     /// A pane sash, with its group's length in pixels.
@@ -498,6 +519,15 @@ pub(crate) struct Shell {
     /// The footer's high-usage chip and its running-work dialog.
     resources: Entity<ResourceMonitor>,
     sidebar_frame: Entity<Chrome>,
+    projects_frame: Entity<Chrome>,
+    project_rail_list: project_rail::ProjectRailList,
+    project_rail_drag: Option<project_rail::ProjectRailDrag>,
+    project_rail_stats: project_rail::ProjectRailStats,
+    project_resize: Option<(Pixels, f32)>,
+    classic_sidebar_tab: classic_sidebar::ClassicSidebarTab,
+    classic_tabs: classic_sidebar::WorkspaceTabs,
+    classic_session_search: Entity<input::Input>,
+    classic_worktree_picker: Option<classic_sidebar::WorktreePicker>,
     sidebar_list: sidebar_list::SidebarList,
     sidebar_slide: Option<PaneSlide>,
     sidebar_fraction: f32,
@@ -755,8 +785,13 @@ impl Shell {
             renders: 0,
         });
         let tabs_frame = cx.new(|_| Chrome {
-            owner,
+            owner: owner.clone(),
             kind: ChromeKind::Tabs,
+            renders: 0,
+        });
+        let projects_frame = cx.new(|_| Chrome {
+            owner,
+            kind: ChromeKind::Projects,
             renders: 0,
         });
         let active_kind = summaries
@@ -788,7 +823,10 @@ impl Shell {
         let git = cx.new(|cx| crate::git_status::ProjectGit::new(git_project, cx));
         let git_observation = cx.observe(&git, |this, _, cx| {
             // The title bar's dot and the panel's tab label follow its stats.
-            let _ = this;
+            this.sync_project_rail_git_stats(cx);
+            if this.workspace.classic_layout {
+                this.sidebar_frame.update(cx, |_, cx| cx.notify());
+            }
             cx.notify();
         });
         let resources = cx.new(ResourceMonitor::new);
@@ -803,6 +841,14 @@ impl Shell {
         let worktree_focus = workspace.worktree_focus.clone();
         let session_worktrees = sidebar_metadata.worktrees;
         let notification_state = notifications::State::new(&workspace, cx);
+        let classic_session_search = classic_sidebar::session_search(cx);
+        let classic_search_subscription =
+            classic_sidebar::bind_session_search(&classic_session_search, cx);
+        let classic_sidebar_tab = workspace
+            .classic_sidebar_tabs
+            .get(&workspace.project)
+            .map(|id| classic_sidebar::ClassicSidebarTab::from_id(id))
+            .unwrap_or_default();
         let mut this = Self {
             monos: None,
             quick_open: None,
@@ -818,6 +864,15 @@ impl Shell {
             usage_footer: cx.new(|cx| UsageFooter::new(active_kind, cx)),
             resources,
             sidebar_frame,
+            projects_frame,
+            project_rail_list: project_rail::ProjectRailList::new(cx),
+            project_rail_drag: None,
+            project_rail_stats: Default::default(),
+            project_resize: None,
+            classic_sidebar_tab,
+            classic_tabs: Default::default(),
+            classic_session_search,
+            classic_worktree_picker: None,
             sidebar_list: sidebar_list::SidebarList::new(cx),
             sidebar_slide: None,
             sidebar_fraction: if workspace.sidebar_visible { 1. } else { 0. },
@@ -959,7 +1014,12 @@ impl Shell {
             live_mark: None,
             viewport_width: 1200.,
             viewport_height: 800.,
-            observations: vec![git_observation, resource_observation, resource_stops],
+            observations: vec![
+                git_observation,
+                resource_observation,
+                resource_stops,
+                classic_search_subscription,
+            ],
             generation: Arc::new(AtomicU64::new(0)),
             latest_state,
             render_passes: 0,
@@ -1368,8 +1428,14 @@ impl Shell {
     fn invalidate_chrome(&self, cx: &mut Context<Self>) {
         self.notify_sidebar(cx);
         self.tabs_frame.update(cx, |_, cx| cx.notify());
+        if self.workspace.classic_layout {
+            self.projects_frame.update(cx, |_, cx| cx.notify());
+        }
     }
     fn reveal_active_tab(&self, cx: &App) {
+        if self.workspace.classic_layout {
+            self.reveal_active_project_rail();
+        }
         if let Some(ix) = self
             .visible_tabs(cx)
             .iter()
@@ -1380,6 +1446,12 @@ impl Shell {
     }
     /// Sidebar.tsx's `gitRoot`: the active session's worktree or folder.
     fn sync_git(&mut self, cx: &mut Context<Self>) {
+        self.classic_sidebar_tab = self
+            .workspace
+            .classic_sidebar_tabs
+            .get(&self.workspace.project)
+            .map(|id| classic_sidebar::ClassicSidebarTab::from_id(id))
+            .unwrap_or_default();
         let session = self
             .workspace
             .active
@@ -1409,6 +1481,7 @@ impl Shell {
     /// project, and not covered by an app view.
     fn right_panel_shown(&self, cx: &App) -> bool {
         (self.workspace.right_panel_open || self.right_slide.is_some())
+            && (!self.workspace.classic_layout || self.mono_active(cx))
             && !self.app_view_open()
             && self.settings.is_none()
             && self.app_search.is_none()
@@ -1417,13 +1490,65 @@ impl Shell {
     fn sync_right_panel(&mut self, cx: &mut Context<Self>) {
         let opening = self.right_slide.as_ref().is_some_and(PaneSlide::opening);
         let shown = !self.mono_active(cx)
+            && !self.workspace.classic_layout
             && self.workspace.right_panel_open
             && !self.app_view_open()
             && self.settings.is_none()
             && self.app_search.is_none()
             && !opening;
         if let Some(panel) = &self.right_panel {
-            panel.update(cx, |p, cx| p.set_shown(shown, cx));
+            let sidebar_tab = (self.workspace.classic_layout
+                && self.session_sidebar_available(cx)
+                && self.workspace.sidebar_visible
+                && self.settings.is_none())
+            .then(|| self.classic_sidebar_tab.tool_tab())
+            .flatten();
+            panel.update(cx, |p, cx| {
+                p.set_shown(shown, cx);
+                p.set_sidebar_tab(sidebar_tab, cx);
+            });
+        }
+    }
+    fn select_classic_sidebar_tab(
+        &mut self,
+        tab: classic_sidebar::ClassicSidebarTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ensure_right_panel(window, cx);
+        self.leave_app_views(cx);
+        self.close_app_search(window, cx);
+        if let Some(monos) = self.monos.clone() {
+            monos.update(cx, |monos, cx| monos.close(cx));
+        }
+        self.classic_sidebar_tab = tab;
+        self.workspace
+            .classic_sidebar_tabs
+            .insert(self.workspace.project.clone(), tab.id().into());
+        self.close_preview(cx);
+        self.set_sidebar_visible(true, cx);
+        self.sync_right_panel(cx);
+        self.notify_sidebar(cx);
+        self.persist(cx);
+        cx.notify();
+    }
+    fn classic_tool_pane(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(panel) = &self.right_panel else {
+            return div().into_any_element();
+        };
+        let panel = panel.read(cx);
+        match self.classic_sidebar_tab {
+            classic_sidebar::ClassicSidebarTab::Files => panel
+                .explorer
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
+            classic_sidebar::ClassicSidebarTab::Changes => panel
+                .changes
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
+            classic_sidebar::ClassicSidebarTab::Sessions => div().into_any_element(),
         }
     }
     fn toggle_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2473,8 +2598,8 @@ impl Shell {
     /// the sidebar: each pane's share of the card, less its review.
     fn narrowest_chat(&self, sidebar: bool, cx: &App) -> f32 {
         // The card's inset and border.
-        let mut main = self.viewport_width - 10.;
-        if sidebar {
+        let mut main = self.viewport_width - 10. - self.project_rail_drawn_width();
+        if sidebar && self.session_sidebar_available(cx) {
             main -= self.workspace.sidebar_width;
         }
         if self.right_panel_shown(cx) {
@@ -2520,6 +2645,9 @@ impl Shell {
     /// collapses the sidebar as it opens. A sidebar collapsed that way comes
     /// back once there is room again; one the user hid stays hidden.
     fn fit_sidebar(&mut self, cx: &mut Context<Self>) {
+        if !self.session_sidebar_available(cx) {
+            return;
+        }
         if self.workspace.sidebar_visible {
             if self.narrowest_chat(true, cx) < MIN_CHAT_WIDTH {
                 self.set_sidebar_visible(false, cx);
@@ -3367,6 +3495,7 @@ impl Shell {
     /// The target's current size, the range it rests in, and pixels per unit.
     fn resize_extent(&self, target: &ResizeTarget) -> Option<(f32, f32, f32, f32)> {
         Some(match target {
+            ResizeTarget::Projects => (self.workspace.project_rail_width, 176., 360., 1.),
             ResizeTarget::Sidebar => {
                 let max = (self.viewport_width * 0.5).clamp(200., 560.);
                 (self.workspace.sidebar_width, 200., max, 1.)
@@ -3394,6 +3523,7 @@ impl Shell {
     }
     fn set_resize(&mut self, target: &ResizeTarget, value: f32) {
         match target {
+            ResizeTarget::Projects => self.workspace.project_rail_width = value,
             ResizeTarget::Sidebar => self.workspace.sidebar_width = value,
             ResizeTarget::RightPanel => self.workspace.right_panel_width = value,
             ResizeTarget::Dock(project) => {
@@ -3425,6 +3555,7 @@ impl Shell {
         let any = [
             self.pane_sash.take().is_some(),
             self.resize.take().is_some(),
+            self.project_resize.take().is_some(),
             self.right_resize.take().is_some(),
             self.dock_resize.take().is_some(),
         ]
@@ -3709,6 +3840,7 @@ impl Shell {
         self.resize = None;
         self.drop_peek();
         self.workspace.sidebar_visible = visible;
+        self.sync_right_panel(cx);
     }
     fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_app_search(window, cx);
@@ -3736,7 +3868,7 @@ impl Shell {
         if let Some(ix) = self.workspace.projects.iter().position(|p| p == &path) {
             // Switching projects slides the sidebar the way the spaces run:
             // moving right, the new project comes in from the right.
-            if changed && !cx.reduce_motion() {
+            if changed && !self.workspace.classic_layout && !cx.reduce_motion() {
                 self.space_slide = from.map(|from| {
                     let direction = if ix > from { 1. } else { -1. };
                     (direction, std::time::Instant::now())
@@ -3749,7 +3881,16 @@ impl Shell {
             }
         }
         self.workspace.collapsed.remove(&path);
-        if self.restore_scope_tab(window, cx) {
+        // Original-layout project buttons leave the standalone Mono/app view.
+        // The new layout restores each project's selected tab, including Monos.
+        let remembered_session = self
+            .workspace
+            .scope_focus
+            .get(&self.tab_scope())
+            .is_some_and(|tab| matches!(tab, TitleTab::Session(_)));
+        if (!self.workspace.classic_layout || remembered_session)
+            && self.restore_scope_tab(window, cx)
+        {
             return;
         }
         self.workspace.active = self
@@ -3861,6 +4002,18 @@ impl Shell {
         self.create_session(kind, false, cx);
     }
     fn create_session(&mut self, kind: Kind, only_if_empty: bool, cx: &mut Context<Self>) {
+        self.create_session_target(kind, only_if_empty, None, cx);
+    }
+    fn create_in_folder(&mut self, folder: String, cx: &mut Context<Self>) {
+        self.create_session_target(self.default_kind(), false, Some(folder), cx);
+    }
+    fn create_session_target(
+        &mut self,
+        kind: Kind,
+        only_if_empty: bool,
+        folder: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         let store = self.store.clone();
         let cwd = self.workspace.project.clone();
         let focus = self.worktree_focus.get(&cwd).cloned();
@@ -3932,6 +4085,15 @@ impl Shell {
                     Ok((summary, settings)) => {
                         let id = summary.id;
                         this.add(summary, cx);
+                        if let Some(folder) = &folder {
+                            let groups = this.groups.entry(cwd.clone()).or_default();
+                            groups.add_to_folder(folder, id);
+                            let groups = groups.clone();
+                            let project = cwd.clone();
+                            this.store_write("save folders", cx, move |store| {
+                                store.save_groups(&project, &groups)
+                            });
+                        }
                         if let Some(view) = this.sessions.get(&id) {
                             view.update(cx, |view, cx| view.seed_new_settings(settings, cx));
                         }
@@ -3979,12 +4141,19 @@ impl Shell {
     }
     fn navigation_width(&self) -> f32 {
         let closed = self.traffic_lights() + 3. * 24.;
+        if self.workspace.classic_layout {
+            return if self.workspace.project_rail_open || self.settings.is_some() {
+                self.project_rail_drawn_width().max(closed + 6.)
+            } else {
+                closed
+            };
+        }
         closed + (self.workspace.sidebar_width.max(closed + 6.) - closed) * self.sidebar_fraction
     }
     /// Classic: the strip's room before its tabs, wherever the navigation
     /// overhangs the sidebar.
-    fn strip_lead(&self) -> f32 {
-        (self.navigation_width() - self.workspace.sidebar_width * self.sidebar_fraction).max(0.)
+    fn strip_lead(&self, cx: &App) -> f32 {
+        (self.navigation_width() - self.left_sidebar_width(cx)).max(0.)
     }
     /// The traffic lights, sidebar toggle and visit arrows, spanning the
     /// open sidebar so the arrows sit at its edge.
@@ -3997,7 +4166,15 @@ impl Shell {
             .items_center()
             // `pr-1.5` only beside the open sidebar; closed, the tab
             // strip's own inset is gap enough after the arrows.
-            .pr(px(6. * self.sidebar_fraction))
+            .pr(px(if self.workspace.classic_layout {
+                if self.workspace.project_rail_open || self.settings.is_some() {
+                    6.
+                } else {
+                    0.
+                }
+            } else {
+                6. * self.sidebar_fraction
+            }))
             .child(
                 // Fixed, so the toggle holds still as the sidebar opens
                 // and closes.
@@ -4011,10 +4188,14 @@ impl Shell {
                     .child(self.peek_toggle_bounds.probe())
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     // Hovering the toggle peeks a collapsed sidebar out.
-                    .on_hover(
-                        cx.listener(|this, hovered, _, cx| this.hover_peek_toggle(*hovered, cx)),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx))),
+                    .on_hover(cx.listener(|this, hovered, _, cx| {
+                        if !this.workspace.classic_layout {
+                            this.hover_peek_toggle(*hovered, cx)
+                        }
+                    }))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.toggle_primary_sidebar(window, cx)),
+                    ),
             )
             .child(titlebar_drag_area().flex_1())
             .child(
@@ -4022,10 +4203,18 @@ impl Shell {
                     "visit-back",
                     BACK_LABEL,
                     "chevron-left",
-                    !self.history.back.is_empty(),
+                    (self.workspace.classic_layout && self.mono_active(cx))
+                        || !self.history.back.is_empty(),
                 )
                 .debug_selector(|| "visit-back".into())
-                .on_click(cx.listener(|this, _, window, cx| this.visit(-1, window, cx))),
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.workspace.classic_layout {
+                        this.classic_rail_back(window, cx)
+                    } else {
+                        this.visit(-1, window, cx)
+                    }
+                })),
             )
             .child(
                 icon_button_enabled(
@@ -4035,6 +4224,7 @@ impl Shell {
                     !self.history.forward.is_empty(),
                 )
                 .debug_selector(|| "visit-forward".into())
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _, window, cx| this.visit(1, window, cx))),
             )
     }
@@ -4182,9 +4372,9 @@ impl Shell {
         // Same hierarchy as TitleBar.tsx's inset layout: window navigation and
         // session tabs share the outer shell, above the rounded workspace card.
         if let Some(settings) = self.settings.clone() {
-            let classic = self.workspace.classic_layout;
+            let classic = self.workspace.boxy_layout();
             let lead = if classic {
-                self.strip_lead()
+                self.strip_lead(cx)
             } else {
                 self.navigation_width() + 6.
             };
@@ -4207,21 +4397,22 @@ impl Shell {
                 .into_any_element();
         }
         let tabs_width = px(self.tabs_width(window, cx));
-        let classic = self.workspace.classic_layout;
+        let classic = self.workspace.boxy_layout();
         div()
             .h(px(TITLE_BAR_HEIGHT))
             .flex_shrink_0()
             .flex()
             .items_center()
+            .when(self.workspace.classic_layout, |d| d.items_start())
             // Classic: the strip heads the workspace column, above a rule.
             .when(classic, |d| {
                 d.border_b_1().border_color(crate::right_panel::stroke())
             })
-            .child(if classic {
+            .child(if classic && !self.classic_titlebar_spans_window(cx) {
                 // The navigation floats over the sidebar's header
                 // (classic_body); the strip keeps only the part it uncovers.
                 titlebar_drag_area()
-                    .w(px(self.strip_lead()))
+                    .w(px(self.strip_lead(cx)))
                     .flex_shrink_0()
                     .into_any_element()
             } else {
@@ -4251,6 +4442,9 @@ impl Shell {
     fn panel_toggle(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let mono = self.mono_active(cx);
         if self.workspace.classic_layout && !mono {
+            return div().into_any_element();
+        }
+        if self.workspace.boxy_layout() && !mono {
             return self.classic_corner(window, cx);
         }
         let toggle = mono || self.git.read(cx).available();
@@ -4294,7 +4488,7 @@ impl Shell {
                 }
                 let ink = if panel_off {
                     content(0.25)
-                } else if panel_active && !self.workspace.classic_layout {
+                } else if panel_active && !self.workspace.boxy_layout() {
                     content(1.)
                 } else {
                     content(0.5)
@@ -4306,7 +4500,7 @@ impl Shell {
                         .flex_shrink_0()
                         .flex()
                         .items_center()
-                        .pl(px(if show_tabs && !self.workspace.classic_layout {
+                        .pl(px(if show_tabs && !self.workspace.boxy_layout() {
                             CORNER_TABS_LEAD
                         } else {
                             6.
@@ -4375,7 +4569,7 @@ impl Shell {
                         ),
                 )
             })
-            .when(show_tabs && !self.workspace.classic_layout, |d| {
+            .when(show_tabs && !self.workspace.boxy_layout(), |d| {
                 // The card has 6px of outer padding and a 1px right border.
                 // Keep the rule on its divider even during the opening slide.
                 let offset = self.toggle_room(cx) - (self.right_drawn + 7.);
@@ -4453,7 +4647,7 @@ impl Shell {
         natural.min((self.workspace.right_panel_width - controls).max(48.))
     }
     fn project_tabs_width(&self, cx: &App) -> f32 {
-        let padding = if self.workspace.classic_layout {
+        let padding = if self.workspace.boxy_layout() {
             24.
         } else {
             12.
@@ -4469,7 +4663,7 @@ impl Shell {
     }
     /// The toggle's room at the end of the strip: `pl-1.5`, the button, `pr-3`.
     fn toggle_room(&self, cx: &App) -> f32 {
-        if self.workspace.classic_layout {
+        if self.workspace.boxy_layout() {
             return self.corner_room(cx);
         }
         if self.mono_active(cx) || self.git.read(cx).available() {
@@ -4730,6 +4924,79 @@ impl Shell {
                 184.,
                 MenuStyle::Filter,
             ),
+            MenuTarget::ProjectRailAdd => (
+                "Open project".into(),
+                vec![
+                    MenuAction::new("open-project", "Open folder…")
+                        .icon("folder-add")
+                        .into(),
+                    MenuAction::new("open-remote-project", "Open folder on a machine…")
+                        .icon("globe")
+                        .into(),
+                ],
+                230.,
+                MenuStyle::Explorer,
+            ),
+            MenuTarget::CompactProjectPicker => {
+                let (monos, active) = self
+                    .monos
+                    .as_ref()
+                    .filter(|_| self.workspace.classic_layout && self.workspace.preferences.monos)
+                    .map(|manager| {
+                        let manager = manager.read(cx);
+                        let monos = manager
+                            .roster
+                            .monos
+                            .iter()
+                            .map(|mono| crate::pickers::PickerMono {
+                                id: mono.id.clone(),
+                                name: mono.label(),
+                                mascot: mono.mascot.clone(),
+                                color: mono.color,
+                            })
+                            .collect();
+                        (monos, manager.active.clone())
+                    })
+                    .unwrap_or_default();
+                let picker = cx.new(|cx| {
+                    ProjectPicker::new(&self.workspace.projects, &self.workspace.project, cx)
+                        .appearance(self.workspace.project_appearance.clone())
+                        .allow_remote()
+                        .monos(monos, active, cx)
+                });
+                events.push(cx.subscribe_in(
+                    &picker,
+                    window,
+                    |this, _, picked: &ProjectPicked, window, cx| {
+                        this.close_menu(cx);
+                        match picked {
+                            ProjectPicked::Project(path) => {
+                                this.select_project(path.clone(), window, cx)
+                            }
+                            ProjectPicked::Mono(id) => {
+                                if let Some(monos) = this.monos.clone() {
+                                    monos.update(cx, |m, cx| m.open(id, window, cx));
+                                }
+                            }
+                            ProjectPicked::New => this.open_project(cx),
+                            ProjectPicked::Remote => {
+                                this.open_remote_project(window, cx);
+                                return;
+                            }
+                        }
+                        this.focus_active(window, cx);
+                        this.invalidate_chrome(cx);
+                        cx.notify();
+                    },
+                ));
+                let focus = picker.read(cx).search_focus(cx);
+                (
+                    "Switch project".into(),
+                    vec![MenuItem::Custom(picker.into(), focus)],
+                    286.,
+                    MenuStyle::Switcher,
+                )
+            }
             // SidebarWorktreeSwitcher's menu under the project header.
             MenuTarget::Header => {
                 let picker = cx.new(|cx| {
@@ -4746,7 +5013,7 @@ impl Shell {
                             ProjectPicked::Project(path) if *path != this.workspace.project => {
                                 this.select_project(path.clone(), window, cx)
                             }
-                            ProjectPicked::Project(_) => {}
+                            ProjectPicked::Project(_) | ProjectPicked::Mono(_) => {}
                             ProjectPicked::New => this.open_project(cx),
                             ProjectPicked::Remote => {
                                 this.open_remote_project(window, cx);
@@ -4808,6 +5075,23 @@ impl Shell {
                     MenuStyle::Switcher,
                 )
             }
+            MenuTarget::ProjectRailGroup(id) => {
+                let controls = self.project_rail_group_controls(id, events, window, cx);
+                (
+                    "Project group actions".into(),
+                    vec![
+                        MenuItem::Custom(controls.clone().into(), controls.read(cx).focus(cx)),
+                        MenuItem::Separator,
+                        MenuAction::new("delete-project-group", "Delete group")
+                            .icon("trash")
+                            .description("Projects will become ungrouped")
+                            .danger()
+                            .into(),
+                    ],
+                    260.,
+                    MenuStyle::Group,
+                )
+            }
             // TabGroupMenu's appearance controls and project actions.
             MenuTarget::Project { path, rail } => {
                 let controls = self.project_appearance_controls(path, events, window, cx);
@@ -4819,16 +5103,33 @@ impl Shell {
                         .into(),
                 ];
                 if *rail {
+                    let mut groups = vec![MenuAction::new("project-group:new", "New group…")];
+                    if self.workspace.project_rail_assignments.contains_key(path) {
+                        groups.push(MenuAction::new("project-group:", "No group"));
+                    }
+                    groups.extend(self.workspace.project_rail_groups.iter().map(|group| {
+                        MenuAction::new(format!("project-group:{}", group.id), group.name.clone())
+                            .checked(
+                                self.workspace.project_rail_assignments.get(path)
+                                    == Some(&group.id),
+                            )
+                    }));
+                    let pinned = self.workspace.project_rail_pinned.contains(path);
                     items.extend([
                         MenuAction::new("project-group", "Move to group")
                             .icon("folder-tree")
-                            .disabled(true)
-                            .submenu(vec![MenuAction::new("project-group:new", "New group…")])
+                            .submenu(groups)
                             .into(),
-                        MenuAction::new("pin", "Pin project")
-                            .icon("pin")
-                            .disabled(true)
-                            .into(),
+                        MenuAction::new(
+                            "pin",
+                            if pinned {
+                                "Unpin project"
+                            } else {
+                                "Pin project"
+                            },
+                        )
+                        .icon(if pinned { "pin-off" } else { "pin" })
+                        .into(),
                     ]);
                 }
                 items.extend([
@@ -4905,6 +5206,22 @@ impl Shell {
             }
             MenuTarget::Session(id) => self.run_session_menu(id, action, window, cx),
             MenuTarget::Folder(folder) => self.run_folder_menu(folder, action, window, cx),
+            MenuTarget::ProjectRailAdd => match action {
+                "open-project" => self.open_project(cx),
+                "open-remote-project" => self.open_remote_project(window, cx),
+                _ => {}
+            },
+            MenuTarget::CompactProjectPicker => {}
+            MenuTarget::ProjectRailGroup(id) => {
+                if action == "delete-project-group" {
+                    self.workspace.project_rail_groups.retain(|g| g.id != id);
+                    self.workspace
+                        .project_rail_assignments
+                        .retain(|_, group| group != &id);
+                    self.persist(cx);
+                    self.projects_frame.update(cx, |_, cx| cx.notify());
+                }
+            }
             MenuTarget::Header => {
                 // "Project settings" opens the project's menu beside its row.
                 if action == "settings" {
@@ -4922,7 +5239,20 @@ impl Shell {
                 }
             }
             MenuTarget::Project { path, .. } => {
-                if action == "reveal" {
+                if action == "pin" {
+                    self.toggle_project_rail_pin(&path, cx);
+                } else if action == "project-group:new" {
+                    let id = self.create_project_rail_group(Some(&path), cx);
+                    let at = row.map_or_else(Point::default, |r| Point::new(r.left(), r.top()));
+                    self.open_menu(
+                        MenuTarget::ProjectRailGroup(id),
+                        Anchor::Point(at),
+                        window,
+                        cx,
+                    );
+                } else if let Some(group) = action.strip_prefix("project-group:") {
+                    self.assign_project_rail_group(&path, group, cx);
+                } else if action == "reveal" {
                     if path.starts_with("remote://") {
                         self.error = Some("Remote folders stay on their host machine.".into());
                         cx.notify();
@@ -4954,7 +5284,7 @@ impl Shell {
         }
     }
     fn schedule_preview(&mut self, id: i64, anchor: AnchorSlot, cx: &mut Context<Self>) {
-        if self.menu.is_some() {
+        if self.menu.is_some() || self.classic_worktree_picker.is_some() {
             return;
         }
         let settle = std::time::Duration::from_millis(180);
@@ -5625,9 +5955,13 @@ impl Shell {
                             .is_some_and(|caller| shown.contains(caller)))
                     && self.filter_session(*id, start, cx)
                     && (self.query.is_empty()
-                        || format!("{} {}", s.summary.title, s.summary.provider)
-                            .to_lowercase()
-                            .contains(&self.query))
+                        || if self.workspace.classic_layout {
+                            self.classic_session_matches_query(*id, cx)
+                        } else {
+                            format!("{} {}", s.summary.title, s.summary.provider)
+                                .to_lowercase()
+                                .contains(&self.query)
+                        })
             })
             .collect();
         ids.sort_by_key(|id| {
@@ -5719,6 +6053,9 @@ impl Shell {
                     let _ = back.update(cx, |this, cx| this.close_settings(window, cx));
                 },
             );
+        }
+        if self.workspace.classic_layout {
+            return self.classic_sidebar(cx);
         }
         self.refresh_sidebar_structure(cx);
         let live_agents = self.live_agents_preview(cx);
@@ -5903,7 +6240,9 @@ impl Shell {
                             ),
                     ),
             )
-            .child(self.project_spaces(cx))
+            .when(!self.workspace.classic_layout, |d| {
+                d.child(self.project_spaces(cx))
+            })
             .when_some(self.session_preview.as_ref(), |d, preview| {
                 let id = preview.id;
                 d.child(
@@ -6060,6 +6399,7 @@ impl Shell {
                         let hovered = self.hovered_space.as_ref() == Some(&path);
                         div()
                             .id(("project-space", ix))
+                            .debug_selector(move || format!("project-space-{ix}"))
                             .group("project-space")
                             .role(Role::Tab)
                             .aria_label(format!("Project {}", self.project_label(&path)))
@@ -6634,15 +6974,15 @@ impl Shell {
     /// The tab strip's width: between the navigation and TitleBar.tsx's right
     /// panel toggle, `pl-1.5 pr-3` clear of the edge.
     fn tabs_width(&self, window: &Window, cx: &App) -> f32 {
-        let trailing = if self.workspace.classic_layout {
+        let trailing = if self.workspace.boxy_layout() {
             self.right_drawn + self.strip_trail(cx)
         } else {
             self.toggle_room(cx)
         };
         // The classic strip starts beside the sidebar, after whatever the
         // navigation leaves uncovered.
-        let lead = if self.workspace.classic_layout {
-            self.workspace.sidebar_width * self.sidebar_fraction + self.strip_lead()
+        let lead = if self.workspace.boxy_layout() && !self.classic_titlebar_spans_window(cx) {
+            self.left_sidebar_width(cx) + self.strip_lead(cx)
         } else {
             self.navigation_width()
         };
@@ -7412,7 +7752,7 @@ impl Render for Shell {
             git.set_polling(poll_git && git.available(), cx)
         });
         if let Some(panel) = &self.right_panel {
-            let classic = self.workspace.classic_layout;
+            let classic = self.workspace.boxy_layout();
             let tab_width = self.project_tabs_width(cx);
             panel.update(cx, |p, cx| {
                 p.set_top_inset(if classic { TITLE_BAR_HEIGHT } else { 0. }, cx);
@@ -7420,14 +7760,31 @@ impl Render for Shell {
                 p.set_show_excluded(self.workspace.preferences.show_excluded_files, cx);
             });
         }
+        if let Some(search) = &self.app_search {
+            let original = self.workspace.classic_layout.then(|| {
+                if self.workspace.project_rail_open {
+                    12.
+                } else {
+                    self.strip_lead(cx) + 6.
+                }
+            });
+            search
+                .view
+                .update(cx, |search, cx| search.set_original_header(original, cx));
+        }
         if let Some(monos) = &self.monos {
+            monos.update(cx, |monos, cx| {
+                monos.set_original_chrome(self.workspace.classic_layout, cx)
+            });
             let details = monos.read(cx).details.clone();
-            let inset = if self.workspace.classic_layout {
+            let inset = if self.workspace.boxy_layout() && !self.workspace.classic_layout {
                 TITLE_BAR_HEIGHT
             } else {
                 0.
             };
-            details.update(cx, |view, cx| view.set_top_inset(inset, cx));
+            details.update(cx, |view, cx| {
+                view.set_top_inset(inset, cx);
+            });
         }
         self.sync_notices(window, cx);
         div()
@@ -7602,6 +7959,12 @@ impl Render for Shell {
                 }
             }))
             .on_action(cx.listener(|this, _: &DismissMenu, window, cx| {
+                if this.cancel_project_rail_drag(cx) {
+                    return;
+                }
+                if this.cancel_classic_sidebar_tab(cx) {
+                    return;
+                }
                 if this.remote_project_picker.is_some() {
                     this.close_remote_project(window, cx);
                     return;
@@ -7667,11 +8030,15 @@ impl Render for Shell {
                 this.invalidate_chrome(cx);
                 cx.notify();
             }))
-            .on_action(
-                cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
-            )
+            .on_action(cx.listener(|this, _: &ToggleSidebar, window, cx| {
+                this.toggle_primary_sidebar(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &ToggleRightPanel, window, cx| {
-                this.toggle_right_panel(window, cx)
+                if this.workspace.classic_layout {
+                    this.toggle_sidebar(window, cx)
+                } else {
+                    this.toggle_right_panel(window, cx)
+                }
             }))
             .on_action(cx.listener(|this, _: &SearchFiles, window, cx| {
                 if this.app_view_open() || this.settings.is_some() || this.mono_active(cx) {
@@ -7679,6 +8046,16 @@ impl Render for Shell {
                 }
                 this.close_app_search(window, cx);
                 this.ensure_right_panel(window, cx);
+                if this.workspace.classic_layout {
+                    this.select_classic_sidebar_tab(
+                        classic_sidebar::ClassicSidebarTab::Files,
+                        window,
+                        cx,
+                    );
+                    let explorer = this.right_panel.as_ref().unwrap().read(cx).explorer.clone();
+                    explorer.update(cx, |explorer, cx| explorer.open_search(window, cx));
+                    return;
+                }
                 this.set_right_panel_open(true, window, cx);
                 if let Some(panel) = &this.right_panel {
                     let explorer = panel.read(cx).explorer.clone();
@@ -7728,9 +8105,22 @@ impl Render for Shell {
                 this.move_dock_drag(event, cx);
                 this.move_pane_drag(event, cx);
                 this.move_folder_drag(event, cx);
+                this.move_project_rail_drag(event, cx);
+                this.move_classic_sidebar_tab(event, cx);
                 this.drag_sash(event, cx);
                 this.drag_dock(event, cx);
                 this.drag_review(event, cx);
+                if let Some((start, width)) = this.project_resize {
+                    if event.pressed_button == Some(MouseButton::Left) {
+                        this.drag_resize(
+                            ResizeTarget::Projects,
+                            width + (event.position.x - start).as_f32(),
+                            cx,
+                        );
+                    } else {
+                        this.release_resizes(cx);
+                    }
+                }
                 if let Some((start, width)) = this.resize {
                     if event.pressed_button == Some(MouseButton::Left) {
                         let width = width + (event.position.x - start).as_f32();
@@ -7747,6 +8137,8 @@ impl Render for Shell {
                     this.finish_dock_drag(cx);
                     this.finish_pane_drag(window, cx);
                     this.finish_folder_drag(cx);
+                    this.finish_project_rail_drag(cx);
+                    this.end_classic_sidebar_tab(cx);
                     if let Some(m) = this.monos.clone() {
                         m.update(cx, |m, cx| m.finish_reorder(cx));
                     }
@@ -7769,6 +8161,10 @@ impl Render for Shell {
                 // Context menus open at the pointer, as ExplorerMenu
                 // does; TabGroupMenu hangs its top-left corner there.
                 menu_popover(&open.menu, open.anchor.clone(), cx)
+                    .when(
+                        self.workspace.classic_layout && open.target == MenuTarget::SessionFilter,
+                        |p| p.align(Align::End).gap(2.),
+                    )
                     .when(point, |p| p.gap(0.))
                     .when(beside, |p| p.side(Side::Right))
                     .when(open.target == MenuTarget::SidebarOptions, |p| {
@@ -9487,7 +9883,237 @@ mod tests {
         assert!(!open(cx));
     }
     #[gpui::test]
-    fn classic_layout_runs_the_sidebar_and_workspace_full_height(cx: &mut TestAppContext) {
+    fn original_sidebar_geometry_matches_tauri_chrome(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_resize(gpui::size(px(1500.), px(900.)));
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.classic_layout = true;
+                shell.workspace.project_rail_open = true;
+                shell.classic_sidebar_tab = classic_sidebar::ClassicSidebarTab::Sessions;
+                shell.layout_changed(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+
+        let projects = visual.debug_bounds("project-rail-frame").unwrap();
+        let sidebar = visual.debug_bounds("sidebar-frame").unwrap();
+        let header = visual.debug_bounds("classic-workspace-header").unwrap();
+        let tabs = visual.debug_bounds("classic-workspace-tabs").unwrap();
+        let search = visual.debug_bounds("classic-conversation-search").unwrap();
+        assert_eq!(projects.size.width, px(220.));
+        assert_eq!(sidebar.size.width, px(260.));
+        assert_eq!(projects.top(), px(0.));
+        assert_eq!(sidebar.top(), px(0.));
+        assert_eq!(sidebar.left(), projects.right());
+        assert_eq!(header.top(), sidebar.top());
+        assert_eq!(header.size.height, px(40.));
+        assert_eq!(tabs.top(), header.bottom());
+        assert_eq!(tabs.size.height, px(36.));
+        assert_eq!(search.top(), tabs.bottom());
+        assert_eq!(search.size.height, px(36.));
+        assert_eq!(
+            visual.debug_bounds("sidebar-sessions").unwrap().top(),
+            search.bottom()
+        );
+        assert_eq!(
+            visual.debug_bounds("main-pane-frame").unwrap().left(),
+            sidebar.right()
+        );
+
+        let back = visual.debug_bounds("visit-back").unwrap();
+        let forward = visual.debug_bounds("visit-forward").unwrap();
+        let toggle = visual.debug_bounds("toggle-sidebar").unwrap();
+        assert_eq!(back.right(), forward.left());
+        assert_eq!(toggle.left(), px(TRAFFIC_LIGHTS));
+        assert!(toggle.right() <= back.left());
+        assert_eq!(forward.right(), projects.right() - px(6.));
+        assert_eq!(toggle.center().y, header.center().y);
+        assert!(visual.debug_bounds("sidebar-project-button").is_none());
+    }
+
+    #[gpui::test]
+    fn original_sidebar_tools_replace_sessions_in_the_left_column(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_resize(gpui::size(px(1500.), px(900.)));
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.classic_layout = true;
+                shell.workspace.project_rail_open = true;
+                shell.layout_changed(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        let sidebar = visual.debug_bounds("sidebar-frame").unwrap();
+        let tabs = visual.debug_bounds("classic-workspace-tabs").unwrap();
+
+        for (id, selector) in [("files", "explorer-header"), ("changes", "changes-header")] {
+            let tab = visual
+                .debug_bounds(if id == "files" {
+                    "classic-workspace-tab-files"
+                } else {
+                    "classic-workspace-tab-changes"
+                })
+                .unwrap();
+            visual.simulate_click(tab.center(), Default::default());
+            visual.run_until_parked();
+            let tool = visual.debug_bounds(selector).unwrap();
+            assert_eq!(tool.top(), tabs.bottom());
+            assert_eq!(tool.left(), sidebar.left());
+            assert!(tool.right() <= sidebar.right());
+            assert!(visual.debug_bounds("right-panel-frame").is_none());
+            assert!(visual.debug_bounds("classic-conversation-search").is_none());
+            window
+                .update(visual, |shell, _, _| {
+                    assert_eq!(shell.classic_sidebar_tab.id(), id);
+                    assert_eq!(
+                        shell
+                            .workspace
+                            .classic_sidebar_tabs
+                            .get(&shell.workspace.project)
+                            .map(String::as_str),
+                        Some(id)
+                    );
+                })
+                .unwrap();
+        }
+        let sessions = visual
+            .debug_bounds("classic-workspace-tab-sessions")
+            .unwrap();
+        visual.simulate_click(sessions.center(), Default::default());
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("classic-conversation-search").is_some());
+        assert!(visual.debug_bounds("explorer-header").is_none());
+        assert!(visual.debug_bounds("changes-header").is_none());
+    }
+
+    #[gpui::test]
+    fn original_sidebar_compact_rail_uses_vertical_workspace_tabs(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_resize(gpui::size(px(1500.), px(900.)));
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.classic_layout = true;
+                shell.workspace.project_rail_open = true;
+                shell.layout_changed(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        let toggle = visual.debug_bounds("toggle-sidebar").unwrap();
+        visual.simulate_click(toggle.center(), Default::default());
+        visual.run_until_parked();
+
+        let projects = visual.debug_bounds("project-rail-frame").unwrap();
+        let sidebar = visual.debug_bounds("sidebar-frame").unwrap();
+        let header = visual.debug_bounds("classic-workspace-header").unwrap();
+        assert_eq!(projects.size.width, px(48.));
+        assert_eq!(sidebar.left(), projects.right());
+        assert_eq!(sidebar.size.width, px(260.));
+        assert!(visual.debug_bounds("classic-workspace-tabs").is_none());
+        assert!(visual.debug_bounds("rail-workspace-sessions").is_some());
+        assert!(visual.debug_bounds("rail-workspace-files").is_some());
+        assert!(visual.debug_bounds("rail-workspace-changes").is_some());
+        assert_eq!(
+            visual
+                .debug_bounds("classic-conversation-search")
+                .unwrap()
+                .top(),
+            header.bottom()
+        );
+        #[cfg(target_os = "macos")]
+        {
+            let strip = visual.debug_bounds("title-tab-strip").unwrap();
+            assert_eq!(strip.top(), px(0.));
+            assert_eq!(strip.size.height, px(40.));
+            assert_eq!(projects.top(), px(40.));
+            assert_eq!(header.top(), px(40.));
+        }
+
+        let expand = visual.debug_bounds("toggle-sidebar").unwrap();
+        assert_eq!(expand.origin, toggle.origin);
+        assert!(visual.debug_bounds("rail-expand-projects").is_none());
+        assert_eq!(
+            visual.debug_bounds("visit-back").unwrap().left(),
+            expand.right(),
+            "collapsed history follows the toggle, independent of the sessions sidebar"
+        );
+        assert_eq!(
+            visual.debug_bounds("visit-forward").unwrap().right(),
+            px(TRAFFIC_LIGHTS + 72.)
+        );
+        visual.simulate_click(expand.center(), Default::default());
+        visual.run_until_parked();
+        assert_eq!(
+            visual
+                .debug_bounds("project-rail-frame")
+                .unwrap()
+                .size
+                .width,
+            px(220.)
+        );
+        assert!(visual.debug_bounds("classic-workspace-tabs").is_some());
+    }
+
+    #[gpui::test]
+    fn original_sidebar_workspace_tabs_reorder_and_persist(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_resize(gpui::size(px(1500.), px(900.)));
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.classic_layout = true;
+                shell.workspace.project_rail_open = true;
+                shell.layout_changed(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        let sessions = visual
+            .debug_bounds("classic-workspace-tab-sessions")
+            .unwrap();
+        let changes = visual
+            .debug_bounds("classic-workspace-tab-changes")
+            .unwrap();
+        visual.simulate_mouse_down(sessions.center(), MouseButton::Left, Default::default());
+        visual.simulate_mouse_move(changes.center(), MouseButton::Left, Default::default());
+        visual.simulate_mouse_up(changes.center(), MouseButton::Left, Default::default());
+        visual.run_until_parked();
+        let files = visual.debug_bounds("classic-workspace-tab-files").unwrap();
+        let changes = visual
+            .debug_bounds("classic-workspace-tab-changes")
+            .unwrap();
+        let sessions = visual
+            .debug_bounds("classic-workspace-tab-sessions")
+            .unwrap();
+        assert!(files.left() < changes.left() && changes.left() < sessions.left());
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(
+                    shell.workspace.classic_sidebar_tab_order,
+                    ["files", "changes", "sessions"]
+                );
+                assert_eq!(
+                    shell.classic_sidebar_tab,
+                    classic_sidebar::ClassicSidebarTab::Sessions
+                );
+                let saved = shell.latest_state.lock().unwrap().clone();
+                let restored = Workspace::restore(Some(&saved), &[], "/work/monocode");
+                assert_eq!(
+                    restored.classic_sidebar_tab_order,
+                    ["files", "changes", "sessions"]
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn new_boxy_layout_runs_the_sidebar_and_workspace_full_height(cx: &mut TestAppContext) {
         crate::theme::configure(&crate::settings::Preferences::default(), false);
         let (window, _, _) = window(cx);
         let frames = |cx: &mut TestAppContext| {
@@ -9523,7 +10149,10 @@ mod tests {
         assert_eq!(main.top(), px(TITLE_BAR_HEIGHT));
         assert!(tabs.bottom() <= main.top());
         window
-            .update(cx, |shell, _, cx| shell.toggle_layout(cx))
+            .update(cx, |shell, _, cx| {
+                shell.workspace.new_layout_boxy = true;
+                shell.layout_changed(cx)
+            })
             .unwrap();
         let (sidebar, main, tabs) = frames(cx);
         let sidebar = sidebar.unwrap();
@@ -9637,11 +10266,12 @@ mod tests {
         cx.update(|cx| cx.set_reduce_motion(false));
         window
             .update(cx, |shell, _, cx| {
-                assert!(shell.workspace.classic_layout);
+                assert!(shell.workspace.new_layout_boxy);
                 let saved = serde_json::to_string(&shell.workspace).unwrap();
-                assert!(Workspace::restore(Some(&saved), &[], "/work/monocode").classic_layout);
-                shell.toggle_layout(cx);
-                assert!(!shell.workspace.classic_layout);
+                assert!(Workspace::restore(Some(&saved), &[], "/work/monocode").new_layout_boxy);
+                shell.workspace.new_layout_boxy = !shell.workspace.new_layout_boxy;
+                shell.layout_changed(cx);
+                assert!(!shell.workspace.new_layout_boxy);
             })
             .unwrap();
     }

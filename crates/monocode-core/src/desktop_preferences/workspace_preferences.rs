@@ -87,7 +87,7 @@ impl DesktopPreferences {
             (
                 "collapsed_project_rail",
                 "collapsedProjectRailMode",
-                &["compact", "hidden"][..],
+                &["compact"][..],
                 "compact",
             ),
             (
@@ -344,6 +344,12 @@ impl DesktopPreferences {
         next: &mut Map<String, Value>,
     ) {
         let old = baseline.get("workspace").unwrap_or(&Value::Null);
+        // A fresh desktop import names the actual navigation layout. Old
+        // native sidecars used classic_layout solely for the boxy frame and
+        // migrate in Workspace::restore instead.
+        if !target.contains_key("classic_layout") {
+            target.insert("new_layout_boxy".into(), json!(false));
+        }
         let mut source = Map::new();
         reconcile_preference(
             target,
@@ -365,6 +371,24 @@ impl DesktopPreferences {
             &mut source,
             "sidebar_visible",
             json!(self.flag("sessionSidebarOpen").unwrap_or(true)),
+        );
+        reconcile_preference(
+            target,
+            old,
+            &mut source,
+            "project_rail_open",
+            json!(self.flag("projectRailOpen").unwrap_or(true)),
+        );
+        reconcile_preference(
+            target,
+            old,
+            &mut source,
+            "project_rail_width",
+            json!(self
+                .number("projectRailWidth")
+                .unwrap_or(220.)
+                .clamp(176., 360.)
+                .round()),
         );
         reconcile_preference(
             target,
@@ -459,8 +483,12 @@ impl DesktopPreferences {
             "monocode.projectGroupAssignments",
             "monocode.projectLocations",
             "monocode.projectSidebarTabs.v1",
+            "monocode.sidebarTabOrder",
             "monocode.projectRailOpen",
             "monocode.projectRailWidth",
+            "monocode.projectRailPinned",
+            "monocode.projectRailOrder",
+            "monocode.railMonosPinned",
             "monocode.transcriptZen",
             "monocode.projectNotifications.v1",
             "monocode.notificationProjects.v2",
@@ -625,6 +653,8 @@ mod tests {
             ("monocode.insetLayout", "1"),
             ("monocode.sessionSidebarOpen", "0"),
             ("monocode.projectRailOpen", "1"),
+            ("monocode.projectRailWidth", "248"),
+            ("monocode.collapsedProjectRailMode", "hidden"),
             ("monocode.sidebarOpacity", "0.42"),
             ("monocode.uiScale", "1.4"),
             ("monocode.chatBackgroundSessionOpacity", "0.31"),
@@ -662,6 +692,10 @@ mod tests {
         assert!(settings["keybindings"]["App: Settings"].is_null());
         assert_eq!(workspace["classic_layout"], false);
         assert_eq!(workspace["sidebar_visible"], false);
+        assert_eq!(workspace["new_layout_boxy"], false);
+        assert_eq!(workspace["project_rail_open"], true);
+        assert_eq!(workspace["project_rail_width"], 248.);
+        assert_eq!(settings["collapsed_project_rail"], "compact");
         assert_eq!(
             workspace["right_panel_tabs"],
             json!(["changes", "files", "graph"])

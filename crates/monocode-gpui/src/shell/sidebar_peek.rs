@@ -64,7 +64,7 @@ impl SidebarPeek {
 impl Shell {
     /// Only the inset layout's collapsed sidebar peeks.
     fn peek_available(&self) -> bool {
-        !self.workspace.classic_layout
+        !self.workspace.boxy_layout()
             && !self.workspace.sidebar_visible
             && self.sidebar_slide.is_none()
             && self.settings.is_none()

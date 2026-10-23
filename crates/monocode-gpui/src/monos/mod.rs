@@ -92,6 +92,7 @@ pub(crate) struct Monos {
     pub(crate) error: Option<String>,
     notice_region: AnchorSlot,
     pub(crate) details: Entity<overview::Overview>,
+    original_chrome: bool,
     overview_tab: OverviewTab,
     overview_previous: OverviewTab,
     overview_reveal: Option<crate::project_tabs::TabReveal<OverviewTab>>,
@@ -317,6 +318,7 @@ impl Monos {
             error: roster_error,
             notice_region,
             details,
+            original_chrome: false,
             overview_tab: OverviewTab::Sessions,
             overview_previous: OverviewTab::Sessions,
             overview_reveal: None,
@@ -428,6 +430,15 @@ impl Monos {
         }
         cx.notify();
     }
+    pub(crate) fn set_original_chrome(&mut self, original: bool, cx: &mut Context<Self>) {
+        if self.original_chrome == original {
+            return;
+        }
+        self.original_chrome = original;
+        self.details
+            .update(cx, |view, cx| view.set_original_chrome(original, cx));
+        cx.notify();
+    }
     pub(crate) fn overview_chrome(&self) -> OverviewChrome {
         let counts = self.current().map_or((0, 0, 0, 0), |mono| {
             (
@@ -448,6 +459,73 @@ impl Monos {
         if let Some(id) = self.active.clone() {
             cx.emit(ShowDetails(id));
         }
+    }
+    /// TitleBar.tsx's MonoTitle, used by the original full-width Mono view.
+    pub(crate) fn original_title(&self, inset: f32, cx: &App) -> AnyElement {
+        let Some(mono) = self.current() else {
+            return div().flex_1().min_w_0().into_any_element();
+        };
+        let state = self
+            .chats
+            .get(&mono.id)
+            .map(|chat| chat.read(cx).mono_status())
+            .unwrap_or("idle");
+        let status = match state {
+            "working" => "Working",
+            "needs-you" => "Needs you",
+            _ => "Idle",
+        };
+        div()
+            .id("original-mono-title")
+            .debug_selector(|| "original-mono-title".into())
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .pl(px(inset))
+            .pr_4()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(avatar::avatar(
+                &mono.mascot,
+                mono.color,
+                state,
+                16.,
+                state == "idle",
+            ))
+            .child(
+                div()
+                    .debug_selector(|| "original-mono-name".into())
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(13.))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(content(1.))
+                    .child(mono.label()),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "original-mono-status".into())
+                    .flex_shrink_0()
+                    .text_size(px(12.))
+                    .font_weight(gpui::FontWeight::NORMAL)
+                    .text_color(if state == "needs-you" {
+                        accent_color()
+                    } else {
+                        content(0.45)
+                    })
+                    .child(status),
+            )
+            .into_any_element()
+    }
+    pub(crate) fn open_current_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.active.clone() else {
+            return;
+        };
+        self.settings = Some(SettingsSection::General);
+        window.focus(&self.settings_focus, cx);
+        self.reload_files(&id, cx);
+        cx.notify();
     }
     pub(crate) fn current(&self) -> Option<&Mono> {
         self.active.as_deref().and_then(|id| self.roster.get(id))
@@ -1037,6 +1115,24 @@ impl Monos {
         .detach();
     }
     pub(crate) fn rail(&mut self, project: Option<String>, cx: &mut Context<Self>) -> AnyElement {
+        self.rail_impl(project, false, false, cx)
+    }
+    /// Original navigation lists every Mono, before the projects; the inset
+    /// layout continues to list only the current project's Monos.
+    pub(crate) fn project_navigation_rail(
+        &mut self,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.rail_impl(None, true, compact, cx)
+    }
+    fn rail_impl(
+        &mut self,
+        project: Option<String>,
+        original: bool,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         if !self.prefs.monos {
             return div().into_any_element();
         }
@@ -1051,23 +1147,56 @@ impl Monos {
         for mono in &roster {
             self.rail_bounds.entry(mono.id.clone()).or_default();
         }
-        let has = !roster.is_empty();
+        let count = roster.len();
+        let has = count > 0;
+        if original && !has && compact {
+            return div().into_any_element();
+        }
         let add_project = project.clone();
-        let heading = section_label("Monos").when(has, |d| {
+        let heading = if original {
+            div()
+                .h(px(30.))
+                .pl(px(10.))
+                .pr_3()
+                .pt_1()
+                .pb(px(6.))
+                .flex()
+                .items_center()
+                .gap_1()
+                .when(compact, |d| d.px(px(14.)))
+                .when(!compact, |d| {
+                    d.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .px_1()
+                            .text_size(px(12.))
+                            .line_height(px(20.))
+                            .text_color(content(0.5))
+                            .child("Monos"),
+                    )
+                })
+        } else {
+            section_label("Monos")
+        }
+        .when(has, |d| {
             d.child(
                 icon_button("new-mono", "New mono", "plus")
                     .debug_selector(|| "sidebar-mono-button".into())
                     .size(px(20.))
-                    .mr(px(-2.))
+                    .when(!original, |d| d.mr(px(-2.)))
                     .on_click(cx.listener(move |this, _, w, cx| {
                         this.create(add_project.clone().into_iter().collect(), w, cx)
                     })),
             )
         });
         div()
-            .px_2()
-            .pb_3()
-            .child(heading)
+            .when(!original, |d| d.px_2().pb_3())
+            .when(original && !compact, |d| d.pb_2())
+            .when(compact, |d| {
+                d.w_full().flex().flex_col().items_center().gap(px(6.))
+            })
+            .when(!compact, |d| d.child(heading))
             .when(!has, |d| {
                 d.child(
                     div()
@@ -1076,6 +1205,9 @@ impl Monos {
                         .role(Role::Button)
                         .aria_label("New mono")
                         .h(px(32.))
+                        .when(original, |d| {
+                            d.ml(px(6.)).mr_2().font_weight(gpui::FontWeight::MEDIUM)
+                        })
                         .px_2()
                         .rounded_md()
                         .flex()
@@ -1091,7 +1223,7 @@ impl Monos {
                         })),
                 )
             })
-            .children(roster.into_iter().map(|mono| {
+            .children(roster.into_iter().enumerate().map(|(index, mono)| {
                 let active = self.active.as_deref() == Some(&mono.id);
                 let state = self
                     .chats
@@ -1140,6 +1272,9 @@ impl Monos {
                     .role(Role::Button)
                     .aria_label(label)
                     .h(px(32.))
+                    .when(original && !compact, |d| d.ml(px(6.)).mr_2())
+                    .when(original && !compact && index + 1 < count, |d| d.mb_px())
+                    .when(compact, |d| d.w(px(32.)))
                     .px_2()
                     .rounded_md()
                     .relative()
@@ -1149,19 +1284,46 @@ impl Monos {
                     .opacity(if active { 1. } else { 0.65 })
                     .when(active, |d| d.bg(content(0.1)))
                     .hover(|s| s.bg(content(0.08)).opacity(1.))
-                    .child(avatar::avatar(&mono.mascot, mono.color, state, 16., true))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .when(unread > 0, |d| d.pr(px(24.)))
-                            .group_hover("mono-rail-row", |s| s.pr(px(24.)))
-                            .text_size(px(14.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(mono.label()),
+                            .size(px(16.))
+                            .relative()
+                            .flex_shrink_0()
+                            .child(avatar::avatar(&mono.mascot, mono.color, state, 16., true))
+                            .when(original, |d| {
+                                d.child(
+                                    div()
+                                        .absolute()
+                                        .right(px(-2.))
+                                        .top(px(-2.))
+                                        .size(px(6.))
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(rgb(crate::right_panel::BACKGROUND_BASE))
+                                        .bg(if state == "working" {
+                                            rgb(mono.color).into()
+                                        } else if state == "needs-you" {
+                                            accent_color()
+                                        } else {
+                                            content(0.3)
+                                        }),
+                                )
+                            }),
                     )
-                    .when(unread > 0, |d| {
+                    .when(!compact, |d| {
+                        d.child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .when(unread > 0, |d| d.pr(px(24.)))
+                                .group_hover("mono-rail-row", |s| s.pr(px(24.)))
+                                .text_size(px(14.))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .child(mono.label()),
+                        )
+                    })
+                    .when(unread > 0 && !compact, |d| {
                         d.child(
                             div()
                                 .absolute()
@@ -1178,34 +1340,52 @@ impl Monos {
                                             let id = mono.id.clone();
                                             move || format!("mono-rail-unread-{id}")
                                         })
-                                        .size(px(6.))
+                                        .when(!original, |d| d.size(px(6.)))
+                                        .when(original, |d| {
+                                            d.h(px(16.))
+                                                .min_w(px(16.))
+                                                .px_1()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .text_size(px(10.))
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(0xffffff))
+                                                .child(if unread > 99 {
+                                                    "99+".into()
+                                                } else {
+                                                    unread.to_string()
+                                                })
+                                        })
                                         .rounded_full()
                                         .bg(accent_color()),
                                 ),
                         )
                     })
-                    .child(
-                        div()
-                            .absolute()
-                            .right_1()
-                            .top(px(4.))
-                            .invisible()
-                            .group_hover("mono-rail-row", |s| s.visible())
-                            .child(
-                                icon_button("mono-options", "Mono options", "more-horizontal")
-                                    .debug_selector({
-                                        let id = mono.id.clone();
-                                        move || format!("mono-rail-options-{id}")
-                                    })
-                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation()
-                                    })
-                                    .on_click(cx.listener(move |this, _, w, cx| {
-                                        cx.stop_propagation();
-                                        this.open_options(&options, None, w, cx);
-                                    })),
-                            ),
-                    )
+                    .when(!compact, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .right_1()
+                                .top(px(4.))
+                                .invisible()
+                                .group_hover("mono-rail-row", |s| s.visible())
+                                .child(
+                                    icon_button("mono-options", "Mono options", "more-horizontal")
+                                        .debug_selector({
+                                            let id = mono.id.clone();
+                                            move || format!("mono-rail-options-{id}")
+                                        })
+                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .on_click(cx.listener(move |this, _, w, cx| {
+                                            cx.stop_propagation();
+                                            this.open_options(&options, None, w, cx);
+                                        })),
+                                ),
+                        )
+                    })
                     .child(slot.probe())
                     .on_click(cx.listener(move |this, _, w, cx| {
                         if std::mem::take(&mut this.skip_click) {
@@ -1388,7 +1568,7 @@ impl gpui::Render for Monos {
                     .when_some(self.chat(), |d, chat| {
                         d.child(div().flex_1().min_h_0().child(chat))
                     })
-                    .child(self.topbar(&mono, cx)),
+                    .when(!self.original_chrome, |d| d.child(self.topbar(&mono, cx))),
             )
             .children(self.settings_modal(&mono, window, cx))
             .children(self.picker_surface(cx))

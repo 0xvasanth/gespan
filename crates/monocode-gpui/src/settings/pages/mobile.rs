@@ -973,13 +973,15 @@ impl SettingsView {
                 .absolute()
                 .inset_0()
                 .occlude()
-                .bg(gpui::rgba(if self.ctx.classic {
-                    0x00000066
-                } else if content(1.).l < 0.5 {
-                    0x00000033
-                } else {
-                    0x00000059
-                }))
+                .bg(gpui::rgba(
+                    if self.ctx.classic || self.ctx.new_layout_boxy {
+                        0x00000066
+                    } else if content(1.).l < 0.5 {
+                        0x00000033
+                    } else {
+                        0x00000059
+                    },
+                ))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1006,7 +1008,9 @@ impl SettingsView {
                         .shadow_2xl()
                         .border_1()
                         .border_color(content(0.07))
-                        .child(pairing_backdrop(self.ctx.classic))
+                        .child(pairing_backdrop(
+                            self.ctx.classic || self.ctx.new_layout_boxy,
+                        ))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(
                             div()

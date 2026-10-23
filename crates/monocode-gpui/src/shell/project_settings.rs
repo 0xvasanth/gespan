@@ -160,7 +160,7 @@ impl Shell {
                 .bg(black(0.4))
                 .child(
                     popover("project-background-modal", anchor)
-                        .modal_surface(self.workspace.classic_layout)
+                        .modal_surface(self.workspace.boxy_layout())
                         .width(width)
                         .gap(0.)
                         .max_height(viewport.height.as_f32() - 32.)
@@ -211,7 +211,7 @@ impl Shell {
                 session_opacity: p.chat_background_session.clamp(5, 65) as f32 / 100.,
             });
         }
-        let classic = self.workspace.classic_layout;
+        let classic = self.workspace.boxy_layout();
         chat.update(cx, |session, cx| {
             session.set_project_appearance(appearance.clone(), cx);
             session.set_classic_layout(classic, cx);
@@ -221,7 +221,7 @@ impl Shell {
             self.backgrounds.remove(&id);
         }
         let background = settings.map(|settings| {
-            let clip = (!self.workspace.classic_layout).then(|| self.background_card.clone());
+            let clip = (!self.workspace.boxy_layout()).then(|| self.background_card.clone());
             let background = self
                 .backgrounds
                 .entry(id)

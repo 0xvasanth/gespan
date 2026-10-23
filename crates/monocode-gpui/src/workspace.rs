@@ -51,6 +51,18 @@ impl TitleTab {
     }
 }
 
+/// A named section of projects in the original project navigation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub(crate) struct ProjectRailGroup {
+    pub id: String,
+    pub name: String,
+    pub collapsed: bool,
+    pub color_index: Option<usize>,
+    pub custom_color: Option<String>,
+    pub mascot: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Workspace {
@@ -97,9 +109,18 @@ pub(crate) struct Workspace {
     pub focused: HashMap<i64, i64>,
     /// Each project's terminal dock (ProjectTerminalDock), by project path.
     pub docks: HashMap<String, TerminalDock>,
-    /// React's classic layout: a full-height sidebar beside a full-height
-    /// workspace that holds its own tabs and footer, instead of the inset card.
+    /// Original layout: separate project and session sidebars.
     pub classic_layout: bool,
+    /// The new single-sidebar layout can keep its full-height, square frame.
+    pub new_layout_boxy: bool,
+    pub project_rail_open: bool,
+    pub project_rail_monos_pinned: bool,
+    pub project_rail_width: f32,
+    pub project_rail_pinned: HashSet<String>,
+    pub project_rail_groups: Vec<ProjectRailGroup>,
+    pub project_rail_assignments: HashMap<String, String>,
+    pub classic_sidebar_tabs: HashMap<String, String>,
+    pub classic_sidebar_tab_order: Vec<String>,
     pub new_layout_prompt_dismissed: bool,
     pub preferences: crate::settings::Preferences,
     pub session_filters: monocode_core::session_filters::Filters,
@@ -264,6 +285,15 @@ impl Default for Workspace {
             focused: Default::default(),
             docks: Default::default(),
             classic_layout: false,
+            new_layout_boxy: false,
+            project_rail_open: true,
+            project_rail_monos_pinned: false,
+            project_rail_width: 220.,
+            project_rail_pinned: HashSet::new(),
+            project_rail_groups: Vec::new(),
+            project_rail_assignments: HashMap::new(),
+            classic_sidebar_tabs: HashMap::new(),
+            classic_sidebar_tab_order: Vec::new(),
             new_layout_prompt_dismissed: false,
             preferences: crate::settings::Preferences::default(),
             session_filters: Default::default(),
@@ -275,10 +305,95 @@ impl Default for Workspace {
     }
 }
 impl Workspace {
+    /// Seed original-rail concepts from the exact desktop preference strings.
+    /// Native edits then live in their own persisted fields.
+    pub(crate) fn restore_project_rail_metadata(&mut self) {
+        let Some(metadata) = self.desktop_preferences_metadata.as_ref() else {
+            return;
+        };
+        let read = |key: &str| -> Option<serde_json::Value> {
+            metadata
+                .get(key)?
+                .as_str()
+                .and_then(|s| serde_json::from_str(s).ok())
+        };
+        if let Some(value) = read("monocode.railMonosPinned") {
+            self.project_rail_monos_pinned = value.as_bool().unwrap_or(false);
+        }
+        if self.classic_sidebar_tab_order.is_empty()
+            && let Some(value) = read("monocode.sidebarTabOrder")
+        {
+            self.classic_sidebar_tab_order = serde_json::from_value::<Vec<String>>(value)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|tab| ["sessions", "files", "changes"].contains(&tab.as_str()))
+                .collect();
+        }
+        if self.classic_sidebar_tabs.is_empty()
+            && let Some(value) = read("monocode.projectSidebarTabs.v1")
+        {
+            self.classic_sidebar_tabs = serde_json::from_value::<HashMap<String, String>>(value)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|(_, tab)| ["sessions", "files", "changes"].contains(&tab.as_str()))
+                .collect();
+        }
+        if let Some(value) = read("monocode.projectRailPinned") {
+            self.project_rail_pinned = serde_json::from_value(value).unwrap_or_default();
+        }
+        if let Some(value) = read("monocode.projectGroups") {
+            self.project_rail_groups = serde_json::from_value(value).unwrap_or_default();
+        }
+        if let Some(value) = read("monocode.projectGroupAssignments") {
+            self.project_rail_assignments = serde_json::from_value(value).unwrap_or_default();
+        }
+        if let Some(value) = read("monocode.projectRailOrder")
+            && let Ok(order) = serde_json::from_value::<Vec<String>>(value)
+        {
+            let mut projects: Vec<_> = order
+                .into_iter()
+                .filter(|p| self.projects.contains(p))
+                .collect();
+            projects.extend(
+                self.projects
+                    .iter()
+                    .filter(|p| !projects.contains(p))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
+            self.projects = projects;
+        }
+    }
+
+    pub fn boxy_layout(&self) -> bool {
+        self.classic_layout || self.new_layout_boxy
+    }
+
     pub fn restore(saved: Option<&str>, sessions: &[(i64, String)], cwd: &str) -> Self {
         let mut state = saved
             .and_then(|s| serde_json::from_str::<Self>(s).ok())
             .unwrap_or_default();
+        // Before the project rail returned, "classic" meant the boxy version
+        // of the single-sidebar layout. Keep that appearance for existing users.
+        if let Some(saved) = saved.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            && saved.get("new_layout_boxy").is_none()
+        {
+            state.new_layout_boxy = state.classic_layout;
+            state.classic_layout = false;
+        }
+        let has_rail_state = saved
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .is_some_and(|value| value.get("project_rail_pinned").is_some());
+        if !has_rail_state {
+            state.restore_project_rail_metadata();
+        }
+        // Hidden project navigation is retired; collapsed always means icons.
+        state.preferences.collapsed_project_rail = "compact".into();
+        state.project_rail_width = if state.project_rail_width.is_finite() {
+            state.project_rail_width.clamp(176., 360.)
+        } else {
+            220.
+        };
         if state.project.is_empty() {
             state.project = cwd.into();
         }
@@ -767,6 +882,29 @@ pub(crate) fn project_name(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_boxy_layout_and_hidden_rail_migrate_without_changing_appearance() {
+        let state = super::Workspace::restore(
+            Some(r#"{"classic_layout":true,"preferences":{"collapsed_project_rail":"hidden"}}"#),
+            &[],
+            "/work",
+        );
+        assert!(!state.classic_layout);
+        assert!(state.new_layout_boxy);
+        assert!(state.boxy_layout());
+        assert_eq!(state.preferences.collapsed_project_rail, "compact");
+        let saved = serde_json::to_string(&state).unwrap();
+        let mut state = super::Workspace::restore(Some(&saved), &[], "/work");
+        state.classic_layout = true;
+        state.project_rail_open = false;
+        state.project_rail_width = 248.;
+        let saved = serde_json::to_string(&state).unwrap();
+        let state = super::Workspace::restore(Some(&saved), &[], "/work");
+        assert!(state.classic_layout && state.new_layout_boxy);
+        assert!(!state.project_rail_open);
+        assert_eq!(state.project_rail_width, 248.);
+    }
+
     use super::*;
     #[test]
     fn navigation_prunes_closed_tabs_and_a_new_visit_discards_forward() {
