@@ -7,6 +7,7 @@ import {
   applyHarnessEvent,
   stopStreaming,
 } from "../src/integrations/harness/core/apply";
+import { isTemporaryWorktreeBranch } from "../src/shared/lib/branchOwnership";
 import { resolveModel } from "../src/features/sessions/model/models";
 import { isVisionImage } from "../src/features/sessions/model/attachments";
 import type {
@@ -89,7 +90,7 @@ export function parseCommand(input: unknown): HostCommand {
       v.autoWorktreeBranch !== undefined &&
       (v.worktreeCwd === undefined ||
         typeof v.autoWorktreeBranch !== "string" ||
-        !/^mc\/[a-z0-9]{8}$/.test(v.autoWorktreeBranch))
+        !isTemporaryWorktreeBranch(v.autoWorktreeBranch))
     )
       throw new Error("Invalid automatically created worktree branch");
     return {

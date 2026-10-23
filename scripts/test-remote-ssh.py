@@ -4,6 +4,7 @@
 Requires OpenSSH sshd, a built host package for this platform, and Cargo.
 Does not modify HOME, SSH configuration, authorized_keys or OS services.
 """
+import argparse
 import json
 import os
 import pathlib
@@ -29,6 +30,33 @@ def free_port():
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--native", action="store_true", help="Test the GPUI desktop and UI-independent core instead of Tauri")
+    parser.add_argument("--desktop", type=pathlib.Path, help="Use an already-built desktop executable (for example a native-dev build)")
+    parser.add_argument("--profile", help="Cargo build profile (native defaults to native-dev; Tauri defaults to dev)")
+    args = parser.parse_args()
+    profile = args.profile or ("native-dev" if args.native else "dev")
+    profile_directory = "debug" if profile == "dev" else profile
+    if args.native:
+        metadata = json.loads(subprocess.check_output([
+            "cargo", "metadata", "--manifest-path", str(ROOT / "crates/rebase-gpui/Cargo.toml"),
+            "--no-deps", "--format-version", "1",
+        ], cwd=ROOT, text=True))
+        target = pathlib.Path(metadata["target_directory"])
+        if os.environ.get("CARGO_BUILD_TARGET"):
+            target /= os.environ["CARGO_BUILD_TARGET"]
+        desktop = args.desktop or target / profile_directory / "rebase-gpui"
+        transport_test = ["cargo", "test", "--manifest-path", "crates/rebase-gpui/Cargo.toml", "--locked", "--offline", "-j", "1", "-p", "rebase-core", "--profile", profile, "--lib", "remote::ssh::tests::loopback_transport_preserves_host_and_reconnects"]
+        build_hint = f"cargo build --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-gpui --profile {profile}"
+    else:
+        desktop = args.desktop or ROOT / "target" / profile_directory / "rebase"
+        transport_test = ["cargo", "test", "--lib", "remote_ssh::tests::loopback_transport_preserves_host_and_reconnects"]
+        if args.profile:
+            transport_test.extend(["--profile", profile])
+        build_hint = "cargo build --bin rebase" + (f" --profile {profile}" if args.profile else "")
+    desktop = desktop.resolve()
+    if not desktop.is_file():
+        raise RuntimeError(f"Run {build_hint} first, or pass --desktop with an existing build")
     if not LAUNCHER.is_file():
         raise RuntimeError("Run npm run host:package first")
     sshd = shutil.which("sshd") or "/usr/sbin/sshd"
@@ -49,9 +77,6 @@ def main():
                 raise RuntimeError(daemon.stderr.read().decode())
             # Exercise the actual desktop executable's non-GUI askpass mode.
             # Only trust the fingerprint of the disposable key created above.
-            desktop = ROOT / "target/debug/rebase"
-            if not desktop.is_file():
-                raise RuntimeError("Run cargo build --bin rebase first")
             fingerprint = subprocess.check_output(["ssh-keygen", "-lf", str(folder / "host.pub")], text=True).split()[1]
             with socket.socket() as prompts:
                 prompts.bind(("127.0.0.1", 0))
@@ -80,8 +105,9 @@ def main():
                 print("Native askpass verified the disposable SSH host fingerprint.")
             host("start")
             device = json.loads(host("pair", "--name", "Loopback test", "--json"))
-            env = {**os.environ, "REBASE_TEST_SSH_TARGET": f"{pwd.getpwuid(os.getuid()).pw_name}@127.0.0.1", "REBASE_TEST_SSH_PORT": str(ssh_port), "REBASE_TEST_HOST_PORT": str(host_port), "REBASE_TEST_SSH_KEY": str(folder / "client"), "REBASE_TEST_KNOWN_HOSTS": str(folder / "known_hosts"), "REBASE_TEST_TOKEN": device["token"], "REBASE_TEST_ENVIRONMENT": device["environmentId"]}
-            subprocess.run(["cargo", "test", "--lib", "remote_ssh::tests::loopback_transport_preserves_host_and_reconnects", "--", "--ignored"], cwd=ROOT, env=env, check=True)
+            test_env = {"REBASE_TEST_SSH_TARGET": f"{pwd.getpwuid(os.getuid()).pw_name}@127.0.0.1", "REBASE_TEST_SSH_PORT": str(ssh_port), "REBASE_TEST_HOST_PORT": str(host_port), "REBASE_TEST_SSH_KEY": str(folder / "client"), "REBASE_TEST_KNOWN_HOSTS": str(folder / "known_hosts"), "REBASE_TEST_TOKEN": device["token"], "REBASE_TEST_ENVIRONMENT": device["environmentId"]}
+            env = {**os.environ, **test_env}
+            subprocess.run([*transport_test, "--", "--ignored"], cwd=ROOT, env=env, check=True)
             assert json.loads(host("connection-info"))["port"] == host_port
             print("Packaged host survived both native SSH tunnel closures.")
         finally:

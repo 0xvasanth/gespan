@@ -54,7 +54,7 @@ function setup() {
           projectCwd: run.cwd,
           checkoutCwd: `/worktrees/${task.id}`,
           kind: "worktree" as const,
-          branch: `mc/orch-${task.id}`,
+          branch: `rebase/orch-${task.id}`,
         },
       };
     }),

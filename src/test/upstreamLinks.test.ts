@@ -9,6 +9,26 @@ const root = join(__dirname, "..", "..");
 // upstream product site and must not creep back in.
 const FORBIDDEN = /hardbeat920\/rebase|usemono\.dev/i;
 
+// The native tree must not point at the upstream MonoCode repo, its release
+// downloads, or its bundle identifiers either.
+const NATIVE_FORBIDDEN = /hardbeat920\/(rebase|monocode)|usemono|monocode/i;
+const NATIVE_PATHS = [
+  /^crates\//,
+  /^docs\/native\//,
+  /^\.github\/workflows\/native[^/]*\.ya?ml$/,
+  /^scripts\/[^/]*native[^/]*(\/|$)/,
+  /^scripts\/test-remote-ssh\.py$/,
+];
+const NATIVE_SKIP = [
+  /^vendor\//,
+  /^crates\/[^/]+\/target\//,
+  /^scripts\/native-dependencies\.test\.mjs$/, // asserts the untouched vendored build.rs message
+];
+// Lines that name a legacy value on purpose, to assert it is gone.
+const NATIVE_LINE_ALLOW: { file: string; line: RegExp }[] = [
+  { file: "crates/rebase-core/tests/shared_contracts.rs", line: /monocode|dev\.usemono|hardbeat920/i },
+];
+
 const EXCLUDED = [
   /(^|\/)(bun\.lockb?|package-lock\.json|Cargo\.lock|yarn\.lock|pnpm-lock\.yaml)$/,
   /(^|\/)node_modules\//,
@@ -41,6 +61,30 @@ describe("upstream links", () => {
       });
     }
     expect(hits).toEqual([]);
+  });
+
+  it("has no upstream MonoCode repo, release URL or bundle id in the native tree", () => {
+    const hits: string[] = [];
+    for (const rel of trackedFiles()) {
+      if (!NATIVE_PATHS.some((re) => re.test(rel)) || NATIVE_SKIP.some((re) => re.test(rel))) continue;
+      let text: string;
+      try {
+        text = readFileSync(join(root, rel), "utf8");
+      } catch {
+        continue;
+      }
+      text.split("\n").forEach((line, i) => {
+        if (NATIVE_FORBIDDEN.test(line) && !NATIVE_LINE_ALLOW.some((a) => a.file === rel && a.line.test(line))) hits.push(`${rel}:${i + 1}`);
+      });
+    }
+    expect(hits).toEqual([]);
+  });
+
+  it("flags the upstream release URL and bundle ids in the native tree", () => {
+    for (const bad of ["https://github.com/hardbeat920/monocode/releases/download/v1", "dev.usemono.gpui", "com.monocode.desktop", "Monocode Native"]) {
+      expect(NATIVE_FORBIDDEN.test(bad), bad).toBe(true);
+    }
+    expect(NATIVE_FORBIDDEN.test("https://github.com/0xvasanth/rebase/releases/download/v1")).toBe(false);
   });
 
   it("matches the forbidden patterns but not the fork or contributor credits", () => {

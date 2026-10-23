@@ -1,0 +1,198 @@
+# Rebase Native preview
+
+Rebase Native is the experimental Rust + GPUI app. The production app still
+uses React/Tauri. Native builds have their own Cargo workspace and lockfile.
+
+## Requirements
+
+- Node.js 22+ and a current stable Rust toolchain.
+- On macOS, Xcode with macOS components.
+- Linux core checks need D-Bus headers and pkg-config (`libdbus-1-dev` and
+  `pkg-config` on Debian/Ubuntu).
+- At least one installed, signed-in agent CLI. See [provider setup](../providers.md).
+
+The native commands do not require `npm install` or a frontend build.
+macOS is the primary preview target. Linux and Windows GUI builds and interaction
+remain unverified; see [preview limitations](parity.md).
+
+## Develop
+
+From the repository root:
+
+```sh
+npm run native:dev
+```
+
+Development uses a separate database. To open a particular project:
+
+```sh
+npm run native:dev -- --cwd /path/to/project
+```
+
+Type `r` then Enter in the terminal to rebuild and restart. The current app stays
+open until the new build succeeds. Ctrl+C stops the app and runner. There is no
+hot reload or automatic rebuild on save.
+
+On macOS, the command packages and launches `Rebase Native.app`. Other
+platforms launch the executable directly.
+
+## Build
+
+```sh
+npm run native:build
+```
+
+This creates an optimized build without launching it. **The release app uses the
+installed Rebase database, and changes save there.** No extra flags are needed.
+
+On macOS, open:
+
+```sh
+open "crates/rebase-gpui/target/release/Rebase Native.app"
+```
+
+The app has a separate name and application ID (`com.rebase.native`) so it can be
+installed alongside Rebase. Local source builds are signed locally, without
+Apple notarization or configured automatic updates. Linux and Windows builds
+produce a standalone executable
+under `crates/rebase-gpui/target/release/`. `CARGO_TARGET_DIR` and
+`CARGO_BUILD_TARGET` can change these output paths.
+
+The **Rebase Native Preview** GitHub Actions workflow runs checks and build
+verification.
+
+## Releases and the update feed
+
+**Native preview release** runs only when started by hand, so pushing a tag
+never publishes anything. To cut a preview:
+
+1. Tag the commit as `native-v<version>` (for example
+   `native-v0.16.0-preview.2`) and push the tag.
+2. In the Actions tab, open **Native preview release**, choose **Run workflow**,
+   set **Use workflow from** to that tag, and run it. Dispatching from a branch or
+   any tag that is not `native-v*` fails at once in the first job.
+
+The workflow builds and signs every platform package, then publishes to GitHub
+Releases:
+
+- The versioned `native-v<version>` release (a prerelease, never marked latest)
+  holds the packages and their `.sig` files. It is immutable once published; use
+  a new preview tag to ship a fix.
+- A fixed `native-latest` release holds only `latest.json`. The workflow creates
+  it if missing and overwrites the asset on every native release. The signed
+  feed's package URLs point at the versioned release's assets.
+
+If a run fails after the versioned release was published but before the feed was
+updated, run the workflow again from the same tag. Nothing is signed and no
+package is re-uploaded on a rerun. When `native-v<version>` already has all of its
+packages, `.sig` files and `latest.json`, the run downloads the original signed
+`latest.json` and the `.sig` files, checks that they match, and republishes that
+same `latest.json` to `native-latest`. If any of those assets is missing, the run
+fails and names them; use a new preview tag then.
+
+Keep the signing secrets in a GitHub Environment with required reviewers, so a
+release run needs an approval before it can use the signing key. If you move
+the secrets into an Environment, also add `environment: <name>` to the `publish`
+job in `native-release.yml`, and to the `build` and `rpm` jobs, which read
+`TAURI_UPDATER_PUBKEY`. Without it those jobs cannot see the secrets, so the
+release breaks silently.
+
+The app's default endpoint is therefore
+`https://github.com/0xvasanth/rebase/releases/download/native-latest/latest.json`.
+GitHub's `releases/latest` serves the Tauri app's stable `v*` releases, so the
+native feed deliberately uses its own tag and never competes with it. To
+override the default (HTTPS only), set the `NATIVE_UPDATER_ENDPOINT` repository
+variable (Settings, Secrets and variables, Actions, Variables) for CI releases,
+which the workflow passes to `scripts/release-channel.cjs native-config`. For a
+local build, set `REBASE_NATIVE_UPDATER_ENDPOINT` yourself instead.
+
+Required repository secrets: `TAURI_UPDATER_PUBKEY` (embedded in the app),
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, plus the
+Apple signing secrets. Cloudflare R2 is optional: when all of `R2_PUBLIC_BASE_URL`,
+`R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
+are set, packages and `latest.json` are also mirrored under `native-preview/`;
+otherwise that step is skipped. The channel logic lives in
+`scripts/release-channel.cjs` and is tested in `scripts/release-channel.test.cjs`.
+
+The macOS app icon is `src-tauri/icons/icon.icns`, shared with the Tauri app.
+
+## Running alongside Rebase
+
+Rebase Native and the Tauri Rebase app share one database,
+`~/Library/Application Support/com.rebase.desktop/rebase.db` on macOS. Before
+you use Rebase Native with your real data:
+
+- Back up `rebase.db` with both apps closed.
+- Do not have the same conversation open in both apps at the same time. Tauri
+  Rebase saves whole conversations, so it can overwrite turns that were added in
+  Rebase Native.
+
+Opening different conversations in each app is fine. A code safeguard for this is
+planned but not built yet.
+
+## Data and configuration
+
+Development stores `rebase.db` under:
+
+| Platform | Development directory |
+| --- | --- |
+| macOS | `~/Library/Application Support/Rebase Development/` |
+| Linux | `$XDG_DATA_HOME/Rebase Development/`, or `~/.local/share/Rebase Development/` |
+| Windows | `%LOCALAPPDATA%\Rebase Development\` |
+
+`REBASE_NATIVE_DATA_DIR` overrides this development directory.
+
+Release builds open `com.rebase.desktop/rebase.db` under macOS Application
+Support, Linux's XDG data directory, or Windows' `%APPDATA%`. The app uses the
+existing desktop schema and session IDs. GPUI preferences are saved beside the
+database in `rebase.db.gpui.json`.
+
+Supported desktop preferences and workspace state are read from the installed
+app's webview localStorage on macOS and Linux. The Windows WebView2 reader is
+implemented and covered by synthetic fixtures on Linux; reading a real Windows
+profile remains unverified. Native preference edits are stored separately.
+Some desktop layout concepts still need native support; see
+[preview limitations](parity.md).
+
+The Windows reader always opens a temporary copy of localStorage. Copying while
+Tauri is writing is best-effort: an inconsistent copy can leave desktop
+preferences incomplete or unavailable for that launch. Close Tauri before
+starting GPUI for the first time. See [verification](verification.md) for
+recorded checks.
+
+To inspect the installed database without opening a window or changing it, use
+the executable from a release build:
+
+```sh
+crates/rebase-gpui/target/release/rebase-gpui --check-data
+```
+
+Provider CLI paths can be changed in Settings → Providers. CLI authentication
+continues to use each provider's existing sign-in.
+
+## Checks and fixtures
+
+```sh
+npm run native:check
+```
+
+This runs the script tests, Rust formatting, strict Clippy and native tests.
+See [verification](verification.md) for individual commands, optional provider
+checks and the latest recorded results.
+
+A synthetic long-history fixture uses development data and makes no provider
+request:
+
+```sh
+REBASE_NATIVE_DATA_DIR=/tmp/rebase-native-lab npm run native:dev -- --fixture
+```
+
+Fixtures are refused with production data. Use a fresh temporary directory when
+you want an empty fixture store.
+
+## Contributing
+
+See [architecture](migration.md) for the crate boundaries and renderer patches,
+and [preview limitations](parity.md) for remaining work. The
+[session visuals guide](visuals.md) documents the agent-facing visual API and
+examples.

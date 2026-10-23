@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED } = require("./release-channel.cjs");
+const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -88,6 +88,7 @@ test("the CLI exports the same channel used for feed publication", () => {
   }
 });
 
+const R2_NAMES = ["R2_PUBLIC_BASE_URL", "R2_ACCOUNT_ID", "R2_BUCKET_NAME", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"];
 const fullR2 = {
   R2_PUBLIC_BASE_URL: "https://cdn.example.com",
   R2_ACCOUNT_ID: "acct",
@@ -129,4 +130,156 @@ test("the r2 CLI exports R2_ENABLED and fails for an incomplete beta", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the native feed is the fixed native-latest release, separate from Tauri's releases/latest", () => {
+  assert.equal(GITHUB_NATIVE_FEED, "https://github.com/0xvasanth/rebase/releases/download/native-latest/latest.json");
+  assert.notEqual(GITHUB_NATIVE_FEED, GITHUB_STABLE_FEED);
+  // R2 and the Tauri override never leak into the native endpoint.
+  assert.equal(nativeUpdaterEndpoint({}), GITHUB_NATIVE_FEED);
+  assert.equal(
+    nativeUpdaterEndpoint({
+      GITHUB_REF_NAME: "native-v0.16.0-preview.2",
+      R2_PUBLIC_BASE_URL: "https://cdn.example.com",
+      TAURI_UPDATER_ENDPOINT: "https://updates.example.com/stable.json",
+      NATIVE_UPDATER_ENDPOINT: "  ",
+    }),
+    GITHUB_NATIVE_FEED,
+  );
+});
+
+test("the native endpoint can be overridden, but only with HTTPS", () => {
+  assert.equal(
+    nativeUpdaterEndpoint({ NATIVE_UPDATER_ENDPOINT: "https://mirror.example.com/native.json" }),
+    "https://mirror.example.com/native.json",
+  );
+  assert.throws(() => nativeUpdaterEndpoint({ NATIVE_UPDATER_ENDPOINT: "http://mirror.example.com/native.json" }), /HTTPS/);
+});
+
+test("native packages are referenced from the versioned native-v release, not the feed release", () => {
+  assert.equal(
+    nativeAssetBase({ GITHUB_REF_NAME: "native-v0.16.0-preview.2" }),
+    "https://github.com/0xvasanth/rebase/releases/download/native-v0.16.0-preview.2",
+  );
+  for (const ref of ["v0.9.1", "native-latest", "native-v", "", undefined]) {
+    assert.throws(() => nativeAssetBase({ GITHUB_REF_NAME: ref }), /native-v/);
+  }
+});
+
+test("native R2 mirroring is optional and only enabled when every secret is present", () => {
+  assert.deepEqual(nativeR2Status({}), { enabled: false, missing: R2_NAMES });
+  assert.deepEqual(nativeR2Status(fullR2), { enabled: true, missing: [] });
+  const { R2_BUCKET_NAME, ...rest } = fullR2;
+  assert.deepEqual(nativeR2Status(rest), { enabled: false, missing: ["R2_BUCKET_NAME"] });
+  assert.equal(nativeR2Status({ ...fullR2, R2_ACCOUNT_ID: "  " }).enabled, false);
+});
+
+test("native builds still require the updater pubkey", () => {
+  assert.throws(() => updaterPubkey({}), /TAURI_UPDATER_PUBKEY/);
+});
+
+test("the native-config CLI exports the endpoint and fails without a pubkey", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-config-"));
+  const envFile = path.join(dir, "env");
+  fs.writeFileSync(envFile, "");
+  const run = (env) => execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "native-config"], {
+    env: { PATH: process.env.PATH, GITHUB_ENV: envFile, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.throws(() => run({}), (error) => /TAURI_UPDATER_PUBKEY/.test(error.stderr));
+  run({ TAURI_UPDATER_PUBKEY: "pub" });
+  const written = fs.readFileSync(envFile, "utf8");
+  assert.match(written, new RegExp(`REBASE_NATIVE_UPDATER_ENDPOINT=${GITHUB_NATIVE_FEED}\n`));
+  assert.match(written, /REBASE_NATIVE_UPDATER_PUBKEY=pub\n/);
+});
+
+test("the native-r2 CLI exports R2_ENABLED=false when secrets are absent", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-r2-"));
+  const envFile = path.join(dir, "env");
+  fs.writeFileSync(envFile, "");
+  execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "native-r2"], {
+    env: { PATH: process.env.PATH, GITHUB_ENV: envFile }, encoding: "utf8",
+  });
+  assert.equal(fs.readFileSync(envFile, "utf8"), "R2_ENABLED=false\n");
+});
+
+test("native releases only run from a native-v* tag", () => {
+  assert.equal(requireNativeTagRef({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "native-v0.16.0-preview.2" }), "native-v0.16.0-preview.2");
+  for (const env of [
+    { GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "main" },
+    { GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "native-v0.16.0-preview.2" },
+    { GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.9.1" },
+    { GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "native-v" },
+    {},
+  ]) assert.throws(() => requireNativeTagRef(env), /native-v\* tag/);
+});
+
+test("expected native files are each package plus its signature", () => {
+  assert.deepEqual(
+    nativeExpectedFiles([{ filename: "a.dmg", target: "darwin-aarch64-app" }, { filename: "b.deb" }]),
+    ["latest.json", "a.dmg", "a.dmg.sig", "b.deb"],
+  );
+});
+
+test("a missing or draft versioned release uploads packages", () => {
+  const expected = ["latest.json", "a.dmg", "a.dmg.sig"];
+  assert.deepEqual(nativePublishPlan({ release: null, expected }), { createRelease: true, uploadPackages: true });
+  assert.deepEqual(nativePublishPlan({ release: { isDraft: true, assets: [{ name: "a.dmg" }] }, expected }), { createRelease: false, uploadPackages: true });
+});
+
+test("a published versioned release keeps its packages and only the feed is refreshed", () => {
+  const expected = ["latest.json", "a.dmg", "a.dmg.sig"];
+  const release = { isDraft: false, assets: [{ name: "latest.json" }, { name: "a.dmg" }, { name: "a.dmg.sig" }, { name: "extra.txt" }] };
+  assert.deepEqual(nativePublishPlan({ release, expected }), { createRelease: false, uploadPackages: false });
+});
+
+test("a published release with missing assets is an error naming them", () => {
+  const release = { isDraft: false, assets: [{ name: "a.dmg" }] };
+  assert.throws(() => nativePublishPlan({ release, expected: ["a.dmg", "a.dmg.sig"] }), /missing assets: a\.dmg\.sig/);
+  assert.throws(() => nativePublishPlan({ release: { isDraft: false, assets: [{ name: "a.dmg" }] }, expected: ["latest.json", "a.dmg"] }), /missing assets: latest\.json/);
+  assert.throws(() => nativePublishPlan({ release: { isDraft: false }, expected: ["a.dmg"] }), /missing assets: a\.dmg/);
+});
+
+const TAG = "native-v0.16.0-preview.2";
+const feedFor = (platforms) => JSON.stringify({
+  payload: Buffer.from(JSON.stringify({ platforms })).toString("base64"),
+  signature: "manifest-signature",
+});
+const url = (name, tag = TAG) => `https://github.com/0xvasanth/rebase/releases/download/${tag}/${encodeURIComponent(name)}`;
+
+test("recovery reuses the original signatures and signs nothing", () => {
+  const latestJson = feedFor({ "darwin-aarch64-app": { url: url("Rebase Native.app.tar.gz"), signature: "sig-original" } });
+  const before = latestJson;
+  const manifest = verifyRecoveredFeed({
+    latestJson,
+    sigs: { "Rebase Native.app.tar.gz": "sig-original\n" },
+    tag: TAG,
+    expected: ["Rebase Native.app.tar.gz"],
+  });
+  assert.equal(manifest.platforms["darwin-aarch64-app"].signature, "sig-original");
+  assert.equal(latestJson, before);
+});
+
+test("the workflow exposes the signing key only to the normal-path signing step", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "native-release.yml"), "utf8");
+  const publish = workflow.slice(workflow.indexOf("\n  publish:"));
+  const holders = publish.split("\n      - ").filter((step) => step.includes("TAURI_SIGNING_PRIVATE_KEY"));
+  assert.equal(holders.length, 1);
+  assert.match(holders[0], /^name: Sign all update packages/);
+  assert.match(holders[0], /if: env\.NATIVE_UPLOAD_PACKAGES == 'true'/);
+  assert.doesNotMatch(publish.split("\n    steps:")[0], /TAURI_SIGNING_PRIVATE_KEY/);
+});
+
+test("recovery fails when a .sig asset is missing or differs from the feed", () => {
+  const latestJson = feedFor({ t: { url: url("a.dmg"), signature: "sig-original" } });
+  const args = { latestJson, tag: TAG, expected: ["a.dmg"] };
+  assert.throws(() => verifyRecoveredFeed({ ...args, sigs: {} }), /Missing signature asset a\.dmg\.sig/);
+  assert.throws(() => verifyRecoveredFeed({ ...args, sigs: { "a.dmg": "swapped" } }), /does not match a\.dmg\.sig/);
+});
+
+test("recovery rejects a feed that points elsewhere, at an unknown file, or is unreadable", () => {
+  const sigs = { "a.dmg": "s" };
+  assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({ t: { url: url("a.dmg", "native-v9.9.9"), signature: "s" } }), sigs, tag: TAG, expected: ["a.dmg"] }), /does not point at/);
+  assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({ t: { url: url("evil.dmg"), signature: "s" } }), sigs, tag: TAG, expected: ["a.dmg"] }), /not a published package/);
+  assert.throws(() => verifyRecoveredFeed({ latestJson: "not json", sigs, tag: TAG, expected: [] }), /unreadable/);
+  assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({}), sigs, tag: TAG, expected: [] }), /lists no packages/);
 });

@@ -62,6 +62,28 @@ npm run tauri dev
 
 Small, focused contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
+## Rebase Native preview
+
+The Rust + GPUI app is an experimental preview. React/Tauri remains the
+production app.
+
+To try GPUI from this checkout with Node.js 22+, Rust and Xcode on macOS:
+
+```sh
+npm run native:dev     # launch with a separate development database
+npm run native:build   # create an optimized app using installed Rebase data
+```
+
+Type `r` then Enter in the development terminal to rebuild and restart; there is
+no hot reload. The release app saves changes to your installed Rebase data.
+See the [native guide](docs/native/README.md) for prerequisites, build output,
+checks and preview limitations.
+
+Rebase Native shares `~/Library/Application Support/com.rebase.desktop/rebase.db`
+with Rebase. Back up `rebase.db` with both apps closed before first using Rebase
+Native, and do not open the same conversation in both apps at once: Rebase saves
+whole conversations and can overwrite turns added in Rebase Native.
+
 ## Contributors
 
 Thanks to everyone who contributes to Rebase!

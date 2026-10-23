@@ -156,6 +156,29 @@ pub fn git_worktrees(cwd: String, store: State<'_, SessionStore>) -> Result<Work
     })
 }
 
+/// Legacy branch prefixes, still recognised so existing worktrees keep working.
+const LEGACY_BRANCH_PREFIXES: [&str; 1] = ["mc/"];
+const APP_BRANCH_PREFIX: &str = "rebase/";
+
+fn has_app_prefix(name: &str, suffix: &str) -> bool {
+    std::iter::once(APP_BRANCH_PREFIX)
+        .chain(LEGACY_BRANCH_PREFIXES)
+        .any(|prefix| {
+            name.strip_prefix(prefix)
+                .is_some_and(|rest| rest.starts_with(suffix))
+        })
+}
+
+/// Branches Rebase created itself (current `rebase/` or legacy `mc/`).
+pub fn is_app_branch(name: &str) -> bool {
+    has_app_prefix(name, "")
+}
+
+/// Temporary orchestration worker branches (`rebase/orch-…` or legacy `mc/orch-…`).
+pub fn is_orchestration_branch(name: &str) -> bool {
+    has_app_prefix(name, "orch-")
+}
+
 fn create(root: &Path, branch: &str, base: &str, existing: bool) -> Result<Worktree, String> {
     let branch = branch.trim();
     if branch.starts_with('-') || branch.starts_with('@') || branch.is_empty() {
@@ -414,7 +437,7 @@ fn rename_branch(root: &Path, path: &Path, branch: &str) -> Result<Worktree, Str
         return Err("The main working copy cannot be renamed here".into());
     }
     let current = tree.branch.as_deref().ok_or("The worktree is detached")?;
-    if !current.starts_with("mc/") && !current.starts_with("rebase/") {
+    if !is_app_branch(current) {
         return Err("Only automatically created worktree branches can be renamed".into());
     }
     if current == branch {
@@ -741,7 +764,7 @@ pub fn git_orchestration_worktree_remove(
     let conn = store.lock_conn()?;
     let removed = remove_with_sessions(&conn, &root, &path, true, true)?;
     if let Some(branch) = branch {
-        if branch.starts_with("mc/orch-") {
+        if is_orchestration_branch(&branch) {
             if let Err(error) = git(Path::new(&removed.project_cwd), &["branch", "-D", &branch]) {
                 eprintln!("Orchestration worktree removed; temporary branch cleanup will need a retry: {error}");
             }
@@ -755,7 +778,7 @@ pub async fn git_orchestration_branch_remove(cwd: String, branch: String) -> Res
     tauri::async_runtime::spawn_blocking(move || {
         let root = expand_home(&cwd);
         let branch = branch.trim();
-        if !branch.starts_with("mc/orch-") {
+        if !is_orchestration_branch(branch) {
             return Err("Only orchestration temporary branches can be removed here".into());
         }
         git(&root, &["check-ref-format", "--branch", branch])?;
@@ -889,7 +912,7 @@ mod tests {
         std::fs::write(root.join("untracked.txt"), "lead new\n").unwrap();
         std::fs::remove_file(root.join("deleted.txt")).unwrap();
 
-        let tree = create_seeded(&root, "mc/orch-testworker").unwrap();
+        let tree = create_seeded(&root, "rebase/orch-testworker").unwrap();
         let worker = Path::new(&tree.path);
         assert_eq!(
             std::fs::read_to_string(worker.join("tracked.txt")).unwrap(),
@@ -901,12 +924,12 @@ mod tests {
         );
         assert!(!worker.join("deleted.txt").exists());
         assert_eq!(
-            create_seeded(&root, "mc/orch-testworker").unwrap().path,
+            create_seeded(&root, "rebase/orch-testworker").unwrap().path,
             tree.path
         );
 
         std::fs::write(root.join("tracked.txt"), "later lead edit\n").unwrap();
-        assert!(create_seeded(&root, "mc/orch-testworker").is_err());
+        assert!(create_seeded(&root, "rebase/orch-testworker").is_err());
         assert_eq!(
             std::fs::read_to_string(worker.join("tracked.txt")).unwrap(),
             "lead dirty\n"
@@ -930,7 +953,24 @@ mod tests {
     }
 
     #[test]
-    fn renames_only_temporary_worktree_branches() {
+    fn new_worktree_names_use_rebase_prefix_and_legacy_is_still_owned() {
+        let repo = repo();
+        let root = repo.0.join("repo");
+        let tree = create(&root, "rebase/12345678", "main", false).unwrap();
+        assert!(tree.path.ends_with("/rebase-12345678"));
+        let renamed = rename_branch(&root, Path::new(&tree.path), "rebase/faster").unwrap();
+        assert_eq!(renamed.branch.as_deref(), Some("rebase/faster"));
+
+        assert!(is_app_branch("rebase/x") && is_app_branch("mc/x"));
+        assert!(!is_app_branch("feature/x") && !is_app_branch("mcx/x"));
+        assert!(is_orchestration_branch("mc/orch-x"));
+        assert!(is_orchestration_branch("rebase/orch-x"));
+        assert!(!is_orchestration_branch("feature/x"));
+        assert!(!is_orchestration_branch("rebase/other"));
+    }
+
+    #[test]
+    fn renames_only_temporary_worktree_branches_including_legacy_mc() {
         let repo = repo();
         let root = repo.0.join("repo");
         let tree = create(&root, "mc/12345678", "main", false).unwrap();
