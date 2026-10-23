@@ -717,10 +717,7 @@ mod tests {
                 "-o",
                 "IdentitiesOnly=yes",
                 "-o",
-                &format!(
-                    "UserKnownHostsFile={}",
-                    required("REBASE_TEST_KNOWN_HOSTS")
-                ),
+                &format!("UserKnownHostsFile={}", required("REBASE_TEST_KNOWN_HOSTS")),
             ]);
             command
         };
@@ -809,9 +806,7 @@ mod tests {
         assert!(script.contains("checksum mismatch"));
         assert!(script.contains("\"$FORCE_UPGRADE\" = 1"));
         assert!(script.contains("service uninstall"));
-        assert!(
-            upgrade_script(HostPlatform::Unix, 3774).starts_with("REBASE_HOST_FORCE_UPGRADE=1")
-        );
+        assert!(upgrade_script(HostPlatform::Unix, 3774).starts_with("REBASE_HOST_FORCE_UPGRADE=1"));
         assert!(!upgrade_script(HostPlatform::Unix, 3774).contains('\r'));
         assert!(upgrade_script(HostPlatform::Windows, 3774)
             .starts_with("$env:REBASE_HOST_FORCE_UPGRADE = '1'"));

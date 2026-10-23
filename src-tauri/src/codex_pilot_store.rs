@@ -1,4 +1,4 @@
-//! Mono threads retain native Codex rollouts, but outside the Codex app's home.
+//! Pilot threads retain native Codex rollouts, but outside the Codex app's home.
 //! Configuration and credentials remain shared with the selected provider account.
 
 use std::path::{Path, PathBuf};
@@ -92,13 +92,13 @@ fn locations(app: &AppHandle, account_id: Option<&str>) -> Result<(PathBuf, Path
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
-        .join("codex-monos")
+        .join("codex-pilots")
         .join(account_id);
     Ok((source, home))
 }
 
 #[tauri::command(async)]
-pub fn codex_mono_store_prepare(
+pub fn codex_pilot_store_prepare(
     app: AppHandle,
     provider_account_id: Option<String>,
     thread_id: Option<String>,
@@ -120,7 +120,7 @@ pub fn codex_mono_store_prepare(
 }
 
 #[tauri::command(async)]
-pub fn codex_mono_store_copy(
+pub fn codex_pilot_store_copy(
     app: AppHandle,
     provider_account_id: Option<String>,
     thread_id: String,
@@ -147,7 +147,7 @@ pub fn codex_mono_store_copy(
 }
 
 #[tauri::command(async)]
-pub fn codex_mono_store_restore_agent_state(
+pub fn codex_pilot_store_restore_agent_state(
     app: AppHandle,
     provider_account_id: Option<String>,
     thread_id: String,
@@ -180,7 +180,7 @@ fn prepare_files(source: &Path, home: &Path) -> Result<(), String> {
     std::fs::create_dir_all(source)
         .map_err(|e| format!("Could not open the Codex account directory: {e}"))?;
     std::fs::create_dir_all(home)
-        .map_err(|e| format!("Could not create Mono Codex storage: {e}"))?;
+        .map_err(|e| format!("Could not create Pilot Codex storage: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -190,11 +190,11 @@ fn prepare_files(source: &Path, home: &Path) -> Result<(), String> {
     let source = source.canonicalize().map_err(|e| e.to_string())?;
     let canonical_home = home.canonicalize().map_err(|e| e.to_string())?;
     if canonical_home.starts_with(&source) || source.starts_with(&canonical_home) {
-        return Err("Mono Codex storage must be separate from the normal Codex home".into());
+        return Err("Pilot Codex storage must be separate from the normal Codex home".into());
     }
     for name in STATE_NAMES {
         if std::fs::symlink_metadata(home.join(name)).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err("Mono Codex state must remain in its private storage directory".into());
+            return Err("Pilot Codex state must remain in its private storage directory".into());
         }
     }
     for entry in std::fs::read_dir(&source).map_err(|e| e.to_string())? {
@@ -234,7 +234,7 @@ fn link_entry(source: &Path, target: &Path) -> Result<(), String> {
             return Ok(());
         }
         return Err(format!(
-            "Unexpected link in Mono Codex storage: {}",
+            "Unexpected link in Pilot Codex storage: {}",
             target.display()
         ));
     }
@@ -244,13 +244,13 @@ fn link_entry(source: &Path, target: &Path) -> Result<(), String> {
             std::fs::remove_file(target).map_err(|e| e.to_string())?;
         } else {
             return Err(format!(
-                "Unexpected entry in Mono Codex storage: {}",
+                "Unexpected entry in Pilot Codex storage: {}",
                 target.display()
             ));
         }
         #[cfg(not(windows))]
         return Err(format!(
-            "Unexpected entry in Mono Codex storage: {}",
+            "Unexpected entry in Pilot Codex storage: {}",
             target.display()
         ));
     }
@@ -298,7 +298,7 @@ fn read_keyring(service: &str, key: &str) -> Result<Option<String>, String> {
 fn write_keyring(service: &str, key: &str, value: &str) -> Result<(), String> {
     keyring::Entry::new(service, key)
         .and_then(|e| e.set_password(value))
-        .map_err(|_| "Could not share Codex credentials with Mono storage".into())
+        .map_err(|_| "Could not share Codex credentials with Pilot storage".into())
 }
 
 fn prepare_keyring(source: &Path, home: &Path) -> Result<Vec<KeyringMirror>, String> {
@@ -350,7 +350,7 @@ fn prepare_keyring(source: &Path, home: &Path) -> Result<Vec<KeyringMirror>, Str
         } else if let Ok(entry) = keyring::Entry::new(service, &private_key) {
             match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => {}
-                Err(_) => return Err("Could not clear the previous Mono Codex login".into()),
+                Err(_) => return Err("Could not clear the previous Pilot Codex login".into()),
             }
         }
         mirrors.push(KeyringMirror {
@@ -427,7 +427,7 @@ fn copy_rollouts_with_edges(
 ) -> Result<(), String> {
     validate_thread_id(thread_id)?;
     if paths.is_empty() {
-        return Err("Codex did not return a saved Mono thread".into());
+        return Err("Codex did not return a saved Pilot thread".into());
     }
     let source = source.canonicalize().map_err(|e| e.to_string())?;
     let allowed_roots = [source.join("sessions"), source.join("archived_sessions")]
@@ -501,7 +501,7 @@ fn copy_rollouts_with_edges(
     if !root_name.ends_with(&format!("-{thread_id}.jsonl"))
         && !root_name.ends_with(&format!("-{thread_id}.jsonl.zst"))
     {
-        return Err("The saved Mono root does not match its thread id".into());
+        return Err("The saved Pilot root does not match its thread id".into());
     }
     let pending_dir = home.join(".rebase-migrations");
     std::fs::create_dir_all(&pending_dir).map_err(|e| e.to_string())?;
@@ -662,7 +662,7 @@ fn restore_agent_edges(home: &Path, thread_id: &str) -> Result<(), String> {
         Err(e) => return Err(e.to_string()),
     };
     let edges: Vec<AgentEdge> = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    let path = state_db(home)?.ok_or("Codex has not initialized the private Mono index")?;
+    let path = state_db(home)?.ok_or("Codex has not initialized the private Pilot index")?;
     apply_agent_edges(&path, edges)?;
     std::fs::remove_file(snapshot).map_err(|e| e.to_string())?;
     Ok(())
@@ -744,7 +744,7 @@ mod tests {
             self.0.join("account")
         }
         fn home(&self) -> PathBuf {
-            self.0.join("mono")
+            self.0.join("pilot")
         }
         fn rollout(&self, id: &str, base: Option<&str>) -> PathBuf {
             let dir = self.source().join("archived_sessions");

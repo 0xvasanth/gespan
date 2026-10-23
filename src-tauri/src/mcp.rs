@@ -833,10 +833,8 @@ mod tests {
 
     #[test]
     fn adds_opencode_two_server_without_changing_existing_timeouts_or_servers() {
-        let root = std::env::temp_dir().join(format!(
-            "rebase-opencode-timeout-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("rebase-opencode-timeout-{}", uuid::Uuid::new_v4()));
         let path = root.join("opencode.json");
         std::fs::create_dir_all(&root).unwrap();
         let original = serde_json::json!({
@@ -1011,8 +1009,7 @@ mod tests {
 
     #[test]
     fn writes_server_without_discarding_other_configuration() {
-        let root =
-            std::env::temp_dir().join(format!("rebase-mcp-write-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("rebase-mcp-write-{}", uuid::Uuid::new_v4()));
         let path = root.join(".cursor/mcp.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
@@ -1031,8 +1028,7 @@ mod tests {
 
     #[test]
     fn adds_to_existing_cursor_jsonc() {
-        let root =
-            std::env::temp_dir().join(format!("rebase-mcp-jsonc-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("rebase-mcp-jsonc-{}", uuid::Uuid::new_v4()));
         let path = root.join(".cursor/mcp.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(

@@ -37,17 +37,17 @@ pub(super) struct Action {
     destructive: bool,
 }
 
-/// The actions below the Monos, each in its own group. Each gets a circle
+/// The actions below the Pilots, each in its own group. Each gets a circle
 /// like a portrait's so every title in the menu shares one column.
 pub(super) const ACTIONS: [Action; 2] = [
     Action {
-        id: "mono-chat-composer",
+        id: "pilot-chat-composer",
         title: "Quick Composer",
         symbol: "square.and.pencil",
         destructive: false,
     },
     Action {
-        id: "mono-chat-quit",
+        id: "pilot-chat-quit",
         title: "Quit Rebase",
         symbol: "power",
         destructive: true,
@@ -57,7 +57,7 @@ pub(super) const ACTIONS: [Action; 2] = [
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MenuMascot {
-    mono_id: String,
+    pilot_id: String,
     rects: Vec<MascotRect>,
 }
 
@@ -107,7 +107,7 @@ pub(super) fn decorate(tray: &tauri::tray::TrayIcon) -> tauri::Result<()> {
                 }
             }
         }))
-        .map_err(|exception| format!("Could not style the Mono menu: {exception:?}"))
+        .map_err(|exception| format!("Could not style the Pilot menu: {exception:?}"))
     })?
     .map_err(|error| std::io::Error::other(error).into())
 }
@@ -121,7 +121,7 @@ fn show_image(item: &NSMenuItem) {
     }
 }
 
-/// An SF Symbol in a faint circle the size of a Mono portrait. As a template
+/// An SF Symbol in a faint circle the size of a Pilot portrait. As a template
 /// image it follows the menu's text color, including when highlighted; a
 /// destructive action keeps its red instead.
 fn action_icon(action: &Action) -> Option<Retained<NSImage>> {
@@ -256,7 +256,7 @@ fn style_menu(menu: &NSMenu, mtm: MainThreadMarker) {
         NSView::alloc(mtm),
         NSRect::new(NSPoint::ZERO, NSSize::new(WIDTH, 30.0)),
     );
-    let title = NSTextField::labelWithString(&NSString::from_str("Monos"), mtm);
+    let title = NSTextField::labelWithString(&NSString::from_str("Pilots"), mtm);
     title.setFont(Some(&NSFont::systemFontOfSize_weight(13.0, unsafe {
         NSFontWeightSemibold
     })));
@@ -271,12 +271,12 @@ fn style_menu(menu: &NSMenu, mtm: MainThreadMarker) {
 }
 
 pub(super) fn icon_for(
-    mono_id: &str,
+    pilot_id: &str,
     mascots: &[MenuMascot],
 ) -> Option<tauri::image::Image<'static>> {
     mascots
         .iter()
-        .find(|mascot| mascot.mono_id == mono_id)
+        .find(|mascot| mascot.pilot_id == pilot_id)
         .map(|mascot| portrait(&mascot.rects))
 }
 
@@ -474,10 +474,10 @@ mod tests {
     }
 
     #[test]
-    fn each_mono_receives_its_own_portrait_when_the_payload_order_changes() {
+    fn each_pilot_receives_its_own_portrait_when_the_payload_order_changes() {
         let mascots = [
             MenuMascot {
-                mono_id: "second".into(),
+                pilot_id: "second".into(),
                 rects: vec![MascotRect {
                     x: 2.0,
                     y: 2.0,
@@ -487,7 +487,7 @@ mod tests {
                 }],
             },
             MenuMascot {
-                mono_id: "first".into(),
+                pilot_id: "first".into(),
                 rects: vec![MascotRect {
                     x: 2.0,
                     y: 2.0,

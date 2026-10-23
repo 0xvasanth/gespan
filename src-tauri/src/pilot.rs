@@ -1,20 +1,20 @@
-//! Each Mono keeps its files in the app's data folder, never in a repo: it
+//! Each Pilot keeps its files in the app's data folder, never in a repo: it
 //! works in repos with full file access, so a soul kept there could be
 //! rewritten outside the app's controlled CLI or by a pull request.
 //!
 //! ```text
-//! <app data>/monos/
-//! ├── index.json            from when each project had its own Mono:
+//! <app data>/pilots/
+//! ├── index.json            from when each project had its own Pilot:
 //! │                         folder id → the project keys it answered for
-//! └── <mono id>/
+//! └── <pilot id>/
 //!     ├── SOUL.md           who it is; edited by the user or at their request
 //!     ├── MEMORY.md         what it has learned; loads into every turn
 //!     ├── habits.json       what it does on its own, on a schedule
 //!     └── memory/           topic notes read on demand, and archive.md
 //! ```
 //!
-//! A Mono is not tied to a project, so its folder is named by its own id. One
-//! that was a project's Mono passes that project along until its old folder
+//! A Pilot is not tied to a project, so its folder is named by its own id. One
+//! that was a project's Pilot passes that project along until its old folder
 //! has moved under its id.
 
 use std::path::{Path, PathBuf};
@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
-const MONOS_DIR: &str = "monos";
-/// Where Monos lived before they had their name; moved on first use.
+const PILOTS_DIR: &str = "pilots";
+/// Where Pilots lived before they had their name; moved on first use.
 const LEGACY_DIR: &str = "agents";
 const INDEX_FILE: &str = "index.json";
 const SOUL_FILE: &str = "SOUL.md";
@@ -37,7 +37,7 @@ const HABITS_FILE: &str = "habits.json";
 const FILE_MAX: usize = 256 * 1024;
 pub const CONFLICT: &str = "conflict";
 
-/// Serializes index updates, so two Monos opening at once cannot both read
+/// Serializes index updates, so two Pilots opening at once cannot both read
 /// the old index and drop each other's entry.
 static INDEX_LOCK: Mutex<()> = Mutex::new(());
 
@@ -54,7 +54,7 @@ struct AgentIndex {
 #[derive(Debug, Serialize, Deserialize)]
 struct AgentEntry {
     id: String,
-    /// Project keys (normalized paths) its project's Mono answered for.
+    /// Project keys (normalized paths) its project's Pilot answered for.
     projects: Vec<String>,
 }
 
@@ -123,9 +123,9 @@ fn topics(dir: &Path) -> Vec<String> {
     names
 }
 
-fn monos_root(app: &AppHandle) -> Result<PathBuf, String> {
+fn pilots_root(app: &AppHandle) -> Result<PathBuf, String> {
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let root = data.join(MONOS_DIR);
+    let root = data.join(PILOTS_DIR);
     let legacy = data.join(LEGACY_DIR);
     if !root.exists() && legacy.join(INDEX_FILE).is_file() {
         let _ = std::fs::rename(&legacy, &root);
@@ -191,14 +191,14 @@ fn valid_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
-/// The Mono's folder, created with an empty memory on first use. A Mono that
+/// The Pilot's folder, created with an empty memory on first use. A Pilot that
 /// was a project's own takes over that project's folder the first time.
-fn agent_dir(root: &Path, mono: &str, legacy_project: Option<&str>) -> Result<PathBuf, String> {
-    if !valid_id(mono) {
-        return Err("Not a Mono id".into());
+fn agent_dir(root: &Path, pilot: &str, legacy_project: Option<&str>) -> Result<PathBuf, String> {
+    if !valid_id(pilot) {
+        return Err("Not a Pilot id".into());
     }
     std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
-    let dir = root.join(mono);
+    let dir = root.join(pilot);
     if let Some(project) = legacy_project.filter(|project| !project.trim().is_empty()) {
         adopt_legacy_folder(root, &dir, project)?;
     }
@@ -210,8 +210,8 @@ fn agent_dir(root: &Path, mono: &str, legacy_project: Option<&str>) -> Result<Pa
     Ok(dir)
 }
 
-/// Moves the folder the project's Mono had to `dir`, once, and drops it from
-/// the index so no other Mono can take it too.
+/// Moves the folder the project's Pilot had to `dir`, once, and drops it from
+/// the index so no other Pilot can take it too.
 fn adopt_legacy_folder(root: &Path, dir: &Path, project: &str) -> Result<(), String> {
     let _guard = INDEX_LOCK.lock().map_err(|e| e.to_string())?;
     let mut index = read_index(root);
@@ -234,14 +234,14 @@ fn adopt_legacy_folder(root: &Path, dir: &Path, project: &str) -> Result<(), Str
     std::fs::rename(&temp, &path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-fn load(root: &Path, mono: &str, legacy_project: Option<&str>) -> Result<AgentFiles, String> {
+fn load(root: &Path, pilot: &str, legacy_project: Option<&str>) -> Result<AgentFiles, String> {
     let _guard = FILES_LOCK.lock().map_err(|e| e.to_string())?;
-    let dir = agent_dir(root, mono, legacy_project)?;
+    let dir = agent_dir(root, pilot, legacy_project)?;
     let soul = read_optional(&dir.join(SOUL_FILE))?;
     let memory_path = dir.join(MEMORY_FILE);
     let memory = read_optional(&memory_path)?.unwrap_or_default();
     Ok(AgentFiles {
-        id: mono.to_string(),
+        id: pilot.to_string(),
         soul_hash: content_hash(soul.as_deref().unwrap_or("")),
         soul,
         memory_hash: content_hash(&memory),
@@ -254,12 +254,12 @@ fn load(root: &Path, mono: &str, legacy_project: Option<&str>) -> Result<AgentFi
 
 fn read(
     root: &Path,
-    mono: &str,
+    pilot: &str,
     legacy_project: Option<&str>,
     relative: &str,
 ) -> Result<AgentFile, String> {
     let _guard = FILES_LOCK.lock().map_err(|e| e.to_string())?;
-    let dir = agent_dir(root, mono, legacy_project)?;
+    let dir = agent_dir(root, pilot, legacy_project)?;
     let text = read_optional(&resolve_file(&dir, relative)?)?;
     Ok(AgentFile {
         hash: content_hash(text.as_deref().unwrap_or("")),
@@ -271,7 +271,7 @@ fn read(
 /// what the agent wrote while they were typing. No hash means overwrite.
 fn save(
     root: &Path,
-    mono: &str,
+    pilot: &str,
     legacy_project: Option<&str>,
     relative: &str,
     text: &str,
@@ -281,7 +281,7 @@ fn save(
         return Err(format!("{relative} is too large"));
     }
     let _guard = FILES_LOCK.lock().map_err(|e| e.to_string())?;
-    let dir = agent_dir(root, mono, legacy_project)?;
+    let dir = agent_dir(root, pilot, legacy_project)?;
     let path = resolve_file(&dir, relative)?;
     if let Some(expected) = expected_hash {
         let current = read_optional(&path)?.unwrap_or_default();
@@ -294,46 +294,46 @@ fn save(
 }
 
 #[tauri::command]
-pub async fn mono_load(
+pub async fn pilot_load(
     app: AppHandle,
-    mono: String,
+    pilot: String,
     legacy_project: Option<String>,
 ) -> Result<AgentFiles, String> {
-    let root = monos_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || load(&root, &mono, legacy_project.as_deref()))
+    let root = pilots_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || load(&root, &pilot, legacy_project.as_deref()))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn mono_read(
+pub async fn pilot_read(
     app: AppHandle,
-    mono: String,
+    pilot: String,
     legacy_project: Option<String>,
     path: String,
 ) -> Result<AgentFile, String> {
-    let root = monos_root(&app)?;
+    let root = pilots_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        read(&root, &mono, legacy_project.as_deref(), &path)
+        read(&root, &pilot, legacy_project.as_deref(), &path)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn mono_save(
+pub async fn pilot_save(
     app: AppHandle,
-    mono: String,
+    pilot: String,
     legacy_project: Option<String>,
     path: String,
     text: String,
     expected_hash: Option<String>,
 ) -> Result<String, String> {
-    let root = monos_root(&app)?;
+    let root = pilots_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         save(
             &root,
-            &mono,
+            &pilot,
             legacy_project.as_deref(),
             &path,
             &text,
@@ -349,18 +349,18 @@ mod tests {
     use super::*;
 
     fn temp_root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("mono-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("pilot-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         root
     }
 
     #[test]
-    fn creates_one_folder_per_mono_with_empty_memory() {
+    fn creates_one_folder_per_pilot_with_empty_memory() {
         let root = temp_root();
-        let first = load(&root, "mono-a", None).unwrap();
-        let again = load(&root, "mono-a", None).unwrap();
-        let other = load(&root, "mono-b", None).unwrap();
-        assert_eq!(first.id, "mono-a");
+        let first = load(&root, "pilot-a", None).unwrap();
+        let again = load(&root, "pilot-a", None).unwrap();
+        let other = load(&root, "pilot-b", None).unwrap();
+        assert_eq!(first.id, "pilot-a");
         assert_eq!(first.dir, again.dir);
         assert_ne!(first.dir, other.dir);
         assert_eq!(first.soul, None);
@@ -381,11 +381,11 @@ mod tests {
             r#"{"agents":[{"id":"old-id","projects":["/code/app"]}]}"#,
         )
         .unwrap();
-        let adopted = load(&root, "mono-a", Some("/code/app")).unwrap();
+        let adopted = load(&root, "pilot-a", Some("/code/app")).unwrap();
         assert_eq!(adopted.memory, "- kept");
         assert!(!old.exists());
-        // Another Mono naming the same project starts fresh.
-        let other = load(&root, "mono-b", Some("/code/app")).unwrap();
+        // Another Pilot naming the same project starts fresh.
+        let other = load(&root, "pilot-b", Some("/code/app")).unwrap();
         assert_eq!(other.memory, "");
         std::fs::remove_dir_all(root).unwrap();
     }

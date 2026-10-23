@@ -7,7 +7,7 @@ mod azure_devops;
 mod background_work;
 mod chat_background;
 mod checkpoint;
-mod codex_mono_store;
+mod codex_pilot_store;
 mod control;
 pub mod control_cli;
 mod cursor_store;
@@ -31,14 +31,14 @@ mod mcp;
 mod menu;
 mod mobile_access;
 mod mobile_router;
-mod mono;
-#[cfg(target_os = "macos")]
-mod mono_chat;
-mod mono_transcript;
 mod notes;
 mod notifications;
 mod pasteboard;
 mod pi_usage;
+mod pilot;
+#[cfg(target_os = "macos")]
+mod pilot_chat;
+mod pilot_transcript;
 mod project_logo;
 mod provider_session_transfer;
 mod pty;
@@ -292,7 +292,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 quick_composer::init(app.handle())?;
-                mono_chat::init(app.handle())?;
+                pilot_chat::init(app.handle())?;
                 macos::install_dock_menu(app.handle());
                 if let Some(window) = app.get_webview_window("main") {
                     macos::install(&window);
@@ -504,9 +504,9 @@ pub fn run() {
             harness::harness_resolve_antigravity,
             harness::harness_free_port,
             harness::harness_spawn,
-            codex_mono_store::codex_mono_store_prepare,
-            codex_mono_store::codex_mono_store_copy,
-            codex_mono_store::codex_mono_store_restore_agent_state,
+            codex_pilot_store::codex_pilot_store_prepare,
+            codex_pilot_store::codex_pilot_store_copy,
+            codex_pilot_store::codex_pilot_store_restore_agent_state,
             provider_session_transfer::provider_session_transfer,
             harness::harness_write,
             harness::harness_kill,
@@ -538,10 +538,10 @@ pub fn run() {
             session_store::cancel_session_search,
             session_store::session_get,
             session_store::session_tool_detail,
-            mono_transcript::mono_session_get,
-            mono_transcript::mono_session_page,
-            mono_transcript::mono_session_upsert,
-            mono_transcript::mono_session_find,
+            pilot_transcript::pilot_session_get,
+            pilot_transcript::pilot_session_page,
+            pilot_transcript::pilot_session_upsert,
+            pilot_transcript::pilot_session_find,
             session_store::session_delete,
             session_store::session_set_archived,
             session_store::session_set_pinned,
@@ -561,9 +561,9 @@ pub fn run() {
             notes::notes_delete,
             notes::notes_save_image,
             notes::notes_image_path,
-            mono::mono_load,
-            mono::mono_read,
-            mono::mono_save,
+            pilot::pilot_load,
+            pilot::pilot_read,
+            pilot::pilot_save,
             checkpoint::session_checkpoint_ensure,
             checkpoint::session_checkpoint_begin_turn,
             checkpoint::session_checkpoint_finish_turn,
@@ -618,27 +618,27 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             quick_composer::git_popup::quick_composer_dismiss,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_chat_sync,
+            pilot_chat::pilot_chat_sync,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_chat_publish,
+            pilot_chat::pilot_chat_publish,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_chat_state,
+            pilot_chat::pilot_chat_state,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_chat_ready,
+            pilot_chat::pilot_chat_ready,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_chat_action,
+            pilot_chat::pilot_chat_action,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_chat_take,
+            pilot_chat::pilot_chat_take,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_chat_accept,
+            pilot_chat::pilot_chat_accept,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_chat_reply,
+            pilot_chat::pilot_chat_reply,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_chat_keep_alive,
+            pilot_chat::pilot_chat_keep_alive,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_chat_switch,
+            pilot_chat::pilot_chat_switch,
             #[cfg(target_os = "macos")]
-            mono_chat::mono_menu_bar_set_visible,
+            pilot_chat::pilot_menu_bar_set_visible,
             window_transfer::stage_window_transfer,
             window_transfer::take_window_transfer,
             chat_background::save_chat_background,
@@ -688,7 +688,7 @@ pub fn run() {
                 .any(|window| window.label() != label);
             control::window_closed(handle, &label);
             #[cfg(target_os = "macos")]
-            mono_chat::window_closed(handle, &label);
+            pilot_chat::window_closed(handle, &label);
             if !other_window {
                 reap_harness_children(handle);
             }

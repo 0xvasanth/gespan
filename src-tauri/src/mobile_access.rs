@@ -340,7 +340,7 @@ pub fn mobile_publish(
         return Err("Only workspace windows can publish mobile data".into());
     }
     if !catalog["projects"].is_array()
-        || !catalog["monos"].is_array()
+        || !catalog["pilots"].is_array()
         || !catalog["sessions"].is_array()
     {
         return Err("Invalid mobile catalog".into());
@@ -501,8 +501,8 @@ fn merged_catalog(app: &AppHandle, inner: &mut Inner) -> Value {
     inner
         .catalogs
         .retain(|window, _| app.get_webview_window(window).is_some());
-    let mut result = json!({"projects":[],"monos":[],"sessions":[]});
-    for field in ["projects", "monos", "sessions"] {
+    let mut result = json!({"projects":[],"pilots":[],"sessions":[]});
+    for field in ["projects", "pilots", "sessions"] {
         let mut items = HashMap::new();
         for catalog in inner.catalogs.values() {
             for item in catalog[field].as_array().into_iter().flatten() {
@@ -543,7 +543,7 @@ const RECENT_SESSIONS: usize = 20;
 const SESSION_PAGE_MAX: usize = 100;
 
 /// The workspace poll's sessions: each project's most recent, every busy one,
-/// and every Mono's. `sessions` is newest first, as `merged_catalog` sorts it.
+/// and every Pilot's. `sessions` is newest first, as `merged_catalog` sorts it.
 fn recent_sessions(sessions: &Value) -> Vec<Value> {
     let mut per_project: HashMap<&str, usize> = HashMap::new();
     sessions
@@ -555,7 +555,7 @@ fn recent_sessions(sessions: &Value) -> Vec<Value> {
                 .entry(session["projectId"].as_str().unwrap_or(""))
                 .or_default();
             *count += 1;
-            *count <= RECENT_SESSIONS || session["busy"] == true || session["monoId"].is_string()
+            *count <= RECENT_SESSIONS || session["busy"] == true || session["pilotId"].is_string()
         })
         .cloned()
         .collect()
@@ -609,8 +609,8 @@ fn pick_owner(catalogs: &HashMap<String, Value>, method: &str, entity: &str) -> 
         .filter_map(|(window, catalog)| {
             let (field, id) = if method == "session.start" || method == "project.changes" {
                 ("projects", entity)
-            } else if let Some(mono) = entity.strip_prefix("mono:") {
-                ("monos", mono)
+            } else if let Some(pilot) = entity.strip_prefix("pilot:") {
+                ("pilots", pilot)
             } else {
                 ("sessions", entity)
             };
@@ -885,7 +885,7 @@ mod tests {
     fn the_poll_carries_recent_sessions_and_pages_serve_the_rest() {
         let sessions: Vec<Value> = (0..30)
             .map(|i| json!({"id":format!("s{i}"),"projectId":"p","title":format!("Task {i}"),"busy":i == 25}))
-            .chain([json!({"id":"m","projectId":"p","monoId":"mono"})])
+            .chain([json!({"id":"m","projectId":"p","pilotId":"pilot"})])
             .collect();
         let sessions = json!(sessions);
         let recent = recent_sessions(&sessions);

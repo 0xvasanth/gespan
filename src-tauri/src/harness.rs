@@ -954,23 +954,23 @@ pub fn harness_spawn(
     apply_provider_account(&app, &mut cmd, account.as_ref())?;
     let codex_store = match codex_store.as_deref() {
         None => None,
-        Some("mono")
+        Some("pilot")
             if binary_provider.as_deref() == Some("codex")
                 && account.as_ref().is_some_and(|a| a.provider == "codex")
                 && args.first().is_some_and(|a| a == "app-server") =>
         {
             let store =
-                crate::codex_mono_store::prepare(&app, account.as_ref().map(|a| a.id.as_str()))?;
+                crate::codex_pilot_store::prepare(&app, account.as_ref().map(|a| a.id.as_str()))?;
             let private_path = serde_json::to_string(&store.home).map_err(|e| e.to_string())?;
             // Explicit config takes precedence over CODEX_SQLITE_HOME. Override
-            // both so a user's sqlite_home cannot index Monos in the Codex app.
+            // both so a user's sqlite_home cannot index Pilots in the Codex app.
             cmd.env("CODEX_HOME", &store.home)
                 .env("CODEX_SQLITE_HOME", &store.home)
                 .args(["-c", &format!("sqlite_home={private_path}")]);
             Some(Arc::new(store))
         }
         Some(_) => {
-            return Err("Private Mono storage is only supported for Codex app-server".into())
+            return Err("Private Pilot storage is only supported for Codex app-server".into())
         }
     };
 
@@ -3591,10 +3591,8 @@ mod tests {
     fn configured_binary_paths_fail_closed_and_stay_exact() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir().join(format!(
-            "rebase-configured-binaries-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("rebase-configured-binaries-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let codex = dir.join("codex");

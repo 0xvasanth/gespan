@@ -42,11 +42,8 @@ extern "C" fn activate_others(object: &AnyObject, _: Sel, flag: Bool) {
 }
 
 fn quiet_class(original: &'static AnyClass) -> Result<&'static AnyClass, String> {
-    let name = CString::new(format!(
-        "RebaseQuiet_{}",
-        original.name().to_string_lossy()
-    ))
-    .map_err(|error| error.to_string())?;
+    let name = CString::new(format!("RebaseQuiet_{}", original.name().to_string_lossy()))
+        .map_err(|error| error.to_string())?;
     if let Some(class) = AnyClass::get(&name) {
         return Ok(class);
     }

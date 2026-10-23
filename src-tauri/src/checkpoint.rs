@@ -1918,8 +1918,8 @@ mod tests {
     }
 
     #[test]
-    fn mono_changes_in_two_repositories_can_be_kept_independently() {
-        let home = tmp("mono-multiple-repos");
+    fn pilot_changes_in_two_repositories_can_be_kept_independently() {
+        let home = tmp("pilot-multiple-repos");
         for name in ["a", "b"] {
             let repo = home.0.join(name);
             std::fs::create_dir(&repo).unwrap();
@@ -1931,23 +1931,26 @@ mod tests {
             .map(|path| home.0.join(path).to_string_lossy().into_owned())
             .collect();
         let (_root, store) = store();
-        store.begin_turn("mono", &cwd, "turn").unwrap();
-        store.prepare("mono", &cwd, &paths).unwrap();
+        store.begin_turn("pilot", &cwd, "turn").unwrap();
+        store.prepare("pilot", &cwd, &paths).unwrap();
         for path in &paths {
-            std::fs::write(path, "mono change\n").unwrap();
+            std::fs::write(path, "pilot change\n").unwrap();
         }
-        store.capture("mono", &cwd, &paths).unwrap();
-        store.finish_turn("mono", &cwd, "turn").unwrap();
+        store.capture("pilot", &cwd, &paths).unwrap();
+        store.finish_turn("pilot", &cwd, "turn").unwrap();
         assert_eq!(
-            relatives(&store.status("mono", &cwd).unwrap()),
+            relatives(&store.status("pilot", &cwd).unwrap()),
             vec!["a/file.txt", "b/file.txt"]
         );
-        store.keep("mono", &cwd, Some("a/file.txt")).unwrap();
+        store.keep("pilot", &cwd, Some("a/file.txt")).unwrap();
         assert_eq!(
-            relatives(&store.status("mono", &cwd).unwrap()),
+            relatives(&store.status("pilot", &cwd).unwrap()),
             vec!["b/file.txt"]
         );
-        assert_eq!(std::fs::read_to_string(&paths[1]).unwrap(), "mono change\n");
+        assert_eq!(
+            std::fs::read_to_string(&paths[1]).unwrap(),
+            "pilot change\n"
+        );
     }
 
     #[test]

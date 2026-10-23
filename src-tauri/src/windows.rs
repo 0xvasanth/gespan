@@ -204,10 +204,8 @@ mod tests {
             let pair = portable_pty::native_pty_system()
                 .openpty(portable_pty::PtySize::default())
                 .unwrap();
-            let pid_file = std::env::temp_dir().join(format!(
-                "rebase-pty-descendant-{}.pid",
-                std::process::id()
-            ));
+            let pid_file = std::env::temp_dir()
+                .join(format!("rebase-pty-descendant-{}.pid", std::process::id()));
             let _ = std::fs::remove_file(&pid_file);
             let mut terminal = portable_pty::CommandBuilder::new(std::env::current_exe().unwrap());
             terminal.args([

@@ -1,4 +1,4 @@
-//! Mono-only transcripts. Ordinary sessions continue to use blocks_json.
+//! Pilot-only transcripts. Ordinary sessions continue to use blocks_json.
 //! Turn boundaries have their own index, so opening a chat never scans old blocks.
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -11,16 +11,16 @@ const PAGE_TURNS: i64 = 10;
 
 pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS mono_transcripts (
+        "CREATE TABLE IF NOT EXISTS pilot_transcripts (
            session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE
          );
-         CREATE TABLE IF NOT EXISTS mono_turns (
-           session_id TEXT NOT NULL REFERENCES mono_transcripts(session_id) ON DELETE CASCADE,
+         CREATE TABLE IF NOT EXISTS pilot_turns (
+           session_id TEXT NOT NULL REFERENCES pilot_transcripts(session_id) ON DELETE CASCADE,
            seq INTEGER NOT NULL,
            PRIMARY KEY (session_id, seq)
          );
-         CREATE TABLE IF NOT EXISTS mono_blocks (
-           session_id TEXT NOT NULL REFERENCES mono_transcripts(session_id) ON DELETE CASCADE,
+         CREATE TABLE IF NOT EXISTS pilot_blocks (
+           session_id TEXT NOT NULL REFERENCES pilot_transcripts(session_id) ON DELETE CASCADE,
            seq INTEGER NOT NULL,
            block_id TEXT NOT NULL,
            block_json TEXT NOT NULL,
@@ -30,13 +30,13 @@ pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
            PRIMARY KEY (session_id, seq),
            UNIQUE (session_id, block_id)
          );
-         CREATE INDEX IF NOT EXISTS mono_blocks_user ON mono_blocks(session_id, is_user, is_draft);",
+         CREATE INDEX IF NOT EXISTS pilot_blocks_user ON pilot_blocks(session_id, is_user, is_draft);",
     )
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MonoPage {
+pub struct PilotPage {
     pub blocks: Vec<Value>,
     pub before: Option<i64>,
     pub has_newer: bool,
@@ -44,17 +44,17 @@ pub struct MonoPage {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MonoTranscript {
+pub struct PilotTranscript {
     before: Option<i64>,
     first_block_id: Option<String>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MonoRecord {
+pub struct PilotRecord {
     #[serde(flatten)]
     session: SessionRecord,
-    mono_transcript: MonoTranscript,
+    pilot_transcript: PilotTranscript,
 }
 
 fn invalid(message: &str) -> rusqlite::Error {
@@ -63,7 +63,7 @@ fn invalid(message: &str) -> rusqlite::Error {
 
 pub(crate) fn is_indexed(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM mono_transcripts WHERE session_id = ?1)",
+        "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id = ?1)",
         [id],
         |row| row.get(0),
     )
@@ -75,7 +75,7 @@ pub(crate) fn matching_blocks(
     needle: &str,
     limit: usize,
 ) -> rusqlite::Result<Value> {
-    let mut statement = conn.prepare("SELECT block_json FROM mono_blocks WHERE session_id = ?1 AND instr(search_text, ?2) > 0 ORDER BY seq LIMIT ?3")?;
+    let mut statement = conn.prepare("SELECT block_json FROM pilot_blocks WHERE session_id = ?1 AND instr(search_text, ?2) > 0 ORDER BY seq LIMIT ?3")?;
     let blocks = statement
         .query_map(params![id, needle, limit as i64], |row| {
             let raw: String = row.get(0)?;
@@ -86,14 +86,14 @@ pub(crate) fn matching_blocks(
 }
 
 pub(crate) fn generated_image_paths(conn: &Connection, id: &str) -> rusqlite::Result<Vec<String>> {
-    let mut statement = conn.prepare("SELECT json_extract(block_json, '$.image.path') FROM mono_blocks WHERE session_id = ?1 AND json_extract(block_json, '$.role') = 'image' AND json_type(block_json, '$.image.path') = 'text'")?;
+    let mut statement = conn.prepare("SELECT json_extract(block_json, '$.image.path') FROM pilot_blocks WHERE session_id = ?1 AND json_extract(block_json, '$.role') = 'image' AND json_type(block_json, '$.image.path') = 'text'")?;
     let paths = statement
         .query_map([id], |row| row.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(paths)
 }
 
-/// A legacy Mono is converted once, transactionally, the first time it opens.
+/// A legacy Pilot is converted once, transactionally, the first time it opens.
 /// No ordinary session is visited by this migration.
 pub(crate) fn migrate_transcript(conn: &Connection, id: &str) -> rusqlite::Result<()> {
     if is_indexed(conn, id)? {
@@ -103,7 +103,10 @@ pub(crate) fn migrate_transcript(conn: &Connection, id: &str) -> rusqlite::Resul
         return Ok(());
     };
     let tx = conn.unchecked_transaction()?;
-    tx.execute("INSERT INTO mono_transcripts(session_id) VALUES (?1)", [id])?;
+    tx.execute(
+        "INSERT INTO pilot_transcripts(session_id) VALUES (?1)",
+        [id],
+    )?;
     insert_blocks(
         &tx,
         id,
@@ -123,11 +126,11 @@ fn insert_blocks(
     after: i64,
     blocks: &[Value],
 ) -> rusqlite::Result<()> {
-    let mut block_insert = conn.prepare("INSERT INTO mono_blocks(session_id, seq, block_id, block_json, search_text, is_user, is_draft) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?;
+    let mut block_insert = conn.prepare("INSERT INTO pilot_blocks(session_id, seq, block_id, block_json, search_text, is_user, is_draft) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?;
     let mut turn_insert =
-        conn.prepare("INSERT INTO mono_turns(session_id, seq) VALUES (?1, ?2)")?;
+        conn.prepare("INSERT INTO pilot_turns(session_id, seq) VALUES (?1, ?2)")?;
     // A handoff occupies its own turn, including when a suffix is edited.
-    let mut after_handoff = conn.query_row("SELECT json_extract(block_json, '$.role') = 'handoff' FROM mono_blocks WHERE session_id = ?1 AND seq = ?2", params![id, after], |row| row.get::<_, bool>(0)).optional()?.unwrap_or(false);
+    let mut after_handoff = conn.query_row("SELECT json_extract(block_json, '$.role') = 'handoff' FROM pilot_blocks WHERE session_id = ?1 AND seq = ?2", params![id, after], |row| row.get::<_, bool>(0)).optional()?.unwrap_or(false);
     for (index, block) in blocks.iter().enumerate() {
         let cleaned = crate::artifacts::retain_existing_cards(conn, block)?;
         let block = cleaned.as_ref();
@@ -142,7 +145,7 @@ fn insert_blocks(
         if seq == 1
             || after_handoff
             || (!internal && matches!(role, "user" | "handoff"))
-            || block.get("monoHabit").is_some()
+            || block.get("pilotHabit").is_some()
         {
             turn_insert.execute(params![id, seq])?;
         }
@@ -190,15 +193,15 @@ fn page(
     id: &str,
     before: Option<i64>,
     around: Option<&str>,
-) -> rusqlite::Result<MonoPage> {
+) -> rusqlite::Result<PilotPage> {
     let end = if let Some(block) = around {
         let seq: i64 = conn.query_row(
-            "SELECT seq FROM mono_blocks WHERE session_id = ?1 AND block_id = ?2",
+            "SELECT seq FROM pilot_blocks WHERE session_id = ?1 AND block_id = ?2",
             params![id, block],
             |row| row.get(0),
         )?;
         conn.query_row(
-            "SELECT seq FROM mono_turns WHERE session_id = ?1 AND seq > ?2 ORDER BY seq LIMIT 1",
+            "SELECT seq FROM pilot_turns WHERE session_id = ?1 AND seq > ?2 ORDER BY seq LIMIT 1",
             params![id, seq],
             |row| row.get(0),
         )
@@ -208,7 +211,7 @@ fn page(
         before.unwrap_or(i64::MAX)
     };
     let mut statement = conn.prepare(
-        "SELECT seq FROM mono_turns WHERE session_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3",
+        "SELECT seq FROM pilot_turns WHERE session_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3",
     )?;
     let starts = statement
         .query_map(params![id, end, PAGE_TURNS + 1], |row| row.get::<_, i64>(0))?
@@ -219,7 +222,7 @@ fn page(
         .next_back()
         .copied()
         .unwrap_or(end);
-    let mut statement = conn.prepare("SELECT block_json FROM mono_blocks WHERE session_id = ?1 AND seq >= ?2 AND seq < ?3 ORDER BY seq")?;
+    let mut statement = conn.prepare("SELECT block_json FROM pilot_blocks WHERE session_id = ?1 AND seq >= ?2 AND seq < ?3 ORDER BY seq")?;
     let blocks = statement
         .query_map(params![id, start, end], |row| {
             let raw: String = row.get(0)?;
@@ -233,11 +236,11 @@ fn page(
         })?
         .collect::<rusqlite::Result<Vec<Value>>>()?;
     let has_newer = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM mono_blocks WHERE session_id = ?1 AND seq >= ?2)",
+        "SELECT EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id = ?1 AND seq >= ?2)",
         params![id, end],
         |row| row.get(0),
     )?;
-    Ok(MonoPage {
+    Ok(PilotPage {
         blocks,
         before: (starts.len() > PAGE_TURNS as usize).then_some(start),
         has_newer,
@@ -245,10 +248,10 @@ fn page(
 }
 
 #[tauri::command(async)]
-pub fn mono_session_get(
+pub fn pilot_session_get(
     store: State<'_, SessionStore>,
     session_id: String,
-) -> Result<Option<MonoRecord>, String> {
+) -> Result<Option<PilotRecord>, String> {
     session_store::validate_id(&session_id, "session")?;
     let conn = store.lock_conn()?;
     migrate_transcript(&conn, &session_id).map_err(|e| e.to_string())?;
@@ -264,9 +267,9 @@ pub fn mono_session_get(
         .and_then(|block| block["id"].as_str())
         .map(str::to_string);
     session.blocks = json!(page.blocks);
-    Ok(Some(MonoRecord {
+    Ok(Some(PilotRecord {
         session,
-        mono_transcript: MonoTranscript {
+        pilot_transcript: PilotTranscript {
             before: page.before,
             first_block_id,
         },
@@ -274,20 +277,20 @@ pub fn mono_session_get(
 }
 
 #[tauri::command(async)]
-pub fn mono_session_page(
+pub fn pilot_session_page(
     store: State<'_, SessionStore>,
     session_id: String,
     before: Option<i64>,
     before_block_id: Option<String>,
     around_block_id: Option<String>,
-) -> Result<MonoPage, String> {
+) -> Result<PilotPage, String> {
     session_store::validate_id(&session_id, "session")?;
     let conn = store.lock_conn()?;
     migrate_transcript(&conn, &session_id).map_err(|e| e.to_string())?;
     let before = if let Some(block) = before_block_id {
         Some(
             conn.query_row(
-                "SELECT seq FROM mono_blocks WHERE session_id = ?1 AND block_id = ?2",
+                "SELECT seq FROM pilot_blocks WHERE session_id = ?1 AND block_id = ?2",
                 params![session_id, block],
                 |row| row.get(0),
             )
@@ -300,14 +303,14 @@ pub fn mono_session_page(
 }
 
 #[tauri::command(async)]
-pub fn mono_session_find(
+pub fn pilot_session_find(
     store: State<'_, SessionStore>,
     session_id: String,
     query: String,
 ) -> Result<Vec<String>, String> {
     session_store::validate_id(&session_id, "session")?;
     let conn = store.lock_conn()?;
-    let mut statement = conn.prepare("SELECT block_id FROM mono_blocks WHERE session_id = ?1 AND instr(search_text, ?2) > 0 ORDER BY seq LIMIT 1000").map_err(|e| e.to_string())?;
+    let mut statement = conn.prepare("SELECT block_id FROM pilot_blocks WHERE session_id = ?1 AND instr(search_text, ?2) > 0 ORDER BY seq LIMIT 1000").map_err(|e| e.to_string())?;
     let needle = query.trim().to_lowercase();
     if needle.is_empty() {
         return Ok(Vec::new());
@@ -336,25 +339,25 @@ fn upsert_with_mode(
     header.blocks = json!([]);
     let mut summary = session_store::upsert_session(&tx, &header)?;
     tx.execute(
-        "INSERT OR IGNORE INTO mono_transcripts(session_id) VALUES (?1)",
+        "INSERT OR IGNORE INTO pilot_transcripts(session_id) VALUES (?1)",
         [&session.id],
     )?;
     if changed {
         let anchor = if append_only {
             tx.query_row(
-                "SELECT COALESCE(MAX(seq), 0) FROM mono_blocks WHERE session_id = ?1",
+                "SELECT COALESCE(MAX(seq), 0) FROM pilot_blocks WHERE session_id = ?1",
                 [&session.id],
                 |row| row.get::<_, i64>(0),
             )?
         } else if let Some(id) = after {
             tx.query_row(
-                "SELECT seq FROM mono_blocks WHERE session_id = ?1 AND block_id = ?2",
+                "SELECT seq FROM pilot_blocks WHERE session_id = ?1 AND block_id = ?2",
                 params![session.id, id],
                 |row| row.get::<_, i64>(0),
             )?
         } else if let Some(id) = from {
             tx.query_row(
-                "SELECT seq - 1 FROM mono_blocks WHERE session_id = ?1 AND block_id = ?2",
+                "SELECT seq - 1 FROM pilot_blocks WHERE session_id = ?1 AND block_id = ?2",
                 params![session.id, id],
                 |row| row.get::<_, i64>(0),
             )?
@@ -362,11 +365,11 @@ fn upsert_with_mode(
             0
         };
         tx.execute(
-            "DELETE FROM mono_turns WHERE session_id = ?1 AND seq > ?2",
+            "DELETE FROM pilot_turns WHERE session_id = ?1 AND seq > ?2",
             params![session.id, anchor],
         )?;
         tx.execute(
-            "DELETE FROM mono_blocks WHERE session_id = ?1 AND seq > ?2",
+            "DELETE FROM pilot_blocks WHERE session_id = ?1 AND seq > ?2",
             params![session.id, anchor],
         )?;
         insert_blocks(
@@ -388,7 +391,7 @@ fn upsert_with_mode(
             |row| row.get(0),
         )?;
     }
-    let (has_user, draft): (bool, bool) = tx.query_row("SELECT EXISTS(SELECT 1 FROM mono_blocks WHERE session_id = ?1 AND is_user = 1), EXISTS(SELECT 1 FROM mono_blocks WHERE session_id = ?1 AND is_user = 1 AND is_draft = 1)", [&session.id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let (has_user, draft): (bool, bool) = tx.query_row("SELECT EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id = ?1 AND is_user = 1), EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id = ?1 AND is_user = 1 AND is_draft = 1)", [&session.id], |row| Ok((row.get(0)?, row.get(1)?)))?;
     tx.execute(
         "UPDATE sessions SET has_user_message = ?2, is_draft = ?3 WHERE id = ?1",
         params![session.id, has_user, draft],
@@ -399,7 +402,7 @@ fn upsert_with_mode(
 }
 
 #[tauri::command(async)]
-pub fn mono_session_upsert(
+pub fn pilot_session_upsert(
     store: State<'_, SessionStore>,
     session: SessionUpsert,
     after_block_id: Option<String>,
@@ -422,7 +425,7 @@ pub fn mono_session_upsert(
         || !session.model_settings.is_object()
         || !session.blocks.is_array()
     {
-        return Err("Invalid Mono session".into());
+        return Err("Invalid Pilot session".into());
     }
     let conn = store.lock_conn()?;
     upsert_with_mode(
@@ -443,6 +446,31 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
+    #[test]
+    fn creates_pilot_tables_and_no_mono_tables() {
+        let store = SessionStore::open_in_memory().unwrap();
+        let conn = store.lock_conn().unwrap();
+        let names: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type IN ('table','index')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        for t in [
+            "pilot_transcripts",
+            "pilot_turns",
+            "pilot_blocks",
+            "pilot_blocks_user",
+        ] {
+            assert!(names.iter().any(|n| n == t), "missing {t}");
+        }
+        assert!(
+            !names.iter().any(|n| n.starts_with("mono_")),
+            "stale mono table: {names:?}"
+        );
+    }
+
     fn upsert(
         conn: &Connection,
         session: &SessionUpsert,
@@ -462,61 +490,61 @@ mod tests {
                 ]
             })
             .collect();
-        serde_json::from_value(json!({"id":id, "cwd":"/tmp", "harness":"codex", "model":"model", "modelSettings":{}, "runtimeMode":"default", "title":"Mono", "blocks":blocks})).unwrap()
+        serde_json::from_value(json!({"id":id, "cwd":"/tmp", "harness":"codex", "model":"model", "modelSettings":{}, "runtimeMode":"default", "title":"Pilot", "blocks":blocks})).unwrap()
     }
 
     #[test]
     fn pending_messages_survive_header_only_writes_and_clear_after_delivery() {
         let store = SessionStore::open_in_memory().unwrap();
         let conn = store.lock_conn().unwrap();
-        let mut session = sample("queued-mono", 25);
+        let mut session = sample("queued-pilot", 25);
         upsert(&conn, &session, None, None, true).unwrap();
         session.blocks = json!([]);
         session.queued_messages =
             vec![json!({"id":"pending", "text":"Follow up", "attachments":[]})];
         session.queue_status = Some("active".into());
         upsert(&conn, &session, None, None, false).unwrap();
-        let stored = session_store::get_session_metadata(&conn, "queued-mono")
+        let stored = session_store::get_session_metadata(&conn, "queued-pilot")
             .unwrap()
             .unwrap();
         assert_eq!(stored.queued_messages, session.queued_messages);
         assert_eq!(stored.queue_status.as_deref(), Some("active"));
-        let history = page(&conn, "queued-mono", None, None).unwrap();
+        let history = page(&conn, "queued-pilot", None, None).unwrap();
         assert_eq!(history.blocks.len(), PAGE_TURNS as usize * 2);
 
         session.queued_messages.clear();
         session.queue_status = None;
         upsert(&conn, &session, None, None, false).unwrap();
-        let stored = session_store::get_session_metadata(&conn, "queued-mono")
+        let stored = session_store::get_session_metadata(&conn, "queued-pilot")
             .unwrap()
             .unwrap();
         assert!(stored.queued_messages.is_empty());
         assert_eq!(
-            page(&conn, "queued-mono", None, None).unwrap().blocks,
+            page(&conn, "queued-pilot", None, None).unwrap().blocks,
             history.blocks
         );
     }
 
     #[test]
-    fn migrates_only_the_requested_mono_and_pages_ten_complete_turns() {
+    fn migrates_only_the_requested_pilot_and_pages_ten_complete_turns() {
         let store = SessionStore::open_in_memory().unwrap();
         let conn = store.lock_conn().unwrap();
-        let mono = sample("mono", 25);
+        let pilot = sample("pilot", 25);
         let normal = sample("normal", 25);
-        session_store::upsert_session(&conn, &mono).unwrap();
+        session_store::upsert_session(&conn, &pilot).unwrap();
         session_store::upsert_session(&conn, &normal).unwrap();
-        migrate_transcript(&conn, "mono").unwrap();
-        let latest = page(&conn, "mono", None, None).unwrap();
+        migrate_transcript(&conn, "pilot").unwrap();
+        let latest = page(&conn, "pilot", None, None).unwrap();
         assert_eq!(latest.blocks.len(), 20);
         assert_eq!(latest.blocks[0]["id"], "u15");
-        let earlier = page(&conn, "mono", latest.before, None).unwrap();
+        let earlier = page(&conn, "pilot", latest.before, None).unwrap();
         assert_eq!(earlier.blocks[0]["id"], "u5");
         assert_eq!(earlier.blocks.last().unwrap()["id"], "a14");
-        let oldest = page(&conn, "mono", earlier.before, None).unwrap();
+        let oldest = page(&conn, "pilot", earlier.before, None).unwrap();
         assert_eq!(oldest.blocks.len(), 10);
         assert_eq!(oldest.before, None);
         assert!(oldest.has_newer);
-        let jump = page(&conn, "mono", None, Some("a3")).unwrap();
+        let jump = page(&conn, "pilot", None, Some("a3")).unwrap();
         assert_eq!(jump.blocks.last().unwrap()["id"], "a3");
         assert_eq!(
             session_store::get_session(&conn, "normal")
@@ -526,7 +554,7 @@ mod tests {
             normal.blocks
         );
         assert_eq!(
-            session_store::get_session(&conn, "mono")
+            session_store::get_session(&conn, "pilot")
                 .unwrap()
                 .unwrap()
                 .blocks,
@@ -538,7 +566,7 @@ mod tests {
     fn cold_page_reads_are_bounded_and_never_read_the_legacy_blob() {
         let store = SessionStore::open_in_memory().unwrap();
         let conn = store.lock_conn().unwrap();
-        upsert(&conn, &sample("mono", 10_000), None, None, true).unwrap();
+        upsert(&conn, &sample("pilot", 10_000), None, None, true).unwrap();
         conn.authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
             AuthAction::Read {
                 table_name: "sessions",
@@ -557,11 +585,11 @@ mod tests {
             }),
         )
         .unwrap();
-        migrate_transcript(&conn, "mono").unwrap();
-        assert!(session_store::get_session_metadata(&conn, "mono")
+        migrate_transcript(&conn, "pilot").unwrap();
+        assert!(session_store::get_session_metadata(&conn, "pilot")
             .unwrap()
             .is_some());
-        assert_eq!(page(&conn, "mono", None, None).unwrap().blocks.len(), 20);
+        assert_eq!(page(&conn, "pilot", None, None).unwrap().blocks.len(), 20);
         assert!(
             steps.load(Ordering::Relaxed) < 2_000,
             "Opening must not scan old messages"
@@ -572,16 +600,16 @@ mod tests {
     fn suffix_edits_appends_and_rewinds_preserve_unloaded_history() {
         let store = SessionStore::open_in_memory().unwrap();
         let conn = store.lock_conn().unwrap();
-        let mut session = sample("mono", 25);
+        let mut session = sample("pilot", 25);
         upsert(&conn, &session, None, None, true).unwrap();
         session.blocks = json!([{ "id":"a24", "role":"assistant", "text":"Edited" }, {"id":"u25", "role":"user", "text":"Next"}]);
         upsert(&conn, &session, Some("u24"), None, true).unwrap();
         assert_eq!(
-            page(&conn, "mono", None, Some("a0")).unwrap().blocks[1]["text"],
+            page(&conn, "pilot", None, Some("a0")).unwrap().blocks[1]["text"],
             "Answer 0"
         );
         assert_eq!(
-            page(&conn, "mono", None, None)
+            page(&conn, "pilot", None, None)
                 .unwrap()
                 .blocks
                 .last()
@@ -591,7 +619,7 @@ mod tests {
         session.blocks = json!([]);
         upsert(&conn, &session, Some("a24"), None, true).unwrap();
         assert_eq!(
-            page(&conn, "mono", None, None)
+            page(&conn, "pilot", None, None)
                 .unwrap()
                 .blocks
                 .last()
@@ -602,7 +630,7 @@ mod tests {
         upsert(&conn, &session, None, Some("u15"), true).unwrap();
         let total: i64 = conn
             .query_row(
-                "SELECT count(*) FROM mono_blocks WHERE session_id = 'mono'",
+                "SELECT count(*) FROM pilot_blocks WHERE session_id = 'pilot'",
                 [],
                 |row| row.get(0),
             )
@@ -612,7 +640,7 @@ mod tests {
         session.blocks = json!([]);
         upsert(&conn, &session, None, None, false).unwrap();
         assert_eq!(
-            conn.query_row("SELECT count(*) FROM mono_blocks", [], |row| row
+            conn.query_row("SELECT count(*) FROM pilot_blocks", [], |row| row
                 .get::<_, i64>(0))
                 .unwrap(),
             total
@@ -623,27 +651,27 @@ mod tests {
     fn failed_anchors_roll_back_and_reset_cascades_all_history() {
         let store = SessionStore::open_in_memory().unwrap();
         let conn = store.lock_conn().unwrap();
-        let mut session = sample("mono", 12);
+        let mut session = sample("pilot", 12);
         upsert(&conn, &session, None, None, true).unwrap();
         session.title = "Should roll back".into();
         assert!(upsert(&conn, &session, Some("missing"), None, true).is_err());
         assert_eq!(
-            session_store::get_session_metadata(&conn, "mono")
+            session_store::get_session_metadata(&conn, "pilot")
                 .unwrap()
                 .unwrap()
                 .title,
-            "Mono"
+            "Pilot"
         );
-        conn.execute("DELETE FROM sessions WHERE id = 'mono'", [])
+        conn.execute("DELETE FROM sessions WHERE id = 'pilot'", [])
             .unwrap();
         assert_eq!(
-            conn.query_row("SELECT count(*) FROM mono_blocks", [], |row| row
+            conn.query_row("SELECT count(*) FROM pilot_blocks", [], |row| row
                 .get::<_, i64>(0))
                 .unwrap(),
             0
         );
         assert_eq!(
-            conn.query_row("SELECT count(*) FROM mono_turns", [], |row| row
+            conn.query_row("SELECT count(*) FROM pilot_turns", [], |row| row
                 .get::<_, i64>(0))
                 .unwrap(),
             0
@@ -654,18 +682,18 @@ mod tests {
     fn appending_after_deleting_a_loaded_window_preserves_the_archive() {
         let store = SessionStore::open_in_memory().unwrap();
         let conn = store.lock_conn().unwrap();
-        let mut session = sample("mono", 20);
+        let mut session = sample("pilot", 20);
         upsert(&conn, &session, None, None, true).unwrap();
         session.blocks = json!([]);
         upsert(&conn, &session, None, Some("u10"), true).unwrap();
         session.blocks = json!([{ "id":"fresh", "role":"user", "text":"Fresh" }]);
         upsert_with_mode(&conn, &session, None, None, true, true).unwrap();
         assert_eq!(
-            page(&conn, "mono", None, Some("a0")).unwrap().blocks[1]["text"],
+            page(&conn, "pilot", None, Some("a0")).unwrap().blocks[1]["text"],
             "Answer 0"
         );
         assert_eq!(
-            conn.query_row("SELECT count(*) FROM mono_blocks", [], |row| row
+            conn.query_row("SELECT count(*) FROM pilot_blocks", [], |row| row
                 .get::<_, i64>(0))
                 .unwrap(),
             21
