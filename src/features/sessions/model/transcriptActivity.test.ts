@@ -383,7 +383,7 @@ describe("groupPilotTurnItems", () => {
       shell("look", "in_progress"),
     ];
     for (const live of [true, false]) {
-      expect(groupMonoTurnItems(blocks, { live })).toMatchObject([
+      expect(groupPilotTurnItems(blocks, { live })).toMatchObject([
         { type: "block", block: { id: "ask" } },
         { type: "activity", blocks: [{ id: "check" }] },
         { type: "block", block: { id: "answer" } },
