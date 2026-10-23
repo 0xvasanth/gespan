@@ -151,7 +151,12 @@ it("lets the Pilot add, pause, try and remove its habits", async () => {
     instructions: "Tell me if CI on main is red.",
     schedule: { kind: "weekdays", time: "09:00" },
   })) as { habit: { id: string; schedule: string } };
-  expect(added.habit.schedule).toBe("Weekdays at 9:00 AM");
+  // The product formats the clock in the runtime locale ("9:00 AM" vs "9:00 am").
+  const nineAm = new Date(2000, 0, 1, 9, 0).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  expect(added.habit.schedule).toBe(`Weekdays at ${nineAm}`);
   expect(habits()[0].nextRunAt).toBe(new Date(2026, 9, 5, 9).getTime());
   const id = added.habit.id;
   await run("habits.update", { id, enabled: false });
