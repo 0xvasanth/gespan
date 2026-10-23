@@ -1,0 +1,27 @@
+src-tauri/src/board.rs
+  s_0de52fe47ecaaa::t_c9071beb6e2208 1-270,272-280,282-730,737-1109,1169-1175,1263-1266,1298-1301,1370-1375,1380-1384,1396-1400,1441-1442,1445-1456
+  s_0de52fe47ecaaa::t_cb37b9af3dff33 731-736
+  s_0de52fe47ecaaa::t_74e355b53495fd 1110-1168,1176-1262,1267-1297,1302-1369,1376-1378,1385-1395,1401-1440,1443-1444,1457-1565
+  s_0de52fe47ecaaa::t_c4339be5bc2963 1379
+  s_0de52fe47ecaaa::t_ca071152052aca 271,281
+src-tauri/src/lib.rs
+  s_0de52fe47ecaaa::t_c9071beb6e2208 8,365-381
+src-tauri/src/session_store.rs
+  s_0de52fe47ecaaa::t_74e355b53495fd 1012
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d8915873d986ae04b40c73e732e4517406f58462",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
