@@ -1,0 +1,21 @@
+src/features/quick-composer/model/quickComposer.test.ts
+  s_a58cfe644461b5::t_da11ba60cecf52 126
+src/features/files/ui/FilePicker.test.ts
+  s_a58cfe644461b5::t_e871bc940e2273 157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "213adf8c025700f6e192c1a2a8ec49e26c02123f",
+  "prompts": {},
+  "sessions": {
+    "s_a58cfe644461b5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce16b3c8-2963-4868-baf6-a77ac6cdb910",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
