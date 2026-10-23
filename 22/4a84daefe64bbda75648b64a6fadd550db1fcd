@@ -1,0 +1,115 @@
+mobile/src/features/sessions/providerSvgs.ts
+  s_232d570adba1f4::t_e704604cfa6c03 6,17
+src/integrations/harness/providers/kiro/kiroCatalog.ts
+  s_232d570adba1f4::t_2927e45ec5ddcd 49,52,59
+  s_232d570adba1f4::t_a474dae6aa75ce 1-9,11-22,24-48,50-51,53-58,60-88
+  s_232d570adba1f4::t_168bb10c64e091 10,23
+src/integrations/harness/core/registry.test.ts
+  s_232d570adba1f4::t_3296b657f34c3a 14,115,131,136-143
+  s_232d570adba1f4::t_66ae31446ada40 144-145
+mobile/src/features/sessions/SessionFilterMenu.tsx
+  s_232d570adba1f4::t_e704604cfa6c03 37
+src/integrations/harness/core/child.test.ts
+  s_232d570adba1f4::t_3ead656108034e 164,186
+mobile/src/features/workspace/types.ts
+  s_232d570adba1f4::t_2e10991ea6851a 17
+src/integrations/harness/providers/kiro/kiroProtocol.test.ts
+  s_232d570adba1f4::t_bd87b702e3d814 113-130
+  s_232d570adba1f4::t_6799b995b95ea1 6,10-11,16,288,290-298,300-349
+  s_232d570adba1f4::t_2927e45ec5ddcd 17,350-359
+  s_232d570adba1f4::t_d4bd8a1daab5ff 1-5,7-9,12-15,18-104,137-287,289,299,360-361
+  s_232d570adba1f4::t_51952231e51097 105-112,131-136
+src/integrations/harness/providers/kiro/kiroLive.test.ts
+  s_232d570adba1f4::t_8cff167cd25259 1-338,340-342,351-405,421-422,424-426,428-462,479-622
+  s_232d570adba1f4::t_9c5bc925c14edf 463-478
+  s_232d570adba1f4::t_2927e45ec5ddcd 339,343-350,406-420,423,427
+src/assets/providers/kiro.svg
+  s_232d570adba1f4::t_e704604cfa6c03 1-3
+src/features/sessions/model/models.ts
+  s_232d570adba1f4::t_2e10991ea6851a 198-202,227,258
+  s_232d570adba1f4::t_0a0b171ce40394 197
+docs/superpowers/specs/2026-10-23-kiro-cli-provider-design.md
+  s_232d570adba1f4::t_73df42a5209c62 1-2,6-128
+  s_232d570adba1f4::t_4c1e022ae90b54 3-5
+src/integrations/harness/core/availabilityState.ts
+  s_232d570adba1f4::t_2e10991ea6851a 20
+src/integrations/harness/index.ts
+  s_232d570adba1f4::t_3ead656108034e 104-110,169
+  s_232d570adba1f4::t_f34797238a31ab 103
+src/features/settings/model/settings.ts
+  s_232d570adba1f4::t_2e10991ea6851a 448
+docs/providers.md
+  s_232d570adba1f4::t_168bb10c64e091 17
+src/shared/ui/icons.test.ts
+  s_232d570adba1f4::t_76952eb42c8e97 68-79
+  s_232d570adba1f4::t_e704604cfa6c03 7-10
+src/integrations/harness/providers/kiro/kiroCatalog.test.ts
+  s_232d570adba1f4::t_4b4e3578b11b82 1-111
+src/features/connections/model/protocol.ts
+  s_232d570adba1f4::t_2e10991ea6851a 17
+src/integrations/harness/providers/kiro/kiroLaunch.test.ts
+  s_232d570adba1f4::t_a242225ff19d90 1-17,20-53,55-131
+  s_232d570adba1f4::t_38aacaa8776d6a 18-19
+  s_232d570adba1f4::t_2927e45ec5ddcd 54
+docs/remote-access.md
+  s_232d570adba1f4::t_2fcf6ef7ece459 3
+src/integrations/harness/providers/kiro/kiro.ts
+  s_232d570adba1f4::t_218a843bd50304 1-3,5-74,78-261,263-499
+  s_232d570adba1f4::t_168bb10c64e091 262
+  s_232d570adba1f4::t_3296b657f34c3a 4
+  s_232d570adba1f4::t_4424792e3b7e04 75-77
+src/integrations/harness/core/child.ts
+  s_232d570adba1f4::t_f20f7caeb46c4c 505-506
+  s_232d570adba1f4::t_2e10991ea6851a 440,501-504
+src-tauri/src/harness.rs
+  s_232d570adba1f4::t_36700cbbf3bcd3 2534,2536-2537,2539
+  s_232d570adba1f4::t_084448e47bae40 4366-4370
+  s_232d570adba1f4::t_168bb10c64e091 3745
+  s_232d570adba1f4::t_91763af5f60f41 867-879,1855,2096,2143,2218,2515-2533,2538
+  s_232d570adba1f4::t_2f76fb5688d789 2535,3740-3744,3746-3772
+src/features/sessions/ui/HarnessIcon.tsx
+  s_232d570adba1f4::t_e704604cfa6c03 9,26,39,88
+src/features/sessions/ui/ModelPicker.test.ts
+  s_232d570adba1f4::t_53d1e1aa37302a 169-171
+src-tauri/src/lib.rs
+  s_232d570adba1f4::t_91763af5f60f41 503
+src/integrations/harness/providers/kiro/kiroProtocol.ts
+  s_232d570adba1f4::t_e51753492dd8ff 1-5,11-64,71-98,103,105-106,108-184,248-305
+  s_232d570adba1f4::t_7cd75ae8e623da 6-10,185-247
+  s_232d570adba1f4::t_b3615e4125b713 99-102,104,107
+  s_232d570adba1f4::t_2927e45ec5ddcd 65-70
+README.md
+  s_232d570adba1f4::t_2fcf6ef7ece459 15
+src/integrations/harness/core/availability.ts
+  s_232d570adba1f4::t_2e10991ea6851a 12,56-61,170-172
+  s_232d570adba1f4::t_6b873775c95b09 173-177
+docs/superpowers/plans/2026-10-23-kiro-cli-provider.md
+  s_232d570adba1f4::t_5622c9357dddd4 1-112
+src/integrations/harness/providers/kiro/kiroLaunch.ts
+  s_232d570adba1f4::t_168bb10c64e091 12
+  s_232d570adba1f4::t_a474dae6aa75ce 5-11,13-14
+  s_232d570adba1f4::t_2927e45ec5ddcd 19-20,48-50
+  s_232d570adba1f4::t_38aacaa8776d6a 1-4,15-18,21-47,51-89
+src/integrations/harness/core/register.ts
+  s_232d570adba1f4::t_3ead656108034e 7,25
+src/features/sessions/model/session.ts
+  s_232d570adba1f4::t_2e10991ea6851a 28,42,553,568
+src/integrations/harness/providers/kiro/kiroAdapter.ts
+  s_232d570adba1f4::t_3ead656108034e 1-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "224a84daefe64bbda75648b64a6fadd550db1fcd",
+  "prompts": {},
+  "sessions": {
+    "s_232d570adba1f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "435d0764-4ce0-46d9-b9a4-ba511c96bdd9",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
