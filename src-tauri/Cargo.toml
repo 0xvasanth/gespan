@@ -5,7 +5,7 @@ edition.workspace = true
 description = "Rebase — one UI for every agent harness"
 authors = ["Nick"]
 repository = "https://github.com/0xvasanth/rebase"
-homepage = "https://usemono.dev"
+homepage = "https://github.com/0xvasanth/rebase"
 license.workspace = true
 
 [lib]

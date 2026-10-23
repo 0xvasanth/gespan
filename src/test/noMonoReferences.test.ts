@@ -35,12 +35,10 @@ function stripTypography(text: string): string {
 const ALLOWED: { file: string; line: RegExp; why: string }[] = [
   { file: "src/test/noMonoReferences.test.ts", line: /./, why: "this guard names the pattern it forbids" },
   { file: "mobile/src/ui/theme.ts", line: /./, why: "the unrelated monochrome-style \"mono\" theme (brief)" },
-  { file: "src-tauri/src/menu.rs", line: /usemono\.dev/, why: "external product URL" },
   { file: "src-tauri/src/pilot_transcript.rs", line: /no_mono_tables|"mono_"|stale mono table/, why: "asserts legacy tables are gone" },
   { file: "src/test/invokeCommands.test.ts", line: /legacy mono_\*|\/mono\//, why: "asserts no legacy mono commands" },
   { file: "src/features/sessions/model/operatorCommand.test.ts", line: /\/mono\b/, why: "retired /mono is plain text" },
   { file: "mobile/modules/rebase-link/ios/TranscriptPresentation.swift", line: /\bmono\b/, why: "`mono` selects the Menlo monospace font for code runs" },
-  { file: "mobile/modules/rebase-link/ios/RebaseLink.podspec", line: /usemono\.dev/, why: "external product URL" },
   { file: "src/features/automations/model/automations.ts", line: /monopolize/, why: "the English word, not the old feature name" },
   { file: "src/features/pilots/model/pilotFiles.test.ts", line: /Monos\?/, why: "asserts no Mono wording" },
 ];

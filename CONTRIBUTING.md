@@ -10,7 +10,7 @@ Development is focused on the Rust + GPUI migration. The React/Tauri app on `mai
 
 - Bug fixes, security fixes, documentation improvements, and changes useful to both apps are still welcome on `main`.
 - Larger Tauri-specific features and refactors are temporarily deferred during the migration.
-- Target GPUI contributions at `mc/migrate-rebase-to-gpui`. See [the native guide](https://github.com/hardbeat920/rebase/blob/mc/migrate-rebase-to-gpui/docs/native/README.md) for setup and checks.
+- Target GPUI contributions at `mc/migrate-rebase-to-gpui`. See [the native guide](https://github.com/0xvasanth/rebase/blob/mc/migrate-rebase-to-gpui/docs/native/README.md) for setup and checks.
 
 Before starting a larger change, open an issue so we can agree on the scope and target branch and avoid duplicated work. Existing PRs will be reviewed individually.
 

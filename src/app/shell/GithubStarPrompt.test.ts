@@ -88,7 +88,7 @@ it("falls back to GitHub when the authenticated API action fails", async () => {
   );
 
   expect(mocks.openUrl).toHaveBeenCalledWith(
-    "https://github.com/hardbeat920/rebase",
+    "https://github.com/0xvasanth/rebase",
   );
   expect(container.querySelector("[data-github-star-prompt]")).not.toBeNull();
 });

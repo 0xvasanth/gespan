@@ -51,7 +51,7 @@ describe("MarkdownDocumentPreview", () => {
     expect(html).not.toContain("<ul");
   });
 
-  // https://github.com/hardbeat920/rebase/issues/591
+  // https://github.com/0xvasanth/rebase/issues/591
   it("keeps consecutive lines on their own lines", () => {
     const html = renderToStaticMarkup(
       createElement(MarkdownDocumentPreview, {

@@ -35,16 +35,16 @@ describe("parseUserMessageLink", () => {
   it("extracts a URL followed by a comment", () => {
     expect(
       parseUserMessageLink(
-        "https://github.com/hardbeat920/rebase/pull/226 check this",
+        "https://github.com/0xvasanth/rebase/pull/226 check this",
       ),
     ).toEqual({
       link: {
-        url: "https://github.com/hardbeat920/rebase/pull/226",
+        url: "https://github.com/0xvasanth/rebase/pull/226",
         host: "github.com",
-        displayUrl: "github.com/hardbeat920/rebase/pull/226",
+        displayUrl: "github.com/0xvasanth/rebase/pull/226",
         githubWorkItem: {
           kind: "pr",
-          repo: "hardbeat920/rebase",
+          repo: "0xvasanth/rebase",
           number: 226,
         },
       },

@@ -223,7 +223,7 @@ describe("dedupeInboxItems", () => {
         number: 10,
         updatedAt: "2026-08-27T10:00:00Z",
         projectPath: "/tmp/agent-terminal",
-        repo: "hardbeat920/rebase",
+        repo: "0xvasanth/rebase",
       }),
       item({
         number: 10,
@@ -239,7 +239,7 @@ describe("dedupeInboxItems", () => {
     expect(deduped).toHaveLength(1);
     expect(deduped[0]?.projectPath).toBe("/tmp/rebase");
     expect(inboxItemKey(deduped[0]!)).toBe(
-      "github:hardbeat920/rebase:issue:10",
+      "github:0xvasanth/rebase:issue:10",
     );
   });
 
@@ -297,7 +297,7 @@ describe("groupProjectsByRepo", () => {
   it("fetches each GitHub remote once", () => {
     expect(
       groupProjectsByRepo([
-        { path: "/tmp/rebase", repo: "hardbeat920/rebase" },
+        { path: "/tmp/rebase", repo: "0xvasanth/rebase" },
         { path: "/tmp/agent-terminal", repo: "HardBeat920/rebase" },
         { path: "/tmp/docs", repo: "acme/docs" },
       ]).map((project) => project.path),

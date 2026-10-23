@@ -25,7 +25,7 @@ export type UpdaterSnapshot = {
 
 let pendingUpdate: Update | null = null;
 
-const RELEASES_URL = "https://github.com/hardbeat920/rebase/releases/latest";
+const RELEASES_URL = "https://github.com/0xvasanth/rebase/releases/latest";
 
 /**
  * Linux `.deb` and `.rpm` installs belong to apt/dnf. The release feed only

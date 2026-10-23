@@ -20,10 +20,10 @@ Install and sign in to at least one supported agent first. See [provider setup](
 
 | Platform | Download |
 | --- | --- |
-| macOS, Apple Silicon | [Rebase.dmg](https://dl.usemono.dev/Rebase.dmg) |
-| macOS, Intel | [Rebase_x64.dmg](https://dl.usemono.dev/Rebase_x64.dmg) |
-| Linux, x86_64 | [.deb, .rpm, or AppImage](https://github.com/hardbeat920/rebase/releases/latest) |
-| Windows, x86_64 | [Installer](https://github.com/hardbeat920/rebase/releases/latest) |
+| macOS, Apple Silicon | [Rebase.dmg](https://github.com/0xvasanth/rebase/releases/latest) |
+| macOS, Intel | [Rebase_x64.dmg](https://github.com/0xvasanth/rebase/releases/latest) |
+| Linux, x86_64 | [.deb, .rpm, or AppImage](https://github.com/0xvasanth/rebase/releases/latest) |
+| Windows, x86_64 | [Installer](https://github.com/0xvasanth/rebase/releases/latest) |
 
 On macOS, open the DMG and drag Rebase to Applications. On Windows, run the installer. See [Linux setup](docs/install.md) for dependencies and package instructions.
 
@@ -38,7 +38,7 @@ Open a project folder, choose an agent, and send a message. Each tab is a sessio
 
 Pilots are experimental agents that work across your projects. They keep a memory and can run scheduled tasks you set up with them.
 
-Rebase is still early. If something breaks, [report a bug](https://github.com/hardbeat920/rebase/issues).
+Rebase is still early. If something breaks, [report a bug](https://github.com/0xvasanth/rebase/issues).
 
 ## Guides
 
@@ -64,7 +64,7 @@ Small, focused contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md
 
 Thanks to everyone who contributes to Rebase!
 
-[![Rebase contributors](https://contrib.rocks/image?repo=hardbeat920/rebase)](https://github.com/hardbeat920/rebase/graphs/contributors)
+[![Rebase contributors](https://contrib.rocks/image?repo=0xvasanth/rebase)](https://github.com/0xvasanth/rebase/graphs/contributors)
 
 Contributor image by [contrib.rocks](https://contrib.rocks).
 

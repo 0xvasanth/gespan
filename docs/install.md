@@ -1,6 +1,6 @@
 # Linux installation
 
-Download the x86_64 `.deb`, `.rpm`, or AppImage from [GitHub Releases](https://github.com/hardbeat920/rebase/releases/latest). Install and sign in to at least one [supported provider](providers.md) before starting a session.
+Download the x86_64 `.deb`, `.rpm`, or AppImage from [GitHub Releases](https://github.com/0xvasanth/rebase/releases/latest). Install and sign in to at least one [supported provider](providers.md) before starting a session.
 
 ## Ubuntu / Debian packages
 
@@ -73,7 +73,7 @@ chmod +x Rebase_*.AppImage
 
 ## Updates
 
-The AppImage updates itself from **Settings → General**. The `.deb` and `.rpm` update through apt or dnf: download the newer package from [GitHub Releases](https://github.com/hardbeat920/rebase/releases/latest) and install it with the same command used above.
+The AppImage updates itself from **Settings → General**. The `.deb` and `.rpm` update through apt or dnf: download the newer package from [GitHub Releases](https://github.com/0xvasanth/rebase/releases/latest) and install it with the same command used above.
 
 For beta release feeds and testing AppImage updates, see [release and updater details](building.md#beta-releases-and-updates).
 

@@ -5,7 +5,7 @@ Pod::Spec.new do |s|
   s.description = s.summary
   s.license = { :type => 'MIT' }
   s.author = 'Rebase'
-  s.homepage = 'https://usemono.dev'
+  s.homepage = 'https://github.com/0xvasanth/rebase'
   s.platforms = { :ios => '16.4' }
   s.source = { :git => 'https://github.com/0xvasanth/rebase.git' }
   s.static_framework = true

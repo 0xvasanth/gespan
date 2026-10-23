@@ -6,7 +6,7 @@ import {
 } from "../../features/inbox/model/githubTasks";
 import { Loader, Star, X } from "../../shared/ui/icons";
 
-const REBASE_GITHUB_URL = "https://github.com/hardbeat920/rebase";
+const REBASE_GITHUB_URL = "https://github.com/0xvasanth/rebase";
 const DISMISSED_STORAGE_KEY = "rebase.githubStarPrompt.dismissed.v1";
 
 type PromptSnapshot = "loading" | "visible" | "starring" | "hidden";

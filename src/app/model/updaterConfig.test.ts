@@ -50,7 +50,7 @@ describe("updater", () => {
       currentVersion: "0.1.23",
     });
     expect(message).toHaveBeenCalledWith(
-      expect.stringContaining("https://github.com/hardbeat920/rebase/releases/latest"),
+      expect.stringContaining("https://github.com/0xvasanth/rebase/releases/latest"),
       { title: "Rebase" },
     );
   });
@@ -68,7 +68,7 @@ describe("updater", () => {
 
   it.each(["deb", "rpm"] as const)("names one %s installer and the releases URL", (kind) => {
     const hint = packageManagerHint(kind);
-    expect(hint).toContain("https://github.com/hardbeat920/rebase/releases/latest");
+    expect(hint).toContain("https://github.com/0xvasanth/rebase/releases/latest");
     expect(hint).not.toMatch(/[*<>]/);
     expect(hint).toContain("Replace the file name");
     expect(hint).toContain(kind === "deb" ? "sudo apt install ./Rebase_X.Y.Z_amd64.deb" : "sudo dnf install ./Rebase-X.Y.Z-1.x86_64.rpm");

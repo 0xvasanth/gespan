@@ -95,7 +95,7 @@ function typeInto(field: HTMLInputElement | HTMLTextAreaElement, value: string) 
   field.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-// https://github.com/hardbeat920/rebase/issues/768
+// https://github.com/0xvasanth/rebase/issues/768
 it.each([
   { title: "Untitled", body: "This is the note body.", fallback: "This is the note body." },
   { title: "Custom title", body: "Intro\n# Generated title\nBody", fallback: "Generated title" },
@@ -231,7 +231,7 @@ it("refreshes an open note after an Operator write", async () => {
   expect(container.textContent).toContain("New text");
 });
 
-// https://github.com/hardbeat920/rebase/issues/591
+// https://github.com/0xvasanth/rebase/issues/591
 it("keeps a note's consecutive lines on their own lines", async () => {
   stored = { ...stored, body: "> first line\n> second line\n> third line" };
   await render();

@@ -1261,7 +1261,7 @@ pub enum GitHubStarStatus {
     Unavailable,
 }
 
-const REBASE_STAR_ENDPOINT: &str = "/user/starred/hardbeat920/rebase";
+const REBASE_STAR_ENDPOINT: &str = "/user/starred/0xvasanth/rebase";
 
 /// Whether the GitHub CLI is installed and has an active authenticated account.
 #[tauri::command]
@@ -8531,7 +8531,7 @@ mod tests {
     #[test]
     fn pr_head_filter_qualifies_branch_with_repo_owner() {
         assert_eq!(
-            github_pr_head_filter("hardbeat920/rebase", "main").as_deref(),
+            github_pr_head_filter("0xvasanth/rebase", "main").as_deref(),
             Some("hardbeat920:main")
         );
     }
@@ -8547,19 +8547,19 @@ mod tests {
         }"#;
         assert_eq!(
             parse_github_repositories(json).unwrap(),
-            vec!["EricRasputin/rebase-eric", "hardbeat920/rebase"]
+            vec!["EricRasputin/rebase-eric", "0xvasanth/rebase"]
         );
     }
 
     #[test]
     fn parse_github_repositories_keeps_a_normal_repo_single() {
         let json = r#"{
-            "nameWithOwner": "hardbeat920/rebase",
+            "nameWithOwner": "0xvasanth/rebase",
             "parent": null
         }"#;
         assert_eq!(
             parse_github_repositories(json).unwrap(),
-            vec!["hardbeat920/rebase"]
+            vec!["0xvasanth/rebase"]
         );
     }
 
@@ -8700,7 +8700,7 @@ mod tests {
     #[test]
     fn split_github_repo_reads_owner_and_name() {
         assert_eq!(
-            split_github_repo(" hardbeat920/rebase ").unwrap(),
+            split_github_repo(" 0xvasanth/rebase ").unwrap(),
             ("hardbeat920".into(), "rebase".into())
         );
         assert!(split_github_repo("rebase").is_err());
