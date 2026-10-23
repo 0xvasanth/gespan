@@ -167,15 +167,112 @@ impl Shell {
             })
             .collect()
     }
-    fn dock_open(&self) -> bool {
+    fn dock_open(&self, cx: &App) -> bool {
+        if self.terminal_in_panel(cx) {
+            return self.panel_terminal_shown(cx);
+        }
         self.workspace
             .docks
             .get(&self.workspace.project)
             .is_some_and(|d| d.open && !d.terminals.is_empty())
     }
+    /// The new layout can host the terminal as the right panel's last tab
+    /// instead of the dock, wherever that panel can open.
+    pub(super) fn terminal_in_panel(&self, cx: &App) -> bool {
+        self.workspace.preferences.terminal_in_panel
+            && !self.workspace.classic_layout
+            && !self.workspace.project.starts_with("remote://")
+            && !self.mono_active(cx)
+            && self.git.read(cx).available()
+    }
+    pub(super) fn panel_terminal_shown(&self, cx: &App) -> bool {
+        self.workspace.right_panel_open
+            && !self.app_view_open()
+            && self
+                .right_panel
+                .as_ref()
+                .is_some_and(|p| p.read(cx).tab() == crate::right_panel::RightTab::Terminal)
+    }
+    /// The panel's Terminal tab always has a shell to show.
+    pub(super) fn ensure_panel_terminal(&mut self, cx: &mut Context<Self>) {
+        let project = self.workspace.project.clone();
+        self.ensure_terminals(&project, cx);
+        if self
+            .workspace
+            .docks
+            .get(&project)
+            .is_some_and(|d| !d.terminals.is_empty())
+        {
+            return;
+        }
+        let cwd = self.terminal_cwd(cx);
+        let dock = self.workspace.docks.entry(project.clone()).or_default();
+        dock.add(cwd.clone());
+        // The dock stays shut until the terminal moves back out of the panel.
+        dock.open = false;
+        let terminal = self.spawn_terminal(cwd, cx);
+        self.terminals.entry(project).or_default().push(terminal);
+        self.persist(cx);
+    }
+    /// Opens the right panel on its Terminal tab and focuses the shell.
+    pub(super) fn show_panel_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ensure_right_panel(window, cx);
+        self.ensure_panel_terminal(cx);
+        if let Some(panel) = self.right_panel.clone() {
+            panel.update(cx, |p, cx| {
+                p.set_terminal_tab(true, cx);
+                p.select(crate::right_panel::RightTab::Terminal, cx);
+            });
+        }
+        self.set_right_panel_open(true, window, cx);
+        self.focus_terminal(window, cx);
+        self.invalidate_chrome(cx);
+        cx.notify();
+    }
+    /// The panel's Terminal tab: the dock's header and its active terminal.
+    pub(super) fn panel_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let project = self.workspace.project.clone();
+        self.ensure_terminals(&project, cx);
+        let Some(dock) = self.workspace.docks.get(&project).cloned() else {
+            return div().into_any_element();
+        };
+        // The boxy frame's title bar sits over the panel; clear it as the
+        // other tabs do.
+        let top_inset = self
+            .right_panel
+            .as_ref()
+            .map_or(0., |p| p.read(cx).top_inset());
+        div()
+            .id("panel-terminal")
+            .debug_selector(|| "panel-terminal".into())
+            .role(Role::Region)
+            .aria_label("Terminal")
+            .size_full()
+            .flex()
+            .flex_col()
+            .when(top_inset > 0., |d| {
+                d.child(
+                    div()
+                        .h(px(top_inset))
+                        .flex_shrink_0()
+                        .border_b_1()
+                        .border_color(crate::right_panel::stroke()),
+                )
+            })
+            .child(self.dock_header(&dock, true, window, cx))
+            .child(
+                div().flex_1().min_h_0().min_w_0().children(
+                    self.terminals
+                        .get(&project)
+                        .and_then(|t| t.get(dock.active))
+                        .cloned(),
+                ),
+            )
+            .into_any_element()
+    }
     /// onToggleRunningTerminal: hide the open dock, else show it on `ix`.
     fn toggle_running_terminal(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.dock_open()
+        if !self.dock_open(cx)
             && let Some(dock) = self.workspace.docks.get_mut(&self.workspace.project)
         {
             dock.active = ix.min(dock.terminals.len().saturating_sub(1));
@@ -447,9 +544,11 @@ impl Shell {
         px(0.)
     }
     /// SurfaceTabs for the dock's terminals, then New, Move and Hide.
+    /// `in_panel` drops the controls that only make sense for the dock.
     pub(super) fn dock_header(
         &mut self,
         dock: &TerminalDock,
+        in_panel: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -747,7 +846,8 @@ impl Shell {
                             cx.listener(|this, _, window, cx| this.new_terminal(window, cx)),
                         ),
                     )
-                    .child(
+                    .when(!in_panel, |d| {
+                        d.child(
                         icon_button("move-terminal", "Move Terminal", side)
                             .child(move_anchor.probe())
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -764,12 +864,15 @@ impl Shell {
                                     cx,
                                 );
                             })),
-                    )
-                    .child(
+                        )
+                    })
+                    .when(!in_panel, |d| {
+                        d.child(
                         icon_button("hide-terminal", HIDE_TERMINAL_LABEL, hide).on_click(
                             cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx)),
                         ),
-                    ),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -781,7 +884,7 @@ impl Shell {
             return None;
         }
         let running = self.running_terminals(cx);
-        let open = self.dock_open();
+        let open = self.dock_open(cx);
         let classic = self.workspace.boxy_layout();
         // The classic footer's own `px-3` and border hold these in place.
         let group = div()
@@ -792,6 +895,11 @@ impl Shell {
             .when(!classic, |d| d.mr(px(6.)).pb(px(2.)))
             .text_size(px(11.))
             .children(self.actions_button(cx));
+        // The right panel's Terminal tab takes over the footer's terminal controls.
+        if self.terminal_in_panel(cx) {
+            self.live_mark = None;
+            return Some(group.into_any_element());
+        }
         if running.is_empty() {
             self.live_mark = None;
             let has_terminals = self
@@ -809,6 +917,7 @@ impl Shell {
                     .child(
                         div()
                             .id("footer-terminal")
+                            .debug_selector(|| "footer-terminal".into())
                             .role(Role::Button)
                             .aria_label(label)
                             .aria_toggled(if open {
@@ -908,7 +1017,7 @@ impl Shell {
                                 .child(label),
                         )
                         .on_click(cx.listener(move |this, _, window, cx| {
-                            if this.dock_open() || !many {
+                            if this.dock_open(cx) || !many {
                                 this.toggle_running_terminal(first, window, cx);
                             } else if matches!(&this.menu, Some(m) if m.target == MenuTarget::RunningTerminals) {
                                 this.close_menu(cx);
@@ -961,6 +1070,55 @@ const HIDE_TERMINAL_LABEL: &str = if cfg!(target_os = "macos") {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn the_new_layout_can_host_the_terminal_as_a_right_panel_tab(cx: &mut gpui::TestAppContext) {
+        use crate::right_panel::RightTab;
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, window, cx| {
+                cx.set_reduce_motion(true);
+                shell.workspace.classic_layout = false;
+                shell.workspace.new_layout_boxy = true;
+                shell.layout_changed(cx);
+                shell.workspace.preferences.terminal_in_panel = true;
+                shell.toggle_terminal(window, cx);
+                let project = shell.workspace.project.clone();
+                assert!(shell.workspace.right_panel_open);
+                assert_eq!(shell.terminals[&project].len(), 1);
+                let panel = shell.right_panel.clone().unwrap();
+                assert_eq!(panel.read(cx).tab(), RightTab::Terminal);
+                assert_eq!(panel.read(cx).tabs().last(), Some(&RightTab::Terminal));
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        // In the boxy frame the terminal starts below the title bar's tabs.
+        let tabs = visual.debug_bounds("right-panel-terminal").unwrap();
+        let header = visual.debug_bounds("terminal-tab-0").unwrap();
+        assert!(header.top() >= tabs.bottom(), "{header:?} under {tabs:?}");
+        assert!(visual.debug_bounds("terminal-dock").is_none());
+        assert!(visual.debug_bounds("footer-terminal").is_none());
+        window
+            .update(cx, |shell, window, cx| {
+                // The footer button closes the panel it opened.
+                shell.toggle_terminal(window, cx);
+                assert!(!shell.workspace.right_panel_open);
+                // Turned off, the tab goes and the dock is back.
+                shell.workspace.preferences.terminal_in_panel = false;
+                shell.apply_preferences(cx);
+                let panel = shell.right_panel.clone().unwrap();
+                assert_eq!(panel.read(cx).tab(), RightTab::Files);
+                assert!(!panel.read(cx).tabs().contains(&RightTab::Terminal));
+                shell.toggle_terminal(window, cx);
+                assert!(shell.workspace.docks[&shell.workspace.project].open);
+                shell.toggle_terminal(window, cx);
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("footer-terminal").is_some());
+    }
 
     #[test]
     fn chip_labels_count_repeated_processes_in_order() {

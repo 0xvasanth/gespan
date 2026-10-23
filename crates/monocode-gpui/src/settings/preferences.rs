@@ -21,6 +21,8 @@ pub(crate) struct Preferences {
     pub close_to_tray: bool,
     /// Running an action shows the terminal it runs in.
     pub action_opens_terminal: bool,
+    /// The new layout opens the terminal as a right panel tab, not a dock.
+    pub terminal_in_panel: bool,
     // Appearance
     pub theme: String,
     pub workspace_theme: String,
@@ -105,6 +107,7 @@ impl Default for Preferences {
             working_agents: true,
             close_to_tray: true,
             action_opens_terminal: true,
+            terminal_in_panel: false,
             theme: "dark".into(),
             workspace_theme: "default".into(),
             inset_glass: true,

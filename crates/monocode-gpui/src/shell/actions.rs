@@ -59,6 +59,8 @@ impl Shell {
                 (t.foreground.is_none() && !t.exited).then_some((ix, terminal))
             });
         let reveal = self.workspace.preferences.action_opens_terminal;
+        // The right panel shows the terminal instead of the dock.
+        let in_panel = self.terminal_in_panel(cx);
         let viewport = self.viewport();
         let dock = self.workspace.docks.entry(project.clone()).or_default();
         let was_open = dock.open && !dock.terminals.is_empty();
@@ -66,7 +68,7 @@ impl Shell {
             Some((ix, terminal)) => {
                 if reveal {
                     dock.active = ix;
-                    dock.open = true;
+                    dock.open |= !in_panel;
                 }
                 terminal
             }
@@ -76,7 +78,7 @@ impl Shell {
                 dock.size = dock.side.clamp(dock.size, viewport);
                 dock.add(cwd.clone());
                 // `add` opens the dock; a background run leaves it as it was.
-                dock.open = reveal || was_open;
+                dock.open = (reveal && !in_panel) || was_open;
                 let terminal = self.spawn_terminal(cwd, cx);
                 self.terminals
                     .entry(project.clone())
@@ -87,7 +89,9 @@ impl Shell {
             }
         };
         terminal.update(cx, |t, cx| t.run(&action.command, cx));
-        if reveal {
+        if reveal && in_panel {
+            self.show_panel_terminal(window, cx);
+        } else if reveal {
             if let Some(dock) = self.workspace.docks.get(&project) {
                 self.dock_tab_scroll.scroll_to_item(dock.active);
             }

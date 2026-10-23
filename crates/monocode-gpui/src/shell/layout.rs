@@ -343,7 +343,7 @@ impl Shell {
             .right_panel
             .clone()
             .filter(|_| right_shown && self.settings.is_none())
-            .map(|panel| self.right_panel_frame(panel, right_width, full, cx));
+            .map(|panel| self.right_panel_frame(panel, right_width, full, window, cx));
         let footer = (!self.classic_surface_open(cx)).then(|| self.footer_row(cx));
         let spans_window = self.classic_titlebar_spans_window(cx);
         let original = self.workspace.classic_layout;
@@ -544,7 +544,7 @@ impl Shell {
             .corner_reveal
             .as_ref()
             .and_then(|reveal| reveal.progress(current, window, cx));
-        let tabs = [
+        let mut tabs = vec![
             (
                 "right-panel-explorer",
                 "Explorer",
@@ -559,6 +559,10 @@ impl Shell {
             ),
             ("right-panel-history", "History", "clock", RightTab::Graph),
         ];
+        if self.terminal_in_panel(cx) {
+            tabs.push(("right-panel-terminal", "Terminal", "terminal", RightTab::Terminal));
+        }
+        let count = tabs.len();
         row.pl_1p5()
             .pr_3()
             .when(open, |d| {
@@ -588,6 +592,7 @@ impl Shell {
                                     crate::project_tabs::TabLabel::from(label).max_width(
                                         crate::right_panel::tab_label_width(
                                             self.project_tabs_width(cx),
+                                            count,
                                         ),
                                     ),
                                     path,
@@ -748,7 +753,7 @@ impl Shell {
                 ),
             )
             .when_some(panel, |d, panel| {
-                d.child(self.right_panel_frame(panel, right_width, full, cx))
+                d.child(self.right_panel_frame(panel, right_width, full, window, cx))
             })
     }
     /// The usage chips with the terminal controls at the far end.

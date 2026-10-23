@@ -351,6 +351,7 @@ impl Shell {
         }
         crate::settings::apply_keybindings(&self.workspace.preferences, cx);
         cx.set_global(self.workspace.preferences.clone());
+        self.sync_right_panel(cx);
         if let Some(center) = crate::accounts::get(cx) {
             center.update(cx, |center, cx| {
                 let changed = center.mask_emails != self.workspace.preferences.mask_emails

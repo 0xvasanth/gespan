@@ -261,6 +261,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "actions commands run script dock background",
     ),
     (
+        "terminal-in-panel",
+        Section::General,
+        "Terminal in side panel",
+        "terminal dock right panel tab shell new layout",
+    ),
+    (
         "file-tabs",
         Section::General,
         "File tabs",

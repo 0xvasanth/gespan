@@ -1520,9 +1520,11 @@ impl Shell {
                 && self.settings.is_none())
             .then(|| self.classic_sidebar_tab.tool_tab())
             .flatten();
+            let terminal_tab = self.terminal_in_panel(cx);
             panel.update(cx, |p, cx| {
                 p.set_shown(shown, cx);
                 p.set_sidebar_tab(sidebar_tab, cx);
+                p.set_terminal_tab(terminal_tab, cx);
             });
         }
     }
@@ -1620,7 +1622,12 @@ impl Shell {
             self.workspace.right_panel_tabs.clone(),
             self.workspace.changes_view,
         );
-        let panel = cx.new(|cx| RightPanel::new(git, tab, order, window, cx));
+        let terminal_tab = self.terminal_in_panel(cx);
+        let panel = cx.new(|cx| {
+            let mut panel = RightPanel::new(git, tab, order, window, cx);
+            panel.set_terminal_tab(terminal_tab, cx);
+            panel
+        });
         let explorer = panel.read(cx).explorer.clone();
         self.observations.push(cx.subscribe(
             &explorer,
@@ -1674,7 +1681,12 @@ impl Shell {
         self.observations
             .push(cx.subscribe(&panel, |this, _, event: &PanelEvent, cx| {
                 match event {
-                    PanelEvent::Tab(tab) => this.workspace.right_panel_tab = *tab,
+                    PanelEvent::Tab(tab) => {
+                        this.workspace.right_panel_tab = *tab;
+                        if *tab == crate::right_panel::RightTab::Terminal {
+                            this.ensure_panel_terminal(cx);
+                        }
+                    }
                     PanelEvent::Reordered(order) => this.workspace.right_panel_tabs = order.clone(),
                 }
                 this.persist(cx);
@@ -2774,6 +2786,14 @@ impl Shell {
         self.dock_tab_scroll.scroll_to_item(added);
         let terminal = self.spawn_terminal(cwd, cx);
         self.terminals.entry(project).or_default().push(terminal);
+        if self.terminal_in_panel(cx) {
+            if let Some(dock) = self.workspace.docks.get_mut(&self.workspace.project) {
+                dock.open = false;
+            }
+            self.show_panel_terminal(window, cx);
+            self.persist(cx);
+            return;
+        }
         if !was_open {
             self.slide_dock(true, cx);
         }
@@ -2787,6 +2807,14 @@ impl Shell {
         if self.workspace.project.starts_with("remote://") {
             self.error = Some("Terminals are not available on remote projects.".into());
             cx.notify();
+            return;
+        }
+        if self.terminal_in_panel(cx) {
+            if self.panel_terminal_shown(cx) {
+                self.set_right_panel_open(false, window, cx);
+            } else {
+                self.show_panel_terminal(window, cx);
+            }
             return;
         }
         let project = self.workspace.project.clone();
@@ -2949,6 +2977,10 @@ impl Shell {
                 terminal.update(cx, |t, _| t.visible = shown);
             }
         }
+        // The right panel's Terminal tab hosts the shells instead.
+        if self.terminal_in_panel(cx) {
+            return body;
+        }
         let Some(dock) = self.workspace.docks.get(&project).cloned() else {
             return body;
         };
@@ -2991,7 +3023,7 @@ impl Shell {
                 DockSide::Bottom => d.top_0(),
                 DockSide::Right => d.left_0(),
             })
-            .child(self.dock_header(&dock, window, cx))
+            .child(self.dock_header(&dock, false, window, cx))
             .child(
                 div().flex_1().min_h_0().min_w_0().children(
                     self.terminals
@@ -3606,6 +3638,7 @@ impl Shell {
         self.sync_git(cx);
         self.update_chat_visibility(cx);
         self.update_usage_provider(cx);
+        self.sync_right_panel(cx);
         self.invalidate_chrome(cx);
         let state = serde_json::to_string(&self.workspace).unwrap();
         *self.latest_state.lock().unwrap_or_else(|e| e.into_inner()) = state.clone();
@@ -4248,10 +4281,11 @@ impl Shell {
     /// Part of the card: the project tools beside the workspace, behind a
     /// hairline. Its contents keep their full width while it slides.
     fn right_panel_frame(
-        &self,
+        &mut self,
         panel: Entity<RightPanel>,
         width: f32,
         full: f32,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let content =
@@ -4268,6 +4302,10 @@ impl Shell {
                         .cached(StyleRefinement::default().size_full())
                         .into_any_element()
                 }
+            } else if self.terminal_in_panel(cx)
+                && panel.read(cx).tab() == crate::right_panel::RightTab::Terminal
+            {
+                self.panel_terminal(window, cx)
             } else {
                 panel
                     .cached(StyleRefinement::default().size_full())
@@ -4660,7 +4698,8 @@ impl Shell {
         if !self.workspace.right_panel_open || self.app_view_open() {
             return natural;
         }
-        let controls = crate::right_panel::TAB_ICONS_WIDTH + 6. + CORNER_BUTTONS_WIDTH + 12.;
+        let controls =
+            crate::right_panel::tab_icons_width(self.right_tab_count(cx)) + 6. + CORNER_BUTTONS_WIDTH + 12.;
         natural.min((self.workspace.right_panel_width - controls).max(48.))
     }
     fn project_tabs_width(&self, cx: &App) -> f32 {
@@ -4674,9 +4713,13 @@ impl Shell {
             - CORNER_BUTTONS_WIDTH
             - padding)
             .clamp(
-                crate::right_panel::TAB_ICONS_WIDTH,
-                crate::right_panel::TABS_WIDTH,
+                crate::right_panel::tab_icons_width(self.right_tab_count(cx)),
+                crate::right_panel::tabs_width(self.right_tab_count(cx)),
             )
+    }
+    /// Explorer, Changes and History, and Terminal when it lives in the panel.
+    fn right_tab_count(&self, cx: &App) -> usize {
+        3 + usize::from(self.terminal_in_panel(cx))
     }
     /// The toggle's room at the end of the strip: `pl-1.5`, the button, `pr-3`.
     fn toggle_room(&self, cx: &App) -> f32 {

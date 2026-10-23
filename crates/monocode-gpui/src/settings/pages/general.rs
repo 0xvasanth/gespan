@@ -144,6 +144,20 @@ impl SettingsView {
                 |this, on, cx| this.update(cx, |p| p.action_opens_terminal = on),
             )],
         ));
+        workspace.push(self.row(
+            Some("terminal-in-panel"),
+            false,
+            "Terminal in side panel",
+            Some("In the new layout, open the terminal as a tab in the right panel instead of below the chat.".into()),
+            vec![self.toggle(
+                "terminal-in-panel",
+                "Terminal in side panel",
+                p.terminal_in_panel,
+                false,
+                cx,
+                |this, on, cx| this.update(cx, |p| p.terminal_in_panel = on),
+            )],
+        ));
         if cfg!(target_os = "windows") {
             workspace.push(self.row(
                 Some("close-to-tray"),

@@ -256,6 +256,7 @@ impl SettingsView {
                     | "quick-composer"
                     | "working-agents"
                     | "action-opens-terminal"
+                    | "terminal-in-panel"
                     | "close-to-tray"
                     | "main-pane-glass"
                     | "inset-layout"
