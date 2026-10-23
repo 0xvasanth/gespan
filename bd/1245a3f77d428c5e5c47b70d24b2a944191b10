@@ -1,0 +1,20 @@
+src/test/noMonoReferences.test.ts
+  s_232d570adba1f4::t_ff3fb0b4cdbaad 143-151
+  s_232d570adba1f4::t_45973fd6c34d63 88-92,100,157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd1245a3f77d428c5e5c47b70d24b2a944191b10",
+  "prompts": {},
+  "sessions": {
+    "s_232d570adba1f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "435d0764-4ce0-46d9-b9a4-ba511c96bdd9",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
