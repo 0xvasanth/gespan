@@ -293,3 +293,69 @@ fn remote_ssh_release_url_env_and_pairing_match_tauri() {
             && askpass.contains("REBASE_SSH_ASKPASS_SECRET")
     );
 }
+
+/// Both apps persist the same `agentRun` object and the Claude wake marker row in
+/// `sessions.blocks_json`. Renaming any of these on one side silently drops the field
+/// when the other app loads or saves the block, so each literal is pinned on both sides.
+/// Mirror of the "shares the agentRun fields" test in `src/test/sharedContracts.test.ts`.
+#[test]
+fn agent_run_and_wake_marker_json_names_match() {
+    let session = tauri("src/features/sessions/model/session.ts");
+    let store = tauri("src/features/sessions/data/sessionStore.ts");
+    let claude = tauri("src/integrations/harness/providers/claude/claude.ts");
+    let agent_run = session
+        .split("export type AgentRunMeta = {")
+        .nth(1)
+        .and_then(|rest| rest.split("\n};").next())
+        .expect("AgentRunMeta in session.ts");
+    let tasks = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tool/tasks.rs"))
+        .unwrap();
+    for field in ["agentId", "resumeOf", "activity", "continuation"] {
+        assert!(
+            agent_run.contains(&format!("{field}?:")),
+            "{field} missing on Tauri AgentRunMeta"
+        );
+        assert!(
+            store.contains(&format!("\"{field}\"")),
+            "{field} not kept by the Tauri store"
+        );
+        assert!(
+            tasks.contains(&format!("agent.get(\"{field}\")"))
+                || tasks.contains(&format!("agent[\"{field}\"]")),
+            "Rebase Native does not read agentRun.{field}"
+        );
+        assert!(
+            tasks.contains(&format!("(\"{field}\","))
+                || tasks.contains(&format!("value[\"{field}\"] =")),
+            "Rebase Native does not write agentRun.{field}"
+        );
+    }
+
+    // The row: `role: "system"`, `interjection: { customType }`, `sentAt`.
+    let interjection = session
+        .split("export type InterjectionMeta = {")
+        .nth(1)
+        .expect("InterjectionMeta in session.ts");
+    assert!(interjection.trim_start().starts_with("customType: string;"));
+    assert!(session.contains("sentAt?: number;"));
+    let marker = claude
+        .split("function emitWakeMarker")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}").next())
+        .expect("emitWakeMarker in claude.ts");
+    assert!(
+        marker.contains("customType: \"task-notification\""),
+        "{marker}"
+    );
+    assert!(marker.contains("sentAt:"), "{marker}");
+    let blocks = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store/shared/blocks.rs"),
+    )
+    .unwrap();
+    assert!(blocks.contains("block[\"interjection\"][\"customType\"]"));
+    assert!(blocks.contains("json!({\"customType\":note.custom_type})"));
+    assert!(blocks.contains("block[\"sentAt\"]"));
+    assert!(native_sources()
+        .iter()
+        .any(|(_, text)| text.contains("custom_type: \"task-notification\".into()")));
+}

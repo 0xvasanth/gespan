@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseHandback } from "./subagentHandback";
+import { handbackMeta, parseHandback } from "./subagentHandback";
 
 const FIXTURE = resolve(
   process.cwd(),
@@ -146,5 +146,32 @@ describe("parseHandback", () => {
       expect(performance.now() - start).toBeLessThan(200);
       expect(parsed).toEqual({ report: text });
     });
+  });
+});
+
+describe("handbackMeta", () => {
+  it("joins the fields with the Rebase Native wording", () => {
+    expect(
+      handbackMeta({
+        report: "",
+        toolUses: 5,
+        subagentTokens: 1234567,
+        durationMs: 4_200,
+      }),
+    ).toBe("5 tool uses · 1,234,567 tokens · 4.2s");
+  });
+  it("uses the singular and omits missing fields", () => {
+    expect(handbackMeta({ report: "", toolUses: 1 })).toBe("1 tool use");
+    expect(
+      handbackMeta({ report: "", subagentTokens: 999, durationMs: 0 }),
+    ).toBe("999 tokens · 0.0s");
+    expect(handbackMeta({ report: "x" })).toBeUndefined();
+  });
+  it("rounds durations like Native: one decimal under ten seconds, none after", () => {
+    const at = (durationMs: number) => handbackMeta({ report: "", durationMs });
+    expect(at(9_949)).toBe("9.9s");
+    expect(at(9_960)).toBe("10s");
+    expect(at(10_499)).toBe("10s");
+    expect(at(125_000)).toBe("125s");
   });
 });

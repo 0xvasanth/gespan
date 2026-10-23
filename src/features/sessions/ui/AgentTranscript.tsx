@@ -149,6 +149,7 @@ import {
   subagentModelName,
   subagentName,
   subagentReport,
+  subagentReportMeta,
   toolCallLabel,
   toolCallState,
   turnCopyText,
@@ -2478,6 +2479,9 @@ const TranscriptBlock = memo(function TranscriptBlock({
   }
 
   if (block.role === "system") {
+    if (block.interjection?.customType === TASK_NOTIFICATION) {
+      return <BackgroundFinishedMarker block={block} />;
+    }
     if (block.interjection) {
       return <InterjectionDivider block={block} />;
     }
@@ -4052,38 +4056,49 @@ function SubagentPanel({
   const status = subagentStatusLine(block, steps);
   const output = useToolDetail(block, open);
   const report = subagentReport(block, output.detail);
+  const reportMeta = subagentReportMeta(block, output.detail);
+  // Only a run that is working has anything to say it is doing.
+  const activity =
+    state === "pending" ? block.agentRun?.activity?.trim() : undefined;
   const failed = state === "rejected";
 
   // The name takes the room it needs and gives the rest back: a provider that
   // names a run with its whole brief must not push the row off the pane.
   const label = (
-    <span className="flex min-w-0 flex-1 items-baseline gap-2">
-      {active ? (
-        <Shimmer
-          className="min-w-0 flex-1 truncate font-sans text-sm"
-          duration={1.6}
-        >
-          {name}
-        </Shimmer>
-      ) : (
-        <span
-          className={`min-w-0 flex-1 truncate font-sans text-sm transition-colors duration-200 ${
-            state === "rejected"
-              ? "text-red-400"
-              : "text-content/75 group-hover:text-content"
-          }`}
-        >
-          {name}
-        </span>
-      )}
-      {model || status ? (
-        <span className="flex min-w-0 max-w-[55%] shrink-0 items-baseline gap-2 font-sans text-[12px] text-content/40">
-          {model ? (
-            <span className="truncate" title={`Model: ${model}`}>
-              {model}
-            </span>
-          ) : null}
-          {status ? <span className="shrink-0">{status}</span> : null}
+    <span className="flex min-w-0 flex-1 flex-col">
+      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+        {active ? (
+          <Shimmer
+            className="min-w-0 flex-1 truncate font-sans text-sm"
+            duration={1.6}
+          >
+            {name}
+          </Shimmer>
+        ) : (
+          <span
+            className={`min-w-0 flex-1 truncate font-sans text-sm transition-colors duration-200 ${
+              state === "rejected"
+                ? "text-red-400"
+                : "text-content/75 group-hover:text-content"
+            }`}
+          >
+            {name}
+          </span>
+        )}
+        {model || status ? (
+          <span className="flex min-w-0 max-w-[55%] shrink-0 items-baseline gap-2 font-sans text-[12px] text-content/40">
+            {model ? (
+              <span className="truncate" title={`Model: ${model}`}>
+                {model}
+              </span>
+            ) : null}
+            {status ? <span className="shrink-0">{status}</span> : null}
+          </span>
+        ) : null}
+      </span>
+      {activity ? (
+        <span className="truncate font-sans text-[12px] text-content/40">
+          {activity}
         </span>
       ) : null}
     </span>
@@ -4158,6 +4173,11 @@ function SubagentPanel({
                     onOpenFile={onOpenFile}
                   />
                 )}
+              </div>
+            ) : null}
+            {reportMeta ? (
+              <div className="zen-phase-step pb-1 font-sans text-[12px] text-content/40">
+                {reportMeta}
               </div>
             ) : null}
           </div>
@@ -4374,6 +4394,9 @@ function ActivityInterjectionRow({ block }: { block: Block }) {
   const [open, setOpen] = useState(false);
   const meta = block.interjection;
   if (!meta) return null;
+  if (meta.customType === TASK_NOTIFICATION) {
+    return <BackgroundFinishedMarker block={block} compact />;
+  }
   const chrome = interjectionChrome(meta);
   const summary = proseSummary(block.text);
   const label = (
@@ -5175,6 +5198,36 @@ function HandoffDivider({ block }: { block: Block }) {
         </div>
         <div className="h-px min-w-4 flex-1 bg-content/12" />
       </div>
+    </div>
+  );
+}
+
+const TASK_NOTIFICATION = "task-notification";
+
+/**
+ * Claude woke itself because a background agent finished. A muted line keeps
+ * its follow-up from reading as a reply to the user; the wording is Rebase
+ * Native's `finished_marker`.
+ */
+function BackgroundFinishedMarker({
+  block,
+  compact = false,
+}: {
+  block: Block;
+  compact?: boolean;
+}) {
+  const summary = block.text.trim();
+  return (
+    <div
+      role="group"
+      aria-label="Background agent finished"
+      className={`min-w-0 font-sans text-[12px] leading-[18px] text-content/45 ${
+        compact ? "py-1" : "px-4 py-2"
+      }`}
+    >
+      {summary
+        ? `Background agent finished \u00b7 ${summary}`
+        : "Background agent finished"}
     </div>
   );
 }

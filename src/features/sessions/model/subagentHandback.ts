@@ -76,3 +76,31 @@ function dedent(text: string): string {
   const indent = indents.length ? Math.min(...indents) : 0;
   return lines.map((l) => (l.trim() ? l.slice(indent) : "")).join("\n");
 }
+
+/**
+ * "5 tool uses · 12,345 tokens · 4.2s", from whatever the trailer carried.
+ * The wording and rounding match Rebase Native's `meta_line`.
+ */
+export function handbackMeta(handback: Handback): string | undefined {
+  const parts: string[] = [];
+  const { toolUses, subagentTokens, durationMs } = handback;
+  if (toolUses !== undefined) {
+    parts.push(`${toolUses} tool ${toolUses === 1 ? "use" : "uses"}`);
+  }
+  if (subagentTokens !== undefined) {
+    parts.push(`${thousands(subagentTokens)} tokens`);
+  }
+  if (durationMs !== undefined) parts.push(seconds(durationMs));
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+function thousands(value: number): string {
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/** Whole seconds from ten up, one decimal below (9_949 ms is 9.9s, 9_960 ms is 10s). */
+function seconds(ms: number): string {
+  const tenths = Math.floor((ms + 50) / 100);
+  if (tenths >= 100) return `${Math.floor((ms + 500) / 1000)}s`;
+  return `${Math.floor(tenths / 10)}.${tenths % 10}s`;
+}
