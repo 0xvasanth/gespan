@@ -27,6 +27,8 @@ Install and sign in to at least one supported agent first. See [provider setup](
 
 On macOS, open the DMG and drag Rebase to Applications. On Windows, run the installer. See [Linux setup](docs/install.md) for dependencies and package instructions.
 
+Installers appear on the [Releases page](https://github.com/0xvasanth/rebase/releases) once a release is published. Until then, [build from source](#build-from-source).
+
 ## Get started
 
 Open a project folder, choose an agent, and send a message. Each tab is a session. Split panes to work with sessions side by side.

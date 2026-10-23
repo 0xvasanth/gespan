@@ -1,5 +1,16 @@
 {
   "name": "rebase-desktop",
+  "description": "A desktop GUI for your coding agents",
+  "license": "MIT",
+  "author": "vasanth",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xvasanth/rebase.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0xvasanth/rebase/issues"
+  },
+  "homepage": "https://github.com/0xvasanth/rebase#readme",
   "private": true,
   "version": "0.16.0",
   "type": "module",
