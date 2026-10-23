@@ -3,6 +3,7 @@ export const APP_VIEW_LABELS = {
   inbox: "Inbox",
   notes: "Notes",
   automations: "Automations",
+  board: "Board",
 } as const;
 
 export type AppView = keyof typeof APP_VIEW_LABELS;

@@ -1,0 +1,488 @@
+// @vitest-environment happy-dom
+import {
+  act,
+  createElement,
+  useSyncExternalStore,
+  type ComponentProps,
+} from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+import type {
+  BoardCard,
+  BoardColumn,
+  BoardDetail,
+  ColumnRole,
+} from "../model/board";
+import type { KanbanBoardProps } from "./kanban/KanbanBoard";
+import { BoardView } from "./BoardView";
+import { Sidebar } from "../../../app/shell/Sidebar";
+import {
+  loadBoardEnabled,
+  saveBoardEnabled,
+  subscribeBoardEnabled,
+} from "../../settings/model/settings";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(() => Promise.resolve(() => undefined)),
+}));
+
+// The real board, with its latest props kept so a test can drive a drop.
+const kanban: { props: KanbanBoardProps | null } = { props: null };
+vi.mock("./kanban/KanbanBoard", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./kanban/KanbanBoard")>();
+  return {
+    KanbanBoard: (props: KanbanBoardProps) => {
+      kanban.props = props;
+      return createElement(actual.KanbanBoard, props);
+    },
+  };
+});
+
+// Keep the Sidebar's native services out of the flag test.
+vi.mock("../../source-control/hooks/useProjectDiffStats", () => ({
+  useProjectDiffStats: vi.fn(() => null),
+}));
+vi.mock("../../source-control/hooks/useGitFileStatuses", () => ({
+  useGitFileStatuses: () => ({ files: new Map(), dirs: new Map() }),
+}));
+vi.mock("../../../app/shell/SidebarUpdate", () => ({
+  SidebarUpdateFooter: () => null,
+}));
+vi.mock("../../files/ui/FileTree", () => ({ FileTree: () => null }));
+vi.mock("../../../app/shell/WindowControls", () => ({
+  WindowControls: () => null,
+}));
+
+function column(
+  id: string,
+  name: string,
+  position: number,
+  role: ColumnRole | null,
+): BoardColumn {
+  return { id, boardId: "b1", name, position, role };
+}
+
+function card(
+  id: string,
+  columnId: string,
+  position: number,
+  number: number,
+  title: string,
+): BoardCard {
+  return {
+    id,
+    boardId: "b1",
+    columnId,
+    number,
+    title,
+    body: "",
+    position,
+    linkKind: null,
+    linkId: null,
+    createdAt: 1,
+    updatedAt: Date.now(),
+  };
+}
+
+const BOARD = { id: "b1", name: "Agents", createdAt: 1, updatedAt: 1 };
+
+function fixture(): BoardDetail {
+  return {
+    board: BOARD,
+    columns: [
+      column("backlog", "Backlog", 0, "todo"),
+      column("progress", "In Progress", 1, "doing"),
+      column("review", "Review", 2, "review"),
+      column("done", "Done", 3, "done"),
+    ],
+    cards: [
+      card("c1", "backlog", 0, 1, "Fix login"),
+      card("c2", "backlog", 1, 2, "Write docs"),
+      card("c3", "progress", 0, 3, "Ship board"),
+    ],
+  };
+}
+
+type Handler = (args: Record<string, unknown>) => unknown;
+let handlers: Record<string, Handler>;
+
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const stored = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => stored.set(key, value),
+    removeItem: (key: string) => stored.delete(key),
+    clear: () => stored.clear(),
+  });
+  kanban.props = null;
+  handlers = {
+    board_list: () => [BOARD],
+    board_get: () => fixture(),
+    board_activity: () => [],
+    board_card_create: (args) =>
+      card("new", String(args.columnId), 9, 9, String(args.title)),
+  };
+  vi.mocked(invoke).mockReset();
+  vi.mocked(invoke).mockImplementation(async (cmd, args) => {
+    const handler = handlers[cmd];
+    if (!handler) throw new Error(`unexpected command ${cmd}`);
+    return handler((args ?? {}) as Record<string, unknown>);
+  });
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  document.body.innerHTML = "";
+  vi.unstubAllGlobals();
+});
+
+async function flush() {
+  await act(async () => {
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+  });
+}
+
+async function renderBoard(
+  overrides: Partial<ComponentProps<typeof BoardView>> = {},
+) {
+  const props: ComponentProps<typeof BoardView> = {
+    onClose: vi.fn(),
+    linkTargets: [],
+    onOpenLinkedWork: vi.fn(),
+    ...overrides,
+  };
+  await act(async () => {
+    root.render(createElement(BoardView, props));
+  });
+  await flush();
+  return props;
+}
+
+const columnEl = (id: string) =>
+  container.querySelector<HTMLElement>(`[data-kanban-column="${id}"]`)!;
+
+const cardIdsIn = (id: string) =>
+  [...columnEl(id).querySelectorAll("[data-kanban-card]")].map((el) =>
+    el.getAttribute("data-kanban-card"),
+  );
+
+const commands = (cmd: string) =>
+  vi.mocked(invoke).mock.calls.filter(([name]) => name === cmd);
+
+function typeInto(field: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    "value",
+  )!.set!;
+  act(() => {
+    setter.call(field, value);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function press(target: HTMLElement, key: string, init: KeyboardEventInit = {}) {
+  act(() => {
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      }),
+    );
+  });
+}
+
+describe("BoardView", () => {
+  it("shows the empty state with no boards", async () => {
+    handlers.board_list = () => [];
+    await renderBoard();
+    expect(container.textContent).toContain("No boards yet");
+    expect(
+      [...container.querySelectorAll("button")].some(
+        (button) => button.textContent === "Create board",
+      ),
+    ).toBe(true);
+    expect(commands("board_get")).toHaveLength(0);
+  });
+
+  it("renders the columns with names, role icons and counts, and card numbers", async () => {
+    await renderBoard();
+    const columns = [...container.querySelectorAll("[data-kanban-column]")];
+    expect(columns).toHaveLength(4);
+    expect(
+      columns.map((el) => el.querySelector("[data-column-name]")?.textContent),
+    ).toEqual(["Backlog", "In Progress", "Review", "Done"]);
+    expect(
+      columns.map((el) =>
+        el.querySelector("svg[data-role]")?.getAttribute("data-role"),
+      ),
+    ).toEqual(["todo", "doing", "review", "done"]);
+    expect(
+      columns.map((el) => el.querySelector("[data-column-count]")?.textContent),
+    ).toEqual(["2", "1", "0", "0"]);
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
+    const first = columnEl("backlog").querySelector("[data-kanban-card='c1']")!;
+    expect(first.textContent).toContain("#1");
+    expect(first.textContent).toContain("Fix login");
+    // The board that opened is remembered for next time.
+    expect(localStorage.getItem("rebase:open-board")).toBe("b1");
+  });
+
+  it("adds a card with Enter, ignores an empty title and closes on Esc", async () => {
+    await renderBoard();
+    const addButton = [
+      ...columnEl("backlog").querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.includes("Add card"))!;
+    act(() => addButton.click());
+    const field = columnEl("backlog").querySelector("textarea")!;
+    expect(field).not.toBeNull();
+    expect(columnEl("backlog").textContent).toContain(
+      "Enter to add · Esc to cancel",
+    );
+
+    typeInto(field, "   ");
+    press(field, "Enter");
+    await flush();
+    expect(commands("board_card_create")).toHaveLength(0);
+
+    typeInto(field, "  Fix the build  ");
+    press(field, "Enter");
+    await flush();
+    expect(commands("board_card_create")).toHaveLength(1);
+    expect(commands("board_card_create")[0][1]).toMatchObject({
+      columnId: "backlog",
+      title: "Fix the build",
+    });
+
+    // Shift+Enter is a newline, not a submit.
+    typeInto(field, "Two");
+    press(field, "Enter", { shiftKey: true });
+    await flush();
+    expect(commands("board_card_create")).toHaveLength(1);
+
+    press(columnEl("backlog").querySelector("textarea")!, "Escape");
+    expect(columnEl("backlog").querySelector("textarea")).toBeNull();
+  });
+
+  it("disables Delete column while the column holds cards", async () => {
+    await renderBoard();
+    const deleteItem = (columnId: string) => {
+      const menuButton = columnEl(columnId).querySelector<HTMLButtonElement>(
+        'button[aria-label^="Column actions"]',
+      )!;
+      act(() => menuButton.click());
+      const item = [
+        ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+      ].find((el) => el.textContent?.startsWith("Delete"))!;
+      return item;
+    };
+    const blocked = deleteItem("backlog");
+    expect(blocked.disabled).toBe(true);
+    expect(blocked.getAttribute("title")).toBe("Column has 2 cards");
+    press(blocked, "Escape");
+    act(() => document.body.dispatchEvent(new PointerEvent("pointerdown")));
+    await flush();
+
+    const open = deleteItem("review");
+    expect(open.disabled).toBe(false);
+  });
+
+  it("moves a card optimistically and puts it back when the move fails", async () => {
+    await renderBoard();
+    let reject!: (error: unknown) => void;
+    handlers.board_card_move = () =>
+      new Promise((_, fail) => {
+        reject = fail;
+      });
+
+    act(() => kanban.props!.onCardMove("c1", { columnId: "review", index: 0 }));
+    expect(cardIdsIn("backlog")).toEqual(["c2"]);
+    expect(cardIdsIn("review")).toEqual(["c1"]);
+    expect(commands("board_card_move")).toHaveLength(1);
+    expect(commands("board_card_move")[0][1]).toEqual({
+      cardId: "c1",
+      columnId: "review",
+      index: 0,
+      actor: "user",
+    });
+
+    await act(async () => reject("database is locked"));
+    await flush();
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
+    expect(cardIdsIn("review")).toEqual([]);
+    expect(
+      container.ownerDocument.querySelector('[role="alert"]')?.textContent,
+    ).toContain("database is locked");
+  });
+
+  it("moves a column optimistically and calls board_column_move", async () => {
+    await renderBoard();
+    handlers.board_column_move = () => undefined;
+    act(() => kanban.props!.onColumnMove("done", 0));
+    expect(
+      [...container.querySelectorAll("[data-kanban-column]")].map((el) =>
+        el.getAttribute("data-kanban-column"),
+      ),
+    ).toEqual(["done", "backlog", "progress", "review"]);
+    expect(commands("board_column_move")[0][1]).toEqual({
+      columnId: "done",
+      index: 0,
+    });
+  });
+});
+
+describe("BoardView linked work", () => {
+  function linkedFixture(): BoardDetail {
+    const detail = fixture();
+    detail.cards[0] = { ...detail.cards[0], linkKind: "session", linkId: "s1" };
+    detail.cards[1] = {
+      ...detail.cards[1],
+      linkKind: "flow-run",
+      linkId: "run-gone",
+    };
+    return detail;
+  }
+
+  it("shows a linked session's chip and opens it from the card", async () => {
+    handlers.board_get = () => linkedFixture();
+    const target = {
+      kind: "session" as const,
+      id: "s1",
+      label: "Codex · Fix login",
+      status: "running" as const,
+    };
+    const props = await renderBoard({ linkTargets: [target] });
+    const linked = columnEl("backlog").querySelector(
+      "[data-kanban-card='c1']",
+    )!;
+    const chip = linked.querySelector("[data-link-chip]")!;
+    expect(chip.getAttribute("data-link-chip")).toBe("found");
+    expect(chip.textContent).toContain("Codex · Fix login");
+    expect(chip.querySelector('[aria-label="running"]')).not.toBeNull();
+
+    const open = linked.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open linked work"]',
+    )!;
+    act(() => open.click());
+    expect(props.onOpenLinkedWork).toHaveBeenCalledWith(target);
+    // The button doesn't also open the card.
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("marks a link whose work is gone, including Flow runs", async () => {
+    handlers.board_get = () => linkedFixture();
+    await renderBoard();
+    for (const id of ["c1", "c2"]) {
+      const el = columnEl("backlog").querySelector(
+        `[data-kanban-card='${id}']`,
+      )!;
+      const chip = el.querySelector("[data-link-chip]")!;
+      expect(chip.getAttribute("data-link-chip")).toBe("missing");
+      expect(chip.textContent).toBe("Linked work no longer exists");
+      expect(
+        el.querySelector('button[aria-label="Open linked work"]'),
+      ).toBeNull();
+    }
+  });
+
+  it("opens the card detail with its activity timeline", async () => {
+    handlers.board_activity = () => [
+      {
+        id: "a1",
+        boardId: "b1",
+        cardId: "c3",
+        kind: "moved",
+        actor: "system",
+        fromColumn: "Backlog",
+        toColumn: "In Progress",
+        detail: null,
+        createdAt: Date.now() - 2 * 60_000,
+      },
+    ];
+    await renderBoard();
+    const cardEl = columnEl("progress").querySelector<HTMLElement>(
+      "[data-board-card='c3']",
+    )!;
+    act(() => cardEl.click());
+    await flush();
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("Card #3");
+    expect(commands("board_activity")[0][1]).toMatchObject({
+      boardId: "b1",
+      cardId: "c3",
+    });
+    expect(dialog.querySelector("[data-card-activity]")?.textContent).toBe(
+      "Moved from Backlog to In Progress · system · 2m ago",
+    );
+  });
+});
+
+describe("Board sidebar entry", () => {
+  let props: ComponentProps<typeof Sidebar>;
+
+  function Harness() {
+    const enabled = useSyncExternalStore(
+      subscribeBoardEnabled,
+      loadBoardEnabled,
+    );
+    return createElement(Sidebar, {
+      ...props,
+      onOpenBoard: enabled ? props.onOpenBoard : undefined,
+    });
+  }
+
+  const boardEntry = () =>
+    [...container.querySelectorAll('nav[aria-label="Views"] button')].find(
+      (button) => button.textContent?.trim().startsWith("Board"),
+    );
+
+  it("shows the Board entry only while the Board setting is on", async () => {
+    props = {
+      cwd: "/workspace/project",
+      open: true,
+      inset: true,
+      sessions: [],
+      busySessionIds: new Set(),
+      approvalSessionIds: new Set(),
+      status: "idle",
+      pending: false,
+      tab: "sessions",
+      filesSearchOpen: false,
+      onSelectSession: vi.fn(),
+      onOpenFile: vi.fn(),
+      onTabChange: vi.fn(),
+      onFilesSearchOpenChange: vi.fn(),
+      onOpenAutomations: vi.fn(),
+      onOpenBoard: vi.fn(),
+    };
+    await act(async () => root.render(createElement(Harness)));
+    expect(loadBoardEnabled()).toBe(false);
+    expect(boardEntry()).toBeUndefined();
+    // Its neighbour is there, so the list itself rendered.
+    expect(
+      [...container.querySelectorAll('nav[aria-label="Views"] button')].some(
+        (button) => button.textContent?.includes("Automations"),
+      ),
+    ).toBe(true);
+
+    await act(async () => saveBoardEnabled(true));
+    const entry = boardEntry();
+    expect(entry).toBeDefined();
+    act(() => (entry as HTMLButtonElement).click());
+    expect(props.onOpenBoard).toHaveBeenCalledTimes(1);
+
+    await act(async () => saveBoardEnabled(false));
+    expect(boardEntry()).toBeUndefined();
+  });
+});
