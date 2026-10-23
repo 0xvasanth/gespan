@@ -1,0 +1,1282 @@
+crates/rebase-gpui/src/transcript/measurements.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-360
+crates/rebase-gpui/src/conversation/btw.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1110
+crates/rebase-gpui/src/shell/quick_composer.rs
+  s_ccb41beff89445::t_bcdcd8e695c275 58
+  s_ccb41beff89445::t_d5a849b2802d40 1-57,59-144
+crates/rebase-gpui/assets/hugeicons/logout-01.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/session_filters.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-193
+crates/rebase-gpui/assets/chevron-right.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/catalog.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-947
+crates/rebase-gpui/src/conversation/attachment_drop.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-84
+crates/rebase-gpui/src/conversation/submission_tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-303
+crates/rebase-gpui/src/shell/remote_sessions.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-132
+crates/rebase-core/src/pilot/bridge.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-316
+crates/rebase-gpui/build.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-27
+crates/rebase-gpui/src/inbox/ui.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1640,1642-3067
+  s_ccb41beff89445::t_678df1ee4764ab 1641
+crates/rebase-gpui/src/shell/quick_open.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-223
+crates/rebase-gpui/assets/hugeicons/test-tube.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/queue-play.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/actions.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-588
+crates/rebase-core/src/files.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-829
+crates/rebase-gpui/assets/claude.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1-10
+crates/rebase-gpui/assets/hugeicons/list-bullet.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/internet.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/mobile/watch.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-205
+crates/rebase-gpui/assets/hugeicons/response-note.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/conversation/commands.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-223
+crates/rebase-gpui/src/pickers.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1322
+crates/rebase-gpui/src/runtime/handoff.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-129
+crates/rebase-gpui/src/settings/notification_preferences.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1217
+crates/rebase-gpui/src/settings/layout_tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-196
+crates/rebase-gpui/src/shell/app_views.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-496
+crates/rebase-gpui/src/editor_scrollbar.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-83
+crates/rebase-core/src/usage/pi.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-612
+crates/rebase-core/src/inbox/linear.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-695
+crates/rebase-gpui/src/shell/rails.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1122
+scripts/bundle-native-macos.sh
+  s_ccb41beff89445::t_d5a849b2802d40 12-13,15,20,23-24,33-35,41-44,47-48,54,60,62-63,67-68,73
+crates/rebase-gpui/src/markdown.rs
+  s_ccb41beff89445::t_678df1ee4764ab 69
+  s_ccb41beff89445::t_d5a849b2802d40 1-68,70-1047
+crates/rebase-gpui/assets/hugeicons/check.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/pilots/host.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-449
+crates/rebase-core/src/store/shared/blocks.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-806
+crates/rebase-gpui/src/conversation/remote.rs
+  s_ccb41beff89445::t_d7924e146c2f80 259
+  s_ccb41beff89445::t_d5a849b2802d40 1-258,260-409
+crates/rebase-gpui/src/transcript/history.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-502
+crates/rebase-core/src/visual.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-259
+crates/rebase-gpui/src/notifications/github_activity.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-478
+crates/rebase-core/src/pilot.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-312,315-378
+  s_ccb41beff89445::t_d7924e146c2f80 313-314
+crates/rebase-gpui/src/pilots/cards.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-423,429-431,435-554
+  s_ccb41beff89445::t_d7924e146c2f80 424-428,432-434
+crates/rebase-core/src/remote/remote_bootstrap.sh
+  s_ccb41beff89445::t_d5a849b2802d40 1-69
+crates/rebase-gpui/src/changes.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-2035
+crates/rebase-gpui/src/conversation/pilot.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1181
+crates/rebase-core/src/accounts/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-250
+crates/rebase-gpui/src/markdown_model.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-535
+crates/rebase-gpui/src/notifications/file_error.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-45
+crates/rebase-core/src/agent.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-251
+crates/rebase-core/src/follow_up.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-278
+crates/rebase-gpui/src/pilots/changes.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-59,62-858
+  s_ccb41beff89445::t_d7924e146c2f80 60-61
+crates/rebase-gpui/src/notifications/app_update.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-367
+crates/rebase-gpui/src/project_settings.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1081
+crates/rebase-core/src/scm.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1379
+crates/rebase-gpui/src/shell/search.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-474
+crates/rebase-gpui/src/transcript/outline.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-548
+crates/rebase-gpui/src/review.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-2328
+crates/rebase-core/src/pilot/cards.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-126
+crates/rebase-gpui/assets/hugeicons/git-branch-hi.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/tab_motion.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-253
+crates/rebase-gpui/assets/folder.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/input/code.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-2439
+crates/rebase-gpui/assets/hugeicons/wand.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/native-editor.js
+  s_ccb41beff89445::t_678df1ee4764ab 9-10,12,24,29,33,37
+  s_ccb41beff89445::t_d5a849b2802d40 1-8,11,13-23,25-28,30-32,34-36,38-43
+crates/rebase-gpui/src/composer_completion.rs
+  s_ccb41beff89445::t_d7924e146c2f80 574
+  s_ccb41beff89445::t_d5a849b2802d40 1-573,575-1175
+crates/rebase-gpui/src/notifications/surface.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-50
+crates/rebase-gpui/assets/hugeicons/external-link.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/pilots/filters.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-142
+crates/rebase-gpui/src/resource_pressure.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-857
+crates/rebase-gpui/assets/hugeicons/inbox-hi.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/omp.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1-10
+docs/native/preview-release-notes.md
+  s_ccb41beff89445::t_d5a849b2802d40 1,3,5
+crates/rebase-gpui/src/conversation/accounts.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-855
+crates/rebase-gpui/assets/hugeicons/chatting.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/message-square.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/unfold-vertical.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/resources.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-513
+crates/rebase-gpui/assets/hugeicons/refresh-cw.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/session_title.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-221
+crates/rebase-gpui/src/main.rs
+  s_ccb41beff89445::t_d7924e146c2f80 52,245,262
+  s_ccb41beff89445::t_d5a849b2802d40 1-51,53-244,246-261,263-586
+crates/rebase-gpui/src/runtime/follow_up_tests.rs
+  s_ccb41beff89445::t_678df1ee4764ab 43,45
+  s_ccb41beff89445::t_d5a849b2802d40 1-42,44,46-146
+crates/rebase-gpui/src/settings/pages/mcp.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-419
+crates/rebase-gpui/src/transcript/links.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-224
+crates/rebase-gpui/src/pilots/search.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-21
+crates/rebase-gpui/src/settings/palettes.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-213
+crates/rebase-gpui/src/notifications/harness_updates.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-220,222-305
+  s_ccb41beff89445::t_678df1ee4764ab 221
+crates/rebase-gpui/assets/fx.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1-3
+crates/rebase-core/src/tool/tasks.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-848
+crates/rebase-gpui/assets/hugeicons/keyboard.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/pilots/mod.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-35,37-904,907-1385,1400-1401,1404-1464,1472-1621
+  s_ccb41beff89445::t_d7924e146c2f80 36,905-906,1386-1399,1402-1403,1465-1471
+crates/rebase-core/src/provider/attachments.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-82
+NOTICE
+  s_ccb41beff89445::t_1a33aad51fc305 10,16,22,32,41,45
+crates/rebase-gpui/src/automations/trigger_menu.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-186
+crates/rebase-gpui/src/transcript/tools.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-252,256-833
+  s_ccb41beff89445::t_d7924e146c2f80 253-255
+src/test/upstreamLinks.test.ts
+  s_ccb41beff89445::t_b9b8bf5018b2b2 25
+  s_ccb41beff89445::t_34b85a52967c17 22-24,26-27
+crates/rebase-core/src/provider/tasks.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1015
+crates/rebase-gpui/assets/hugeicons/palette.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/usage_footer/resets.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-392
+crates/rebase-core/src/provider/discovery.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-91
+crates/rebase-gpui/assets/hugeicons/square-lock.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/notifications/approvals.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-311
+crates/rebase-core/src/provider/acp.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1671
+crates/rebase-gpui/src/search.rs
+  s_ccb41beff89445::t_678df1ee4764ab 556
+  s_ccb41beff89445::t_d5a849b2802d40 1-555,557-907
+.gitattributes
+  s_ccb41beff89445::t_1a33aad51fc305 5
+crates/rebase-gpui/src/dev_reload.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-21
+crates/rebase-gpui/src/shell/remote_projects.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-602
+crates/rebase-gpui/src/accounts.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-883
+crates/rebase-gpui/assets/dark-plus.LICENSE
+  s_ccb41beff89445::t_d5a849b2802d40 1-22
+crates/rebase-gpui/src/notifications/errors.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-52
+crates/rebase-core/src/provider/parked.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-635
+crates/rebase-gpui/assets/note.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/conversation/follow_up.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-964
+crates/rebase-gpui/src/notifications/layout_notice.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-60
+crates/rebase-gpui/src/runtime/persistence.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-392
+crates/rebase-gpui/src/project_search.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-422,424-433,435-620
+  s_ccb41beff89445::t_678df1ee4764ab 423,434
+crates/rebase-gpui/src/settings/pages/providers.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-306
+crates/rebase-gpui/src/transcript/drafts.rs
+  s_ccb41beff89445::t_d7924e146c2f80 282
+  s_ccb41beff89445::t_d5a849b2802d40 1-281,283-454
+crates/rebase-gpui/assets/hugeicons/cursor-magic.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/quick_composer/hotkey.rs
+  s_ccb41beff89445::t_c7f0712ed7615c 76
+  s_ccb41beff89445::t_d5a849b2802d40 1-75,77-175
+crates/rebase-core/src/files/name.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-153
+crates/rebase-gpui/assets/hugeicons/delete-02.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/inbox.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/inbox/gitlab.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1089
+crates/rebase-gpui/src/accounts/resets.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-367
+crates/rebase-gpui/src/shell/shortcuts/macos.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-81
+crates/rebase-gpui/src/terminal.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1478
+scripts/native-editor/format.ts
+  s_ccb41beff89445::t_d5a849b2802d40 9
+crates/rebase-core/src/provider/opencode/client.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-693
+crates/rebase-gpui/src/fixtures.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-126
+crates/rebase-core/src/provider/compaction.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-46
+crates/rebase-core/src/tool/presentation.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-894
+crates/rebase-gpui/src/file_editor/media.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-705
+crates/rebase-gpui/assets/grok.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1-4
+crates/rebase-gpui/assets/codex.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1-11
+crates/rebase-gpui/assets/hugeicons/hammer.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/process.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-222
+crates/rebase-gpui/assets/pi.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1-4
+crates/rebase-gpui/src/settings/keymap.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-94
+Cargo.toml
+  s_ccb41beff89445::t_1a33aad51fc305 4
+crates/rebase-gpui/assets/hugeicons/fold-vertical.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/settings/data.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-115
+crates/rebase-gpui/assets/hugeicons/panel-left.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/folder-open.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/explorer.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1744
+crates/rebase-gpui/src/settings/widgets.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-816
+crates/rebase-core/src/context.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-57
+crates/rebase-gpui/assets/hugeicons/add-01.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/queue-steer.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/input/command.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-179
+crates/rebase-gpui/src/settings/preferences.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-222
+crates/rebase-gpui/src/file_icons.rs
+  s_ccb41beff89445::t_678df1ee4764ab 52
+  s_ccb41beff89445::t_d5a849b2802d40 1-51,53-85
+crates/rebase-gpui/src/session_mark.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-154
+crates/rebase-gpui/assets/hugeicons/response-metrics.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/automations.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1246,1248-1678
+  s_ccb41beff89445::t_34b85a52967c17 1247
+crates/rebase-gpui/assets/hugeicons/shield-alert.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+src/test/noMonoReferences.test.ts
+  s_ccb41beff89445::t_b9b8bf5018b2b2 63
+  s_ccb41beff89445::t_34b85a52967c17 62
+  s_ccb41beff89445::t_f74362303a9335 70
+crates/rebase-gpui/src/pilots/memory_ui.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-489
+crates/rebase-core/src/provider/lifecycle.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-273
+crates/rebase-gpui/assets/plus.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/mcp.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1179,1181-1204,1206-1430
+  s_ccb41beff89445::t_d7924e146c2f80 1180,1205
+crates/rebase-gpui/src/pulse.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-306
+crates/rebase-gpui/assets/hugeicons/image-add.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/regex.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/settings/pages/keybindings.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-664
+scripts/package-native.mjs
+  s_ccb41beff89445::t_d5a849b2802d40 49-51,56,61,63-64,72-73,78,80,86-87,106,131,136,141,184,187,192,194,198,219,225,227,230-231,234-235,239,247,261,264,288,295,331
+crates/rebase-core/src/provider/pi.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-840
+crates/rebase-core/src/external_editor.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-261
+crates/rebase-gpui/src/sound.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-136
+crates/rebase-core/src/remote/attachments.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-214
+crates/rebase-gpui/assets/sidebar-right.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/notifications/linked_activity.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-369
+crates/rebase-gpui/src/pilots/notifications.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-65
+crates/rebase-gpui/assets/filter.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/particle_text/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-284
+crates/rebase-gpui/assets/hugeicons/star-filled.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/right_panel.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-600
+crates/rebase-gpui/src/pilots/panels.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1237,1240-2069
+  s_ccb41beff89445::t_d7924e146c2f80 1238-1239
+scripts/native-dependencies.test.mjs
+  s_ccb41beff89445::t_d5a849b2802d40 9,14
+crates/rebase-gpui/src/workspace.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1231
+crates/rebase-gpui/src/pilots/panel_stack.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-268
+crates/rebase-gpui/src/transcript/visuals.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-159
+crates/rebase-gpui/src/settings/pages/archive.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-172
+crates/rebase-gpui/src/conversation/remote_plans.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-278
+crates/rebase-core/src/app_update/fixtures/public-key.txt
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/more-horizontal.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/settings.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+docs/native/visuals.md
+  s_ccb41beff89445::t_d5a849b2802d40 3,26-28,31,104
+crates/rebase-gpui/assets/hugeicons/globe.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/accounts/identity.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-223
+crates/rebase-gpui/src/markdown/search.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-170
+crates/rebase-core/src/files/index.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-84,86-453
+  s_ccb41beff89445::t_678df1ee4764ab 85
+crates/rebase-core/src/response.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-290
+crates/rebase-core/src/session_groups.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-476
+crates/rebase-core/src/desktop_preferences/workspace_snapshot.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-337
+crates/rebase-core/src/checkpoint.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1166
+crates/rebase-gpui/assets/hugeicons/response-activity.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/arcade.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-449
+crates/rebase-gpui/src/pilots/scheduler.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1529
+crates/rebase-gpui/src/modal.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-389
+crates/rebase-gpui/assets/hugeicons/package.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/x.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/files/paths.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-331
+crates/rebase-core/src/provider.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-2200
+crates/rebase-gpui/assets/hugeicons/case-sensitive.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/runtime/visual_tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-55,57,59-154
+  s_ccb41beff89445::t_678df1ee4764ab 56,58
+crates/rebase-core/src/provider/devin.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-772,774-780
+  s_ccb41beff89445::t_d7924e146c2f80 773
+crates/rebase-gpui/assets/hugeicons/trash.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/remote.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-993
+crates/rebase-core/src/store/remote.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-801
+crates/rebase-gpui/assets/hugeicons/rotate-ccw.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/zap.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/automations/gallery.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-228
+crates/rebase-gpui/src/session_review.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-470
+crates/rebase-core/src/store/shared/edit.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-313
+crates/rebase-core/Cargo.toml
+  s_ccb41beff89445::t_d5a849b2802d40 1-62
+crates/rebase-core/src/remote/protocol.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-323
+crates/rebase-gpui/src/settings/pages/worktrees.rs
+  s_ccb41beff89445::t_d7924e146c2f80 75
+  s_ccb41beff89445::t_d5a849b2802d40 1-74,76-203
+crates/rebase-core/src/transcript.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-151
+crates/rebase-gpui/src/popover.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-2191
+crates/rebase-gpui/src/editor_analysis.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-675
+crates/rebase-gpui/src/settings/pages/mobile.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1345,1349-1438
+  s_ccb41beff89445::t_58aaac5c60c6fa 1346-1348
+crates/rebase-core/src/catalog/claude.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-231
+crates/rebase-gpui/src/shell/project_removal.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-187
+crates/rebase-gpui/src/runtime.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1038
+crates/rebase-gpui/src/shell/image_lightbox_tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-98
+crates/rebase-gpui/assets/hugeicons/eye.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/app_commands.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-368
+crates/rebase-core/src/time.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-56
+crates/rebase-gpui/assets/material/LICENSE
+  s_ccb41beff89445::t_d5a849b2802d40 1-8
+crates/rebase-gpui/src/pilots/html.rs
+  s_ccb41beff89445::t_678df1ee4764ab 130
+  s_ccb41beff89445::t_d5a849b2802d40 1-129,131-316
+crates/rebase-gpui/assets/hugeicons/smart-phone.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/mobile/host.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-769,771-880
+  s_ccb41beff89445::t_d7924e146c2f80 770
+crates/rebase-core/src/accounts/login.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-195
+crates/rebase-gpui/src/file_editor/selection.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-298
+scripts/build-native.mjs
+  s_ccb41beff89445::t_d5a849b2802d40 27,29-30,32,37,39
+crates/rebase-gpui/src/diff_view.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1951
+crates/rebase-core/src/pilot/api.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-98
+crates/rebase-core/src/provider/follow_up.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-342
+crates/rebase-gpui/src/shell/session_groups.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-2496
+crates/rebase-gpui/src/tab_label.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-157
+crates/rebase-gpui/assets/inbox-gitlab.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+scripts/package-native.test.mjs
+  s_ccb41beff89445::t_d5a849b2802d40 28,31,100,111,129
+crates/rebase-gpui/assets/chevron-left.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/mobile/transcript.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1050
+crates/rebase-gpui/src/conversation/composer_features.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-619
+crates/rebase-gpui/src/shell/pilots.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-109
+crates/rebase-gpui/src/editor_syntax.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1155
+crates/rebase-gpui/src/runtime/remote/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-798
+crates/rebase-core/src/desktop_preferences/workspace_preferences.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-828
+crates/rebase-gpui/assets/hugeicons/arrow-left.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/rocket.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/shortcuts.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-199
+docs/native/README.md
+  s_ccb41beff89445::t_d5a849b2802d40 1,3,36,46,51,55,58,61,66,70-72,74,76,79,98,118
+crates/rebase-core/src/accounts/transfer/codex.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-184
+crates/rebase-core/src/notes.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-285
+crates/rebase-gpui/assets/hugeicons/panel-bottom.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/settings-arcade.js
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/session_folders.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-402
+crates/rebase-gpui/src/transcript.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-332,336-728,731-1589,1591-2197,2199-6547
+  s_ccb41beff89445::t_d7924e146c2f80 333-335,729-730,1590,2198
+crates/rebase-gpui/src/conversation/title.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-174
+crates/rebase-gpui/src/pilots/color_picker.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-374
+crates/rebase-gpui/assets/hugeicons/login-01.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/terminal_dock.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-971
+crates/rebase-core/src/desktop_preferences/session_defaults.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-171
+crates/rebase-core/src/visual/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-290
+crates/rebase-gpui/assets/hugeicons/file.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/reveal.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-366
+crates/rebase-core/src/pilot/desktop.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-347
+crates/rebase-gpui/src/theme.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-299,301-314,316-499
+  s_ccb41beff89445::t_678df1ee4764ab 300,315
+scripts/native-installer.nsi
+  s_ccb41beff89445::t_d5a849b2802d40 4,6-7,11-12,32,35,38,41-42,44,49,54-60,64,66-67,73-74,79,83-85,90-91
+crates/rebase-gpui/assets/hugeicons/pilot-attach.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/memory_log.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-61
+crates/rebase-gpui/src/notifications/mod.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-14
+crates/rebase-gpui/assets/hugeicons/queue-list.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/sidebar_list.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1309
+scripts/dev-native.test.mjs
+  s_ccb41beff89445::t_d5a849b2802d40 12-13,15-16,27,47,118,121,158-159,167,191
+crates/rebase-gpui/src/shell/title_tabs.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-35,42-212,219-896
+  s_ccb41beff89445::t_d7924e146c2f80 36-41,213-218
+crates/rebase-gpui/Cargo.toml
+  s_ccb41beff89445::t_d5a849b2802d40 1-105
+crates/rebase-gpui/src/file_editor/chrome.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-219
+crates/rebase-core/src/inbox/avatar.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-42
+crates/rebase-gpui/src/quick_composer.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-469
+crates/rebase-gpui/src/pane_layout.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-808
+docs/building.md
+  s_ccb41beff89445::t_1a33aad51fc305 84,94,104,107
+crates/rebase-gpui/assets/hugeicons/square.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/store/edit.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-397
+crates/rebase-gpui/src/settings/pages/inbox.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-120
+crates/rebase-gpui/src/shell/project_settings.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-329
+crates/rebase-gpui/src/settings/pages/mod.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-47
+crates/rebase-gpui/assets/hugeicons/whole-word.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/remote/ssh.rs
+  s_ccb41beff89445::t_d7924e146c2f80 720,809
+  s_ccb41beff89445::t_f2f2269c339d8c 401
+  s_ccb41beff89445::t_d5a849b2802d40 1-400,402-719,721-808,810-906
+crates/rebase-core/src/lib.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-18,20-47
+  s_ccb41beff89445::t_d7924e146c2f80 19
+crates/rebase-core/src/mobile/router.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-208
+crates/rebase-gpui/assets/chevrons-up-down.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/git-pull-request-draft.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/play.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/composer.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-438
+crates/rebase-gpui/src/file_editor/search.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-223
+crates/rebase-gpui/src/settings/model.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-580
+crates/rebase-core/src/store/shared_schema.sql
+  s_ccb41beff89445::t_d5a849b2802d40 1-27
+crates/rebase-gpui/src/settings/mod.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1033
+crates/rebase-core/src/session_filters.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-184
+crates/rebase-core/src/usage.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-630
+crates/rebase-gpui/assets/hugeicons/chart-square.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/circle-dashed-hi.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/minus-sign.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/runtime/remote.rs
+  s_ccb41beff89445::t_d7924e146c2f80 546
+  s_ccb41beff89445::t_d5a849b2802d40 1-545,547-792
+crates/rebase-gpui/src/transcript/live_phase.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-467
+.gitignore
+  s_ccb41beff89445::t_1a33aad51fc305 60
+crates/rebase-core/src/usage/devin.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-401
+crates/rebase-gpui/assets/hugeicons/pilot-send.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/store/shared/accounts.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-117
+crates/rebase-gpui/src/assets.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-223
+crates/rebase-gpui/src/accounts/ui.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1109
+crates/rebase-gpui/src/activity.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-393
+package.json
+  s_ccb41beff89445::t_1a33aad51fc305 33-34
+crates/rebase-gpui/assets/hugeicons/pin.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/provider/limits.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-160
+crates/rebase-gpui/assets/hugeicons/star.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/sidebar.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/usage/opencode.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-282
+crates/rebase-core/src/store/shared.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1761
+crates/rebase-gpui/assets/hugeicons/folder-01.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/pilot/files.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-450
+crates/rebase-gpui/src/notes/preview.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-160
+crates/rebase-gpui/src/conversation/background_tasks.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-341
+crates/rebase-core/src/pilot/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-162
+crates/rebase-gpui/src/automations.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1172
+crates/rebase-gpui/src/notifications/delivery.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-146
+crates/rebase-gpui/src/settings/pages/connections.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1057
+crates/rebase-gpui/assets/dark-plus.json
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/native-editor.LICENSE.txt
+  s_ccb41beff89445::t_d5a849b2802d40 1-9100
+crates/rebase-core/src/app_update/fixtures/feed.json
+  s_ccb41beff89445::t_d5a849b2802d40 1-4
+crates/rebase-gpui/src/shell/project_rail.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-703,711-2155
+  s_ccb41beff89445::t_d7924e146c2f80 704-710
+crates/rebase-gpui/src/shell/session_preview.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-115
+crates/rebase-gpui/assets/hugeicons/dashboard.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/search/project.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-486
+crates/rebase-gpui/assets/hugeicons/arrow-down-circle.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/bug.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/provider/opencode/events.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-921
+crates/rebase-gpui/assets/hugeicons/response-handoff.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/bell-off.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/classic_surface_tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-173,176-192,197-222,227-381,386-961
+  s_ccb41beff89445::t_d7924e146c2f80 174-175,193-196,223-226,382-385
+crates/rebase-gpui/src/settings/pages/chat.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-162
+crates/rebase-gpui/src/worktree_switcher.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-769
+crates/rebase-core/src/accounts.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-327
+crates/rebase-core/src/desktop_preferences/webview.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-603
+crates/rebase-core/examples/provider_smoke.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-190
+crates/rebase-core/src/inbox.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1088
+crates/rebase-gpui/assets/hugeicons/panel-right.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/visuals/source.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-234
+crates/rebase-gpui/assets/hugeicons/git-compare.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/file-add.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/undo.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/transcript/attachments.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-85
+crates/rebase-gpui/src/input.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-2188
+docs/native/verification.md
+  s_ccb41beff89445::t_d5a849b2802d40 23,68,86-87,94,104-105
+crates/rebase-gpui/src/file_editor.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1581
+crates/rebase-core/src/app_update/install.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-309
+crates/rebase-gpui/src/conversation/remote_tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-437
+crates/rebase-gpui/assets/devin.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1-3
+crates/rebase-core/src/app_update/mod.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-394
+crates/rebase-gpui/assets/hugeicons/chevron-down-2.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/sliders.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/transcript/remote_plans.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-129
+crates/rebase-core/src/harness_updates.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-130
+crates/rebase-gpui/src/pilots/avatar.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-195
+scripts/native-settings/build-arcade.mjs
+  s_ccb41beff89445::t_d5a849b2802d40 5,40
+crates/rebase-core/src/files/remote.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-317
+crates/rebase-core/src/search.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-379
+crates/rebase-gpui/assets/hugeicons/git-merge.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/composer_runner.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-242
+crates/rebase-gpui/src/conversation/response_menu.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-590
+.github/workflows/native.yml
+  s_ccb41beff89445::t_d5a849b2802d40 1,9-10,49-50,53,60-64
+  s_ccb41beff89445::t_38c7fc213156c0 5
+CONTRIBUTING.md
+  s_ccb41beff89445::t_1a33aad51fc305 42
+crates/rebase-gpui/assets/hugeicons/panel-top.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/store/notes.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-810
+crates/rebase-core/src/worktree_management.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-121
+crates/rebase-gpui/src/reflow_motion.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-217
+crates/rebase-gpui/src/shell.rs
+  s_ccb41beff89445::t_d7924e146c2f80 20,1047-1054,3717,8845,9639-9641,10699,11090
+  s_ccb41beff89445::t_d5a849b2802d40 1-19,21-1046,1055-3716,3718-8844,8846-9638,9642-10698,10700-11089,11091-12035
+crates/rebase-gpui/src/mobile/catalog.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-293
+crates/rebase-core/src/remote/windows-acl.ps1
+  s_ccb41beff89445::t_d5a849b2802d40 1-18
+crates/rebase-core/src/mobile/catalog.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-119
+crates/rebase-gpui/assets/hugeicons/gauge.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/ghost.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/classic_surfaces.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-120,124-149
+  s_ccb41beff89445::t_d7924e146c2f80 121-123
+crates/rebase-gpui/src/notifications/updater.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-404
+crates/rebase-gpui/src/transcript/attachments.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-314
+crates/rebase-gpui/assets/inbox-github.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/sparkles.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/tool-branch.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/mobile/mod.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-5
+crates/rebase-core/src/store/session_metadata.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-191
+crates/rebase-gpui/assets/hugeicons/message-multiple.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+scripts/dev-native.mjs
+  s_ccb41beff89445::t_d5a849b2802d40 73,80-81,85,93,96,98,107,114,181
+crates/rebase-gpui/assets/cursor.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1-3
+crates/rebase-gpui/src/pilots/floating.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-60,68-79,82-95,98-121,129-281
+  s_ccb41beff89445::t_d7924e146c2f80 61-67,80-81,96-97,122-128
+crates/rebase-gpui/assets/hugeicons/account-user.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/app_update/fixtures/package.txt
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/fonts.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-2
+crates/rebase-gpui/assets/hugeicons/queue-pause.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/inbox-linear.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/orchestration.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-190
+crates/rebase-core/src/visual_bridge.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-902
+crates/rebase-core/src/provider/opencode.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-751
+crates/rebase-gpui/src/shell/automation_runs.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-649
+crates/rebase-core/src/scm/text.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-321
+crates/rebase-gpui/assets/hugeicons/share.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/store/session_preview.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-89
+crates/rebase-core/src/visual/sdk.js
+  s_ccb41beff89445::t_d5a849b2802d40 1-181
+crates/rebase-gpui/src/conversation/mobile.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-151
+crates/rebase-gpui/assets/opencode.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1-3
+crates/rebase-gpui/src/git_cache.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-125
+crates/rebase-gpui/assets/open-folder.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/accounts/signin.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-273
+crates/rebase-core/src/store/shared/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1040
+crates/rebase-gpui/assets/hugeicons/check-circle-2.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/sidebar_peek.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-327
+crates/rebase-gpui/assets/hermes.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/ai-idea.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/store.rs
+  s_ccb41beff89445::t_d7924e146c2f80 4-5
+  s_ccb41beff89445::t_d5a849b2802d40 1-3,6-1469
+crates/rebase-core/src/inbox/azure_devops.rs
+  s_ccb41beff89445::t_d7924e146c2f80 1154-1155
+  s_ccb41beff89445::t_d5a849b2802d40 1-1153,1156-2043
+crates/rebase-gpui/assets/material-icons.json
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/store/side_threads.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-298
+crates/rebase-core/src/usage/claude.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-195
+crates/rebase-core/src/pilot/work.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-337
+crates/rebase-core/src/scm/review.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-453
+crates/rebase-gpui/src/conversation.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-13,15-582,584-829,832-4486
+  s_ccb41beff89445::t_d7924e146c2f80 14,583,830-831
+crates/rebase-gpui/src/traffic_lights.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-84
+crates/rebase-gpui/src/transcript/dates.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-331
+crates/rebase-core/src/inbox/jira.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-916
+crates/rebase-gpui/src/shell/idle_agents.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-27
+crates/rebase-core/src/store/rebase_import.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-600
+crates/rebase-gpui/src/conversation/approvals.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-300
+crates/rebase-core/src/diff.rs
+  s_ccb41beff89445::t_678df1ee4764ab 182
+  s_ccb41beff89445::t_d5a849b2802d40 1-181,183-671
+crates/rebase-core/src/desktop_preferences.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-742
+crates/rebase-gpui/assets/hugeicons/chevron-up.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/pilots/overview.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-180
+crates/rebase-gpui/src/project_background.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-595
+crates/rebase-gpui/src/settings/pages/general.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-235
+crates/rebase-gpui/src/settings/pages/skills.rs
+  s_ccb41beff89445::t_d7924e146c2f80 20
+  s_ccb41beff89445::t_d5a849b2802d40 1-19,21-741
+crates/rebase-core/src/tool.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-100
+crates/rebase-core/src/provider/questions.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-429
+crates/rebase-gpui/src/settings/pages/appearance.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-627
+crates/rebase-core/src/provider/rewind.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-292
+crates/rebase-gpui/assets/inbox-gitlab-color.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/accounts/desktop.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-199
+crates/rebase-core/src/app_update/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-113
+crates/rebase-core/src/provider/commands.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-353
+crates/rebase-gpui/assets/hugeicons/check-circle.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/pilots/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1159,1165-1478
+  s_ccb41beff89445::t_d7924e146c2f80 1160-1164
+crates/rebase-gpui/src/shell/picker_preferences.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-29
+crates/rebase-gpui/assets/native-format.js
+  s_ccb41beff89445::t_d5a849b2802d40 1-262
+crates/rebase-gpui/src/shell/accounts.rs
+  s_ccb41beff89445::t_d7924e146c2f80 245
+  s_ccb41beff89445::t_d5a849b2802d40 1-244,246-357
+crates/rebase-core/src/mobile.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-10
+crates/rebase-gpui/src/shell/worktrees.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-454
+crates/rebase-gpui/assets/hugeicons/git-branch.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/circle-x.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/file_editor/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-5,8-147
+  s_ccb41beff89445::t_d7924e146c2f80 6-7
+crates/rebase-gpui/src/inbox/diff.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-116
+crates/rebase-gpui/assets/hugeicons/folder-tree.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/checkpoint/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-788
+crates/rebase-gpui/src/shell/live_agents.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-364
+docs/native/parity.md
+  s_ccb41beff89445::t_d5a849b2802d40 44
+crates/rebase-gpui/src/notifications/reminders.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-341
+crates/rebase-gpui/src/visuals.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1512
+crates/rebase-core/src/store/pilots.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-331
+crates/rebase-gpui/assets/hugeicons/file-script.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/questions.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-903
+crates/rebase-gpui/src/visuals/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-459
+crates/rebase-gpui/src/usage_footer.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-283,286-1055
+  s_ccb41beff89445::t_d7924e146c2f80 284-285
+crates/rebase-gpui/src/inbox/document.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-725
+crates/rebase-core/src/inbox/github.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1351
+crates/rebase-gpui/assets/close.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/response-opinion.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/settings/management.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-567,569-916
+  s_ccb41beff89445::t_d7924e146c2f80 568
+crates/rebase-gpui/assets/hugeicons/chevron-down-hi.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/transcript/tasks.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1004
+crates/rebase-gpui/assets/hugeicons/loader-03.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/circle-dot.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/history.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-770
+crates/rebase-gpui/src/project_tabs.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-205
+crates/rebase-gpui/src/pilots/status.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-106
+src/test/sharedContracts.test.ts
+  s_ccb41beff89445::t_2ff89fe9ef7b42 20
+crates/rebase-gpui/src/quick_open.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-301
+crates/rebase-gpui/assets/hugeicons/response-copy.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+.github/workflows/native-release.yml
+  s_ccb41beff89445::t_d5a849b2802d40 55,65-67,113,115,124,174-179,222,226-227,229,236,245
+crates/rebase-gpui/src/image_lightbox.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-698
+scripts/bundle-native-macos.test.mjs
+  s_ccb41beff89445::t_d5a849b2802d40 14,29,31,36,48,50,52-54
+crates/rebase-gpui/assets/hugeicons/pipette.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/inbox/avatar.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-86
+crates/rebase-gpui/src/file_editor/diff.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-168
+crates/rebase-gpui/src/git_picker.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-509
+docs/native/migration.md
+  s_ccb41beff89445::t_d5a849b2802d40 11-13,19
+crates/rebase-core/src/project_appearance.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-603
+crates/rebase-gpui/src/metal_tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-655
+crates/rebase-gpui/src/accounts/masked.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-73
+crates/rebase-gpui/src/composer_motion.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-182
+crates/rebase-core/src/accounts/transfer.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-295
+crates/rebase-gpui/src/context_meter.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-60
+crates/rebase-gpui/src/settings/skill_document.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-256
+crates/rebase-gpui/assets/hugeicons/terminal.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/remote/remote_bootstrap.ps1
+  s_ccb41beff89445::t_d5a849b2802d40 1-111
+crates/rebase-gpui/src/shell/classic_sidebar.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1138
+crates/rebase-gpui/src/notes.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1172
+crates/rebase-gpui/assets/hugeicons/git-pull-request.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/file_panes.rs
+  s_ccb41beff89445::t_d7924e146c2f80 244,450-451
+  s_ccb41beff89445::t_d5a849b2802d40 1-243,245-449,452-935
+crates/rebase-gpui/src/file_editor/video.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-167
+crates/rebase-gpui/src/inbox.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-886
+crates/rebase-gpui/assets/hugeicons/comment-add.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/archive.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/editor-palettes.json
+  s_ccb41beff89445::t_d5a849b2802d40 1-310
+crates/rebase-gpui/src/conversation/history.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-352
+crates/rebase-core/src/git.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-447
+crates/rebase-gpui/src/response_actions.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-74
+scripts/native-editor/index.ts
+  s_ccb41beff89445::t_d5a849b2802d40 38,66,94,104,117
+crates/rebase-core/src/provider/kind.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-125
+crates/rebase-gpui/assets/inbox-azuredevops.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/accounts/processes.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-65
+crates/rebase-core/src/provider/text_tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-79
+crates/rebase-gpui/assets/hugeicons/clock.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/git-branch-2.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/conversation/composer_shelf.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-126
+crates/rebase-gpui/src/settings/pages/pilots.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-100
+crates/rebase-gpui/src/git_graph.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-573
+scripts/native-editor/package.json
+  s_ccb41beff89445::t_d5a849b2802d40 2
+crates/rebase-gpui/assets/hugeicons/alert-circle.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/input/spelling.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-18
+crates/rebase-gpui/src/transcript/phases.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-217
+crates/rebase-gpui/src/shell/orchestration.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-450
+crates/rebase-gpui/assets/hugeicons/pin-off.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/app-window.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/examples/verify_native_update.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-67
+crates/rebase-gpui/src/notifications/platform_macos.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-234
+crates/rebase-gpui/assets/hugeicons/check-hi.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/pilot/memory.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-323
+crates/rebase-gpui/src/pilots/files.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-279
+crates/rebase-core/src/scm/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1034
+crates/rebase-gpui/src/runtime/visual_discovery.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-215
+crates/rebase-core/src/visual/model.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-617
+crates/rebase-gpui/assets/hugeicons/check-2.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/pencil-edit.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/sticky-note.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/store/remote_legacy.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-597
+crates/rebase-gpui/assets/hugeicons/git-branch-dot.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/folder-add.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/conversation/edit_last_turn.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-326,328-483
+  s_ccb41beff89445::t_d7924e146c2f80 327
+crates/rebase-gpui/src/transcript/follow_tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-509,511-2018
+  s_ccb41beff89445::t_d7924e146c2f80 510
+scripts/native-release.mjs
+  s_ccb41beff89445::t_d5a849b2802d40 60
+crates/rebase-gpui/assets/hugeicons/bot.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/git-pull-request-closed.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/inbox-jira.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/notifications/platform.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-57
+crates/rebase-gpui/src/shell/session_loading.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-367
+scripts/native-editor/build.mjs
+  s_ccb41beff89445::t_d5a849b2802d40 9,36,39,42,44,48
+crates/rebase-core/src/search/tests.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-210
+crates/rebase-gpui/assets/hugeicons/file-diff.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-core/src/pilot/habits.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-295
+crates/rebase-gpui/src/automations/editor.rs
+  s_ccb41beff89445::t_d7924e146c2f80 1215
+  s_ccb41beff89445::t_d5a849b2802d40 1-1214,1216-1335
+crates/rebase-gpui/src/shell/notifications.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1395
+crates/rebase-gpui/src/fs_watch.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-129
+crates/rebase-core/tests/shared_contracts.rs
+  s_ccb41beff89445::t_d7924e146c2f80 208-295
+  s_ccb41beff89445::t_2ff89fe9ef7b42 1-207
+crates/rebase-gpui/src/mobile/project.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1051
+crates/rebase-core/src/files/document.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-330,332-479
+  s_ccb41beff89445::t_d7924e146c2f80 331
+crates/rebase-core/src/scm/shell.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-367
+scripts/test-remote-ssh.py
+  s_ccb41beff89445::t_78b7aadc8216ec 101,109
+  s_ccb41beff89445::t_d5a849b2802d40 42,48-50
+crates/rebase-core/src/inbox/media.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-340
+crates/rebase-core/src/store/managed_sessions.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-73
+crates/rebase-gpui/src/visuals/scene.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-416
+crates/rebase-gpui/assets/hugeicons.LICENSE
+  s_ccb41beff89445::t_d5a849b2802d40 1-21
+crates/rebase-gpui/src/pilots/sprites.json
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/chevron-down.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/pencil-edit-02.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/git_status.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-334
+crates/rebase-core/src/skills.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1306
+crates/rebase-gpui/src/transcript/selection.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-704
+crates/rebase-gpui/assets/search.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/assets/hugeicons/loader.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/pane_motion.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-200
+crates/rebase-gpui/assets/hugeicons/pilot-arrow-up.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/pilots/work.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-133
+crates/rebase-gpui/assets/hugeicons/smile.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/shell/mobile_host.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-310,314-873,878-1057,1063-1395,1400-1860
+  s_ccb41beff89445::t_d7924e146c2f80 311-313,874-877,1058-1062,1396-1399
+crates/rebase-gpui/src/transcript/mascot.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-179
+crates/rebase-core/src/remote/ssh_askpass.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-201
+crates/rebase-core/src/provider/devin/jsonc.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-59
+crates/rebase-gpui/src/conversation/notifications.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-91
+crates/rebase-gpui/src/automations/templates.json
+  s_ccb41beff89445::t_d5a849b2802d40 1-215
+crates/rebase-core/src/git/remote.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-147
+crates/rebase-gpui/src/shell/settings.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-816
+crates/rebase-core/src/cli.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-154
+crates/rebase-gpui/assets/hugeicons/cloud-upload.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/particle_text.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-481
+crates/rebase-gpui/assets/antigravity.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1-70
+crates/rebase-gpui/src/syntax.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-151
+crates/rebase-gpui/assets/hugeicons/search-01.svg
+  s_ccb41beff89445::t_d5a849b2802d40 1
+crates/rebase-gpui/src/image_memory.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-323
+crates/rebase-gpui/src/shell/layout.rs
+  s_ccb41beff89445::t_d5a849b2802d40 1-1180
+crates/rebase-gpui/Cargo.lock
+  s_ccb41beff89445::t_ca8f297ce14f0e 3635,3677,3691
+scripts/native-editor/package-lock.json
+  s_ccb41beff89445::t_12ccdfdc259b4b 2,7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10cbf479059d3300848b5f1f936a5baacbebb786",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
