@@ -97,6 +97,8 @@ pub enum Event {
     Reasoning(String),
     Tool(ToolCall),
     Status(String),
+    /// What the turn still waits on after the provider yielded; empty clears it.
+    Background(Vec<BackgroundTask>),
     UsageLimited(crate::usage::Limit),
     Interjection {
         text: String,
@@ -108,6 +110,18 @@ pub enum Event {
         model_settings: HashMap<String, String>,
     },
     Done,
+}
+
+/// A command or subagent left running after the provider yielded its answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackgroundTask {
+    pub id: String,
+    pub description: String,
+    pub agent: bool,
+    /// The shell command behind a backgrounded Bash call, when known.
+    pub command: Option<String>,
+    /// Unix milliseconds.
+    pub started_at: u64,
 }
 
 fn codex_error(error: &Value, fallback: &str) -> String {

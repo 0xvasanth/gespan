@@ -1,6 +1,7 @@
 mod accounts;
 mod approvals;
 mod attachment_drop;
+mod background_tasks;
 mod btw;
 mod commands;
 pub(crate) mod composer_features;
@@ -138,6 +139,7 @@ pub(crate) struct Conversation {
     draft_has_value: bool,
     folder_selected: bool,
     follow_ups: follow_up::FollowUps,
+    background: background_tasks::BackgroundTasks,
     attachments: Vec<std::path::PathBuf>,
     pending_attachments: Vec<std::path::PathBuf>,
     attachment_photos: std::collections::HashMap<
@@ -555,6 +557,7 @@ impl Conversation {
             draft_has_value: false,
             folder_selected: false,
             follow_ups: Default::default(),
+            background: Default::default(),
             attachments: Vec::new(),
             pending_attachments: Vec::new(),
             attachment_photos: Default::default(),
@@ -1197,6 +1200,9 @@ impl Conversation {
                         if !stopping || finished {
                             this.status = update.status;
                         }
+                        if let Some(tasks) = update.background.filter(|_| !stopping) {
+                            this.set_background(tasks, cx);
+                        }
                         if !stopping {
                             this.approvals.extend(update.approvals);
                         }
@@ -1282,6 +1288,7 @@ impl Conversation {
                             this.summary.updated_at = monocode_core::time::now_ms();
                             this.busy = false;
                             this.stopping = false;
+                            this.clear_background();
                             if this.is_remote() {
                                 this.refresh_remote_snapshot(cx);
                             }
@@ -2538,6 +2545,7 @@ impl Conversation {
             self.save_follow_ups(cx);
         }
         self.follow_ups.ready = false;
+        self.clear_background();
         self.approvals.clear();
         self.questions.clear();
         self.controls = None;
@@ -2634,6 +2642,7 @@ impl Conversation {
             .children(self.model_list_popover(cx))
             .children(self.orchestration_card(cx))
             .children(if self.is_remote() { None } else { self.usage_notice(false, cx) })
+            .child(self.background_shelf(window, cx))
             .child(self.message_queue(window, cx))
             .children(if self.is_remote() { None } else { self.auth_notice(cx) })
             .when(self.settings.worktree_removed,|d|d.child(div().mb_2().p_3().rounded_lg().border_1().border_color(content(0.1)).flex().items_center().gap_3().text_size(px(12.)).child(div().flex_1().child("Worktree deleted. Select a branch or worktree to continue this conversation.")).child(tool_pill("reattach-worktree","Select worktree").child("Select worktree").on_click(cx.listener(|this,_,window,cx|this.open_git(GitMode::Worktree,window,cx))))))

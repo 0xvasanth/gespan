@@ -41,6 +41,8 @@ pub(crate) struct Update {
     pub(crate) context: Option<monocode_core::context::Usage>,
     pub(crate) metrics: Option<monocode_core::agent::TurnMetrics>,
     pub(crate) usage_limit: Option<monocode_core::usage::Limit>,
+    /// The tasks a yielded turn still waits on, when that changed.
+    pub(crate) background: Option<Vec<provider::BackgroundTask>>,
     pub(crate) approvals: Vec<Approval>,
     pub(crate) approvals_resolved: Vec<String>,
     pub(crate) questions: Vec<monocode_core::agent::Question>,
@@ -239,6 +241,7 @@ fn run_turn_using(
                 context: None,
                 metrics: None,
                 usage_limit: None,
+                background: None,
                 approvals: Vec::new(),
                 approvals_resolved: Vec::new(),
                 questions: Vec::new(),
@@ -292,6 +295,7 @@ fn run_turn_using(
                     context: None,
                     metrics: None,
                     usage_limit: None,
+                    background: None,
                     approvals: Vec::new(),
                     approvals_resolved: Vec::new(),
                     questions: Vec::new(),
@@ -344,6 +348,7 @@ fn run_turn_using(
                     context: None,
                     metrics: None,
                     usage_limit: None,
+                    background: None,
                     approvals: Vec::new(),
                     approvals_resolved: Vec::new(),
                     questions: Vec::new(),
@@ -530,6 +535,7 @@ fn run_turn_using(
                 let mut config_settings = None;
                 let mut context_changed = false;
                 let mut metrics = None;
+                let mut background = None;
                 let mut approvals = Vec::new();
                 let mut approvals_resolved = Vec::new();
                 let mut questions = Vec::new();
@@ -747,6 +753,7 @@ fn run_turn_using(
                             boundary = true;
                         }
                         Event::Status(text) => status = text,
+                        Event::Background(tasks) => background = Some(tasks),
                         Event::UsageLimited(limit) => usage_limit = Some(limit),
                         Event::Done => {
                             status = "Ready".into();
@@ -788,6 +795,7 @@ fn run_turn_using(
                             context: context_changed.then_some(context),
                             metrics,
                             usage_limit: None,
+                            background,
                             approvals,
                             approvals_resolved,
                             questions,
@@ -977,6 +985,7 @@ fn run_turn_using(
         context: None,
         metrics: None,
         usage_limit: if cancelled { None } else { usage_limit },
+        background: None,
         approvals: Vec::new(),
         approvals_resolved: Vec::new(),
         questions: Vec::new(),

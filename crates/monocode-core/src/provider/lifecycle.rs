@@ -76,6 +76,7 @@ impl Protocol {
             if !self.claude_prompt_sent && started.elapsed() >= Duration::from_secs(8) {
                 self.claude_prompt(stdin)?;
             }
+            self.sync_background(&mut events);
             if self.claude_result_seen
                 && self.activities.claude_background.is_empty()
                 && self.activities.claude_pending.is_empty()

@@ -100,9 +100,13 @@ impl Conversation {
     ) {
         let attachments = std::mem::take(&mut self.attachments);
         let mut message = self.message(prompt, attachments, mode, cx);
-        message.steer = cx
+        // Once the agent has answered and only background work is left, which
+        // may never end (a dev server), queuing would park the message behind
+        // it, so hand it to the agent now.
+        message.steer = (cx
             .try_global::<crate::settings::Preferences>()
             .is_none_or(|prefs| prefs.follow_up == "steer")
+            || !self.background.tasks.is_empty())
             && Kind::from_id(&self.summary.provider).can_steer()
             && message.can_steer();
         self.follow_ups.motion.insert(

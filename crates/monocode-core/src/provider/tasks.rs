@@ -12,6 +12,10 @@ pub(super) struct Activities {
     pub(super) background_calls: std::collections::HashSet<String>,
     pub(super) claude_background: HashMap<String, String>,
     pub(super) claude_pending: std::collections::HashSet<String>,
+    /// Every running Claude task in start order, as claude.ts's backgroundTasks.
+    pub(super) claude_tasks: Vec<BackgroundTask>,
+    /// What the UI was last told the yielded turn is waiting on.
+    pub(super) published: Vec<BackgroundTask>,
 }
 fn text(value: &Value) -> Option<&str> {
     value.as_str().filter(|s| !s.trim().is_empty())
@@ -369,6 +373,7 @@ impl Protocol {
         events.push(Event::Tool(tool.clone()));
     }
     fn claude_activity(&mut self, value: &Value, events: &mut Vec<Event>) -> bool {
+        self.claude_background_list(value);
         let parent = text(&value["parent_tool_use_id"]);
         if let Some(parent) = parent {
             match value["type"].as_str() {
@@ -486,6 +491,7 @@ impl Protocol {
                 if subtype == "task_started" {
                     self.activities.claude_pending.insert(id.into());
                 }
+                self.track_claude_task(id, subtype, value, patch);
                 if subtype == "task_notification" {
                     let background = self.activities.claude_background.remove(id).is_some();
                     self.activities.claude_pending.remove(id);
@@ -563,6 +569,84 @@ impl Protocol {
         }
         false
     }
+    /// Mirrors claude.ts's backgroundTasks: a task runs from task_started
+    /// until a terminal update, its notification, or a background_tasks_changed
+    /// list that no longer has it.
+    fn track_claude_task(&mut self, id: &str, subtype: &str, value: &Value, patch: &Value) {
+        let tasks = &mut self.activities.claude_tasks;
+        match subtype {
+            "task_started" if !tasks.iter().any(|task| task.id == id) => {
+                let source = text(&value["tool_use_id"]).and_then(|id| self.tools.get(id));
+                let command = source
+                    .filter(|tool| tool.name == "Bash")
+                    .and_then(|tool| serde_json::from_str::<Value>(&tool.input).ok())
+                    .and_then(|input| text(&input["command"]).map(str::to_owned));
+                tasks.push(BackgroundTask {
+                    id: id.into(),
+                    description: text(&value["description"])
+                        .unwrap_or(if command.is_some() { "Background command" } else { "Background task" })
+                        .into(),
+                    agent: is_agent_task(value["task_type"].as_str()),
+                    command,
+                    started_at: crate::time::now_ms(),
+                });
+            }
+            "task_updated" => {
+                if let Some(description) = text(&patch["description"]) {
+                    if let Some(task) = tasks.iter_mut().find(|task| task.id == id) {
+                        task.description = description.into();
+                    }
+                }
+                let status = patch["status"].as_str().unwrap_or("").to_lowercase();
+                if matches!(status.as_str(), "completed" | "failed" | "killed" | "stopped") {
+                    tasks.retain(|task| task.id != id);
+                }
+            }
+            "task_notification" => tasks.retain(|task| task.id != id),
+            _ => {}
+        }
+    }
+    /// Claude's full list of running tasks replaces the tracked one.
+    pub(super) fn claude_background_list(&mut self, value: &Value) {
+        if value["type"] != "system" || value["subtype"] != "background_tasks_changed" {
+            return;
+        }
+        let rows: Vec<&Value> = value["tasks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["ambient"] != true)
+            .collect();
+        let tasks = &mut self.activities.claude_tasks;
+        tasks.retain(|task| rows.iter().any(|row| row["task_id"] == task.id.as_str()));
+        for row in rows {
+            let Some(id) = text(&row["task_id"]) else {
+                continue;
+            };
+            if !tasks.iter().any(|task| task.id == id) {
+                tasks.push(BackgroundTask {
+                    id: id.into(),
+                    description: text(&row["description"]).unwrap_or("Background task").into(),
+                    agent: is_agent_task(row["task_type"].as_str()),
+                    command: None,
+                    started_at: crate::time::now_ms(),
+                });
+            }
+        }
+    }
+    /// Once Claude has yielded, tell the UI which tasks the turn still waits
+    /// on, and clear the list when Claude picks the thread back up.
+    pub(super) fn sync_background(&mut self, events: &mut Vec<Event>) {
+        let waiting = if self.claude_result_seen && !self.done {
+            self.activities.claude_tasks.clone()
+        } else {
+            Vec::new()
+        };
+        if waiting != self.activities.published {
+            self.activities.published = waiting.clone();
+            events.push(Event::Background(waiting));
+        }
+    }
     fn claude_progress(&mut self, value: &Value, parent: &str, events: &mut Vec<Event>) {
         let (Some(id), Some(name)) = (text(&value["tool_use_id"]), text(&value["tool_name"]))
         else {
@@ -584,6 +668,12 @@ impl Protocol {
             events,
         );
     }
+}
+fn is_agent_task(task_type: Option<&str>) -> bool {
+    matches!(
+        task_type.map(str::to_lowercase).as_deref(),
+        Some("local_agent" | "remote_agent")
+    )
 }
 fn text_content(value: &Value) -> String {
     value.as_str().map(str::to_owned).unwrap_or_else(|| {
@@ -868,5 +958,38 @@ mod tests {
         assert_eq!(tool(&done).output, "Provider reported failure");
         let orphan = p.frame(json!({"type":"assistant","parent_tool_use_id":"unknown","message":{"id":"x","content":[{"type":"text","text":"Unattributed child"}]}}), &mut Vec::new()).unwrap();
         assert!(orphan.is_empty());
+    }
+    #[test]
+    fn claude_background_tasks_show_once_the_answer_yields_and_clear_as_they_finish() {
+        let mut p = protocol(Kind::Claude);
+        let tick = |p: &mut Protocol| {
+            p.lifecycle_tick(Instant::now(), &mut Vec::new())
+                .unwrap()
+                .into_iter()
+                .find_map(|event| match event {
+                    Event::Background(tasks) => Some(tasks),
+                    _ => None,
+                })
+        };
+        p.frame(json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"dev-call","name":"Bash","input":{"command":"npm run dev","run_in_background":true}}]}}), &mut Vec::new()).unwrap();
+        p.frame(json!({"type":"system","subtype":"task_started","task_id":"dev","tool_use_id":"dev-call","description":"Start dev server","task_type":"local_bash","is_backgrounded":true}), &mut Vec::new()).unwrap();
+        p.frame(json!({"type":"system","subtype":"task_started","task_id":"review","description":"Review","task_type":"local_agent"}), &mut Vec::new()).unwrap();
+        // Work the agent is still doing in the foreground is not background.
+        assert_eq!(tick(&mut p), None);
+
+        p.frame(json!({"type":"result","result":"Started it."}), &mut Vec::new()).unwrap();
+        let tasks = tick(&mut p).unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].description, "Start dev server");
+        assert_eq!(tasks[0].command.as_deref(), Some("npm run dev"));
+        assert!(!tasks[0].agent && tasks[1].agent);
+        assert_eq!(tick(&mut p), None, "an unchanged list is not sent again");
+
+        p.frame(json!({"type":"system","subtype":"task_updated","task_id":"review","patch":{"status":"completed"}}), &mut Vec::new()).unwrap();
+        let tasks = tick(&mut p).unwrap();
+        assert_eq!(tasks.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["dev"]);
+
+        p.frame(json!({"type":"system","subtype":"background_tasks_changed","tasks":[]}), &mut Vec::new()).unwrap();
+        assert_eq!(tick(&mut p), Some(Vec::new()));
     }
 }
