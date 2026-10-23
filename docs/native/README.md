@@ -1,6 +1,6 @@
-# Monocode Native preview
+# Rebase Native preview
 
-Monocode Native is the experimental Rust + GPUI app. The production app still
+Rebase Native is the experimental Rust + GPUI app. The production app still
 uses React/Tauri. Native builds have their own Cargo workspace and lockfile.
 
 ## Requirements
@@ -33,7 +33,7 @@ Type `r` then Enter in the terminal to rebuild and restart. The current app stay
 open until the new build succeeds. Ctrl+C stops the app and runner. There is no
 hot reload or automatic rebuild on save.
 
-On macOS, the command packages and launches `Monocode Native.app`. Other
+On macOS, the command packages and launches `Rebase Native.app`. Other
 platforms launch the executable directly.
 
 ## Build
@@ -43,40 +43,40 @@ npm run native:build
 ```
 
 This creates an optimized build without launching it. **The release app uses the
-installed MonoCode database, and changes save there.** No extra flags are needed.
+installed Rebase database, and changes save there.** No extra flags are needed.
 
 On macOS, open:
 
 ```sh
-open "crates/monocode-gpui/target/release/Monocode Native.app"
+open "crates/rebase-gpui/target/release/Rebase Native.app"
 ```
 
 The app has a separate name and application ID (`com.rebase.native`) so it can be
-installed alongside MonoCode. Local source builds are signed locally, without
+installed alongside Rebase. Local source builds are signed locally, without
 Apple notarization or configured automatic updates. Linux and Windows builds
 produce a standalone executable
-under `crates/monocode-gpui/target/release/`. `CARGO_TARGET_DIR` and
+under `crates/rebase-gpui/target/release/`. `CARGO_TARGET_DIR` and
 `CARGO_BUILD_TARGET` can change these output paths.
 
-The **Monocode Native Preview** GitHub Actions workflow runs checks and build
+The **Rebase Native Preview** GitHub Actions workflow runs checks and build
 verification.
 
 ## Data and configuration
 
-Development stores `monocode.db` under:
+Development stores `rebase.db` under:
 
 | Platform | Development directory |
 | --- | --- |
-| macOS | `~/Library/Application Support/Monocode Development/` |
-| Linux | `$XDG_DATA_HOME/Monocode Development/`, or `~/.local/share/Monocode Development/` |
-| Windows | `%LOCALAPPDATA%\Monocode Development\` |
+| macOS | `~/Library/Application Support/Rebase Development/` |
+| Linux | `$XDG_DATA_HOME/Rebase Development/`, or `~/.local/share/Rebase Development/` |
+| Windows | `%LOCALAPPDATA%\Rebase Development\` |
 
-`MONOCODE_NATIVE_DATA_DIR` overrides this development directory.
+`REBASE_NATIVE_DATA_DIR` overrides this development directory.
 
-Release builds open `com.monocode.desktop/monocode.db` under macOS Application
+Release builds open `com.rebase.desktop/rebase.db` under macOS Application
 Support, Linux's XDG data directory, or Windows' `%APPDATA%`. The app uses the
 existing desktop schema and session IDs. GPUI preferences are saved beside the
-database in `monocode.db.gpui.json`.
+database in `rebase.db.gpui.json`.
 
 Supported desktop preferences and workspace state are read from the installed
 app's webview localStorage on macOS and Linux. The Windows WebView2 reader is
@@ -95,7 +95,7 @@ To inspect the installed database without opening a window or changing it, use
 the executable from a release build:
 
 ```sh
-crates/monocode-gpui/target/release/monocode-gpui --check-data
+crates/rebase-gpui/target/release/rebase-gpui --check-data
 ```
 
 Provider CLI paths can be changed in Settings → Providers. CLI authentication
@@ -115,7 +115,7 @@ A synthetic long-history fixture uses development data and makes no provider
 request:
 
 ```sh
-MONOCODE_NATIVE_DATA_DIR=/tmp/monocode-native-lab npm run native:dev -- --fixture
+REBASE_NATIVE_DATA_DIR=/tmp/rebase-native-lab npm run native:dev -- --fixture
 ```
 
 Fixtures are refused with production data. Use a fresh temporary directory when

@@ -59,12 +59,15 @@ function stripTypography(text: string): string {
 const ALLOWED: { file: string; line: RegExp; why: string }[] = [
   { file: "src/test/noMonoReferences.test.ts", line: /./, why: "this guard names the pattern it forbids" },
   { file: "src/test/sharedContracts.test.ts", line: /./, why: "asserts the GPUI app no longer reads the legacy MonoCode values" },
+  { file: "crates/rebase-core/tests/shared_contracts.rs", line: /./, why: "asserts the GPUI app no longer reads the legacy MonoCode values" },
+  { file: "scripts/native-dependencies.test.mjs", line: /Screen capture is disabled in Monocode/, why: "asserts the message of the untouched vendored GPUI build.rs" },
   { file: "src/test/upstreamLinks.test.ts", line: /usemono|monocode/i, why: "this guard names the upstream URL it forbids" },
   { file: "mobile/src/ui/theme.ts", line: /./, why: "the unrelated monochrome-style \"mono\" theme (brief)" },
   { file: "src-tauri/src/pilot_transcript.rs", line: /no_mono_tables|"mono_"|stale mono table/, why: "asserts legacy tables are gone" },
   { file: "src/test/invokeCommands.test.ts", line: /legacy mono_\*|\/mono\//, why: "asserts no legacy mono commands" },
   { file: "src/features/sessions/model/operatorCommand.test.ts", line: /\/mono\b/, why: "retired /mono is plain text" },
   { file: "mobile/modules/rebase-link/ios/TranscriptPresentation.swift", line: /\bmono\b/, why: "`mono` selects the Menlo monospace font for code runs" },
+  { file: "crates/rebase-core/src/automations.rs", line: /monopolizing/, why: "the English word, not the old feature name" },
   { file: "src/features/automations/model/automations.ts", line: /monopolize/, why: "the English word, not the old feature name" },
   { file: "src/features/pilots/model/pilotFiles.test.ts", line: /Monos\?/, why: "asserts no Mono wording" },
 ];

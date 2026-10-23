@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 test("Finder launches use development data for dev bundles and installed data for release bundles", {
   skip: process.platform === "win32",
 }, async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "monocode-bundle-data-"));
+  const directory = await mkdtemp(join(tmpdir(), "rebase-bundle-data-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const bin = join(directory, "bin");
   const target = join(directory, "target with spaces");
@@ -26,14 +26,14 @@ test("Finder launches use development data for dev bundles and installed data fo
   }
   for (const [profile, override, mode] of [
     ["native-dev", undefined, "dev-data"],
-    ["release", undefined, "monocode-data"],
+    ["release", undefined, "rebase-data"],
     ["release", "dev-data", "dev-data"],
-    ["native-dev", "monocode-data", "monocode-data"],
+    ["native-dev", "rebase-data", "rebase-data"],
   ]) {
     await t.test(`${profile}: ${override ?? "default"}`, async () => {
       const output = join(target, profile);
       await mkdir(output, { recursive: true });
-      const executable = join(output, "monocode-gpui");
+      const executable = join(output, "rebase-gpui");
       await writeFile(executable, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
       await chmod(executable, 0o755);
       const args = ["scripts/bundle-native-macos.sh", profile, target, "0.16.0"];
@@ -45,13 +45,13 @@ test("Finder launches use development data for dev bundles and installed data fo
       });
       assert.ifError(packaged.error);
       assert.equal(packaged.status, 0, packaged.stdout + packaged.stderr);
-      const bundle = join(output, "Monocode Native.app/Contents");
+      const bundle = join(output, "Rebase Native.app/Contents");
       const plist = await readFile(join(bundle, "Info.plist"), "utf8");
-      assert.ok(plist.includes(`<key>MonocodeDataMode</key><string>${mode}</string>`));
+      assert.ok(plist.includes(`<key>RebaseDataMode</key><string>${mode}</string>`));
       // macOS rejects menu bar items from a process that exec'd after launch.
-      assert.ok(plist.includes("<key>CFBundleExecutable</key><string>monocode-gpui</string>"));
-      await assert.rejects(access(join(bundle, "MacOS/monocode-launcher")));
-      const launched = spawnSync(join(bundle, "MacOS/monocode-gpui"), ["--cwd", "a project with spaces"], {
+      assert.ok(plist.includes("<key>CFBundleExecutable</key><string>rebase-gpui</string>"));
+      await assert.rejects(access(join(bundle, "MacOS/rebase-launcher")));
+      const launched = spawnSync(join(bundle, "MacOS/rebase-gpui"), ["--cwd", "a project with spaces"], {
         encoding: "utf8",
       });
       assert.ifError(launched.error);

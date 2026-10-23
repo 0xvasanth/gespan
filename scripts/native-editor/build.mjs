@@ -6,7 +6,7 @@ import vm from "node:vm";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
-const asset = path.join(root, "crates/monocode-gpui/assets/native-editor.js");
+const asset = path.join(root, "crates/rebase-gpui/assets/native-editor.js");
 const options = {
   absWorkingDir: here,
   entryPoints: ["index.ts"],
@@ -33,19 +33,19 @@ await build({ ...options, entryPoints: ["format.ts"], outfile: asset.replace("na
 // No DOM, Node or external services are available in the native interpreter.
 const sandbox = vm.createContext({});
 vm.runInContext(await readFile(asset, "utf8"), sandbox);
-const sample = JSON.parse(await sandbox.monocodeAnalyze("test.json", '{"bad": }', "{}"));
+const sample = JSON.parse(await sandbox.rebaseAnalyze("test.json", '{"bad": }', "{}"));
 if (!sample.diagnostics.length || !sample.changes.length) throw new Error("Native analysis smoke check failed");
 const largeSource = await readFile(path.join(root, "src/app/App.tsx"), "utf8");
-const largeAnalysis = JSON.parse(await sandbox.monocodeAnalyze("App.tsx", largeSource, `${largeSource}\nexport const previousHighlightTail = "tail";\n`));
+const largeAnalysis = JSON.parse(await sandbox.rebaseAnalyze("App.tsx", largeSource, `${largeSource}\nexport const previousHighlightTail = "tail";\n`));
 if (!largeAnalysis.tokens.some(token => token.to > largeSource.length - 1024)) throw new Error("Large-file highlighting stops before the end of App.tsx");
 if (!largeAnalysis.changes.some(change => change.original.includes("previousHighlightTail") && change.tokens.some(token => token.kind === "var(--syntax-string)"))) throw new Error("Large-file baseline highlighting stops before its final change");
-const completion = JSON.parse(await sandbox.monocodeComplete("test.js", "cons", 4, true));
+const completion = JSON.parse(await sandbox.rebaseComplete("test.js", "cons", 4, true));
 if (!completion.some(option => option.label === "const")) throw new Error("Completion smoke check failed");
-const search = JSON.parse(sandbox.monocodeSearch("hello HELLO", "(hello)", "$1!", false, false, true));
+const search = JSON.parse(sandbox.rebaseSearch("hello HELLO", "(hello)", "$1!", false, false, true));
 if (search.matches.length !== 2 || search.matches[0].insert !== "hello!") throw new Error("Search smoke check failed");
 const formatter = vm.createContext({});
 vm.runInContext(await readFile(asset.replace("native-editor.js", "native-format.js"), "utf8"), formatter);
-if (JSON.parse(await formatter.monocodeFormat("a.json", '{"a":1}', 0)).formatted !== '{ "a": 1 }\n') throw new Error("Format smoke check failed");
+if (JSON.parse(await formatter.rebaseFormat("a.json", '{"a":1}', 0)).formatted !== '{ "a": 1 }\n') throw new Error("Format smoke check failed");
 const paletteBuild = await build({ ...options, entryPoints: [], stdin: { contents: 'import { WORKSPACE_THEMES } from "../../src/features/settings/model/workspaceThemes"; globalThis.palettes = Object.fromEntries(WORKSPACE_THEMES.map(t => [t.id, { dark: { ...t.dark.syntax, heading: t.dark.heading }, light: { ...t.light.syntax, heading: t.light.heading } }]));', resolveDir: here }, write: false });
 const palettes = vm.createContext({});
 vm.runInContext(paletteBuild.outputFiles[0].text, palettes);

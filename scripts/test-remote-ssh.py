@@ -39,15 +39,15 @@ def main():
     profile_directory = "debug" if profile == "dev" else profile
     if args.native:
         metadata = json.loads(subprocess.check_output([
-            "cargo", "metadata", "--manifest-path", str(ROOT / "crates/monocode-gpui/Cargo.toml"),
+            "cargo", "metadata", "--manifest-path", str(ROOT / "crates/rebase-gpui/Cargo.toml"),
             "--no-deps", "--format-version", "1",
         ], cwd=ROOT, text=True))
         target = pathlib.Path(metadata["target_directory"])
         if os.environ.get("CARGO_BUILD_TARGET"):
             target /= os.environ["CARGO_BUILD_TARGET"]
-        desktop = args.desktop or target / profile_directory / "monocode-gpui"
-        transport_test = ["cargo", "test", "--manifest-path", "crates/monocode-gpui/Cargo.toml", "--locked", "--offline", "-j", "1", "-p", "monocode-core", "--profile", profile, "--lib", "remote::ssh::tests::loopback_transport_preserves_host_and_reconnects"]
-        build_hint = f"cargo build --manifest-path crates/monocode-gpui/Cargo.toml -p monocode-gpui --profile {profile}"
+        desktop = args.desktop or target / profile_directory / "rebase-gpui"
+        transport_test = ["cargo", "test", "--manifest-path", "crates/rebase-gpui/Cargo.toml", "--locked", "--offline", "-j", "1", "-p", "rebase-core", "--profile", profile, "--lib", "remote::ssh::tests::loopback_transport_preserves_host_and_reconnects"]
+        build_hint = f"cargo build --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-gpui --profile {profile}"
     else:
         desktop = args.desktop or ROOT / "target" / profile_directory / "rebase"
         transport_test = ["cargo", "test", "--lib", "remote_ssh::tests::loopback_transport_preserves_host_and_reconnects"]
@@ -98,7 +98,7 @@ def main():
                 worker = threading.Thread(target=answer_prompt, daemon=True)
                 worker.start()
                 result = subprocess.run(["ssh", "-F", "/dev/null", "-i", str(folder / "client"), "-p", str(ssh_port), "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=ask", "-o", f"UserKnownHostsFile={folder}/prompt_known_hosts", f"{pwd.getpwuid(os.getuid()).pw_name}@127.0.0.1", "printf", "askpass-ok"],
-                    env={**os.environ, "SSH_ASKPASS": str(desktop), "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": "rebase:0", "REBASE_SSH_ASKPASS_ADDRESS": f"127.0.0.1:{prompts.getsockname()[1]}", "REBASE_SSH_ASKPASS_SECRET": secret, "MONOCODE_SSH_ASKPASS_ADDRESS": f"127.0.0.1:{prompts.getsockname()[1]}", "MONOCODE_SSH_ASKPASS_SECRET": secret}, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=25)
+                    env={**os.environ, "SSH_ASKPASS": str(desktop), "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": "rebase:0", "REBASE_SSH_ASKPASS_ADDRESS": f"127.0.0.1:{prompts.getsockname()[1]}", "REBASE_SSH_ASKPASS_SECRET": secret}, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=25)
                 worker.join(timeout=1)
                 assert prompt_results == [True], prompt_results
                 assert result.returncode == 0 and result.stdout == "askpass-ok", result.stderr
@@ -106,8 +106,7 @@ def main():
             host("start")
             device = json.loads(host("pair", "--name", "Loopback test", "--json"))
             test_env = {"REBASE_TEST_SSH_TARGET": f"{pwd.getpwuid(os.getuid()).pw_name}@127.0.0.1", "REBASE_TEST_SSH_PORT": str(ssh_port), "REBASE_TEST_HOST_PORT": str(host_port), "REBASE_TEST_SSH_KEY": str(folder / "client"), "REBASE_TEST_KNOWN_HOSTS": str(folder / "known_hosts"), "REBASE_TEST_TOKEN": device["token"], "REBASE_TEST_ENVIRONMENT": device["environmentId"]}
-            # The native core crate still reads MONOCODE_TEST_* until the rename task; Tauri reads REBASE_TEST_*.
-            env = {**os.environ, **test_env, **{k.replace("REBASE_", "MONOCODE_", 1): v for k, v in test_env.items()}}
+            env = {**os.environ, **test_env}
             subprocess.run([*transport_test, "--", "--ignored"], cwd=ROOT, env=env, check=True)
             assert json.loads(host("connection-info"))["port"] == host_port
             print("Packaged host survived both native SSH tunnel closures.")

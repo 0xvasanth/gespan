@@ -20,7 +20,7 @@ remaining runtime and platform work.
 | Production Rust workspace | 698 tests passed, 1 SSH fixture ignored; formatting and strict Clippy passed |
 | Production macOS packaging | Tauri release `.app` built and its local ad-hoc signature verified |
 | Native macOS commands | `native:dev` built and launched; `native:build` produced an optimized app without launching it; both bundle signatures verified |
-| Native database defaults | Dev opened `Monocode Development/monocode.db`; release `--check-data` read the production database without migration |
+| Native database defaults | Dev opened `Rebase Development/rebase.db`; release `--check-data` read the production database without migration |
 | Native UI and chat | Provider order, live Codex streaming, Stop, saved history after relaunch, resumed provider context, and file preview/source passed |
 | Native release UI | Restored existing workspace and conversation history from a consistent production database snapshot |
 | macOS notifications | Reminder appeared in Notification Center; opening it returned from Settings to the matching chat and cleared the reminder |
@@ -65,7 +65,7 @@ The installed-profile integration test is ignored by default because it reads
 personal storage. To run that read-only check explicitly:
 
 ```sh
-cargo test --manifest-path crates/monocode-gpui/Cargo.toml --locked -p monocode-core --profile native-dev installed_desktop_dir_reads -- --ignored
+cargo test --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core --profile native-dev installed_desktop_dir_reads -- --ignored
 ```
 
 ## Local checks
@@ -83,15 +83,15 @@ For focused work, run the relevant part:
 
 ```sh
 npm run native:test:dev
-cargo fmt --manifest-path crates/monocode-gpui/Cargo.toml --all --check
-cargo clippy --manifest-path crates/monocode-gpui/Cargo.toml --locked -p monocode-core -p monocode-gpui --all-targets --profile native-dev -- -D warnings
+cargo fmt --manifest-path crates/rebase-gpui/Cargo.toml --all --check
+cargo clippy --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core -p rebase-gpui --all-targets --profile native-dev -- -D warnings
 npm run native:test
 ```
 
 On macOS with a Metal device, the renderer regression opens no window:
 
 ```sh
-cargo test --manifest-path crates/monocode-gpui/Cargo.toml --locked -p monocode-gpui --profile native-dev overlapping_shell_pane -- --ignored
+cargo test --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-gpui --profile native-dev overlapping_shell_pane -- --ignored
 ```
 
 ## Optional runtime checks
@@ -101,8 +101,8 @@ the catalog; without it, the example makes two real provider requests and checks
 streaming and resumed context:
 
 ```sh
-cargo run --manifest-path crates/monocode-gpui/Cargo.toml --locked -p monocode-core --profile native-dev --example provider_smoke -- cursor --models
-cargo run --manifest-path crates/monocode-gpui/Cargo.toml --locked -p monocode-core --profile native-dev --example provider_smoke -- cursor
+cargo run --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core --profile native-dev --example provider_smoke -- cursor --models
+cargo run --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core --profile native-dev --example provider_smoke -- cursor
 ```
 
 For long-history interaction, use the isolated fixture from the

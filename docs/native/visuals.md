@@ -1,6 +1,6 @@
 # Native session visuals
 
-An agent can publish an interactive visual into an ordinary conversation. Ask for a chart, comparison, calculator, diagram, or 3D explanation. The visual stays in the transcript with the rest of the reply and remains usable after the turn ends. Monos use the same capability when running a conversation.
+An agent can publish an interactive visual into an ordinary conversation. Ask for a chart, comparison, calculator, diagram, or 3D explanation. The visual stays in the transcript with the rest of the reply and remains usable after the turn ends. Pilots use the same capability when running a conversation.
 
 Interactive rendering is a native desktop feature. The phone transcript shows the visual's title with an instruction to open it on desktop.
 
@@ -23,12 +23,12 @@ The check executes the program and validates its native component tree and repre
 The equivalent commands work with a source file:
 
 ```sh
-monocode-gpui visual docs
-monocode-gpui visual check --input /path/to/explanation.js
-monocode-gpui visual show --input /path/to/explanation.js --title "Explanation"
+rebase-gpui visual docs
+rebase-gpui visual check --input /path/to/explanation.js
+rebase-gpui visual show --input /path/to/explanation.js --title "Explanation"
 ```
 
-Reading the reference and checking also work outside a running app. Showing requires the capability inherited by the agent of a live session. CLI discovery supplies the executable path; it is also available to the agent through `MONOCODE_VISUAL_EXECUTABLE`.
+Reading the reference and checking also work outside a running app. Showing requires the capability inherited by the agent of a live session. CLI discovery supplies the executable path; it is also available to the agent through `REBASE_VISUAL_EXECUTABLE`.
 
 ## Programs and native controls
 
@@ -101,7 +101,7 @@ The [dashboard example](examples/visual-dashboard.js) exercises charts, tabs, st
 To seed them into an isolated development conversation:
 
 ```sh
-cargo run --manifest-path crates/monocode-gpui/Cargo.toml --locked -p monocode-gpui --profile native-dev -- --dev-data --visual-fixture
+cargo run --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-gpui --profile native-dev -- --dev-data --visual-fixture
 ```
 
 The fixture cannot be written into the production database.

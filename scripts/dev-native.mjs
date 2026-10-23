@@ -70,19 +70,19 @@ export async function startDev({
         builtRevision = revision;
         const started = Date.now();
         log("Building… (the current app stays open)");
-        const metadataResult = await run("cargo", ["metadata", "--manifest-path", "crates/monocode-gpui/Cargo.toml", "--locked", "--no-deps", "--format-version", "1"], true);
+        const metadataResult = await run("cargo", ["metadata", "--manifest-path", "crates/rebase-gpui/Cargo.toml", "--locked", "--no-deps", "--format-version", "1"], true);
         if (closing) return;
         if (metadataResult.code !== 0) {
           log("Cargo metadata failed. Fix the error, then type r to retry.");
           continue;
         }
         const metadata = JSON.parse(metadataResult.stdout);
-        const pkg = metadata.packages.find((pkg) => pkg.name === "monocode-gpui");
-        if (!pkg) throw new Error("The monocode-gpui package was not found.");
+        const pkg = metadata.packages.find((pkg) => pkg.name === "rebase-gpui");
+        if (!pkg) throw new Error("The rebase-gpui package was not found.");
         const target = buildEnv.CARGO_BUILD_TARGET
           ? join(metadata.target_directory, buildEnv.CARGO_BUILD_TARGET)
           : metadata.target_directory;
-        const result = await run("cargo", ["build", "--manifest-path", "crates/monocode-gpui/Cargo.toml", "--locked", "-p", pkg.name, "--bin", pkg.name, "--profile", "native-dev"]);
+        const result = await run("cargo", ["build", "--manifest-path", "crates/rebase-gpui/Cargo.toml", "--locked", "-p", pkg.name, "--bin", pkg.name, "--profile", "native-dev"]);
         if (closing) return;
         if (result.code !== 0) {
           log("Build failed. Keeping the current app; type r to retry after fixing the error.");
@@ -90,12 +90,12 @@ export async function startDev({
         }
         // Another restart request during compilation gets a fresh build first.
         if (builtRevision !== revision) continue;
-        let executable = join(target, "native-dev", platform === "win32" ? "monocode-gpui.exe" : "monocode-gpui");
+        let executable = join(target, "native-dev", platform === "win32" ? "rebase-gpui.exe" : "rebase-gpui");
         if (bundle) {
           const dataMode = args.reduce((mode, arg, index) => {
-            if (["--cwd", "--monocode-db"].includes(args[index - 1])) return mode;
+            if (["--cwd", "--rebase-db"].includes(args[index - 1])) return mode;
             if (arg === "--dev-data") return "dev-data";
-            if (arg === "--monocode-data") return "monocode-data";
+            if (arg === "--rebase-data") return "rebase-data";
             return mode;
           }, "dev-data");
           const packaged = await run("bash", ["scripts/bundle-native-macos.sh", "native-dev", target, pkg.version, dataMode]);
@@ -104,14 +104,14 @@ export async function startDev({
             log("App packaging failed. Fix the error, then type r to retry.");
             continue;
           }
-          executable = join(target, "native-dev", "Monocode Native.app", "Contents", "MacOS", "monocode-gpui");
+          executable = join(target, "native-dev", "Rebase Native.app", "Contents", "MacOS", "rebase-gpui");
         }
         if (builtRevision !== revision) continue;
         await stopApp();
         if (closing) return;
         if (builtRevision !== revision) continue;
         const next = launch(executable, args, {
-          env: { ...buildEnv, MONOCODE_DEV_RELOAD: "1" },
+          env: { ...buildEnv, REBASE_DEV_RELOAD: "1" },
           stdio: ["pipe", "inherit", "inherit"],
           // Ctrl+C reaches the runner, which lets the app run its quit hooks.
           detached: platform !== "win32",
@@ -178,7 +178,7 @@ export function parseDevArgs(argv) {
     } else {
       options.args.push(arg);
       // Preserve values even when an app path happens to match a runner flag.
-      if (["--cwd", "--monocode-db"].includes(arg) && index + 1 < argv.length) {
+      if (["--cwd", "--rebase-db"].includes(arg) && index + 1 < argv.length) {
         options.args.push(argv[++index]);
       }
     }

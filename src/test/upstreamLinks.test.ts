@@ -19,7 +19,12 @@ const NATIVE_PATHS = [
   /^scripts\/[^/]*native[^/]*(\/|$)/,
   /^scripts\/test-remote-ssh\.py$/,
 ];
-const NATIVE_SKIP = [/^vendor\//, /^crates\/[^/]+\/target\//];
+const NATIVE_SKIP = [
+  /^vendor\//,
+  /^crates\/[^/]+\/target\//,
+  /^scripts\/native-dependencies\.test\.mjs$/, // asserts the untouched vendored build.rs message
+  /^crates\/rebase-core\/tests\/shared_contracts\.rs$/, // asserts the legacy MonoCode values are gone
+];
 
 const EXCLUDED = [
   /(^|\/)(bun\.lockb?|package-lock\.json|Cargo\.lock|yarn\.lock|pnpm-lock\.yaml)$/,

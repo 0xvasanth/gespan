@@ -2,4 +2,4 @@
 *.sh text eol=lf
 
 # Signature verification requires identical package bytes on every platform.
-crates/monocode-core/src/app_update/fixtures/package.txt text eol=lf
+crates/rebase-core/src/app_update/fixtures/package.txt text eol=lf

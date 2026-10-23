@@ -46,22 +46,22 @@ async function notices(directory) {
     "LICENSE",
     "NOTICE",
     "docs/native/LICENSE-GPUI-APACHE",
-    "crates/monocode-gpui/assets/hugeicons.LICENSE",
-    "crates/monocode-gpui/assets/dark-plus.LICENSE",
-    "crates/monocode-gpui/assets/native-editor.LICENSE.txt",
+    "crates/rebase-gpui/assets/hugeicons.LICENSE",
+    "crates/rebase-gpui/assets/dark-plus.LICENSE",
+    "crates/rebase-gpui/assets/native-editor.LICENSE.txt",
   ]) {
     await cp(join(root, file), join(directory, file.split("/").at(-1)));
   }
   await cp(
-    join(root, "crates/monocode-gpui/assets/material/LICENSE"),
+    join(root, "crates/rebase-gpui/assets/material/LICENSE"),
     join(directory, "material-icons.LICENSE"),
   );
 }
 async function linuxTree(directory, binary, kind) {
-  const app = join(directory, "usr/lib/monocode-native");
+  const app = join(directory, "usr/lib/rebase-native");
   await mkdir(app, { recursive: true });
-  await cp(binary, join(app, "monocode-gpui"));
-  await chmod(join(app, "monocode-gpui"), 0o755);
+  await cp(binary, join(app, "rebase-gpui"));
+  await chmod(join(app, "rebase-gpui"), 0o755);
   await writeFile(
     join(app, "native-install.json"),
     JSON.stringify({ app_id: "com.rebase.native", kind }),
@@ -69,22 +69,22 @@ async function linuxTree(directory, binary, kind) {
   await notices(join(app, "licenses"));
   await mkdir(join(directory, "usr/bin"), { recursive: true });
   await writeFile(
-    join(directory, "usr/bin/monocode-native"),
-    '#!/bin/sh\nexec /usr/lib/monocode-native/monocode-gpui "$@"\n',
+    join(directory, "usr/bin/rebase-native"),
+    '#!/bin/sh\nexec /usr/lib/rebase-native/rebase-gpui "$@"\n',
     { mode: 0o755 },
   );
   await mkdir(join(directory, "usr/share/applications"), { recursive: true });
   const desktop =
-    "[Desktop Entry]\nType=Application\nName=Monocode Native\nExec=monocode-native %F\nIcon=monocode-native\nCategories=Development;\nTerminal=false\nStartupWMClass=com.rebase.native\n";
+    "[Desktop Entry]\nType=Application\nName=Rebase Native\nExec=rebase-native %F\nIcon=rebase-native\nCategories=Development;\nTerminal=false\nStartupWMClass=com.rebase.native\n";
   await writeFile(
-    join(directory, "usr/share/applications/monocode-native.desktop"),
+    join(directory, "usr/share/applications/rebase-native.desktop"),
     desktop,
   );
   const icons = join(directory, "usr/share/icons/hicolor/256x256/apps");
   await mkdir(icons, { recursive: true });
   await cp(
-    join(root, "public/monocode.png"),
-    join(icons, "monocode-native.png"),
+    join(root, "public/rebase.png"),
+    join(icons, "rebase-native.png"),
   );
   return { app, desktop };
 }
@@ -103,7 +103,7 @@ export async function packageNative({
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
   }).stdout.trim();
-  if (embedded !== `Monocode Native ${version}`)
+  if (embedded !== `Rebase Native ${version}`)
     throw new Error(`Native executable version does not match ${version}`);
   await mkdir(out, { recursive: true });
   const work = join(out, "work");
@@ -128,17 +128,17 @@ export async function packageNative({
         "release",
         dirname(dirname(binary)),
         version,
-        "monocode-data",
+        "rebase-data",
       ],
       {
         env: {
           ...process.env,
-          MONOCODE_NATIVE_SIGNING_IDENTITY:
+          REBASE_NATIVE_SIGNING_IDENTITY:
             process.env.APPLE_SIGNING_IDENTITY || "",
         },
       },
     );
-    const app = join(dirname(binary), "Monocode Native.app");
+    const app = join(dirname(binary), "Rebase Native.app");
     if (
       !process.env.APPLE_SIGNING_IDENTITY ||
       process.env.APPLE_SIGNING_IDENTITY === "-"
@@ -181,21 +181,21 @@ export async function packageNative({
     run("spctl", ["--assess", "--type", "execute", app]);
     const name = arch === "aarch64" ? "aarch64" : "x64";
     const archive = add(
-      `MonocodeNative_${version}_${name}.app.tar.gz`,
+      `RebaseNative_${version}_${name}.app.tar.gz`,
       `darwin-${arch}-app`,
     );
-    run("tar", ["-czf", archive, "-C", dirname(app), "Monocode Native.app"], {
+    run("tar", ["-czf", archive, "-C", dirname(app), "Rebase Native.app"], {
       env: { ...process.env, COPYFILE_DISABLE: "1" },
     });
     const imageRoot = join(work, "dmg");
     await mkdir(imageRoot);
-    run("ditto", [app, join(imageRoot, "Monocode Native.app")]);
+    run("ditto", [app, join(imageRoot, "Rebase Native.app")]);
     run("ln", ["-s", "/Applications", join(imageRoot, "Applications")]);
-    const dmg = add(`MonocodeNative_${version}_${name}.dmg`);
+    const dmg = add(`RebaseNative_${version}_${name}.dmg`);
     run("hdiutil", [
       "create",
       "-volname",
-      "Monocode Native",
+      "Rebase Native",
       "-srcfolder",
       imageRoot,
       "-ov",
@@ -216,27 +216,27 @@ export async function packageNative({
     await mkdir(join(debRoot, "DEBIAN"));
     await writeFile(
       join(debRoot, "DEBIAN/control"),
-      `Package: monocode-native\nVersion: ${version.replace("-preview.", "~preview.")}\nArchitecture: amd64\nMaintainer: Monocode maintainers\nSection: devel\nPriority: optional\nDepends: libasound2, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: Monocode Native experimental preview\n`,
+      `Package: rebase-native\nVersion: ${version.replace("-preview.", "~preview.")}\nArchitecture: amd64\nMaintainer: Rebase maintainers\nSection: devel\nPriority: optional\nDepends: libasound2, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-xcb1, libxcb1, libxcb-shape0, libxcb-xfixes0, libxcb-randr0, libegl1, libvulkan1, libdbus-1-3, pkexec | policykit-1\nDescription: Rebase Native experimental preview\n`,
     );
     run("dpkg-deb", [
       "--build",
       "--root-owner-group",
       debRoot,
-      add(`monocode-native_${version}_amd64.deb`, "linux-x86_64-deb"),
+      add(`rebase-native_${version}_amd64.deb`, "linux-x86_64-deb"),
     ]);
-    const appDir = join(work, "MonocodeNative.AppDir");
+    const appDir = join(work, "RebaseNative.AppDir");
     const { desktop } = await linuxTree(appDir, binary, "appimage");
     await writeFile(
-      join(appDir, "monocode-native.desktop"),
-      desktop.replace("Exec=monocode-native %F", "Exec=monocode-gpui %F"),
+      join(appDir, "rebase-native.desktop"),
+      desktop.replace("Exec=rebase-native %F", "Exec=rebase-gpui %F"),
     );
     await cp(
-      join(root, "public/monocode.png"),
-      join(appDir, "monocode-native.png"),
+      join(root, "public/rebase.png"),
+      join(appDir, "rebase-native.png"),
     );
     await writeFile(
       join(appDir, "AppRun"),
-      '#!/bin/sh\nexec "$APPDIR/usr/lib/monocode-native/monocode-gpui" "$@"\n',
+      '#!/bin/sh\nexec "$APPDIR/usr/lib/rebase-native/rebase-gpui" "$@"\n',
       { mode: 0o755 },
     );
     run(
@@ -244,7 +244,7 @@ export async function packageNative({
       [
         appDir,
         add(
-          `MonocodeNative_${version}_amd64.AppImage`,
+          `RebaseNative_${version}_amd64.AppImage`,
           "linux-x86_64-appimage",
         ),
       ],
@@ -258,10 +258,10 @@ export async function packageNative({
       await mkdir(join(top, name), { recursive: true });
     const tree = join(top, "SOURCES/tree");
     await linuxTree(tree, binary, "rpm");
-    const spec = join(top, "SPECS/monocode-native.spec");
+    const spec = join(top, "SPECS/rebase-native.spec");
     await writeFile(
       spec,
-      `Name: monocode-native\nVersion: ${parsed.base}\nRelease: 0.preview.${parsed.sequence}%{?dist}\nSummary: Monocode Native experimental preview\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\n%description\nMonocode Native experimental preview.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/monocode-native\n/usr/lib/monocode-native\n/usr/share/applications/monocode-native.desktop\n/usr/share/icons/hicolor/256x256/apps/monocode-native.png\n`,
+      `Name: rebase-native\nVersion: ${parsed.base}\nRelease: 0.preview.${parsed.sequence}%{?dist}\nSummary: Rebase Native experimental preview\nLicense: MIT AND Apache-2.0\nBuildArch: x86_64\nRequires: polkit\n%description\nRebase Native experimental preview.\n%install\nmkdir -p %{buildroot}\ncp -a %{_sourcedir}/tree/. %{buildroot}/\n%files\n/usr/bin/rebase-native\n/usr/lib/rebase-native\n/usr/share/applications/rebase-native.desktop\n/usr/share/icons/hicolor/256x256/apps/rebase-native.png\n`,
     );
     run("rpmbuild", [
       "--define",
@@ -285,14 +285,14 @@ export async function packageNative({
   } else if (kind === "windows") {
     const stage = join(work, "windows");
     await mkdir(stage);
-    await cp(binary, join(stage, "monocode-gpui.exe"));
+    await cp(binary, join(stage, "rebase-gpui.exe"));
     await writeFile(
       join(stage, "native-install.json"),
       JSON.stringify({ app_id: "com.rebase.native", kind: "nsis" }),
     );
     await notices(join(stage, "licenses"));
     const installer = add(
-      `MonocodeNative_${version}_x64-setup.exe`,
+      `RebaseNative_${version}_x64-setup.exe`,
       "windows-x86_64-nsis",
     );
     const quote = (value) =>
@@ -328,6 +328,6 @@ if (
     binary,
     out,
     arch,
-    version: process.env.MONOCODE_NATIVE_VERSION,
+    version: process.env.REBASE_NATIVE_VERSION,
   });
 }

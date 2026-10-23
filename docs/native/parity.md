@@ -41,7 +41,7 @@ approval for every edit. Native Supervised mode does not add that guarantee.
 | Inbox | Runtime/visual checks, inline video, linked-update notices and richer CI evidence/repair progress |
 | Notes | Runtime/visual checks and composer note-card presentation |
 | Automations | Scheduler, provider and recovery checks; current implementation has source review only |
-| Monos | Existing-data checks, HTML accessibility, floating-document interactions and durable orchestration recovery |
+| Pilots | Existing-data checks, HTML accessibility, floating-document interactions and durable orchestration recovery |
 | Remote connections | Real-machine installation/update, existing-data restoration and cross-platform checks; the existing host's feature limits still apply |
 | Integrations | Completion/approval notifications, sounds and Dock badges; Quick Composer attachments/shortcut checks, MCP/skills checks and remaining app-control endpoints. macOS reminder delivery and click routing passed on Oct 22 |
 | Shared data | Concurrent Tauri/native use with active scheduled tasks or phone connections remains unverified and deferred |

@@ -35,7 +35,7 @@ function originalState(state: EditorState, source: string, original: string) {
   return parsedState(state.update({ changes: { from, to, insert: original.slice(from, end) } }).state, true);
 }
 
-globalThis.monocodeAnalyze = async (path: string, source: string, original: string | null) => {
+globalThis.rebaseAnalyze = async (path: string, source: string, original: string | null) => {
   const state = await stateFor(path, source, 0, true);
   const tokensFor = state => {
     const tokens = [];
@@ -63,7 +63,7 @@ globalThis.monocodeAnalyze = async (path: string, source: string, original: stri
   return JSON.stringify({ diagnostics: isLintable(path) ? syntaxDiagnostics(state) : [], changes, folds, tokens });
 };
 
-globalThis.monocodeComplete = async (path: string, source: string, pos: number, explicit: boolean) => {
+globalThis.rebaseComplete = async (path: string, source: string, pos: number, explicit: boolean) => {
   const state = await stateFor(path, source, pos);
   const context = new CompletionContext(state, pos, explicit);
   const results = await Promise.all(state.languageDataAt<any>("autocomplete", pos).map(data => (Array.isArray(data) ? completeFromList(data) : data)(context)));
@@ -91,7 +91,7 @@ globalThis.monocodeComplete = async (path: string, source: string, pos: number, 
   return JSON.stringify(options.sort((a, b) => a.label.localeCompare(b.label)).slice(0, 100));
 };
 
-globalThis.monocodeEmmet = async (path: string, source: string, pos: number) => {
+globalThis.rebaseEmmet = async (path: string, source: string, pos: number) => {
   const state = await stateFor(path, source, pos);
   let result = null;
   tryExpandEmmet({ state, dispatch: spec => {
@@ -101,7 +101,7 @@ globalThis.monocodeEmmet = async (path: string, source: string, pos: number) => 
   return JSON.stringify(result);
 };
 
-globalThis.monocodeSearch = (source: string, query: string, replacement: string, caseSensitive: boolean, wholeWord: boolean, regexp: boolean) => {
+globalThis.rebaseSearch = (source: string, query: string, replacement: string, caseSensitive: boolean, wholeWord: boolean, regexp: boolean) => {
   const state = EditorState.create({ doc: source });
   const search = new SearchQuery({ search: query, replace: replacement, caseSensitive, wholeWord, regexp, literal: true });
   if (!search.valid) return JSON.stringify({ matches: [], invalid: !!query });
@@ -114,6 +114,6 @@ globalThis.monocodeSearch = (source: string, query: string, replacement: string,
   return JSON.stringify({ matches, invalid: false });
 };
 
-globalThis.monocodeChunkAction = (original: string, current: string, pos: number, start: number, end: number, stage: boolean) => JSON.stringify(
+globalThis.rebaseChunkAction = (original: string, current: string, pos: number, start: number, end: number, stage: boolean) => JSON.stringify(
   (stage ? stageChunkText : revertChunkText)(original, current, pos, start === end ? null : { from: start, to: end })
 );

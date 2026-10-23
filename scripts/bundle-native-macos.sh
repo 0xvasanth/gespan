@@ -9,19 +9,19 @@ if [ "$(uname -s)" != Darwin ]; then
 fi
 
 native_profile="${1:-release}"
-native_target="${2:-${CARGO_TARGET_DIR:-crates/monocode-gpui/target}}/$native_profile"
-native_version="${3:-$(sed -n 's/^version = "\([^"]*\)".*/\1/p' crates/monocode-gpui/Cargo.toml)}"
+native_target="${2:-${CARGO_TARGET_DIR:-crates/rebase-gpui/target}}/$native_profile"
+native_version="${3:-$(sed -n 's/^version = "\([^"]*\)".*/\1/p' crates/rebase-gpui/Cargo.toml)}"
 if [ "$native_profile" = release ]; then
-  native_data_mode="${4:-monocode-data}"
+  native_data_mode="${4:-rebase-data}"
 else
   native_data_mode="${4:-dev-data}"
 fi
 case "$native_data_mode" in
-  dev-data|monocode-data) ;;
+  dev-data|rebase-data) ;;
   *) echo "Unknown data mode: $native_data_mode" >&2; exit 1 ;;
 esac
-native_bundle="$native_target/Monocode Native.app"
-native_binary="$native_target/monocode-gpui"
+native_bundle="$native_target/Rebase Native.app"
+native_binary="$native_target/rebase-gpui"
 if [ ! -f "$native_binary" ]; then
   echo "Missing native executable: $native_binary" >&2
   echo 'Build it with cargo first, or use npm run native:build.' >&2
@@ -30,47 +30,47 @@ fi
 
 mkdir -p "$native_bundle/Contents/MacOS" "$native_bundle/Contents/Resources"
 # Replace the inode atomically so macOS does not reuse an older signature cache.
-cp "$native_binary" "$native_bundle/Contents/MacOS/monocode-gpui.next"
-mv -f "$native_bundle/Contents/MacOS/monocode-gpui.next" "$native_bundle/Contents/MacOS/monocode-gpui"
-cp src-tauri/icons/icon.icns "$native_bundle/Contents/Resources/monocode.icns"
+cp "$native_binary" "$native_bundle/Contents/MacOS/rebase-gpui.next"
+mv -f "$native_bundle/Contents/MacOS/rebase-gpui.next" "$native_bundle/Contents/MacOS/rebase-gpui"
+cp src-tauri/icons/icon.icns "$native_bundle/Contents/Resources/rebase.icns"
 # Ship the app's attribution and the license texts for GPUI and embedded assets.
 # Add these before signing so the signature covers the notices too.
 native_licenses="$native_bundle/Contents/Resources/licenses"
 mkdir -p "$native_licenses"
 cp LICENSE NOTICE docs/native/LICENSE-GPUI-APACHE "$native_licenses/"
-cp crates/monocode-gpui/assets/hugeicons.LICENSE \
-  crates/monocode-gpui/assets/dark-plus.LICENSE \
-  crates/monocode-gpui/assets/native-editor.LICENSE.txt "$native_licenses/"
-cp crates/monocode-gpui/assets/material/LICENSE "$native_licenses/material-icons.LICENSE"
+cp crates/rebase-gpui/assets/hugeicons.LICENSE \
+  crates/rebase-gpui/assets/dark-plus.LICENSE \
+  crates/rebase-gpui/assets/native-editor.LICENSE.txt "$native_licenses/"
+cp crates/rebase-gpui/assets/material/LICENSE "$native_licenses/material-icons.LICENSE"
 rm -f "$native_licenses/Geist-OFL.txt"
 # Launch the binary itself: an exec'ing launcher changes the pid version, and macOS
-# then refuses the menu bar item. The app reads MonocodeDataMode from Info.plist.
-native_executable="monocode-gpui"
+# then refuses the menu bar item. The app reads RebaseDataMode from Info.plist.
+native_executable="rebase-gpui"
 native_short_version="${native_version%%-*}"
 native_build_version="$native_short_version"
 if [[ "$native_version" == *-preview.* ]]; then
   native_build_version="${native_version##*-preview.}"
 fi
-rm -f "$native_bundle/Contents/MacOS/monocode-launcher"
+rm -f "$native_bundle/Contents/MacOS/rebase-launcher"
 cat > "$native_bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>$native_executable</string>
-<key>MonocodeDataMode</key><string>$native_data_mode</string>
+<key>RebaseDataMode</key><string>$native_data_mode</string>
 <key>CFBundleIdentifier</key><string>com.rebase.native</string>
-<key>CFBundleName</key><string>Monocode Native</string>
-<key>CFBundleDisplayName</key><string>Monocode Native</string>
+<key>CFBundleName</key><string>Rebase Native</string>
+<key>CFBundleDisplayName</key><string>Rebase Native</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$native_short_version</string>
 <key>CFBundleVersion</key><string>$native_build_version</string>
-<key>MonocodeNativeVersion</key><string>$native_version</string>
-<key>CFBundleIconFile</key><string>monocode.icns</string>
+<key>RebaseNativeVersion</key><string>$native_version</string>
+<key>CFBundleIconFile</key><string>rebase.icns</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
-native_identity="${MONOCODE_NATIVE_SIGNING_IDENTITY:--}"
+native_identity="${REBASE_NATIVE_SIGNING_IDENTITY:--}"
 if [ "$native_identity" = - ]; then
   codesign --force --sign - "$native_bundle"
 else

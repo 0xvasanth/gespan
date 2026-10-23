@@ -6,7 +6,7 @@ import * as typescript from "prettier/plugins/typescript";
 import * as postcss from "prettier/plugins/postcss";
 import * as html from "prettier/plugins/html";
 import * as markdown from "prettier/plugins/markdown";
-globalThis.monocodeFormat = async (path: string, source: string, cursorOffset: number) => {
+globalThis.rebaseFormat = async (path: string, source: string, cursorOffset: number) => {
   if (source.length > 512 * 1024) return "null";
   const ext = path.toLowerCase().split(".").pop();
   const parser = ["js", "jsx", "mjs", "cjs"].includes(ext!) ? "babel"

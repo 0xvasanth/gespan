@@ -1,5 +1,5 @@
 {
-  "name": "monocode-native-editor-analysis",
+  "name": "rebase-native-editor-analysis",
   "private": true,
   "type": "module",
   "scripts": {

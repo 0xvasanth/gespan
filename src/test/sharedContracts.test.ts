@@ -17,7 +17,7 @@ function rustFiles(dir: string): string[] {
   });
 }
 
-const gpui = ["crates/monocode-core/src", "crates/monocode-gpui/src"]
+const gpui = ["crates/rebase-core/src", "crates/rebase-gpui/src"]
   .flatMap((dir) => rustFiles(join(root, dir)))
   .map((file) => readFileSync(file, "utf8"))
   .join("\n");

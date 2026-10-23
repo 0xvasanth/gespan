@@ -57,7 +57,7 @@ export function nativeManifest({ version, baseUrl, artifacts, notes = "" }) {
 }
 
 export async function prepareNativeRelease(directory, env = process.env) {
-  const version = env.MONOCODE_NATIVE_VERSION;
+  const version = env.REBASE_NATIVE_VERSION;
   previewVersion(version);
   if (!env.TAURI_SIGNING_PRIVATE_KEY || !env.TAURI_UPDATER_PUBKEY)
     throw new Error(

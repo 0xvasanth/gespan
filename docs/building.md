@@ -81,7 +81,7 @@ The [release workflow](../.github/workflows/release.yml) packages the platform b
 
 Read [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines and checks. The experimental remote host has its own [build and packaging instructions](remote-access.md#release-packaging).
 
-## Monocode Native preview
+## Rebase Native preview
 
 The experimental GPUI app uses a separate Cargo workspace. The production
 commands above continue to build React/Tauri.
@@ -91,7 +91,7 @@ Native commands do not need npm dependencies installed.
 
 ```sh
 npm run native:dev     # launch with a separate development database
-npm run native:build   # create an optimized app using installed MonoCode data
+npm run native:build   # create an optimized app using installed Rebase data
 npm run native:check   # run native checks
 ```
 
@@ -101,10 +101,10 @@ no hot reload or automatic rebuild on save. Ctrl+C stops the runner and app.
 The build command does not launch the app. On macOS, open the result with:
 
 ```sh
-open "crates/monocode-gpui/target/release/Monocode Native.app"
+open "crates/rebase-gpui/target/release/Rebase Native.app"
 ```
 
-The release app reads and writes your installed MonoCode data. It is locally
+The release app reads and writes your installed Rebase data. It is locally
 signed, without notarization or automatic updates. Linux/Windows GUI builds
 remain unverified.
 

@@ -6,12 +6,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const buildScript = new URL("../crates/monocode-gpui/build.rs", import.meta.url);
+const buildScript = new URL("../crates/rebase-gpui/build.rs", import.meta.url);
 // The first Cargo build on a fresh Windows runner can exceed one minute.
 const cargoTimeout = process.platform === "win32" ? 180_000 : 60_000;
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "monocode-dependency-guard-"));
+  const root = await mkdtemp(join(tmpdir(), "rebase-dependency-guard-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, "src"));
   await writeFile(join(root, "src/lib.rs"), "");
