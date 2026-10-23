@@ -366,6 +366,35 @@ describe("groupPilotTurnItems", () => {
     ]);
   });
 
+  it("keeps every reply a background task woke it up to give, and messages sent after one below it", () => {
+    const wait = (id: string, status = "completed"): Block => ({
+      ...shell(id),
+      tool: { kind: "shell", status, background: true },
+    });
+    const blocks: Block[] = [
+      { id: "ask", role: "user", text: "Is the server up?", startedAt: 1 },
+      shell("check"),
+      note("answer", "It is up; the tests are running."),
+      wait("wait-1"),
+      shell("collect"),
+      note("update", "The first batch passed."),
+      wait("wait-2", "in_progress"),
+      { id: "why", role: "user", text: "Why so slow?", sentAt: 10 },
+      shell("look", "in_progress"),
+    ];
+    for (const live of [true, false]) {
+      expect(groupPilotTurnItems(blocks, { live })).toMatchObject([
+        { type: "block", block: { id: "ask" } },
+        { type: "activity", blocks: [{ id: "check" }] },
+        { type: "block", block: { id: "answer" } },
+        { type: "activity", blocks: [{ id: "wait-1" }, { id: "collect" }] },
+        { type: "block", block: { id: "update" } },
+        { type: "block", block: { id: "why" } },
+        { type: "activity", blocks: [{ id: "wait-2" }, { id: "look" }] },
+      ]);
+    }
+  });
+
   it("keeps direct replies and empty turns intact", () => {
     expect(groupPilotTurnItems([])).toEqual([]);
     expect(groupPilotTurnItems([note("answer", "Hello.")])).toMatchObject([
@@ -1586,6 +1615,40 @@ describe("foldableWork", () => {
         ]),
       ),
     ).toBeUndefined();
+  });
+
+  it("keeps both messages of a turn a Stop hook continued", () => {
+    // A hook asked for one more line after the agent had answered; the
+    // continuation produced reasoning, then the line. With no tools in
+    // between there is nothing to put away, so the answer it interrupted
+    // stays visible in the order it was said.
+    const turn = items([
+      { id: "u", role: "user", text: "Summarize the report." },
+      { id: "a1", role: "assistant", text: "The complete answer." },
+      thought("r1"),
+      { id: "a2", role: "assistant", text: "One more short line." },
+    ]);
+    expect(foldableWork(turn)).toBeUndefined();
+  });
+
+  it("still folds when the continuation ran tools", () => {
+    const turn = items([
+      { id: "u", role: "user", text: "go" },
+      note("n1", "Checking the other half now."),
+      shell("c1"),
+      { id: "a1", role: "assistant", text: "The complete answer." },
+      thought("r1"),
+      shell("c2"),
+      { id: "a2", role: "assistant", text: "One more short line." },
+    ]);
+    const fold = foldableWork(turn)!;
+    expect(foldedBlocks(turn, fold).map((block) => block.id)).toEqual([
+      "n1",
+      "c1",
+      "a1",
+      "r1",
+      "c2",
+    ]);
   });
 });
 

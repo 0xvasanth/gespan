@@ -14,6 +14,7 @@ export const REMOTE_PROVIDERS = [
   "omp",
   "fx",
   "hermes",
+  "kiro",
   "antigravity",
   "devin",
 ] as const;

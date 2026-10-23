@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = join(__dirname, "..", "..");
@@ -114,6 +114,12 @@ function scannedFiles(): string[] {
   return files;
 }
 
+// Repo-relative path with forward slashes on every OS, so the allowlist and
+// the startsWith checks match on Windows, where `relative` yields backslashes.
+function repoPath(file: string): string {
+  return relative(root, file).split(sep).join("/");
+}
+
 function read(rel: string): string {
   return readFileSync(join(root, rel), "utf8");
 }
@@ -121,7 +127,7 @@ function read(rel: string): string {
 function scan(pattern: (line: string) => boolean, honorAllowlist: boolean): string[] {
   const hits: string[] = [];
   for (const file of scannedFiles()) {
-    const rel = relative(root, file);
+    const rel = repoPath(file);
     if (!honorAllowlist && rel === "src/test/noMonoReferences.test.ts") continue; // holds the forbidden pattern
     const rules = honorAllowlist ? ALLOWED.filter((a) => a.file === rel) : [];
     let text: string;
@@ -131,7 +137,7 @@ function scan(pattern: (line: string) => boolean, honorAllowlist: boolean): stri
       continue; // tracked but removed from the working tree
     }
     text
-      .split("\n")
+      .split(/\r?\n/)
       .forEach((line, i) => {
         if (rules.some((r) => r.line.test(line))) return;
         if (honorAllowlist && THEME_LINE.test(line)) return;
@@ -175,7 +181,7 @@ describe("Monos -> Pilots rename", () => {
   });
 
   it("scans the native tree but not vendored code or build output", () => {
-    const rels = scannedFiles().map((f) => relative(root, f));
+    const rels = scannedFiles().map(repoPath);
     expect(rels.some((f) => /^crates\/[^/]+\/src\/main\.rs$/.test(f))).toBe(true);
     expect(rels.some((f) => f.startsWith("docs/native/"))).toBe(true);
     expect(rels.some((f) => f === ".github/workflows/native.yml")).toBe(true);
@@ -183,8 +189,12 @@ describe("Monos -> Pilots rename", () => {
     expect(rels.some((f) => f.startsWith("vendor/") || /^crates\/[^/]+\/target\//.test(f))).toBe(false);
   });
 
+  it("reports repo paths with forward slashes whatever the OS separator", () => {
+    expect(scannedFiles().map(repoPath).some((f) => f.includes("\\"))).toBe(false);
+  });
+
   it("scans the mobile tree", () => {
-    const rels = scannedFiles().map((f) => relative(root, f));
+    const rels = scannedFiles().map(repoPath);
     expect(rels.some((f) => f.startsWith("mobile/src/"))).toBe(true);
     expect(rels.some((f) => f.includes("node_modules"))).toBe(false);
   });

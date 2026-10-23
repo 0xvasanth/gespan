@@ -17,6 +17,7 @@ let availability: HarnessAvailability = {
   omp: false,
   fx: false,
   hermes: false,
+  kiro: false,
   antigravity: false,
   devin: false,
 };

@@ -9,6 +9,7 @@ import {
   resolveFxBinary,
   resolveGrokBinary,
   resolveHermesBinary,
+  resolveKiroBinary,
   resolveOmpBinary,
   resolveOpenCodeBinary,
   resolvePiBinary,
@@ -51,6 +52,12 @@ const CLI: Record<HarnessId, { name: string; install?: string }> = {
     name: "Hermes Agent CLI",
     install:
       "Install from hermes-agent.nousresearch.com, then run hermes model",
+  },
+  kiro: {
+    name: "Kiro CLI",
+    // Unverified: Kiro's docs list no CLI install command; this is the
+    // installer URL Kiro publishes for kiro-cli.
+    install: "curl -fsSL https://cli.kiro.dev/install | bash, then kiro-cli login",
   },
   antigravity: { name: "Antigravity ACP server (agy_acp_server.par)" },
   devin: {
@@ -155,6 +162,14 @@ export function probeHarnessAvailability(
       if (id === "hermes") {
         try {
           await resolveHermesBinary();
+          return [id, true] as const;
+        } catch {
+          return [id, false] as const;
+        }
+      }
+      if (id === "kiro") {
+        try {
+          await resolveKiroBinary();
           return [id, true] as const;
         } catch {
           return [id, false] as const;

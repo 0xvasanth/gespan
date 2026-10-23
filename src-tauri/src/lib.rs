@@ -500,6 +500,7 @@ pub fn run() {
             harness::harness_resolve_fx,
             harness::harness_resolve_grok,
             harness::harness_resolve_hermes,
+            harness::harness_resolve_kiro,
             harness::harness_resolve_devin,
             harness::harness_resolve_antigravity,
             harness::harness_free_port,
@@ -692,6 +693,13 @@ pub fn run() {
             if !other_window {
                 reap_harness_children(handle);
             }
+        }
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_),
+            ..
+        } if window::is_workspace_window(&label) => {
+            window::schedule_state_save(handle);
         }
         tauri::RunEvent::ExitRequested { api, code, .. } => {
             if window::allow_exit() {

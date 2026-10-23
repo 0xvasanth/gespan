@@ -60,11 +60,25 @@ fn capitalize(value: &str) -> String {
 }
 
 fn claude_identity(dir: Option<PathBuf>) -> Option<ProviderAccountIdentity> {
+    claude_identity_with_env_token(dir, std::env::var("CLAUDE_CODE_OAUTH_TOKEN").ok())
+}
+
+/// The default account can be signed in with `CLAUDE_CODE_OAUTH_TOKEN` alone,
+/// in which case there is no `.claude.json` to read. It is connected, just
+/// anonymous. Secondary accounts always have their own config directory, so
+/// the environment token never speaks for them.
+fn claude_identity_with_env_token(
+    dir: Option<PathBuf>,
+    env_token: Option<String>,
+) -> Option<ProviderAccountIdentity> {
+    if dir.is_none() && env_token.is_some_and(|token| !token.trim().is_empty()) {
+        return Some(ProviderAccountIdentity::default());
+    }
     let path = match dir {
         Some(dir) => dir.join(".claude.json"),
         None => home()?.join(".claude.json"),
     };
-    parse_claude_identity(&read_json(&path)?)
+    read_json(&path).as_ref().and_then(parse_claude_identity)
 }
 
 /// Parse the `oauthAccount` block Claude Code writes to `.claude.json`.
@@ -145,6 +159,47 @@ mod tests {
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(serde_json::to_vec(&claims).unwrap());
         json!({ "tokens": { "id_token": format!("header.{payload}.signature") } })
+    }
+
+    fn claude_config_dir(label: &str, config: &Value) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "rebase-claude-identity-{label}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".claude.json"), config.to_string()).unwrap();
+        dir
+    }
+
+    #[test]
+    fn claude_env_token_marks_the_default_account_connected_without_a_config() {
+        assert_eq!(
+            claude_identity_with_env_token(None, Some("sk-ant-oat01-secret".into())),
+            Some(ProviderAccountIdentity::default())
+        );
+    }
+
+    #[test]
+    fn claude_env_token_never_speaks_for_a_secondary_account() {
+        let dir = claude_config_dir(
+            "secondary",
+            &json!({ "oauthAccount": { "emailAddress": "grace@example.com" } }),
+        );
+        let found =
+            claude_identity_with_env_token(Some(dir.clone()), Some("sk-ant-oat01-x".into()));
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(found, identity(Some("grace@example.com"), None, None, None));
+    }
+
+    #[test]
+    fn claude_blank_env_token_is_ignored() {
+        let missing = std::env::temp_dir().join("rebase-claude-identity-missing");
+        for token in [None, Some(String::new()), Some("  \n".into())] {
+            assert_eq!(
+                claude_identity_with_env_token(Some(missing.clone()), token),
+                None
+            );
+        }
     }
 
     #[test]

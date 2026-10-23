@@ -4,16 +4,6 @@ Rebase is early and I’m the only maintainer, so small and focused lands much f
 
 Please don’t open PRs that add a new provider right now. The existing harnesses still need to agree on a few patterns, and a new adapter would copy whatever is there today. See [New providers](#new-providers).
 
-## Temporary PR policy during the GPUI migration
-
-Development is focused on the Rust + GPUI migration. The React/Tauri app on `main` remains supported while the native preview is tested.
-
-- Bug fixes, security fixes, documentation improvements, and changes useful to both apps are still welcome on `main`.
-- Larger Tauri-specific features and refactors are temporarily deferred during the migration.
-- Target GPUI contributions at `mc/migrate-rebase-to-gpui`. See [the native guide](https://github.com/0xvasanth/rebase/blob/mc/migrate-rebase-to-gpui/docs/native/README.md) for setup and checks.
-
-Before starting a larger change, open an issue so we can agree on the scope and target branch and avoid duplicated work. Existing PRs will be reviewed individually.
-
 ## Get it running
 
 You need Node.js 20+, a current stable Rust toolchain, and at least one provider CLI installed and logged in. See [provider setup](docs/providers.md) for installation and login instructions.
@@ -71,7 +61,7 @@ When the pause lifts, this section goes away.
 
 ## Pull requests
 
-Keep a PR to one thing, and say what changed and why. The [PR template](.github/pull_request_template.md) covers the rest. If it changes the UI, a before/after screenshot helps a lot.
+`main` is protected: changes land through a pull request with passing CI. Keep a PR to one thing, and say what changed and why. The [PR template](.github/pull_request_template.md) covers the rest. If it changes the UI, a before/after screenshot helps a lot.
 
 For anything that moves product direction - a new surface, new provider behavior, a refactor that changes the shape of the app - open an issue first. That’s not gatekeeping, I’d just rather you hear “I’m already halfway through that” before you write it than after. New providers are the exception: don’t send the adapter, even from an issue, until the pause above is gone.
 

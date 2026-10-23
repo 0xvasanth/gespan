@@ -12,6 +12,7 @@ export {
   appendUser,
   appendSteerUser,
   promoteLastAssistantToPlan,
+  promoteProposedPlan,
   stopStreaming,
 } from "./core/apply";
 export {
@@ -100,6 +101,14 @@ export {
   bindHermesSession,
 } from "./providers/hermes/hermes";
 export {
+  sendKiroTurn,
+  cancelKiroTurn,
+  respondKiroApproval,
+  stopKiroSession,
+  forgetKiroSession,
+  bindKiroSession,
+} from "./providers/kiro/kiro";
+export {
   sendAntigravityTurn,
   steerAntigravityTurn,
   cancelAntigravityTurn,
@@ -157,6 +166,7 @@ export { refreshPiCatalog, refreshOmpCatalog } from "./providers/pi/piCatalog";
 export { refreshFxCatalog } from "./providers/fx/fxCatalog";
 export { refreshGrokCatalog } from "./providers/grok/grokCatalog";
 export { refreshHermesCatalog } from "./providers/hermes/hermesCatalog";
+export { refreshKiroCatalog } from "./providers/kiro/kiroCatalog";
 export { refreshAntigravityCatalog } from "./providers/antigravity/antigravityCatalog";
 export { registerBuiltinHarnesses } from "./core/register";
 export {

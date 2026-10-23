@@ -2672,7 +2672,7 @@ function SidebarComponent({
           {navList}
           {/* The project's Pilots, above its folders. */}
           {inset && railPilots && inProject ? (
-            <PilotRailSection {...railPilots} project={cwd} />
+            <PilotRailSection {...railPilots} project={cwd} showAll />
           ) : null}
           {!cwd || cwd === "~" ? (
             <div className="px-3 py-2 text-[12px] text-content/50">

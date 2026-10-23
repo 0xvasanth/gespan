@@ -11,6 +11,7 @@ import {
   canRunHarnessTextPrompt,
   runHarnessTextPrompt,
   canRewindHarnessLastTurn,
+  canSteerHarness,
   compactHarnessContext,
   configureHarnessIdlePark,
   enforceHarnessIdleLimit,
@@ -111,6 +112,7 @@ describe("harness registry", () => {
       "omp",
       "fx",
       "hermes",
+      "kiro",
       "antigravity",
     ];
 
@@ -126,8 +128,19 @@ describe("harness registry", () => {
       omp: true,
       fx: false,
       hermes: false,
+      kiro: false,
       antigravity: false,
     });
+  });
+
+  it("registers Kiro as a live harness that queues follow-ups and refreshes its own catalog", () => {
+    registerBuiltinHarnesses();
+    expect(isLiveHarness("kiro")).toBe(true);
+    expect(canSteerHarness("kiro")).toBe(false);
+    expect(canCompactHarnessContext("kiro")).toBe(false);
+    expect(listHarnesses().find((adapter) => adapter.id === "kiro")?.refreshCatalog).toBeTypeOf(
+      "function",
+    );
   });
 
   it("exposes the native compaction support matrix", () => {

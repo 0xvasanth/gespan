@@ -437,6 +437,7 @@ async function resolveHarnessBinary(
     omp: "harness_resolve_omp",
     fx: "harness_resolve_fx",
     hermes: "harness_resolve_hermes",
+    kiro: "harness_resolve_kiro",
     antigravity: "harness_resolve_antigravity",
     devin: "harness_resolve_devin",
   };
@@ -495,6 +496,12 @@ export function resolveHermesBinary(
   binaryPath?: string | null,
 ): Promise<{ path: string }> {
   return resolveHarnessBinary("hermes", binaryPath);
+}
+
+export function resolveKiroBinary(
+  binaryPath?: string | null,
+): Promise<{ path: string }> {
+  return resolveHarnessBinary("kiro", binaryPath);
 }
 
 export function resolveDevinBinary(

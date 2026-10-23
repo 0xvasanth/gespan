@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/rebase.png" alt="Rebase" width="88" />
+  <img src="docs/assets/logo.png" alt="Rebase" width="112" />
 </p>
 
 <h1 align="center">Rebase</h1>
@@ -12,7 +12,7 @@
   <img width="1680" height="1050" alt="Rebase with agent sessions open side by side" src="https://github.com/user-attachments/assets/2cd4a6ec-eb1e-4b45-8627-a76442ea3874" />
 </p>
 
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity, Pi, omp, fx, Hermes Agent, and Devin. If they’re installed and logged in, Rebase can run them. Tabs are sessions. The composer is the input. Rebase does not sell tokens.
+Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity, Pi, omp, fx, Hermes Agent, Kiro CLI, and Devin. If they’re installed and logged in, Rebase can run them. Tabs are sessions. The composer is the input. Rebase does not sell tokens.
 
 ## Install
 
@@ -26,6 +26,8 @@ Install and sign in to at least one supported agent first. See [provider setup](
 | Windows, x86_64 | [Installer](https://github.com/0xvasanth/rebase/releases/latest) |
 
 On macOS, open the DMG and drag Rebase to Applications. On Windows, run the installer. See [Linux setup](docs/install.md) for dependencies and package instructions.
+
+Installers appear on the [Releases page](https://github.com/0xvasanth/rebase/releases) once a release is published. Until then, [build from source](#build-from-source).
 
 ## Get started
 
