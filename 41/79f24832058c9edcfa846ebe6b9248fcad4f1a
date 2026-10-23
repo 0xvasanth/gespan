@@ -1,0 +1,25 @@
+src/test/upstreamLinks.test.ts
+  s_ccb41beff89445::t_d87ba689125cf3 10,46
+src-tauri/src/fs.rs
+  s_ccb41beff89445::t_d87ba689125cf3 8535,8545,8704
+src/features/inbox/model/githubTasks.test.ts
+  s_ccb41beff89445::t_d87ba689125cf3 232,301
+src/test/noMonoReferences.test.ts
+  s_ccb41beff89445::t_d87ba689125cf3 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4179f24832058c9edcfa846ebe6b9248fcad4f1a",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
