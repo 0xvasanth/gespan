@@ -1,0 +1,26 @@
+src/features/board/ui/kanban/KanbanBoard.test.ts
+  s_0de52fe47ecaaa::t_476cbbe22a0049 157-158,182-187,280
+  s_0de52fe47ecaaa::t_d677f0e5f58612 279,281-306
+src/features/board/ui/kanban/KanbanBoard.tsx
+  s_0de52fe47ecaaa::t_cdbd7f0e9ec9e0 24-25,69,133-152,172,188-192
+src/features/board/ui/kanban/kanbanSession.ts
+  s_0de52fe47ecaaa::t_cdbd7f0e9ec9e0 27-32,67,74-77,79-96,122-126
+src/features/board/ui/kanban/kanbanSession.test.ts
+  s_0de52fe47ecaaa::t_1ae6d7a9e5f561 152-206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79c2e3c5148118a24b3fe99b2d6365d298e41181",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
