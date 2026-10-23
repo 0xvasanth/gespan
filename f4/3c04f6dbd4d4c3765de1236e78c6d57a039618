@@ -1,0 +1,26 @@
+src/features/sessions/data/sessionStoreLookup.test.ts
+  s_0de52fe47ecaaa::t_65e1adad7b8750 1-37
+src/features/sessions/data/sessionStore.ts
+  s_0de52fe47ecaaa::t_2ea338b28ffac7 509-531
+src-tauri/src/session_store.rs
+  s_0de52fe47ecaaa::t_41c2a480369da3 2715-2753
+  s_0de52fe47ecaaa::t_2cfca456fdf75d 308-329,1738-1739,1743-1778,1784-1804
+src-tauri/src/lib.rs
+  s_0de52fe47ecaaa::t_2cfca456fdf75d 555
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f43c04f6dbd4d4c3765de1236e78c6d57a039618",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
