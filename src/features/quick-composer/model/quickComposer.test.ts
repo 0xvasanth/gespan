@@ -123,7 +123,7 @@ describe("filterQuickProjects", () => {
   const projects = ["/Users/me/code/rebase", "/Users/me/work/api"];
 
   it("matches the project name or its parent folder", () => {
-    expect(filterQuickProjects(projects, "mono")).toEqual([
+    expect(filterQuickProjects(projects, "rebase")).toEqual([
       "/Users/me/code/rebase",
     ]);
     expect(filterQuickProjects(projects, "work")).toEqual([
