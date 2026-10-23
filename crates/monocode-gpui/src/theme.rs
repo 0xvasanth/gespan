@@ -146,7 +146,11 @@ pub(crate) fn is_light() -> bool {
 /// The opaque card behind popovers and modals in light themes, and wherever
 /// the renderer has no backdrop blur.
 pub(crate) fn floating_fill() -> Hsla {
-    let mut fill = if is_light() { inset_pane_fill() } else { pane_fill() };
+    let mut fill = if is_light() {
+        inset_pane_fill()
+    } else {
+        pane_fill()
+    };
     if is_light() {
         fill.l = fill.l.max(0.995);
     }

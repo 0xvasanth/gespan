@@ -289,7 +289,8 @@ impl Default for Workspace {
             focused: Default::default(),
             docks: Default::default(),
             classic_layout: false,
-            new_layout_boxy: false,
+            // Fresh installs start on the boxy frame; saved choices are kept.
+            new_layout_boxy: true,
             project_rail_open: true,
             project_rail_monos_pinned: false,
             project_rail_width: 220.,
@@ -1115,6 +1116,9 @@ mod tests {
         let fresh = Workspace::restore(None, &sessions, "/a");
         assert_eq!(fresh.active, Some(2));
         assert_eq!(fresh.project, "/a");
+        assert!(fresh.new_layout_boxy);
+        let rounded = Workspace::restore(Some(r#"{"new_layout_boxy":false}"#), &sessions, "/a");
+        assert!(!rounded.new_layout_boxy);
     }
     #[test]
     fn restoring_history_keeps_only_remembered_or_selected_projects() {

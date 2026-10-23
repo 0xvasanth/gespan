@@ -101,20 +101,22 @@ impl Render for Runner {
         // renders repaint the same frame rather than nudging the runner
         // forward at uneven intervals.
         let tick = (self.started.elapsed().as_secs_f64() * 1000. / TICK_MS) as u64;
-        let result = (self.stepped != Some(tick)).then(|| self.context.with(|cx| {
-            let o: rquickjs::Object = cx.globals().get("NativeArcade")?;
-            let f: rquickjs::Function = o.get("runnerFrame")?;
-            f.call::<_, String>((
-                tick as f64 * TICK_MS,
-                width,
-                self.busy,
-                obstacle
-                    .map(|o| o.to_string())
-                    .unwrap_or_else(|| "null".into()),
-                reduced,
-                self.name,
-            ))
-        }));
+        let result = (self.stepped != Some(tick)).then(|| {
+            self.context.with(|cx| {
+                let o: rquickjs::Object = cx.globals().get("NativeArcade")?;
+                let f: rquickjs::Function = o.get("runnerFrame")?;
+                f.call::<_, String>((
+                    tick as f64 * TICK_MS,
+                    width,
+                    self.busy,
+                    obstacle
+                        .map(|o| o.to_string())
+                        .unwrap_or_else(|| "null".into()),
+                    reduced,
+                    self.name,
+                ))
+            })
+        });
         if let Some(result) = result {
             self.stepped = Some(tick);
             if let Ok(json) = result

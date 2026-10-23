@@ -746,8 +746,11 @@ impl SettingsView {
         };
         actions = actions
             .child(
-                crate::modal::disabled(crate::modal::ghost_button("cancel-management", "Cancel"), busy)
-                    .on_click(cx.listener(|this, _, window, cx| this.close_management(window, cx))),
+                crate::modal::disabled(
+                    crate::modal::ghost_button("cancel-management", "Cancel"),
+                    busy,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.close_management(window, cx))),
             )
             .child(
                 crate::modal::disabled(

@@ -127,7 +127,12 @@ pub(crate) fn body(text: impl Into<SharedString>) -> Div {
 }
 /// The right-aligned button row closing a dialog.
 pub(crate) fn actions() -> Div {
-    div().mt(px(20.)).flex().justify_end().items_center().gap(px(8.))
+    div()
+        .mt(px(20.))
+        .flex()
+        .justify_end()
+        .items_center()
+        .gap(px(8.))
 }
 
 fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
@@ -182,7 +187,11 @@ pub(crate) fn danger_button(
 }
 /// Disables a dialog button without changing its size.
 pub(crate) fn disabled(button: Stateful<Div>, disabled: bool) -> Stateful<Div> {
-    if disabled { button.opacity(0.4) } else { button.cursor_pointer() }
+    if disabled {
+        button.opacity(0.4)
+    } else {
+        button.cursor_pointer()
+    }
 }
 fn danger(alpha: f32) -> Hsla {
     gpui::hsla(0., 0.66, if is_light() { 0.5 } else { 0.47 }, alpha)
@@ -205,7 +214,9 @@ pub(crate) fn overlay(
             .flex()
             .items_center()
             .justify_center()
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| on_dismiss(window, cx))
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                on_dismiss(window, cx)
+            })
             .child(enter(
                 SharedString::from(format!("{id}-card")),
                 div()
@@ -263,9 +274,11 @@ impl Prompt {
     }
     fn destructive(&self, label: &str) -> bool {
         self.level != PromptLevel::Info
-            && ["delete", "remove", "discard", "revoke", "reset", "stop", "quit", "close"]
-                .iter()
-                .any(|word| label.to_lowercase().starts_with(word))
+            && [
+                "delete", "remove", "discard", "revoke", "reset", "stop", "quit", "close",
+            ]
+            .iter()
+            .any(|word| label.to_lowercase().starts_with(word))
     }
     fn key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let choice = match event.keystroke.key.as_str() {
@@ -304,7 +317,9 @@ impl Render for Prompt {
         let card = card().child(
             card_body()
                 .child(title(self.message.clone()))
-                .when_some(self.detail.clone(), |d, detail| d.child(body(detail).mt(px(6.))))
+                .when_some(self.detail.clone(), |d, detail| {
+                    d.child(body(detail).mt(px(6.)))
+                })
                 .child(actions().children(buttons)),
         );
         div()
@@ -332,7 +347,13 @@ mod tests {
         let window = cx.add_window(|_, _| gpui::Empty);
         let mut answer = window
             .update(cx, |_, window, cx| {
-                window.prompt(PromptLevel::Warning, "Delete?", None, &["Delete", "Cancel"], cx)
+                window.prompt(
+                    PromptLevel::Warning,
+                    "Delete?",
+                    None,
+                    &["Delete", "Cancel"],
+                    cx,
+                )
             })
             .unwrap();
         cx.run_until_parked();
@@ -342,7 +363,13 @@ mod tests {
         assert_eq!(answer.try_recv(), Ok(Some(1)));
         let mut answer = window
             .update(visual, |_, window, cx| {
-                window.prompt(PromptLevel::Info, "Continue?", Some("Detail"), &["OK", "Cancel"], cx)
+                window.prompt(
+                    PromptLevel::Info,
+                    "Continue?",
+                    Some("Detail"),
+                    &["OK", "Cancel"],
+                    cx,
+                )
             })
             .unwrap();
         visual.run_until_parked();

@@ -203,10 +203,11 @@ impl Shell {
         self.observations.push(cx.subscribe(
             &self.notification_state.layout,
             |this, _, event, cx| {
-                this.workspace.new_layout_prompt_dismissed = true;
                 if matches!(event, LayoutNoticeEvent::Try) && this.workspace.classic_layout {
+                    // Dismisses the notice and picks the default frame.
                     this.toggle_layout(cx);
                 } else {
+                    this.workspace.new_layout_prompt_dismissed = true;
                     this.persist(cx);
                     cx.notify();
                 }

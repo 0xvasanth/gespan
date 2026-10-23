@@ -39,10 +39,10 @@ mod markdown;
 mod markdown_model;
 #[cfg(target_os = "macos")]
 mod memory_log;
-mod modal;
 #[cfg(all(test, target_os = "macos"))]
 mod metal_tests;
 mod mobile;
+mod modal;
 mod monos;
 mod notes;
 mod notifications;

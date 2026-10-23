@@ -149,6 +149,13 @@ impl Shell {
     }
     /// Switch navigation layouts without changing the new layout's frame style.
     pub(super) fn toggle_layout(&mut self, cx: &mut Context<Self>) {
+        // Someone leaving the original layout before answering the new-layout
+        // notice has never picked a frame, so they land on the boxy default.
+        // Those who already went through it keep the frame they had.
+        if self.workspace.classic_layout && !self.workspace.new_layout_prompt_dismissed {
+            self.workspace.new_layout_boxy = true;
+            self.workspace.new_layout_prompt_dismissed = true;
+        }
         self.workspace.classic_layout = !self.workspace.classic_layout;
         self.project_resize = None;
         self.layout_changed(cx);

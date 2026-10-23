@@ -10829,6 +10829,8 @@ mod tests {
         a.has_messages = true;
         let ids = (a.id, b.id);
         let mut state = Workspace::default();
+        // Layout tests start from the rounded frame and opt into boxy.
+        state.new_layout_boxy = false;
         state.add_project("/work/another-project");
         state.add_project("/work/monocode");
         state.open(a.id);
@@ -10851,6 +10853,28 @@ mod tests {
         cx.refresh().unwrap();
         cx.run_until_parked();
         (window, ids.0, ids.1)
+    }
+    #[gpui::test]
+    fn leaving_the_original_layout_defaults_to_boxy_only_before_the_notice(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _, _) = window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.classic_layout = true;
+                shell.workspace.new_layout_boxy = false;
+                shell.workspace.new_layout_prompt_dismissed = false;
+                shell.toggle_layout(cx);
+                assert!(!shell.workspace.classic_layout);
+                assert!(shell.workspace.new_layout_boxy);
+                assert!(shell.workspace.new_layout_prompt_dismissed);
+
+                shell.workspace.classic_layout = true;
+                shell.workspace.new_layout_boxy = false;
+                shell.toggle_layout(cx);
+                assert!(!shell.workspace.new_layout_boxy);
+            })
+            .unwrap();
     }
     #[gpui::test]
     fn pane_surfaces_follow_the_edge_at_a_constant_width(cx: &mut TestAppContext) {
