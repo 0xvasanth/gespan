@@ -446,6 +446,32 @@ fn concurrent_desktop_changes_are_never_overwritten() {
 }
 
 #[test]
+fn tauri_session_with_a_harness_gpui_does_not_know_still_loads_with_the_raw_string() {
+    // Tauri Rebase can save sessions for harnesses the native app has not
+    // ported (for example Kiro). They must list, load and keep their harness.
+    let store = Store::open_rebase(Path::new(":memory:")).unwrap();
+    let (id, source) = saved(&store, json!([]));
+    store
+        .conn
+        .execute(
+            "UPDATE sessions SET harness='kiro',model='kiro:auto' WHERE id=?1",
+            [&source],
+        )
+        .unwrap();
+    assert!(crate::provider::Kind::parse("kiro").is_none());
+    let listed = store.sessions().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].provider, "kiro");
+    store.load(id).unwrap();
+    store.agent_settings(id).unwrap();
+    let harness: String = store
+        .conn
+        .query_row("SELECT harness FROM sessions WHERE id=?1", [&source], |r| r.get(0))
+        .unwrap();
+    assert_eq!(harness, "kiro");
+}
+
+#[test]
 fn configuring_the_same_provider_preserves_its_resume_id() {
     let store = Store::open_rebase(Path::new(":memory:")).unwrap();
     let (id, _) = saved(&store, json!([]));
