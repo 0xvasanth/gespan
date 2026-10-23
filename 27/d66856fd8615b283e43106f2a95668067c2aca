@@ -1,0 +1,385 @@
+src/features/notifications/model/notifications.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 8,207
+src/features/sessions/ui/PilotWorkTicker.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-100
+src/features/sessions/ui/UsageLimitNotice.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 22,38,47,58,67-68,88
+src/features/sessions/ui/Composer.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 575
+src/features/sessions/model/queuedFollowUp.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 63
+src/features/settings/ui/SettingsView.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 31-35,129-131,134,136-138,140-142,145-147,151
+src/features/workspace/model/appViewTabs.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 22-24,27-28,33
+src/app/shell/Sidebar.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 217-228,230,233-234,414-417,511-512,777,784,791,987-989,993,1000,2673-2675,3241-3242,3284,3556-3557,3589-3592,3594-3601,3604-3606,3608-3612,3614,3626,3663,3667-3668,3671-3678,3680,3682,3684,3690,3706,3804,3816,3822,3829-3830,3834,3842,3846,4254
+src/features/pilots/ui/PilotProjectCommit.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-640
+src/features/sessions/ui/HarnessIcon.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 40,70,75,80,82,111,114,119,124,129,135
+src/integrations/harness/providers/codex/codexStore.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 12,78,80,92,105,112,115,118,123,128,151,183,185,197,205,216,223,230-231
+src/features/sessions/model/messageQueue.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 51,56,85
+src/features/sessions/model/pilotWorkStatus.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-84
+src/features/pilots/ui/PilotFilePages.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-269
+src/features/pilots/model/pilotMemory.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-192
+src/features/sessions/ui/UsageLimitAccountPicker.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 25,30,86,96,102,117
+src/features/pilots/model/pilotConversation.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-41
+src/app/hooks/usePilotHabits.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-493
+src/app/hooks/useFloatingPilot.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-202
+src/features/mobile/model/mobileWorkspace.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 40,95,100,142,169-170,172-174,183-187,189,191-192,202,254-255,257-259,270,297-298,300,437
+src/features/pilots/ui/HabitPage.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-244
+src/features/pilots/ui/ConfirmReset.tsx
+  s_ccb41beff89445::t_6824f7f82eb41c 1-92
+src/app/shell/TitleBar.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 47,49-52,81-82,119,122,128-132,191,419-423,673-674,747,749-751,791,904,1047,1052-1053,1058,1090-1095,1130,1170,1172,1234-1235,1371-1372,1375,1389,1394
+src/features/sessions/model/sessionFilters.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 15
+src/debugPilotScroll.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-45
+src/app/shell/UsageProviderChip.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 115
+src/features/pilots/ui/PilotComposer.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-485
+src/features/pilots/model/pilotRotation.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-251
+src/features/pilots/model/pilotFiles.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-242
+src/features/pilots/ui/PilotHeader.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-58
+src/integrations/harness/providers/codex/codexStore.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 45,61,75,147,189
+tests/browser/transcript-scroll.spec.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 3-5,13-16,26,30,62-63,66,69,76,86-87,90,94,108,111,145,150,153,160,182,185,191,193,218,221
+src/features/pilots/ui/HabitRow.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-36
+src/features/pilots/ui/pilotPanelParts.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-451
+src/features/mobile/model/mobileTranscript.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1,5,24-25,65,86,94,104,119,121,127,142,144,147-149,154,167,169,182,243,274,350,441
+src/features/sessions/ui/SessionPane.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 66-73,78,81-84,86-87,116,139,144-146,152-157,361-366,397,402,404,423-428,531,533,558,564,644,917,950-951,953,955,958-961,964,967-968,971,988,990,993,995,997,1005-1007,1073,1113,1122,1135-1136,1154,1173,1190,1210,1214,1217,1260,1297-1298
+src/features/pilots/ui/PilotIntro.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-62
+src/integrations/harness/providers/codex/codexLive.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 22,25,31,122,187,319,326-328,333,342,349,352,360,362,371,375,382,389,394
+src/features/agent-app/model/sessionConversation.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 36,66-69
+src/features/mobile/model/mobileTranscript.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 83,90,101,104
+src/features/pilots/model/pilotWorkspace.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-345
+src/features/pilots/ui/FloatingPilotChat.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-331
+src/features/quick-composer/model/quickComposer.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 55
+src/features/artifacts/ui/ArtifactPanel.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 5-6,96
+src/features/pilots/ui/PilotRailMascot.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-57
+src/features/sessions/model/operatorCommand.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 33,61
+src/features/pilots/ui/PilotUsageLimitNotice.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-54
+src/features/sessions/model/transcriptActivity.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 12-14,21,115,123,129,138,143,158,171,176,185,200,202,224,244,250,257,284,305,310,331,355,370-371,375,381,400,660,664-666
+src/features/settings/model/settings.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 29,123,125,128,197-200,203-206,209-211,213,855,857,859-860,862-864,867-868,871,875,877,879,882,885,887-888,891-892,894,897,899,901,1174
+src/features/pilots/model/pilotMessaging.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-163
+src/features/pilots/model/pilotCompletionBatches.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-421
+src/features/pilots/ui/FloatingPilotChat.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-643
+src/features/projects/ui/ProjectBackgroundDialog.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 54-55,65-66
+src/integrations/harness/core/types.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 170-171
+src/integrations/harness/providers/codex/codexText.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 20,38,202,281,286-287,384,388,392
+src/features/pilots/ui/PilotActivityView.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-117
+src/features/pilots/ui/PilotMemoryPage.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-86
+src/features/pilots/model/pilotActivity.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-103
+src/features/pilots/ui/LaunchedSessionCard.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-129
+src/features/pilots/ui/PilotIntro.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-125
+src/features/sessions/model/transcriptTurnCache.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 3,94,103-108,114,166,183,199,221,228,233-234,236,248,264
+src/features/sessions/ui/AgentTranscript.habits.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 11,13-15,33,107,115,122-123,128,141,152,216,223-224,232,247,311,328
+src/integrations/harness/providers/codex/codexText.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 18,20,24,117,258,265,269-270,272,274,281,287,298-299
+src/test/invokeCommands.test.ts
+  s_ccb41beff89445::t_20e3a1bbe25107 1-11,14-16,23-64,67-68
+  s_ccb41beff89445::t_8e7b73eb909a8a 12-13,17-22
+  s_ccb41beff89445::t_97635156afb234 65-66
+src/features/pilots/ui/PilotUsageLimitNotice.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-211
+src/features/sessions/model/speechBubble.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 19
+src/features/sessions/model/session.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 57-58,266,270,276,283-284,374-375,377,395-398,400-401,403,461-462,484
+src/integrations/harness/core/apply.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 454,466-467,756
+src/features/pilots/ui/PanelStack.test.ts
+  s_ccb41beff89445::t_6824f7f82eb41c 1-55
+src/app/shell/SidebarRename.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 16-18,376,388,392,396,489,495-496,503-505,517,519-521,528-530,535
+src/app/model/quickLaunchSession.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 176-177
+src/app/shell/PilotRailSection.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-87
+src/features/pilots/model/pilotFiles.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-367
+src/features/pilots/model/pilotConversation.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-86
+src/features/pilots/ui/PilotChangesView.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-390
+src/features/sessions/hooks/useBottomChatMotion.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 215,232
+src/features/pilots/model/pilotBackground.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-25
+src/features/pilots/model/pilotHabits.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-272
+src/features/pilots/ui/PilotComposer.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-235
+src/features/pilots/ui/PilotComposer.ime.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-61
+src/features/sessions/data/sessionStore.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 2-3,83,139-140,192,194,196,257-258,290,385-387,389-390,400-401,413,417,425,430,554-557,559,563-564,570,577-578,592,596,607,614,830,849,967-972,974-977,1012,1014-1015,1017,1506
+src/features/pilots/model/pilotHabits.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-614
+src/features/mobile/hooks/useMobileWorkspace.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 34
+src/app/hooks/useIdleSessionDetach.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 31-33,222
+src/features/pilots/model/pilotRoster.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-78
+src/features/settings/model/appShortcuts.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 31,33
+src/features/sessions/data/pilotSessionStore.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-452
+src/features/sessions/ui/transcriptVisibility.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 6
+src/features/pilots/ui/PilotSettingsDialog.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-202
+src/features/settings/model/displayPrefs.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 7,13,23-24,71-74,105,111-115
+src/features/settings/model/settings.flags.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 70-72,74
+src/features/pilots/model/pilot.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-134
+src/app/shell/UsageFooter.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 201
+src/features/pilots/ui/HabitsList.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-66
+src/features/sessions/model/pilotWorkStatus.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-74
+src/app/hooks/usePilotHabits.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-315
+src/features/agent-app/model/agentApp.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 121,128,131-133,161,164-165,179,181-183,202,204-206,251,254-256,331,333,335,337,386,401,403,440,442,458,475,477,505,507,523,565,570,585,602,604-605,716,859-860,871,874-875,1213,1274,1328,1338-1339,1384,1412
+src/features/agent-app/model/sessionConversation.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 21
+src/features/pilots/model/pilotReaction.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-89
+src/features/pilots/ui/PilotSettingsDialog.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-437
+src/features/projects/ui/ProjectBackgroundDialog.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 41
+src/features/sessions/ui/PilotWorkTicker.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-134
+src/app/hooks/useFloatingPilot.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-193
+src/features/pilots/model/pilotMessaging.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-218
+src/app/App.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 11,13-15,17-19,21-25,113,122-123,131-135,138-139,142-143,145-147,526,619-633,635-636,638-639,643-645,649,657,659,662-663,665-668,697,786-787,914,1054,1070-1072,1170-1180,1183-1187,1190-1191,1204,1211-1212,1215-1216,1220-1228,1230-1231,1234,1237-1243,1251-1259,1314-1315,1447-1449,1452-1454,1456-1457,1461,1469,1472-1476,1570,1584-1585,1650,1662,1665,1677,1687,1694,1702,1944,1947,1949,1952-1953,1985,1992,2032-2033,2035-2039,2042,2109,2233,2235,2338-2340,2345,2361,2364,2367,2369-2371,2383-2384,2389,2397-2398,2400,2409-2410,2471,2474,2502,2811,3176,3302,3319,3564,3566,4091,4163-4164,4219,4258,4260,4318,4328,4343,4361,4391-4392,4397-4398,4403,4405,4407,4411,4434,4494,4496-4501,4503,4509,4511,4513-4515,5054-5055,5057-5060,5062-5064,5073-5083,5089,5091-5092,5102,5104,5106-5117,5121-5135,5140-5141,5149,5192-5195,5213-5215,5251,5258,5262,5266,5271-5275,5281-5284,5287,5290-5291,5297,5299,5303-5304,5913,6066-6071,6077-6078,6081,6083,6086,6093-6094,6096,6458,6462,6547,6554,6835,6912,6979,7039-7040,7344-7347,7354,7356-7357,7373,7376,7382,7407,7460,7508,7510,7670,7673-7674,7677,7680-7681,7747,7750-7751,7824,7857-7858,7866-7867,7869,8249,8303,8330,8351,8355-8358,8367,8376,8379-8380,8382,8384,8394,8402,8404,8558,8638,8640,8645-8647,8649,8652-8654,8656,8661,8663,8669-8670,8675,8688,8691,8693,8722-8724,8729,8731,8734,8737,8742-8743,8746,8751,8757,8762,8922,8924,8928,8931-8932,8939-8940,8948-8950,8953-8956,8960-8962,9068,9092-9093,9098,9106-9107,9113,9119-9120,9327,9354,9383,9385,9392,9551,9557,9562,9622,9625,9651,9653,9658,9695,9699,10037,10571,10573,10673,10724-10725,10727,10741,11227-11228,11230,11232-11233,11236,11238,11246,11259,11265-11266,11274,11289-11290,11295,11307,11351,11353,11370,11424-11425,11427,11467,11469,11547,11561,11615,11617-11619,11621-11623,11625-11626,11629-11630,11638-11641,11899-11901,11903-11906,11910-11911,11914,11929,11934-11935,12143,12145,12164,12282,12300,12441-12442,12450,12589-12591,12614,12626-12627,12655-12657,12659,12666-12667,12671,12674,12680-12681,12683,12751,12756-12757,12770-12771,12782-12783,12843,12875,13102-13103,13240,13259,13264,13269,13273,13294,13363,13410-13412,13426-13430,13434,13495-13498,13501-13503,13505-13508,13510-13511,13513,13516-13518,13520-13539,13541,13544,13550,13560,13587-13588,13599,13603,13610,13612-13613,13615-13617,13619,13621-13622,13627-13628,13630-13631,13635-13636,13640,13649-13658,13661-13662,13664-13669,13671-13672,13674,13676,13679-13680,13682,13684-13685,13687-13688,13690-13691,13694-13709,13711,13714,13717,13719-13720,13723-13724,13726-13728,13730-13732,13734,13738-13739,13745-13747,13749-13751,13754,13756,13758-13763,13767-13772,13787,13797,13871,13878-13880,13882,13884,13889,13891,13901-13903,13906-13908,13910-13912,13914,13916,13918,13935,13983,14024,14051-14052,14091,14099-14101,14104,14107,14112,14116,14246,14294,14297,14308,14320,14335,14364,14367,14371,14382-14385,14387,14390,14403,14411,14416-14417,14419-14423,14425-14426,14428,14431,14433-14434,14460,14471-14472
+src/features/pilots/model/pilotMigration.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-60
+src/features/pilots/ui/FloatingPilotChat.motion.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-178
+src/features/pilots/ui/PilotSessionList.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-334
+src/features/sessions/ui/SessionFiltersMenu.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 19
+src/features/pilots/model/pilotSessionCompletion.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-270
+src/app/hooks/useIdleSessionDetach.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 19-20,71
+src/features/pilots/ui/PilotSessionList.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-451
+src/features/sessions/model/operatorCommand.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 20,25
+pilot-chat.html
+  s_ccb41beff89445::t_b27e97f7d898e2 1-21
+src/features/pilots/model/pilotUsageLimit.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-146
+src/features/pilots/model/pilotUsageLimit.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-39
+src/features/pilots/ui/PilotOverview.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-268
+src/features/settings/model/settings.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 631
+src/styles/index.css
+  s_ccb41beff89445::t_b27e97f7d898e2 72,127-128,132-136,464,910,970-971,978-979,1018,1025,2754,2792,2794,2810,2817-2818,2851,2885,2898,2903-2904,2908,2912-2913,2918,2924,2929,3058,3061-3062,3066-3067,3070,3072,3075,3081,3087,3107,3111,3211,3688,3692-3693,3698,3703,3708-3709,3712,3722
+src/features/artifacts/artifacts.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 35
+src/features/pilots/model/pilotCards.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-197
+src/features/pilots/model/pilotReaction.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-90
+src/features/pilots/ui/PilotActivityView.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-32
+src/features/agent-app/model/agentAppMemory.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 5,7,11,22-23,30-33,98,103,121,126-128,132,147,174,176,202-204,212,232
+src/integrations/harness/core/apply.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 9-11,722,730,743,763,770,775
+src/features/sessions/data/sessionStoreRestore.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 68,72
+src/features/pilots/model/pilotActivity.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-23
+src/features/pilots/model/pilotSessionCompletion.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-331
+vite.config.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 40
+src/features/sessions/data/sessionStore.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 345,357,362,366-367
+src/app/shell/SettingsRail.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 32
+src/features/projects/ui/SearchableProjectPicker.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 32-33,35-36,41,44-47,49,75-76,93,109,127-128,136,140-141,145-146,171-175,196,217,248,261,271,283-284,286,290-291,320,322,325-326,328,330,348,407-408,418,420,422-423,425,433,437-438,445,447,452,522,528,530,535,540
+src/features/pilots/model/floatingPilot.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-170
+tests/browser/transcript.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 4,6,70,75,78,86,90,94,106,112-114,123,129,138,143,146,152,158,162,172,178,187,193,198,213,225,235-237,247-249,251
+src/app/shell/PilotRailSection.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-392
+src/features/sessions/model/transcriptTurnCache.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 3-4,7,45,97,100-101
+src/features/sessions/ui/SessionPaneScroll.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 7,16-17,24,36-39,55,152,164,166,175,184-185,196,200,210-211,218-219,228,238-240,251,253-254,268-269
+src/features/sessions/ui/AgentTranscript.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 348,366,372,376,398,857-858,864,901,903,905,910,923,934,949,955,963,969
+src/features/pilots/model/floatingPilot.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-138
+src/features/pilots/ui/PilotChangesView.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-555
+src/app/shell/ProjectRail.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 98,147-148,188,368,462
+src/app/shell/startedSessions.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 39,50
+src/features/agent-app/model/agentApp.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 48-49,59,62,64-65,77,99,108,131-132,134,137,144,146-147,149,151,155,157,160,162,252,257-258,260,262,296,305,307-308,314-315,318,321,328,332,336,340,342,375,378,466,473-475,488-489,510-511,513-514,516,524,531,545,550,558,561,574,578,581,586,588,600-601,608,631,643,653,657,669,680,688,725-726,728-729,739,744,746,775,800,814,841-842,962,964,969,998,1010,1022,1028,1057,1078,1110,1112,1114,1116,1124
+src/features/agent-app/model/agentAppSoul.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 5,7,10,17-18,23,28,33,40-42,68,77,110,117,131
+src/features/sessions/model/transcriptActivity.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 348,350,356,389-390,394,396,412-414,427,432,437,442,444-445,453-454,459,468,541,548
+src/features/sessions/ui/AgentTranscript.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 70,72,74-78,123-124,158-159,225,227-228,235,238,347,349-351,365,539,802,1130,1181,1183,1185,1189,1191-1192,1201,1232,1234,1262,1265,1301,1327,1336,1344,1416,1456,1522,1569,2362,2516,2519,2524-2525,2569,2589,2699,2722-2725,2899-2902,3011,3016,3018-3019,3021-3022,3025,3129,3132,3135,3171,3392,3424,3452,3456,3464,3468,3475,3510,3513,3524,3530,3536,3555,3594-3595,3601,3608,3613,5297,5309,5312,5316,5321
+src/features/pilots/ui/NewHabitPage.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-228
+src/integrations/harness/providers/codex/codex.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 51,96,145,483,557-558,720
+src/features/pilots/ui/PilotFilePages.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-426
+src/features/pilots/model/pilotWorkspace.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-153
+src/features/projects/ui/SearchableProjectPickerPilots.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-69
+src/features/pilots/ui/PilotStatus.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-46
+src/features/pilots/model/pilotSpawnedSessions.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-198
+src/features/pilots/floatingMain.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-92
+src/features/settings/model/appShortcuts.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 18
+src/integrations/harness/core/child.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 41,50,78,357
+src/features/settings/ui/SettingsView.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 264,268,328-338,355-356,358-359,378-379,658,1202,4239-4240,4242-4243,4247-4248,4251-4253,4257,4259-4260,4263,4266-4268,4271,4273,4279,4281,4286,4292-4294,4296-4297,4300,4308-4309,4325,4330,4334,4336,4343,4345,4347-4348
+src/main.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 3-4
+src/features/sessions/ui/SessionPaneMessaging.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 39-42,197,206,254,264,286,323
+src/features/pilots/ui/PilotHabits.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-383
+src/features/automations/model/automations.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 519
+src/features/pilots/ui/PanelStack.tsx
+  s_ccb41beff89445::t_6824f7f82eb41c 1-161
+src/features/sessions/ui/AgentTranscript.inlineWork.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 8,92,146,153,168,173-174,204,209,213,218,220,233,237,244,250,266,268,279,291,294,308,334,337,343,391,398,436,449,457,542,549,579,609,638,693,719,768,771-772,852,854,857,887,892,910,927,939,974,1055
+src/features/sessions/model/liveAgents.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 31,34-36,44,46-48
+src/features/pilots/model/pilotRotation.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-176
+src/features/pilots/ui/PilotSidebar.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-106
+src/integrations/harness/core/registry.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 39
+src/features/pilots/floatingMain.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-68
+src/features/pilots/ui/PilotProjects.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-122
+src/features/sessions/ui/MessageQueue.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 103-106,173,188
+src/features/pilots/hooks/usePilotTranscript.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-93
+src/features/pilots/model/pilotSpawnedSessions.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-255
+src/features/sessions/ui/AgentTranscriptScroll.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 46,54,70,518,568
+src/features/sessions/hooks/useBottomChatMotion.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 32,109,300
+src/features/pilots/model/pilotBackground.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-41
+src/app/model/quickLaunchSession.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 54
+src/features/terminal/ui/TerminalView.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 122
+src/features/pilots/hooks/usePilotTranscript.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-173
+src/features/pilots/model/pilot.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-482
+src/features/pilots/model/pilotMemory.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-339
+src/features/pilots/ui/PilotOverview.tsx
+  s_ccb41beff89445::t_b27e97f7d898e2 1-598
+src/features/pilots/ui/PilotComposerFileDrop.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 1-128
+src/features/sessions/ui/MessageQueue.test.ts
+  s_ccb41beff89445::t_b27e97f7d898e2 5,9,11,43,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27d66856fd8615b283e43106f2a95668067c2aca",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
