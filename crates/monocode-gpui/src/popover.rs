@@ -239,6 +239,8 @@ impl AnchorSlot {
 pub(crate) enum Anchor {
     Slot(AnchorSlot),
     Point(Point<Pixels>),
+    /// Centre the measured card in the window, for modals.
+    Center,
     /// Follow the row vertically, but always measure the gap from the parent
     /// card's edge, regardless of its row padding or menu style.
     Submenu {
@@ -251,6 +253,7 @@ impl Anchor {
         match self {
             Self::Slot(slot) => slot.get().unwrap_or_default(),
             Self::Point(p) => Bounds::new(*p, size(px(0.), px(0.))),
+            Self::Center => Bounds::default(),
             Self::Submenu { row, surface } => {
                 let row = row.get().unwrap_or_default();
                 let surface = surface.get().unwrap_or(row);
@@ -610,7 +613,14 @@ impl Element for Placed {
         let top = placed.top.unwrap_or_else(|| {
             viewport.1 - placed.bottom.unwrap_or(0.) - height.min(placed.max_height)
         });
-        let target = point(px(placed.left).round(), px(top).round());
+        let target = if matches!(self.anchor, Anchor::Center) {
+            point(
+                px(((viewport.0 - f32::from(surface.width)) / 2.).max(0.)).round(),
+                px(((viewport.1 - height) / 2.).max(0.)).round(),
+            )
+        } else {
+            point(px(placed.left).round(), px(top).round())
+        };
         let moving = target + entrance_offset(placed.side, self.progress);
         // One offset moves the glass, frame, content, clipping and hitboxes.
         window.with_element_offset(moving - bounds.origin, |window| {

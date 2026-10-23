@@ -645,6 +645,9 @@ impl TranscriptView {
     pub(crate) fn document(text: String, cx: &mut Context<Self>) -> Self {
         let mut view = Self::new();
         view.document = true;
+        // A document reads from its top. Chat's tail-follow would open it
+        // scrolled to the end and keep it pinned there on every rebuild.
+        view.list.set_follow_mode(FollowMode::Normal);
         view.patch(
             0,
             vec![Row {
@@ -655,6 +658,10 @@ impl TranscriptView {
             }],
             cx,
         );
+        view.list.scroll_to(ListOffset {
+            item_ix: 0,
+            offset_in_item: px(0.),
+        });
         view
     }
     /// liveAgents.ts's toLiveAgent: the last turn's latest tool, as "Read

@@ -48,6 +48,19 @@ pub(crate) fn scrim(id: impl Into<ElementId>) -> AnimationElement<Div> {
     backdrop(id, div().absolute().inset_0())
 }
 
+/// Lifts a modal overlay out of the pane that renders it, so its scrim covers
+/// the whole window and a flex-centred card centres on the window rather than
+/// the pane. Popovers opened inside it (priority 40 and up) still draw above.
+pub(crate) fn window_overlay(window: &Window, overlay: impl IntoElement) -> impl IntoElement {
+    let size = window.viewport_size();
+    gpui::deferred(
+        gpui::anchored()
+            .position(gpui::point(px(0.), px(0.)))
+            .child(div().relative().w(size.width).h(size.height).child(overlay)),
+    )
+    .with_priority(30)
+}
+
 /// Fades a card in while it rises a few points into place.
 pub(crate) fn enter<E: Styled + IntoElement + 'static>(
     id: impl Into<ElementId>,

@@ -2839,7 +2839,10 @@ impl gpui::Render for Inbox {
             .when(self.project_picker, |d| d.child(self.project_menu(cx)))
             .when(self.action_menu, |d| d.child(self.action_menu_view(cx)))
             .when(self.connect_provider.is_some(), |d| {
-                d.child(self.connection_dialog(cx))
+                d.child(crate::modal::window_overlay(
+                    window,
+                    self.connection_dialog(cx),
+                ))
             })
             .when(self.confirm_action.is_some(), |d| {
                 d.child(self.action_confirmation(cx))

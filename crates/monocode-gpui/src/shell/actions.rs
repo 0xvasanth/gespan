@@ -362,10 +362,7 @@ impl Shell {
         let editing = dialog.editing.is_some();
         let viewport = window.viewport_size();
         let width = 420f32.min(viewport.width.as_f32() - 24.);
-        let anchor = Anchor::Point(gpui::point(
-            px((viewport.width.as_f32() - width) / 2.),
-            px((viewport.height.as_f32() / 2. - 180.).max(16.)),
-        ));
+        let anchor = Anchor::Center;
         let weak = cx.weak_entity();
         let label = |text: &'static str| {
             div()

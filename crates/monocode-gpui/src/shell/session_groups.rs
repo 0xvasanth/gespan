@@ -1700,10 +1700,7 @@ impl Shell {
         let title = self.session_metadata(dialog.id, cx).display_title();
         let viewport = window.viewport_size();
         let width = 384f32.min(viewport.width.as_f32() - 24.);
-        let anchor = Anchor::Point(gpui::point(
-            px((viewport.width.as_f32() - width) / 2.),
-            px((viewport.height.as_f32() / 2. - 120.).max(16.)),
-        ));
+        let anchor = Anchor::Center;
         let weak = cx.weak_entity();
         let button = |id: &'static str, label: &'static str| {
             div()
