@@ -15,6 +15,7 @@ import {
   type BoardCard,
 } from "../model/board";
 import { LinkChip } from "./BoardCardItem";
+import { confirmDeleteCard } from "./boardControls";
 import {
   activityText,
   errorText,
@@ -146,7 +147,8 @@ export function CardDetail({
     );
   };
 
-  const remove = () => {
+  const remove = async () => {
+    if (!(await confirmDeleteCard(card))) return;
     deleteCard(card.id)
       .then(onClose)
       .catch((error) =>
@@ -249,7 +251,7 @@ export function CardDetail({
         <div className="flex justify-end">
           <button
             type="button"
-            onClick={remove}
+            onClick={() => void remove()}
             className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-red-300/90 hover:bg-red-500/15"
           >
             <Trash2 className="size-3.5" strokeWidth={1.75} />

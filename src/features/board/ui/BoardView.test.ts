@@ -8,6 +8,7 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import type {
   BoardCard,
   BoardColumn,
@@ -27,6 +28,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => undefined)),
 }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn() }));
 
 // The real board, with its latest props kept so a test can drive a drop.
 const kanban: { props: KanbanBoardProps | null } = { props: null };
@@ -129,6 +131,7 @@ beforeEach(() => {
       card("new", String(args.columnId), 9, 9, String(args.title)),
   };
   vi.mocked(invoke).mockReset();
+  vi.mocked(ask).mockReset();
   vi.mocked(invoke).mockImplementation(async (cmd, args) => {
     const handler = handlers[cmd];
     if (!handler) throw new Error(`unexpected command ${cmd}`);
@@ -318,6 +321,37 @@ describe("BoardView", () => {
 
     const open = deleteItem("review");
     expect(open.disabled).toBe(false);
+  });
+
+  it("asks before deleting a card from its menu", async () => {
+    await renderBoard();
+    handlers.board_card_delete = () => undefined;
+    const deleteFromMenu = async () => {
+      const menu = columnEl("backlog").querySelector<HTMLButtonElement>(
+        'button[aria-label="Card actions for #2"]',
+      )!;
+      act(() => menu.click());
+      const item = [
+        ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+      ].find((el) => el.textContent === "Delete")!;
+      await act(async () => item.click());
+      await flush();
+    };
+
+    vi.mocked(ask).mockResolvedValue(false);
+    await deleteFromMenu();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ask).mock.calls[0][0]).toContain("#2");
+    expect(vi.mocked(ask).mock.calls[0][0]).toContain("Write docs");
+    expect(commands("board_card_delete")).toHaveLength(0);
+    // The menu click doesn't also open the card.
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    vi.mocked(ask).mockResolvedValue(true);
+    await deleteFromMenu();
+    expect(commands("board_card_delete")).toEqual([
+      ["board_card_delete", { cardId: "c2" }],
+    ]);
   });
 
   it("moves a card optimistically and puts it back when the move fails", async () => {

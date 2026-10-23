@@ -3,6 +3,7 @@ import { act, createElement, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import type { BoardCard } from "../model/board";
 import { CardDetail } from "./CardDetail";
 
@@ -10,6 +11,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => undefined)),
 }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn() }));
 
 const CARD: BoardCard = {
   id: "c3",
@@ -31,6 +33,7 @@ let root: Root;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.mocked(invoke).mockReset();
+  vi.mocked(ask).mockReset();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -118,5 +121,56 @@ describe("CardDetail linked work", () => {
     expect(dialogText()).not.toContain("Linked work no longer exists");
     await act(async () => openButton()!.click());
     expect(props.onOpenLinkedWork).toHaveBeenCalledWith(target);
+  });
+});
+
+describe("CardDetail delete", () => {
+  const deleteButton = () =>
+    [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+    ].find((button) => button.textContent?.includes("Delete card"))!;
+
+  const deletes = () =>
+    vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "board_card_delete");
+
+  async function settle() {
+    await act(async () => {
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    });
+  }
+
+  it("asks before deleting and keeps the card when declined", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    vi.mocked(ask).mockResolvedValue(false);
+    const props = await renderDetail();
+    await act(async () => deleteButton().click());
+    await settle();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ask).mock.calls[0][0]).toContain("#3");
+    expect(vi.mocked(ask).mock.calls[0][0]).toContain("Ship board");
+    expect(deletes()).toHaveLength(0);
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
+
+  it("deletes the card and closes once confirmed", async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd) =>
+      cmd === "board_activity" ? [] : undefined,
+    );
+    vi.mocked(ask).mockResolvedValue(true);
+    const props = await renderDetail();
+    await act(async () => deleteButton().click());
+    await settle();
+    expect(deletes()).toEqual([["board_card_delete", { cardId: "c3" }]]);
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not delete when the confirm dialog can't open", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    vi.mocked(ask).mockRejectedValue(new Error("dialog unavailable"));
+    const props = await renderDetail();
+    await act(async () => deleteButton().click());
+    await settle();
+    expect(deletes()).toHaveLength(0);
+    expect(props.onClose).not.toHaveBeenCalled();
   });
 });

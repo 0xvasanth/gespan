@@ -5,8 +5,10 @@ import {
   type ReactNode,
   type SyntheticEvent,
 } from "react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { Popover } from "../../../shared/ui/Popover";
 import { MoreHorizontal } from "../../../shared/ui/icons";
+import type { BoardCard } from "../model/board";
 
 const stop = (event: SyntheticEvent) => event.stopPropagation();
 
@@ -20,6 +22,24 @@ export const noDrag = {
   onKeyDown: stop,
   onClick: stop,
 } as const;
+
+/**
+ * Asks before a card, its notes and its activity are deleted. A dialog that
+ * can't open counts as "no": nothing is deleted without a yes.
+ */
+export function confirmDeleteCard(
+  card: Pick<BoardCard, "number" | "title">,
+): Promise<boolean> {
+  return ask(
+    `Delete card #${card.number} “${card.title}”? Its notes and activity are removed.`,
+    {
+      title: "Delete card",
+      kind: "warning",
+      okLabel: "Delete card",
+      cancelLabel: "Cancel",
+    },
+  ).catch(() => false);
+}
 
 export const ICON_BUTTON =
   "grid size-6 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60";

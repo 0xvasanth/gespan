@@ -35,7 +35,12 @@ import {
 } from "../model/board";
 import { BoardCardItem } from "./BoardCardItem";
 import { BoardColumnHeader } from "./BoardColumnHeader";
-import { MenuButton, MenuItem, NameInput } from "./boardControls";
+import {
+  confirmDeleteCard,
+  MenuButton,
+  MenuItem,
+  NameInput,
+} from "./boardControls";
 import {
   errorText,
   linkValue,
@@ -300,6 +305,11 @@ function BoardContent({
       .catch(fail("Couldn't delete the board"));
   };
 
+  const removeCard = async (card: BoardCard) => {
+    if (!(await confirmDeleteCard(card))) return;
+    deleteCard(card.id).catch(fail(`Couldn't delete card #${card.number}`));
+  };
+
   const toast = error ? (
     <FileActionError message={error} onDismiss={() => setError(null)} />
   ) : null;
@@ -349,9 +359,7 @@ function BoardContent({
       onOpenLinkedWork={openLinkedWork}
       onRename={() => setOpenCard({ id: card.id, focus: "title" })}
       onLink={() => setOpenCard({ id: card.id, focus: "link" })}
-      onDelete={() =>
-        void deleteCard(card.id).catch(fail("Couldn't delete the card"))
-      }
+      onDelete={() => void removeCard(card)}
     />
   );
 
