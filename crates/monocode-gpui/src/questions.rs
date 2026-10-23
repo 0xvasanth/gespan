@@ -88,9 +88,7 @@ impl QuestionCard {
         let clock = request.auto_resolve_at.map(|_| {
             cx.spawn(async move |this, cx| {
                 loop {
-                    cx.background_executor()
-                        .timer(Duration::from_secs(1))
-                        .await;
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
                     if !this
                         .update(cx, |this, cx| {
                             cx.notify();
@@ -303,7 +301,9 @@ impl QuestionCard {
                         .hover(|s| s.bg(content(0.05)))
                         .child(badge(
                             div().child(if selected && multiple {
-                                icon("check", 12.).text_color(inverse_ink()).into_any_element()
+                                icon("check", 12.)
+                                    .text_color(inverse_ink())
+                                    .into_any_element()
                             } else {
                                 div().child((oi + 1).to_string()).into_any_element()
                             }),
@@ -351,7 +351,11 @@ impl QuestionCard {
             .child(
                 div()
                     .pl(px(16.))
-                    .pr(px(if self.request.items.len() > 1 { 128. } else { 48. }))
+                    .pr(px(if self.request.items.len() > 1 {
+                        128.
+                    } else {
+                        48.
+                    }))
                     .pt(px(14.))
                     .pb(px(8.))
                     .flex()
@@ -412,19 +416,22 @@ impl QuestionCard {
             })
             .when(total > 1, |d| {
                 d.child(
-                    icon_button_enabled("question-prev", "Previous question", "chevron-left", step > 0)
-                        .debug_selector(|| "question-prev".into())
-                        .when(step > 0, |b| {
-                            b.on_click(cx.listener(|this, _, _, cx| this.go(this.step - 1, cx)))
-                        }),
+                    icon_button_enabled(
+                        "question-prev",
+                        "Previous question",
+                        "chevron-left",
+                        step > 0,
+                    )
+                    .debug_selector(|| "question-prev".into())
+                    .when(step > 0, |b| {
+                        b.on_click(cx.listener(|this, _, _, cx| this.go(this.step - 1, cx)))
+                    }),
                 )
-                .child(
-                    div()
-                        .min_w(px(40.))
-                        .flex()
-                        .justify_center()
-                        .child(format!("{} of {}", step + 1, total)),
-                )
+                .child(div().min_w(px(40.)).flex().justify_center().child(format!(
+                    "{} of {}",
+                    step + 1,
+                    total
+                )))
                 .child(
                     icon_button_enabled(
                         "question-next",
@@ -466,8 +473,11 @@ impl QuestionCard {
             .items_center()
             .gap(px(12.))
             .when(item.allow_custom, |d| {
-                d.child(badge(icon("pencil-line", 12.).text_color(content(0.6)), false))
-                    .child(div().flex_1().min_w_0().child(field.clone()))
+                d.child(badge(
+                    icon("pencil-line", 12.).text_color(content(0.6)),
+                    false,
+                ))
+                .child(div().flex_1().min_w_0().child(field.clone()))
             })
             .when(!item.allow_custom, |d| {
                 d.child(
@@ -493,7 +503,11 @@ impl QuestionCard {
                 d.child(
                     footer_button(
                         "question-continue",
-                        if last { "Submit answers" } else { "Next question" },
+                        if last {
+                            "Submit answers"
+                        } else {
+                            "Next question"
+                        },
                         true,
                     )
                     .debug_selector(|| "question-continue".into())
@@ -515,14 +529,14 @@ fn badge(child: impl IntoElement, filled: bool) -> impl IntoElement {
         .justify_center()
         .text_size(px(11.))
         .bg(content(if filled { 0.9 } else { 0.07 }))
-        .text_color(if filled {
-            inverse_ink()
-        } else {
-            content(0.6)
-        })
+        .text_color(if filled { inverse_ink() } else { content(0.6) })
         .child(child)
 }
-fn footer_button(id: &'static str, label: &'static str, primary: bool) -> gpui::Stateful<gpui::Div> {
+fn footer_button(
+    id: &'static str,
+    label: &'static str,
+    primary: bool,
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .role(Role::Button)
@@ -573,7 +587,11 @@ impl Render for QuestionCard {
             self.turn = None;
         }
         let forward = outgoing.is_none_or(|(_, forward)| forward);
-        let shift = if forward { SLIDE_DISTANCE } else { -SLIDE_DISTANCE };
+        let shift = if forward {
+            SLIDE_DISTANCE
+        } else {
+            -SLIDE_DISTANCE
+        };
         let page = div().relative().child(self.page(self.step, true, cx));
         // The first page arrives with the card's own fade.
         let page = if self.turns == 0 {
@@ -771,6 +789,9 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use monocode_core::agent::{QuestionItem, QuestionOption};
     use std::{cell::RefCell, rc::Rc};
+
+    type Replies = Rc<RefCell<Vec<Option<Vec<Vec<String>>>>>>;
+
     fn option(label: &str) -> QuestionOption {
         QuestionOption {
             id: label.to_lowercase(),
@@ -778,13 +799,7 @@ mod tests {
             description: String::new(),
         }
     }
-    fn card(
-        cx: &mut TestAppContext,
-    ) -> (
-        gpui::WindowHandle<QuestionCard>,
-        Rc<RefCell<Vec<Option<Vec<Vec<String>>>>>>,
-        Subscription,
-    ) {
+    fn card(cx: &mut TestAppContext) -> (gpui::WindowHandle<QuestionCard>, Replies, Subscription) {
         cx.update(|cx| cx.set_reduce_motion(true));
         let request = Question {
             id: "r".into(),

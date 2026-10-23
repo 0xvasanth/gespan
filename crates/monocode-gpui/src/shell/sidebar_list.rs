@@ -882,12 +882,11 @@ mod tests {
             Box::leak(format!("session-workspace-{id}").into_boxed_str());
         let title_selector: &'static str =
             Box::leak(format!("session-title-{id}").into_boxed_str());
-        for classic in [false, true] {
+        for boxy in [false, true] {
             window
                 .update(visual, |shell, _, cx| {
-                    shell.workspace.classic_layout = classic;
-                    shell.invalidate_chrome(cx);
-                    cx.notify();
+                    shell.workspace.new_layout_boxy = boxy;
+                    shell.layout_changed(cx);
                 })
                 .unwrap();
             visual.run_until_parked();
@@ -1077,12 +1076,11 @@ mod tests {
             })
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        for classic in [false, true] {
+        for boxy in [false, true] {
             window
                 .update(visual, |shell, _, cx| {
-                    shell.workspace.classic_layout = classic;
-                    shell.invalidate_chrome(cx);
-                    cx.notify();
+                    shell.workspace.new_layout_boxy = boxy;
+                    shell.layout_changed(cx);
                 })
                 .unwrap();
             visual.run_until_parked();

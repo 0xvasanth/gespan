@@ -40,6 +40,12 @@ unicode-normalization = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+rusty-leveldb = "1"
+tempfile = "3"
+
+# Exercise WebView2 storage fixtures on Linux and macOS too.
+[target.'cfg(not(windows))'.dev-dependencies]
+rusty-leveldb = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["linux-native-sync-persistent", "crypto-rust"] }

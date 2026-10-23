@@ -3592,7 +3592,8 @@ impl Render for Conversation {
                                     .into_any_element();
                                 let focus = self.input.focus_handle(cx);
                                 let card = self.questions.front().map(|(card, _)| card);
-                                self.question_overlay.wrap(composer, card, &focus, window, cx)
+                                self.question_overlay
+                                    .wrap(composer, card, &focus, window, cx)
                             }),
                     ),
             )

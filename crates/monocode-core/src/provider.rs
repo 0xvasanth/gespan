@@ -2111,8 +2111,9 @@ mod process_tests {
     }
     #[test]
     fn crash_preserves_coalesced_partial_text() {
+        // Read initialization before exiting so startup cannot race a closed stdin.
         let (_tmp, request) = fixture(
-            "#!/bin/sh\nprintf '%s\\n' '{\"method\":\"item/agentMessage/delta\",\"params\":{\"itemId\":\"a\",\"delta\":\"partial\"}}'\n",
+            "#!/bin/sh\nIFS= read -r init\nprintf '%s\\n' '{\"method\":\"item/agentMessage/delta\",\"params\":{\"itemId\":\"a\",\"delta\":\"partial\"}}'\n",
         );
         let mut text = String::new();
         let result = run(request, Arc::new(AtomicBool::new(false)), |events| {
@@ -2181,7 +2182,8 @@ for line in sys.stdin:
 
     #[test]
     fn malformed_provider_json_fails() {
-        let (_tmp, request) = fixture("#!/bin/sh\nprintf '{invalid json\\n'\n");
+        // Exercise JSON parsing after startup, rather than a broken initialization pipe.
+        let (_tmp, request) = fixture("#!/bin/sh\nIFS= read -r init\nprintf '{invalid json\\n'\n");
         let error = run(request, Arc::new(AtomicBool::new(false)), |_| Ok(())).unwrap_err();
         assert!(error.starts_with("Invalid provider JSON:"), "{error}");
     }
