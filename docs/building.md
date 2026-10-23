@@ -70,6 +70,13 @@ Prerelease tags such as `v0.9.1-beta.1` publish to `beta/latest.json`, and beta 
 
 To trial AppImage updates, install a beta AppImage in a writable directory, publish a newer beta, and verify the update downloads, installs, and relaunches successfully before publishing a stable version.
 
+### Updater feed and signing secrets
+
+- Stable releases attach `latest.json` to the GitHub Release. Builds default to `https://github.com/0xvasanth/rebase/releases/latest/download/latest.json`; set the `TAURI_UPDATER_ENDPOINT` secret to override it. The feed always points at the GitHub Release assets.
+- R2 is optional for stable releases. When all R2 secrets (`R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) are set, packages and the feed are also mirrored to R2; otherwise that step is skipped.
+- Beta releases require all of the R2 secrets and fail early if any is missing, because GitHub's `/releases/latest` skips prereleases and `beta/latest.json` is served from R2 only.
+- `TAURI_UPDATER_PUBKEY` is always required, along with `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Generate the key pair with `bunx tauri signer generate`.
+
 The [release workflow](../.github/workflows/release.yml) packages the platform builds and publishes the updater feed. [scripts/release-channel.cjs](../scripts/release-channel.cjs) selects the stable or beta feed.
 
 Read [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines and checks. The experimental remote host has its own [build and packaging instructions](remote-access.md#release-packaging).

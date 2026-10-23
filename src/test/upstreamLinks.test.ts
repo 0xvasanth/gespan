@@ -11,7 +11,8 @@ const FORBIDDEN = /hardbeat920\/rebase|usemono\.dev/i;
 
 const EXCLUDED = [
   /(^|\/)(bun\.lockb?|package-lock\.json|Cargo\.lock|yarn\.lock|pnpm-lock\.yaml)$/,
-  /(^|\/)(node_modules|target|dist|build)\//,
+  /(^|\/)node_modules\//,
+  /^(target|dist|build|src-tauri\/target)\//,
   /^docs\/superpowers\//,
   /^\.superpowers\//,
   /^src\/test\/upstreamLinks\.test\.ts$/, // names the forbidden patterns

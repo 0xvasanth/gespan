@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseChannel, updaterEndpoint, updaterPubkey, GITHUB_STABLE_FEED } = require("./release-channel.cjs");
+const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -83,6 +83,49 @@ test("the CLI exports the same channel used for feed publication", () => {
       env: { ...process.env, GITHUB_REF_NAME: "v0.9.1-beta.1", GITHUB_ENV: envFile },
     });
     assert.equal(fs.readFileSync(envFile, "utf8"), "RELEASE_PRERELEASE=true\nUPDATER_FEED_KEY=beta/latest.json\n");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const fullR2 = {
+  R2_PUBLIC_BASE_URL: "https://cdn.example.com",
+  R2_ACCOUNT_ID: "acct",
+  R2_BUCKET_NAME: "bucket",
+  R2_ACCESS_KEY_ID: "key",
+  R2_SECRET_ACCESS_KEY: "secret",
+};
+
+test("stable releases treat R2 as optional, enabled only when fully configured", () => {
+  assert.deepEqual(r2Status({ GITHUB_REF_NAME: "v0.9.1", ...fullR2 }), { enabled: true, missing: [] });
+  const partial = { GITHUB_REF_NAME: "v0.9.1", R2_PUBLIC_BASE_URL: "https://cdn.example.com", R2_BUCKET_NAME: " " };
+  const status = r2Status(partial);
+  assert.equal(status.enabled, false);
+  assert.deepEqual(status.missing, ["R2_ACCOUNT_ID", "R2_BUCKET_NAME", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]);
+  assert.equal(r2Status({ GITHUB_REF_NAME: "v0.9.1" }).enabled, false);
+});
+
+test("beta releases fail fast naming every missing R2 secret", () => {
+  assert.equal(r2Status({ GITHUB_REF_NAME: "v0.9.1-beta.1", ...fullR2 }).enabled, true);
+  const { R2_BUCKET_NAME, R2_SECRET_ACCESS_KEY, ...rest } = fullR2;
+  assert.throws(
+    () => r2Status({ GITHUB_REF_NAME: "v0.9.1-beta.1", ...rest }),
+    /Beta releases require all R2 secrets; missing: R2_BUCKET_NAME, R2_SECRET_ACCESS_KEY/,
+  );
+  assert.throws(() => r2Status({ GITHUB_REF_NAME: "v0.9.1-beta.1" }), /R2_PUBLIC_BASE_URL/);
+});
+
+test("the r2 CLI exports R2_ENABLED and fails for an incomplete beta", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rebase-r2-"));
+  try {
+    const envFile = path.join(dir, "github-env");
+    const run = (env) => execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "r2"], {
+      env: { PATH: process.env.PATH, GITHUB_ENV: envFile, ...env },
+      stdio: "pipe",
+    });
+    run({ GITHUB_REF_NAME: "v0.9.1" });
+    assert.equal(fs.readFileSync(envFile, "utf8"), "R2_ENABLED=false\n");
+    assert.throws(() => run({ GITHUB_REF_NAME: "v0.9.1-beta.1" }), /Command failed/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

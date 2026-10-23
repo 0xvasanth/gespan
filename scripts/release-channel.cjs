@@ -35,9 +35,27 @@ function updaterPubkey(env) {
   return pubkey;
 }
 
-module.exports = { releaseChannel, updaterEndpoint, updaterPubkey, GITHUB_STABLE_FEED };
+const R2_REQUIRED = ["R2_PUBLIC_BASE_URL", "R2_ACCOUNT_ID", "R2_BUCKET_NAME", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"];
 
-if (require.main === module) {
+// R2 is optional for stable releases (GitHub Releases is the default feed) but
+// required for beta, whose feed is R2-only. One rule shared by every step.
+function r2Status(env) {
+  const { prerelease } = releaseChannel(env.GITHUB_REF_NAME);
+  const missing = R2_REQUIRED.filter((name) => !(env[name] || "").trim());
+  if (prerelease && missing.length) {
+    throw new Error(`Beta releases require all R2 secrets; missing: ${missing.join(", ")}`);
+  }
+  return { enabled: missing.length === 0, missing };
+}
+
+module.exports = { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED };
+
+if (require.main === module && process.argv[2] === "r2") {
+  const { enabled, missing } = r2Status(process.env);
+  if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
+  fs.appendFileSync(process.env.GITHUB_ENV, `R2_ENABLED=${enabled}\n`);
+  console.log(enabled ? "R2 enabled" : `R2 disabled (missing: ${missing.join(", ")})`);
+} else if (require.main === module) {
   const { prerelease, feedKey } = releaseChannel(process.env.GITHUB_REF_NAME);
   if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
   fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_PRERELEASE=${prerelease}\nUPDATER_FEED_KEY=${feedKey}\n`);

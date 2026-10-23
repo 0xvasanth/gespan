@@ -27,6 +27,16 @@ jobs:
       - name: Select release channel
         run: node scripts/release-channel.cjs
 
+      # One R2 rule for every later step; beta releases fail here if R2 is incomplete.
+      - name: Check R2 configuration
+        env:
+          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/release-channel.cjs r2
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -92,7 +102,7 @@ jobs:
                 plugins: {
                   updater: {
                     pubkey,
-                    endpoints: endpoint ? [endpoint] : [],
+                    endpoints: [endpoint],
                   },
                 },
               },
@@ -214,13 +224,6 @@ jobs:
               exit 1
             fi
           done
-          BASE="${R2_PUBLIC_BASE_URL%/}"
-          # R2 is optional: without all of its secrets the feed points at the
-          # GitHub Release assets and the R2 upload below is skipped.
-          R2_ENABLED=false
-          if [[ -n "$BASE" && -n "${R2_ACCOUNT_ID:-}" && -n "${R2_BUCKET_NAME:-}" && -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
-            R2_ENABLED=true
-          fi
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           RELEASE_PREFIX="releases/${VERSION}"
           ARM_TAR_KEY="${RELEASE_PREFIX}/Rebase.app.tar.gz"
@@ -233,12 +236,9 @@ jobs:
           WINDOWS_SIGNATURE_KEY="${WINDOWS_INSTALLER_KEY}.sig"
           LINUX_APPIMAGE_KEY="${RELEASE_PREFIX}/Rebase_${VERSION}_amd64.AppImage"
           LINUX_APPIMAGE_SIGNATURE_KEY="${LINUX_APPIMAGE_KEY}.sig"
-          # Asset names on the GitHub Release match the basenames of the R2 keys.
-          if [[ "$R2_ENABLED" == true ]]; then
-            FEED_BASE="$BASE/$RELEASE_PREFIX"
-          else
-            FEED_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
-          fi
+          # The feed always points at the GitHub Release assets (their names
+          # match the basenames of the R2 keys), independent of R2.
+          FEED_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
 
           VERSION="$VERSION" \
             ARM_SIG="$ARM_SIG" \
@@ -435,7 +435,7 @@ jobs:
           set -euo pipefail
           # Stable feed is also a GitHub Release asset; the beta feed
           # (beta/latest.json) is R2-only because /releases/latest skips prereleases.
-          if [[ -z "${R2_BUCKET_NAME:-}" || -z "${R2_ACCOUNT_ID:-}" || -z "${AWS_ACCESS_KEY_ID:-}" || -z "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+          if [[ "$R2_ENABLED" != true ]]; then
             echo "R2 secrets not set; skipping R2 feed publication."
             exit 0
           fi
