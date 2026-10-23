@@ -7,6 +7,7 @@ import {
 } from "../../../platform/tauri/fs";
 import { isFilesystemTab, type FilePaneTab } from "../../workspace/model/layout";
 import { isEqualOrInside, parentPath, pathKey } from "../../../shared/lib/paths";
+import { APP_BRANCH_PREFIX } from "../../../shared/lib/branchOwnership";
 import { isBlankSession } from "../../projects/model/projectReturn";
 import { newSession, sessionWorkCwd, type Session } from "../../sessions/model/session";
 
@@ -76,20 +77,20 @@ export function temporaryWorktreeBranchName(
     .replace(/[^a-zA-Z0-9]/g, "")
     .slice(0, 8)
     .toLowerCase();
-  return `mc/${token || Date.now().toString(36)}`;
+  return `${APP_BRANCH_PREFIX}${token || Date.now().toString(36)}`;
 }
 
 export function orchestrationWorktreeBranchName(id: string): string {
   const token = id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12).toLowerCase();
-  return `mc/orch-${token || Date.now().toString(36)}`;
+  return `${APP_BRANCH_PREFIX}orch-${token || Date.now().toString(36)}`;
 }
 
 export function namedWorktreeBranch(fragment: string): string | null {
   const clean = fragment
     .trim()
-    .replace(/^(?:mc|rebase)\/+/, "")
+    .replace(/^(?:rebase|mc)\/+/, "")
     .replace(/^\/+|\/+$/g, "");
-  return clean ? `mc/${clean}` : null;
+  return clean ? `${APP_BRANCH_PREFIX}${clean}` : null;
 }
 
 export async function removeWorktree(

@@ -3,6 +3,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { isTemporaryWorktreeBranch } from "../src/shared/lib/branchOwnership";
 
 const exec = promisify(execFile);
 const options = (cwd: string) => ({
@@ -210,7 +211,7 @@ export async function renameHostWorktreeBranch(
   branch: string,
   stillOwned: () => boolean = () => true,
 ): Promise<HostWorktree> {
-  if (!/^mc\/[a-z0-9]{8}$/.test(expectedBranch))
+  if (!isTemporaryWorktreeBranch(expectedBranch))
     throw new Error("This is not an automatically created worktree branch");
   if (
     !branch ||

@@ -23,10 +23,10 @@ vi.mock("@tauri-apps/api/webview", () => ({
 vi.mock("../../source-control/hooks/useProjectBranches", () => ({
   useProjectBranchesState: () => ({
     branches: {
-      current: "mc/greeting",
+      current: "rebase/greeting",
       detached: false,
       branches: [
-        { name: "mc/greeting", remote: null, current: true },
+        { name: "rebase/greeting", remote: null, current: true },
         { name: "main", remote: null, current: false },
       ],
     },
@@ -1434,7 +1434,7 @@ describe("Composer question focus", () => {
           model: "claude-sonnet",
           runtimeMode: "supervised",
           cwd: "/repo",
-          executionCwd: "/repo-worktrees/mc-greeting",
+          executionCwd: "/repo-worktrees/rebase-greeting",
           hideProjectPicker: true,
           onFocus: vi.fn(),
           onCwdChange: vi.fn(),
@@ -1454,7 +1454,7 @@ describe("Composer question focus", () => {
       container.querySelector('[aria-label="Choose working copy"]'),
     ).toBeNull();
     expect(
-      container.querySelector('[aria-label="Branch mc/greeting"]'),
+      container.querySelector('[aria-label="Branch rebase/greeting"]'),
     ).not.toBeNull();
   });
 
@@ -1556,7 +1556,7 @@ describe("Composer question focus", () => {
     );
     expect(onWorkspaceModeChange).toHaveBeenLastCalledWith(
       "worktree",
-      "mc/greeting",
+      "rebase/greeting",
     );
 
     await act(async () =>
@@ -1569,7 +1569,7 @@ describe("Composer question focus", () => {
         }),
       ),
     );
-    expect(onWorktreeBaseChange).toHaveBeenLastCalledWith("mc/greeting");
+    expect(onWorktreeBaseChange).toHaveBeenLastCalledWith("rebase/greeting");
   });
 
   it("returns focus to the composer textarea once a question is answered", async () => {

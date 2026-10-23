@@ -157,6 +157,33 @@ pub fn create_branch(cwd: &Path, name: &str) -> Result<(), String> {
     git(cwd, &["switch", "-c", name])?;
     Ok(())
 }
+/// Legacy branch prefixes, still recognised so existing worktrees keep working.
+const LEGACY_BRANCH_PREFIXES: [&str; 1] = ["mc/"];
+const APP_BRANCH_PREFIX: &str = "rebase/";
+
+fn has_app_prefix(name: &str, suffix: &str) -> bool {
+    std::iter::once(APP_BRANCH_PREFIX)
+        .chain(LEGACY_BRANCH_PREFIXES)
+        .any(|prefix| {
+            name.strip_prefix(prefix)
+                .is_some_and(|rest| rest.starts_with(suffix))
+        })
+}
+
+/// Branches Rebase created itself (current `rebase/` or legacy `mc/`).
+pub fn is_app_branch(name: &str) -> bool {
+    has_app_prefix(name, "")
+}
+
+/// Orchestration worker branches (`rebase/orch-…` or legacy `mc/orch-…`).
+pub fn is_orchestration_branch(name: &str) -> bool {
+    has_app_prefix(name, "orch-")
+}
+
+fn native_session_branch(session: i64, stamp: u128) -> String {
+    format!("{APP_BRANCH_PREFIX}native-{session}-{stamp}")
+}
+
 pub fn create_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, String> {
     if crate::files::remote::is_remote(cwd) {
         let stamp = std::time::SystemTime::now()
@@ -165,7 +192,7 @@ pub fn create_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, 
             .as_millis();
         return remote::create_worktree(
             cwd,
-            &format!("mc/native-{session}-{stamp}"),
+            &native_session_branch(session, stamp),
             Some(base),
             false,
         )
@@ -182,7 +209,7 @@ pub fn create_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, 
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let name = format!("mc/native-{session}-{stamp}");
+    let name = native_session_branch(session, stamp);
     let path = parent.join(name.replace('/', "-"));
     let commit = git(
         cwd,
@@ -310,6 +337,45 @@ pub fn create_project_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_session_worktrees_use_rebase_prefix() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("project");
+        std::fs::create_dir(&cwd).unwrap();
+        git(&cwd, &["init", "-b", "main"]).unwrap();
+        std::fs::write(cwd.join("file"), "x\n").unwrap();
+        git(&cwd, &["add", "file"]).unwrap();
+        git(
+            &cwd,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "init",
+            ],
+        )
+        .unwrap();
+        let path = create_worktree(&cwd, "main", 7).unwrap();
+        let folder = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(folder.starts_with("rebase-native-7-"), "{folder}");
+        let branch = worktrees(&cwd)
+            .unwrap()
+            .into_iter()
+            .find_map(|tree| tree.branch.filter(|b| b.starts_with("rebase/native-7-")));
+        assert!(branch.as_deref().is_some_and(is_app_branch));
+    }
+    #[test]
+    fn app_and_orchestration_branches_accept_legacy_prefix() {
+        assert!(is_app_branch("rebase/x") && is_app_branch("mc/12345678"));
+        assert!(!is_app_branch("feature/x") && !is_app_branch("mcx/y"));
+        assert!(is_orchestration_branch("mc/orch-x"));
+        assert!(is_orchestration_branch("rebase/orch-x"));
+        assert!(!is_orchestration_branch("feature/x"));
+        assert!(!is_orchestration_branch("rebase/other"));
+    }
     #[test]
     fn sidebar_named_copies_preserve_dirty_files_and_refuse_collisions() {
         let temp = tempfile::tempdir().unwrap();

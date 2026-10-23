@@ -94,14 +94,14 @@ it.each([false, true])("applies generated worktree names only to retained sessio
   await vi.waitFor(() => {
     expect(store.session(sessionId).session).toMatchObject({
       title: "codex · Fix remote naming",
-      branch: "mc/remote-naming",
+      branch: "rebase/remote-naming",
       worktreeCwd: tree.path,
     });
   });
   expect(
     (await hostWorktrees(cwd)).worktrees.find((item) => item.path === tree.path)
       ?.branch,
-  ).toBe("mc/remote-naming");
+  ).toBe("rebase/remote-naming");
   expect(title).toHaveBeenCalledTimes(1);
   expect(branch).toHaveBeenCalledTimes(1);
   engine.command({
@@ -194,4 +194,30 @@ it("creates registered host worktrees and binds new sessions to the selected che
   ).rejects.toThrow("already has a working copy");
   const existing = await createHostWorktree(cwd, "existing", "HEAD", true);
   expect(existing.branch).toBe("existing");
+});
+
+it.each([
+  ["rebase/12345678", "wt-rebase-12345678"],
+  ["mc/12345678", "wt-mc-12345678"],
+])("renames automatically created %s branches and names the folder after them", async (temporary, folder) => {
+  const cwd = mkdtempSync(join(tmpdir(), "rebase-host-prefix-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd });
+  git("init", "-q");
+  git("checkout", "-q", "-b", "main");
+  writeFileSync(join(cwd, "file.txt"), "initial\n");
+  git("add", "file.txt");
+  git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "initial");
+  const root = (await hostWorktrees(cwd)).defaultRoot;
+  cleanups.push(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const tree = await createHostWorktree(cwd, temporary, "HEAD", false);
+  expect(tree.path.endsWith(`/${folder}`)).toBe(true);
+  const renamed = await renameHostWorktreeBranch(cwd, tree.path, temporary, "rebase/renamed");
+  expect(renamed.branch).toBe("rebase/renamed");
+  const plain = await createHostWorktree(cwd, "feature/12345678", "HEAD", false);
+  await expect(
+    renameHostWorktreeBranch(cwd, plain.path, "feature/12345678", "rebase/nope"),
+  ).rejects.toThrow("not an automatically created");
 });

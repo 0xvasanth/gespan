@@ -846,7 +846,7 @@ it("creates a host worktree through the composer and selects it", async () => {
       params: expect.objectContaining({
         projectId: "project",
         cwd: "/home/me/repo",
-        branch: expect.stringMatching(/^mc\/[a-z0-9]+$/),
+        branch: expect.stringMatching(/^rebase\/[a-z0-9]+$/),
         base: "dev",
         existing: false,
       }),
