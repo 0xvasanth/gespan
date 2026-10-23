@@ -710,8 +710,6 @@ impl Inbox {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(1024.))
-                    .mx_auto()
                     .px(px(32.))
                     .pt(px(20.))
                     .pb(px(if is_pr { 0. } else { 20. }))
@@ -984,6 +982,7 @@ impl Inbox {
                                             .h_full()
                                             .px_0()
                                             .rounded_none()
+                                            .hover(|s| s.text_color(content(1.)))
                                             .when(self.tab == tab, |d| {
                                                 d.border_b_2()
                                                     .border_color(content(1.))
@@ -1025,7 +1024,7 @@ impl Inbox {
             );
         let body = match self.tab {
             Tab::Summary => self.summary_view(&item, window, cx),
-            Tab::Code => self.diff_view(cx),
+            Tab::Code => self.diff_view(),
             Tab::Checks => self.checks_view(cx),
         };
         div()
@@ -1972,57 +1971,17 @@ impl Inbox {
         div()
             .id(("inbox-summary-row", ix))
             .w_full()
-            .max_w(px(1024.))
-            .mx_auto()
             .px(px(32.))
             .child(body)
             .into_any_element()
     }
 
-    fn diff_view(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn diff_view(&self) -> AnyElement {
         div()
             .min_h_0()
             .flex_1()
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .h(px(32.))
-                    .px(px(12.))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .when(
-                        self.item().is_some_and(|item| item.provider == "github"),
-                        |d| {
-                            d.child(
-                                action("inbox-diff-hunks", "Hunks")
-                                    .h(px(24.))
-                                    .when(!self.diff_full, |d| d.bg(content(0.1)))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if this.diff_full {
-                                            this.diff_full = false;
-                                            this.diff = None;
-                                            this.set_tab(Tab::Code, cx);
-                                        }
-                                    })),
-                            )
-                            .child(
-                                action("inbox-diff-full", "Full file")
-                                    .h(px(24.))
-                                    .when(self.diff_full, |d| d.bg(content(0.1)))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if !this.diff_full {
-                                            this.diff_full = true;
-                                            this.diff = None;
-                                            this.set_tab(Tab::Code, cx);
-                                        }
-                                    })),
-                            )
-                        },
-                    ),
-            )
             .when(self.extra_loading, |d| d.child(message("Loading changes…")))
             .when_some(self.extra_error.clone(), |d, text| d.child(error(text)))
             .when(self.diff.is_some(), |d| {
