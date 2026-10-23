@@ -1,0 +1,40 @@
+crates/rebase-gpui/src/conversation.rs
+  s_ccb41beff89445::t_f56283bb5ddbee 162-163,580,649-653,657-665,763
+crates/rebase-gpui/src/mobile/transcript.rs
+  s_ccb41beff89445::t_43f5ca1bbfd238 806-809
+  s_ccb41beff89445::t_f56283bb5ddbee 251-254
+  s_ccb41beff89445::t_a627656ba5cce3 790-805,810-812
+crates/rebase-gpui/src/transcript/history.rs
+  s_ccb41beff89445::t_f56283bb5ddbee 101-105,128-130,144,221
+crates/rebase-gpui/src/transcript.rs
+  s_ccb41beff89445::t_f56283bb5ddbee 467-469,682-688,2333
+  s_ccb41beff89445::t_bc9d9c24998f4e 704-718
+  s_ccb41beff89445::t_a627656ba5cce3 4361-4364,4368,4382
+crates/rebase-gpui/src/conversation/background_tasks.rs
+  s_ccb41beff89445::t_43f5ca1bbfd238 483-491,493-550
+  s_ccb41beff89445::t_bc9d9c24998f4e 492
+crates/rebase-gpui/src/conversation/remote.rs
+  s_ccb41beff89445::t_f56283bb5ddbee 196
+crates/rebase-gpui/src/conversation/history.rs
+  s_ccb41beff89445::t_f56283bb5ddbee 93,148
+crates/rebase-gpui/src/transcript/tasks.rs
+  s_ccb41beff89445::t_bc9d9c24998f4e 1323-1325,1343-1347
+  s_ccb41beff89445::t_43f5ca1bbfd238 1307-1322,1326-1342,1348-1350
+  s_ccb41beff89445::t_76bb0a4e2268bc 1306
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "52d7cc682a97512b6bd0884afe2b3933da4441f7",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
