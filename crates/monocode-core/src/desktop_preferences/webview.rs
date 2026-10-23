@@ -133,6 +133,11 @@ impl DesktopPreferences {
             return Self::default();
         };
         let root = PathBuf::from(base).join("com.monocode.desktop");
+        Self::load_webview2_from(&root)
+    }
+
+    #[cfg(any(windows, test))]
+    fn load_webview2_from(root: &Path) -> Self {
         for relative in [
             "EBWebView/Default/Local Storage/leveldb",
             "Default/Local Storage/leveldb",
@@ -161,7 +166,11 @@ impl DesktopPreferences {
             .tempdir()
             .map_err(|e| e.to_string())?;
         copy_leveldb(path, staging.path())?;
-        Self::open_chromium_localstorage(staging.path())
+        // The LevelDB reader asserts on malformed table footers and other corrupt
+        // input. Keep the database and its iterators inside the unwind boundary:
+        // a best-effort copy must fail like an I/O error, not terminate startup.
+        std::panic::catch_unwind(|| Self::open_chromium_localstorage(staging.path()))
+            .unwrap_or_else(|_| Err("WebView2 localStorage is damaged or incomplete".into()))
     }
 
     #[cfg(any(windows, test))]
@@ -484,27 +493,89 @@ mod tests {
             .unwrap();
         db.flush().unwrap();
         let source = keep_open.then_some(db);
-        let snapshot = || {
-            std::fs::read_dir(root.path())
-                .unwrap()
-                .map(|entry| {
-                    let entry = entry.unwrap();
-                    let name = entry.file_name();
-                    // Windows denies reads of the byte-range-locked LOCK file.
-                    let contents = (name != "LOCK").then(|| std::fs::read(entry.path()).unwrap());
-                    (name, contents)
-                })
-                .collect::<BTreeMap<_, _>>()
-        };
-        let before = snapshot();
+        let before = snapshot_leveldb(root.path());
         let preferences = DesktopPreferences::read_chromium_localstorage(root.path()).unwrap();
         assert_eq!(preferences.get("monocode.workspaceTheme"), Some("tidepool"));
         assert!(preferences.available);
-        assert_eq!(snapshot(), before, "source WebView2 files changed");
+        assert_eq!(
+            snapshot_leveldb(root.path()),
+            before,
+            "source WebView2 files changed"
+        );
         let mut workspace = serde_json::json!({});
         preferences.apply_workspace(&mut workspace);
         assert_eq!(workspace["preferences"]["workspace_theme"], "tidepool");
         drop(source);
+    }
+
+    fn snapshot_leveldb(path: &Path) -> BTreeMap<std::ffi::OsString, Option<Vec<u8>>> {
+        std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                let name = entry.file_name();
+                // Windows denies reads of the byte-range-locked LOCK file.
+                let contents = (name != "LOCK").then(|| std::fs::read(entry.path()).unwrap());
+                (name, contents)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn webview2_corrupt_tables_preserve_source_and_native_workspace() {
+        for short_table in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("EBWebView/Default/Local Storage/leveldb");
+            std::fs::create_dir_all(&path).unwrap();
+            let mut db = rusty_leveldb::DB::open(&path, Default::default()).unwrap();
+            db.put(
+                b"_https://tauri.localhost\x00\x01monocode.workspaceTheme",
+                b"\x01tidepool",
+            )
+            .unwrap();
+            // Existing fixtures only exercise WAL recovery. Flush this setting
+            // into a table so the importer must parse its footer.
+            db.compact_range(b"", b"\xff").unwrap();
+            db.close().unwrap();
+            drop(db);
+            let mut tables = 0;
+            for entry in std::fs::read_dir(&path).unwrap() {
+                let table = entry.unwrap().path();
+                if table
+                    .extension()
+                    .is_some_and(|extension| extension == "ldb")
+                {
+                    let length = std::fs::metadata(&table).unwrap().len();
+                    assert!(length > 56);
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(table)
+                        .unwrap()
+                        .set_len(if short_table { 17 } else { length - 8 })
+                        .unwrap();
+                    tables += 1;
+                }
+            }
+            assert!(tables > 0);
+            let before = snapshot_leveldb(&path);
+            assert!(DesktopPreferences::read_chromium_localstorage(&path).is_err());
+
+            let preferences = DesktopPreferences::load_webview2_from(root.path());
+            assert!(!preferences.is_available());
+            let mut workspace = serde_json::json!({
+                "projects": ["/code/native"],
+                "project": "/code/native",
+                "preferences": {"workspace_theme": "ember"}
+            });
+            let original = workspace.clone();
+            preferences.apply_workspace(&mut workspace);
+            assert_eq!(workspace, original);
+            assert_eq!(
+                snapshot_leveldb(&path),
+                before,
+                "source WebView2 files changed"
+            );
+        }
     }
 
     #[test]
