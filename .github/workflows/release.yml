@@ -148,25 +148,25 @@ jobs:
           verify_app "target/x86_64-apple-darwin/release/bundle/macos/Rebase.app" x86_64
 
       - name: Download Linux packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-packages
           path: target/release/bundle/linux
 
       - name: Download Linux rpm package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-rpm-package
           path: target/release/bundle/rpm
 
       - name: Download Windows packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: windows-packages
           path: target/release/bundle/nsis
 
       - name: Download host packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: host-packages
           path: build/host-packages

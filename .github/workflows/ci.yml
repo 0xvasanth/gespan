@@ -274,7 +274,7 @@ jobs:
       - name: Enable EPEL 10
         run: dnf install -y epel-release
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: rpm-package
           path: rpm
