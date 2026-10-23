@@ -1,0 +1,135 @@
+crates/monocode-core/src/remote/ssh_askpass.rs
+  s_ccb41beff89445::t_44fc61736e90d4 138
+crates/monocode-core/src/mono.rs
+  s_ccb41beff89445::t_44fc61736e90d4 280
+crates/monocode-core/src/checkpoint.rs
+  s_ccb41beff89445::t_44fc61736e90d4 359,644,740,835-838
+crates/monocode-gpui/src/transcript.rs
+  s_ccb41beff89445::t_0532417e5cf9d4 5902,6018
+  s_ccb41beff89445::t_44fc61736e90d4 1548
+crates/monocode-core/src/mono/work.rs
+  s_ccb41beff89445::t_de5adb5cd8ff98 308
+  s_ccb41beff89445::t_0532417e5cf9d4 149,287,293,297
+  s_ccb41beff89445::t_44fc61736e90d4 163,169
+crates/monocode-gpui/src/review.rs
+  s_ccb41beff89445::t_44fc61736e90d4 1757
+crates/monocode-gpui/src/monos/panels.rs
+  s_ccb41beff89445::t_44fc61736e90d4 2007
+docs/native/README.md
+  s_ccb41beff89445::t_6b7350dc29ce32 54
+scripts/package-native.mjs
+  s_ccb41beff89445::t_f2af5b2da7b724 67,78,291
+crates/monocode-core/src/mono/desktop.rs
+  s_ccb41beff89445::t_44fc61736e90d4 25,33,130,225,315,317
+crates/monocode-core/src/checkpoint/tests.rs
+  s_ccb41beff89445::t_44fc61736e90d4 371
+crates/monocode-core/src/app_update/mod.rs
+  s_ccb41beff89445::t_44fc61736e90d4 20
+crates/monocode-core/src/desktop_preferences/session_defaults.rs
+  s_ccb41beff89445::t_44fc61736e90d4 14,17-18,38,123,141,146
+  s_ccb41beff89445::t_de5adb5cd8ff98 121,144
+crates/monocode-gpui/src/notifications/github_activity.rs
+  s_ccb41beff89445::t_44fc61736e90d4 140
+crates/monocode-gpui/src/settings/pages/mobile.rs
+  s_ccb41beff89445::t_44fc61736e90d4 1294,1419
+crates/monocode-gpui/src/notifications/app_update.rs
+  s_ccb41beff89445::t_44fc61736e90d4 11
+crates/monocode-gpui/src/editor_syntax.rs
+  s_ccb41beff89445::t_44fc61736e90d4 281
+crates/monocode-core/tests/shared_contracts.rs
+  s_ccb41beff89445::t_2641d324070173 91-94,165
+  s_ccb41beff89445::t_de5adb5cd8ff98 53-58,120-124,138-141,143-146,181-183
+  s_ccb41beff89445::t_dc6e497cfe84bc 1-52,59-90,95-119,125-137,148-164,166-180,184-207
+  s_ccb41beff89445::t_6812054f532c35 142,147
+crates/monocode-core/src/desktop_preferences/workspace_preferences.rs
+  s_ccb41beff89445::t_44fc61736e90d4 32-34,123,177,185,196,201,218,233,254,264,268,275,291,310,334,412,417-418,438,445,455,471-496,505,509,650-660,662,665,667,671,675,714,723,745,782,786,789-791,809
+crates/monocode-gpui/src/workspace.rs
+  s_ccb41beff89445::t_44fc61736e90d4 354,358,367,375,378,381,384
+crates/monocode-core/src/store/monos.rs
+  s_ccb41beff89445::t_44fc61736e90d4 138,142,150,156,159,270,275,278,284
+crates/monocode-core/src/store/shared/tests.rs
+  s_ccb41beff89445::t_44fc61736e90d4 34,47,58,121,161,173,202,225,238,269,286,351,427,473,508,573,939
+  s_ccb41beff89445::t_2973624e0d77aa 6,8,17,209,211,220,923,925,934
+crates/monocode-gpui/src/notifications/updater.rs
+  s_ccb41beff89445::t_44fc61736e90d4 222,225,230
+scripts/package-native.test.mjs
+  s_ccb41beff89445::t_f2af5b2da7b724 114
+crates/monocode-core/src/store/shared/edit.rs
+  s_ccb41beff89445::t_0532417e5cf9d4 129
+src/test/noMonoReferences.test.ts
+  s_ccb41beff89445::t_cd376a4a279ab6 37
+crates/monocode-gpui/src/main.rs
+  s_ccb41beff89445::t_44fc61736e90d4 134,234,258
+crates/monocode-gpui/src/file_editor.rs
+  s_ccb41beff89445::t_44fc61736e90d4 669
+crates/monocode-core/src/store/monocode_import.rs
+  s_ccb41beff89445::t_44fc61736e90d4 32,359,481,534
+scripts/native-release.mjs
+  s_ccb41beff89445::t_f2af5b2da7b724 51
+crates/monocode-core/src/store/shared.rs
+  s_ccb41beff89445::t_44fc61736e90d4 931,933,940,957,959,968-969,1005,1007,1034,1071,1074,1081,1085,1117,1125,1128,1457-1459
+scripts/native-release.test.mjs
+  s_ccb41beff89445::t_f2af5b2da7b724 22
+crates/monocode-core/src/desktop_preferences.rs
+  s_ccb41beff89445::t_44fc61736e90d4 144,165,178,226,229,246,250,283,346,384,544,549,560,564,569,573,577,608,611,624,628,648,664,674,678,725
+  s_ccb41beff89445::t_de5adb5cd8ff98 146,567
+  s_ccb41beff89445::t_ccb91ba166a0d8 738-739
+crates/monocode-core/src/desktop_preferences/webview.rs
+  s_ccb41beff89445::t_ccb91ba166a0d8 104,321
+  s_ccb41beff89445::t_20b232631ddaff 486,489,532
+  s_ccb41beff89445::t_44fc61736e90d4 17,135,390,395,399,423,428,456,459,465-466,498
+src/test/sharedContracts.test.ts
+  s_ccb41beff89445::t_c5020add51839a 88
+  s_ccb41beff89445::t_6812054f532c35 70-74
+  s_ccb41beff89445::t_5d63cb165211cd 1-33,37-45,48-56,58-67,69,76-79,81-85,87,89,91-94,97-98
+  s_ccb41beff89445::t_4b61a10279a106 34-36,46-47,57,68,75,80,86,90,95-96
+crates/monocode-gpui/src/shell/notifications.rs
+  s_ccb41beff89445::t_44fc61736e90d4 887
+crates/monocode-core/src/app_update/fixtures/public-key.txt
+  s_ccb41beff89445::t_1c6005e219bef2 1
+crates/monocode-gpui/src/shell/settings.rs
+  s_ccb41beff89445::t_44fc61736e90d4 539
+crates/monocode-core/src/store/shared/accounts.rs
+  s_ccb41beff89445::t_44fc61736e90d4 12,15,104
+crates/monocode-core/src/desktop_preferences/workspace_snapshot.rs
+  s_ccb41beff89445::t_44fc61736e90d4 28,78,82,304,319
+crates/monocode-gpui/src/notifications/platform_macos.rs
+  s_ccb41beff89445::t_44fc61736e90d4 23-24
+crates/monocode-core/src/store/notes.rs
+  s_ccb41beff89445::t_44fc61736e90d4 791
+crates/monocode-core/src/app_update/fixtures/feed.json
+  s_ccb41beff89445::t_1c6005e219bef2 2-3
+crates/monocode-core/src/store/shared/blocks.rs
+  s_ccb41beff89445::t_44fc61736e90d4 156,210-211,258,267,476,479-480,482,484,661,663,690
+crates/monocode-core/src/mobile/catalog.rs
+  s_ccb41beff89445::t_44fc61736e90d4 23,78
+crates/monocode-core/src/inbox.rs
+  s_ccb41beff89445::t_44fc61736e90d4 473,479,484,491,495
+crates/monocode-core/src/store/remote.rs
+  s_ccb41beff89445::t_44fc61736e90d4 114
+crates/monocode-core/src/store/remote_legacy.rs
+  s_ccb41beff89445::t_de5adb5cd8ff98 315
+  s_ccb41beff89445::t_44fc61736e90d4 51,68,92,236,322,405,410,413,415,419,435,438,504,560
+crates/monocode-core/src/mobile/host.rs
+  s_ccb41beff89445::t_44fc61736e90d4 204,311,342,452,866
+scripts/bundle-native-macos.sh
+  s_ccb41beff89445::t_f2af5b2da7b724 61
+crates/monocode-gpui/src/shell/mobile_host.rs
+  s_ccb41beff89445::t_44fc61736e90d4 521,541
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91c7732f44cc1047d1b2663c940eb7f0572ceb5f",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
