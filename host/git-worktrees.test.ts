@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { HostEngine } from "./engine";
 import { HostStore } from "./store";
@@ -213,7 +213,7 @@ it.each([
     rmSync(cwd, { recursive: true, force: true });
   });
   const tree = await createHostWorktree(cwd, temporary, "HEAD", false);
-  expect(tree.path.endsWith(`/${folder}`)).toBe(true);
+  expect(basename(tree.path)).toBe(folder);
   const renamed = await renameHostWorktreeBranch(cwd, tree.path, temporary, "rebase/renamed");
   expect(renamed.branch).toBe("rebase/renamed");
   const plain = await createHostWorktree(cwd, "feature/12345678", "HEAD", false);
