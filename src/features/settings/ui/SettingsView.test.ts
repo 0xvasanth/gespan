@@ -689,6 +689,32 @@ describe("settings pages", () => {
     expect(localStorage.getItem("rebase.tabAnimationsEnabled")).toBe("1");
   });
 
+  it("offers the Board as an opt-in, right after Notes", async () => {
+    await render("general");
+    const control = container.querySelector<HTMLButtonElement>(
+      '[role="switch"][aria-label="Board"]',
+    )!;
+
+    expect(control.getAttribute("aria-checked")).toBe("false");
+    expect(localStorage.getItem("rebase.boardEnabled")).toBeNull();
+    await act(async () => control.click());
+    expect(control.getAttribute("aria-checked")).toBe("true");
+    expect(localStorage.getItem("rebase.boardEnabled")).toBe("1");
+    await act(async () => control.click());
+    expect(control.getAttribute("aria-checked")).toBe("false");
+    expect(localStorage.getItem("rebase.boardEnabled")).toBe("0");
+
+    const ids = renderedSettingIds();
+    expect(ids.indexOf("board")).toBe(ids.indexOf("notes") + 1);
+  });
+
+  it("finds the Board setting by its search keywords", () => {
+    const entry = SETTINGS_INDEX.find((item) => item.id === "board");
+    expect(entry?.section).toBe("general");
+    expect(entry?.label).toBe("Board");
+    expect(entry?.keywords).toContain("kanban");
+  });
+
   it("defaults to the icon rail and lets users hide it", async () => {
     await render("appearance");
     let control = container.querySelector<HTMLElement>(
