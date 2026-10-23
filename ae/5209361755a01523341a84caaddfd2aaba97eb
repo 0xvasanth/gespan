@@ -1,0 +1,21 @@
+src-tauri/src/account_identity.rs
+  s_3d6000c3007319::t_883bed0afe7a33 63-74,164-187,190-203
+  s_3d6000c3007319::t_947d57a3895ff1 188-189
+  s_3d6000c3007319::t_1e01484b6de181 204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae5209361755a01523341a84caaddfd2aaba97eb",
+  "prompts": {},
+  "sessions": {
+    "s_3d6000c3007319": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d7ce5de9-52e0-4565-a35c-874563a61ab4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
