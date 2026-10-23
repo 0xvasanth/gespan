@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Rebase icon: purple/violet grid with terminal prompt on black -->
+  <rect width="1024" height="1024" fill="#000"/>
+
+  <!-- Row 1: 2 blocks -->
+  <rect x="312" y="150" width="136" height="148" rx="4" fill="#B9A0FA"/>
+  <rect x="450" y="150" width="148" height="148" rx="4" fill="#B6A0FA"/>
+
+  <!-- Row 2: 3 blocks + center prompt -->
+  <rect x="150" y="314" width="148" height="134" rx="4" fill="#EDE9FE"/>
+  <!-- center prompt block -->
+  <rect x="450" y="300" width="148" height="148" rx="8" fill="#DBD2FD"/>
+  <text x="524" y="390" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="72" font-weight="600" fill="#1E1B4B" text-anchor="middle">
+    &gt;_
+  </text>
+  <rect x="750" y="314" width="130" height="134" rx="4" fill="#9F7EF8"/>
+
+  <!-- Row 3: 2 wide blocks on sides -->
+  <rect x="150" y="450" width="148" height="148" rx="4" fill="#8F68CE"/>
+  <rect x="750" y="450" width="130" height="148" rx="4" fill="#936CF4"/>
+
+  <!-- Row 4: 3 blocks -->
+  <rect x="150" y="600" width="148" height="110" rx="4" fill="#5B22B4"/>
+  <rect x="600" y="600" width="148" height="148" rx="4" fill="#8554EF"/>
+  <rect x="750" y="600" width="130" height="112" rx="4" fill="#8E62F5"/>
+
+  <!-- Row 5: 2 blocks -->
+  <rect x="312" y="750" width="136" height="130" rx="4" fill="#6D29D9"/>
+  <rect x="450" y="750" width="148" height="130" rx="4" fill="#783DE4"/>
+
+  <!-- Additional blocks for the cross pattern -->
+  <rect x="300" y="300" width="148" height="148" rx="4" fill="#D7CDFC"/>
+  <rect x="300" y="450" width="148" height="148" rx="4" fill="#D2C5F2"/>
+  <rect x="300" y="600" width="148" height="148" rx="4" fill="#6928D1"/>
+  <rect x="450" y="300" width="148" height="148" rx="4" fill="#DBD2FD"/>
+  <rect x="600" y="150" width="112" height="148" rx="4" fill="#AD95F9"/>
+  <rect x="600" y="300" width="148" height="148" rx="4" fill="#A384F8"/>
+  <rect x="600" y="750" width="112" height="130" rx="4" fill="#7D46E8"/>
+</svg>
