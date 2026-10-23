@@ -7,18 +7,35 @@ function releaseChannel(tag) {
   return { prerelease, feedKey: prerelease ? "beta/latest.json" : "latest.json" };
 }
 
+// GitHub's /releases/latest skips prereleases, so the stable feed can live on
+// GitHub Releases. The beta feed (beta/latest.json) stays R2-only.
+const GITHUB_STABLE_FEED = "https://github.com/0xvasanth/rebase/releases/latest/download/latest.json";
+
 function updaterEndpoint(env) {
   const { prerelease, feedKey } = releaseChannel(env.GITHUB_REF_NAME);
   const base = (env.R2_PUBLIC_BASE_URL || "").trim().replace(/\/$/, "");
   const configured = (env.TAURI_UPDATER_ENDPOINT || "").trim();
   // Beta builds must never retain a configured production endpoint.
-  const endpoint = !prerelease && configured ? configured : base ? `${base}/${feedKey}` : "";
-  if (!endpoint) throw new Error("R2_PUBLIC_BASE_URL is required for beta updates; stable builds may use TAURI_UPDATER_ENDPOINT");
+  let endpoint;
+  if (prerelease) endpoint = base ? `${base}/${feedKey}` : "";
+  else endpoint = configured || GITHUB_STABLE_FEED;
+  if (!endpoint) throw new Error("R2_PUBLIC_BASE_URL is required for beta updates; stable builds default to GitHub Releases");
   if (new URL(endpoint).protocol !== "https:") throw new Error("Release updater endpoints must use HTTPS");
   return endpoint;
 }
 
-module.exports = { releaseChannel, updaterEndpoint };
+function updaterPubkey(env) {
+  const pubkey = (env.TAURI_UPDATER_PUBKEY || "").trim();
+  if (!pubkey) {
+    throw new Error(
+      "The TAURI_UPDATER_PUBKEY repository secret is missing. Generate a key pair with `bunx tauri signer generate`, " +
+        "store the public key as TAURI_UPDATER_PUBKEY and the private key as TAURI_SIGNING_PRIVATE_KEY (plus TAURI_SIGNING_PRIVATE_KEY_PASSWORD).",
+    );
+  }
+  return pubkey;
+}
+
+module.exports = { releaseChannel, updaterEndpoint, updaterPubkey, GITHUB_STABLE_FEED };
 
 if (require.main === module) {
   const { prerelease, feedKey } = releaseChannel(process.env.GITHUB_REF_NAME);

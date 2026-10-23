@@ -81,13 +81,9 @@ jobs:
             console.error("APPLE_SIGNING_IDENTITY is required and must not be ad-hoc '-'");
             process.exit(1);
           }
-          const pubkey = process.env.TAURI_UPDATER_PUBKEY || "";
-          const { updaterEndpoint } = require("./scripts/release-channel.cjs");
+          const { updaterEndpoint, updaterPubkey } = require("./scripts/release-channel.cjs");
+          const pubkey = updaterPubkey(process.env);
           const endpoint = updaterEndpoint(process.env);
-          if (!pubkey || !endpoint) {
-            console.error("TAURI_UPDATER_PUBKEY and an updater endpoint are required");
-            process.exit(1);
-          }
           writeFileSync(
             process.env.RUNNER_TEMP + "/tauri.release.conf.json",
             JSON.stringify(
@@ -163,7 +159,7 @@ jobs:
           name: host-packages
           path: build/host-packages
 
-      - name: Upload updater packages to R2
+      - name: Build updater feed and upload packages to R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -219,6 +215,12 @@ jobs:
             fi
           done
           BASE="${R2_PUBLIC_BASE_URL%/}"
+          # R2 is optional: without all of its secrets the feed points at the
+          # GitHub Release assets and the R2 upload below is skipped.
+          R2_ENABLED=false
+          if [[ -n "$BASE" && -n "${R2_ACCOUNT_ID:-}" && -n "${R2_BUCKET_NAME:-}" && -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+            R2_ENABLED=true
+          fi
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           RELEASE_PREFIX="releases/${VERSION}"
           ARM_TAR_KEY="${RELEASE_PREFIX}/Rebase.app.tar.gz"
@@ -231,16 +233,22 @@ jobs:
           WINDOWS_SIGNATURE_KEY="${WINDOWS_INSTALLER_KEY}.sig"
           LINUX_APPIMAGE_KEY="${RELEASE_PREFIX}/Rebase_${VERSION}_amd64.AppImage"
           LINUX_APPIMAGE_SIGNATURE_KEY="${LINUX_APPIMAGE_KEY}.sig"
+          # Asset names on the GitHub Release match the basenames of the R2 keys.
+          if [[ "$R2_ENABLED" == true ]]; then
+            FEED_BASE="$BASE/$RELEASE_PREFIX"
+          else
+            FEED_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          fi
 
           VERSION="$VERSION" \
             ARM_SIG="$ARM_SIG" \
-            ARM_TAR_URL="$BASE/$ARM_TAR_KEY" \
+            ARM_TAR_URL="$FEED_BASE/${ARM_TAR_KEY##*/}" \
             INTEL_SIG="$INTEL_SIG" \
-            INTEL_TAR_URL="$BASE/$INTEL_TAR_KEY" \
+            INTEL_TAR_URL="$FEED_BASE/${INTEL_TAR_KEY##*/}" \
             WINDOWS_SIGNATURE="$WINDOWS_SIGNATURE" \
-            WINDOWS_INSTALLER_URL="$BASE/$WINDOWS_INSTALLER_KEY" \
+            WINDOWS_INSTALLER_URL="$FEED_BASE/${WINDOWS_INSTALLER_KEY##*/}" \
             LINUX_APPIMAGE_SIGNATURE="$LINUX_APPIMAGE_SIGNATURE" \
-            LINUX_APPIMAGE_URL="$BASE/$LINUX_APPIMAGE_KEY" \
+            LINUX_APPIMAGE_URL="$FEED_BASE/${LINUX_APPIMAGE_KEY##*/}" \
             node <<'NODE'
           const fs = require("fs");
           fs.writeFileSync(
@@ -286,6 +294,10 @@ jobs:
           );
           NODE
 
+          if [[ "$R2_ENABLED" != true ]]; then
+            echo "R2 secrets not set; skipping R2 upload (updater feed uses GitHub Release assets)."
+            exit 0
+          fi
           brew list awscli >/dev/null 2>&1 || brew install awscli
           IMMUTABLE_CACHE="public,max-age=31536000,immutable"
           NO_CACHE="no-store,max-age=0,must-revalidate"
@@ -363,6 +375,10 @@ jobs:
             "$INTEL_DMG" "$RELEASE_ASSETS/Rebase_x64.app.tar.gz" "$RELEASE_ASSETS/Rebase_x64.app.tar.gz.sig"
             "$DEB" "$APPIMAGE" "$APPIMAGE_SIG" "$RPM" "$NSIS" "$NSIS_SIG" "${HOST_FILES[@]}"
           )
+          # Stable updater feed, served at releases/latest/download/latest.json.
+          if [[ "$RELEASE_PRERELEASE" != true ]]; then
+            RELEASE_FILES+=(latest.json)
+          fi
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" \
               --draft \
@@ -417,6 +433,12 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
         run: |
           set -euo pipefail
+          # Stable feed is also a GitHub Release asset; the beta feed
+          # (beta/latest.json) is R2-only because /releases/latest skips prereleases.
+          if [[ -z "${R2_BUCKET_NAME:-}" || -z "${R2_ACCOUNT_ID:-}" || -z "${AWS_ACCESS_KEY_ID:-}" || -z "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+            echo "R2 secrets not set; skipping R2 feed publication."
+            exit 0
+          fi
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           aws s3 cp latest.json "s3://${R2_BUCKET_NAME}/${UPDATER_FEED_KEY}" \
             --content-type "application/json" \
@@ -481,13 +503,9 @@ jobs:
         run: |
           node <<'NODE'
           const { writeFileSync } = require("node:fs");
-          const pubkey = process.env.TAURI_UPDATER_PUBKEY || "";
-          const { updaterEndpoint } = require("./scripts/release-channel.cjs");
+          const { updaterEndpoint, updaterPubkey } = require("./scripts/release-channel.cjs");
+          const pubkey = updaterPubkey(process.env);
           const endpoint = updaterEndpoint(process.env);
-          if (!pubkey || !endpoint) {
-            console.error("TAURI_UPDATER_PUBKEY and an updater endpoint are required");
-            process.exit(1);
-          }
           writeFileSync(
             process.env.RUNNER_TEMP + "/tauri.release.conf.json",
             JSON.stringify(
@@ -641,7 +659,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Could not select the updater endpoint"
           }
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBKEY)) {
+          $pubkey = node -p "require('./scripts/release-channel.cjs').updaterPubkey(process.env)"
+          if ($LASTEXITCODE -ne 0) {
             throw "TAURI_UPDATER_PUBKEY is required"
           }
           $config = @{
@@ -650,7 +669,7 @@ jobs:
             }
             plugins = @{
               updater = @{
-                pubkey = $env:TAURI_UPDATER_PUBKEY
+                pubkey = $pubkey
                 endpoints = @($endpoint)
               }
             }

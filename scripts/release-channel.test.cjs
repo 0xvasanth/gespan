@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseChannel, updaterEndpoint } = require("./release-channel.cjs");
+const { releaseChannel, updaterEndpoint, updaterPubkey, GITHUB_STABLE_FEED } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -32,11 +32,28 @@ test("stable builds preserve the configured endpoint", () => {
   }), "https://updates.example.com/stable.json");
 });
 
-test("stable builds can use the R2 default", () => {
+test("stable builds default to the GitHub Releases feed, even when R2 is configured", () => {
+  assert.equal(GITHUB_STABLE_FEED, "https://github.com/0xvasanth/rebase/releases/latest/download/latest.json");
+  assert.equal(updaterEndpoint({ GITHUB_REF_NAME: "v0.9.1" }), GITHUB_STABLE_FEED);
+  assert.equal(updaterEndpoint({ GITHUB_REF_NAME: "v0.9.1", TAURI_UPDATER_ENDPOINT: "  " }), GITHUB_STABLE_FEED);
   assert.equal(updaterEndpoint({
     GITHUB_REF_NAME: "v0.9.1",
     R2_PUBLIC_BASE_URL: "https://cdn.example.com/",
-  }), "https://cdn.example.com/latest.json");
+  }), GITHUB_STABLE_FEED);
+});
+
+test("a non-HTTPS stable override is rejected", () => {
+  assert.throws(() => updaterEndpoint({
+    GITHUB_REF_NAME: "v0.9.1",
+    TAURI_UPDATER_ENDPOINT: "http://updates.example.com/latest.json",
+  }), /must use HTTPS/);
+});
+
+test("the pubkey is required and the error names the secret and how to generate it", () => {
+  assert.equal(updaterPubkey({ TAURI_UPDATER_PUBKEY: " abc \n" }), "abc");
+  for (const env of [{}, { TAURI_UPDATER_PUBKEY: "" }, { TAURI_UPDATER_PUBKEY: "  \n" }]) {
+    assert.throws(() => updaterPubkey(env), /TAURI_UPDATER_PUBKEY.*bunx tauri signer generate/s);
+  }
 });
 
 test("beta builds override a configured production endpoint", () => {
