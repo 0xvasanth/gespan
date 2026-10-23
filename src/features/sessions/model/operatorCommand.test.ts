@@ -69,4 +69,19 @@ describe("Operator composer command", () => {
       expect(operatorEnabledInThread([legacy])).toBe(true);
     }
   });
+
+  it("does not treat the retired /mono spelling as a command", () => {
+    expect(consumeOperatorCommand("/mono list notes")).toEqual({
+      text: "/mono list notes",
+      matched: false,
+    });
+    const retired = {
+      id: "retired",
+      role: "user" as const,
+      text: "/mono list notes",
+    };
+    expect(isOperatorUserTurn(retired)).toBe(false);
+    expect(operatorUserPrompt(retired)).toBe("/mono list notes");
+    expect(operatorEnabledInThread([retired])).toBe(false);
+  });
 });

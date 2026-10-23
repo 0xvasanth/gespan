@@ -14,6 +14,7 @@ import {
   memoryWithinBudget,
   planAgentContext,
   pilotContext,
+  PILOT_PROMPT_VERSION,
   pilotTurn,
   recordAgentContext,
   resetPilotDefaults,
@@ -117,6 +118,7 @@ it("says how to keep memory and update the soul only at the user's request", () 
   };
   const full = pilotContext(look, files(), { soul: true, memory: true });
   expect(full).toContain("You are Skull, a Pilot in Rebase");
+  expect(full).not.toMatch(/\bMonos?\b/);
   expect(full).toContain("these 2 projects (rebase and site)");
   expect(full).toContain("- site: /code/site");
   expect(full).toContain("Be brief.");
@@ -239,4 +241,8 @@ it("puts what the app adds ahead of the user's message, marked as its own", () =
     turn.indexOf("what is this"),
   );
   expect(turn.endsWith("</rebase_context>\n\nwhat is this")).toBe(true);
+});
+
+it("bumps the prompt version so cached pilot prompts refresh after the rename", () => {
+  expect(PILOT_PROMPT_VERSION).toBe(19);
 });

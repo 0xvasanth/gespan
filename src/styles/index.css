@@ -69,7 +69,7 @@
   --color-skill: #e8c547;
   --color-mention: #38bdf8;
   --font-mono:
-    ui-monospace, SFPilot-Regular, Menlo, Monaco, Consolas, "Liberation Pilot",
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
     "Courier New", monospace;
   --font-sans:
     system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
@@ -124,16 +124,16 @@
 
 /* Static so Tailwind always emits it: only xterm reads it, via JS. */
 @theme static {
-  /* Terminal-only stack. JetBrains Pilot Nerd Font leads so prompt text and
-     icons share one face; the Nerd Font families after the system pilots fill
+  /* Terminal-only stack. JetBrains Mono Nerd Font leads so prompt text and
+     icons share one face; the Nerd Font families after the system monospace fonts fill
      Private Use Area glyphs (powerline arrows, git/folder icons) because
      WebKit's fallback never reaches user-installed icon fonts on its own. */
   --font-terminal:
-    "JetBrainsPilot NFM", "JetBrainsPilot Nerd Font Pilot", "JetBrainsPilot NF",
-    ui-monospace, SFPilot-Regular, Menlo, Monaco, "Symbols Nerd Font Pilot",
-    "Symbols Nerd Font", "MesloLGS NF", "MesloLGS Nerd Font Pilot",
-    "FiraCode Nerd Font Pilot", "Hack Nerd Font Pilot",
-    "CaskaydiaCove Nerd Font Pilot", Consolas, "Liberation Pilot", "Courier New",
+    "JetBrainsMono NFM", "JetBrainsMono Nerd Font Mono", "JetBrainsMono NF",
+    ui-monospace, SFMono-Regular, Menlo, Monaco, "Symbols Nerd Font Mono",
+    "Symbols Nerd Font", "MesloLGS NF", "MesloLGS Nerd Font Mono",
+    "FiraCode Nerd Font Mono", "Hack Nerd Font Mono",
+    "CaskaydiaCove Nerd Font Mono", Consolas, "Liberation Mono", "Courier New",
     monospace;
 }
 

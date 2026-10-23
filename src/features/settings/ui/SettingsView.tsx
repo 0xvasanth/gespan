@@ -4327,7 +4327,7 @@ function PilotRow({ pilot }: { pilot: Pilot }) {
       }
     >
       <span className="text-[12px] leading-5 text-content/50">
-        Show Pilot spawned session on the sidebar
+        Show sessions this Pilot starts in the sidebar
       </span>
       <Toggle
         label={`Show sessions started by ${look.name} in sidebar`}

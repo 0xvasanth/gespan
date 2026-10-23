@@ -16,7 +16,7 @@ const SHADOW_OFFSET = 2 * UNIT;
 const FONT_PX = 10;
 const PAD_X = 3 * UNIT;
 const PAD_Y = 2 * UNIT;
-const FONT = `600 ${FONT_PX}px ui-monospace, SFPilot-Regular, Menlo, monospace`;
+const FONT = `600 ${FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`;
 
 const snap = (value: number) => Math.round(value / UNIT) * UNIT;
 

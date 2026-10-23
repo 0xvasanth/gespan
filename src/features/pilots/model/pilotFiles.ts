@@ -303,7 +303,7 @@ export function forgetAgentContext(sessionId: string): void {
 }
 
 /** Bumped when the fixed rules below change, so live chats get them again. */
-export const PILOT_PROMPT_VERSION = 18;
+export const PILOT_PROMPT_VERSION = 19;
 
 /**
  * The user's message with what the app adds to it, placed ahead and marked
