@@ -1,8 +1,11 @@
 name: Native preview release
 
 on:
-  push:
-    tags: ["native-v*"]
+  # Manual only until the signing secrets exist; see "Releases and the update
+  # feed" in docs/native/README.md. Start it from a native-v* tag (Run workflow
+  # -> Use workflow from -> Tags -> native-vX.Y.Z-preview.N): the tag name is the
+  # version, and the guard job rejects any other ref.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,8 +15,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  guard:
+    name: Require a native-v* tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: node scripts/release-channel.cjs native-ref
+
   build:
     name: Native preview (${{ matrix.target }})
+    needs: guard
     strategy:
       fail-fast: false
       matrix:
@@ -38,6 +51,7 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 2
       TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+      NATIVE_UPDATER_ENDPOINT: ${{ vars.NATIVE_UPDATER_ENDPOINT }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,7 +74,8 @@ jobs:
           VERSION="${GITHUB_REF_NAME#native-v}"
           node --input-type=module -e 'import { previewVersion } from "./scripts/package-native.mjs"; previewVersion(process.argv[1]);' "$VERSION"
           echo "REBASE_NATIVE_VERSION=$VERSION" >> "$GITHUB_ENV"
-          # Requires TAURI_UPDATER_PUBKEY; the endpoint defaults to the GitHub native-latest feed.
+          # Requires TAURI_UPDATER_PUBKEY; the endpoint is the NATIVE_UPDATER_ENDPOINT repository
+          # variable, or the GitHub native-latest feed when that is unset.
           node scripts/release-channel.cjs native-config
       - name: Install native Linux build dependencies
         if: runner.os == 'Linux'
@@ -140,11 +155,13 @@ jobs:
 
   rpm:
     name: Native preview (Enterprise Linux rpm)
+    needs: guard
     runs-on: ubuntu-latest
     container: almalinux:10
     env:
       CARGO_BUILD_JOBS: 2
       TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+      NATIVE_UPDATER_ENDPOINT: ${{ vars.NATIVE_UPDATER_ENDPOINT }}
     steps:
       - run: dnf install -y git
       - uses: actions/checkout@v4
@@ -166,7 +183,8 @@ jobs:
           VERSION="${GITHUB_REF_NAME#native-v}"
           node --input-type=module -e 'import { previewVersion } from "./scripts/package-native.mjs"; previewVersion(process.argv[1]);' "$VERSION"
           echo "REBASE_NATIVE_VERSION=$VERSION" >> "$GITHUB_ENV"
-          # Requires TAURI_UPDATER_PUBKEY; the endpoint defaults to the GitHub native-latest feed.
+          # Requires TAURI_UPDATER_PUBKEY; the endpoint is the NATIVE_UPDATER_ENDPOINT repository
+          # variable, or the GitHub native-latest feed when that is unset.
           node scripts/release-channel.cjs native-config
       - run: cargo test --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core --profile native-dev app_update
       - run: cargo build --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-gpui --release
@@ -217,6 +235,18 @@ jobs:
         with:
           workspaces: crates/rebase-gpui
           key: native-publication-verifier
+      - name: Decide whether the versioned release still needs its packages
+        run: |
+          set -euo pipefail
+          RELEASE_JSON="$(gh release view "$GITHUB_REF_NAME" --json isDraft,assets 2>/dev/null || true)" \
+            NATIVE_RELEASE_JSON="$RELEASE_JSON" \
+            node scripts/release-channel.cjs native-publish-plan native-dist "$RUNNER_TEMP/native-packages.txt"
+          if [ "$(grep '^NATIVE_UPLOAD_PACKAGES=' "$GITHUB_ENV" | tail -1)" = NATIVE_UPLOAD_PACKAGES=false ]; then
+            # The feed must sign and point at the published bytes, not this run's rebuild.
+            while IFS= read -r file; do
+              [ -n "$file" ] && gh release download "$GITHUB_REF_NAME" --dir native-dist --clobber --pattern "$file"
+            done < "$RUNNER_TEMP/native-packages.txt"
+          fi
       - name: Sign all update packages and the native manifest
         run: |
           echo "REBASE_NATIVE_VERSION=${GITHUB_REF_NAME#native-v}" >> "$GITHUB_ENV"
@@ -228,21 +258,21 @@ jobs:
       - name: Publish native preview assets
         run: |
           set -euo pipefail
+          # A published native-v* release is immutable and is never re-uploaded. When
+          # it is already published, the packages stay as they are and only the
+          # native-latest feed is refreshed (this lets a failed run recover).
           node --input-type=module -e 'import { readFileSync } from "node:fs"; for (const file of JSON.parse(readFileSync("native-dist/release-files.json"))) console.log(file);' > "$RUNNER_TEMP/native-files.txt"
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          if [ "$NATIVE_CREATE_RELEASE" = true ]; then
             gh release create "$GITHUB_REF_NAME" --draft --prerelease --latest=false --target "$GITHUB_SHA" --title "Rebase Native ${REBASE_NATIVE_VERSION}" --notes-file docs/native/preview-release-notes.md
           fi
-          IS_DRAFT=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)
-          if [ "$IS_DRAFT" != true ]; then
-            echo 'Published native previews are immutable. Use a new preview tag.' >&2
-            exit 1
+          if [ "$NATIVE_UPLOAD_PACKAGES" = true ]; then
+            FILES=()
+            while IFS= read -r file; do
+              FILES+=("native-dist/$file")
+            done < "$RUNNER_TEMP/native-files.txt"
+            gh release upload "$GITHUB_REF_NAME" "${FILES[@]}" --clobber
+            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease --latest=false
           fi
-          FILES=()
-          while IFS= read -r file; do
-            FILES+=("native-dist/$file")
-          done < "$RUNNER_TEMP/native-files.txt"
-          gh release upload "$GITHUB_REF_NAME" "${FILES[@]}" --clobber
-          gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease --latest=false
           # latest.json references the assets of the versioned release above, so
           # the fixed native-latest release only ever holds this one feed file.
           # Publish it after every platform asset exists.

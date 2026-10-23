@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status } = require("./release-channel.cjs");
+const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -200,4 +200,40 @@ test("the native-r2 CLI exports R2_ENABLED=false when secrets are absent", () =>
     env: { PATH: process.env.PATH, GITHUB_ENV: envFile }, encoding: "utf8",
   });
   assert.equal(fs.readFileSync(envFile, "utf8"), "R2_ENABLED=false\n");
+});
+
+test("native releases only run from a native-v* tag", () => {
+  assert.equal(requireNativeTagRef({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "native-v0.16.0-preview.2" }), "native-v0.16.0-preview.2");
+  for (const env of [
+    { GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "main" },
+    { GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "native-v0.16.0-preview.2" },
+    { GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.9.1" },
+    { GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "native-v" },
+    {},
+  ]) assert.throws(() => requireNativeTagRef(env), /native-v\* tag/);
+});
+
+test("expected native files are each package plus its signature", () => {
+  assert.deepEqual(
+    nativeExpectedFiles([{ filename: "a.dmg", target: "darwin-aarch64-app" }, { filename: "b.deb" }]),
+    ["a.dmg", "a.dmg.sig", "b.deb"],
+  );
+});
+
+test("a missing or draft versioned release uploads packages", () => {
+  const expected = ["a.dmg", "a.dmg.sig"];
+  assert.deepEqual(nativePublishPlan({ release: null, expected }), { createRelease: true, uploadPackages: true });
+  assert.deepEqual(nativePublishPlan({ release: { isDraft: true, assets: [{ name: "a.dmg" }] }, expected }), { createRelease: false, uploadPackages: true });
+});
+
+test("a published versioned release keeps its packages and only the feed is refreshed", () => {
+  const expected = ["a.dmg", "a.dmg.sig"];
+  const release = { isDraft: false, assets: [{ name: "a.dmg" }, { name: "a.dmg.sig" }, { name: "extra.txt" }] };
+  assert.deepEqual(nativePublishPlan({ release, expected }), { createRelease: false, uploadPackages: false });
+});
+
+test("a published release with missing assets is an error naming them", () => {
+  const release = { isDraft: false, assets: [{ name: "a.dmg" }] };
+  assert.throws(() => nativePublishPlan({ release, expected: ["a.dmg", "a.dmg.sig"] }), /missing assets: a\.dmg\.sig/);
+  assert.throws(() => nativePublishPlan({ release: { isDraft: false }, expected: ["a.dmg"] }), /missing assets: a\.dmg/);
 });

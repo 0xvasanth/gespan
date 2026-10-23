@@ -73,12 +73,66 @@ function nativeR2Status(env) {
   return { enabled: missing.length === 0, missing };
 }
 
+// Manual dispatch must start from a native-v* tag, never a branch. GitHub sets
+// GITHUB_REF_TYPE and GITHUB_REF_NAME to the tag a "Use workflow from" tag run uses.
+function requireNativeTagRef(env) {
+  const name = env.GITHUB_REF_NAME || "";
+  if (env.GITHUB_REF_TYPE !== "tag" || !/^native-v.+/.test(name)) {
+    throw new Error(
+      `Run this workflow from a native-v* tag (Use workflow from -> Tags), not "${name || "(none)"}" (${env.GITHUB_REF_TYPE || "unknown"}).`,
+    );
+  }
+  return name;
+}
+
+// Files the versioned release must hold: every package and its .sig.
+function nativeExpectedFiles(records) {
+  const files = [];
+  for (const record of records) {
+    files.push(record.filename);
+    if (record.target) files.push(`${record.filename}.sig`);
+  }
+  return files;
+}
+
+// A published native-v* release is immutable, but the native-latest feed can
+// be rewritten. So a rerun after a failure between the two steps may repair the
+// feed without touching the published packages.
+//   release: null (absent) or { isDraft, assets: [{ name }] } from `gh release view`.
+function nativePublishPlan({ release, expected }) {
+  if (!release) return { createRelease: true, uploadPackages: true };
+  if (release.isDraft) return { createRelease: false, uploadPackages: true };
+  const have = new Set((release.assets || []).map((asset) => asset.name));
+  const missing = expected.filter((name) => !have.has(name));
+  if (missing.length) {
+    throw new Error(
+      `The published release is immutable but is missing assets: ${missing.join(", ")}. Use a new preview tag.`,
+    );
+  }
+  return { createRelease: false, uploadPackages: false };
+}
+
 module.exports = {
+  requireNativeTagRef, nativeExpectedFiles, nativePublishPlan,
   releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED,
   GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status,
 };
 
-if (require.main === module && process.argv[2] === "native-config") {
+if (require.main === module && process.argv[2] === "native-ref") {
+  console.log(`Native release ref: ${requireNativeTagRef(process.env)}`);
+} else if (require.main === module && process.argv[2] === "native-publish-plan") {
+  // usage: native-publish-plan <native-dist> <packages-out>; NATIVE_RELEASE_JSON is empty when the release is absent.
+  const dir = process.argv[3];
+  const records = fs.readdirSync(dir).filter((n) => /^artifacts-.*\.json$/.test(n))
+    .flatMap((n) => JSON.parse(fs.readFileSync(`${dir}/${n}`, "utf8")));
+  const expected = nativeExpectedFiles(records);
+  const raw = (process.env.NATIVE_RELEASE_JSON || "").trim();
+  const plan = nativePublishPlan({ release: raw ? JSON.parse(raw) : null, expected });
+  if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
+  fs.writeFileSync(process.argv[4], expected.filter((n) => !n.endsWith(".sig")).join("\n") + "\n");
+  fs.appendFileSync(process.env.GITHUB_ENV, `NATIVE_CREATE_RELEASE=${plan.createRelease}\nNATIVE_UPLOAD_PACKAGES=${plan.uploadPackages}\n`);
+  console.log(plan.uploadPackages ? "Uploading packages to the versioned release" : "Versioned release already published: keeping its packages, refreshing the feed only");
+} else if (require.main === module && process.argv[2] === "native-config") {
   if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
   const pubkey = updaterPubkey(process.env);
   const endpoint = nativeUpdaterEndpoint(process.env);

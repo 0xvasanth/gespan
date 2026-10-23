@@ -63,8 +63,17 @@ verification.
 
 ## Releases and the update feed
 
-Pushing a `native-v<version>` tag runs **Native preview release**. It builds and
-signs every platform package, then publishes to GitHub Releases:
+**Native preview release** runs only when started by hand, so pushing a tag
+never publishes anything. To cut a preview:
+
+1. Tag the commit as `native-v<version>` (for example
+   `native-v0.16.0-preview.2`) and push the tag.
+2. In the Actions tab, open **Native preview release**, choose **Run workflow**,
+   set **Use workflow from** to that tag, and run it. Dispatching from a branch or
+   any tag that is not `native-v*` fails at once in the first job.
+
+The workflow builds and signs every platform package, then publishes to GitHub
+Releases:
 
 - The versioned `native-v<version>` release (a prerelease, never marked latest)
   holds the packages and their `.sig` files. It is immutable once published; use
@@ -73,12 +82,20 @@ signs every platform package, then publishes to GitHub Releases:
   it if missing and overwrites the asset on every native release. The signed
   feed's package URLs point at the versioned release's assets.
 
+If a run fails after the versioned release was published but before the feed was
+updated, run the workflow again from the same tag. Published packages are never
+re-uploaded: the run downloads them, signs the feed for exactly those files, and
+uploads only `latest.json` to `native-latest`. It fails if a published release is
+missing any package or `.sig` file; use a new preview tag then.
+
 The app's default endpoint is therefore
 `https://github.com/0xvasanth/rebase/releases/download/native-latest/latest.json`.
 GitHub's `releases/latest` serves the Tauri app's stable `v*` releases, so the
-native feed deliberately uses its own tag and never competes with it. Set
-`REBASE_NATIVE_UPDATER_ENDPOINT` at build time (HTTPS only) to override the
-default.
+native feed deliberately uses its own tag and never competes with it. To
+override the default (HTTPS only), set the `NATIVE_UPDATER_ENDPOINT` repository
+variable (Settings, Secrets and variables, Actions, Variables) for CI releases,
+which the workflow passes to `scripts/release-channel.cjs native-config`. For a
+local build, set `REBASE_NATIVE_UPDATER_ENDPOINT` yourself instead.
 
 Required repository secrets: `TAURI_UPDATER_PUBKEY` (embedded in the app),
 `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, plus the
@@ -89,6 +106,20 @@ otherwise that step is skipped. The channel logic lives in
 `scripts/release-channel.cjs` and is tested in `scripts/release-channel.test.cjs`.
 
 The macOS app icon is `src-tauri/icons/icon.icns`, shared with the Tauri app.
+
+## Running alongside Rebase
+
+Rebase Native and the Tauri Rebase app share one database,
+`~/Library/Application Support/com.rebase.desktop/rebase.db` on macOS. Before
+you use Rebase Native with your real data:
+
+- Back up `rebase.db` with both apps closed.
+- Do not have the same conversation open in both apps at the same time. Tauri
+  Rebase saves whole conversations, so it can overwrite turns that were added in
+  Rebase Native.
+
+Opening different conversations in each app is fine. A code safeguard for this is
+planned but not built yet.
 
 ## Data and configuration
 

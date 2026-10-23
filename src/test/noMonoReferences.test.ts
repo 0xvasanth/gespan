@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 const root = join(__dirname, "..", "..");
 
 const SCAN_DIRS = ["src", "src-tauri/src", "mobile/src", "mobile/tests", "mobile/modules", "host", "tests"];
-const SCAN_FILES = ["src-tauri/Info.plist", ...readdirSync(join(root, "src-tauri")).filter((n) => /^tauri.*\.conf\.json$/.test(n)).map((n) => `src-tauri/${n}`)];
+const SCAN_FILES = ["README.md", "src-tauri/Info.plist", ...readdirSync(join(root, "src-tauri")).filter((n) => /^tauri.*\.conf\.json$/.test(n)).map((n) => `src-tauri/${n}`)];
 const SKIP_DIRS = new Set(["node_modules", "target", "dist", "build", ".expo", "Pods", ".gradle", "generated"]);
 const TEXT_EXT = /\.(tsx?|jsx?|css|html|rs|mjs|json|md|toml|swift|h|m|kt|gradle|podspec)$/;
 const LOCKFILES = /(package-lock\.json|Cargo\.lock|yarn\.lock|pnpm-lock\.yaml)$/;
@@ -187,6 +187,10 @@ describe("Monos -> Pilots rename", () => {
     expect(rels.some((f) => f === ".github/workflows/native.yml")).toBe(true);
     expect(rels.some((f) => f === "scripts/package-native.mjs")).toBe(true);
     expect(rels.some((f) => f.startsWith("vendor/") || /^crates\/[^/]+\/target\//.test(f))).toBe(false);
+  });
+
+  it("scans the README", () => {
+    expect(scannedFiles().map(repoPath)).toContain("README.md");
   });
 
   it("reports repo paths with forward slashes whatever the OS separator", () => {
