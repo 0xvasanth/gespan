@@ -1,0 +1,25 @@
+src/features/board/model/linkedTurns.test.ts
+  s_0de52fe47ecaaa::t_48c817337b1284 3-7,161-227
+src/features/board/model/linkedTurns.ts
+  s_0de52fe47ecaaa::t_9fb95a3cd103c3 39-41
+  s_0de52fe47ecaaa::t_66facf016bc40e 24-35
+  s_0de52fe47ecaaa::t_e6e58e395178fd 23
+src/app/App.tsx
+  s_0de52fe47ecaaa::t_9fb95a3cd103c3 714,932-933,8040-8044,9038,9100,9106-9109,11443,11554,11563
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ad06f254982498ce1de82906a51c7030640355b",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
