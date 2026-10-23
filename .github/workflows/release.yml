@@ -466,7 +466,7 @@ jobs:
         if: runner.os == 'Linux'
       - run: npm run host:package
         if: runner.os != 'Linux'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: runner.os == 'Linux'
         with:
           name: host-packages
@@ -564,7 +564,7 @@ jobs:
           cp "${deb[0]}" "${appimage[0]}" "${appimage[0]}.sig" release-artifacts/
 
       - name: Upload Linux packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-packages
           path: release-artifacts/
@@ -627,7 +627,7 @@ jobs:
           cp "${bundle[0]}" release-artifacts/
 
       - name: Upload rpm package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-rpm-package
           path: release-artifacts/
@@ -698,7 +698,7 @@ jobs:
           Copy-Item -Path $artifacts -Destination "release-artifacts/"
 
       - name: Upload Windows packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-packages
           path: release-artifacts/
