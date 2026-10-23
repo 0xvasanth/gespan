@@ -137,7 +137,7 @@ impl Conversation {
             .max_h(px(ROW_HEIGHT * VISIBLE_ROWS))
             .overflow_y_scroll()
             .children(tasks.iter().map(|task| {
-                let row = background_row(task);
+                let row = background_row(task, cx);
                 self.background.motion.row(&task.id, row, row_width, window)
             }));
         let card = composer_shelf::card("background-tasks-card", self.classic_layout)
@@ -152,17 +152,30 @@ impl Conversation {
     }
 }
 
-fn background_row(task: &BackgroundTask) -> gpui::Stateful<gpui::Div> {
+fn background_row(
+    task: &BackgroundTask,
+    cx: &mut Context<Conversation>,
+) -> gpui::Stateful<gpui::Div> {
     let started_at = task.started_at;
+    let tool_id = task.tool_id.clone();
     div()
         .id(SharedString::from(format!("background-{}", task.id)))
         .debug_selector({
             let id = task.id.clone();
             move || format!("background-task-{id}")
         })
-        .role(Role::Group)
+        .role(if tool_id.is_some() {
+            Role::Button
+        } else {
+            Role::Group
+        })
         .aria_label(format!("Background task: {}", task.description))
         .min_h(px(ROW_HEIGHT))
+        .when_some(tool_id, |d, tool_id| {
+            d.cursor_pointer()
+                .hover(|s| s.bg(content(0.04)))
+                .on_click(cx.listener(move |this, _, _, cx| this.reveal_tool(&tool_id, cx)))
+        })
         .flex()
         .items_center()
         .gap(px(10.))
@@ -192,6 +205,45 @@ fn background_row(task: &BackgroundTask) -> gpui::Stateful<gpui::Div> {
                         .text_color(content(0.8))
                         .child(task.description.clone()),
                 )
+                .when(task.latest.is_some() || task.steps > 0, |d| {
+                    let id = task.id.clone();
+                    let steps_id = task.id.clone();
+                    d.child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(8.))
+                            .text_size(px(11.))
+                            .text_color(content(0.4))
+                            .when_some(
+                                task.latest
+                                    .clone()
+                                    .filter(|latest| !latest.trim().is_empty()),
+                                |d, latest| {
+                                    d.child(
+                                        div()
+                                            .debug_selector(move || {
+                                                format!("background-latest-{id}")
+                                            })
+                                            .min_w_0()
+                                            .flex_1()
+                                            .truncate()
+                                            .child(latest),
+                                    )
+                                },
+                            )
+                            .when(task.steps > 0, |d| {
+                                d.child(
+                                    div()
+                                        .debug_selector(move || {
+                                            format!("background-steps-{steps_id}")
+                                        })
+                                        .flex_shrink_0()
+                                        .child(steps_label(task.steps)),
+                                )
+                            }),
+                    )
+                })
                 .when_some(task.command.clone(), |d, command| {
                     d.child(
                         div()
@@ -240,6 +292,10 @@ fn background_row(task: &BackgroundTask) -> gpui::Stateful<gpui::Div> {
                     )
             },
         ))
+}
+
+fn steps_label(steps: u32) -> String {
+    format!("{steps} {}", if steps == 1 { "step" } else { "steps" })
 }
 
 fn first_line(command: &str) -> &str {
@@ -332,6 +388,96 @@ mod tests {
             .unwrap();
         visual.refresh().unwrap();
         assert!(visual.debug_bounds("background-tasks-header").is_none());
+    }
+
+    fn agent_row(id: &str) -> rebase_core::transcript::Row {
+        let mut call = rebase_core::tool::ToolCall::new(id, "Agent");
+        call.panel = Some(rebase_core::tool::tasks::Panel::Agent(
+            rebase_core::tool::tasks::AgentRun {
+                name: Some("Review".into()),
+                ..Default::default()
+            },
+        ));
+        call.state = rebase_core::tool::ToolState::Completed;
+        call.output = "done".into();
+        rebase_core::transcript::Row {
+            role: "tool".into(),
+            text: serde_json::to_string(&call).unwrap(),
+            first: true,
+            sent_at: None,
+        }
+    }
+
+    #[gpui::test]
+    fn a_linked_row_reveals_its_block_and_an_unlinked_row_does_nothing(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let summary = store.create("claude", "/tmp").unwrap();
+        let linked = BackgroundTask {
+            tool_id: Some("send-1".into()),
+            latest: Some("Reading src/auth.rs".into()),
+            steps: 5,
+            ..task("linked", true)
+        };
+        let plain = task("plain", true);
+        let window = cx.update(|cx| {
+            input::bind(cx);
+            cx.set_reduce_motion(true);
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    let mut view = Conversation::new(summary, Arc::new(Mutex::new(store)), cx);
+                    view.loaded = true;
+                    view.summary.has_messages = true;
+                    view.busy = true;
+                    view.transcript.update(cx, |transcript, cx| {
+                        let row = |role: &str, text: &str| rebase_core::transcript::Row {
+                            role: role.into(),
+                            text: text.into(),
+                            first: true,
+                            sent_at: None,
+                        };
+                        transcript.patch(
+                            0,
+                            vec![
+                                row("user", "Go"),
+                                agent_row("send-1"),
+                                row("assistant", "Ok"),
+                            ],
+                            cx,
+                        );
+                    });
+                    view.set_background(vec![linked, plain], cx);
+                    view
+                })
+            })
+            .unwrap()
+        });
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        // The row shows the latest activity and its step count.
+        assert!(visual.debug_bounds("background-latest-linked").is_some());
+        assert!(visual.debug_bounds("background-steps-linked").is_some());
+        assert!(visual.debug_bounds("background-steps-plain").is_none());
+        assert_eq!(steps_label(5), "5 steps");
+        assert_eq!(steps_label(1), "1 step");
+
+        let is_open = |visual: &mut VisualTestContext| {
+            window
+                .update(visual, |view, _, cx| {
+                    view.transcript
+                        .read(cx)
+                        .agent_open_for_test("agent:1:send-1")
+                })
+                .unwrap()
+        };
+        let plain_row = visual.debug_bounds("background-task-plain").unwrap();
+        visual.simulate_click(plain_row.center(), Default::default());
+        visual.refresh().unwrap();
+        assert!(!is_open(visual), "a row without a block id is not a link");
+
+        let linked_row = visual.debug_bounds("background-task-linked").unwrap();
+        visual.simulate_click(linked_row.center(), Default::default());
+        visual.refresh().unwrap();
+        assert!(is_open(visual), "the click opens the block it points at");
     }
 
     #[test]

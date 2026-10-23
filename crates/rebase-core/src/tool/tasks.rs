@@ -131,6 +131,10 @@ pub struct AgentRun {
     /// The latest progress description. Never the run's title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity: Option<String>,
+    /// True on the synthetic block that collects a finished agent's later work
+    /// for one turn. Lets a UI title it without parsing the block id.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub continuation: bool,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentStep {
@@ -679,6 +683,7 @@ pub fn from_desktop(block: &Value) -> Option<Panel> {
         agent_id: agent.get("agentId").and_then(string),
         resume_of: agent.get("resumeOf").and_then(string),
         activity: agent.get("activity").and_then(string),
+        continuation: agent["continuation"].as_bool().unwrap_or(false),
         ..AgentRun::default()
     };
     for step in agent
@@ -765,6 +770,9 @@ pub fn desktop_agent(run: &AgentRun) -> Value {
         if let Some(field) = field {
             value[key] = Value::String(field.clone());
         }
+    }
+    if run.continuation {
+        value["continuation"] = Value::Bool(true);
     }
     value
 }

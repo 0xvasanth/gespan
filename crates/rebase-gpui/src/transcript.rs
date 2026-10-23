@@ -98,6 +98,19 @@ fn work_title(model: Option<&str>, elapsed_ms: Option<u64>, live: bool) -> Strin
     format!("{title} for {duration}")
 }
 
+/// The muted marker for Claude's self-started wake. The note's text is the
+/// notification summary.
+pub(crate) fn finished_marker(note: &rebase_core::transcript::Interjection) -> Option<String> {
+    (note.custom_type == "task-notification").then(|| {
+        let summary = note.text.trim();
+        if summary.is_empty() {
+            "Background agent finished".to_owned()
+        } else {
+            format!("Background agent finished · {summary}")
+        }
+    })
+}
+
 struct Message {
     start: usize,
     display_start: usize,
@@ -640,6 +653,58 @@ impl TranscriptView {
             });
         }
         cx.notify();
+    }
+    /// Scrolls to the sub-agent block `tool_id` and opens it, unfolding the
+    /// work that hides it. False when the block is not in the loaded rows.
+    pub(crate) fn reveal_tool(&mut self, tool_id: &str, cx: &mut Context<Self>) -> bool {
+        let found = (0..self.source.len()).rev().find(|&at| {
+            let row = &self.source[at];
+            row.role == "tool" && row.first && row.text.contains(tool_id) && {
+                let mut end = at + 1;
+                while end < self.source.len() && !self.source[end].first {
+                    end += 1;
+                }
+                let text: String = self.source[at..end]
+                    .iter()
+                    .map(|r| r.text.as_str())
+                    .collect();
+                serde_json::from_str::<ToolCall>(&text).is_ok_and(|call| {
+                    call.id == tool_id && matches!(call.panel(), Some(Panel::Agent(_)))
+                })
+            }
+        });
+        let Some(at) = found else {
+            return false;
+        };
+        let turn = self
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.start <= at)
+            .map_or(0, |m| m.turn);
+        self.work_folds.insert(turn, true);
+        for message in &self.messages {
+            if message.turn == turn {
+                self.phases.insert(message.start, true);
+            }
+        }
+        self.list.pause_following_tail();
+        self.rebuild(0, cx);
+        self.toggle_agent_part(format!("agent:{at}:{tool_id}"), true, at, cx);
+        if let Some(item_ix) = self.rows.iter().position(|row| {
+            row.key.0 == at && matches!(&row.body, Body::Tool { call, .. } if call.id == tool_id)
+        }) {
+            self.list.scroll_to(ListOffset {
+                item_ix,
+                offset_in_item: px(0.),
+            });
+        }
+        cx.notify();
+        true
+    }
+    #[cfg(test)]
+    pub(crate) fn agent_open_for_test(&self, key: &str) -> bool {
+        self.agent_panels.part_open(key, false)
     }
     pub(crate) fn source_rows(&self) -> &[Row] {
         &self.source
@@ -4273,6 +4338,23 @@ impl TranscriptView {
         let body = match row.body {
             Body::RemotePlan(plan) => self.remote_plan_card(&plan, cx),
             Body::Visual(document) => self.visual_row(message_start, document, cx),
+            Body::Interjection(ref note) if finished_marker(note).is_some() => {
+                // Claude woke itself for a finished background agent; this
+                // keeps its follow-up from reading as a reply to the user.
+                div()
+                    .id(("background-finished", message_start))
+                    .debug_selector(move || format!("background-finished-{message_start}"))
+                    .role(Role::Group)
+                    .aria_label("Background agent finished")
+                    .w_full()
+                    .min_w_0()
+                    .py_2()
+                    .text_size(px(12.))
+                    .line_height(px(18.))
+                    .text_color(content(0.45))
+                    .child(finished_marker(note).unwrap_or_default())
+                    .into_any_element()
+            }
             Body::Interjection(ref note) => {
                 let open = self.expanded.contains(&message_start);
                 let long = note.text.lines().count() > 4 || note.text.len() > 300;

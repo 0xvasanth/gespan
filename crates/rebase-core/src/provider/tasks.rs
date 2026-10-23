@@ -775,6 +775,7 @@ impl Protocol {
                     )),
                     agent_id: agent,
                     resume_of: Some(parent.into()),
+                    continuation: true,
                     ..AgentRun::default()
                 }));
                 // Like the fallback block: its steps carry their own state, and

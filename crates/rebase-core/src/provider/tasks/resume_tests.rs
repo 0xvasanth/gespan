@@ -346,6 +346,10 @@ fn a_known_but_finished_dispatch_gets_one_continuation_block_per_turn() {
     );
     assert_eq!(run.steps.len(), 2);
     assert_eq!(run.resume_of.as_deref(), Some(AGENT));
+    assert!(
+        run.continuation,
+        "the UI tells continuations apart by this flag"
+    );
     // Nothing reports when stray work ends: the block must not stay Running
     // (the runtime would later settle it as failed).
     assert_eq!(blocks[0].state, ToolState::Completed);
@@ -439,6 +443,27 @@ fn new_fields_round_trip_with_camel_case_names() {
         serde_json::from_value::<Panel>(native).unwrap(),
         Panel::Agent(run)
     );
+}
+
+#[test]
+fn continuation_flag_round_trips_and_is_absent_when_false() {
+    let run = AgentRun {
+        continuation: true,
+        ..AgentRun::default()
+    };
+    let desktop = desktop_agent(&run);
+    assert_eq!(desktop["continuation"], true);
+    let Some(Panel::Agent(back)) = from_desktop(&json!({"role":"tool","agentRun":desktop})) else {
+        panic!()
+    };
+    assert!(back.continuation);
+    let native = serde_json::to_value(Panel::Agent(run)).unwrap();
+    assert_eq!(native["continuation"], true);
+    let plain = serde_json::to_value(Panel::Agent(AgentRun::default())).unwrap();
+    assert!(plain.get("continuation").is_none());
+    assert!(desktop_agent(&AgentRun::default())
+        .get("continuation")
+        .is_none());
 }
 
 #[test]

@@ -14,6 +14,7 @@ use gpui::{
 };
 use rebase_core::tool::{
     ToolCall, ToolState,
+    handback::{Handback, parse_handback},
     tasks::{AgentRun, AgentStep, Panel, TaskList, TaskStatus},
 };
 use std::{
@@ -358,7 +359,7 @@ fn agent(
     available_width: Option<Pixels>,
     cx: &mut Context<TranscriptView>,
 ) -> AnyElement {
-    let name = run.display_name();
+    let name = run_title(run);
     let failed = matches!(call.state, ToolState::Failed | ToolState::Cancelled);
     let active = view.streaming
         && call.state == ToolState::Running
@@ -367,12 +368,19 @@ fn agent(
             .iter()
             .rposition(rebase_core::transcript::Row::is_prompt)
             .is_none_or(|prompt| start > prompt);
-    let report = call.agent_report();
+    // The harness frames a sub-agent's hand-back; show the report itself and
+    // keep the trailer as a muted metadata line.
+    let (report, meta) = split_report(call.agent_report());
+    let activity = (call.state == ToolState::Running)
+        .then(|| run.activity.as_deref().map(str::trim))
+        .flatten()
+        .filter(|activity| !activity.is_empty())
+        .map(str::to_owned);
     let omitted = call
         .display
         .as_ref()
         .is_some_and(|meta| meta["detailOmitted"] == true);
-    let has_detail = !run.steps.is_empty() || report.is_some() || omitted;
+    let has_detail = !run.steps.is_empty() || report.is_some() || meta.is_some() || omitted;
     let key = format!("agent:{start}:{}", call.id);
     let open = view.agent_panels.open(&key, failed);
     if !open {
@@ -497,6 +505,20 @@ fn agent(
             }
         }));
     let mut panel = div().w_full().min_w_0().flex().flex_col().child(header);
+    if let Some(activity) = activity {
+        panel = panel.child(
+            div()
+                .id(("subagent-activity", start))
+                .debug_selector(move || format!("subagent-activity-{start}"))
+                .pl(px(34.))
+                .pr_1p5()
+                .truncate()
+                .text_size(px(12.))
+                .line_height(px(16.))
+                .text_color(content(0.4))
+                .child(activity),
+        );
+    }
     if has_detail && view.agent_panels.visible(&key, open) {
         let width = available_width.unwrap_or_else(|| panel_width(view, start));
         let trail = agent_trail(view, call, run, start, active, width, cx);
@@ -518,12 +540,12 @@ fn agent(
                         color.a = 0.8;
                         color
                     })
-                    .child(report.to_owned())
+                    .child(report.clone())
                     .into_any_element()
             } else {
                 markdown_text(
                     view,
-                    report,
+                    &report,
                     &format!("{}:report", call.id),
                     markdown::Tone::Normal,
                     cx,
@@ -538,9 +560,94 @@ fn agent(
                     .child(report),
             );
         }
+        if let Some(meta) = meta {
+            body = body.child(
+                div()
+                    .id(("subagent-meta", start))
+                    .debug_selector(move || format!("subagent-meta-{start}"))
+                    .pl(px(20.))
+                    .pb_1()
+                    .text_size(px(11.))
+                    .text_color(content(0.4))
+                    .child(meta),
+            );
+        }
         panel = panel.child(disclosure(view, &key, open, width, body.into_any_element()));
     }
     panel.into_any_element()
+}
+
+const RESUMED: &str = "Resumed · ";
+const CONTINUED: &str = "Continued · ";
+
+/// The run's title. A continuation block collects a finished agent's later
+/// work and also carries `resume_of`, so it is checked first. The core stores
+/// the prefix in the name already; strip it so it is never doubled.
+pub(super) fn run_title(run: &AgentRun) -> String {
+    let name = run.display_name();
+    let bare = name
+        .strip_prefix(RESUMED)
+        .or_else(|| name.strip_prefix(CONTINUED))
+        .unwrap_or(&name);
+    if run.continuation {
+        format!("{CONTINUED}{bare}")
+    } else if run.resume_of.is_some() {
+        format!("{RESUMED}{bare}")
+    } else {
+        name
+    }
+}
+
+/// The report with the harness framing removed, and its metadata line.
+fn split_report(raw: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(parsed) = raw.map(parse_handback) else {
+        return (None, None);
+    };
+    let report = parsed.report.trim();
+    (
+        (!report.is_empty()).then(|| report.to_owned()),
+        meta_line(&parsed),
+    )
+}
+
+/// "5 tool uses · 12,345 tokens · 4.2s", from whatever the trailer carried.
+fn meta_line(handback: &Handback) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(uses) = handback.tool_uses {
+        parts.push(format!(
+            "{uses} tool {}",
+            if uses == 1 { "use" } else { "uses" }
+        ));
+    }
+    if let Some(tokens) = handback.subagent_tokens {
+        parts.push(format!("{} tokens", thousands(tokens)));
+    }
+    if let Some(ms) = handback.duration_ms {
+        parts.push(seconds(ms));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+fn thousands(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (ix, ch) in digits.chars().enumerate() {
+        if ix > 0 && (digits.len() - ix).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Whole seconds from ten up, one decimal below.
+fn seconds(ms: u64) -> String {
+    let tenths = (ms + 50) / 100;
+    if tenths >= 100 {
+        format!("{}s", (ms + 500) / 1000)
+    } else {
+        format!("{}.{}s", tenths / 10, tenths % 10)
+    }
 }
 
 /// Direct port of buildActivityPhases: prose titles the work that follows it;
@@ -1000,5 +1107,251 @@ impl gpui::Render for AgentBrief {
             .line_height(px(18.))
             .text_color(content(0.85))
             .child(self.0.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transcript::{Body, finished_marker};
+    use gpui::{ListOffset, TestAppContext, size};
+    use rebase_core::transcript::{Interjection, Row};
+
+    const FRAMED: &str = "[Subagent hand-back] The agent below finished. The report follows:\n\n    Found 3 issues.\n\nagentId: a1b2 (use SendMessage with to: 'a1b2')\n<usage>subagent_tokens: 12345\ntool_uses: 5\nduration_ms: 4200</usage>";
+
+    fn row(role: &str, text: &str) -> Row {
+        Row {
+            role: role.into(),
+            text: text.into(),
+            first: true,
+            sent_at: None,
+        }
+    }
+    fn agent_row(id: &str, run: AgentRun, state: ToolState, output: &str) -> Row {
+        let mut call = ToolCall::new(id, "Agent");
+        call.panel = Some(Panel::Agent(run));
+        call.state = state;
+        call.output = output.into();
+        row("tool", &serde_json::to_string(&call).unwrap())
+    }
+    fn named(name: &str) -> AgentRun {
+        AgentRun {
+            name: Some(name.into()),
+            ..AgentRun::default()
+        }
+    }
+
+    #[test]
+    fn titles_follow_the_run_fields_not_the_block_id() {
+        assert_eq!(run_title(&named("Review auth")), "Review auth");
+        let resumed = AgentRun {
+            resume_of: Some("toolu_a".into()),
+            ..named("Resumed · Review auth")
+        };
+        assert_eq!(run_title(&resumed), "Resumed · Review auth");
+        // A bare name gets the prefix once.
+        let bare = AgentRun {
+            resume_of: Some("toolu_a".into()),
+            ..named("Review auth")
+        };
+        assert_eq!(run_title(&bare), "Resumed · Review auth");
+        // Continuations also carry resume_of; they must not read as resumed.
+        let continued = AgentRun {
+            resume_of: Some("toolu_a".into()),
+            continuation: true,
+            ..named("Continued · Review auth")
+        };
+        assert_eq!(run_title(&continued), "Continued · Review auth");
+        assert_eq!(run_title(&named("Background agent")), "Background agent");
+    }
+
+    #[test]
+    fn the_report_loses_its_framing_and_the_trailer_becomes_a_metadata_line() {
+        let (report, meta) = split_report(Some(FRAMED));
+        let report = report.unwrap();
+        assert_eq!(report, "Found 3 issues.");
+        assert!(!report.contains("Subagent hand-back") && !report.contains("agentId:"));
+        assert_eq!(meta.as_deref(), Some("5 tool uses · 12,345 tokens · 4.2s"));
+        let (plain, none) = split_report(Some("Just text."));
+        assert_eq!((plain.as_deref(), none), (Some("Just text."), None));
+        assert_eq!(split_report(None), (None, None));
+    }
+
+    #[test]
+    fn durations_and_counts_read_naturally() {
+        assert_eq!(seconds(4_200), "4.2s");
+        assert_eq!(seconds(9_949), "9.9s");
+        assert_eq!(seconds(9_960), "10s");
+        assert_eq!(seconds(10_000), "10s");
+        assert_eq!(seconds(61_400), "61s");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1_000), "1,000");
+        assert_eq!(thousands(1_234_567), "1,234,567");
+        let one = Handback {
+            tool_uses: Some(1),
+            ..Handback::default()
+        };
+        assert_eq!(meta_line(&one).as_deref(), Some("1 tool use"));
+        assert_eq!(meta_line(&Handback::default()), None);
+    }
+
+    fn open_view(cx: &mut TestAppContext, source: Vec<Row>) -> gpui::WindowHandle<TranscriptView> {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|_| TranscriptView::new())
+            })
+            .unwrap()
+        });
+        cx.simulate_window_resize(window.into(), size(px(900.), px(1400.)));
+        window
+            .update(cx, |view, _, cx| {
+                view.visible = false;
+                view.patch(0, source, cx);
+            })
+            .unwrap();
+        window
+    }
+
+    #[gpui::test]
+    fn a_running_run_shows_its_activity_and_a_settled_one_does_not(cx: &mut TestAppContext) {
+        let busy = AgentRun {
+            activity: Some("Reading src/auth.rs".into()),
+            ..named("Review auth")
+        };
+        let window = open_view(
+            cx,
+            vec![
+                row("user", "Review"),
+                agent_row("run", busy.clone(), ToolState::Running, ""),
+            ],
+        );
+        window
+            .update(cx, |view, _, cx| {
+                view.streaming = true;
+                view.rebuild(0, cx);
+            })
+            .unwrap();
+        cx.refresh().unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        assert!(visual.debug_bounds("subagent-activity-1").is_some());
+
+        let window = open_view(
+            visual,
+            vec![
+                row("user", "Review"),
+                agent_row("run", busy, ToolState::Completed, ""),
+            ],
+        );
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), visual);
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("subagent-activity-1").is_none());
+    }
+
+    #[gpui::test]
+    fn an_opened_report_shows_the_metadata_line(cx: &mut TestAppContext) {
+        let window = open_view(
+            cx,
+            vec![
+                row("user", "Review"),
+                agent_row("run", named("Review auth"), ToolState::Completed, FRAMED),
+            ],
+        );
+        cx.refresh().unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        assert!(visual.debug_bounds("subagent-meta-1").is_none());
+        window
+            .update(visual, |view, _, cx| {
+                view.toggle_agent_part("agent:1:run".into(), true, 1, cx)
+            })
+            .unwrap();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("subagent-meta-1").is_some());
+    }
+
+    #[gpui::test]
+    fn revealing_a_block_unfolds_it_opens_it_and_scrolls_to_it(cx: &mut TestAppContext) {
+        let source = vec![
+            row("user", "Do it"),
+            agent_row("early", named("Early"), ToolState::Completed, "done"),
+            row("assistant", "Working."),
+            agent_row("target", named("Target"), ToolState::Completed, "done"),
+            row("assistant", "All done."),
+        ];
+        let window = open_view(cx, source);
+        cx.refresh().unwrap();
+        window
+            .update(cx, |view, _, cx| {
+                view.list.scroll_to(ListOffset {
+                    item_ix: 0,
+                    offset_in_item: px(0.),
+                });
+                assert!(!view.agent_panels.part_open("agent:3:target", false));
+                assert!(
+                    !view.reveal_tool("missing", cx),
+                    "unknown blocks do nothing"
+                );
+                assert!(view.reveal_tool("target", cx));
+                assert!(view.agent_panels.part_open("agent:3:target", false));
+                assert!(!view.agent_panels.part_open("agent:1:early", false));
+                let ix = view
+                    .rows
+                    .iter()
+                    .position(|r| matches!(&r.body, Body::Tool { call, .. } if call.id == "target"))
+                    .expect("the block is built");
+                assert_eq!(view.list.logical_scroll_top().item_ix, ix);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn the_wake_marker_is_muted_text_with_the_summary_and_other_notes_keep_their_style(
+        cx: &mut TestAppContext,
+    ) {
+        let note = |kind: &str, text: &str| {
+            row(
+                "interjection",
+                &serde_json::to_string(&Interjection {
+                    text: text.into(),
+                    custom_type: kind.into(),
+                    severity: None,
+                })
+                .unwrap(),
+            )
+        };
+        let window = open_view(
+            cx,
+            vec![
+                row("user", "Start"),
+                row("assistant", "Started."),
+                note("task-notification", "Review finished"),
+                row("assistant", "The review found nothing."),
+                note("advisor", "Check the tests"),
+            ],
+        );
+        cx.refresh().unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        assert!(visual.debug_bounds("background-finished-2").is_some());
+        assert!(
+            visual.debug_bounds("background-finished-4").is_none(),
+            "an advisor note is not a wake marker"
+        );
+        let wake = |text: &str| Interjection {
+            text: text.into(),
+            custom_type: "task-notification".into(),
+            severity: None,
+        };
+        assert_eq!(
+            finished_marker(&wake("Review finished")).as_deref(),
+            Some("Background agent finished · Review finished")
+        );
+        assert_eq!(
+            finished_marker(&wake("  ")).as_deref(),
+            Some("Background agent finished")
+        );
+        let other = Interjection {
+            custom_type: "advisor".into(),
+            ..wake("x")
+        };
+        assert_eq!(finished_marker(&other), None);
     }
 }

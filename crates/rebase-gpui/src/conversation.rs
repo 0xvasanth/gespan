@@ -641,6 +641,11 @@ impl Conversation {
         self.transcript
             .update(cx, |view, cx| view.reveal_search(row, &query, cx));
     }
+    /// Scrolls the transcript to a sub-agent block and opens it.
+    pub(crate) fn reveal_tool(&mut self, tool_id: &str, cx: &mut Context<Self>) {
+        self.transcript
+            .update(cx, |view, cx| view.reveal_tool(tool_id, cx));
+    }
     pub(crate) fn load(&mut self, cx: &mut Context<Self>) {
         if self.is_remote() {
             self.load_remote(cx);
