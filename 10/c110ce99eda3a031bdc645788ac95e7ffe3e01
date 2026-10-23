@@ -1,0 +1,28 @@
+scripts/release-channel.cjs
+  s_ccb41beff89445::t_6ece1baecb453f 38,40-58
+docs/building.md
+  s_ccb41beff89445::t_3d7d2ce4788b96 73-79
+.github/workflows/release.yml
+  s_ccb41beff89445::t_3d7d2ce4788b96 30-39,105,239-241,438
+src/test/upstreamLinks.test.ts
+  s_ccb41beff89445::t_3d7d2ce4788b96 14-15
+scripts/release-channel.test.cjs
+  s_ccb41beff89445::t_6ece1baecb453f 7,90-128,132
+  s_ccb41beff89445::t_aa2795f197a9a2 129-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10c110ce99eda3a031bdc645788ac95e7ffe3e01",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
