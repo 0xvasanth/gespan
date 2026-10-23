@@ -1,0 +1,33 @@
+src/features/board/ui/CardDetail.tsx
+  s_0de52fe47ecaaa::t_b38e587f5995bc 20,59-68,93,95-104,111,138,145,153,232,234,240-245,247
+src/features/board/ui/BoardView.tsx
+  s_0de52fe47ecaaa::t_9fee5612c8a658 174-181
+  s_0de52fe47ecaaa::t_87d1dfdc5cc5c5 39-44,93-94,168,172-173,182-185,349,530
+src/features/board/ui/CardDetail.test.ts
+  s_0de52fe47ecaaa::t_f67ccb2dc34bba 1-86
+src/app/App.tsx
+  s_0de52fe47ecaaa::t_35891dec0932c0 13909,13911-13915,13917
+src/features/board/ui/boardFormat.ts
+  s_0de52fe47ecaaa::t_b38e587f5995bc 68-72
+src/features/board/ui/BoardView.test.ts
+  s_0de52fe47ecaaa::t_e59f9622cede7d 384-393,397-398,402-408,410-427
+  s_0de52fe47ecaaa::t_2a6cf4e6c1dd29 161,377,379,381
+  s_0de52fe47ecaaa::t_0b600b701607a7 394-396,399-401,409
+  s_0de52fe47ecaaa::t_e2c9bb61d73805 382-383
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2efa6f9ef0d4f356c70dbb77fd83d7e2f6913430",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
