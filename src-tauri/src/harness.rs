@@ -2518,7 +2518,6 @@ fn resolve_kiro() -> Option<PathBuf> {
 
     if let Some(home) = &home {
         candidates.push(home.join(".local/bin/kiro-cli"));
-        candidates.push(home.join(".kiro/bin/kiro-cli"));
         candidates.push(home.join(".npm-global/bin/kiro-cli"));
         candidates.push(home.join(".cargo/bin/kiro-cli"));
     }
