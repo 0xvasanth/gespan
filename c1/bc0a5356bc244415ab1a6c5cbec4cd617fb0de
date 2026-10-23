@@ -1,0 +1,27 @@
+src/features/automations/model/automations.ts
+  s_ccb41beff89445::t_7ca189855891f9 519
+src/test/noMonoReferences.test.ts
+  s_ccb41beff89445::t_1c442361279750 12-13,55-62,75,121
+  s_ccb41beff89445::t_dcced80c6c5922 16,20-24,26
+  s_ccb41beff89445::t_cdb7b6fff911b0 54
+  s_ccb41beff89445::t_c31f1b32f6d071 7-10,42-43,52-53,63,82,120,122-124,126-137
+  s_ccb41beff89445::t_c2de8920a35e38 17-19,27-32,44,112,125
+  s_ccb41beff89445::t_a397c4db8fbced 25
+  s_ccb41beff89445::t_cfc3dc79ea7a04 138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1bc0a5356bc244415ab1a6c5cbec4cd617fb0de",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
