@@ -88,6 +88,10 @@ src/integrations/harness/providers/kiro/kiro.ts
   s_232d570adba1f4::t_3296b657f34c3a 4
   s_232d570adba1f4::t_4424792e3b7e04 75-77
   s_232d570adba1f4::t_218a843bd50304 1-3,5-74,78-499
+README.md
+  s_232d570adba1f4::t_a086e5f3320c65 15
+docs/remote-access.md
+  s_232d570adba1f4::t_a086e5f3320c65 3
 ---
 {
   "schema_version": "authorship/3.0.0",
