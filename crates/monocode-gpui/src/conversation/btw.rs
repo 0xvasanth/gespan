@@ -24,6 +24,7 @@ const CLOSE_MS: f32 = 260.;
 const OPEN_EASE: fx::Ease = (0.22, 1., 0.36, 1.);
 const CLOSE_EASE: fx::Ease = (0.4, 0., 0.2, 1.);
 const BURST_MS: f32 = 1900.;
+const MODEL_NOTE: &str = "Answer side questions with another model.";
 const BLOCK_CHARS: usize = 8_000;
 
 fn supported(kind: Kind) -> bool {
@@ -129,7 +130,8 @@ pub(super) struct Btw {
     revision: u64,
     pending_submit: Option<String>,
     cancel: HashMap<String, Arc<AtomicBool>>,
-    models: Option<Entity<ModelList>>,
+    /// The handoff-style model menu, while open.
+    models: Option<Entity<Menu>>,
     model_subscription: Option<Subscription>,
     model_anchor: AnchorSlot,
     _submit: Subscription,
@@ -287,6 +289,20 @@ impl Btw {
     }
     pub(super) fn is_open(&self) -> bool {
         self.open
+    }
+    /// Esc: close the model menu if it is up, else fold the sheet away.
+    /// False leaves the key to others (closed sheet, or IME composition).
+    pub(super) fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.open || self.input.read(cx).is_composing() {
+            return false;
+        }
+        if self.models.take().is_some() {
+            window.focus(&self.input.focus_handle(cx), cx);
+            cx.notify();
+        } else {
+            self.close(window, cx);
+        }
+        true
     }
     /// How much of the session composer shows: it steps aside under an open
     /// sheet and returns as the sheet folds back into it.
@@ -810,6 +826,67 @@ impl Btw {
         self.save(cx);
         cx.notify();
     }
+    /// The response menu's model rows for the side thread's own provider:
+    /// each model, with its reasoning efforts in a submenu.
+    fn model_items(&self, result: Result<Vec<Model>, String>) -> Vec<MenuItem> {
+        let mut items = vec![MenuItem::Note(MODEL_NOTE.into())];
+        let Some(thread) = self.active() else {
+            return items;
+        };
+        let provider = Kind::from_id(&thread.provider);
+        let models = match result {
+            Ok(models) => models,
+            Err(error) => {
+                items.push(MenuItem::Note(
+                    format!("Couldn't load models: {error}").into(),
+                ));
+                return items;
+            }
+        };
+        let current = thread.model.as_deref();
+        for model in models {
+            let selected = current.is_some_and(|id| {
+                super::response_menu::model_ids_match(provider, id, &model.id)
+                    || model.alias_target.as_deref().is_some_and(|alias| {
+                        super::response_menu::model_ids_match(provider, id, alias)
+                    })
+            });
+            let target = |effort: Option<String>| {
+                serde_json::to_string(&monocode_core::response::Target {
+                    provider: provider.id().into(),
+                    model: Some(model.id.clone()),
+                    effort,
+                    settings: model
+                        .controls
+                        .iter()
+                        .map(|control| (control.id.clone(), control.current.clone()))
+                        .collect(),
+                })
+                .unwrap_or_default()
+            };
+            let mut option = MenuAction::new(
+                target(None),
+                crate::pickers::model_display_name(provider, &model.id, &model.name),
+            )
+            .checked(selected);
+            if !model.efforts.is_empty() {
+                let mut efforts = vec![
+                    MenuAction::new(target(None), "Default")
+                        .checked(selected && thread.effort.is_none()),
+                ];
+                efforts.extend(model.efforts.iter().map(|effort| {
+                    MenuAction::new(target(Some(effort.clone())), effort_name(effort))
+                        .checked(selected && thread.effort.as_deref() == Some(effort))
+                }));
+                option = option.submenu(efforts);
+            }
+            items.push(option.into());
+        }
+        if items.len() == 1 {
+            items.push(MenuItem::Note("No models are available.".into()));
+        }
+        items
+    }
     fn model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.models.is_some() {
             self.models = None;
@@ -823,33 +900,72 @@ impl Btw {
             return;
         }
         let provider = Kind::from_id(&thread.provider);
-        let model = thread.model.clone();
-        let cwd = thread.cwd.clone();
         let mut account = thread.account.clone();
         if account.id != monocode_core::accounts::DEFAULT {
             account.root = crate::accounts::get(cx).map(|center| center.read(cx).root.clone());
         }
-        let picker = cx.new(|cx| {
-            ModelList::new_for(provider, model, &cwd, account, cx).allow_provider_switch(false)
+        // Cached rows show at once; the fresh catalog replaces them.
+        let cached = catalog::cached_models_for(provider, &account);
+        let items = match cached {
+            Some(models) => self.model_items(Ok(models)),
+            None => vec![
+                MenuItem::Note(MODEL_NOTE.into()),
+                MenuItem::Note("Loading models…".into()),
+            ],
+        };
+        let menu = cx.new(|cx| {
+            Menu::new(provider.label(), items, window, cx)
+                .width(240.)
+                .style(MenuStyle::Settings)
         });
         self.model_subscription = Some(cx.subscribe_in(
-            &picker,
+            &menu,
             window,
-            |this, _, event: &ModelPicked, window, cx| {
-                if let Some(thread) = this.active_mut()
-                    && thread.provider == event.0.id()
+            |this, _, event: &MenuEvent, window, cx| {
+                if let MenuEvent::Picked(id, _) = event
+                    && let Ok(target) = serde_json::from_str::<monocode_core::response::Target>(id)
+                    && let Some(thread) = this.active_mut()
+                    && thread.provider == target.provider
                 {
-                    thread.model = event.1.clone();
+                    thread.model = target.model;
+                    thread.effort = target.effort;
+                    thread.model_settings.extend(target.settings);
+                    this.save(cx);
+                    this.refresh(cx);
                 }
                 this.models = None;
-                this.save(cx);
-                this.refresh(cx);
                 window.focus(&this.input.focus_handle(cx), cx);
+                cx.notify();
             },
         ));
-        window.focus(&picker.read(cx).search_focus(cx), cx);
-        self.models = Some(picker);
+        if !cfg!(test) {
+            let work = cx
+                .background_executor()
+                .spawn(async move { catalog::models_for(provider, &account) });
+            let weak_menu = menu.downgrade();
+            cx.spawn(async move |this, cx| {
+                let result = work.await;
+                let _ = this.update(cx, |this, cx| {
+                    // A closed or reopened menu keeps its own rows.
+                    if this.models.as_ref().map(|m| m.downgrade()) != Some(weak_menu.clone()) {
+                        return;
+                    }
+                    let items = this.model_items(result);
+                    if let Some(menu) = &this.models {
+                        menu.update(cx, |menu, cx| menu.set_items(items, cx));
+                    }
+                });
+            })
+            .detach();
+        }
+        self.models = Some(menu);
         cx.notify();
+    }
+    /// The model pill's effort, as the session composer shows it.
+    fn effort_label(&self) -> Option<String> {
+        self.active()
+            .and_then(|thread| thread.effort.as_deref())
+            .map(effort_name)
     }
 }
 
@@ -1110,7 +1226,7 @@ impl Btw {
                             .when(!selected, |d| {
                                 d.opacity(0.).group_hover(group, |s| s.opacity(1.))
                             })
-                            .child(icon("x-mark", 12.))
+                            .child(icon("close", 12.))
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.remove(&remove_id, cx)),
                             ),
@@ -1228,7 +1344,7 @@ impl Btw {
                                 .text_color(red(0xfee2e2, 0.8))
                                 .hover(|s| s.bg(red(0xfecaca, 0.1)).text_color(red(0xfef2f2, 1.)))
                                 .when(running, |d| d.opacity(0.5))
-                                .child(icon("arrow-path", 12.))
+                                .child(icon("refresh-cw", 12.))
                                 .child("Retry")
                                 .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
                         )
@@ -1302,6 +1418,15 @@ impl Btw {
                                 .child(self.model_anchor.probe())
                                 .child(provider_icon(&provider, 16.))
                                 .child(pill_label(model))
+                                .when_some(self.effort_label(), |d, effort| {
+                                    d.child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_size(px(11.))
+                                            .text_color(content(0.5))
+                                            .child(effort),
+                                    )
+                                })
                                 .child(icon("chevron-down", 12.))
                                 .on_click(
                                     cx.listener(|this, _, window, cx| {
@@ -1394,36 +1519,15 @@ impl Render for Btw {
                 self.composer_box(running, window, cx)
                     .opacity(shape.as_ref().map_or(1., |shape| shape.composer)),
             );
-        let models = self.models.clone().map(|models| {
-            let weak = cx.weak_entity();
-            popover("btw-model-picker", Anchor::Slot(self.model_anchor.clone()))
-                .side(Side::Top)
-                .width(430.)
-                .on_dismiss(move |window, cx| {
-                    let _ = weak.update(cx, |this, cx| {
-                        this.models = None;
-                        window.focus(&this.input.focus_handle(cx), cx);
-                        cx.notify();
-                    });
-                })
-                .child(models)
+        let models = self.models.as_ref().map(|menu| {
+            menu_popover(menu, Anchor::Slot(self.model_anchor.clone()), cx).side(Side::Top)
         });
         let mut root = div()
             .absolute()
             .inset_0()
             .child(self.overlay.layout_probe())
             .when(open, |d| {
-                d.on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                    if event.keystroke.key == "escape" && !this.input.read(cx).is_composing() {
-                        if this.models.take().is_none() {
-                            this.close(window, cx);
-                        }
-                        window.prevent_default();
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
-                }))
-                .child(div().absolute().inset_0().on_mouse_down(
+                d.child(div().absolute().inset_0().on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, window, cx| this.close(window, cx)),
                 ))

@@ -994,8 +994,10 @@ impl Shell {
                         })
                         .relative()
                         .map(|d| {
+                            // `-mx-1` pulls the hover wash to the footer's edge;
+                            // the left pull would close the gap after Actions.
                             if classic {
-                                d.mx(px(-4.)).px(px(4.)).rounded_md()
+                                d.mr(px(-4.)).px(px(4.)).rounded_md()
                             } else {
                                 d.h(px(20.)).px_2().rounded_full()
                             }

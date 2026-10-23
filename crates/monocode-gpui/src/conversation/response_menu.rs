@@ -345,7 +345,7 @@ impl Conversation {
     }
 }
 
-fn model_ids_match(provider: Kind, left: &str, right: &str) -> bool {
+pub(super) fn model_ids_match(provider: Kind, left: &str, right: &str) -> bool {
     let normalize = |id: &str| {
         let id = id
             .strip_prefix(&format!("{}:", provider.id()))
