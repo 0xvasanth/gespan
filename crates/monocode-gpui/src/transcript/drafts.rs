@@ -110,12 +110,12 @@ impl TranscriptView {
                             .rounded(px(12.))
                             .border_1()
                             .border_color(content(0.))
-                            .bg(content(0.04))
+                            .bg(crate::theme::draft_bubble_fill())
                             .px_3()
                             .py_2()
                             .text_size(px(14.))
                             .line_height(px(20.))
-                            .child(draft_dashes(Some(12.), 0.3))
+                            .child(draft_dashes(Some(12.), crate::theme::draft_bubble_edge()))
                             .children(draft.attachments.iter().map(|path| {
                                 div()
                                     .mb_1()
@@ -150,7 +150,7 @@ impl TranscriptView {
                                     .items_center()
                                     .justify_between()
                                     .gap_4()
-                                    .child(draft_dashes(None, 0.2))
+                                    .child(draft_dashes(None, content(0.2)))
                                     .child(
                                         div()
                                             .flex()
@@ -203,7 +203,7 @@ impl TranscriptView {
 /// Browser dashed 1px borders use approximately 3px dashes with 3px gaps.
 /// GPUI's built-in 2px/1px pattern is visibly tighter. Keep the browser pattern
 /// local to draft bubbles and their divider, including the rounded corners.
-fn draft_dashes(radius: Option<f32>, alpha: f32) -> impl IntoElement {
+fn draft_dashes(radius: Option<f32>, color: gpui::Hsla) -> impl IntoElement {
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
@@ -232,7 +232,7 @@ fn draft_dashes(radius: Option<f32>, alpha: f32) -> impl IntoElement {
                 path.line_to(point(right, top));
             }
             if let Ok(path) = path.build() {
-                window.paint_path(path, content(alpha));
+                window.paint_path(path, color);
             }
         },
     )

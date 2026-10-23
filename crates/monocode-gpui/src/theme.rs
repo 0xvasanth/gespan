@@ -40,6 +40,7 @@ struct Tokens {
     light: bool,
     ink: Hsla,
     accent: Hsla,
+    user_accent: Option<Hsla>,
     shell: Hsla,
     pane: Hsla,
     inset_pane: Hsla,
@@ -84,6 +85,7 @@ pub(crate) fn configure(p: &crate::settings::Preferences, system_light: bool) ->
         light,
         ink: rgb(palette.content).into(),
         accent: rgb(custom.unwrap_or(palette.accent)).into(),
+        user_accent: custom.map(|c| rgb(c).into()),
         shell,
         pane,
         inset_pane,
@@ -137,6 +139,47 @@ pub(crate) fn composer_fill() -> Hsla {
 pub(crate) fn composer_blur() -> f32 {
     let light = TOKENS.with(|tokens| tokens.borrow().as_ref().is_some_and(|t| t.light));
     if light { 0. } else { 24. }
+}
+
+/// The accent picked in Settings; `None` keeps the theme's neutral ink.
+fn user_accent() -> Option<Hsla> {
+    TOKENS.with(|t| t.borrow().as_ref().and_then(|t| t.user_accent))
+}
+/// `.user-message-bubble`: a picked accent tints sent messages at 24%.
+pub(crate) fn user_bubble_fill() -> Hsla {
+    user_accent().map_or(content(0.1), |a| a.opacity(0.24))
+}
+/// `.user-message-bubble[data-draft]`: an 8% wash inside a 38% dashed edge.
+pub(crate) fn draft_bubble_fill() -> Hsla {
+    user_accent().map_or(content(0.04), |a| a.opacity(0.08))
+}
+pub(crate) fn draft_bubble_edge() -> Hsla {
+    user_accent().map_or(content(0.3), |a| a.opacity(0.38))
+}
+/// `.primary-action` under `has-user-accent`: the accent, with black or white
+/// ink by its relative luminance; `None` keeps the default solid button.
+pub(crate) fn primary_action(enabled: bool) -> Option<(Hsla, Hsla)> {
+    let accent = user_accent()?;
+    if !enabled {
+        return Some((accent.opacity(0.28), content(0.35)));
+    }
+    let rgba = accent.to_rgb();
+    let linear = |v: f32| {
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance = 0.2126 * linear(rgba.r) + 0.7152 * linear(rgba.g) + 0.0722 * linear(rgba.b);
+    Some((
+        accent,
+        if luminance > 0.179 {
+            black(1.)
+        } else {
+            white(1.)
+        },
+    ))
 }
 
 /// Selected text is tinted with the accent; light surfaces get a paler wash
