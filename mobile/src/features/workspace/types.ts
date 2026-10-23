@@ -14,6 +14,7 @@ export type Harness =
   | "omp"
   | "fx"
   | "hermes"
+  | "kiro"
   | "antigravity"
   | "devin";
 

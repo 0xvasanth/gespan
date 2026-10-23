@@ -864,6 +864,19 @@ pub fn harness_resolve_hermes() -> Result<CursorBinary, String> {
         })
 }
 
+/// Resolve AWS's Kiro CLI (`kiro-cli`). The `kiro` IDE launcher is not an ACP server.
+#[tauri::command(async)]
+pub fn harness_resolve_kiro() -> Result<CursorBinary, String> {
+    resolve_kiro()
+        .map(|path| CursorBinary {
+            path: path.to_string_lossy().into_owned(),
+        })
+        .ok_or_else(|| {
+            "Kiro CLI not found. Install it with `curl -fsSL https://cli.kiro.dev/install | bash` and run `kiro-cli login`, then retry."
+                .into()
+        })
+}
+
 /// Resolve Cognition's Devin CLI (`devin`).
 #[tauri::command(async)]
 pub fn harness_resolve_devin() -> Result<CursorBinary, String> {
@@ -1839,6 +1852,7 @@ fn is_harness_argv_token(part: &str) -> bool {
             | "omp"
             | "fx"
             | "hermes"
+            | "kiro-cli"
             | "devin"
             | "agy_acp_server.par"
             | "pi"
@@ -2079,6 +2093,7 @@ fn resolve_harness_binary_default(provider: &str) -> Option<PathBuf> {
         "omp" => resolve_omp(),
         "fx" => resolve_fx(),
         "hermes" => resolve_hermes(),
+        "kiro" => resolve_kiro(),
         "antigravity" => resolve_antigravity(),
         "devin" => resolve_devin(),
         _ => None,
@@ -2125,6 +2140,7 @@ fn resolve_harness_binary_override(provider: &str, binary_path: &str) -> Result<
         "omp" => &["omp"],
         "fx" => &["fx"],
         "hermes" => &["hermes"],
+        "kiro" => &["kiro-cli"],
         "antigravity" => &["agy_acp_server.par"],
         "devin" => &["devin"],
         _ => {
@@ -2199,6 +2215,7 @@ fn validate_harness_binary_version(provider: &str, path: &Path) -> Result<(), St
         "claude" => lower.contains("claude"),
         "codex" => lower.contains("codex"),
         "hermes" => lower.contains("hermes"),
+        "kiro" => lower.contains("kiro"),
         "devin" => lower.contains("devin"),
         _ => true,
     };
@@ -2489,6 +2506,31 @@ fn resolve_hermes() -> Option<PathBuf> {
     candidates.push(PathBuf::from("/usr/bin/hermes"));
     candidates.push(PathBuf::from("/snap/bin/hermes"));
     if let Some(from_shell) = which_via_login_shell("hermes") {
+        candidates.push(from_shell);
+    }
+
+    first_binary(candidates)
+}
+
+fn resolve_kiro() -> Option<PathBuf> {
+    let home = dirs_home().map(PathBuf::from);
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(home) = &home {
+        candidates.push(home.join(".local/bin/kiro-cli"));
+        candidates.push(home.join(".kiro/bin/kiro-cli"));
+        candidates.push(home.join(".npm-global/bin/kiro-cli"));
+        candidates.push(home.join(".cargo/bin/kiro-cli"));
+    }
+    #[cfg(windows)]
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        candidates.push(local_app_data.join("kiro-cli/kiro-cli"));
+    }
+    #[cfg(target_os = "macos")]
+    candidates.push(PathBuf::from("/opt/homebrew/bin/kiro-cli"));
+    candidates.push(PathBuf::from("/usr/local/bin/kiro-cli"));
+    candidates.push(PathBuf::from("/usr/bin/kiro-cli"));
+    if let Some(from_shell) = which_via_login_shell("kiro-cli") {
         candidates.push(from_shell);
     }
 
@@ -3695,6 +3737,39 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn kiro_override_accepts_only_a_kiro_cli_binary_that_reports_kiro() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("rebase-kiro-binary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |path: &Path, body: &str| {
+            std::fs::write(path, body).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        let kiro_cli = dir.join("kiro-cli");
+        write(&kiro_cli, "#!/bin/sh\necho 'kiro-cli 1.5.0'\n");
+        // The `kiro` IDE launcher is not an ACP server and must never be accepted.
+        let ide_launcher = dir.join("kiro");
+        write(&ide_launcher, "#!/bin/sh\necho 'kiro 1.5.0'\n");
+        let impostor_dir = dir.join("other");
+        std::fs::create_dir_all(&impostor_dir).unwrap();
+        let impostor = impostor_dir.join("kiro-cli");
+        write(&impostor, "#!/bin/sh\necho 'something-else 1.5.0'\n");
+
+        assert_eq!(
+            resolve_harness_binary_override("kiro", &kiro_cli.to_string_lossy()),
+            Ok(kiro_cli.clone())
+        );
+        assert!(resolve_harness_binary_override("kiro", &ide_launcher.to_string_lossy()).is_err());
+        assert!(resolve_harness_binary_override("kiro", &impostor.to_string_lossy()).is_err());
+        assert!(resolve_harness_binary_override("kiro", "kiro-cli").is_err());
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn which_in_path_takes_the_first_executable_hit() {
         use std::os::unix::fs::PermissionsExt;
@@ -4288,6 +4363,11 @@ mod reap_logic_tests {
         assert!(looks_like_harness_argv("/Users/n/.local/bin/claude --help"));
         assert!(looks_like_harness_argv("/Users/n/.local/bin/hermes acp"));
         assert!(looks_like_harness_argv("/Users/n/.local/bin/devin acp"));
+        assert!(looks_like_harness_argv(
+            "/Users/n/.local/bin/kiro-cli acp --agent-engine=v3"
+        ));
+        // The IDE launcher shares the prefix but is not an agent CLI.
+        assert!(!looks_like_harness_argv("/usr/local/bin/kiro ."));
         assert!(!looks_like_harness_argv("tmux new -s work"));
         assert!(!looks_like_harness_argv("npm start"));
         assert!(!looks_like_harness_argv(

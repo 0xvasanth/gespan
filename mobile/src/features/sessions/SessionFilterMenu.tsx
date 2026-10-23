@@ -34,6 +34,7 @@ const HARNESS_NAMES: Record<Harness, string> = {
   omp: "OMP",
   fx: "FX",
   hermes: "Hermes",
+  kiro: "Kiro",
   antigravity: "Antigravity",
   devin: "Devin",
 };

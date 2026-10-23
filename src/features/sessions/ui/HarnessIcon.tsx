@@ -6,6 +6,7 @@ import devin from "../../../assets/providers/devin.svg";
 import fx from "../../../assets/providers/fx.svg";
 import grok from "../../../assets/providers/grok.svg";
 import hermes from "../../../assets/providers/hermes.svg";
+import kiro from "../../../assets/providers/kiro.svg";
 import omp from "../../../assets/providers/omp.svg";
 import opencode from "../../../assets/providers/opencode.svg";
 import pi from "../../../assets/providers/pi.svg";
@@ -22,6 +23,7 @@ export const HARNESS_ICONS: Record<HarnessId, string> = {
   omp,
   fx,
   hermes,
+  kiro,
   antigravity,
   devin,
 };
@@ -34,6 +36,7 @@ export const MONOCHROME_HARNESSES = new Set<HarnessId>([
   "pi",
   "fx",
   "hermes",
+  "kiro",
   "devin",
 ]);
 
@@ -82,7 +85,7 @@ export function HarnessIcon({
       </PilotIcon>
     );
   }
-  if (harness === "hermes" || harness === "devin") {
+  if (harness === "hermes" || harness === "devin" || harness === "kiro") {
     const mark = HARNESS_ICONS[harness];
     return (
       <span
