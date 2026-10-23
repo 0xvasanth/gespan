@@ -506,6 +506,29 @@ export async function listLinkedSessions(): Promise<SessionSummary[]> {
   return rows.map(normalizeSummary);
 }
 
+/** Matches MAX_SESSION_LOOKUP in session_store.rs. */
+const SESSION_LOOKUP_BATCH = 500;
+
+/**
+ * The saved sessions among `ids`, from any project, archived or not. An id
+ * that isn't returned has no saved session: it was deleted.
+ */
+export async function listSessionsByIds(
+  ids: readonly string[],
+): Promise<SessionSummary[]> {
+  const unique = [...new Set(ids)];
+  const batches: string[][] = [];
+  for (let i = 0; i < unique.length; i += SESSION_LOOKUP_BATCH) {
+    batches.push(unique.slice(i, i + SESSION_LOOKUP_BATCH));
+  }
+  const pages = await Promise.all(
+    batches.map((sessionIds) =>
+      invoke<SessionSummary[]>("session_list_by_ids", { sessionIds }),
+    ),
+  );
+  return pages.flat().map(normalizeSummary);
+}
+
 export type SessionSearchHit = {
   kind: "conversation" | "message";
   sessionId: string;
