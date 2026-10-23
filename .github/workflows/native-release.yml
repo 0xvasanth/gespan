@@ -205,8 +205,6 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
       R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -241,27 +239,42 @@ jobs:
           RELEASE_JSON="$(gh release view "$GITHUB_REF_NAME" --json isDraft,assets 2>/dev/null || true)" \
             NATIVE_RELEASE_JSON="$RELEASE_JSON" \
             node scripts/release-channel.cjs native-publish-plan native-dist "$RUNNER_TEMP/native-packages.txt"
-          if [ "$(grep '^NATIVE_UPLOAD_PACKAGES=' "$GITHUB_ENV" | tail -1)" = NATIVE_UPLOAD_PACKAGES=false ]; then
-            # The feed must sign and point at the published bytes, not this run's rebuild.
-            while IFS= read -r file; do
-              [ -n "$file" ] && gh release download "$GITHUB_REF_NAME" --dir native-dist --clobber --pattern "$file"
-            done < "$RUNNER_TEMP/native-packages.txt"
-          fi
+      - name: Recovery - reuse the published, already signed feed
+        if: env.NATIVE_UPLOAD_PACKAGES == 'false'
+        run: |
+          set -euo pipefail
+          # Nothing is signed here and the signing key is not in this step's
+          # environment: the feed and signatures come from the published release and
+          # are only checked for consistency.
+          mkdir native-recovered
+          gh release download "$GITHUB_REF_NAME" --dir native-recovered --pattern latest.json --pattern '*.sig'
+          node scripts/release-channel.cjs native-verify-recovery native-recovered
       - name: Sign all update packages and the native manifest
+        if: env.NATIVE_UPLOAD_PACKAGES == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           echo "REBASE_NATIVE_VERSION=${GITHUB_REF_NAME#native-v}" >> "$GITHUB_ENV"
           REBASE_NATIVE_VERSION="${GITHUB_REF_NAME#native-v}" node scripts/native-release.mjs native-dist
       - name: Verify the signed feed and all packages with the native client
+        if: env.NATIVE_UPLOAD_PACKAGES == 'true'
         run: cargo run --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core --example verify_native_update --profile native-dev -- native-dist
       - name: Check optional R2 mirror
         run: node scripts/release-channel.cjs native-r2
       - name: Publish native preview assets
         run: |
           set -euo pipefail
+          REBASE_NATIVE_VERSION="${GITHUB_REF_NAME#native-v}"
+          echo "REBASE_NATIVE_VERSION=$REBASE_NATIVE_VERSION" >> "$GITHUB_ENV"
           # A published native-v* release is immutable and is never re-uploaded. When
           # it is already published, the packages stay as they are and only the
           # native-latest feed is refreshed (this lets a failed run recover).
-          node --input-type=module -e 'import { readFileSync } from "node:fs"; for (const file of JSON.parse(readFileSync("native-dist/release-files.json"))) console.log(file);' > "$RUNNER_TEMP/native-files.txt"
+          FEED=native-recovered/latest.json
+          if [ "$NATIVE_UPLOAD_PACKAGES" = true ]; then
+            FEED=native-dist/latest.json
+            node --input-type=module -e 'import { readFileSync } from "node:fs"; for (const file of JSON.parse(readFileSync("native-dist/release-files.json"))) console.log(file);' > "$RUNNER_TEMP/native-files.txt"
+          fi
           if [ "$NATIVE_CREATE_RELEASE" = true ]; then
             gh release create "$GITHUB_REF_NAME" --draft --prerelease --latest=false --target "$GITHUB_SHA" --title "Rebase Native ${REBASE_NATIVE_VERSION}" --notes-file docs/native/preview-release-notes.md
           fi
@@ -270,6 +283,8 @@ jobs:
             while IFS= read -r file; do
               FILES+=("native-dist/$file")
             done < "$RUNNER_TEMP/native-files.txt"
+            # The signed feed rides along so a failed run can republish it unsigned.
+            FILES+=(native-dist/latest.json)
             gh release upload "$GITHUB_REF_NAME" "${FILES[@]}" --clobber
             gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease --latest=false
           fi
@@ -279,9 +294,9 @@ jobs:
           if ! gh release view native-latest >/dev/null 2>&1; then
             gh release create native-latest --prerelease --latest=false --target "$GITHUB_SHA" --title "Rebase Native update feed" --notes 'Update feed for Rebase Native. Contains only latest.json; packages live on the native-v* releases.'
           fi
-          gh release upload native-latest native-dist/latest.json --clobber
+          gh release upload native-latest "$FEED" --clobber
       - name: Mirror native preview to R2 (optional)
-        if: env.R2_ENABLED == 'true'
+        if: env.R2_ENABLED == 'true' && env.NATIVE_UPLOAD_PACKAGES == 'true'
         run: |
           set -euo pipefail
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"

@@ -85,9 +85,12 @@ function requireNativeTagRef(env) {
   return name;
 }
 
-// Files the versioned release must hold: every package and its .sig.
+// Files the versioned release must hold: every package and its .sig, plus the
+// signed latest.json the original run produced. Recovery republishes that exact
+// file; it never signs anything, so the signing key cannot be used as an oracle
+// to certify assets someone replaced on the release.
 function nativeExpectedFiles(records) {
-  const files = [];
+  const files = ["latest.json"];
   for (const record of records) {
     files.push(record.filename);
     if (record.target) files.push(`${record.filename}.sig`);
@@ -112,8 +115,40 @@ function nativePublishPlan({ release, expected }) {
   return { createRelease: false, uploadPackages: false };
 }
 
+// Checks a latest.json taken from a published versioned release against that
+// release's own .sig assets, so a recovery republishes it only when it is
+// consistent. The client still verifies every package against these signatures
+// and the manifest against the updater public key.
+//   sigs: { "<package filename>": "<contents of its .sig asset>" }
+function verifyRecoveredFeed({ latestJson, sigs, tag, expected }) {
+  let manifest;
+  try {
+    const feed = JSON.parse(latestJson);
+    if (!feed.signature || !feed.payload) throw new Error("no payload or signature");
+    manifest = JSON.parse(Buffer.from(feed.payload, "base64").toString("utf8"));
+  } catch (error) {
+    throw new Error(`The published latest.json is unreadable: ${error.message}`);
+  }
+  const base = `${GITHUB_RELEASES}/${tag}/`;
+  const targets = Object.entries(manifest.platforms || {});
+  if (!targets.length) throw new Error("The published latest.json lists no packages");
+  for (const [target, platform] of targets) {
+    if (typeof platform.url !== "string" || !platform.url.startsWith(base)) {
+      throw new Error(`${target} does not point at the ${tag} release`);
+    }
+    const filename = decodeURIComponent(platform.url.slice(base.length));
+    if (!expected.includes(filename)) throw new Error(`${target} lists ${filename}, which is not a published package`);
+    const sig = (sigs[filename] || "").trim();
+    if (!sig) throw new Error(`Missing signature asset ${filename}.sig`);
+    if (sig !== (platform.signature || "").trim()) {
+      throw new Error(`The signature for ${target} does not match ${filename}.sig`);
+    }
+  }
+  return manifest;
+}
+
 module.exports = {
-  requireNativeTagRef, nativeExpectedFiles, nativePublishPlan,
+  verifyRecoveredFeed, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan,
   releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED,
   GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status,
 };
@@ -132,6 +167,14 @@ if (require.main === module && process.argv[2] === "native-ref") {
   fs.writeFileSync(process.argv[4], expected.filter((n) => !n.endsWith(".sig")).join("\n") + "\n");
   fs.appendFileSync(process.env.GITHUB_ENV, `NATIVE_CREATE_RELEASE=${plan.createRelease}\nNATIVE_UPLOAD_PACKAGES=${plan.uploadPackages}\n`);
   console.log(plan.uploadPackages ? "Uploading packages to the versioned release" : "Versioned release already published: keeping its packages, refreshing the feed only");
+} else if (require.main === module && process.argv[2] === "native-verify-recovery") {
+  // usage: native-verify-recovery <dir holding the downloaded latest.json and *.sig>
+  const dir = process.argv[3];
+  const sigs = {};
+  for (const name of fs.readdirSync(dir)) if (name.endsWith(".sig")) sigs[name.slice(0, -4)] = fs.readFileSync(`${dir}/${name}`, "utf8");
+  const expected = Object.keys(sigs);
+  verifyRecoveredFeed({ latestJson: fs.readFileSync(`${dir}/latest.json`, "utf8"), sigs, tag: requireNativeTagRef(process.env), expected });
+  console.log("Recovered feed matches the published signatures");
 } else if (require.main === module && process.argv[2] === "native-config") {
   if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
   const pubkey = updaterPubkey(process.env);

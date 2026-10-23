@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan } = require("./release-channel.cjs");
+const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -216,24 +216,70 @@ test("native releases only run from a native-v* tag", () => {
 test("expected native files are each package plus its signature", () => {
   assert.deepEqual(
     nativeExpectedFiles([{ filename: "a.dmg", target: "darwin-aarch64-app" }, { filename: "b.deb" }]),
-    ["a.dmg", "a.dmg.sig", "b.deb"],
+    ["latest.json", "a.dmg", "a.dmg.sig", "b.deb"],
   );
 });
 
 test("a missing or draft versioned release uploads packages", () => {
-  const expected = ["a.dmg", "a.dmg.sig"];
+  const expected = ["latest.json", "a.dmg", "a.dmg.sig"];
   assert.deepEqual(nativePublishPlan({ release: null, expected }), { createRelease: true, uploadPackages: true });
   assert.deepEqual(nativePublishPlan({ release: { isDraft: true, assets: [{ name: "a.dmg" }] }, expected }), { createRelease: false, uploadPackages: true });
 });
 
 test("a published versioned release keeps its packages and only the feed is refreshed", () => {
-  const expected = ["a.dmg", "a.dmg.sig"];
-  const release = { isDraft: false, assets: [{ name: "a.dmg" }, { name: "a.dmg.sig" }, { name: "extra.txt" }] };
+  const expected = ["latest.json", "a.dmg", "a.dmg.sig"];
+  const release = { isDraft: false, assets: [{ name: "latest.json" }, { name: "a.dmg" }, { name: "a.dmg.sig" }, { name: "extra.txt" }] };
   assert.deepEqual(nativePublishPlan({ release, expected }), { createRelease: false, uploadPackages: false });
 });
 
 test("a published release with missing assets is an error naming them", () => {
   const release = { isDraft: false, assets: [{ name: "a.dmg" }] };
   assert.throws(() => nativePublishPlan({ release, expected: ["a.dmg", "a.dmg.sig"] }), /missing assets: a\.dmg\.sig/);
+  assert.throws(() => nativePublishPlan({ release: { isDraft: false, assets: [{ name: "a.dmg" }] }, expected: ["latest.json", "a.dmg"] }), /missing assets: latest\.json/);
   assert.throws(() => nativePublishPlan({ release: { isDraft: false }, expected: ["a.dmg"] }), /missing assets: a\.dmg/);
+});
+
+const TAG = "native-v0.16.0-preview.2";
+const feedFor = (platforms) => JSON.stringify({
+  payload: Buffer.from(JSON.stringify({ platforms })).toString("base64"),
+  signature: "manifest-signature",
+});
+const url = (name, tag = TAG) => `https://github.com/0xvasanth/rebase/releases/download/${tag}/${encodeURIComponent(name)}`;
+
+test("recovery reuses the original signatures and signs nothing", () => {
+  const latestJson = feedFor({ "darwin-aarch64-app": { url: url("Rebase Native.app.tar.gz"), signature: "sig-original" } });
+  const before = latestJson;
+  const manifest = verifyRecoveredFeed({
+    latestJson,
+    sigs: { "Rebase Native.app.tar.gz": "sig-original\n" },
+    tag: TAG,
+    expected: ["Rebase Native.app.tar.gz"],
+  });
+  assert.equal(manifest.platforms["darwin-aarch64-app"].signature, "sig-original");
+  assert.equal(latestJson, before);
+});
+
+test("the workflow exposes the signing key only to the normal-path signing step", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "native-release.yml"), "utf8");
+  const publish = workflow.slice(workflow.indexOf("\n  publish:"));
+  const holders = publish.split("\n      - ").filter((step) => step.includes("TAURI_SIGNING_PRIVATE_KEY"));
+  assert.equal(holders.length, 1);
+  assert.match(holders[0], /^name: Sign all update packages/);
+  assert.match(holders[0], /if: env\.NATIVE_UPLOAD_PACKAGES == 'true'/);
+  assert.doesNotMatch(publish.split("\n    steps:")[0], /TAURI_SIGNING_PRIVATE_KEY/);
+});
+
+test("recovery fails when a .sig asset is missing or differs from the feed", () => {
+  const latestJson = feedFor({ t: { url: url("a.dmg"), signature: "sig-original" } });
+  const args = { latestJson, tag: TAG, expected: ["a.dmg"] };
+  assert.throws(() => verifyRecoveredFeed({ ...args, sigs: {} }), /Missing signature asset a\.dmg\.sig/);
+  assert.throws(() => verifyRecoveredFeed({ ...args, sigs: { "a.dmg": "swapped" } }), /does not match a\.dmg\.sig/);
+});
+
+test("recovery rejects a feed that points elsewhere, at an unknown file, or is unreadable", () => {
+  const sigs = { "a.dmg": "s" };
+  assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({ t: { url: url("a.dmg", "native-v9.9.9"), signature: "s" } }), sigs, tag: TAG, expected: ["a.dmg"] }), /does not point at/);
+  assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({ t: { url: url("evil.dmg"), signature: "s" } }), sigs, tag: TAG, expected: ["a.dmg"] }), /not a published package/);
+  assert.throws(() => verifyRecoveredFeed({ latestJson: "not json", sigs, tag: TAG, expected: [] }), /unreadable/);
+  assert.throws(() => verifyRecoveredFeed({ latestJson: feedFor({}), sigs, tag: TAG, expected: [] }), /lists no packages/);
 });
