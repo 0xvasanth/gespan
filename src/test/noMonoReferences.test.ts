@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const root = join(__dirname, "..", "..");
 
 const SCAN_DIRS = ["src", "src-tauri/src", "mobile/src", "mobile/tests", "mobile/modules", "host", "tests"];
-const SCAN_FILES = ["src-tauri/Info.plist"];
+const SCAN_FILES = ["src-tauri/Info.plist", ...readdirSync(join(root, "src-tauri")).filter((n) => /^tauri.*\.conf\.json$/.test(n)).map((n) => `src-tauri/${n}`)];
 const SKIP_DIRS = new Set(["node_modules", "target", "dist", "build", ".expo", "Pods", ".gradle", "generated"]);
 const TEXT_EXT = /\.(tsx?|jsx?|css|html|rs|mjs|json|md|toml|swift|h|m|kt|gradle|podspec)$/;
 const LOCKFILES = /(package-lock\.json|Cargo\.lock|yarn\.lock|pnpm-lock\.yaml)$/;
