@@ -5,6 +5,7 @@
 
 mod accounts;
 mod activity;
+mod app_menu;
 mod arcade;
 mod assets;
 mod automations;
@@ -112,6 +113,18 @@ fn quit(cx: &mut App) {
     cx.spawn(async move |cx| {
         shutdown.await;
         cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// Quit, then relaunch the same app once this process has exited.
+fn restart(cx: &mut App) {
+    let shutdown = cx
+        .background_executor()
+        .spawn(async { monocode_core::process::shutdown_all() });
+    cx.spawn(async move |cx| {
+        shutdown.await;
+        cx.update(|cx| cx.restart());
     })
     .detach();
 }
@@ -404,6 +417,7 @@ fn main() {
             };
             cx.bind_keys([KeyBinding::new(&format!("{modifier}-q"), Quit, None)]);
             shell::bind_keys(cx);
+            app_menu::bind(cx);
             usage_footer::bind(cx);
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {

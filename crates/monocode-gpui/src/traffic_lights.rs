@@ -5,20 +5,24 @@
 //! focus and fullscreen don't move them back.
 
 use gpui::Window;
-use objc2_app_kit::{NSView, NSWindow, NSWindowButton};
+use objc2_app_kit::{NSLayoutAttribute, NSView, NSWindow, NSWindowButton};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 const BUTTON_SIZE: f64 = 14.;
 const LEFT_MARGIN: f64 = 12.;
 const BUTTON_SPACING: f64 = 6.;
 
-/// Pins the buttons once; AppKit can recreate them, so call again whenever
-/// the window may have rebuilt its titlebar.
+/// Pins the buttons, or moves already pinned ones; AppKit can recreate them,
+/// so call again whenever the window may have rebuilt its titlebar, and after
+/// the interface zoom changes the title bar's height.
 pub(crate) fn pin(window: &Window, title_bar_height: f32) {
     let Some(ns_window) = ns_window(window) else {
         return;
     };
-    let bottom = (title_bar_height as f64 - BUTTON_SIZE) / 2.;
+    // The buttons keep their native size; the bar they sit in and the gaps
+    // around them follow the interface zoom.
+    let zoom = f64::from(window.content_zoom());
+    let bottom = (f64::from(title_bar_height) * zoom - BUTTON_SIZE) / 2.;
     let kinds = [
         NSWindowButton::CloseButton,
         NSWindowButton::MiniaturizeButton,
@@ -28,14 +32,27 @@ pub(crate) fn pin(window: &Window, title_bar_height: f32) {
         let Some(button) = ns_window.standardWindowButton(kind) else {
             continue;
         };
-        // Already pinned: a second set of constraints would only conflict.
-        if !button.translatesAutoresizingMaskIntoConstraints() {
-            continue;
-        }
         let Some(titlebar) = (unsafe { button.superview() }) else {
             continue;
         };
-        let x = LEFT_MARGIN + i as f64 * (BUTTON_SIZE + BUTTON_SPACING);
+        let x = LEFT_MARGIN * zoom + i as f64 * (BUTTON_SIZE + BUTTON_SPACING * zoom);
+        // Already pinned: move the constraints, since a second set would only
+        // conflict.
+        if !button.translatesAutoresizingMaskIntoConstraints() {
+            let target = objc2::rc::Retained::as_ptr(&button).cast::<objc2::runtime::AnyObject>();
+            for constraint in titlebar.constraints().iter() {
+                let first = unsafe { constraint.firstItem() };
+                if !first.is_some_and(|item| std::ptr::eq(&*item, target)) {
+                    continue;
+                }
+                match constraint.firstAttribute() {
+                    NSLayoutAttribute::Leading => constraint.setConstant(x),
+                    NSLayoutAttribute::Bottom => constraint.setConstant(-bottom),
+                    _ => {}
+                }
+            }
+            continue;
+        }
         button.setTranslatesAutoresizingMaskIntoConstraints(false);
         // Bottom, like GPUI's own origin: the titlebar view's height varies
         // between windowed and fullscreen, the distance from its bottom does not.

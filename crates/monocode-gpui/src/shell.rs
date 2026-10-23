@@ -116,7 +116,18 @@ actions!(
         ToggleLayout,
         OpenSettings,
         GoToFile,
-        OpenCommandPalette
+        OpenCommandPalette,
+        OpenInbox,
+        OpenNotes,
+        CheckForUpdates,
+        MinimizeWindow,
+        ZoomWindow,
+        ZoomIn,
+        ZoomOut,
+        ResetZoom,
+        Reload,
+        SidebarAppearance,
+        About
     ]
 );
 
@@ -222,6 +233,11 @@ pub(crate) fn bind_keys(cx: &mut App) {
         // Switch between the original two-sidebar layout and the new layout.
         KeyBinding::new(&format!("{modifier}-shift-l"), ToggleLayout, context),
         KeyBinding::new(&format!("{modifier}-shift-d"), SplitDown, context),
+        KeyBinding::new(&format!("{modifier}-="), ZoomIn, context),
+        KeyBinding::new(&format!("{modifier}-+"), ZoomIn, context),
+        KeyBinding::new(&format!("{modifier}--"), ZoomOut, context),
+        KeyBinding::new(&format!("{modifier}-0"), ResetZoom, context),
+        KeyBinding::new(&format!("{modifier}-shift-r"), Reload, context),
         KeyBinding::new(&format!("{modifier}-alt-left"), FocusPaneLeft, context),
         KeyBinding::new(&format!("{modifier}-alt-right"), FocusPaneRight, context),
         KeyBinding::new(&format!("{modifier}-alt-up"), FocusPaneUp, context),
@@ -1743,6 +1759,69 @@ impl Shell {
         self.reviews
             .values()
             .any(|pane| pane.read(cx).unsaved_files(cx))
+    }
+    /// Steps the interface scale one notch up or down, or resets it with 0.
+    fn step_ui_scale(&mut self, step: i32, cx: &mut Context<Self>) {
+        use crate::settings::UI_SCALE_PERCENTS;
+        let current = self.workspace.preferences.ui_scale;
+        let next = match step {
+            0 => Some(100),
+            1 => UI_SCALE_PERCENTS.into_iter().find(|&p| p > current),
+            _ => UI_SCALE_PERCENTS.into_iter().rev().find(|&p| p < current),
+        }
+        .unwrap_or(current);
+        if next == current {
+            return;
+        }
+        self.workspace.preferences.ui_scale = next;
+        self.apply_preferences(cx);
+        self.sync_settings(cx);
+        self.persist(cx);
+        cx.notify();
+    }
+    /// The interface scale as a window zoom, applied after the frame that
+    /// noticed it so layout never runs against a viewport that changes mid-draw.
+    fn sync_ui_scale(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let zoom = self.workspace.preferences.ui_scale.clamp(50, 200) as f32 / 100.;
+        if (window.content_zoom() - zoom).abs() < f32::EPSILON {
+            return;
+        }
+        window.defer(cx, move |window, cx| {
+            window.set_content_zoom(zoom, cx);
+            #[cfg(target_os = "macos")]
+            crate::traffic_lights::pin(window, crate::theme::TITLE_BAR_HEIGHT);
+        });
+    }
+    /// The native stand-in for the web app's Reload: restart the process.
+    /// Unlike a webview reload this stops running agents and terminals, so it
+    /// always asks first.
+    fn request_reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.quit_prompted {
+            return;
+        }
+        self.quit_prompted = true;
+        let detail = if self.unsaved_files(cx) {
+            "Running agents and terminals will stop, and unsaved file edits will be lost."
+        } else {
+            "Running agents and terminals will stop."
+        };
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            "Reload Monocode Native?",
+            Some(detail),
+            &["Reload", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = answer.await;
+            let _ = this.update(cx, |this, cx| {
+                this.quit_prompted = false;
+                if matches!(answer, Ok(0)) {
+                    crate::restart(cx);
+                }
+            });
+        })
+        .detach();
     }
     fn request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.unsaved_files(cx) {
@@ -7646,6 +7725,7 @@ fn enter_from(leaf: &LayoutLeaf) -> (Edge, Rect) {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.keep_visible_idle_agents(cx);
+        self.sync_ui_scale(window, cx);
         if let Some(id) = self.pending_composer_focus.take()
             && self
                 .workspace
@@ -7913,6 +7993,32 @@ impl Render for Shell {
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.open_settings(crate::settings::Section::General, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &OpenInbox, window, cx| this.open_inbox(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenNotes, window, cx| this.open_notes(window, cx)))
+            .on_action(cx.listener(|this, _: &CheckForUpdates, _, cx| {
+                this.notification_state
+                    .updater
+                    .update(cx, |updater, cx| updater.check(true, cx));
+            }))
+            .on_action(|_: &MinimizeWindow, window, _| window.minimize_window())
+            .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.step_ui_scale(1, cx)))
+            .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.step_ui_scale(-1, cx)))
+            .on_action(cx.listener(|this, _: &ResetZoom, _, cx| this.step_ui_scale(0, cx)))
+            .on_action(cx.listener(|this, _: &Reload, window, cx| this.request_reload(window, cx)))
+            .on_action(cx.listener(|this, _: &SidebarAppearance, window, cx| {
+                this.open_settings(crate::settings::Section::Appearance, window, cx)
+            }))
+            .on_action(|_: &About, window, cx| {
+                let detail = format!("Version {}", crate::notifications::updater::version());
+                let _ = window.prompt(
+                    gpui::PromptLevel::Info,
+                    "Monocode Native",
+                    Some(&detail),
+                    &["OK"],
+                    cx,
+                );
+            })
+            .on_action(|_: &ZoomWindow, window, _| window.zoom_window())
             .on_action(
                 cx.listener(|this, _: &session_groups::RenameSidebarItem, window, cx| {
                     this.rename_sidebar_item(window, cx)

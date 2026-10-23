@@ -339,7 +339,6 @@ impl Shell {
     pub(super) fn apply_preferences(&mut self, cx: &mut Context<Self>) {
         self.refresh_notification_permission();
         self.configure_quick_composer(cx);
-        crate::file_editor::menus(&self.workspace.preferences, cx);
         monocode_core::cli::initialize(&self.workspace.preferences.binary_paths);
         self.keep_visible_idle_agents(cx);
         monocode_core::provider::configure_idle_agents(
@@ -350,6 +349,8 @@ impl Shell {
             monos.update(cx, |m, cx| m.set_preferences(prefs, cx));
         }
         crate::settings::apply_keybindings(&self.workspace.preferences, cx);
+        // After the keymap, so the menu shows rebound shortcuts.
+        crate::app_menu::install(&self.workspace.preferences, cx);
         cx.set_global(self.workspace.preferences.clone());
         self.sync_right_panel(cx);
         if let Some(center) = crate::accounts::get(cx) {
