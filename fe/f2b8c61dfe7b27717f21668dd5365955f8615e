@@ -1,0 +1,26 @@
+src/features/board/model/board.ts
+  s_0de52fe47ecaaa::t_91d16f4c8848a9 1-188
+src/features/board/model/autoMove.test.ts
+  s_0de52fe47ecaaa::t_53a8c323b4723e 1-6,8-231
+  s_0de52fe47ecaaa::t_91d16f4c8848a9 7
+src/features/board/model/autoMove.ts
+  s_0de52fe47ecaaa::t_91d16f4c8848a9 1-85
+src/features/board/model/board.test.ts
+  s_0de52fe47ecaaa::t_383a3b0847d874 1-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fef2b8c61dfe7b27717f21668dd5365955f8615e",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
