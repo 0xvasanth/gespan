@@ -1,0 +1,26 @@
+src/app/App.tsx
+  s_ccb41beff89445::t_dda03025113000 621,9093-9095
+src/features/mobile/model/mobileWorkspace.ts
+  s_ccb41beff89445::t_dda03025113000 40-45,259-262,302-304
+src/features/mobile/model/mobileWorkspace.test.ts
+  s_ccb41beff89445::t_df514272ddd810 1
+  s_ccb41beff89445::t_46b63eab733e90 2-46
+src/features/pilots/model/pilot.ts
+  s_ccb41beff89445::t_dda03025113000 242-255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1520e9aeba671b083527774a2c97d7cdd43824ab",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
