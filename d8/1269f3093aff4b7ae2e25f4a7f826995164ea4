@@ -1,0 +1,21 @@
+mobile/src/app/pilot/[pilotId].tsx
+  s_ccb41beff89445::t_d231c8c8c42a55 1-75
+src/features/agent-app/model/agentAppMemory.test.ts
+  s_ccb41beff89445::t_57b360b7a8652b 154-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d81269f3093aff4b7ae2e25f4a7f826995164ea4",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
