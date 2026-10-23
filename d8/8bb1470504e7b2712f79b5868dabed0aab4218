@@ -1,0 +1,27 @@
+docs/native/README.md
+  s_ccb41beff89445::t_dc118de10b8e8c 88-95
+scripts/release-channel.cjs
+  s_ccb41beff89445::t_6e176167c000c6 88-91,93,118-149,151,170-177
+.github/workflows/native-release.yml
+  s_ccb41beff89445::t_cbeb7427e5432a 242-251,253-256,261,273-277,286-287,297,299
+  s_ccb41beff89445::t_dc118de10b8e8c 268-269
+scripts/release-channel.test.cjs
+  s_ccb41beff89445::t_ae5c4afa69bc7a 260-269
+  s_ccb41beff89445::t_dc118de10b8e8c 7,219,224,230-231,238,241-259,270-285
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d88bb1470504e7b2712f79b5868dabed0aab4218",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
