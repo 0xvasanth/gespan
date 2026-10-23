@@ -480,6 +480,74 @@ mod tests {
         assert!(is_open(visual), "the click opens the block it points at");
     }
 
+    #[gpui::test]
+    fn a_click_before_the_session_loads_completes_once_loading_finishes(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let summary = store.create("claude", "/tmp").unwrap();
+        let window = cx.update(|cx| {
+            input::bind(cx);
+            cx.set_reduce_motion(true);
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    let view = Conversation::new(summary, Arc::new(Mutex::new(store)), cx);
+                    view.transcript.update(cx, |transcript, cx| {
+                        transcript.patch(0, vec![agent_row("send-1")], cx);
+                    });
+                    view
+                })
+            })
+            .unwrap()
+        });
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |view, _, cx| {
+                assert!(!view.loaded);
+                view.reveal_tool("send-1", cx);
+                assert_eq!(view.pending_tool.as_deref(), Some("send-1"));
+                assert!(
+                    !view
+                        .transcript
+                        .read(cx)
+                        .agent_open_for_test("agent:0:send-1"),
+                    "nothing is revealed against an unloaded session"
+                );
+                // The load finishing runs the pending reveals.
+                view.loaded = true;
+                view.finish_pending_reveals(cx);
+                assert!(view.pending_tool.is_none());
+                assert!(
+                    view.transcript
+                        .read(cx)
+                        .agent_open_for_test("agent:0:send-1")
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn loading_an_empty_session_consumes_the_pending_click(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let summary = store.create("claude", "/tmp").unwrap();
+        let window = cx.update(|cx| {
+            input::bind(cx);
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| Conversation::new(summary, Arc::new(Mutex::new(store)), cx))
+            })
+            .unwrap()
+        });
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |view, _, cx| view.reveal_tool("gone", cx))
+            .unwrap();
+        visual.run_until_parked();
+        window
+            .update(visual, |view, _, _| {
+                assert!(view.loaded, "the click started the load");
+                assert!(view.pending_tool.is_none());
+            })
+            .unwrap();
+    }
+
     #[test]
     fn elapsed_reads_as_a_running_clock() {
         assert_eq!(elapsed(4_200), "4s");

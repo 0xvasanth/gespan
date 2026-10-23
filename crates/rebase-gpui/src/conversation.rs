@@ -159,6 +159,8 @@ pub(crate) struct Conversation {
     history_unloaded: bool,
     history_actions: std::collections::VecDeque<history::HistoryAction>,
     pending_search: Option<(usize, String)>,
+    /// A background row clicked before the session finished loading.
+    pending_tool: Option<String>,
     loading: bool,
     pub(crate) busy: bool,
     /// The UI is idle; serialize the next launch behind the worker's last save.
@@ -575,6 +577,7 @@ impl Conversation {
             history_unloaded: false,
             history_actions: Default::default(),
             pending_search: None,
+            pending_tool: None,
             loading: false,
             busy: false,
             stopping: false,
@@ -643,8 +646,22 @@ impl Conversation {
     }
     /// Scrolls the transcript to a sub-agent block and opens it.
     pub(crate) fn reveal_tool(&mut self, tool_id: &str, cx: &mut Context<Self>) {
+        if !self.loaded || self.history_unloaded {
+            self.pending_tool = Some(tool_id.to_owned());
+            self.load(cx);
+            return;
+        }
         self.transcript
             .update(cx, |view, cx| view.reveal_tool(tool_id, cx));
+    }
+    /// Completes the reveals asked for while the session was loading.
+    fn finish_pending_reveals(&mut self, cx: &mut Context<Self>) {
+        if let Some((row, query)) = self.pending_search.take() {
+            self.reveal_search(row, query, cx);
+        }
+        if let Some(tool_id) = self.pending_tool.take() {
+            self.reveal_tool(&tool_id, cx);
+        }
     }
     pub(crate) fn load(&mut self, cx: &mut Context<Self>) {
         if self.is_remote() {
@@ -743,9 +760,7 @@ impl Conversation {
                             .update(cx, |v, cx| v.install_prepared_history(history, cx));
                         this.status = "Ready".into();
                         this.loaded = true;
-                        if let Some((row, query)) = this.pending_search.take() {
-                            this.reveal_search(row, query, cx);
-                        }
+                        this.finish_pending_reveals(cx);
                         this.sync_review(cx);
                         this.run_history_actions(cx);
                         this.pump_follow_ups(cx);

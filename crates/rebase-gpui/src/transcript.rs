@@ -464,6 +464,9 @@ pub(crate) struct TranscriptView {
     history_loading: bool,
     history_requested: bool,
     history_search: Option<(usize, String)>,
+    /// A sub-agent block (source row, tool id) older than the loaded window,
+    /// revealed once paging reaches it.
+    history_tool: Option<(usize, String)>,
     prepared_parsers: HashMap<usize, MarkdownParser>,
     pilot: bool,
     pilot_groups: std::cell::RefCell<HashMap<usize, usize>>,
@@ -676,6 +679,13 @@ impl TranscriptView {
         let Some(at) = found else {
             return false;
         };
+        if at < self.history_start {
+            // Page the older rows in; the reveal completes when they land.
+            self.history_tool = Some((at, tool_id.to_owned()));
+            self.list.pause_following_tail();
+            self.load_older_history(cx);
+            return true;
+        }
         let turn = self
             .messages
             .iter()
@@ -691,9 +701,21 @@ impl TranscriptView {
         self.list.pause_following_tail();
         self.rebuild(0, cx);
         self.toggle_agent_part(format!("agent:{at}:{tool_id}"), true, at, cx);
-        if let Some(item_ix) = self.rows.iter().position(|row| {
-            row.key.0 == at && matches!(&row.body, Body::Tool { call, .. } if call.id == tool_id)
-        }) {
+        // A Pilot keeps its work in the activity panel and builds no tool row;
+        // land on the nearest row after the block then.
+        let target = self
+            .rows
+            .iter()
+            .position(|row| {
+                row.key.0 == at
+                    && matches!(&row.body, Body::Tool { call, .. } if call.id == tool_id)
+            })
+            .or_else(|| {
+                self.rows
+                    .iter()
+                    .position(|row| row.key.0 >= at && !matches!(row.body, Body::OlderHistory))
+            });
+        if let Some(item_ix) = target {
             self.list.scroll_to(ListOffset {
                 item_ix,
                 offset_in_item: px(0.),
@@ -2308,6 +2330,7 @@ impl TranscriptView {
             history_loading: false,
             history_requested: false,
             history_search: None,
+            history_tool: None,
             prepared_parsers: HashMap::new(),
             pilot: false,
             pilot_groups: Default::default(),
@@ -4335,10 +4358,14 @@ impl TranscriptView {
             row.body,
             Body::Tool { .. } | Body::Phase { .. } | Body::Reasoning
         );
+        let marker = match &row.body {
+            Body::Interjection(note) => finished_marker(note),
+            _ => None,
+        };
         let body = match row.body {
             Body::RemotePlan(plan) => self.remote_plan_card(&plan, cx),
             Body::Visual(document) => self.visual_row(message_start, document, cx),
-            Body::Interjection(ref note) if finished_marker(note).is_some() => {
+            Body::Interjection(_) if marker.is_some() => {
                 // Claude woke itself for a finished background agent; this
                 // keeps its follow-up from reading as a reply to the user.
                 div()
@@ -4352,7 +4379,7 @@ impl TranscriptView {
                     .text_size(px(12.))
                     .line_height(px(18.))
                     .text_color(content(0.45))
-                    .child(finished_marker(note).unwrap_or_default())
+                    .child(marker.unwrap_or_default())
                     .into_any_element()
             }
             Body::Interjection(ref note) => {

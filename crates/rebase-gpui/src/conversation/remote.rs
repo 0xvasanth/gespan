@@ -193,9 +193,7 @@ impl Conversation {
                             this.refresh_catalog(cx);
                             this.refresh_git(cx);
                         }
-                        if let Some((row, query)) = this.pending_search.take() {
-                            this.reveal_search(row, query, cx);
-                        }
+                        this.finish_pending_reveals(cx);
                         if running && !this.busy && !this.stopping {
                             this.settings.remote_action = Some(json!({"type":"attach"}));
                             this.launch_prompt(String::new(), cx);

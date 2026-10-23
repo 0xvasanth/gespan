@@ -1304,6 +1304,51 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_block_older_than_the_loaded_window_is_paged_in_then_revealed(cx: &mut TestAppContext) {
+        use crate::transcript::history::PreparedHistory;
+        let mut source: Vec<Row> = (0..35)
+            .flat_map(|turn| {
+                [
+                    row("user", &format!("Question {turn}")),
+                    row("assistant", &format!("Answer {turn}")),
+                ]
+            })
+            .collect();
+        source.insert(
+            3,
+            agent_row("old", named("Old"), ToolState::Completed, "done"),
+        );
+        let view = cx.new(|_| TranscriptView::new());
+        view.update(cx, |view, cx| {
+            // Only a Pilot pages its history.
+            view.pilot_mode("pilot", 0xffffff, "Pilot");
+            view.install_prepared_history(PreparedHistory::new(source, true), cx);
+            assert!(
+                view.history_start > 3,
+                "the block starts outside the window"
+            );
+            assert!(
+                view.rows
+                    .iter()
+                    .all(|r| !matches!(&r.body, Body::Tool { call, .. } if call.id == "old"))
+            );
+            assert!(view.reveal_tool("old", cx), "the request is accepted");
+            assert!(view.history_tool.is_some(), "and remembered while paging");
+        });
+        cx.run_until_parked();
+        view.update(cx, |view, _| {
+            assert!(view.history_tool.is_none());
+            assert!(view.history_start <= 3);
+            assert!(view.agent_panels.part_open("agent:3:old", false));
+            let top = view.list.logical_scroll_top().item_ix;
+            assert!(
+                view.rows[top].key.0 >= 3 && view.rows[top].key.0 < view.history_start + 6,
+                "scrolled to the paged-in rows, not left at the tail"
+            );
+        });
+    }
+
+    #[gpui::test]
     fn the_wake_marker_is_muted_text_with_the_summary_and_other_notes_keep_their_style(
         cx: &mut TestAppContext,
     ) {
