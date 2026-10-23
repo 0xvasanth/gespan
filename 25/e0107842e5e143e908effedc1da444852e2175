@@ -1,0 +1,37 @@
+src/features/board/ui/boardFormat.ts
+  s_0de52fe47ecaaa::t_4e496481702b81 1,26-30,33-57,64-67,71,74-77,80,83-87
+src/features/board/ui/CardDetail.test.ts
+  s_0de52fe47ecaaa::t_c25c7ae1e33bf5 113-160
+src/features/board/ui/BoardView.tsx
+  s_0de52fe47ecaaa::t_baaeae0a1bdd72 290-291
+  s_0de52fe47ecaaa::t_4e496481702b81 49,60,101-105,116,149,158-159,278-289,292-320,421,597
+src/features/board/ui/BoardView.test.ts
+  s_0de52fe47ecaaa::t_baaeae0a1bdd72 712-735,748
+  s_0de52fe47ecaaa::t_c25c7ae1e33bf5 18,176,636-711,736-747
+  s_0de52fe47ecaaa::t_87dcd56382f974 749
+src/features/board/ui/CardDetail.tsx
+  s_0de52fe47ecaaa::t_4e496481702b81 114,116-119,121-123,125,134,169
+src/features/board/ui/BoardCardItem.tsx
+  s_0de52fe47ecaaa::t_4e496481702b81 10,40-42,49-53
+src/app/App.tsx
+  s_0de52fe47ecaaa::t_0c77ea34a33ca7 559,711-715,13918-13919,13921-13927,13943-13970
+  s_0de52fe47ecaaa::t_4cdfabad7b4b53 14821
+src/features/board/ui/boardFormat.test.ts
+  s_0de52fe47ecaaa::t_c25c7ae1e33bf5 9,112,118-121,129-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "25e0107842e5e143e908effedc1da444852e2175",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
