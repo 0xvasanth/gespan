@@ -278,7 +278,7 @@ fn grammar(lang: Lang) -> Option<&'static Grammar> {
         .or_insert_with(|| match Grammar::new(lang) {
             Ok(grammar) => Some(Box::leak(Box::new(grammar))),
             Err(error) => {
-                eprintln!("monocode: syntax grammar failed: {error}");
+                eprintln!("rebase: syntax grammar failed: {error}");
                 None
             }
         })

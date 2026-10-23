@@ -8,7 +8,7 @@ use crate::{
 use gpui::{Context, EventEmitter, FontWeight, Render, Role, Window, div, img, prelude::*, px};
 use monocode_core::store::Store;
 use std::time::Instant;
-const MARKER: &str = "monocode.installedUpdate";
+const MARKER: &str = "rebase.installedUpdate";
 
 /// Show the marker once, after the expected version is actually running. The
 /// settings abstraction has no delete operation, so an empty value is cleared.

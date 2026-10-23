@@ -20,8 +20,8 @@ use objc2_user_notifications::*;
 
 use super::{Notification, Permission, Target, resolved};
 
-const CATEGORY: &str = "monocode.session";
-const SHOW: &str = "monocode.session.show";
+const CATEGORY: &str = "rebase.session";
+const SHOW: &str = "rebase.session.show";
 static CLICKS: Mutex<VecDeque<Target>> = Mutex::new(VecDeque::new());
 
 define_class!(

@@ -518,7 +518,7 @@ impl Shell {
                 })
                 .collect();
             Ok::<_, String>((
-                json!({"projects": projects, "monos": monos, "sessions": sessions}),
+                json!({"projects": projects, "pilots": monos, "sessions": sessions}),
                 ids,
             ))
         });
@@ -538,7 +538,7 @@ impl Shell {
     // MARK: requests
 
     fn mobile_target(&self, id: &str, cx: &App) -> Result<Target, String> {
-        if let Some(mono) = id.strip_prefix("mono:") {
+        if let Some(mono) = id.strip_prefix("pilot:") {
             return self
                 .monos
                 .as_ref()

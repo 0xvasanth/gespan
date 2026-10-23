@@ -928,16 +928,16 @@ impl Store {
     }
     pub(super) fn shared_blocks(&self, id: i64) -> Result<Vec<Value>, String> {
         let original = self.persisted_session_id(id)?;
-        if has_table(&self.conn, "mono_transcripts")?
+        if has_table(&self.conn, "pilot_transcripts")?
             && sql(self.conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM mono_transcripts WHERE session_id=?1)",
+                "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id=?1)",
                 [&original],
                 |r| r.get::<_, bool>(0),
             ))?
         {
             let mut query = sql(self
                 .conn
-                .prepare("SELECT block_json FROM mono_blocks WHERE session_id=?1 ORDER BY seq"))?;
+                .prepare("SELECT block_json FROM pilot_blocks WHERE session_id=?1 ORDER BY seq"))?;
             let mut result = Vec::new();
             for row in sql(query.query_map([&original], |r| r.get::<_, String>(0)))? {
                 result.push(parse(&sql(row)?)?);
@@ -954,9 +954,9 @@ impl Store {
     }
     pub(super) fn shared_load(&self, id: i64) -> Result<Transcript, String> {
         let original = self.persisted_session_id(id)?;
-        if has_table(&self.conn, "mono_transcripts")?
+        if has_table(&self.conn, "pilot_transcripts")?
             && sql(self.conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM mono_transcripts WHERE session_id=?1)",
+                "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id=?1)",
                 [&original],
                 |row| row.get::<_, bool>(0),
             ))?
@@ -965,8 +965,8 @@ impl Store {
             // a second complete JSON history alongside its display rows.
             // The scalar count and the rows share one SQLite read snapshot.
             let mut query = sql(self.conn.prepare(
-                "SELECT block_json,(SELECT count(*) FROM mono_blocks WHERE session_id=?1)
-                 FROM mono_blocks WHERE session_id=?1 ORDER BY seq",
+                "SELECT block_json,(SELECT count(*) FROM pilot_blocks WHERE session_id=?1)
+                 FROM pilot_blocks WHERE session_id=?1 ORDER BY seq",
             ))?;
             let mut records = sql(query.query([&original]))?;
             let mut rows = Vec::new();
@@ -1002,9 +1002,9 @@ impl Store {
     }
     pub(super) fn shared_store_blocks(&self, id: i64, blocks: &[Value]) -> Result<(), String> {
         let original = self.persisted_session_id(id)?;
-        let indexed = has_table(&self.conn, "mono_transcripts")?
+        let indexed = has_table(&self.conn, "pilot_transcripts")?
             && sql(self.conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM mono_transcripts WHERE session_id=?1)",
+                "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id=?1)",
                 [&original],
                 |r| r.get::<_, bool>(0),
             ))?;
@@ -1031,7 +1031,7 @@ impl Store {
     }
     fn shared_store_indexed_blocks(&self, original: &str, blocks: &[Value]) -> Result<(), String> {
         let mut query = sql(self.conn.prepare(
-            "SELECT seq,block_id,block_json FROM mono_blocks WHERE session_id=?1 ORDER BY seq",
+            "SELECT seq,block_id,block_json FROM pilot_blocks WHERE session_id=?1 ORDER BY seq",
         ))?;
         let mut old = HashMap::new();
         let mut max_seq = 0;
@@ -1068,21 +1068,21 @@ impl Store {
             // and block identities survive, in one enclosing transaction.
             sql(self
                 .conn
-                .execute("DELETE FROM mono_turns WHERE session_id=?1", [original]))?;
+                .execute("DELETE FROM pilot_turns WHERE session_id=?1", [original]))?;
             sql(self
                 .conn
-                .execute("DELETE FROM mono_blocks WHERE session_id=?1", [original]))?;
+                .execute("DELETE FROM pilot_blocks WHERE session_id=?1", [original]))?;
             old.clear();
             max_seq = 0;
         } else {
             for (id, (seq, _)) in &old {
                 if !retained.contains(id.as_str()) {
                     sql(self.conn.execute(
-                        "DELETE FROM mono_turns WHERE session_id=?1 AND seq=?2",
+                        "DELETE FROM pilot_turns WHERE session_id=?1 AND seq=?2",
                         params![original, seq],
                     ))?;
                     sql(self.conn.execute(
-                        "DELETE FROM mono_blocks WHERE session_id=?1 AND block_id=?2",
+                        "DELETE FROM pilot_blocks WHERE session_id=?1 AND block_id=?2",
                         params![original, id],
                     ))?;
                 }
@@ -1114,7 +1114,7 @@ impl Store {
                 .collect::<Vec<_>>()
                 .join("\n")
                 .to_lowercase();
-                sql(self.conn.execute("INSERT INTO mono_blocks(session_id,seq,block_id,block_json,search_text,is_user,is_draft)
+                sql(self.conn.execute("INSERT INTO pilot_blocks(session_id,seq,block_id,block_json,search_text,is_user,is_draft)
                     VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(session_id,seq) DO UPDATE SET block_json=excluded.block_json,
                     search_text=excluded.search_text,is_user=excluded.is_user,is_draft=excluded.is_draft",
                     params![original,seq,id,encode(block)?,search,block["role"]=="user",block["draft"]==true]))?;
@@ -1122,10 +1122,10 @@ impl Store {
             if ix == 0
                 || after_handoff
                 || (block["role"] == "user" && block["internal"] != true)
-                || block.get("monoHabit").is_some()
+                || block.get("pilotHabit").is_some()
             {
                 sql(self.conn.execute(
-                    "INSERT OR IGNORE INTO mono_turns(session_id,seq) VALUES(?1,?2)",
+                    "INSERT OR IGNORE INTO pilot_turns(session_id,seq) VALUES(?1,?2)",
                     params![original, seq],
                 ))?;
             }
@@ -1454,9 +1454,9 @@ impl Store {
         let tx = sql(self.conn.unchecked_transaction())?;
         for (table, column) in [
             ("session_reminders", "session_id"),
-            ("mono_blocks", "session_id"),
-            ("mono_turns", "session_id"),
-            ("mono_transcripts", "session_id"),
+            ("pilot_blocks", "session_id"),
+            ("pilot_turns", "session_id"),
+            ("pilot_transcripts", "session_id"),
             ("in_flight_sessions", "session_id"),
             ("orchestration_workers", "session_id"),
             ("orchestration_sidebar", "lead_id"),

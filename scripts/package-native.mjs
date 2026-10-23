@@ -64,7 +64,7 @@ async function linuxTree(directory, binary, kind) {
   await chmod(join(app, "monocode-gpui"), 0o755);
   await writeFile(
     join(app, "native-install.json"),
-    JSON.stringify({ app_id: "dev.usemono.gpui", kind }),
+    JSON.stringify({ app_id: "com.rebase.native", kind }),
   );
   await notices(join(app, "licenses"));
   await mkdir(join(directory, "usr/bin"), { recursive: true });
@@ -75,7 +75,7 @@ async function linuxTree(directory, binary, kind) {
   );
   await mkdir(join(directory, "usr/share/applications"), { recursive: true });
   const desktop =
-    "[Desktop Entry]\nType=Application\nName=Monocode Native\nExec=monocode-native %F\nIcon=monocode-native\nCategories=Development;\nTerminal=false\nStartupWMClass=dev.usemono.gpui\n";
+    "[Desktop Entry]\nType=Application\nName=Monocode Native\nExec=monocode-native %F\nIcon=monocode-native\nCategories=Development;\nTerminal=false\nStartupWMClass=com.rebase.native\n";
   await writeFile(
     join(directory, "usr/share/applications/monocode-native.desktop"),
     desktop,
@@ -288,7 +288,7 @@ export async function packageNative({
     await cp(binary, join(stage, "monocode-gpui.exe"));
     await writeFile(
       join(stage, "native-install.json"),
-      JSON.stringify({ app_id: "dev.usemono.gpui", kind: "nsis" }),
+      JSON.stringify({ app_id: "com.rebase.native", kind: "nsis" }),
     );
     await notices(join(stage, "licenses"));
     const installer = add(

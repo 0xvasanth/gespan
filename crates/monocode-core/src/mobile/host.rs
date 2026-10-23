@@ -201,7 +201,7 @@ impl MobileHost {
                 identity: None,
                 endpoint: None,
                 invitations: HashMap::new(),
-                catalog: json!({"projects":[],"monos":[],"sessions":[]}),
+                catalog: json!({"projects":[],"pilots":[],"sessions":[]}),
                 watches: HashMap::new(),
                 router_address: None,
                 router_status: "Off".into(),
@@ -308,7 +308,7 @@ impl MobileHost {
         let code =
             URL_SAFE_NO_PAD.encode(serde_json::to_vec(&invitation).map_err(|e| e.to_string())?);
         Ok(Invite {
-            url: format!("monocode://pair?i={code}"),
+            url: format!("rebase://pair?i={code}"),
             expires,
         })
     }
@@ -339,7 +339,7 @@ impl MobileHost {
     /// The app's workspace: `projects`, `monos` and `sessions` (newest first).
     pub fn publish(&self, catalog: Value) -> Result<(), String> {
         if !catalog["projects"].is_array()
-            || !catalog["monos"].is_array()
+            || !catalog["pilots"].is_array()
             || !catalog["sessions"].is_array()
         {
             return Err("Invalid mobile catalog".into());
@@ -449,7 +449,7 @@ impl MobileHost {
         if let Some(identity) = &inner.identity {
             return Ok(identity.clone());
         }
-        let entry = keyring::Entry::new("com.monocode.mobile", &keyring_account(&self.path))
+        let entry = keyring::Entry::new("com.rebase.mobile", &keyring_account(&self.path))
             .map_err(|e| e.to_string())?;
         let identity = match entry.get_password() {
             Ok(value) => serde_json::from_str(&value)
@@ -863,7 +863,7 @@ mod tests {
     async fn the_catalog_answers_workspace_polls_without_the_app() {
         let (host, _events, peer) = paired();
         host.publish(
-            json!({"projects":[{"id":"p"}],"monos":[],"sessions":[{"id":"s","projectId":"p"}]}),
+            json!({"projects":[{"id":"p"}],"pilots":[],"sessions":[{"id":"s","projectId":"p"}]}),
         )
         .unwrap();
         let catalog = host

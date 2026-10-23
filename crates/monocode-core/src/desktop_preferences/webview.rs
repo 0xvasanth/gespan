@@ -14,7 +14,7 @@ impl DesktopPreferences {
             crate::accounts::home()
                 .map(|home| {
                     Self::load_webkit(
-                        &home.join("Library/WebKit/com.monocode.desktop/WebsiteData/Default"),
+                        &home.join("Library/WebKit/com.rebase.desktop/WebsiteData/Default"),
                     )
                 })
                 .unwrap_or_default()
@@ -101,7 +101,7 @@ impl DesktopPreferences {
         conn.busy_timeout(std::time::Duration::from_millis(150))
             .map_err(|e| e.to_string())?;
         let mut query = conn
-            .prepare("SELECT key,value FROM ItemTable WHERE key LIKE 'monocode%' ")
+            .prepare("SELECT key,value FROM ItemTable WHERE key LIKE 'rebase%' ")
             .map_err(|e| e.to_string())?;
         let rows = query
             .query_map([], |row| {
@@ -132,7 +132,7 @@ impl DesktopPreferences {
         let Some(base) = std::env::var_os("LOCALAPPDATA") else {
             return Self::default();
         };
-        let root = PathBuf::from(base).join("com.monocode.desktop");
+        let root = PathBuf::from(base).join("com.rebase.desktop");
         Self::load_webview2_from(&root)
     }
 
@@ -318,7 +318,7 @@ fn chromium_item_origin(key: &[u8]) -> Option<(&str, &[u8])> {
 fn chromium_monocode_entry(key: &[u8], value: &[u8]) -> Option<(String, String)> {
     let script = chromium_item_origin(key)?.1;
     let name = decode_chromium_string(script)?;
-    if !name.starts_with("monocode") {
+    if !name.starts_with("rebase") {
         return None;
     }
     Some((name, decode_chromium_string(value)?))
@@ -387,16 +387,16 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         write_localstorage(
             &root.path().join("http_localhost_1420.localstorage"),
-            "monocode.workspaceTheme",
+            "rebase.workspaceTheme",
             "ember",
         );
         write_localstorage(
             &root.path().join("tauri_localhost_0.localstorage"),
-            "monocode.workspaceTheme",
+            "rebase.workspaceTheme",
             "tidepool",
         );
         let preferences = DesktopPreferences::load_webkitgtk(root.path());
-        assert_eq!(preferences.get("monocode.workspaceTheme"), Some("tidepool"));
+        assert_eq!(preferences.get("rebase.workspaceTheme"), Some("tidepool"));
         assert!(preferences.available);
         let mut workspace = serde_json::json!({});
         preferences.apply_workspace(&mut workspace);
@@ -420,12 +420,12 @@ mod tests {
             .collect();
         write_localstorage(
             &root.path().join("https_tauri.localhost_0.localstorage"),
-            "monocode.recentProjects",
+            "rebase.recentProjects",
             &serde_json::to_string(&projects).unwrap(),
         );
         let loaded = DesktopPreferences::load_webkitgtk(root.path());
         assert_eq!(
-            loaded.json("monocode.recentProjects"),
+            loaded.json("rebase.recentProjects"),
             Some(serde_json::json!(projects))
         );
         loaded.apply_workspace(&mut workspace);
@@ -453,17 +453,17 @@ mod tests {
     #[test]
     fn chromium_strings_accept_type_prefixes_and_plain_utf8() {
         let mut utf16_prefixed = vec![0];
-        utf16_prefixed.extend(utf16("monocode.colorScheme"));
+        utf16_prefixed.extend(utf16("rebase.colorScheme"));
         assert_eq!(
             decode_chromium_string(&utf16_prefixed).as_deref(),
-            Some("monocode.colorScheme")
+            Some("rebase.colorScheme")
         );
         let mut latin1 = vec![1];
         latin1.extend(b"tidepool");
         assert_eq!(decode_chromium_string(&latin1).as_deref(), Some("tidepool"));
         assert_eq!(
-            decode_chromium_string(b"monocode.workspaceTheme").as_deref(),
-            Some("monocode.workspaceTheme")
+            decode_chromium_string(b"rebase.workspaceTheme").as_deref(),
+            Some("rebase.workspaceTheme")
         );
     }
 
@@ -483,10 +483,10 @@ mod tests {
         };
         let mut db = rusty_leveldb::DB::open(root.path(), options).unwrap();
         let mut vite_key = b"_http://localhost:1420\x00".to_vec();
-        vite_key.extend(b"\x01monocode.workspaceTheme");
+        vite_key.extend(b"\x01rebase.workspaceTheme");
         db.put(&vite_key, b"\x01ember").unwrap();
         let mut key = b"_https://tauri.localhost\x00".to_vec();
-        key.extend(b"\x01monocode.workspaceTheme");
+        key.extend(b"\x01rebase.workspaceTheme");
         db.put(&key, b"\x01tidepool").unwrap();
         // An origin with no Monocode settings must not shadow the populated one.
         db.put(b"_tauri://localhost\x00\x01unrelated", b"\x01value")
@@ -495,7 +495,7 @@ mod tests {
         let source = keep_open.then_some(db);
         let before = snapshot_leveldb(root.path());
         let preferences = DesktopPreferences::read_chromium_localstorage(root.path()).unwrap();
-        assert_eq!(preferences.get("monocode.workspaceTheme"), Some("tidepool"));
+        assert_eq!(preferences.get("rebase.workspaceTheme"), Some("tidepool"));
         assert!(preferences.available);
         assert_eq!(
             snapshot_leveldb(root.path()),
@@ -529,7 +529,7 @@ mod tests {
             std::fs::create_dir_all(&path).unwrap();
             let mut db = rusty_leveldb::DB::open(&path, Default::default()).unwrap();
             db.put(
-                b"_https://tauri.localhost\x00\x01monocode.workspaceTheme",
+                b"_https://tauri.localhost\x00\x01rebase.workspaceTheme",
                 b"\x01tidepool",
             )
             .unwrap();

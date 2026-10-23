@@ -277,7 +277,7 @@ pub fn root(store: &Store) -> PathBuf {
         .data_dir()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| std::env::temp_dir().join(format!("monocode-test-{}", new_id())))
-        .join("monos")
+        .join("pilots")
 }
 pub fn load_files(root: &Path, mono: &Mono) -> Result<files::AgentFiles, String> {
     let mut files = files::load(root, &mono.id, None)?;

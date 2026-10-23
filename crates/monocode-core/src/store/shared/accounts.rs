@@ -9,10 +9,10 @@ impl Store {
         }
         Book::from_desktop(
             &preferences
-                .json("monocode.providerAccounts.v1")
+                .json("rebase.providerAccounts.v1")
                 .unwrap_or(json!({})),
             &preferences
-                .json("monocode.providerAccountSelections.v1")
+                .json("rebase.providerAccountSelections.v1")
                 .unwrap_or(json!({})),
         )
     }
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn isolated_account_names_and_selections_survive_restart() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("monocode.db");
+        let path = directory.path().join("rebase.db");
         let store = Store::open_monocode(&path).unwrap();
         assert!(store.shared_desktop_accounts().is_none());
         let mut book = Book::default();

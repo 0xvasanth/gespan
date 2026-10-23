@@ -351,11 +351,11 @@ impl Workspace {
                 .as_str()
                 .and_then(|s| serde_json::from_str(s).ok())
         };
-        if let Some(value) = read("monocode.railMonosPinned") {
+        if let Some(value) = read("rebase.railPilotsPinned") {
             self.project_rail_monos_pinned = value.as_bool().unwrap_or(false);
         }
         if self.classic_sidebar_tab_order.is_empty()
-            && let Some(value) = read("monocode.sidebarTabOrder")
+            && let Some(value) = read("rebase.sidebarTabOrder")
         {
             self.classic_sidebar_tab_order = serde_json::from_value::<Vec<String>>(value)
                 .unwrap_or_default()
@@ -364,7 +364,7 @@ impl Workspace {
                 .collect();
         }
         if self.classic_sidebar_tabs.is_empty()
-            && let Some(value) = read("monocode.projectSidebarTabs.v1")
+            && let Some(value) = read("rebase.projectSidebarTabs.v1")
         {
             self.classic_sidebar_tabs = serde_json::from_value::<HashMap<String, String>>(value)
                 .unwrap_or_default()
@@ -372,16 +372,16 @@ impl Workspace {
                 .filter(|(_, tab)| ["sessions", "files", "changes"].contains(&tab.as_str()))
                 .collect();
         }
-        if let Some(value) = read("monocode.projectRailPinned") {
+        if let Some(value) = read("rebase.projectRailPinned") {
             self.project_rail_pinned = serde_json::from_value(value).unwrap_or_default();
         }
-        if let Some(value) = read("monocode.projectGroups") {
+        if let Some(value) = read("rebase.projectGroups") {
             self.project_rail_groups = serde_json::from_value(value).unwrap_or_default();
         }
-        if let Some(value) = read("monocode.projectGroupAssignments") {
+        if let Some(value) = read("rebase.projectGroupAssignments") {
             self.project_rail_assignments = serde_json::from_value(value).unwrap_or_default();
         }
-        if let Some(value) = read("monocode.projectRailOrder")
+        if let Some(value) = read("rebase.projectRailOrder")
             && let Ok(order) = serde_json::from_value::<Vec<String>>(value)
         {
             let mut projects: Vec<_> = order

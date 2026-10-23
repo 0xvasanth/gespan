@@ -153,7 +153,7 @@ fn project_content(block: &Value) -> Result<Vec<Row>, String> {
     } else {
         if text.is_empty()
             && (!matches!(role, "user" | "assistant" | "reasoning")
-                || block["monoCard"].is_object())
+                || block["pilotCard"].is_object())
         {
             return Ok(Vec::new());
         }
@@ -207,8 +207,8 @@ fn project_block(block: &Value) -> Result<Vec<Row>, String> {
         launch["sessionId"] = json!(crate::mono::work::session_handle(&launch["sessionId"]));
         rows.push(metadata_row("mono-launch", &launch));
     }
-    if block["monoCard"].is_object() {
-        let mut card = block["monoCard"].clone();
+    if block["pilotCard"].is_object() {
+        let mut card = block["pilotCard"].clone();
         card["id"] = block["id"].clone();
         if card["type"] == "session" {
             card["sessionId"] = json!(crate::mono::work::session_handle(&card["sessionId"]));
@@ -255,7 +255,7 @@ fn update(old: Option<&Value>, rows: &[Row]) -> Result<Value, String> {
         if old.is_none() && card["id"].is_string() {
             block["id"] = card["id"].clone();
         }
-        if let Some(external) = old.and_then(|old| old["monoCard"]["sessionId"].as_str()) {
+        if let Some(external) = old.and_then(|old| old["pilotCard"]["sessionId"].as_str()) {
             // UI handles are a projection; never write one over the desktop UUID.
             card["sessionId"] = json!(external);
         }
@@ -264,7 +264,7 @@ fn update(old: Option<&Value>, rows: &[Row]) -> Result<Value, String> {
         }
         block["role"] = json!("assistant");
         block["text"] = json!("");
-        block["monoCard"] = card;
+        block["pilotCard"] = card;
     } else if role == "tool" {
         let call: ToolCall = super::parse(&text)?;
         let previous = old.map(tool);
@@ -473,15 +473,15 @@ pub(super) fn merge(blocks: &[Value], start: usize, delta: &[Row]) -> Result<Vec
             )?;
             let original = &displayed[local..end];
             if group != original {
-                if group[0].role == "mono-card" && value["monoCard"].is_object() {
+                if group[0].role == "mono-card" && value["pilotCard"].is_object() {
                     let card: Value =
                         super::parse(&group.iter().map(|r| r.text.as_str()).collect::<String>())?;
-                    let external = value["monoCard"]["sessionId"].clone();
-                    value["monoCard"] = card;
+                    let external = value["pilotCard"]["sessionId"].clone();
+                    value["pilotCard"] = card;
                     if external.is_string() {
-                        value["monoCard"]["sessionId"] = external;
+                        value["pilotCard"]["sessionId"] = external;
                     }
-                    if let Some(object) = value["monoCard"].as_object_mut() {
+                    if let Some(object) = value["pilotCard"].as_object_mut() {
                         object.remove("id");
                     }
                 } else if !matches!(
@@ -658,9 +658,9 @@ mod card_tests {
     #[test]
     fn rich_desktop_cards_project_without_rewriting_source_when_later_reply_changes() {
         let source = vec![
-            json!({"id":"prompt","role":"user","text":"Write a report","future":"keep","noteCard":{"id":"note","slug":"read-me","title":"Reference","sourceCwd":"/repo","future":true},"artifactCards":[{"id":"report","kind":"document","title":"Report","summary":"Summary","future":7}],"monoSpawnedSessions":[{"sessionId":"app-child","cwd":"/repo","title":"Review","harness":"codex","model":"gpt-6","future":8}]}),
+            json!({"id":"prompt","role":"user","text":"Write a report","future":"keep","noteCard":{"id":"note","slug":"read-me","title":"Reference","sourceCwd":"/repo","future":true},"artifactCards":[{"id":"report","kind":"document","title":"Report","summary":"Summary","future":7}],"pilotSpawnedSessions":[{"sessionId":"app-child","cwd":"/repo","title":"Review","harness":"codex","model":"gpt-6","future":8}]}),
             json!({"id":"reply","role":"assistant","text":"Written","future":{"keep":true}}),
-            json!({"id":"choice","role":"assistant","text":"","monoCard":{"type":"session","sessionId":"app-child","note":"Review this"},"future":9}),
+            json!({"id":"choice","role":"assistant","text":"","pilotCard":{"type":"session","sessionId":"app-child","note":"Review this"},"future":9}),
         ];
         let rows = project(&source).unwrap();
         assert_eq!(
@@ -687,7 +687,7 @@ mod card_tests {
         value["title"] = json!("Live title");
         card.text = value.to_string();
         let patched = merge(&merged, 5, &[card]).unwrap();
-        assert_eq!(patched[2]["monoCard"]["sessionId"], "app-child");
+        assert_eq!(patched[2]["pilotCard"]["sessionId"], "app-child");
     }
     #[test]
     fn internal_completion_prompts_keep_live_row_offsets_and_timing_after_reload() {

@@ -146,7 +146,7 @@ pub fn command_action(command: &str) -> Option<String> {
         .rsplit(['/', '\\'])
         .next()?
         .trim_end_matches(".exe")
-        != "monocode"
+        != "rebase"
         || parts.get(1)? != "app"
     {
         return None;
@@ -160,13 +160,13 @@ pub fn command_action(command: &str) -> Option<String> {
 }
 
 /// One receipt list per source block. Listings supply details for accepted sends
-/// but never create launch cards by themselves (monoSpawnedSessions.ts).
+/// but never create launch cards by themselves (pilotSpawnedSessions.ts).
 pub(crate) fn block_launches(blocks: &[Value]) -> Vec<Vec<Value>> {
     let mut result = Vec::new();
     let mut known = HashMap::new();
     let mut sent = Vec::new();
     for block in blocks {
-        let mut launches: Vec<Value> = block["monoSpawnedSessions"]
+        let mut launches: Vec<Value> = block["pilotSpawnedSessions"]
             .as_array()
             .into_iter()
             .flatten()
@@ -284,17 +284,17 @@ mod tests {
     }
     #[test]
     fn desktop_receipts_recover_launches_and_accepted_followups_without_linking_listings() {
-        let start = receipt("/bin/zsh -lc 'monocode app sessions.start'", {
+        let start = receipt("/bin/zsh -lc 'rebase app sessions.start'", {
             let mut v = details("app-child");
             v["id"] = json!("app-child");
             v
         });
         let listing = receipt(
-            "monocode app sessions.list",
+            "rebase app sessions.list",
             json!({"cwd":"/repo","sessions":[{"id":"existing","title":"Continue","harness":"claude","model":"opus"}]}),
         );
         let send = receipt(
-            "monocode app sessions.send",
+            "rebase app sessions.send",
             json!({"submitted":true,"sessionId":"existing"}),
         );
         let results = block_launches(&[listing.clone(), start.clone(), send.clone()]);
@@ -305,10 +305,7 @@ mod tests {
         failed["tool"]["status"] = json!("error");
         let mut truncated = start.clone();
         truncated["tool"]["detail"] = json!("{\"ok\":true,");
-        let echo = receipt(
-            "echo monocode app sessions.start",
-            json!({"id":"app-child"}),
-        );
+        let echo = receipt("echo rebase app sessions.start", json!({"id":"app-child"}));
         assert!(block_launches(&[failed, truncated, echo, listing])
             .into_iter()
             .flatten()

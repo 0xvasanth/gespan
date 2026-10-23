@@ -17,7 +17,7 @@ use std::{
     time::Duration,
 };
 
-pub const APP_ID: &str = "dev.usemono.gpui";
+pub const APP_ID: &str = "com.rebase.native";
 pub const CHANNEL: &str = "native-preview";
 const MAX_FEED: u64 = 2 * 1024 * 1024;
 const MAX_PACKAGE: u64 = 1024 * 1024 * 1024;

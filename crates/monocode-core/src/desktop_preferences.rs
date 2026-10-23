@@ -141,12 +141,9 @@ impl DesktopPreferences {
             }
             next.insert("appearance".into(), Value::Object(source));
         }
-        let model_controls = json!(match self.get("monocode.modelControls") {
+        let model_controls = json!(match self.get("rebase.modelControls") {
             Some("beside") => "beside",
-            None if matches!(
-                self.get("monocode.composerEffortVisible"),
-                Some("1" | "true")
-            ) =>
+            None if matches!(self.get("rebase.composerEffortVisible"), Some("1" | "true")) =>
                 "beside",
             _ => "menu",
         });
@@ -165,7 +162,7 @@ impl DesktopPreferences {
         }
         next.insert("model_controls".into(), model_controls);
         let provider = self
-            .json("monocode.lastModel")
+            .json("rebase.lastModel")
             .and_then(|last| last["harness"].as_str().map(str::to_owned))
             .filter(|id| crate::provider::Kind::parse(id).is_some());
         if provider.is_some() || baseline.get("default_provider").is_some() {
@@ -178,7 +175,7 @@ impl DesktopPreferences {
             );
         }
         // Convert desktop model IDs before they reach native launch controls.
-        let projects = self.json("monocode.projectProviderSettings.v1");
+        let projects = self.json("rebase.projectProviderSettings.v1");
         if projects.is_some() || baseline.get("project_providers").is_some() {
             let empty = Map::new();
             let projects = projects
@@ -226,10 +223,10 @@ impl DesktopPreferences {
     }
 
     fn projects(&self) -> Option<Vec<String>> {
-        let recents = self.json("monocode.recentProjects")?;
+        let recents = self.json("rebase.recentProjects")?;
         let recents = recents.as_array()?;
         let archived: HashSet<String> = self
-            .json("monocode.archivedProjects")
+            .json("rebase.archivedProjects")
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default()
             .iter()
@@ -246,11 +243,11 @@ impl DesktopPreferences {
             }
         }
         let order = self
-            .json("monocode.projectRailOrder")
+            .json("rebase.projectRailOrder")
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default();
         let pinned = self
-            .json("monocode.projectRailPinned")
+            .json("rebase.projectRailPinned")
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default();
         let pinned: HashSet<String> = pinned
@@ -283,7 +280,7 @@ impl DesktopPreferences {
             ("colors", "color"),
             ("custom-colors", "color"),
         ] {
-            let Some(values) = self.json(&format!("monocode:tab-group:{key}")) else {
+            let Some(values) = self.json(&format!("rebase:tab-group:{key}")) else {
                 continue;
             };
             let Some(values) = values.as_object() else {
@@ -346,7 +343,7 @@ impl DesktopPreferences {
                 record.entry(field).or_insert(default);
             }
         }
-        if let Some(backgrounds) = self.json("monocode:project-chat-backgrounds") {
+        if let Some(backgrounds) = self.json("rebase:project-chat-backgrounds") {
             for (path, settings) in backgrounds.as_object().into_iter().flatten() {
                 let Some(path_value) = settings["path"]
                     .as_str()
@@ -384,7 +381,7 @@ impl DesktopPreferences {
                     .as_str()
                     .filter(|s| ["empty", "all"].contains(s))
                     .or_else(|| {
-                        self.get("monocode.chatBackgroundScope")
+                        self.get("rebase.chatBackgroundScope")
                             .filter(|s| ["empty", "all"].contains(s))
                     })
                     .unwrap_or("all");
@@ -544,12 +541,12 @@ mod tests {
             let value: Vec<u8> = label.encode_utf16().flat_map(u16::to_le_bytes).collect();
             conn.execute(
                 "INSERT INTO ItemTable VALUES(?1,?2)",
-                rusqlite::params!["monocode.test", value],
+                rusqlite::params!["rebase.test", value],
             )
             .unwrap();
         }
         let preferences = DesktopPreferences::load_webkit(root.path());
-        assert_eq!(preferences.get("monocode.test"), Some("Monocode 🦀"));
+        assert_eq!(preferences.get("rebase.test"), Some("Monocode 🦀"));
         assert!(!desktop_origin(&origin("http", "localhost")));
         assert!(desktop_origin(&origin("https", "tauri.localhost")));
         assert!(!desktop_origin(b"tauri localhost"));
@@ -560,27 +557,24 @@ mod tests {
     fn canonical_preferences_replace_stale_sidecar_projects_and_appearance() {
         let preferences = prefs(&[
             (
-                "monocode.recentProjects",
+                "rebase.recentProjects",
                 json!([{"path":"/code/agent-terminal"},{"path":"/code/noodle"},{"path":"/code/archived"}]),
             ),
             (
-                "monocode.projectRailOrder",
+                "rebase.projectRailOrder",
                 json!(["/code/noodle", "/code/agent-terminal"]),
             ),
+            ("rebase.projectRailPinned", json!(["/code/agent-terminal"])),
             (
-                "monocode.projectRailPinned",
-                json!(["/code/agent-terminal"]),
-            ),
-            (
-                "monocode.archivedProjects",
+                "rebase.archivedProjects",
                 json!([{"path":"/code/archived"}]),
             ),
             (
-                "monocode:tab-group:labels",
+                "rebase:tab-group:labels",
                 json!({"/code/agent-terminal":"Monocode"}),
             ),
             (
-                "monocode:tab-group:logos",
+                "rebase:tab-group:logos",
                 json!({"/code/agent-terminal":"/logos/saved.png"}),
             ),
         ]);
@@ -611,10 +605,10 @@ mod tests {
     fn native_edits_survive_until_the_corresponding_desktop_setting_changes() {
         let initial = prefs(&[
             (
-                "monocode.recentProjects",
+                "rebase.recentProjects",
                 json!([{"path":"/code/a"},{"path":"/code/b"}]),
             ),
-            ("monocode:tab-group:labels", json!({"/code/a":"Desktop"})),
+            ("rebase:tab-group:labels", json!({"/code/a":"Desktop"})),
         ]);
         let mut workspace = json!({});
         initial.apply_workspace(&mut workspace);
@@ -627,11 +621,11 @@ mod tests {
         assert_eq!(workspace["project_appearance"]["/code/a"]["mascot"], "cat");
         let changed = prefs(&[
             (
-                "monocode.recentProjects",
+                "rebase.recentProjects",
                 json!([{"path":"/code/a"},{"path":"/code/new"}]),
             ),
             (
-                "monocode:tab-group:labels",
+                "rebase:tab-group:labels",
                 json!({"/code/a":"Renamed in desktop"}),
             ),
         ]);
@@ -651,7 +645,7 @@ mod tests {
     fn model_control_placement_matches_desktop_and_retains_explicit_native_edits() {
         let beside = DesktopPreferences {
             available: true,
-            values: BTreeMap::from([("monocode.modelControls".into(), "beside".into())]),
+            values: BTreeMap::from([("rebase.modelControls".into(), "beside".into())]),
         };
         let mut workspace = json!({"preferences":{"model_controls":"menu"}});
         beside.apply_workspace(&mut workspace);
@@ -667,7 +661,7 @@ mod tests {
         assert_eq!(workspace["preferences"]["model_controls"], "menu");
         let legacy = DesktopPreferences {
             available: true,
-            values: BTreeMap::from([("monocode.composerEffortVisible".into(), "1".into())]),
+            values: BTreeMap::from([("rebase.composerEffortVisible".into(), "1".into())]),
         };
         legacy.apply_workspace(&mut workspace);
         assert_eq!(workspace["preferences"]["model_controls"], "beside");
@@ -677,11 +671,11 @@ mod tests {
     fn desktop_provider_choices_seed_defaults_and_preserve_explicit_native_edits() {
         let source = prefs(&[
             (
-                "monocode.lastModel",
+                "rebase.lastModel",
                 json!({"harness":"claude","model":"claude:opus-4.8"}),
             ),
             (
-                "monocode.projectProviderSettings.v1",
+                "rebase.projectProviderSettings.v1",
                 json!({"/project":{"defaultHarness":"codex"}}),
             ),
         ]);
@@ -728,7 +722,7 @@ mod tests {
         };
         let linux = dir.join("localstorage/tauri_localhost_0.localstorage");
         let macos = crate::accounts::home()
-            .map(|home| home.join("Library/WebKit/com.monocode.desktop/WebsiteData/Default"));
+            .map(|home| home.join("Library/WebKit/com.rebase.desktop/WebsiteData/Default"));
         if !linux.is_file() && macos.as_ref().is_none_or(|root| !root.is_dir()) {
             return;
         }
@@ -741,8 +735,8 @@ mod tests {
         assert!(
             preferences
                 .entries()
-                .any(|(key, _)| key.starts_with("monocode")),
-            "desktop webview storage had no monocode keys"
+                .any(|(key, _)| key.starts_with("rebase")),
+            "desktop webview storage had no rebase keys"
         );
     }
 }

@@ -219,15 +219,15 @@ impl Updater {
                 }
                 let _ = tx.send_blocking(Progress::Installing);
                 locked(&store)?.save_setting(
-                    "monocode.installedUpdate",
+                    "rebase.installedUpdate",
                     &serde_json::json!({"version": update.version.to_string()}).to_string(),
                 )?;
-                locked(&store)?.save_setting("monocode.nativeReleaseNotes", &serde_json::json!({"version": update.version.to_string(), "body": update.notes}).to_string())?;
+                locked(&store)?.save_setting("rebase.nativeReleaseNotes", &serde_json::json!({"version": update.version.to_string(), "body": update.notes}).to_string())?;
                 update.install(download, &installation)
             })();
             if result.is_err() {
                 let _ = locked(&store)
-                    .and_then(|store| store.save_setting("monocode.installedUpdate", ""));
+                    .and_then(|store| store.save_setting("rebase.installedUpdate", ""));
             }
             gate.lock().unwrap_or_else(|e| e.into_inner()).installing = false;
             result

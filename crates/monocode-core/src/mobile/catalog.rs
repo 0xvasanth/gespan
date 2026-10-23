@@ -20,7 +20,7 @@ pub fn recent_sessions(sessions: &Value) -> Vec<Value> {
                 .entry(session["projectId"].as_str().unwrap_or(""))
                 .or_default();
             *count += 1;
-            *count <= RECENT_SESSIONS || session["busy"] == true || session["monoId"].is_string()
+            *count <= RECENT_SESSIONS || session["busy"] == true || session["pilotId"].is_string()
         })
         .cloned()
         .collect()
@@ -75,7 +75,7 @@ mod tests {
     fn the_poll_carries_recent_sessions_and_pages_serve_the_rest() {
         let sessions: Vec<Value> = (0..30)
             .map(|i| json!({"id":format!("s{i}"),"projectId":"p","title":format!("Task {i}"),"busy":i == 25}))
-            .chain([json!({"id":"m","projectId":"p","monoId":"mono"})])
+            .chain([json!({"id":"m","projectId":"p","pilotId":"mono"})])
             .collect();
         let sessions = json!(sessions);
         let recent = recent_sessions(&sessions);

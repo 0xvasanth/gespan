@@ -51,7 +51,7 @@ On macOS, open:
 open "crates/monocode-gpui/target/release/Monocode Native.app"
 ```
 
-The app has a separate name and application ID (`dev.usemono.gpui`) so it can be
+The app has a separate name and application ID (`com.rebase.native`) so it can be
 installed alongside MonoCode. Local source builds are signed locally, without
 Apple notarization or configured automatic updates. Linux and Windows builds
 produce a standalone executable

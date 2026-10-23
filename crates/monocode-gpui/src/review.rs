@@ -1754,7 +1754,7 @@ impl ReviewPane {
 }
 
 fn log_error(error: &str) {
-    eprintln!("monocode: review action failed: {error}");
+    eprintln!("rebase: review action failed: {error}");
 }
 
 /// Polls every future to completion; the workers share one queue.

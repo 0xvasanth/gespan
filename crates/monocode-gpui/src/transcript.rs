@@ -1545,7 +1545,7 @@ impl TranscriptView {
                 .iter()
                 .any(|r| r.first && matches!(r.role.as_str(), "tool" | "reasoning"))
     }
-    /// monoSpawnedSessions: sessions a run's `sessions.start` calls accepted.
+    /// pilotSpawnedSessions: sessions a run's `sessions.start` calls accepted.
     fn run_launches(&self, turn: usize, end: usize) -> Vec<i64> {
         let mut found = Vec::new();
         let mut at = turn;
@@ -5899,7 +5899,7 @@ mod scroll_tests {
         let start = serde_json::to_string(&ToolCall {
             id: "t".into(),
             name: "Bash".into(),
-            input: r#"{"command":"monocode app sessions.start --json {}"}"#.into(),
+            input: r#"{"command":"rebase app sessions.start --json {}"}"#.into(),
             output: r#"{"ok":true,"result":{"sessionId":776,"accepted":true}}"#.into(),
             state: ToolState::Completed,
             panel: None,
@@ -6015,7 +6015,7 @@ mod scroll_tests {
         let start = serde_json::to_string(&ToolCall {
             id: "t".into(),
             name: "Bash".into(),
-            input: r#"{"command":"monocode app sessions.start --json {}"}"#.into(),
+            input: r#"{"command":"rebase app sessions.start --json {}"}"#.into(),
             output: r#"{"ok":true,"result":{"sessionId":7,"accepted":true}}"#.into(),
             state: ToolState::Completed,
             panel: None,

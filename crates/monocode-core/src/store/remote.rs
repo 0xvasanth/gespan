@@ -111,7 +111,7 @@ impl Store {
     pub fn remote_projects(&self) -> Result<BTreeMap<String, RemoteProject>, String> {
         let mut projects: BTreeMap<String, RemoteProject> = self
             .desktop_preferences()
-            .and_then(|prefs| prefs.get("monocode.remote-projects.v2"))
+            .and_then(|prefs| prefs.get("rebase.remote-projects.v2"))
             .map(|raw| {
                 serde_json::from_str(raw)
                     .map_err(|e| format!("Cannot read desktop remote projects: {e}"))

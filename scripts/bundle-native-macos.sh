@@ -58,7 +58,7 @@ cat > "$native_bundle/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>$native_executable</string>
 <key>MonocodeDataMode</key><string>$native_data_mode</string>
-<key>CFBundleIdentifier</key><string>dev.usemono.gpui</string>
+<key>CFBundleIdentifier</key><string>com.rebase.native</string>
 <key>CFBundleName</key><string>Monocode Native</string>
 <key>CFBundleDisplayName</key><string>Monocode Native</string>
 <key>CFBundlePackageType</key><string>APPL</string>

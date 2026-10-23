@@ -22,7 +22,7 @@ impl Roster {
         store: &Store,
         preferences: &DesktopPreferences,
     ) -> Result<(), String> {
-        let Some(raw) = preferences.get("monocode:mono-roster") else {
+        let Some(raw) = preferences.get("rebase:pilot-roster") else {
             return Ok(());
         };
         let roster: Value = serde_json::from_str(raw)
@@ -30,7 +30,7 @@ impl Roster {
         let entries = roster
             .as_array()
             .ok_or("Desktop Mono roster is not an array")?;
-        let backgrounds = preferences.json("monocode:project-chat-backgrounds");
+        let backgrounds = preferences.json("rebase:project-chat-backgrounds");
         let source = entries
             .iter()
             .filter_map(|value| desktop_mono(store, value, backgrounds.as_ref()))
@@ -127,7 +127,7 @@ fn desktop_mono(store: &Store, value: &Value, backgrounds: Option<&Value>) -> Op
         .filter(|s| !s.is_empty());
     let session_id = session.and_then(|id| store.resolve_session_id(id).ok());
     let background = backgrounds
-        .and_then(|all| all.get(format!("mono:{id}")))
+        .and_then(|all| all.get(format!("pilot:{id}")))
         .and_then(|entry| entry.get("path"))
         .and_then(Value::as_str)
         .filter(|path| !path.trim().is_empty())
@@ -222,7 +222,7 @@ pub(crate) fn codex_home(root: &Path, account: &str) -> Result<Option<PathBuf>, 
     let home = root
         .parent()
         .ok_or("Mono storage has no data directory")?
-        .join("codex-monos")
+        .join("codex-pilots")
         .join(account);
     Ok(home.is_dir().then_some(home))
 }
@@ -312,9 +312,9 @@ mod tests {
     #[test]
     fn codex_home_is_account_scoped_and_never_created_by_lookup() {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("monos");
+        let root = temp.path().join("pilots");
         assert!(codex_home(&root, "default").unwrap().is_none());
-        let expected = temp.path().join("codex-monos/default");
+        let expected = temp.path().join("codex-pilots/default");
         std::fs::create_dir_all(&expected).unwrap();
         assert_eq!(codex_home(&root, "default").unwrap(), Some(expected));
         assert!(codex_home(&root, "another-account").unwrap().is_none());

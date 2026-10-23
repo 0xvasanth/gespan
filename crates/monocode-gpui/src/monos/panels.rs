@@ -2004,7 +2004,7 @@ impl Monos {
         };
         let view = cx.new(|cx| {
             BackgroundDialog::new(
-                format!("mono:{id}"),
+                format!("pilot:{id}"),
                 ProjectAppearance {
                     name: mono.label(),
                     color: Some(mono.color),

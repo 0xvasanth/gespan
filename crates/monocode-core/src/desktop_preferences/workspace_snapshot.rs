@@ -25,7 +25,7 @@ impl DesktopPreferences {
                     .map(|(_, value)| value.clone())
             })
         };
-        let folders = self.json("monocode.sessionFolders").and_then(project);
+        let folders = self.json("rebase.sessionFolders").and_then(project);
         let mut groups = Groups::default();
         let mut seen = HashSet::new();
         let mut ids = HashMap::new();
@@ -75,11 +75,11 @@ impl DesktopPreferences {
             });
         }
         groups.pinned_collapsed = self
-            .json("monocode.pinnedSessionsCollapsed")
+            .json("rebase.pinnedSessionsCollapsed")
             .and_then(project)
             .is_some_and(|v| v == true);
         groups.reminders_collapsed = self
-            .json("monocode.reminderSessionsCollapsed")
+            .json("rebase.reminderSessionsCollapsed")
             .and_then(project)
             .is_some_and(|v| v == true);
         Some(groups)
@@ -301,7 +301,7 @@ mod tests {
     }
     #[test]
     fn folders_map_string_ids_and_keep_custom_colors_and_collapsed_sections() {
-        let source = DesktopPreferences { available:true, values:[("monocode.sessionFolders".into(), json!({"/work/":[{"id":"f", "name":" Work ", "sessionIds":["123", "gone", "123"], "collapsed":true, "colorIndex":2, "customColor":"#AbC123"}]}).to_string()), ("monocode.pinnedSessionsCollapsed".into(), json!({"/work":true}).to_string())].into_iter().collect() };
+        let source = DesktopPreferences { available:true, values:[("rebase.sessionFolders".into(), json!({"/work/":[{"id":"f", "name":" Work ", "sessionIds":["123", "gone", "123"], "collapsed":true, "colorIndex":2, "customColor":"#AbC123"}]}).to_string()), ("rebase.pinnedSessionsCollapsed".into(), json!({"/work":true}).to_string())].into_iter().collect() };
         let groups = source
             .groups("/work", |id| (id == "123").then_some(42))
             .unwrap();
@@ -316,7 +316,7 @@ mod tests {
     fn unresolved_folder_members_do_not_discard_user_folder_metadata() {
         let source = DesktopPreferences {
             available: true,
-            values: [("monocode.sessionFolders".into(), json!({"/work":[
+            values: [("rebase.sessionFolders".into(), json!({"/work":[
                 {"id":"stale", "name":"Keep my folder", "sessionIds":["gone"], "collapsed":true, "customColor":"#abc123"},
                 {"id":"empty", "name":"Empty folder", "sessionIds":[], "colorIndex":2}
             ]}).to_string())].into_iter().collect(),

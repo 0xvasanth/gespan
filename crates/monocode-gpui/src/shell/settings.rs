@@ -536,7 +536,7 @@ mod tests {
         window
             .update(visual, |shell, _, cx| {
                 shell.mobile.invite = Some(monocode_core::mobile::Invite {
-                    url: format!("monocode://pair?invite={}", "q".repeat(500)),
+                    url: format!("rebase://pair?invite={}", "q".repeat(500)),
                     expires: monocode_core::time::now_ms() / 1000 + 900,
                 });
                 // This notifies Settings alone. The root overlay must observe it.

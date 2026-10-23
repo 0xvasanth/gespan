@@ -11,11 +11,11 @@ impl DesktopPreferences {
         if !self.is_available() {
             return None;
         }
-        let projects = self.json("monocode.projectProviderSettings.v1");
+        let projects = self.json("rebase.projectProviderSettings.v1");
         let key = crate::files::path_key(cwd);
         let project = projects.as_ref().and_then(|values| values.get(&key));
-        let defaults = self.json("monocode.defaultModels");
-        let last = self.json("monocode.lastModel");
+        let defaults = self.json("rebase.defaultModels");
+        let last = self.json("rebase.lastModel");
         let model = project
             .and_then(|project| project["models"][provider].as_str())
             .or_else(|| {
@@ -35,7 +35,7 @@ impl DesktopPreferences {
             })
             .and_then(|model| crate::store::native_model(model, provider));
         let controls: HashMap<String, String> = self
-            .json("monocode.lastModelSettings")
+            .json("rebase.lastModelSettings")
             .as_ref()
             .and_then(Value::as_object)
             .into_iter()
@@ -118,12 +118,9 @@ mod tests {
     #[test]
     fn desktop_model_keys_and_remembered_effort_seed_new_conversations() {
         let source = preferences(&[
+            ("rebase.defaultModels", json!({"codex":"codex:gpt-6.1-sol"})),
             (
-                "monocode.defaultModels",
-                json!({"codex":"codex:gpt-6.1-sol"}),
-            ),
-            (
-                "monocode.lastModelSettings",
+                "rebase.lastModelSettings",
                 json!({"effort":"medium","reasoningEffort":"xhigh","serviceTier":"default","thinking":"high","variant":"xhigh"}),
             ),
         ]);
@@ -141,15 +138,12 @@ mod tests {
     fn project_models_win_and_other_provider_last_choices_do_not_leak() {
         let source = preferences(&[
             (
-                "monocode.projectProviderSettings.v1",
+                "rebase.projectProviderSettings.v1",
                 json!({"/work":{"defaultHarness":"claude","defaultModel":"claude:opus-4.8","models":{"codex":"codex:gpt-project"}}}),
             ),
+            ("rebase.defaultModels", json!({"codex":"codex:gpt-global"})),
             (
-                "monocode.defaultModels",
-                json!({"codex":"codex:gpt-global"}),
-            ),
-            (
-                "monocode.lastModel",
+                "rebase.lastModel",
                 json!({"harness":"codex","model":"codex:gpt-last"}),
             ),
         ]);

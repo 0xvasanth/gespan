@@ -111,7 +111,7 @@ if (name === 'xcrun' && args[0] === 'notarytool') console.log(JSON.stringify({ s
         "<key>MonocodeNativeVersion</key><string>0.16.0-preview.2</string>",
       ),
     );
-    assert.ok(plist.includes("<string>dev.usemono.gpui</string>"));
+    assert.ok(plist.includes("<string>com.rebase.native</string>"));
     process.env.NATIVE_TEST_NOTARY_STATUS = "Invalid";
     await assert.rejects(
       () =>

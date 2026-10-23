@@ -3,9 +3,9 @@ use super::*;
 #[test]
 fn streamed_indexed_mono_load_preserves_projection_and_revision_guards() {
     let mut store = Store::open_monocode(Path::new(":memory:")).unwrap();
-    let legacy = include_str!("../../../../../src-tauri/src/mono_transcript.rs");
+    let legacy = include_str!("../../../../../src-tauri/src/pilot_transcript.rs");
     let schema = legacy
-        .split("CREATE TABLE IF NOT EXISTS mono_transcripts (")
+        .split("CREATE TABLE IF NOT EXISTS pilot_transcripts (")
         .nth(1)
         .unwrap()
         .split("\",")
@@ -14,7 +14,7 @@ fn streamed_indexed_mono_load_preserves_projection_and_revision_guards() {
     store
         .conn
         .execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS mono_transcripts ({schema}"
+            "CREATE TABLE IF NOT EXISTS pilot_transcripts ({schema}"
         ))
         .unwrap();
     let blocks = (0..1_000)
@@ -31,7 +31,7 @@ fn streamed_indexed_mono_load_preserves_projection_and_revision_guards() {
         let original = store.persisted_session_id(id).unwrap();
         store
             .conn
-            .execute("INSERT INTO mono_transcripts VALUES(?1)", [&original])
+            .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&original])
             .unwrap();
         store.shared_store_blocks(id, &blocks).unwrap();
         let mut loaded = store.load(id).unwrap();
@@ -44,7 +44,7 @@ fn streamed_indexed_mono_load_preserves_projection_and_revision_guards() {
         loaded.append("Continue the same conversation");
         store.write_rows(id, from, &loaded.rows[from..]).unwrap();
         assert_eq!(&store.shared_blocks(id).unwrap()[..blocks.len()], &blocks);
-        store.conn.execute("UPDATE mono_blocks SET block_json=json_set(block_json,'$.future.external',true) WHERE session_id=?1 AND seq=1", [&original]).unwrap();
+        store.conn.execute("UPDATE pilot_blocks SET block_json=json_set(block_json,'$.future.external',true) WHERE session_id=?1 AND seq=1", [&original]).unwrap();
         let error = store
             .write_rows(id, from, &loaded.rows[from..])
             .unwrap_err();
@@ -55,7 +55,7 @@ fn streamed_indexed_mono_load_preserves_projection_and_revision_guards() {
 #[test]
 fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_history_reads() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("monocode.db");
+    let path = directory.path().join("rebase.db");
     let store = Store::open_monocode(&path).unwrap();
     store.conn.execute_batch("CREATE TABLE orchestration_workers(session_id TEXT PRIMARY KEY, lead_id TEXT NOT NULL)").unwrap();
     for (id, cwd, hidden, user) in [
@@ -118,7 +118,7 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
         schema_version
     );
     assert_eq!(std::fs::read(&path).unwrap(), original);
-    assert!(!path.with_file_name("monocode.db.gpui.json").exists());
+    assert!(!path.with_file_name("rebase.db.gpui.json").exists());
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn desktop_workspace_snapshot_restores_existing_ids_and_keeps_native_override() 
 #[test]
 fn search_connections_share_the_same_read_only_preference_snapshot() {
     let directory = tempfile::tempdir().unwrap();
-    let store = Store::open_monocode(&directory.path().join("monocode.db")).unwrap();
+    let store = Store::open_monocode(&directory.path().join("rebase.db")).unwrap();
     let reader = store.search_reader().unwrap().unwrap();
     assert!(std::ptr::eq(
         store.desktop_preferences().unwrap(),
@@ -170,7 +170,7 @@ fn search_connections_share_the_same_read_only_preference_snapshot() {
 #[test]
 fn original_desktop_schema_opens_without_schema_or_history_migration() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("monocode.db");
+    let path = dir.path().join("rebase.db");
     let source = include_str!("../../../../../src-tauri/src/session_store.rs");
     let schema = source
         .split("const MIGRATION_V1: &str = r#\"")
@@ -199,16 +199,16 @@ fn original_desktop_schema_opens_without_schema_or_history_migration() {
         version
     );
     assert_eq!(std::fs::read(&path).unwrap(), original);
-    assert!(!path.with_file_name("monocode.db.gpui.json").exists());
+    assert!(!path.with_file_name("rebase.db.gpui.json").exists());
 }
 
 #[test]
 fn indexed_mono_history_stays_in_its_desktop_tables_with_block_ids_intact() {
     let store = Store::open_monocode(Path::new(":memory:")).unwrap();
     let (id, source) = saved(&store, json!([]));
-    let legacy = include_str!("../../../../../src-tauri/src/mono_transcript.rs");
+    let legacy = include_str!("../../../../../src-tauri/src/pilot_transcript.rs");
     let schema = legacy
-        .split("CREATE TABLE IF NOT EXISTS mono_transcripts (")
+        .split("CREATE TABLE IF NOT EXISTS pilot_transcripts (")
         .nth(1)
         .unwrap()
         .split("\",")
@@ -217,12 +217,12 @@ fn indexed_mono_history_stays_in_its_desktop_tables_with_block_ids_intact() {
     store
         .conn
         .execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS mono_transcripts ({schema}"
+            "CREATE TABLE IF NOT EXISTS pilot_transcripts ({schema}"
         ))
         .unwrap();
     store
         .conn
-        .execute("INSERT INTO mono_transcripts VALUES(?1)", [&source])
+        .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&source])
         .unwrap();
     let blocks = vec![
         json!({"id":"mono-prompt","role":"user","text":"Mono history","future":"keep"}),
@@ -235,7 +235,7 @@ fn indexed_mono_history_stays_in_its_desktop_tables_with_block_ids_intact() {
     let first_raw: String = store
         .conn
         .query_row(
-            "SELECT block_json FROM mono_blocks WHERE block_id='mono-prompt'",
+            "SELECT block_json FROM pilot_blocks WHERE block_id='mono-prompt'",
             [],
             |r| r.get(0),
         )
@@ -266,7 +266,7 @@ fn indexed_mono_history_stays_in_its_desktop_tables_with_block_ids_intact() {
         store
             .conn
             .query_row(
-                "SELECT block_json FROM mono_blocks WHERE block_id='mono-prompt'",
+                "SELECT block_json FROM pilot_blocks WHERE block_id='mono-prompt'",
                 [],
                 |r| r.get::<_, String>(0)
             )
@@ -283,7 +283,7 @@ fn indexed_mono_history_stays_in_its_desktop_tables_with_block_ids_intact() {
 #[test]
 fn desktop_open_uses_existing_records_and_does_not_rewrite_the_database() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("monocode.db");
+    let path = dir.path().join("rebase.db");
     let store = Store::open_monocode(&path).unwrap();
     let row = store.create("codex", "/project").unwrap();
     let id = store.persisted_session_id(row.id).unwrap();
@@ -348,7 +348,7 @@ fn desktop_model_and_effort_decode_and_round_trip_without_rewriting_the_title() 
 #[test]
 fn writes_are_visible_in_desktop_tables_and_preserve_rich_history() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("monocode.db");
+    let path = dir.path().join("rebase.db");
     let mut store = Store::open_monocode(&path).unwrap();
     let original = json!([
         {"id":"prompt","role":"user","text":"Original 🙂","startedAt":100,
@@ -424,7 +424,7 @@ fn writes_are_visible_in_desktop_tables_and_preserve_rich_history() {
 #[test]
 fn concurrent_desktop_changes_are_never_overwritten() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("monocode.db");
+    let path = dir.path().join("rebase.db");
     let mut store = Store::open_monocode(&path).unwrap();
     let (id, source) = saved(&store, json!([{"id":"u","role":"user","text":"Original"}]));
     let t = store.load(id).unwrap();
@@ -470,7 +470,7 @@ fn configuring_the_same_provider_preserves_its_resume_id() {
 #[test]
 fn concurrent_queue_changes_are_preserved_and_transaction_is_rolled_back() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("monocode.db");
+    let path = dir.path().join("rebase.db");
     let store = Store::open_monocode(&path).unwrap();
     let (id, source) = saved(&store, json!([]));
     let mut state = store.follow_ups(id).unwrap();
@@ -505,7 +505,7 @@ fn concurrent_queue_changes_are_preserved_and_transaction_is_rolled_back() {
 #[test]
 fn drafts_queues_and_receipts_keep_desktop_metadata_and_do_not_replay() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("monocode.db");
+    let path = dir.path().join("rebase.db");
     let mut store = Store::open_monocode(&path).unwrap();
     let (id, source) = saved(
         &store,
@@ -570,7 +570,7 @@ fn drafts_queues_and_receipts_keep_desktop_metadata_and_do_not_replay() {
 #[test]
 fn notes_reminders_search_and_read_only_connections_use_the_same_data() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("monocode.db");
+    let path = dir.path().join("rebase.db");
     let mut store = Store::open_monocode(&path).unwrap();
     let (id, source) = saved(
         &store,
@@ -920,9 +920,9 @@ fn fresh_native_turn_receipts_persist_source_fields_without_changing_saved_prove
 fn indexed_mono_turn_receipts_restore_and_save_in_the_original_block_table() {
     let mut store = Store::open_monocode(Path::new(":memory:")).unwrap();
     let (id, original) = saved(&store, json!([]));
-    let legacy = include_str!("../../../../../src-tauri/src/mono_transcript.rs");
+    let legacy = include_str!("../../../../../src-tauri/src/pilot_transcript.rs");
     let schema = legacy
-        .split("CREATE TABLE IF NOT EXISTS mono_transcripts (")
+        .split("CREATE TABLE IF NOT EXISTS pilot_transcripts (")
         .nth(1)
         .unwrap()
         .split("\",")
@@ -931,12 +931,12 @@ fn indexed_mono_turn_receipts_restore_and_save_in_the_original_block_table() {
     store
         .conn
         .execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS mono_transcripts ({schema}"
+            "CREATE TABLE IF NOT EXISTS pilot_transcripts ({schema}"
         ))
         .unwrap();
     store
         .conn
-        .execute("INSERT INTO mono_transcripts VALUES(?1)", [&original])
+        .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&original])
         .unwrap();
     let source = vec![
         json!({"id":"mono-prompt","role":"user","text":"Saved Mono","startedAt":100,"durationMs":7000,

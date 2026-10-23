@@ -126,7 +126,7 @@ impl Store {
         }
         let start = blocks::project(&blocks[..first])?.len();
         let mut prompt = block["text"].as_str().unwrap_or("").to_owned();
-        if block["monocode"] == true {
+        if block["rebase"] == true {
             prompt = format!("/operator {prompt}");
         }
         let attachments = block["attachments"]

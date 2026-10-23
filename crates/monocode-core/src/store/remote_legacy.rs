@@ -48,7 +48,7 @@ impl Store {
         let projects = self.remote_projects()?;
         let preferences = self.desktop_preferences();
         let tabs = preferences
-            .and_then(|prefs| prefs.json("monocode.remote-tabs.v2"))
+            .and_then(|prefs| prefs.json("rebase.remote-tabs.v2"))
             .unwrap_or(json!({}));
         let Some(project) = projects
             .values()
@@ -65,7 +65,7 @@ impl Store {
             .map(str::to_owned);
         let cached = session_id.as_ref().and_then(|id| {
             preferences?
-                .json(&format!("monocode.remote-history.v2:{}", project.key))?
+                .json(&format!("rebase.remote-history.v2:{}", project.key))?
                 .as_array()?
                 .iter()
                 .find(|item| item["id"].as_str() == Some(id))
@@ -89,7 +89,7 @@ impl Store {
             let owners = self.legacy_command_owners()?;
             let mut ambiguous = Vec::new();
             let prefix = format!(
-                "monocode.remote-command.v1:{}:",
+                "rebase.remote-command.v1:{}:",
                 json!([remote.project.key, remote.project.environment_id])
             );
             let candidate_creates = preferences
@@ -233,7 +233,7 @@ impl Store {
             return Ok(());
         }
         let prefix = format!(
-            "monocode.remote-command.v1:{}:",
+            "rebase.remote-command.v1:{}:",
             json!([remote.project.key, remote.project.environment_id])
         );
         let mut owners = self.legacy_command_owners()?;
@@ -312,17 +312,14 @@ impl Store {
         };
         let cached = remote.session_id.as_ref().and_then(|host| {
             preferences
-                .json(&format!(
-                    "monocode.remote-history.v2:{}",
-                    remote.project.key
-                ))?
+                .json(&format!("rebase.remote-history.v2:{}", remote.project.key))?
                 .as_array()?
                 .iter()
                 .find(|item| item["id"].as_str() == Some(host))
                 .cloned()
         });
         let pending = preferences
-            .json("monocode.remote-pending-worktrees.v1")
+            .json("rebase.remote-pending-worktrees.v1")
             .and_then(|all| all[&original].as_str().map(str::to_owned));
         let cwd = cached
             .as_ref()
@@ -405,21 +402,21 @@ mod tests {
 
     fn preferences(bound: &str, blank: &str) -> DesktopPreferences {
         let command_key = format!(
-            "monocode.remote-command.v1:{}:pending",
+            "rebase.remote-command.v1:{}:pending",
             json!([PROJECT, "legacy"])
         );
         DesktopPreferences::from_values(&[
             (
-                "monocode.remote-projects.v2",
+                "rebase.remote-projects.v2",
                 json!({PROJECT:{"key":PROJECT,"environmentId":"legacy","projectId":"host-project","cwd":"/home/repo"}}),
             ),
-            ("monocode.remote-tabs.v2", json!({bound:"host-session"})),
+            ("rebase.remote-tabs.v2", json!({bound:"host-session"})),
             (
-                "monocode.remote-pending-worktrees.v1",
+                "rebase.remote-pending-worktrees.v1",
                 json!({bound:"/home/repo-worktrees/old",blank:"/home/repo-worktrees/pending"}),
             ),
             (
-                &format!("monocode.remote-history.v2:{PROJECT}"),
+                &format!("rebase.remote-history.v2:{PROJECT}"),
                 json!([{"id":"host-session","title":"Host title","harness":"codex","cwd":"/home/repo-worktrees/current","updatedAt":123,"pinned":true}]),
             ),
             (
@@ -435,10 +432,10 @@ mod tests {
             .entries()
             .map(|(key, raw)| {
                 let mut value: Value = serde_json::from_str(raw).unwrap();
-                if key.starts_with("monocode.remote-command.v1:") {
+                if key.starts_with("rebase.remote-command.v1:") {
                     value = value["command"].clone();
                 }
-                if ambiguous && key == "monocode.remote-tabs.v2" {
+                if ambiguous && key == "rebase.remote-tabs.v2" {
                     value = json!({});
                 }
                 (key.into(), value)
@@ -504,7 +501,7 @@ mod tests {
             .entries()
             .map(|(key, raw)| (key.into(), serde_json::from_str(raw).unwrap()))
             .collect();
-        entries.push((format!("monocode.remote-command.v1:{}:second",json!([PROJECT,"legacy"])),json!({"type":"create","commandId":"second-create","projectId":"host-project","harness":"claude","model":"claude:opus"})));
+        entries.push((format!("rebase.remote-command.v1:{}:second",json!([PROJECT,"legacy"])),json!({"type":"create","commandId":"second-create","projectId":"host-project","harness":"claude","model":"claude:opus"})));
         let prefs = DesktopPreferences::from_values(
             &entries
                 .iter()
@@ -560,7 +557,7 @@ mod tests {
         assert!(draft.outbox[1]["sessionId"].is_null());
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert_eq!(
-            prefs.json("monocode.remote-tabs.v2").unwrap()[original],
+            prefs.json("rebase.remote-tabs.v2").unwrap()[original],
             "host-session"
         );
     }

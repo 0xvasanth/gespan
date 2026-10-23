@@ -788,7 +788,7 @@ mod tests {
     #[test]
     fn shared_response_bridge_preserves_original_identity_slug_and_subtype() {
         let directory = tempfile::tempdir().unwrap();
-        let store = Store::open_monocode(&directory.path().join("monocode.db")).unwrap();
+        let store = Store::open_monocode(&directory.path().join("rebase.db")).unwrap();
         store.conn.execute("INSERT INTO notes(id,slug,title,body,created_at,updated_at,artifact_kind) VALUES('source-id','stable','Saved','Body',1,2,'document')", []).unwrap();
         let mut compatible = store.notes().unwrap().pop().unwrap();
         compatible.body = "Changed".into();

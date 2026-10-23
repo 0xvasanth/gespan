@@ -356,7 +356,7 @@ impl Store {
         if edited.is_empty() {
             return Ok(());
         }
-        let prefix = format!("refs/monocode/checkpoints/{session_id}/");
+        let prefix = format!("refs/rebase/checkpoints/{session_id}/");
         let refs = run_git(
             root,
             &[
@@ -641,7 +641,7 @@ impl Store {
                 repos.insert(saved.repo);
             }
         }
-        let prefix = format!("refs/monocode/checkpoints/{session_id}/");
+        let prefix = format!("refs/rebase/checkpoints/{session_id}/");
         for repo in repos {
             if !Path::new(&repo).is_dir() {
                 continue;
@@ -737,7 +737,7 @@ struct Change {
 }
 
 fn turn_ref(session: &str, turn: &str, side: &str) -> String {
-    format!("refs/monocode/checkpoints/{session}/{turn}/{side}")
+    format!("refs/rebase/checkpoints/{session}/{turn}/{side}")
 }
 
 // Git's NUL-delimited output already contains literal paths. Never trim them
@@ -832,10 +832,10 @@ fn capture_workspace(root: &Path, reference: &str) -> Result<String, String> {
         checked_output(
             git_command(root, args)
                 .env("GIT_INDEX_FILE", &index.0)
-                .env("GIT_AUTHOR_NAME", "MonoCode")
-                .env("GIT_AUTHOR_EMAIL", "checkpoint@monocode.local")
-                .env("GIT_COMMITTER_NAME", "MonoCode")
-                .env("GIT_COMMITTER_EMAIL", "checkpoint@monocode.local"),
+                .env("GIT_AUTHOR_NAME", "Rebase")
+                .env("GIT_AUTHOR_EMAIL", "checkpoint@rebase.local")
+                .env("GIT_COMMITTER_NAME", "Rebase")
+                .env("GIT_COMMITTER_EMAIL", "checkpoint@rebase.local"),
         )
     };
     if run_git(root, &["rev-parse", "--verify", "HEAD"]).is_ok() {

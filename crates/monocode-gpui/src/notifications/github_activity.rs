@@ -137,7 +137,7 @@ pub(crate) fn load_seen_with_metadata(
     metadata: Option<&Value>,
 ) -> Result<HashMap<i64, i64>, String> {
     let mut seen = load_seen(store)?;
-    let raw = metadata.and_then(|m| m.get("monocode.linkedSessionSeen"));
+    let raw = metadata.and_then(|m| m.get("rebase.linkedSessionSeen"));
     let decoded = raw
         .and_then(Value::as_str)
         .and_then(|s| serde_json::from_str::<Value>(s).ok());

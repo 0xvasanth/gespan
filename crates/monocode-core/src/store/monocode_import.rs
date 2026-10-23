@@ -29,7 +29,7 @@ pub fn monocode_database() -> PathBuf {
                 .unwrap_or_default()
                 .join(".local/share")
         });
-    base.join("com.monocode.desktop/monocode.db")
+    base.join("com.rebase.desktop/rebase.db")
 }
 
 #[derive(Debug, Default)]
@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn copies_committed_wal_history_and_settings_without_changing_the_source() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("monocode.db");
+        let path = dir.path().join("rebase.db");
         let source = source(&path);
         source
             .execute_batch(
@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn older_schema_works_and_hidden_remote_and_empty_histories_are_skipped() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("monocode.db");
+        let path = dir.path().join("rebase.db");
         let source = source(&path);
         let prompt = json!([{"role":"user","text":"Hello"}]);
         add(&source, "local", dir.path(), prompt.clone(), 100);
@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn invalid_history_rolls_back_the_entire_import() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("monocode.db");
+        let path = dir.path().join("rebase.db");
         let source = source(&path);
         add(
             &source,

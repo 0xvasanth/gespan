@@ -368,7 +368,7 @@ fn undo_restores_only_recorded_files_and_keep_retains_history() {
     f.store.forget("session").unwrap();
     assert!(run_git(
         &f.repo,
-        &["for-each-ref", "refs/monocode/checkpoints/session/"]
+        &["for-each-ref", "refs/rebase/checkpoints/session/"]
     )
     .unwrap()
     .is_empty());

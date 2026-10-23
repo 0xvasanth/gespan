@@ -135,11 +135,11 @@ impl Store {
             return Ok(None);
         }
         let original = self.persisted_session_id(id)?;
-        let indexed = super::shared::has_table(&self.conn, "mono_transcripts")?
+        let indexed = super::shared::has_table(&self.conn, "pilot_transcripts")?
             && self
                 .conn
                 .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM mono_transcripts WHERE session_id=?1)",
+                    "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id=?1)",
                     [&original],
                     |r| r.get::<_, bool>(0),
                 )
@@ -147,16 +147,16 @@ impl Store {
         // Return only references and confirmed app receipts from SQLite. A Mono
         // can have megabytes of prose/tools; none of that crosses this boundary.
         let source = if indexed {
-            "SELECT block_json AS block,seq FROM mono_blocks WHERE session_id=?1"
+            "SELECT block_json AS block,seq FROM pilot_blocks WHERE session_id=?1"
         } else {
             "SELECT value AS block,key AS seq FROM sessions,json_each(sessions.blocks_json) WHERE sessions.id=?1"
         };
         let query = format!(
             r#"SELECT json_object('id',json_extract(block,'$.id'),'role',json_extract(block,'$.role'),
-            'artifactCards',json_extract(block,'$.artifactCards'),'monoSpawnedSessions',json_extract(block,'$.monoSpawnedSessions'),
+            'artifactCards',json_extract(block,'$.artifactCards'),'pilotSpawnedSessions',json_extract(block,'$.pilotSpawnedSessions'),
             'text',CASE WHEN json_extract(block,'$.role')='tool' THEN json_extract(block,'$.text') ELSE '' END,
             'tool',CASE WHEN json_extract(block,'$.role')='tool' THEN json_extract(block,'$.tool') ELSE NULL END)
-            FROM ({source}) WHERE json_type(block,'$.artifactCards')='array' OR json_type(block,'$.monoSpawnedSessions')='array'
+            FROM ({source}) WHERE json_type(block,'$.artifactCards')='array' OR json_type(block,'$.pilotSpawnedSessions')='array'
             OR (json_extract(block,'$.role')='tool' AND json_extract(block,'$.tool.status') IN ('completed','success')
                 AND COALESCE(json_extract(block,'$.tool.preview.title'),json_extract(block,'$.tool.title'),json_extract(block,'$.text'),'') LIKE '%monocode%app%sessions.%') ORDER BY seq"#
         );
@@ -267,21 +267,21 @@ mod tests {
             let original = store.persisted_session_id(mono.id).unwrap();
             let child_id = store.persisted_session_id(child.id).unwrap();
             let blocks = json!([
-                {"id":"user","role":"user","text":"Write it","artifactCards":[{"id":"existing-artifact","kind":"html","title":"Original title","summary":"Overview"}],"monoSpawnedSessions":[{"sessionId":child_id,"cwd":"/old-project","title":"Launch title","harness":"claude","model":"opus"}]},
+                {"id":"user","role":"user","text":"Write it","artifactCards":[{"id":"existing-artifact","kind":"html","title":"Original title","summary":"Overview"}],"pilotSpawnedSessions":[{"sessionId":child_id,"cwd":"/old-project","title":"Launch title","harness":"claude","model":"opus"}]},
                 {"id":"assistant","role":"assistant","text":"Done"}
             ]);
             store.conn.execute("INSERT INTO notes(id,slug,title,body,tags_json,created_at,updated_at,content_kind,artifact_kind) VALUES('existing-artifact','existing-artifact','Saved title','<h1>Actual HTML</h1>','[]',10,20,'artifact','html')", []).unwrap();
             if indexed {
-                store.conn.execute_batch("CREATE TABLE mono_transcripts(session_id TEXT PRIMARY KEY); CREATE TABLE mono_blocks(session_id TEXT,seq INTEGER,block_json TEXT);").unwrap();
+                store.conn.execute_batch("CREATE TABLE pilot_transcripts(session_id TEXT PRIMARY KEY); CREATE TABLE pilot_blocks(session_id TEXT,seq INTEGER,block_json TEXT);").unwrap();
                 store
                     .conn
-                    .execute("INSERT INTO mono_transcripts VALUES(?1)", [&original])
+                    .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&original])
                     .unwrap();
                 for (seq, block) in blocks.as_array().unwrap().iter().enumerate() {
                     store
                         .conn
                         .execute(
-                            "INSERT INTO mono_blocks VALUES(?1,?2,?3)",
+                            "INSERT INTO pilot_blocks VALUES(?1,?2,?3)",
                             rusqlite::params![
                                 original,
                                 i64::try_from(seq).unwrap(),
