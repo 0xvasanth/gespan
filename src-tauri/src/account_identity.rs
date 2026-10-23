@@ -163,7 +163,7 @@ mod tests {
 
     fn claude_config_dir(label: &str, config: &Value) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "monocode-claude-identity-{label}-{}",
+            "rebase-claude-identity-{label}-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn claude_blank_env_token_is_ignored() {
-        let missing = std::env::temp_dir().join("monocode-claude-identity-missing");
+        let missing = std::env::temp_dir().join("rebase-claude-identity-missing");
         for token in [None, Some(String::new()), Some("  \n".into())] {
             assert_eq!(
                 claude_identity_with_env_token(Some(missing.clone()), token),

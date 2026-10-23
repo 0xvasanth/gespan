@@ -644,7 +644,7 @@ export function groupPilotTurnItems(
 }
 
 /**
- * The messages a Mono yielded with before a finished background task woke it
+ * The messages a Pilot yielded with before a finished background task woke it
  * up again. Each one answered the user, so later work never absorbs it.
  */
 function yieldedReplies(items: TurnItem[]): Set<string> {

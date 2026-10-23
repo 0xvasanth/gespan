@@ -327,7 +327,7 @@ export async function discoverFileSkills(
   const [files, plugins] = await Promise.all([
     listSkills(cwd, disabledPaths),
     discoverCodexPluginSkills(cwd).catch((error: unknown) => {
-      console.debug("[monocode] codex plugin skills", error);
+      console.debug("[rebase] codex plugin skills", error);
       return [];
     }),
   ]);

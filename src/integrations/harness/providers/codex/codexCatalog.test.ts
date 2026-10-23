@@ -80,7 +80,7 @@ it("uses Codex discovery without account login or starting a thread, then releas
     forceReload: true,
   });
   expect(mock.spawn).toHaveBeenCalledWith(
-    expect.stringContaining("monocode-codex-probe-"),
+    expect.stringContaining("rebase-codex-probe-"),
     "/codex",
     ["app-server"],
     "/repo",
