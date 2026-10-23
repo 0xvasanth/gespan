@@ -1,0 +1,52 @@
+src/features/files/ui/FileTree.test.ts
+  s_ccb41beff89445::t_a98239ced6662b 136,143,147
+src-tauri/src/worktrees.rs
+  s_ccb41beff89445::t_1938e45c0fec7a 159
+  s_ccb41beff89445::t_9b04879f091e11 161
+  s_ccb41beff89445::t_28cdd4a80d9fca 160,162-165,170-181,440,767,781,915,927,932,956-973
+  s_ccb41beff89445::t_cb150a4e6e5dae 166-169
+host/git-worktrees.test.ts
+  s_ccb41beff89445::t_1938e45c0fec7a 97,104,200-201
+  s_ccb41beff89445::t_d3f41371db401b 198-199,202-223
+host/git-worktrees.ts
+  s_ccb41beff89445::t_28cdd4a80d9fca 6,214
+src/features/orchestration/model/orchestration.test.ts
+  s_ccb41beff89445::t_a98239ced6662b 57
+host/engine.ts
+  s_ccb41beff89445::t_28cdd4a80d9fca 10,93
+src/features/sessions/ui/Composer.test.ts
+  s_ccb41beff89445::t_a98239ced6662b 26,29,1437,1457,1559,1572
+src/features/source-control/model/worktrees.ts
+  s_ccb41beff89445::t_28cdd4a80d9fca 10,80,85,91,93
+src/shared/lib/branchOwnership.ts
+  s_ccb41beff89445::t_1938e45c0fec7a 3
+  s_ccb41beff89445::t_d3f41371db401b 1-2,4-18
+crates/rebase-core/src/git.rs
+  s_ccb41beff89445::t_1938e45c0fec7a 160
+  s_ccb41beff89445::t_28cdd4a80d9fca 161,163-186,195,212,341-379
+  s_ccb41beff89445::t_9b04879f091e11 162
+src/features/source-control/ui/Worktrees.test.ts
+  s_ccb41beff89445::t_a98239ced6662b 134-135,137,140,143
+  s_ccb41beff89445::t_d8920510752979 142
+  s_ccb41beff89445::t_8f985191b2f7cd 44
+src/shared/lib/branchOwnership.test.ts
+  s_ccb41beff89445::t_a98239ced6662b 1-31
+src/features/connections/ui/RemoteSession.test.ts
+  s_ccb41beff89445::t_a98239ced6662b 849
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34b76ee20b5a87f9a43ae6839b14879e381df919",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
