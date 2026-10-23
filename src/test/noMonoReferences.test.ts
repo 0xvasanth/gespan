@@ -34,6 +34,7 @@ function stripTypography(text: string): string {
 // Narrow, per-file line allowlist. Each entry is one specific deliberate use.
 const ALLOWED: { file: string; line: RegExp; why: string }[] = [
   { file: "src/test/noMonoReferences.test.ts", line: /./, why: "this guard names the pattern it forbids" },
+  { file: "src/test/upstreamLinks.test.ts", line: /usemono/, why: "this guard names the upstream URL it forbids" },
   { file: "mobile/src/ui/theme.ts", line: /./, why: "the unrelated monochrome-style \"mono\" theme (brief)" },
   { file: "src-tauri/src/pilot_transcript.rs", line: /no_mono_tables|"mono_"|stale mono table/, why: "asserts legacy tables are gone" },
   { file: "src/test/invokeCommands.test.ts", line: /legacy mono_\*|\/mono\//, why: "asserts no legacy mono commands" },

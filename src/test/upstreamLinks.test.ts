@@ -7,7 +7,7 @@ const root = join(__dirname, "..", "..");
 
 // The fork lives at 0xvasanth/rebase. These point at a dead repo or the
 // upstream product site and must not creep back in.
-const FORBIDDEN = /hardbeat920\/rebase|usemono\.dev/;
+const FORBIDDEN = /hardbeat920\/rebase|usemono\.dev/i;
 
 const EXCLUDED = [
   /(^|\/)(bun\.lockb?|package-lock\.json|Cargo\.lock|yarn\.lock|pnpm-lock\.yaml)$/,
@@ -43,7 +43,7 @@ describe("upstream links", () => {
   });
 
   it("matches the forbidden patterns but not the fork or contributor credits", () => {
-    for (const bad of ["github.com/hardbeat920/rebase/issues", "https://usemono.dev", "https://dl.usemono.dev/Rebase.dmg"]) {
+    for (const bad of ["github.com/HardBeat920/rebase", "github.com/hardbeat920/rebase/issues", "https://usemono.dev", "https://dl.usemono.dev/Rebase.dmg"]) {
       expect(FORBIDDEN.test(bad), bad).toBe(true);
     }
     for (const ok of ["https://github.com/0xvasanth/rebase", "by @hardbeat920 in #12"]) {

@@ -8532,7 +8532,7 @@ mod tests {
     fn pr_head_filter_qualifies_branch_with_repo_owner() {
         assert_eq!(
             github_pr_head_filter("0xvasanth/rebase", "main").as_deref(),
-            Some("hardbeat920:main")
+            Some("0xvasanth:main")
         );
     }
 
@@ -8542,7 +8542,7 @@ mod tests {
             "nameWithOwner": "EricRasputin/rebase-eric",
             "parent": {
                 "name": "rebase",
-                "owner": { "login": "hardbeat920" }
+                "owner": { "login": "0xvasanth" }
             }
         }"#;
         assert_eq!(
@@ -8701,7 +8701,7 @@ mod tests {
     fn split_github_repo_reads_owner_and_name() {
         assert_eq!(
             split_github_repo(" 0xvasanth/rebase ").unwrap(),
-            ("hardbeat920".into(), "rebase".into())
+            ("0xvasanth".into(), "rebase".into())
         );
         assert!(split_github_repo("rebase").is_err());
         assert!(split_github_repo("acme/web extra").is_err());
