@@ -1,0 +1,19 @@
+src/features/settings/ui/SettingsView.test.ts
+  s_232d570adba1f4::t_473470696ae6d7 796-810
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f0ae281a41de55aca853f7a9e13ef0a722575ee",
+  "prompts": {},
+  "sessions": {
+    "s_232d570adba1f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "435d0764-4ce0-46d9-b9a4-ba511c96bdd9",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
