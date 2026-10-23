@@ -21,10 +21,24 @@ export function settledTurnEvent(
 }
 
 /**
+ * The Pilot a turn counts for, if any: the Pilot whose own chat the session
+ * is, else the Pilot a habit run works for, else the Pilot that spawned (or
+ * prompted) the session through the app CLI. Pilot links follow all of them.
+ */
+export function turnPilotId(sources: {
+  own?: string;
+  habitRun?: string;
+  spawnedBy?: string;
+}): string | undefined {
+  return sources.own ?? sources.habitRun ?? sources.spawnedBy;
+}
+
+/**
  * Turns session turns into linked-work events: one "started" when a turn
  * begins and at most one terminal event when it settles, for the session and,
- * when the session is a Pilot's chat, for that Pilot. Turns are keyed by
- * session and turn number, so a repeated start or settle never fires twice.
+ * when a Pilot is behind the turn (see `turnPilotId`), for that Pilot. Turns
+ * are keyed by session and turn number, so a repeated start or settle never
+ * fires twice.
  * Each call is fire-and-forget: a board failure goes to `report`, never back
  * into the session.
  */

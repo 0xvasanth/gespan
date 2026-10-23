@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CardLinkKind, LinkedWorkEvent } from "./board";
-import { createLinkedTurns, settledTurnEvent } from "./linkedTurns";
+import {
+  createLinkedTurns,
+  settledTurnEvent,
+  turnPilotId,
+} from "./linkedTurns";
 
 type Call = [CardLinkKind, string, LinkedWorkEvent];
 
@@ -152,5 +156,72 @@ describe("createLinkedTurns", () => {
     expect(() => turns.started("s1", 1)).not.toThrow();
     expect(() => turns.settled("s1", 1, "completed")).not.toThrow();
     expect(report).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("turnPilotId", () => {
+  it("is the Pilot whose own chat the session is", () => {
+    expect(turnPilotId({ own: "p1" })).toBe("p1");
+  });
+
+  it("is the Pilot a habit run works for", () => {
+    expect(turnPilotId({ habitRun: "p2" })).toBe("p2");
+  });
+
+  it("is the Pilot that spawned or prompted the session", () => {
+    expect(turnPilotId({ spawnedBy: "p3" })).toBe("p3");
+  });
+
+  it("prefers the session's own Pilot, then its habit's, then its spawner", () => {
+    expect(turnPilotId({ own: "p1", habitRun: "p2", spawnedBy: "p3" })).toBe(
+      "p1",
+    );
+    expect(turnPilotId({ habitRun: "p2", spawnedBy: "p3" })).toBe("p2");
+  });
+
+  it("is nobody for a session no Pilot is behind", () => {
+    expect(turnPilotId({})).toBeUndefined();
+  });
+});
+
+describe("Pilot-driven turns on the board", () => {
+  it.each([
+    ["completed", "completed"],
+    ["failed", "failed"],
+  ] as const)(
+    "reports a spawned session's %s turn to the session and its Pilot",
+    (status, event) => {
+      const { turns, calls } = setup();
+      turns.started("spawned", 1, turnPilotId({ spawnedBy: "p3" }));
+      turns.settled("spawned", 1, status);
+      expect(calls).toEqual([
+        ["session", "spawned", "started"],
+        ["pilot", "p3", "started"],
+        ["session", "spawned", event],
+        ["pilot", "p3", event],
+      ]);
+    },
+  );
+
+  it("reports a habit run's turn to its Pilot", () => {
+    const { turns, calls } = setup();
+    turns.started("habit-run", 1, turnPilotId({ habitRun: "p2" }));
+    turns.settled("habit-run", 1, "failed");
+    expect(calls).toEqual([
+      ["session", "habit-run", "started"],
+      ["pilot", "p2", "started"],
+      ["session", "habit-run", "failed"],
+      ["pilot", "p2", "failed"],
+    ]);
+  });
+
+  it("reports a plain session's turn to the session only", () => {
+    const { turns, calls } = setup();
+    turns.started("s1", 1, turnPilotId({}));
+    turns.settled("s1", 1, "completed");
+    expect(calls).toEqual([
+      ["session", "s1", "started"],
+      ["session", "s1", "completed"],
+    ]);
   });
 });

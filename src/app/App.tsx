@@ -711,6 +711,7 @@ import type { BoardLinkTarget } from "../features/board/ui/boardFormat";
 import { onLinkedWork } from "../features/board/model/autoMove";
 import {
   createLinkedTurns,
+  turnPilotId,
   type LinkedTurns,
 } from "../features/board/model/linkedTurns";
 import {
@@ -928,6 +929,8 @@ type SubmitOptions = ComposerTurnOptions & {
   /** An app request that may arrive mid-turn, steering or queuing as one typed here would. */
   followsUp?: boolean;
   pilotSessionCompletion?: Block["pilotSessionCompletion"];
+  /** The Pilot that started or prompted this session through the app CLI. */
+  spawningPilotId?: string;
   onSettled?: (outcome: ControlOutcome) => void;
   /** Generate a fresh title even when this is not the session's first turn. */
   refreshTitle?: boolean;
@@ -8034,7 +8037,11 @@ function Workspace({
       linkedTurns.current!.started(
         sessionId,
         gen,
-        pilotForSession(sessionId)?.id,
+        turnPilotId({
+          own: pilotForSession(sessionId)?.id,
+          habitRun: habitRunPilot(sessionId),
+          spawnedBy: options?.spawningPilotId,
+        }),
       );
       let controlOutcome: ControlOutcome = {
         status: "failed",
@@ -9028,6 +9035,7 @@ function Workspace({
       placement?: AppSessionPlacement,
       onSettled?: (outcome: ControlOutcome) => void,
       openTab?: boolean,
+      spawningPilotId?: string,
     ) =>
       acceptQuickLaunch(
         launch,
@@ -9089,12 +9097,16 @@ function Workspace({
                     submitSession(id, text, attachments, {
                       ...options,
                       appRequestId: deliveryId,
+                      spawningPilotId,
                       onSettled: settle,
                     }),
                   onSettled,
                   rejectionMessage: "The monitored session could not start.",
                 })
-              : submitSession(id, text, attachments, options),
+              : submitSession(id, text, attachments, {
+                  ...options,
+                  spawningPilotId,
+                }),
           saveDraft: (id, prompt, attachments, requestId) =>
             flushSync(() => onSaveDraft(id, prompt, attachments, requestId)),
         },
@@ -11428,6 +11440,7 @@ function Workspace({
                   placement,
                   onSettled,
                   !!placement || (!isPilotSession(source.id) && launch.reveal),
+                  sourcePilot?.id,
                 );
                 rememberLaunch();
                 onSettled?.accept();
@@ -11538,6 +11551,7 @@ function Workspace({
                     submit: (onSettled) =>
                       submitSessionRef.current(id, prompt, [], {
                         appRequestId: requestId,
+                        spawningPilotId: sourcePilot?.id,
                         onSettled,
                       }),
                     onSettled,
@@ -11546,6 +11560,7 @@ function Workspace({
                   })
                 : await submitSessionRef.current(id, prompt, [], {
                     appRequestId: requestId,
+                    spawningPilotId: sourcePilot?.id,
                   });
               if (!accepted) {
                 onSettled?.discard();
