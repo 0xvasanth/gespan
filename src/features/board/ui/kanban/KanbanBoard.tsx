@@ -21,6 +21,8 @@ import {
 } from "@dnd-kit/sortable";
 import {
   type ReactNode,
+  useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -64,7 +66,7 @@ export type KanbanBoardProps = {
 };
 
 // Cards collide with cards and column bodies; columns only with columns.
-const collisionDetection: CollisionDetection = (args) => {
+const boardCollisions: CollisionDetection = (args) => {
   const kind = dragDataOf(args.active)?.kind;
   const droppableContainers = args.droppableContainers.filter((container) => {
     const over = dragDataOf(container)?.kind;
@@ -128,6 +130,26 @@ export function KanbanBoard({
     [],
   );
 
+  // dnd-kit's multiple-containers pattern: right after a card is previewed in
+  // another column its slot is a 2px line, so the card it was dropped next to
+  // is still the closest and would read as a sort past it. Until the next
+  // frame the card is over itself, which keeps the previewed place.
+  const movedToNewColumn = useRef(false);
+  const collisionDetection = useCallback<CollisionDetection>(
+    (args) =>
+      movedToNewColumn.current
+        ? [{ id: args.active.id }]
+        : boardCollisions(args),
+    [],
+  );
+  useEffect(() => {
+    if (!movedToNewColumn.current) return;
+    const frame = requestAnimationFrame(() => {
+      movedToNewColumn.current = false;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [session.local]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, {
@@ -147,6 +169,7 @@ export function KanbanBoard({
       : null;
 
   function update(next: DragSession) {
+    movedToNewColumn.current = false;
     snapshotRef.current = next.lastSnapshot;
     setSession(next);
   }
@@ -162,7 +185,11 @@ export function KanbanBoard({
 
   function handleDragOver({ over }: DragOverEvent) {
     const ref = toDropRef(over);
-    setSession((s) => sessionOver(s, ref));
+    setSession((s) => {
+      const next = sessionOver(s, ref);
+      if (next.local !== s.local) movedToNewColumn.current = true;
+      return next;
+    });
   }
 
   function handleDragEnd({ over }: DragEndEvent) {

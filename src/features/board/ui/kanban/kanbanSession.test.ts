@@ -149,6 +149,61 @@ describe("drag session", () => {
     expect(ids(shownBoard(session), "progress")).toEqual(["c12", "c21", "c22"]);
   });
 
+  it("drops a cross-column preview where it was shown when the drop is over the card itself", () => {
+    // A=[X], B=[B0,B1]: hovering B0 previews X before it.
+    let s = sessionStart(createSession(board()), { kind: "card", id: "c12" });
+    s = sessionOver(s, overCard("c21"));
+    expect(ids(shownBoard(s), "progress")).toEqual(["c12", "c21", "c22"]);
+    // After the preview, collision detection reports the card itself.
+    s = sessionOver(s, overCard("c12"));
+    const { session, commit } = sessionEnd(s, overCard("c12"));
+    expect(commit).toEqual({
+      kind: "card",
+      cardId: "c12",
+      to: { columnId: "progress", index: 0 },
+    });
+    expect(ids(shownBoard(session), "progress")).toEqual(["c12", "c21", "c22"]);
+  });
+
+  it("does not shift a cross-column preview by one when dropped over the neighbour that made it", () => {
+    let s = sessionStart(createSession(board()), { kind: "card", id: "c12" });
+    s = sessionOver(s, overCard("c21"));
+    // dnd-kit can still report the hovered neighbour at drop time.
+    s = sessionOver(s, overCard("c21"));
+    const { session, commit } = sessionEnd(s, overCard("c21"));
+    expect(commit).toMatchObject({ to: { columnId: "progress", index: 0 } });
+    expect(ids(shownBoard(session), "progress")).toEqual(["c12", "c21", "c22"]);
+  });
+
+  it("sorts within the new column once the drag moves on from the card that made the preview", () => {
+    let s = sessionStart(createSession(board()), { kind: "card", id: "c12" });
+    s = sessionOver(s, overCard("c21"));
+    s = sessionOver(s, overCard("c12"));
+    // Back over the neighbour after that: a within-column sort, which
+    // dnd-kit shows as the neighbour sliding above the card.
+    s = sessionOver(s, overCard("c21"));
+    expect(sessionEnd(s, overCard("c21")).commit).toMatchObject({
+      to: { columnId: "progress", index: 1 },
+    });
+    // Further down the column works the same way.
+    let t = sessionStart(createSession(board()), { kind: "card", id: "c12" });
+    t = sessionOver(t, overCard("c21"));
+    t = sessionOver(t, overCard("c22"));
+    expect(sessionEnd(t, overCard("c22")).commit).toMatchObject({
+      to: { columnId: "progress", index: 2 },
+    });
+  });
+
+  it("previews a move back into the source column after a cross-column preview", () => {
+    let s = sessionStart(createSession(board()), { kind: "card", id: "c12" });
+    s = sessionOver(s, overCard("c21"));
+    s = sessionOver(s, overCard("c13"));
+    expect(ids(shownBoard(s), "progress")).toEqual(["c21", "c22"]);
+    const { commit } = sessionEnd(s, overCard("c13"));
+    // Inserted before c13: where it started, so nothing to commit.
+    expect(commit).toBeNull();
+  });
+
   it("applies a drop made during a mid-drag refresh on top of the new detail", () => {
     const v1 = board();
     const v2 = refetched(v1);

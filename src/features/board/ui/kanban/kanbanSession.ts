@@ -24,6 +24,12 @@ export type DragSession = {
         snapshot: BoardDetail;
         /** `detail` when the drag started, to spot refreshes mid-drag. */
         startDetail: BoardDetail;
+        /**
+         * The card that made the latest cross-column preview, while it is
+         * still the latest `over`. A drop over it keeps the preview: the
+         * card was shown before it, not sorted past it.
+         */
+        previewOver: string | null;
       })
     | null;
   /**
@@ -58,20 +64,36 @@ export function sessionStart(s: DragSession, drag: ActiveDrag): DragSession {
   const snapshot = shownBoard(s);
   return {
     ...s,
-    drag: { ...drag, snapshot, startDetail: s.detail },
+    drag: { ...drag, snapshot, startDetail: s.detail, previewOver: null },
     lastSnapshot: snapshot,
   };
 }
 
 /** Previews a card joining another column; same-column moves need none. */
 export function sessionOver(s: DragSession, over: DropRef | null): DragSession {
-  if (s.drag?.kind !== "card" || !over) return s;
+  const drag = s.drag;
+  if (drag?.kind !== "card") return s;
+  if (!over) return withPreviewOver(s, null);
+  if (over.overKind === "card" && over.overId === drag.previewOver) return s;
   const current = shownBoard(s);
-  const cardId = s.drag.id;
-  const card = current.cards.find((c) => c.id === cardId);
-  const target = resolveCardDrop(current, cardId, over.overId, over.overKind);
-  if (!card || !target || target.columnId === card.columnId) return s;
-  return { ...s, local: applyCardMove(current, cardId, target) };
+  const card = current.cards.find((c) => c.id === drag.id);
+  const target = resolveCardDrop(current, drag.id, over.overId, over.overKind);
+  if (!card || !target || target.columnId === card.columnId) {
+    return withPreviewOver(s, null);
+  }
+  return {
+    ...s,
+    local: applyCardMove(current, drag.id, target),
+    drag: {
+      ...drag,
+      previewOver: over.overKind === "card" ? over.overId : null,
+    },
+  };
+}
+
+function withPreviewOver(s: DragSession, previewOver: string | null) {
+  if (!s.drag || s.drag.previewOver === previewOver) return s;
+  return { ...s, drag: { ...s.drag, previewOver } };
 }
 
 // If the parent refreshed mid-drag, the snapshot is stale: build on `detail`.
@@ -97,7 +119,11 @@ export function sessionEnd(
   if (!drag || !base) return { session: s, commit: null };
   const ended = { ...s, drag: null };
   if (drag.kind === "card") {
-    const to = finalCardTarget(drag.snapshot, shownBoard(s), drag.id, over);
+    const settled =
+      over?.overKind === "card" && over.overId === drag.previewOver
+        ? null
+        : over;
+    const to = finalCardTarget(drag.snapshot, shownBoard(s), drag.id, settled);
     if (to) {
       return {
         session: { ...ended, local: applyCardMove(base, drag.id, to) },

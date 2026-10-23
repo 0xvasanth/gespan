@@ -154,7 +154,8 @@ describe("KanbanBoard", () => {
       act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
     // happy-dom has no layout: lay columns out 300px apart and stack cards.
-    function stubLayout() {
+    // `collapse` sizes the dragged card's slot as the 2px line it renders as.
+    function stubLayout({ collapse = false } = {}) {
       const rect = (x: number, y: number, width: number, height: number) =>
         ({
           x,
@@ -178,8 +179,12 @@ describe("KanbanBoard", () => {
           const x = sections.indexOf(section) * 300;
           if (this === section) return rect(x, 0, 280, 500);
           if (this.hasAttribute("data-kanban-card")) {
-            const index = [...this.parentElement!.children].indexOf(this);
-            return rect(x + 6, 50 + index * 70, 268, 60);
+            const height = (el: Element) =>
+              collapse && el.hasAttribute("data-dragging") ? 2 : 60;
+            const siblings = [...this.parentElement!.children];
+            const above = siblings.slice(0, siblings.indexOf(this));
+            const y = above.reduce((top, el) => top + height(el) + 10, 50);
+            return rect(x + 6, y, 268, height(this));
           }
           if (
             this.querySelector("[data-kanban-card]") ||
@@ -269,6 +274,34 @@ describe("KanbanBoard", () => {
       )!;
       expect(backlog.querySelector("[data-kanban-card='c12']")).not.toBeNull();
       expect(props.onCardMove).not.toHaveBeenCalled();
+    });
+
+    it("drops a keyboard cross-column move where the preview showed it", async () => {
+      stubLayout({ collapse: true });
+      const props = render();
+      const el = await pickUp("c12");
+      key(el, "ArrowRight", "ArrowRight");
+      await flush();
+      const progress = container.querySelector(
+        "[data-kanban-column='progress']",
+      )!;
+      const shown = () =>
+        [...progress.querySelectorAll("[data-kanban-card]")].map((c) =>
+          c.getAttribute("data-kanban-card"),
+        );
+      // Previewed before the card it moved next to.
+      expect(shown()).toEqual(["c12", "c21"]);
+      key(document, "Space", " ");
+      await flush();
+      expect(props.onCardMove).toHaveBeenCalledTimes(1);
+      expect(props.onCardMove).toHaveBeenCalledWith("c12", {
+        columnId: "progress",
+        index: 0,
+      });
+      expect(shown()).toEqual(["c12", "c21"]);
+      expect(liveRegion()).toBe(
+        "Dropped card #12 in In Progress, position 1 of 2.",
+      );
     });
 
     it("shows a detail that arrived mid-drag after a same-place drop", async () => {
