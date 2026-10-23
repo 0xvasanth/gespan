@@ -1,0 +1,25 @@
+src-tauri/src/account_identity.rs
+  s_3d6000c3007319::t_2e86bd6d74a9c1 166,196
+src/features/sessions/model/transcriptActivity.ts
+  s_3d6000c3007319::t_d86e2b3b8a4a00 647
+src/features/skills/model/skills.ts
+  s_3d6000c3007319::t_1d0fff0772b14a 330
+src/integrations/harness/providers/codex/codexCatalog.test.ts
+  s_3d6000c3007319::t_516a82622d83a7 83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "40c328b321dae0fd8cda226b511ca2895ad14f79",
+  "prompts": {},
+  "sessions": {
+    "s_3d6000c3007319": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d7ce5de9-52e0-4565-a35c-874563a61ab4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
