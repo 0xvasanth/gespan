@@ -80,6 +80,9 @@ pub(crate) struct Workspace {
     pub tab_workspaces: HashMap<i64, String>,
     pub active: Option<i64>,
     pub projects: Vec<String>,
+    /// Projects archived from the rail, newest first. Their chats stay in
+    /// history; adding the project again takes it out of this list.
+    pub archived_projects: Vec<String>,
     pub project: String,
     /// Last focused open session in each project, independent of tab order.
     pub project_focus: HashMap<String, i64>,
@@ -263,6 +266,7 @@ impl Default for Workspace {
             tab_workspaces: HashMap::new(),
             active: None,
             projects: Vec::new(),
+            archived_projects: Vec::new(),
             project: String::new(),
             project_focus: HashMap::new(),
             recent_files: HashMap::new(),
@@ -520,6 +524,7 @@ impl Workspace {
         state
     }
     pub fn add_project(&mut self, path: &str) {
+        self.archived_projects.retain(|p| p != path);
         if !self.projects.iter().any(|p| p == path) {
             self.projects.push(path.into());
         }

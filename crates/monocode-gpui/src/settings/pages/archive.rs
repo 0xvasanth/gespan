@@ -98,6 +98,75 @@ impl SettingsView {
         } else {
             format!("Archived in {}", self.ctx.project_label)
         };
-        vec![self.group(None,true,"Archived projects",Some("Archive a project from the rail to keep its chats without listing it in the sidebar.".into()),None,vec![note("No archived projects.")]),self.group(None,false,SharedString::from(title),None,None,rows)]
+        let mut projects: Vec<AnyElement> = self
+            .ctx
+            .archived_projects
+            .iter()
+            .enumerate()
+            .map(|(ix, (path, label))| {
+                let (unarchive, delete) = (path.clone(), path.clone());
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .when(ix > 0, |d| d.border_t_1().border_color(content(0.05)))
+                    .px_4()
+                    .py(px(10.))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .child(div().truncate().text_size(px(13.)).child(label.clone()))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(11.))
+                                    .text_color(content(0.35))
+                                    .child(path.clone()),
+                            ),
+                    )
+                    .child(
+                        secondary_button(
+                            SharedString::from(format!("unarchive-project-{ix}")),
+                            "Unarchive",
+                            false,
+                            false,
+                        )
+                        .child("Unarchive")
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(SettingsEvent::UnarchiveProject(unarchive.clone()))
+                        })),
+                    )
+                    .child(
+                        secondary_button(
+                            SharedString::from(format!("delete-project-{ix}")),
+                            "Delete",
+                            true,
+                            false,
+                        )
+                        .child("Delete")
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(SettingsEvent::DeleteProject(delete.clone()))
+                        })),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        if projects.is_empty() {
+            projects.push(note("No archived projects."));
+        }
+        vec![
+            self.group(
+                None,
+                true,
+                "Archived projects",
+                Some("Archive a project from the rail to keep its chats without listing it in the sidebar.".into()),
+                None,
+                projects,
+            ),
+            self.group(None, false, SharedString::from(title), None, None, rows),
+        ]
     }
 }

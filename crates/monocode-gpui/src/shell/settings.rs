@@ -111,6 +111,12 @@ impl Shell {
             cwd: self.workspace.project.clone(),
             project_label: self.project_label(&self.workspace.project),
             archived,
+            archived_projects: self
+                .workspace
+                .archived_projects
+                .iter()
+                .map(|path| (path.clone(), self.project_label(path)))
+                .collect(),
             projects: self
                 .workspace
                 .projects
@@ -186,6 +192,10 @@ impl Shell {
                     }
                 }
                 SettingsEvent::Delete(id) => this.delete_from_settings(*id, window, cx),
+                SettingsEvent::UnarchiveProject(path) => this.unarchive_project(path, cx),
+                SettingsEvent::DeleteProject(path) => {
+                    this.confirm_delete_project(path.clone(), window, cx)
+                }
                 SettingsEvent::RemoveWorktree {
                     cwd,
                     path,

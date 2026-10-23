@@ -18,6 +18,7 @@ mod notifications;
 mod orchestration;
 mod picker_preferences;
 mod project_rail;
+mod project_removal;
 mod project_settings;
 mod quick_composer;
 mod quick_open;
@@ -564,6 +565,8 @@ pub(crate) struct Shell {
     quick: crate::quick_composer::Controller,
     unseen_finished: HashSet<i64>,
     archiving: HashSet<i64>,
+    /// Editors offered by a project's "Open in editor"; `None` while scanning.
+    external_editors: Option<Vec<monocode_core::external_editor::ExternalEditor>>,
     groups: HashMap<String, monocode_core::session_groups::Groups>,
     reminders: Vec<monocode_core::store::Reminder>,
     renaming: Option<session_groups::Renaming>,
@@ -903,6 +906,7 @@ impl Shell {
             quick: Default::default(),
             unseen_finished: HashSet::new(),
             archiving: HashSet::new(),
+            external_editors: None,
             groups: sidebar_metadata.groups,
             reminders: sidebar_metadata.reminders,
             renaming: None,
@@ -1024,6 +1028,9 @@ impl Shell {
             latest_state,
             render_passes: 0,
         };
+        if !cfg!(test) {
+            this.scan_external_editors(cx);
+        }
         this.observe_accounts(cx);
         this.observe_picker_preferences(cx);
         let mono_owner = cx.weak_entity();
@@ -4852,10 +4859,7 @@ impl Shell {
                             },
                         )
                         .into(),
-                        MenuAction::new("delete", "Delete")
-                            .danger()
-                            .disabled(true)
-                            .into(),
+                        MenuAction::new("delete", "Delete").danger().into(),
                     ]);
                 }
                 (
@@ -5136,25 +5140,16 @@ impl Shell {
                     MenuAction::new("reveal", REVEAL_LABEL)
                         .icon("folder-open")
                         .into(),
-                    MenuAction::new("external-editor", "Open in editor")
-                        .icon("app-window")
-                        .disabled(true)
-                        .submenu(vec![MenuAction::new(
-                            "external-editor:none",
-                            "No supported editors found",
-                        )])
-                        .into(),
+                    self.external_editor_menu(path).into(),
                     MenuItem::Separator,
                     self.project_notification_menu(path).into(),
                     MenuItem::Separator,
                     MenuAction::new("archive", "Archive")
                         .icon("archive")
-                        .disabled(true)
                         .into(),
                     MenuAction::new("delete", "Delete")
                         .icon("trash")
                         .danger()
-                        .disabled(true)
                         .into(),
                 ]);
                 (
@@ -5174,11 +5169,12 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if action == "archive"
-            && let MenuTarget::Tab(id) = target
-        {
-            self.toggle_archive(id, cx);
-            return;
+        if let MenuTarget::Tab(id) = target {
+            match action {
+                "archive" => return self.toggle_archive(id, cx),
+                "delete" => return self.confirm_delete_session(id, window, cx),
+                _ => {}
+            }
         }
         match target {
             MenuTarget::TerminalTab(ix) => self.run_terminal_tab_menu(ix, action, window, cx),
@@ -5261,6 +5257,15 @@ impl Shell {
                     }
                 } else if action == "background" {
                     self.open_background_dialog(path, window, cx);
+                } else if action == "archive" {
+                    self.archive_project(&path, window, cx);
+                } else if action == "delete" {
+                    self.confirm_delete_project(path, window, cx);
+                } else if let Some(editor) = action
+                    .strip_prefix("external-editor:")
+                    .filter(|editor| *editor != "none")
+                {
+                    self.open_in_external_editor(editor, &path, cx);
                 } else if action.starts_with("mute:") {
                     self.run_project_notification_menu(&path, action, window, cx);
                 }
