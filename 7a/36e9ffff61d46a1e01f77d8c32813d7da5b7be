@@ -1,0 +1,49 @@
+src/features/board/ui/kanban/KanbanCard.tsx
+  s_0de52fe47ecaaa::t_a5fb8f895f71d7 1-56
+src/features/board/ui/kanban/announcements.ts
+  s_0de52fe47ecaaa::t_6857d4589c2682 101-104,136-139,148-149
+  s_0de52fe47ecaaa::t_194186cb6c1a8c 1-100,105-135,140-147,150-159
+src/features/board/ui/kanban/useReducedMotion.ts
+  s_0de52fe47ecaaa::t_78ad6f0f740c17 1-5,8-25
+  s_0de52fe47ecaaa::t_6857d4589c2682 6-7
+src/features/board/ui/kanban/KanbanBoard.test.ts
+  s_0de52fe47ecaaa::t_6857d4589c2682 91-93,111-113
+  s_0de52fe47ecaaa::t_1cf95de2610d05 1-90,94-110,114-133
+package.json
+  s_0de52fe47ecaaa::t_0a3d2405d441f4 52-54
+src/features/board/ui/kanban/kanbanMove.test.ts
+  s_0de52fe47ecaaa::t_226723fc697f04 1-178,183-210,215-231,235-354,358-361,366-380
+  s_0de52fe47ecaaa::t_6857d4589c2682 179-182,211-214,232-234,355-357,362-365
+src/features/board/ui/kanban/kanbanMove.ts
+  s_0de52fe47ecaaa::t_0ed4ab75ec9966 1-72,75-209
+  s_0de52fe47ecaaa::t_6857d4589c2682 73-74
+src/features/board/ui/kanban/KanbanBoard.tsx
+  s_0de52fe47ecaaa::t_6857d4589c2682 22-28,132-134
+  s_0de52fe47ecaaa::t_475a25ac25a104 1-21,29-108,110,112-131,135-151,157-192,194-207,209-261
+  s_0de52fe47ecaaa::t_379f47b573edb3 109,111,152-156,193,208
+src/features/board/ui/kanban/KanbanColumn.tsx
+  s_0de52fe47ecaaa::t_01c10d6c777ea4 1-105
+src/features/board/ui/kanban/announcements.test.ts
+  s_0de52fe47ecaaa::t_6f40f61f3fa857 1-180,184-194
+  s_0de52fe47ecaaa::t_6857d4589c2682 181-183
+src/features/board/ui/kanban/ColumnRoleIcon.tsx
+  s_0de52fe47ecaaa::t_268c73d6bd2168 1-64
+package-lock.json
+  s_0de52fe47ecaaa::t_2bab7d325880fe 31-33,698-750,6912-6917
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7a36e9ffff61d46a1e01f77d8c32813d7da5b7be",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
