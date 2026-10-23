@@ -631,6 +631,7 @@ impl Shell {
                             .map(|(ix, terminal)| {
                                 let t = terminal.read(cx);
                                 let label: SharedString = t.title.clone().into();
+                                let agent = t.agent();
                                 let description =
                                     SharedString::from(format!("{} — {}", t.title, t.cwd));
                                 let active = ix == dock.active;
@@ -717,13 +718,18 @@ impl Shell {
                                                     d.text_color(content(0.5))
                                                 }
                                             })
-                                            .child(icon("terminal", 14.).text_color(
-                                                if active || hovered {
-                                                    content(1.)
-                                                } else {
-                                                    content(0.5)
-                                                },
-                                            ))
+                                            .child(match agent {
+                                                Some(provider) => {
+                                                    provider_icon(provider, 14.).into_any_element()
+                                                }
+                                                None => icon("terminal", 14.)
+                                                    .text_color(if active || hovered {
+                                                        content(1.)
+                                                    } else {
+                                                        content(0.5)
+                                                    })
+                                                    .into_any_element(),
+                                            })
                                             .child(
                                                 div()
                                                     .flex_1()
@@ -824,8 +830,16 @@ impl Shell {
                                                         .text_size(px(13.))
                                                         .text_color(content(0.5))
                                                         .child(
-                                                            icon("terminal", 14.)
-                                                                .text_color(content(0.5)),
+                                                            match crate::terminal::agent_cli(&ghost)
+                                                            {
+                                                                Some(provider) => {
+                                                                    provider_icon(provider, 14.)
+                                                                        .into_any_element()
+                                                                }
+                                                                None => icon("terminal", 14.)
+                                                                    .text_color(content(0.5))
+                                                                    .into_any_element(),
+                                                            },
                                                         )
                                                         .child(
                                                             div().min_w_0().truncate().child(ghost),

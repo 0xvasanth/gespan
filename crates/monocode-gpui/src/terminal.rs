@@ -1291,6 +1291,24 @@ pub(crate) fn command_label(args: &str) -> Option<String> {
     }
     Some(base)
 }
+/// The supported agent CLI a foreground label names, as a provider id, so
+/// its tab can show the provider's mark instead of the terminal icon.
+pub(crate) fn agent_cli(label: &str) -> Option<&'static str> {
+    // Script launchers report the script: `codex.js` is Codex.
+    let name = label.split('.').next()?;
+    match name {
+        "cursor-agent" | "agent" => return Some("cursor"),
+        "pi-coding-agent" => return Some("pi"),
+        _ => {}
+    }
+    monocode_core::provider::Kind::parse(name).map(|kind| kind.id())
+}
+impl Terminal {
+    /// The agent CLI holding this terminal, if any.
+    pub(crate) fn agent(&self) -> Option<&'static str> {
+        agent_cli(self.foreground.as_deref()?)
+    }
+}
 fn is_shell_name(name: &str) -> bool {
     matches!(
         name,
@@ -1397,6 +1415,14 @@ mod tests {
         assert_eq!(key_bytes(&typed, TermMode::empty()), Some(b"a".to_vec()));
     }
 
+    #[test]
+    fn agent_clis_map_to_their_provider() {
+        assert_eq!(agent_cli("claude"), Some("claude"));
+        assert_eq!(agent_cli("codex.js"), Some("codex"));
+        assert_eq!(agent_cli("cursor-agent"), Some("cursor"));
+        assert_eq!(agent_cli("pi-coding-agent"), Some("pi"));
+        assert_eq!(agent_cli("vim"), None);
+    }
     #[test]
     fn foreground_labels_name_the_script_an_interpreter_runs() {
         assert_eq!(
