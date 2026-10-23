@@ -1,9 +1,11 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  # Manual only until the signing and updater secrets exist; see "Cutting a
+  # release" in docs/building.md. Start it from a version tag (Run workflow ->
+  # Use workflow from -> Tags -> vX.Y.Z): the tag name picks the channel and
+  # version, and scripts/release-channel.cjs rejects any other ref.
+  workflow_dispatch:
 
 permissions:
   contents: read
