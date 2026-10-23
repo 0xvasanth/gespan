@@ -1,0 +1,21 @@
+crates/monocode-core/Cargo.toml
+  s_ccb41beff89445::t_a35b54f2120264 26
+crates/monocode-gpui/Cargo.lock
+  s_ccb41beff89445::t_01f3194b5be6e1 3652,5296-5314
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8eb3c9bd72247a933c84877210cb443eda888dea",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
