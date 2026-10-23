@@ -29,7 +29,12 @@ export type HarnessEvent =
    * The agent has yielded but the turn is not over: work it started is still
    * running and will wake it again. Empty once it is back at work.
    */
-  | { type: "background.updated"; tasks: string[] }
+  | {
+      type: "background.updated";
+      tasks: string[];
+      /** The same tasks with what each card can show and where it leads. */
+      details?: BackgroundTaskDetail[];
+    }
   | ({ type: "interjection"; text: string } & InterjectionMeta)
   | { type: "message.delta"; text: string }
   | { type: "message.completed" }
@@ -75,6 +80,19 @@ export type HarnessEvent =
       preview?: ToolPreview;
       /** Every path affected when one structured edit changes multiple files. */
       paths?: string[];
+    }
+  /**
+   * Metadata for the agent run on a tool block: who it is and what it is doing.
+   * Only the fields given change; `continuation` is written only when true.
+   */
+  | {
+      type: "agent.run";
+      callId: string;
+      name?: string;
+      agentId?: string;
+      resumeOf?: string;
+      activity?: string;
+      continuation?: boolean;
     }
   /** Something a subagent did, mirrored onto its parent Agent tool call. */
   | {
@@ -152,6 +170,19 @@ export type HarnessEvent =
   | { type: "context"; used?: number; window?: number }
   /** Provider token accounting for the active user turn. */
   | ({ type: "turn.metrics" } & TurnMetrics);
+
+/** One running background task, as the waiting card shows it. */
+export type BackgroundTaskDetail = {
+  /** Provider task id. */
+  id: string;
+  description: string;
+  /** The tool block showing this task's work, when there is one. */
+  toolId?: string;
+  /** The latest progress description. */
+  latest?: string;
+  /** Tool steps on that block so far. */
+  steps: number;
+};
 
 export type ApprovalDecision = "allow" | "deny";
 

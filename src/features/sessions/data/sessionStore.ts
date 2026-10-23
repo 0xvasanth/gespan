@@ -1397,7 +1397,33 @@ function sanitizeAgentRun(value: unknown): AgentRunMeta | null {
   });
   const name = typeof record.name === "string" ? record.name.trim() : "";
   if (!name && steps.length === 0) return null;
+  // Rebase Native shares this block. Keep what it wrote that this app does not
+  // model (e.g. nativeIds), so a save here never erases it.
+  const known = new Set([
+    "name",
+    "model",
+    "agentType",
+    "steps",
+    "agentId",
+    "resumeOf",
+    "activity",
+    "continuation",
+  ]);
+  const extra = Object.fromEntries(
+    Object.entries(record).filter(
+      ([key, value]) => !known.has(key) && value !== undefined && value !== null,
+    ),
+  );
+  const text = (key: string) =>
+    typeof record[key] === "string" && (record[key] as string).trim()
+      ? { [key]: (record[key] as string).trim() }
+      : {};
   return {
+    ...extra,
+    ...text("agentId"),
+    ...text("resumeOf"),
+    ...text("activity"),
+    ...(record.continuation === true ? { continuation: true } : {}),
     name: name || "Subagent",
     ...(typeof record.model === "string" && record.model.trim()
       ? { model: record.model.trim() }

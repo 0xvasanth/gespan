@@ -1,0 +1,555 @@
+/**
+ * Replays the captured resumed-background-agent stream through the Claude
+ * adapter's own stdout handler (the `watchChild` line callback), the same
+ * entry point every Claude stdout line takes. Mirrors Rebase Native's
+ * `crates/rebase-core/src/provider/tasks/resume_tests.rs`.
+ */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { applyHarnessEvent } from "../../core/apply";
+import {
+  newSession,
+  type AgentRunMeta,
+  type Block,
+  type Session,
+} from "../../../../features/sessions/model/session";
+import type { HarnessEvent } from "../../core/types";
+
+const sent: string[] = [];
+let onLine: ((line: string) => void) | undefined;
+
+vi.mock("../../core/child", () => ({
+  resolveClaudeBinary: async () => ({ path: "/fake/claude" }),
+  spawnChild: async () => undefined,
+  killChild: async () => undefined,
+  unwatchChild: () => undefined,
+  watchChild: (_id: string, line: (l: string) => void) => {
+    onLine = line;
+  },
+  writeChild: vi.fn(async (_id: string, line: string) => {
+    sent.push(line);
+  }),
+}));
+
+const {
+  bindClaudeSession,
+  restoreClaudeAgentRuns,
+  sendClaudeTurn,
+  steerClaudeTurn,
+  stopClaudeSession,
+  __claudeTestReset,
+} = await import("./claude");
+
+const FRAMES = readFileSync(
+  resolve(process.cwd(), "tests/fixtures/claude/resumed-background-agent.jsonl"),
+  "utf8",
+)
+  .split("\n")
+  .filter((line) => line.trim());
+const AGENT = "toolu_019x6aJjknXrg5CSy9dvntEn";
+const SEND = "toolu_01LfGgNGSbW1AVPVpfLsAYkh";
+const AGENT_ID = "aba491c492e906740";
+const PROVIDER_SESSION = "afda8336-cc48-4d2b-b8ab-d1ab1dbd059b";
+/** Lines 1..=125 are turn 1; 126..=238 are turn 2 and Claude's own wake. */
+const TURN_ONE = 125;
+const RESUMED_CHILDREN = [
+  "toolu_01HWq7foDHczTjtHuoNvz4M7",
+  "toolu_013E6GSRiGhqgcQ3vbtT7XNg",
+  "toolu_01QVuG3c6ZordypvcUmhhfD6",
+  "toolu_01CZhBxnaocVpUQuvCrXoa9C",
+  "toolu_01LEVibA1bj4U6XFyozZ5QFk",
+];
+const NAME = "Run echo and sleep sequence";
+
+/** 1-based fixture lines `from..=to`. */
+function lines(from: number, to = FRAMES.length): string[] {
+  return FRAMES.slice(from - 1, to);
+}
+
+function summary(toolUseId: string): string {
+  for (const line of FRAMES) {
+    const frame = JSON.parse(line) as Record<string, unknown>;
+    if (
+      frame.subtype === "task_notification" &&
+      frame.tool_use_id === toolUseId
+    ) {
+      return frame.summary as string;
+    }
+  }
+  throw new Error(`no notification for ${toolUseId}`);
+}
+
+function parsedSent() {
+  return sent.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function userMessages(): number {
+  return parsedSent().filter((m) => m.type === "user").length;
+}
+
+function initializeRequests(): number {
+  return parsedSent().filter(
+    (m) => (m.request as Record<string, unknown> | undefined)?.subtype === "initialize",
+  ).length;
+}
+
+const waitFor = async (pred: () => boolean, label: string) => {
+  for (let i = 0; i < 400; i++) {
+    if (pred()) return;
+    await new Promise((r) => setTimeout(r, 2));
+  }
+  throw new Error(`timed out waiting for ${label}`);
+};
+
+/** Each fed line's events, so a test can tell which frame emitted what. */
+function feed(events: HarnessEvent[], frames: string[]): HarnessEvent[][] {
+  return frames.map((frame) => {
+    const before = events.length;
+    onLine!(frame);
+    return events.slice(before);
+  });
+}
+
+/**
+ * Sends a user turn. A new process gets `preInit` (or a bare control
+ * response) once it asks to initialize; the turn is open once its prompt is
+ * written.
+ */
+async function openTurn(
+  sessionId: string,
+  events: HarnessEvent[],
+  preInit?: string[],
+): Promise<{ turn: Promise<void> }> {
+  const users = userMessages();
+  const inits = initializeRequests();
+  const turn = sendClaudeTurn({
+    sessionId,
+    cwd: "/repo",
+    model: "claude:claude-sonnet-5",
+    modelSettings: {},
+    runtimeMode: "supervised",
+    text: "go",
+    attachments: [],
+    onEvent: (event) => events.push(event),
+  });
+  await waitFor(
+    () => initializeRequests() > inits || userMessages() > users,
+    "initialize or prompt",
+  );
+  if (initializeRequests() > inits) {
+    if (preInit) feed(events, preInit);
+    else
+      onLine!(
+        JSON.stringify({
+          type: "control_response",
+          response: { subtype: "success", request_id: "rebase_2" },
+        }),
+      );
+  }
+  await waitFor(() => userMessages() > users, "user prompt");
+  return { turn };
+}
+
+/** Turn 1 (lines 1..=125) in a fresh process for `sessionId`. */
+async function replayTurnOne(sessionId: string, events: HarnessEvent[]) {
+  const { turn } = await openTurn(sessionId, events, lines(1, 18));
+  feed(events, lines(19, TURN_ONE));
+  await turn;
+}
+
+function sessionFrom(events: HarnessEvent[], blocks: Block[] = []): Session {
+  return events.reduce(applyHarnessEvent, {
+    ...newSession("claude", "/repo"),
+    blocks,
+  });
+}
+
+function block(session: Session, callId: string): Block {
+  const found = session.blocks.find((b) => b.tool?.callId === callId);
+  if (!found) throw new Error(`no block for ${callId}`);
+  return found;
+}
+
+function run(session: Session, callId: string): AgentRunMeta {
+  const found = block(session, callId).agentRun;
+  if (!found) throw new Error(`${callId} is not an agent run`);
+  return found;
+}
+
+function toolSteps(agent: AgentRunMeta) {
+  return agent.steps.filter((step) => step.kind === "tool");
+}
+
+function markers(events: HarnessEvent[]): string[] {
+  return events.flatMap((event) =>
+    event.type === "interjection" && event.customType === "task-notification"
+      ? [event.text]
+      : [],
+  );
+}
+
+function backgroundDetails(events: HarnessEvent[]) {
+  return events.flatMap((event) =>
+    event.type === "background.updated" ? [event.details ?? []] : [],
+  );
+}
+
+function assertResumedRun(session: Session) {
+  const resumed = run(session, SEND);
+  expect(resumed.resumeOf).toBe(AGENT);
+  expect(resumed.agentId).toBe(AGENT_ID);
+  expect(resumed.name).toBe(`Resumed · ${NAME}`);
+  const steps = toolSteps(resumed);
+  expect(steps.map((step) => step.id)).toEqual(RESUMED_CHILDREN);
+  expect(steps.every((step) => step.status === "completed")).toBe(true);
+  const finalText = (
+    JSON.parse(FRAMES[192]) as {
+      message: { content: { text: string }[] };
+    }
+  ).message.content[0].text;
+  expect(
+    resumed.steps.some(
+      (step) => step.kind === "message" && step.text === finalText.trim(),
+    ),
+  ).toBe(true);
+  expect(block(session, SEND).tool?.status).toBe("completed");
+  expect(block(session, SEND).tool?.detail).toBe(summary(SEND).trim());
+  expect(resumed.activity).toBe("Running Print resumed-3");
+}
+
+/** Turn 1 replayed, saved and loaded back as a restart would find it. */
+async function persistedTurnOne(): Promise<Block[]> {
+  const events: HarnessEvent[] = [];
+  await replayTurnOne("seed", events);
+  await stopClaudeSession("seed");
+  __claudeTestReset();
+  const { sanitizeSessionForPersist } = await import(
+    "../../../../features/sessions/data/sessionStore"
+  );
+  const saved = sanitizeSessionForPersist(sessionFrom(events));
+  return JSON.parse(JSON.stringify(saved.blocks)) as Block[];
+}
+
+/** A fresh process for `sessionId` resuming the fixture conversation. */
+function rebind(sessionId: string, blocks: Block[]) {
+  bindClaudeSession(sessionId, PROVIDER_SESSION, "/repo");
+  restoreClaudeAgentRuns(sessionId, blocks);
+}
+
+function lateChild(parent: string, id: string): string {
+  return JSON.stringify({
+    type: "assistant",
+    parent_tool_use_id: parent,
+    session_id: PROVIDER_SESSION,
+    message: {
+      id,
+      content: [
+        { type: "tool_use", id, name: "Bash", input: { command: "pwd" } },
+      ],
+    },
+  });
+}
+
+function stepOwner(events: HarnessEvent[], stepId: string): string {
+  const step = events.find(
+    (event) => event.type === "agent.step" && event.stepId === stepId,
+  );
+  if (!step || step.type !== "agent.step")
+    throw new Error(`child ${stepId} was not attached`);
+  return step.callId;
+}
+
+const INIT = JSON.stringify({
+  type: "system",
+  subtype: "init",
+  session_id: PROVIDER_SESSION,
+});
+
+beforeEach(() => {
+  sent.length = 0;
+  __claudeTestReset();
+});
+
+afterEach(async () => {
+  for (const id of ["s1", "s2", "seed"]) await stopClaudeSession(id);
+  __claudeTestReset();
+});
+
+describe("Claude resumed background agents", () => {
+  it("keeps the turn-1 foreground agent's child steps", async () => {
+    const events: HarnessEvent[] = [];
+    await replayTurnOne("s1", events);
+    const session = sessionFrom(events);
+    const agent = run(session, AGENT);
+    expect(toolSteps(agent).map((step) => step.id)).toEqual([
+      "toolu_017gf48arc1zKr5QDXoyqy5C",
+      "toolu_01Ry2tgDyg3yBxyKAGJA1qhf",
+    ]);
+    expect(toolSteps(agent).every((s) => s.status === "completed")).toBe(true);
+    // The hand-back trailer and the task events both name the agent.
+    expect(agent.agentId).toBe(AGENT_ID);
+    expect(agent.name).toBe(NAME);
+    expect(block(session, AGENT).tool?.status).toBe("completed");
+  });
+
+  it("turns the SendMessage block into the resumed run with every resumed step", async () => {
+    const events: HarnessEvent[] = [];
+    await replayTurnOne("s1", events);
+    const { turn } = await openTurn("s1", events);
+    feed(events, lines(TURN_ONE + 1));
+    await turn;
+    const session = sessionFrom(events);
+    assertResumedRun(session);
+    // History stays append-only: the original Agent block gains nothing.
+    expect(toolSteps(run(session, AGENT))).toHaveLength(2);
+    expect(block(session, AGENT).tool?.detail).toContain("step-one");
+  });
+
+  it("takes status, summary and activity from task events, never the name", async () => {
+    const events: HarnessEvent[] = [];
+    await replayTurnOne("s1", events);
+    const { turn } = await openTurn("s1", events);
+    // Through the last task_progress (line 191): still running, name intact.
+    feed(events, lines(TURN_ONE + 1, 191));
+    let session = sessionFrom(events);
+    let resumed = run(session, SEND);
+    expect(block(session, SEND).tool?.status).toBe("in_progress");
+    expect(resumed.name).toBe(`Resumed · ${NAME}`);
+    expect(resumed.activity).toBe("Running Print resumed-3");
+    // The launch receipt is not a report.
+    expect(block(session, SEND).tool?.detail ?? "").not.toContain("resumedAgentId");
+    // Through the task_notification (line 195).
+    feed(events, lines(192, 195));
+    session = sessionFrom(events);
+    resumed = run(session, SEND);
+    expect(block(session, SEND).tool?.status).toBe("completed");
+    expect(block(session, SEND).tool?.detail).toBe(summary(SEND).trim());
+    expect(resumed.name).toBe(`Resumed · ${NAME}`);
+    feed(events, lines(196));
+    await turn;
+  });
+
+  it("points the background card at the resumed block and counts its steps", async () => {
+    const events: HarnessEvent[] = [];
+    await replayTurnOne("s1", events);
+    const { turn } = await openTurn("s1", events);
+    feed(events, lines(TURN_ONE + 1, 192));
+    const cards = backgroundDetails(events);
+    const task = cards.at(-1)?.find((row) => row.id === AGENT_ID);
+    expect(task).toMatchObject({
+      toolId: SEND,
+      latest: "Running Print resumed-3",
+      steps: 5,
+    });
+    feed(events, lines(193, 195));
+    expect(
+      backgroundDetails(events).at(-1)?.some((row) => row.id === AGENT_ID),
+    ).toBeFalsy();
+    feed(events, lines(196));
+    await turn;
+  });
+
+  it("seeds from persisted blocks after a restart and routes turn 2", async () => {
+    const blocks = await persistedTurnOne();
+    rebind("s2", blocks);
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1, 192));
+    const task = backgroundDetails(events)
+      .at(-1)
+      ?.find((row) => row.id === AGENT_ID);
+    expect(task).toMatchObject({ toolId: SEND, steps: 5 });
+    feed(events, lines(193));
+    await turn;
+    // Turn 1's block is not re-emitted.
+    expect(
+      events.some(
+        (event) => "callId" in event && event.callId === AGENT,
+      ),
+    ).toBe(false);
+    assertResumedRun(sessionFrom(events, blocks));
+  });
+
+  it("gives a second resume its own steps", async () => {
+    const replace = (frame: string) => {
+      let text = frame.split(SEND).join("toolu_S2");
+      RESUMED_CHILDREN.forEach((child, index) => {
+        text = text.split(child).join(`S2_child${index + 1}`);
+      });
+      return text;
+    };
+    const events: HarnessEvent[] = [];
+    await replayTurnOne("s1", events);
+    const { turn } = await openTurn("s1", events);
+    feed(events, lines(TURN_ONE + 1, 195));
+    feed(events, lines(158, 195).map(replace));
+    feed(events, lines(196));
+    await turn;
+    const session = sessionFrom(events);
+    const first = run(session, SEND);
+    const second = run(session, "toolu_S2");
+    expect(toolSteps(first)).toHaveLength(5);
+    expect(toolSteps(second)).toHaveLength(5);
+    expect(second.resumeOf).toBe(AGENT);
+    expect(toolSteps(second)[0].id).toBe("S2_child1");
+    expect(toolSteps(first).some((s) => s.id.includes("S2_child"))).toBe(false);
+    expect(block(session, "toolu_S2").tool?.status).toBe("completed");
+  });
+
+  it("keeps a child of an unknown parent as a visible Background agent step", async () => {
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s1", events);
+    feed(events, [lateChild("toolu_unknown", "child")]);
+    const owner = stepOwner(events, "child");
+    expect(owner.startsWith("background:toolu_unknown:")).toBe(true);
+    let session = sessionFrom(events);
+    expect(run(session, owner).name).toBe("Background agent");
+    // Its result lands on the same step rather than being dropped.
+    feed(events, [
+      JSON.stringify({
+        type: "user",
+        parent_tool_use_id: "toolu_unknown",
+        message: {
+          content: [
+            { type: "tool_result", tool_use_id: "child", content: "listing" },
+          ],
+        },
+      }),
+    ]);
+    session = sessionFrom(events);
+    const fallback = run(session, owner);
+    expect(fallback.steps).toHaveLength(1);
+    expect(fallback.steps[0]).toMatchObject({ id: "child", status: "completed" });
+    expect(block(session, owner).tool?.status).toBe("completed");
+    feed(events, [JSON.stringify({ type: "result", subtype: "success" })]);
+    await turn;
+  });
+
+  it("gives a known but finished dispatch one continuation block per turn", async () => {
+    rebind("s2", await persistedTurnOne());
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, [lateChild(AGENT, "late-1"), lateChild(AGENT, "late-2")]);
+    const owner = stepOwner(events, "late-1");
+    expect(stepOwner(events, "late-2")).toBe(owner);
+    expect(owner.startsWith(`continued:${AGENT}:`)).toBe(true);
+    const session = sessionFrom(events);
+    const continued = run(session, owner);
+    expect(continued.name).toBe(`Continued · ${NAME}`);
+    expect(continued.steps).toHaveLength(2);
+    expect(continued.resumeOf).toBe(AGENT);
+    expect(continued.continuation).toBe(true);
+    // Nothing reports when stray work ends: the block must not spin forever.
+    expect(block(session, owner).tool?.status).toBe("completed");
+    expect(continued.steps[0].status).toBe("in_progress");
+    feed(events, [JSON.stringify({ type: "result", subtype: "success" })]);
+    await turn;
+  });
+
+  it("never repeats a synthetic block id across turns and processes", async () => {
+    const blocks = await persistedTurnOne();
+    rebind("s2", blocks);
+    const events: HarnessEvent[] = [];
+    let { turn } = await openTurn("s2", events);
+    feed(events, [INIT, lateChild(AGENT, "late-1"), lateChild("toolu_unknown", "lost-1")]);
+    feed(events, [INIT, lateChild(AGENT, "late-2"), lateChild("toolu_unknown", "lost-2")]);
+    feed(events, [JSON.stringify({ type: "result", subtype: "success" })]);
+    await turn;
+    // A new process starts its own turn count again.
+    await stopClaudeSession("s2");
+    ({ turn } = await openTurn("s2", events));
+    feed(events, [INIT, lateChild(AGENT, "late-3"), lateChild("toolu_unknown", "lost-3")]);
+    const continued = ["late-1", "late-2", "late-3"].map((id) =>
+      stepOwner(events, id),
+    );
+    const lost = ["lost-1", "lost-2", "lost-3"].map((id) =>
+      stepOwner(events, id),
+    );
+    for (const id of continued) expect(id.startsWith("continued:")).toBe(true);
+    for (const id of lost) expect(id.startsWith("background:")).toBe(true);
+    expect(new Set([...continued, ...lost]).size).toBe(6);
+    // Within one turn the same parent keeps one block.
+    feed(events, [lateChild(AGENT, "late-4")]);
+    expect(stepOwner(events, "late-4")).toBe(continued[2]);
+    feed(events, [JSON.stringify({ type: "result", subtype: "success" })]);
+    await turn;
+  });
+
+  it("marks Claude's self-started turn with the notification summary, once", async () => {
+    const events: HarnessEvent[] = [];
+    await replayTurnOne("s1", events);
+    const { turn } = await openTurn("s1", events);
+    const perLine = feed(events, lines(TURN_ONE + 1));
+    await turn;
+    // The marker leads the follow-up: it comes with the wake turn's init.
+    expect(markers(perLine[197 - TURN_ONE - 1])).toEqual([summary(SEND)]);
+    expect(markers(events)).toHaveLength(1);
+    // Stored exactly as Rebase Native stores it: an interjection row.
+    const row = sessionFrom(events).blocks.find(
+      (b) => b.interjection?.customType === "task-notification",
+    );
+    expect(row).toMatchObject({
+      role: "system",
+      text: summary(SEND),
+      interjection: { customType: "task-notification" },
+    });
+  });
+
+  it("does not mark a user follow-up as a wake, but still marks Claude's own", async () => {
+    rebind("s2", await persistedTurnOne());
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1, 195));
+    await steerClaudeTurn({
+      sessionId: "s2",
+      cwd: "/repo",
+      model: "claude:claude-sonnet-5",
+      text: "Thanks, what next?",
+    });
+    // The turn that answers the user starts, streams and finishes.
+    const answer = feed(events, lines(196, 237));
+    expect(markers(answer.flat())).toEqual([]);
+    const userResult = feed(events, [
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "Here is what is next.",
+        session_id: PROVIDER_SESSION,
+      }),
+    ]);
+    expect(markers(userResult.flat())).toEqual([]);
+    await turn;
+    // Claude's own wake is still marked, by its result's origin.
+    const wake = feed(events, lines(238));
+    expect(markers(wake.flat())).toEqual([summary(SEND)]);
+  });
+
+  it("marks Claude's own wake after a restart when it starts", async () => {
+    rebind("s2", await persistedTurnOne());
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    const perLine = feed(events, lines(TURN_ONE + 1));
+    await turn;
+    expect(markers(perLine[197 - TURN_ONE - 1])).toEqual([summary(SEND)]);
+    expect(markers(events)).toHaveLength(1);
+  });
+
+  it("seeds from a Native-written block that names its agent by nativeIds only", async () => {
+    const blocks: Block[] = [
+      {
+        id: "native-block",
+        role: "tool",
+        text: NAME,
+        tool: { callId: AGENT, kind: "agent", title: NAME, status: "completed" },
+        agentRun: { name: NAME, steps: [], nativeIds: [AGENT_ID] } as AgentRunMeta,
+      },
+    ];
+    rebind("s2", blocks);
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1));
+    await turn;
+    assertResumedRun(sessionFrom(events, blocks));
+  });
+});

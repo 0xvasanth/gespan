@@ -237,6 +237,17 @@ export type AgentRunMeta = {
   /** Model reported for the child, which may differ from its parent. */
   model?: string;
   steps: AgentStep[];
+  /**
+   * The provider's id for the sub-agent (Claude's agentId), so a later turn
+   * that resumes it can find this run. Shared with Rebase Native.
+   */
+  agentId?: string;
+  /** On a resumption or continuation: the original Agent call's tool id. */
+  resumeOf?: string;
+  /** What the agent is doing now. Never the run's title. */
+  activity?: string;
+  /** A synthetic block for stray work of a finished dispatch. Absent when false. */
+  continuation?: boolean;
 };
 
 export type AttachmentKind = "image" | "audio" | "file";
