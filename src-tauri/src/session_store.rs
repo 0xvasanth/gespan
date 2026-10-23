@@ -1009,6 +1009,7 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     crate::notes::ensure_notes_table(conn)?;
     crate::reminders::ensure_table(conn)?;
     crate::automations::ensure_tables(conn)?;
+    crate::board::ensure_tables(conn)?;
     ensure_orchestration_history(conn)?;
     crate::pilot_transcript::ensure_tables(conn)?;
     Ok(())
