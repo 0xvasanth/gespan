@@ -1,0 +1,19 @@
+src/features/sessions/model/transcriptActivity.test.ts
+  s_3d6000c3007319::t_deea3547e80d17 386
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "42edbc1dd7cecb57db9908f091fa32a1afd5d453",
+  "prompts": {},
+  "sessions": {
+    "s_3d6000c3007319": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d7ce5de9-52e0-4565-a35c-874563a61ab4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
