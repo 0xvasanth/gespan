@@ -2092,7 +2092,7 @@ impl Shell {
                     .items_center()
                     .justify_center()
                     .rounded(px(4.))
-                    .cursor(CursorStyle::Arrow)
+                    .cursor_pointer()
                     .hover(|s| s.bg(content(0.1)))
                     .child(
                         icon("x", 12.)
@@ -4536,7 +4536,7 @@ impl Shell {
                                     gpui::Toggled::False
                                 })
                                 .group("toggle-right-panel")
-                                .cursor(CursorStyle::Arrow)
+                                .cursor_pointer()
                                 .size(px(24.))
                                 .flex_shrink_0()
                                 .flex()
@@ -4608,7 +4608,7 @@ impl Shell {
         (width > 0.).then(|| {
             crate::right_panel::diff_stat(self.git.read(cx).stats.as_ref(), width)
                 .when(!self.app_view_open(), |d| {
-                    d.cursor(CursorStyle::Arrow)
+                    d.cursor_pointer()
                         .hover(|s| s.bg(content(0.1)))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -5716,7 +5716,7 @@ impl Shell {
                 "{} conversation",
                 Kind::from_id(&session.summary.provider).label()
             ))
-            .cursor(CursorStyle::Arrow)
+            .cursor_pointer()
             // A nested row's `h-5` line and `px-1.5`, inside the card border.
             .h(px(if compact {
                 if nested { 28. } else { 32. }
@@ -6134,7 +6134,7 @@ impl Shell {
                                                 ))
                                                 .aria_description(self.workspace.project.clone())
                                                 .aria_expanded(self.menu_open(&MenuTarget::Header))
-                                                .cursor(CursorStyle::Arrow)
+                                                .cursor_pointer()
                                                 .h(px(28.))
                                                 // The whole picker shares Search's left edge.
                                                 .px_1p5()
@@ -6398,7 +6398,7 @@ impl Shell {
                             .aria_label(format!("Project {}", self.project_label(&path)))
                             .aria_description(path.clone())
                             .aria_selected(active)
-                            .cursor(CursorStyle::Arrow)
+                            .cursor_pointer()
                             .flex_1()
                             .min_w_0()
                             .h(px(20.))
@@ -7180,7 +7180,7 @@ impl Shell {
                     .role(Role::Tab)
                     .aria_label(copy.headline.clone())
                     .aria_selected(active)
-                    .cursor(CursorStyle::Arrow)
+                    .cursor_pointer()
                     .w(px(tab_width(&TitleTab::Session(id))))
                     .flex_shrink_0()
                     .h(px(TITLE_BAR_HEIGHT))
@@ -7481,7 +7481,7 @@ impl Shell {
                             .group("new-tab")
                             .role(Role::Button)
                             .aria_label("New session tab")
-                            .cursor(CursorStyle::Arrow)
+                            .cursor_pointer()
                             .size(px(TAB_PLATE_HEIGHT))
                             .flex_shrink_0()
                             .ml(px(new_tab_lead))
@@ -10828,9 +10828,11 @@ mod tests {
             .unwrap();
         a.has_messages = true;
         let ids = (a.id, b.id);
-        let mut state = Workspace::default();
         // Layout tests start from the rounded frame and opt into boxy.
-        state.new_layout_boxy = false;
+        let mut state = Workspace {
+            new_layout_boxy: false,
+            ..Default::default()
+        };
         state.add_project("/work/another-project");
         state.add_project("/work/monocode");
         state.open(a.id);

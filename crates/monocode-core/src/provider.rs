@@ -2090,20 +2090,30 @@ mod process_tests {
     #[test]
     fn cancellation_reaps_child_and_descendant_promptly() {
         for kind in Kind::ALL {
-            let (_tmp, mut request) = fixture("#!/bin/sh\nsleep 30 &\nwait\n");
+            let (_tmp, mut request) =
+                fixture("#!/bin/sh\nsleep 30 &\nprintf ready > ready\nwait\n");
             request.kind = kind;
             request.settings.access = AccessMode::ReadOnly;
+            let ready = request.cwd.join("ready");
             let cancel = Arc::new(AtomicBool::new(false));
             let stop = cancel.clone();
             let timer = thread::spawn(move || {
-                thread::sleep(Duration::from_millis(60));
+                // Wait until the descendant exists, then measure cancellation
+                // independently of provider startup and test-runner load.
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !ready.exists() && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                let started = ready.exists();
+                let stopped_at = Instant::now();
                 stop.store(true, Ordering::Relaxed);
+                (started, stopped_at)
             });
-            let start = Instant::now();
             assert_eq!(run(request, cancel, |_| Ok(())).unwrap_err(), "Stopped");
-            timer.join().unwrap();
+            let (started, stopped_at) = timer.join().unwrap();
+            assert!(started, "{} fixture did not start", kind.label());
             assert!(
-                start.elapsed() < Duration::from_secs(2),
+                stopped_at.elapsed() < Duration::from_secs(2),
                 "{} cancellation must not wait on provider output",
                 kind.label()
             );

@@ -961,7 +961,7 @@ fn mono_font() -> Font {
     gpui::font(crate::markdown::MONO)
 }
 fn selection_fill() -> Hsla {
-    content(0.18)
+    crate::theme::text_selection()
 }
 fn write_note(term: &Arc<FairMutex<Term<Listener>>>, text: &str) {
     let mut parser = alacritty_terminal::vte::ansi::Processor::<

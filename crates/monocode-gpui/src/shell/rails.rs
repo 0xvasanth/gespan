@@ -506,7 +506,7 @@ impl Shell {
                 "{} conversation",
                 Kind::from_id(&session.summary.provider).label()
             ))
-            .cursor(CursorStyle::Arrow)
+            .cursor_pointer()
             .relative()
             .w_full()
             .border_1()
@@ -801,7 +801,7 @@ impl Shell {
                             .gap(px(6.))
                             .px(px(if classic { 8. } else { 6. }))
                             .rounded_md()
-                            .cursor(CursorStyle::Arrow)
+                            .cursor_pointer()
                             .when(open && !classic, |d| d.bg(content(0.1)))
                             .when(!open, |d| d.hover(|s| s.bg(content(0.1))))
                             .child(
@@ -916,7 +916,7 @@ impl Shell {
                                 .py(px(2.))
                                 .text_size(px(11.))
                                 .text_color(content(0.75))
-                                .cursor(CursorStyle::Arrow)
+                                .cursor_pointer()
                                 .hover(|s| s.bg(content(0.25)).text_color(content(1.)))
                                 .child(label)
                         };

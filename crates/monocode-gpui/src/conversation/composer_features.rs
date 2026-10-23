@@ -330,7 +330,7 @@ impl Conversation {
                         .id(("remove-attachment", ix))
                         .role(Role::Button)
                         .aria_label(format!("Remove {label}"))
-                        .cursor(CursorStyle::Arrow)
+                        .cursor_pointer()
                         .flex_shrink_0()
                         .flex()
                         .items_center()

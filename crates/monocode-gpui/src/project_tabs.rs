@@ -1,6 +1,6 @@
 //! Compact project tool tabs shared by the rounded and expanded layouts.
 use crate::{right_panel::RightTab, theme::*};
-use gpui::{App, CursorStyle, MouseButton, Role, Stateful, Window, div, prelude::*, px};
+use gpui::{App, MouseButton, Role, Stateful, Window, div, prelude::*, px};
 use std::time::Instant;
 
 const TAB_TEXT_SIZE: f32 = 12.;
@@ -104,7 +104,7 @@ pub(crate) fn tab_button(
         .aria_label(label.text)
         .aria_selected(selected)
         .group(id)
-        .cursor(CursorStyle::Arrow)
+        .cursor_pointer()
         .px(px(6. + 2. * open))
         .flex_shrink_0()
         .text_size(px(TAB_TEXT_SIZE))

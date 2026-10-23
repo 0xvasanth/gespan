@@ -6,7 +6,7 @@ use gpui::{
     Focusable, GlobalElementId, Hsla, InspectorElementId, KeyBinding, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Role, SharedString, Style,
     TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill,
-    point, prelude::*, px, relative, rgb, rgba, size,
+    point, prelude::*, px, relative, rgb, size,
 };
 use std::{borrow::Cow, ops::Range};
 use unicode_segmentation::UnicodeSegmentation;
@@ -204,7 +204,7 @@ pub struct Input {
     max_chars: Option<usize>,
     centered: bool,
     placeholder: SharedString,
-    placeholder_color: Option<Hsla>,
+    placeholder_alpha: Option<f32>,
     label: SharedString,
     font_size: f32,
     line_height: f32,
@@ -253,7 +253,7 @@ impl Input {
             max_chars: None,
             centered: false,
             placeholder: "Ask, build, or describe a change…".into(),
-            placeholder_color: None,
+            placeholder_alpha: None,
             label: "Message composer".into(),
             font_size: FONT_SIZE,
             line_height: LINE_HEIGHT,
@@ -286,6 +286,7 @@ impl Input {
         input
     }
     /// A one-line field inside a popover, such as a picker's search box.
+    /// Only `placeholder_color`'s alpha is kept; its ink follows the theme.
     pub fn field(
         label: impl Into<SharedString>,
         placeholder: impl Into<SharedString>,
@@ -295,7 +296,7 @@ impl Input {
         let mut input = Self::search(cx);
         input.label = label.into();
         input.placeholder = placeholder.into();
-        input.placeholder_color = Some(placeholder_color);
+        input.placeholder_alpha = Some(placeholder_color.a);
         // Picker search fields are `text-[13px]`.
         input.font_size = 13.;
         input
@@ -310,7 +311,7 @@ impl Input {
         input.height = 20.;
         input.min_height = 20.;
         input.max_height = 152.;
-        input.placeholder_color = Some(crate::theme::content(0.35));
+        input.placeholder_alpha = Some(0.35);
         input.secondary_submit = true;
         input
     }
@@ -1382,10 +1383,12 @@ impl Element for InputElement {
         let run = TextRun {
             len: text.len(),
             font: style.font(),
-            color: match (placeholder, i.placeholder_color) {
-                (true, Some(color)) => color,
+            color: match (placeholder, i.placeholder_alpha) {
+                // Re-ink every paint so a theme switch never strands the
+                // placeholder in the previous theme's color.
+                (true, Some(alpha)) => crate::theme::content(alpha),
                 // `.composer-field::placeholder`: content ink at 40%.
-                (true, None) if !i.single_line => rgba(0xebebeb66).into(),
+                (true, None) if !i.single_line => crate::theme::content(0.4),
                 _ => style.color,
             },
             background_color: None,
@@ -1576,7 +1579,7 @@ impl Element for InputElement {
                                     point(x + left, y + sy),
                                     size((right - left).max(px(1.)), line_height),
                                 ),
-                                rgb(0x364b65),
+                                crate::theme::text_selection(),
                             ));
                             sy += line_height;
                         }
@@ -1592,7 +1595,7 @@ impl Element for InputElement {
                             .unwrap_or_default();
                         w.paint_quad(fill(
                             Bounds::new(point(x + p.x, y + p.y), size(px(1.5), line_height)),
-                            rgb(0xc1d8ff),
+                            crate::theme::content(1.),
                         ));
                     }
                 }
@@ -1657,7 +1660,7 @@ impl Render for Input {
                 d.h_full().font_family(crate::markdown::MONO)
             })
             .track_focus(&self.focus)
-            .cursor(if self.single_line || self.code_rail_hovered() {
+            .cursor(if self.code_rail_hovered() {
                 CursorStyle::Arrow
             } else {
                 CursorStyle::IBeam

@@ -437,7 +437,7 @@ impl Render for ImageLightbox {
                     .bg(black(0.45))
                     .text_color(white(0.8))
                     .shadow_lg()
-                    .cursor(CursorStyle::Arrow)
+                    .cursor_pointer()
                     .hover(|s| s.bg(black(0.65)).text_color(white(1.)))
                     .focus_visible(|s| s.border_2().border_color(white(0.8)))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

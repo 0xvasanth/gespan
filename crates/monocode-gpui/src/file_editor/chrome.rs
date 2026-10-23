@@ -107,7 +107,7 @@ impl FileEditor {
             } else {
                 gpui::Toggled::False
             })
-            .cursor(gpui::CursorStyle::Arrow)
+            .cursor_pointer()
             .flex_shrink_0()
             .h(px(CONTROL_HEIGHT))
             .px_2()
@@ -145,7 +145,7 @@ impl FileEditor {
                             .role(Role::Tab)
                             .aria_label(label)
                             .aria_selected(self.preview == preview)
-                            .cursor(gpui::CursorStyle::Arrow)
+                            .cursor_pointer()
                             .h_full()
                             .flex()
                             .items_center()

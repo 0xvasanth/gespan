@@ -874,7 +874,9 @@ fn titlebar_divider_resizes_mono_details_and_closed_panels_keep_the_corner(
     let s = setup(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     s.window
-        .update(cx, |_, _, cx| {
+        .update(cx, |shell, _, cx| {
+            // The titlebar divider belongs to the rounded frame.
+            shell.workspace.new_layout_boxy = false;
             s.manager.update(cx, |m, cx| {
                 m.settings = None;
                 cx.notify();

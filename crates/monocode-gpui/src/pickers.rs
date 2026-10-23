@@ -3,8 +3,8 @@
 // owns a search field; arrows and Enter in it move and pick in the list.
 use crate::{input, theme::*, workspace::project_name};
 use gpui::{
-    AnyElement, Context, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, Role,
-    SharedString, Subscription, Window, div, prelude::*, px,
+    AnyElement, Context, Entity, EventEmitter, FocusHandle, Focusable, Role, SharedString,
+    Subscription, Window, div, prelude::*, px,
 };
 use monocode_core::catalog::{self, Model};
 use monocode_core::provider::Kind;
@@ -646,7 +646,7 @@ impl ModelList {
             .aria_label(label)
             .aria_selected(selected)
             .group(id)
-            .cursor(CursorStyle::Arrow)
+            .cursor_pointer()
             .flex_shrink_0()
             .size(px(32.))
             .rounded(px(6.))
@@ -709,7 +709,7 @@ impl Render for ModelList {
                             "Wait for the current turn to finish before switching providers"
                         })
                     })
-                    .cursor(CursorStyle::Arrow)
+                    .cursor_pointer()
                     .flex_shrink_0()
                     .h(px(32.))
                     .px_1()
@@ -1051,7 +1051,7 @@ impl Render for ProjectPicker {
                     .role(Role::ListBoxOption)
                     .aria_label(format!("{}, Mono", mono.name))
                     .aria_selected(current)
-                    .cursor(CursorStyle::Arrow)
+                    .cursor_pointer()
                     .flex_shrink_0()
                     .h(px(36.))
                     .px(px(10.))
@@ -1122,7 +1122,7 @@ impl Render for ProjectPicker {
                 .aria_label(self.label(&path))
                 .aria_description(path.clone())
                 .aria_selected(current)
-                .cursor(CursorStyle::Arrow)
+                .cursor_pointer()
                 .flex_shrink_0()
                 .h(px(36.))
                 .px(px(10.))
@@ -1276,7 +1276,7 @@ impl Render for ProjectPicker {
                             .role(Role::Button)
                             .aria_label("New project")
                             .group("project-new")
-                            .cursor(CursorStyle::Arrow)
+                            .cursor_pointer()
                             .h(px(36.))
                             .px(px(10.))
                             .gap(px(10.))
@@ -1300,7 +1300,7 @@ impl Render for ProjectPicker {
                                 .id("project-remote")
                                 .role(Role::Button)
                                 .aria_label("Open folder on a machine")
-                                .cursor(CursorStyle::Arrow)
+                                .cursor_pointer()
                                 .h(px(36.))
                                 .px(px(10.))
                                 .gap(px(10.))

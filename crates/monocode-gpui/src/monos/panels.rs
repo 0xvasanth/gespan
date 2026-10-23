@@ -55,7 +55,7 @@ pub(super) fn button(
         .id(id)
         .role(Role::Button)
         .aria_label(label.clone())
-        .cursor(gpui::CursorStyle::Arrow)
+        .cursor_pointer()
         .flex()
         .items_center()
         .gap_1p5()

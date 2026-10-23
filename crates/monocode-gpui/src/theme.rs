@@ -1,4 +1,4 @@
-use gpui::{CursorStyle, Div, Hsla, Role, Stateful, Svg, div, img, prelude::*, px, rgb, rgba, svg};
+use gpui::{Div, Hsla, Role, Stateful, Svg, div, img, prelude::*, px, rgb, rgba, svg};
 // Shared appearance tokens. Interaction fills use translucent content ink
 // rather than opaque replacement greys.
 pub(crate) const CHAT: u32 = 0x141414;
@@ -137,6 +137,26 @@ pub(crate) fn composer_fill() -> Hsla {
 pub(crate) fn composer_blur() -> f32 {
     let light = TOKENS.with(|tokens| tokens.borrow().as_ref().is_some_and(|t| t.light));
     if light { 0. } else { 24. }
+}
+
+/// Selected text is tinted with the accent; light surfaces get a paler wash
+/// so dark ink stays readable on top.
+pub(crate) fn text_selection() -> Hsla {
+    accent_color().opacity(if is_light() { 0.2 } else { 0.35 })
+}
+
+/// Light mode lifts the solid composer off the matching page with a soft
+/// two-layer drop; dark mode's frosted box needs no shadow.
+pub(crate) fn composer_shadow() -> Vec<gpui::BoxShadow> {
+    if !is_light() {
+        return Vec::new();
+    }
+    vec![
+        gpui::BoxShadow::new(px(0.), px(1.), black(0.04)).blur_radius(px(2.)),
+        gpui::BoxShadow::new(px(0.), px(6.), black(0.07))
+            .blur_radius(px(20.))
+            .spread_radius(px(-4.)),
+    ]
 }
 
 /// Light themes paint floating surfaces opaque instead of frosting them.
@@ -302,7 +322,7 @@ fn chrome_button(
         .role(Role::Button)
         .aria_label(label)
         .group("chrome-button")
-        .cursor(CursorStyle::Arrow)
+        .cursor_pointer()
         .flex()
         .flex_shrink_0()
         .items_center()

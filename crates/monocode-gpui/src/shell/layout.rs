@@ -103,7 +103,7 @@ fn panel_button(enabled: bool, dot: bool) -> gpui::Stateful<gpui::Div> {
         .role(Role::Button)
         .aria_label(super::TOGGLE_RIGHT_PANEL_LABEL)
         .group(id)
-        .cursor(CursorStyle::Arrow)
+        .cursor_pointer()
         .size(px(24.))
         .flex_shrink_0()
         .flex()

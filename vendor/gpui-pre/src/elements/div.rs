@@ -2205,6 +2205,28 @@ pub struct Interactivity {
 }
 
 impl Interactivity {
+    /// Controls whose accessible role says they are clicked show the pointing
+    /// hand unless the element picks its own cursor.
+    fn role_cursor(&self) -> Option<crate::CursorStyle> {
+        use accesskit::Role;
+        matches!(
+            self.override_role?,
+            Role::Button
+                | Role::Link
+                | Role::Tab
+                | Role::ListBoxOption
+                | Role::MenuItem
+                | Role::MenuItemCheckBox
+                | Role::MenuItemRadio
+                | Role::CheckBox
+                | Role::RadioButton
+                | Role::Switch
+                | Role::ComboBox
+                | Role::TreeItem
+        )
+        .then_some(crate::CursorStyle::PointingHand)
+    }
+
     /// Layout this element according to this interactivity state's configured styles
     pub fn request_layout(
         &mut self,
@@ -2570,7 +2592,9 @@ impl Interactivity {
                                                     window.set_window_cursor_style(mouse_cursor);
                                                 }
                                             } else {
-                                                if let Some(mouse_cursor) = style.mouse_cursor {
+                                                if let Some(mouse_cursor) =
+                                                    style.mouse_cursor.or_else(|| self.role_cursor())
+                                                {
                                                     window.set_cursor_style(mouse_cursor, hitbox);
                                                 }
                                             }

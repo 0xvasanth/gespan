@@ -35,7 +35,7 @@ impl Shell {
             .role(Role::Tab)
             .aria_label(view.label())
             .aria_selected(active)
-            .cursor(CursorStyle::Arrow)
+            .cursor_pointer()
             .w(px(width))
             .h(px(TITLE_BAR_HEIGHT))
             .flex_shrink_0()

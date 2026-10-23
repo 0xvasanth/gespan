@@ -658,7 +658,7 @@ impl Monos {
                             .role(Role::Tab)
                             .aria_selected(active)
                             .aria_label(title)
-                            .cursor(gpui::CursorStyle::Arrow)
+                            .cursor_pointer()
                             .h_full()
                             .flex()
                             .items_center()

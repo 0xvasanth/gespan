@@ -352,7 +352,7 @@ impl Element for SelectedText {
                     if right > left {
                         window.paint_quad(gpui::fill(
                             Bounds::new(gpui::point(left, y), size(right - left, height)),
-                            content(0.2),
+                            crate::theme::text_selection(),
                         ))
                     }
                     y += height;

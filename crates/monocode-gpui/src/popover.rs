@@ -3,8 +3,8 @@
 // src/features/files/ui/ExplorerMenu.tsx.
 use crate::theme::*;
 use gpui::{
-    AnyElement, AnyView, App, Bounds, BoxShadow, Context, CursorStyle, DispatchPhase, Display,
-    Element, ElementId, Entity, EventEmitter, FocusHandle, Focusable, GlobalElementId, Hsla,
+    AnyElement, AnyView, App, Bounds, BoxShadow, Context, DispatchPhase, Display, Element,
+    ElementId, Entity, EventEmitter, FocusHandle, Focusable, GlobalElementId, Hsla,
     InspectorElementId, KeyBinding, LayoutId, MouseDownEvent, Pixels, Point,
     Position as CssPosition, Role, SharedString, Style, Toggled, Window, actions, canvas, deferred,
     div, point, prelude::*, px, rgb, rgba, size,
@@ -1237,7 +1237,7 @@ impl Menu {
             })
             .when(has_submenu, |d| d.aria_expanded(open))
             .aria_selected(highlighted)
-            .cursor(CursorStyle::Arrow)
+            .cursor_pointer()
             .relative()
             .flex_shrink_0()
             .w_full()
