@@ -1,0 +1,68 @@
+src-tauri/src/remote_ssh.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 720,809
+src-tauri/src/fs.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 728,737
+src-tauri/src/notes.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 658
+src-tauri/src/windows.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 207-208
+src-tauri/src/pilot.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 1-514
+src-tauri/src/mcp.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 836-837,1012,1031
+src-tauri/src/provider_session_transfer.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 11,228-229
+src-tauri/src/codex_pilot_store.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 1-997
+src-tauri/src/artifacts.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 106,109,193,376,387,447-448,451-452,472,481
+src-tauri/src/pilot_chat/menu_bar.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 1-511
+src-tauri/src/mobile_access.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 343,504-505,546,558,612-613,888
+src-tauri/src/macos_background.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 45-46
+src-tauri/src/harness.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 957,963,966,973,3594-3595
+src-tauri/src/control_cli.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 123,125,139,158-159,163,165,167,195,213,224,229-230,244,257
+src-tauri/src/devin_config.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 224
+src-tauri/src/checkpoint.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 1921-1922,1934-1935,1937,1939-1940,1942,1945,1947,1950-1953
+src-tauri/src/session_store.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 535,1013,1369-1370,1495-1496,2110,2113-2116,2123
+src-tauri/src/window.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 21,158,216-217,631,634-635
+src-tauri/src/pilot_chat.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 1-1017
+src-tauri/src/pilot_transcript.rs
+  s_ccb41beff89445::t_d697f6348d168a 450
+  s_ccb41beff89445::t_1fa08089003990 469-470
+  s_ccb41beff89445::t_5bc5c96a63b367 2-13,15-16,19-21,24-32,34-38,40-46,48-53,55-56,58-65,67-77,79-88,90-95,97-105,110-128,130,132,134-147,149-195,197-198,200-203,205-213,215-224,226-238,240-242,244-250,252-253,255-269,271,273-279,281-285,287-292,294-305,307-312,314-341,343-347,349-353,355-359,361-367,369-371,373-393,395-404,406-427,429-449,451-459,466-467,472-492,494-499,501-506,508-511,513-517,519-522,524-528,530-531,533,535,538-539,541-542,544-546,548-556,558-568,570-587,590-591,593-602,604-607,609-611,613-621,623-632,634-642,644-653,655-658,660-662,664,666-667,669-673,675-684,686-691,693-695,697-702
+  s_ccb41beff89445::t_820d3ed5f885c1 1,14,17-18,22-23,33,39,47,54,57,66,78,89,96,106-109,129,131,133,148,196,199,204,214,225,239,243,251,254,270,272,280,286,293,306,313,342,348,354,360,368,372,394,405,428,460-465,468,471,493,500,507,512,518,523,529,532,534,536-537,540,543,547,557,569,588-589,592,603,608,612,622,633,643,654,659,663,665,668,674,685,692,696
+src-tauri/src/macos.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 226,318,573,1137-1138
+src-tauri/src/lib.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 10,38-41,295,507-509,541-544,564-566,621,623,625,627,629,631,633,635,637,639,641,691
+src-tauri/src/worktree_lifecycle.rs
+  s_ccb41beff89445::t_820d3ed5f885c1 80
+src-tauri/tauri.conf.json
+  s_ccb41beff89445::t_bfcef5d746a665 31-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6ca5f677f32ecf31f20bb4280a44a29bdbb9d22",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
