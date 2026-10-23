@@ -79,4 +79,21 @@ To trial AppImage updates, install a beta AppImage in a writable directory, publ
 
 The [release workflow](../.github/workflows/release.yml) packages the platform builds and publishes the updater feed. [scripts/release-channel.cjs](../scripts/release-channel.cjs) selects the stable or beta feed.
 
+### Cutting a release
+
+The release workflow runs only when started by hand, so pushing a tag never publishes anything on its own.
+
+1. Add every secret below under Settings → Secrets and variables → Actions.
+2. Bump the version (`npm run set-version`), update [CHANGELOG.md](../CHANGELOG.md), and merge that through a pull request.
+3. Tag the merge commit as `vX.Y.Z` (or `vX.Y.Z-beta.N` for a beta) and push the tag.
+4. In the Actions tab, open **Release**, choose **Run workflow**, set **Use workflow from** to that tag, and run it. Any other ref fails immediately.
+
+| Secret | Needed for |
+| --- | --- |
+| `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` | Signing the macOS app |
+| `APPLE_API_KEY`, `APPLE_API_KEY_P8`, `APPLE_API_ISSUER` | Notarizing the macOS app |
+| `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `TAURI_UPDATER_PUBKEY` | Signing and verifying updater packages (always required) |
+| `TAURI_UPDATER_ENDPOINT` | Optional. Overrides the default GitHub Releases feed for stable builds |
+| `R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Optional for stable, required for beta (see above) |
+
 Read [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines and checks. The experimental remote host has its own [build and packaging instructions](remote-access.md#release-packaging).
