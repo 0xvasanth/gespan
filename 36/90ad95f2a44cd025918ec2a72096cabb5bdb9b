@@ -1,0 +1,30 @@
+src/features/board/ui/kanban/KanbanBoard.tsx
+  s_0de52fe47ecaaa::t_ba96f75340435b 64-65,92-98,115,167,251
+src/features/board/ui/BoardView.test.ts
+  s_0de52fe47ecaaa::t_4e440c893f0429 278-299
+src/features/board/ui/kanban/KanbanColumn.tsx
+  s_0de52fe47ecaaa::t_ba96f75340435b 32,41,99
+src/features/board/ui/kanban/KanbanCard.tsx
+  s_0de52fe47ecaaa::t_ba96f75340435b 10-11,16,21,42-54
+src/features/board/ui/kanban/KanbanBoard.test.ts
+  s_0de52fe47ecaaa::t_4e440c893f0429 211-229,232-251
+  s_0de52fe47ecaaa::t_11c4059930ea1e 230-231
+src/features/board/ui/BoardView.tsx
+  s_0de52fe47ecaaa::t_ba96f75340435b 515
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3690ad95f2a44cd025918ec2a72096cabb5bdb9b",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
