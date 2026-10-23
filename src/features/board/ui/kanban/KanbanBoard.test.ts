@@ -130,4 +130,165 @@ describe("KanbanBoard", () => {
     expect(container.querySelector("[data-dragging]")).toBeNull();
     expect(container.querySelector("[data-over]")).toBeNull();
   });
+
+  describe("keyboard drag", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    const liveRegion = () =>
+      document.querySelector("[id^='DndLiveRegion']")?.textContent ?? "";
+
+    function key(target: EventTarget, code: string, k: string) {
+      act(() => {
+        target.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            code,
+            key: k,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+    }
+
+    const flush = () =>
+      act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+    // happy-dom has no layout: lay columns out 300px apart and stack cards.
+    function stubLayout() {
+      const rect = (x: number, y: number, width: number, height: number) =>
+        ({
+          x,
+          y,
+          left: x,
+          top: y,
+          width,
+          height,
+          right: x + width,
+          bottom: y + height,
+          toJSON() {},
+        }) as DOMRect;
+      vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+        function (this: Element) {
+          const section = this.closest("[data-kanban-column]");
+          // The drag overlay (portalled to body) starts over c12's slot.
+          if (!section) return rect(6, 120, 268, 60);
+          const sections = [
+            ...container.querySelectorAll("[data-kanban-column]"),
+          ];
+          const x = sections.indexOf(section) * 300;
+          if (this === section) return rect(x, 0, 280, 500);
+          if (this.hasAttribute("data-kanban-card")) {
+            const index = [...this.parentElement!.children].indexOf(this);
+            return rect(x + 6, 50 + index * 70, 268, 60);
+          }
+          if (
+            this.querySelector("[data-kanban-card]") ||
+            this.matches(".overflow-y-auto")
+          ) {
+            return rect(x, 40, 280, 420);
+          }
+          return rect(x, 0, 280, 36);
+        },
+      );
+    }
+
+    // The keyboard sensor binds its keydown listener on the next tick.
+    async function pickUp(cardId: string) {
+      const el = container.querySelector<HTMLElement>(
+        `[data-kanban-card='${cardId}']`,
+      )!;
+      act(() => el.focus());
+      key(el, "Space", " ");
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+      return el;
+    }
+
+    it("announces cancel with the drag-start position", async () => {
+      render();
+      const el = await pickUp("c12");
+      expect(container.querySelector("[data-dragging='']")).not.toBeNull();
+      key(el, "Escape", "Escape");
+      await flush();
+      expect(liveRegion()).toBe(
+        "Moving card #12 was cancelled. It is back in Backlog, position 2 of 2.",
+      );
+      expect(container.querySelector("[data-dragging]")).toBeNull();
+    });
+
+    it("shows a detail that arrived mid-drag after cancel", async () => {
+      const props = render();
+      const el = await pickUp("c12");
+      const fresh: BoardDetail = {
+        ...detail,
+        cards: [
+          ...detail.cards,
+          {
+            ...detail.cards[0],
+            id: "c13",
+            number: 13,
+            title: "Card 13",
+            position: 2,
+          },
+        ],
+      };
+      act(() =>
+        root.render(createElement(KanbanBoard, { ...props, detail: fresh })),
+      );
+      key(el, "Escape", "Escape");
+      await flush();
+      const backlog = container.querySelector(
+        "[data-kanban-column='backlog']",
+      )!;
+      expect(
+        [...backlog.querySelectorAll("[data-card]")].map((c) =>
+          c.getAttribute("data-card"),
+        ),
+      ).toEqual(["c11", "c12", "c13"]);
+      expect(props.onCardMove).not.toHaveBeenCalled();
+    });
+
+    it("cancel after a cross-column preview announces the original column", async () => {
+      stubLayout();
+      const props = render();
+      const el = await pickUp("c12");
+      key(el, "ArrowRight", "ArrowRight");
+      await flush();
+      const progress = container.querySelector(
+        "[data-kanban-column='progress']",
+      )!;
+      // The preview moved the card into In Progress.
+      expect(progress.querySelector("[data-kanban-card='c12']")).not.toBeNull();
+      // The card remounted in another column, so press Escape on the document.
+      key(document, "Escape", "Escape");
+      await flush();
+      expect(liveRegion()).toBe(
+        "Moving card #12 was cancelled. It is back in Backlog, position 2 of 2.",
+      );
+      const backlog = container.querySelector(
+        "[data-kanban-column='backlog']",
+      )!;
+      expect(backlog.querySelector("[data-kanban-card='c12']")).not.toBeNull();
+      expect(props.onCardMove).not.toHaveBeenCalled();
+    });
+
+    it("shows a detail that arrived mid-drag after a same-place drop", async () => {
+      stubLayout();
+      const props = render();
+      const el = await pickUp("c12");
+      const fresh: BoardDetail = {
+        ...detail,
+        cards: detail.cards.filter((c) => c.id !== "c21"),
+      };
+      act(() =>
+        root.render(createElement(KanbanBoard, { ...props, detail: fresh })),
+      );
+      key(el, "Space", " ");
+      await flush();
+      expect(liveRegion()).toBe(
+        "Dropped card #12 in Backlog, position 2 of 2.",
+      );
+      expect(props.onCardMove).not.toHaveBeenCalled();
+      expect(container.querySelector("[data-kanban-card='c21']")).toBeNull();
+    });
+  });
 });

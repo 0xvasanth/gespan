@@ -34,18 +34,22 @@ import {
 } from "./announcements";
 import { KanbanColumn } from "./KanbanColumn";
 import {
-  applyCardMove,
-  applyColumnMove,
   columnCards,
-  type DragKind,
   type DropTarget,
   dragDataOf,
-  finalCardTarget,
-  resolveCardDrop,
-  resolveColumnDrop,
   sortedColumns,
   toDropRef,
 } from "./kanbanMove";
+import {
+  createSession,
+  type DragSession,
+  sessionCancel,
+  sessionDetailChanged,
+  sessionEnd,
+  sessionOver,
+  sessionStart,
+  shownBoard,
+} from "./kanbanSession";
 import { useReducedMotion } from "./useReducedMotion";
 
 export type KanbanBoardProps = {
@@ -58,8 +62,6 @@ export type KanbanBoardProps = {
   /** Rendered after the last column inside the scroller (the add-column button). */
   trailing?: ReactNode;
 };
-
-type ActiveDrag = { kind: DragKind; id: string };
 
 // Cards collide with cards and column bodies; columns only with columns.
 const collisionDetection: CollisionDetection = (args) => {
@@ -102,16 +104,15 @@ export function KanbanBoard({
   trailing,
 }: KanbanBoardProps) {
   const reducedMotion = useReducedMotion();
-  const [local, setLocal] = useState<BoardDetail | null>(null);
-  const [active, setActive] = useState<ActiveDrag | null>(null);
-  const [seen, setSeen] = useState(detail);
-  // A fresh `detail` replaces the optimistic copy, except mid-drag.
-  if (seen !== detail) {
-    setSeen(detail);
-    if (!active) setLocal(null);
+  const [session, setSession] = useState(() => createSession(detail));
+  if (session.detail !== detail) {
+    setSession(sessionDetailChanged(session, detail));
   }
-  const shown = local ?? detail;
+  const shown = shownBoard(session);
 
+  // Announcements run inside dnd-kit's event, after our handler but before
+  // React commits: `current` is the board as rendered, and `snapshot` is set
+  // synchronously at drag start and kept until the next one.
   const snapshotRef = useRef<BoardDetail | null>(null);
   const shownRef = useRef(shown);
   useLayoutEffect(() => {
@@ -139,74 +140,42 @@ export function KanbanBoard({
     () => new Map(columns.map((c) => [c.id, columnCards(shown, c.id)])),
     [columns, shown],
   );
+  const drag = session.drag;
   const activeCard =
-    active?.kind === "card"
-      ? (shown.cards.find((c) => c.id === active.id) ?? null)
+    drag?.kind === "card"
+      ? (shown.cards.find((c) => c.id === drag.id) ?? null)
       : null;
 
-  function finish() {
-    setActive(null);
-    snapshotRef.current = null;
-  }
-
-  // Back to the board as it was at drag start.
-  function restore(snapshot: BoardDetail) {
-    setLocal(snapshot === detail ? null : snapshot);
+  function update(next: DragSession) {
+    snapshotRef.current = next.lastSnapshot;
+    setSession(next);
   }
 
   function handleDragStart({ active: dragged }: DragStartEvent) {
     const data = dragDataOf(dragged);
-    if (!data || data.kind === "column-body") return;
-    snapshotRef.current = shown;
-    setActive({
-      kind: data.kind,
-      id: data.kind === "card" ? data.cardId : data.columnId,
-    });
-  }
-
-  function handleDragOver({ active: dragged, over }: DragOverEvent) {
-    const data = dragDataOf(dragged);
-    const ref = toDropRef(over);
-    if (data?.kind !== "card" || !ref) return;
-    // Only cross-column moves need a preview; SortableContext animates the rest.
-    setLocal((prev) => {
-      const current = prev ?? detail;
-      const card = current.cards.find((c) => c.id === data.cardId);
-      const target = resolveCardDrop(
-        current,
-        data.cardId,
-        ref.overId,
-        ref.overKind,
-      );
-      if (!card || !target || target.columnId === card.columnId) return prev;
-      return applyCardMove(current, data.cardId, target);
-    });
-  }
-
-  function handleDragEnd({ active: dragged, over }: DragEndEvent) {
-    const data = dragDataOf(dragged);
-    const snapshot = snapshotRef.current ?? detail;
-    finish();
     if (data?.kind === "card") {
-      const to = finalCardTarget(snapshot, shown, data.cardId, toDropRef(over));
-      if (!to) {
-        restore(snapshot);
-        return;
-      }
-      setLocal(applyCardMove(snapshot, data.cardId, to));
-      onCardMove(data.cardId, to);
+      update(sessionStart(session, { kind: "card", id: data.cardId }));
     } else if (data?.kind === "column") {
-      const ref = toDropRef(over);
-      const index = ref && resolveColumnDrop(shown, data.columnId, ref.overId);
-      if (index == null) return;
-      setLocal(applyColumnMove(shown, data.columnId, index));
-      onColumnMove(data.columnId, index);
+      update(sessionStart(session, { kind: "column", id: data.columnId }));
+    }
+  }
+
+  function handleDragOver({ over }: DragOverEvent) {
+    const ref = toDropRef(over);
+    setSession((s) => sessionOver(s, ref));
+  }
+
+  function handleDragEnd({ over }: DragEndEvent) {
+    const { session: next, commit } = sessionEnd(session, toDropRef(over));
+    update(next);
+    if (commit?.kind === "card") onCardMove(commit.cardId, commit.to);
+    else if (commit?.kind === "column") {
+      onColumnMove(commit.columnId, commit.index);
     }
   }
 
   function handleDragCancel() {
-    restore(snapshotRef.current ?? detail);
-    finish();
+    update(sessionCancel(session));
   }
 
   return (
@@ -226,7 +195,7 @@ export function KanbanBoard({
     >
       <div
         data-kanban-board=""
-        data-dragging={active ? active.kind : undefined}
+        data-dragging={drag ? drag.kind : undefined}
         className="flex h-full min-h-0 items-start gap-2 overflow-x-auto px-4 py-3"
       >
         <SortableContext
