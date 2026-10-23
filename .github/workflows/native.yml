@@ -38,6 +38,7 @@ on:
       - 'CHANGELOG.md'
       - 'docs/native/**'
       - 'src-tauri/macos/AppIcon.icon/Assets/icon.png'
+      - 'tests/fixtures/claude/resumed-background-agent.jsonl'
 
 permissions:
   contents: read
