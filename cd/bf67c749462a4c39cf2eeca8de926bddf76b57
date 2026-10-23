@@ -1,0 +1,930 @@
+crates/mobile-link/Cargo.toml
+  s_a58cfe644461b5::t_a9b51e2ef90974 2
+src-tauri/src/cursor_store.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 324
+src-tauri/src/macos.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 61-64,412,753,845,912,923,933,966,968,970,1033,1039,1138,1142,1151-1152,1166-1167,1180-1182
+src-tauri/src/mono_chat/menu_bar.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 51,179
+src/app/model/updaterConfig.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 53-54,71,74,91,127
+src/features/sessions/model/attachmentsPreparation.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 27
+src/integrations/harness/core/apply.ts
+  s_a58cfe644461b5::t_88b23d748f541f 451,463
+src/features/connections/model/remoteOutbox.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 42
+src/features/skills/model/skills.ts
+  s_a58cfe644461b5::t_88b23d748f541f 29,32,78,96,111,345
+src/features/sessions/data/sessionStore.ts
+  s_a58cfe644461b5::t_88b23d748f541f 985
+src-tauri/src/ssh_askpass.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 13-14,138
+tests/browser/workspace-performance.spec.ts
+  s_a58cfe644461b5::t_88b23d748f541f 18,26,134
+src/features/projects/model/projectGroups.ts
+  s_a58cfe644461b5::t_88b23d748f541f 6-7
+src/features/providers/model/providerBinaryPaths.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 14
+src/integrations/harness/providers/hermes/hermesProtocol.ts
+  s_a58cfe644461b5::t_88b23d748f541f 47
+src/integrations/harness/providers/opencode/opencodeCatalog.ts
+  s_a58cfe644461b5::t_88b23d748f541f 56,88
+crates/mobile-link/src/transport.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 275,296,913
+host/workspace.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 32,42,100,190,211,278,312
+src-tauri/src/reminders.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 11-12,389,537
+host/child-backend.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 12,175,221
+src/app/shell/WhatsNewDialog.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 43
+src/features/mobile/model/mobileAttachments.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 10,26
+src/features/monos/model/monoRotation.ts
+  s_a58cfe644461b5::t_88b23d748f541f 213
+src/features/sessions/model/streamingPerformance.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 8,14,69
+src/features/inbox/model/ciRepairTracking.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 132
+src/integrations/harness/core/availability.ts
+  s_a58cfe644461b5::t_88b23d748f541f 77
+src/integrations/harness/providers/grok/grokText.ts
+  s_a58cfe644461b5::t_88b23d748f541f 20,211,300
+src/platform/tauri/fs.ts
+  s_a58cfe644461b5::t_88b23d748f541f 159,464
+src-tauri/src/checkpoint.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 1485,1500-1503,1513-1514
+.github/workflows/release.yml
+  s_a58cfe644461b5::t_d0247384d5b8cb 139-140,224,226-227,229-230,232,251,305-306,318,320-321,323-325,334,344-347,362-363,370
+host/package.mjs
+  s_a58cfe644461b5::t_81d14e6860c847 126,128,135,140,143,159
+src-tauri/src/codex_mono_store.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 24,37,111,160,164,176,506,599,739,897
+src/app/shell/GithubStarPrompt.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 4-5,9-10,61,79,83,124
+src/features/sessions/model/sessionFilters.ts
+  s_a58cfe644461b5::t_88b23d748f541f 35,48
+src/integrations/harness/core/authSupport.ts
+  s_a58cfe644461b5::t_88b23d748f541f 13
+src/features/connections/model/remoteProjects.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 17,19,26-27,40,54,56,71
+src/features/workspace/model/tabGroups.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 362,387,391-392,400,411,415,421,427-428,435,438
+src/integrations/harness/providers/opencode/opencodeTitle.ts
+  s_a58cfe644461b5::t_88b23d748f541f 23
+mobile/package.json
+  s_a58cfe644461b5::t_81d14e6860c847 2
+src-tauri/tauri.windows.conf.json
+  s_a58cfe644461b5::t_81d14e6860c847 7
+src/features/sessions/model/session.ts
+  s_a58cfe644461b5::t_88b23d748f541f 335-336
+src/features/connections/model/connections.ts
+  s_a58cfe644461b5::t_88b23d748f541f 16-18,23-24,27-28,84,292,363
+src/features/sessions/ui/wordFade.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 9
+src/features/notifications/model/notificationProjects.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 116
+src-tauri/tauri.linux.conf.json
+  s_a58cfe644461b5::t_81d14e6860c847 7
+src/features/connections/ui/ConnectionsSettings.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 215
+src/features/orchestration/model/orchestrationPlan.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 153,164
+src-tauri/src/pi_usage.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 218,332
+src/features/agent-app/model/sessionConversation.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 35-36,92
+src/features/sessions/data/sessionHistory.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 52,241,245-246,251,260,276,288,293
+package.json
+  s_a58cfe644461b5::t_2cf5b7becfc65e 16
+  s_a58cfe644461b5::t_2b300f08e1f0c8 2
+src/features/settings/model/projectSidebarTab.ts
+  s_a58cfe644461b5::t_88b23d748f541f 4
+host/cli.ts
+  s_a58cfe644461b5::t_88b23d748f541f 50,78,300
+src/features/automations/model/automations.ts
+  s_a58cfe644461b5::t_88b23d748f541f 5-6
+src/features/sessions/model/editLastTurn.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 101
+host/workspace-commands.ts
+  s_a58cfe644461b5::t_88b23d748f541f 350,723
+src/features/monos/model/monoMigration.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 21,23,30,53
+src/app/model/releaseNotes.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 39
+src/features/notifications/model/notifications.ts
+  s_a58cfe644461b5::t_88b23d748f541f 11,16,19,173
+src/features/quick-composer/ui/QuickComposer.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 616
+src/integrations/harness/index.ts
+  s_a58cfe644461b5::t_88b23d748f541f 35
+src/integrations/harness/providers/codex/codexGit.ts
+  s_a58cfe644461b5::t_88b23d748f541f 66,92
+src/features/files/ui/FilePane.reviews.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 60
+src-tauri/src/pasteboard.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 382,472
+mobile/src/features/sessions/NativeTranscript.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 70,167-168
+src/features/connections/ui/ConnectionsSettings.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 222,248,346,350,447
+src/features/sessions/model/projectProviders.ts
+  s_a58cfe644461b5::t_88b23d748f541f 11,14
+src/integrations/harness/providers/codex/codexTitle.ts
+  s_a58cfe644461b5::t_88b23d748f541f 26
+src/features/sessions/model/projectProviders.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 66,83,85
+src/integrations/harness/providers/fx/fxCatalog.ts
+  s_a58cfe644461b5::t_88b23d748f541f 19
+host/engine.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 17
+src/features/monos/ui/FloatingMonoChat.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 213-214,245,482,600-601
+src/features/sessions/ui/AgentMarkdownMenu.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 83,93,151,169
+src/features/inbox/model/linkedSessionSeen.ts
+  s_a58cfe644461b5::t_88b23d748f541f 1
+src/app/model/navigationPerformance.ts
+  s_a58cfe644461b5::t_88b23d748f541f 5,25-27
+src/features/settings/model/settings.ts
+  s_a58cfe644461b5::t_88b23d748f541f 18,58,101,653,655,657,659,661,663,665,728,774,815,829,834,855,860,882,885,904-905,940,946,969,983,989,1012,1019,1054,1066-1067,1097,1109,1258-1259
+src/features/inbox/model/jira.ts
+  s_a58cfe644461b5::t_88b23d748f541f 67-68
+src/features/skills/ui/SkillPicker.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 12
+src/features/workspace/ui/TabCloseMotion.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 70,224,327
+src/integrations/harness/providers/devin/devinText.ts
+  s_a58cfe644461b5::t_88b23d748f541f 17
+tests/browser/performance.config.ts
+  s_a58cfe644461b5::t_88b23d748f541f 5
+src/features/settings/ui/SettingsView.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 273,296,306-307,322,483,509,526,534,677,689,707,741,970,1007,1059,1082,1094,1122,1126
+src-tauri/src/inbox_media.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 11
+src-tauri/src/worktrees.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 417,790
+host/process.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 19,46,80,109
+mobile/src/features/connection/PairingLinkSheet.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 60
+mobile/src/features/sessions/EmptySession.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 14,31,95
+src/features/sessions/model/sessionFolders.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 506,516
+src/integrations/harness/core/auth.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 76,94
+src/integrations/harness/providers/devin/devinCatalog.ts
+  s_a58cfe644461b5::t_88b23d748f541f 18,33
+src/features/sessions/data/sessionStore.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 382,388,724
+src-tauri/src/automations.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 10,774
+src/features/projects/model/projectMascots.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 31-32
+src/features/providers/model/harnessUpdates.ts
+  s_a58cfe644461b5::t_88b23d748f541f 10
+src/features/connections/ui/AddRemoteProjectDialog.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 133
+host/owner.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 8
+src/features/monos/model/monoSpawnedSessions.ts
+  s_a58cfe644461b5::t_88b23d748f541f 2
+  s_a58cfe644461b5::t_915421a7caf472 93
+src/features/orchestration/model/orchestration.ts
+  s_a58cfe644461b5::t_88b23d748f541f 163,174,529,531,544,550,554,833,909
+src/features/providers/model/rateLimits.ts
+  s_a58cfe644461b5::t_88b23d748f541f 348
+src/features/skills/ui/SkillsPage.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 517
+src/features/monos/model/monoSpawnedSessions.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 40,59,81-82,99
+src/features/sessions/model/models.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 245
+src/features/sessions/model/sessionFolders.ts
+  s_a58cfe644461b5::t_88b23d748f541f 8-11
+src/integrations/harness/providers/pi/piFamily.ts
+  s_a58cfe644461b5::t_88b23d748f541f 220
+tests/browser/workspace-performance.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 248-251,432,438,447
+scripts/test-remote-ssh.py
+  s_a58cfe644461b5::t_496180065af06e 22,35,52,54,76,83
+src-tauri/src/mcp.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 781,812,837,880,916,948,974,999,1015,1035,1063,1180,1209
+host/git-worktrees.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 21,88,122
+src/features/inbox/model/linear.ts
+  s_a58cfe644461b5::t_88b23d748f541f 66-67
+src/features/files/ui/FilePicker.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 122,141,160
+src/features/notifications/ui/ResourcePressureNotice.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 281
+src/features/sessions/ui/DocumentImage.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 64,76
+src/integrations/harness/providers/opencode/opencodeProtocol.ts
+  s_a58cfe644461b5::t_88b23d748f541f 134,151
+src/app/shell/UpdateRailCard.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 25
+src-tauri/src/mobile_router.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 2,47,135
+mobile/src/features/connection/invitation.ts
+  s_a58cfe644461b5::t_88b23d748f541f 10,12
+host/large-sync.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 63
+src/features/inbox/ui/InboxView.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 249,285,353,364-365
+src/features/orchestration/model/orchestration.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 26,51,123,246,249,1218-1222,1224-1225,1228-1230
+src-tauri/src/search.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 462
+src/features/sessions/ui/AgentTranscriptErrorDisclosure.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 76,79,81,98,102-103,105,111,115,124
+src/features/monos/model/monoCards.ts
+  s_a58cfe644461b5::t_88b23d748f541f 151,176
+src/integrations/harness/providers/devin/devinProtocol.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 188
+src/integrations/harness/providers/grok/grok.ts
+  s_a58cfe644461b5::t_88b23d748f541f 281,313,330,485,542
+src/features/settings/model/sounds.ts
+  s_a58cfe644461b5::t_88b23d748f541f 9-10,17
+src/integrations/harness/providers/opencode/opencodeText.ts
+  s_a58cfe644461b5::t_88b23d748f541f 32
+src/integrations/harness/providers/pi/piTitle.ts
+  s_a58cfe644461b5::t_88b23d748f541f 27
+src/integrations/harness/providers/grok/grokGit.ts
+  s_a58cfe644461b5::t_88b23d748f541f 66,92
+mobile/scripts/generate-native-transcript-assets.mjs
+  s_a58cfe644461b5::t_81d14e6860c847 76
+src/integrations/harness/providers/devin/devin.ts
+  s_a58cfe644461b5::t_88b23d748f541f 309,407
+src/features/settings/ui/SettingsView.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 930,946,1005,1408,1907,2415,3246,3507-3508
+src-tauri/src/harness.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 1544,1767,2835,3495,3595,3704,3813,3828,3842,3870,3901,3926,3948,3973,4164,4216,4303
+src/integrations/harness/providers/codex/codexCatalog.ts
+  s_a58cfe644461b5::t_88b23d748f541f 18,42,87-88
+src/features/settings/model/projectSidebarTab.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 9,43
+src/integrations/harness/providers/hermes/hermes.ts
+  s_a58cfe644461b5::t_88b23d748f541f 243,270,392,535
+src/app/model/releaseNotes.ts
+  s_a58cfe644461b5::t_88b23d748f541f 13
+host/windows.ts
+  s_a58cfe644461b5::t_88b23d748f541f 72,99,107,113,124
+src/features/inbox/model/githubTasks.ts
+  s_a58cfe644461b5::t_88b23d748f541f 278-280,283-285
+src/features/inbox/model/inboxSeen.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 14
+src/features/monos/ui/MonoActivityView.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 57,68,102
+mobile/src/features/connection/ConnectionProvider.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 39-40,42
+src/features/sessions/ui/agentMarkdownSpacing.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 10
+src/app/shell/UsageProviderChip.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 222,227
+src/features/connections/model/protocol.ts
+  s_a58cfe644461b5::t_88b23d748f541f 244
+src/features/providers/model/accountUsage.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 185
+src/features/settings/model/nativeGlass.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 24,66-67
+src/features/settings/model/workspaceThemes.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 52
+src-tauri/src/provider_session_transfer.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 229
+mobile/src/features/connection/ConnectScreen.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 24,83,88,107
+src/features/projects/model/projectChatBackground.ts
+  s_a58cfe644461b5::t_88b23d748f541f 14,17
+src/app/shell/TitleBar.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 912,915,917
+src/app/shell/SidebarRename.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 257,888-893,897,903,905,907-908,1083,1209
+src-tauri/src/control_cli.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 8,59,74,77,119,142,187,267,296,303,396,398,401,403,407,409,413,416,418,423,443,445,447,618-619,621-622,624-625,628-629
+src/features/artifacts/ui/HtmlArtifactFrame.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 100,116,119,123
+src/features/connections/model/remoteCommands.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 175
+mobile/src/features/mascots/MascotRain.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 62
+src-tauri/src/windows.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 17,177-178,208
+src/features/sessions/model/archiveShortcut.ts
+  s_a58cfe644461b5::t_88b23d748f541f 28
+src/features/sessions/model/operatorCommand.ts
+  s_a58cfe644461b5::t_88b23d748f541f 9,11,20,25,34,44
+src-tauri/src/session_store.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 92,2134,2141,3044,3249,3307,3377
+src-tauri/src/resources.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 223,234
+src/features/projects/model/projectChatBackground.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 11,117
+crates/mobile-link/src/lib.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 27,41,67
+src-tauri/src/control.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 15,115,262,264,386,467-470,476-477,480-481
+host/child-backend.ts
+  s_a58cfe644461b5::t_88b23d748f541f 79,358
+src/features/agent-app/model/sessionConversation.ts
+  s_a58cfe644461b5::t_88b23d748f541f 68-69
+src/features/mobile/ui/MobileSettings.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 42
+src/features/quick-composer/model/quickComposer.ts
+  s_a58cfe644461b5::t_88b23d748f541f 44
+src/features/sessions/model/operatorCommand.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 33,44,56,61
+src/features/sessions/ui/Composer.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 575,1923,2269
+src/features/workspace/model/workspaceTabGroups.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 279,281,386-387,412,465-467,488-489,525,572-573
+src/integrations/harness/providers/claude/claude.ts
+  s_a58cfe644461b5::t_88b23d748f541f 149,1564,1581,1583,1753
+src/features/sessions/ui/modeCommands.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 52
+src/features/monos/floatingMain.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 40-43,63,65,73,75
+src/integrations/harness/providers/codex/codexText.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 33
+src-tauri/src/azure_devops.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 19,1195
+src/integrations/harness/providers/codex/codexText.ts
+  s_a58cfe644461b5::t_88b23d748f541f 5,25,358-359,402
+src/features/sessions/model/transcriptHighlights.ts
+  s_a58cfe644461b5::t_88b23d748f541f 1-2
+src/integrations/harness/providers/hermes/hermesCatalog.ts
+  s_a58cfe644461b5::t_88b23d748f541f 16,29,79
+src/integrations/harness/providers/pi/piCatalog.ts
+  s_a58cfe644461b5::t_88b23d748f541f 34
+src/features/inbox/model/ciRepairTracking.ts
+  s_a58cfe644461b5::t_88b23d748f541f 14
+src/features/sessions/model/btw.ts
+  s_a58cfe644461b5::t_88b23d748f541f 180,384
+src/integrations/harness/core/registry.ts
+  s_a58cfe644461b5::t_88b23d748f541f 61,83,501
+host/cli.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 21,29
+mobile/tests/connection.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 59
+src/integrations/harness/providers/codex/codexLive.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 19,36,186,321,355,374
+src/main.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 28,54-55,57,106
+.github/workflows/ci.yml
+  s_a58cfe644461b5::t_d0247384d5b8cb 244,296,299,302
+src/integrations/harness/providers/claude/claudeTitle.ts
+  s_a58cfe644461b5::t_88b23d748f541f 25
+src/integrations/harness/providers/claude/claudeLive.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 102,1390
+src/shared/lib/nativeContextMenu.ts
+  s_a58cfe644461b5::t_88b23d748f541f 2,32
+src/features/projects/model/projectLocation.ts
+  s_a58cfe644461b5::t_88b23d748f541f 12
+src/shared/lib/emojiData.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 61,64
+src/integrations/harness/providers/opencode/opencodeLive.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 307,312,343
+src/features/inbox/model/githubTasks.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 226,231-232,236,240,242,300-301,304
+src/features/mobile/model/mobileAccountUsage.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 40
+src/integrations/harness/providers/codex/codexProtocol.ts
+  s_a58cfe644461b5::t_88b23d748f541f 361,520
+src/integrations/harness/providers/pi/piSkills.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 114,128,311
+host/browse.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 9
+src/integrations/harness/providers/opencode/opencodeGit.ts
+  s_a58cfe644461b5::t_88b23d748f541f 66,92
+src/integrations/harness/core/auth.ts
+  s_a58cfe644461b5::t_88b23d748f541f 16,50
+mobile/modules/rebase-link/android/build.gradle
+  s_a58cfe644461b5::t_12f49cf243b11e 5-8
+src/features/projects/model/projectData.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 51-52,58,78
+src/integrations/harness/providers/claude/claudeCatalog.ts
+  s_a58cfe644461b5::t_88b23d748f541f 206-208,228,241
+src/features/projects/model/projectLocation.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 38,40,44-45,47,53
+src/integrations/harness/providers/antigravity/antigravityCatalog.ts
+  s_a58cfe644461b5::t_88b23d748f541f 16,28,77
+src/features/quick-composer/model/quickComposer.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 123,127
+src/features/providers/model/rateLimitsFetch.ts
+  s_a58cfe644461b5::t_88b23d748f541f 25,316-317
+mobile/tests/ProjectScreen.test.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 299,343,373
+src/features/orchestration/ui/OrchestrationFlow.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 494,622,880
+mobile/src/features/changes/CommitSheet.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 408
+src/features/sessions/ui/ModelPicker.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 518
+src/features/files/ui/FileEditorCrlfGit.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 55
+host/windows.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 30,67
+src/app/model/updateNotice.ts
+  s_a58cfe644461b5::t_88b23d748f541f 1
+src/features/skills/ui/SkillPicker.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 349,351
+src/features/automations/model/automationEvents.ts
+  s_a58cfe644461b5::t_88b23d748f541f 30
+src/features/source-control/ui/GitChangesPanel.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 90,608
+src/features/sessions/model/archiveShortcut.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 98
+src/app/model/appLifecycle.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 400,402
+src/integrations/harness/core/child.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 153
+src/integrations/harness/providers/opencode/opencodeProtocol.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 155
+mobile/src/ui/theme.ts
+  s_a58cfe644461b5::t_88b23d748f541f 35
+src-tauri/src/worktree_lifecycle.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 81
+src/features/files/ui/FilePreviewSearch.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 15-17
+src/features/projects/model/recents.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 170-172,175,178,181,183
+src/integrations/harness/providers/omp/omp.ts
+  s_a58cfe644461b5::t_88b23d748f541f 26
+src/integrations/harness/providers/pi/piFlavor.ts
+  s_a58cfe644461b5::t_88b23d748f541f 34-35,50-51
+mobile/modules/rebase-link/ios/RebaseLink.podspec
+  s_a58cfe644461b5::t_dbf4352ff4a008 2-18
+tests/browser/theme-transparency.spec.ts
+  s_a58cfe644461b5::t_88b23d748f541f 14-15,76
+src/features/sessions/model/sessionFolderCommand.ts
+  s_a58cfe644461b5::t_88b23d748f541f 9
+src/app/shell/Sidebar.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 1532-1533,1678
+src/features/sessions/ui/MessageQueue.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 29,55
+src/features/skills/model/createSkill.ts
+  s_a58cfe644461b5::t_88b23d748f541f 1,5,9,12
+mobile/modules/rebase-link/expo-module.config.json
+  s_a58cfe644461b5::t_b0578b5c43a9aa 3-5
+src/features/monos/model/monoFiles.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 114,119-120,236,241
+src/shared/lib/emojiData.ts
+  s_a58cfe644461b5::t_88b23d748f541f 140-141
+src-tauri/src/background_work.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 130,143
+src/features/mobile/ui/PairPhoneDialog.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 23,74,87
+tests/browser/right-panel-graph.spec.ts
+  s_a58cfe644461b5::t_88b23d748f541f 10-13
+src-tauri/src/mobile_access.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 4,56,140,214,225,306,407,410,451,494,636,661,695,812,943
+mobile/src/features/workspace/WorkspaceProvider.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 127-128
+src/integrations/harness/providers/grok/grokCatalog.ts
+  s_a58cfe644461b5::t_88b23d748f541f 21,39,49,54,98
+src/features/inbox/model/inboxFilters.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 667
+src/features/providers/model/providerAccounts.ts
+  s_a58cfe644461b5::t_88b23d748f541f 4-6
+src-tauri/src/notifications.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 17,123-124,292,449,453
+mobile/src/features/connection/useProjectChanges.ts
+  s_a58cfe644461b5::t_88b23d748f541f 41
+src/features/terminal/model/terminalLayout.ts
+  s_a58cfe644461b5::t_88b23d748f541f 120
+src/features/sessions/model/quoteDraft.ts
+  s_a58cfe644461b5::t_88b23d748f541f 1
+src/features/notes/notes.ts
+  s_a58cfe644461b5::t_88b23d748f541f 59-60
+src/features/settings/model/appearance.ts
+  s_a58cfe644461b5::t_88b23d748f541f 19-42,44-49,56,102,113,116,122,167
+src/integrations/harness/providers/antigravity/antigravityLive.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 263
+src/integrations/harness/providers/codex/codexQuestions.ts
+  s_a58cfe644461b5::t_88b23d748f541f 67
+src-tauri/src/fs.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 164,1264,1301,1303-1304,1309,1312,1326,1328,1332,2804,2877,3412,4344,5782,6036,6166,6709-6710,6745,6862,7262-7263,7301,7303,7309-7312,8487-8488,8534,8542,8544,8550,8557,8562,8703-8704,8706,9505
+src-tauri/src/quick_composer.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 6-7,517,528,567,579,612,656,768,792
+src/features/sessions/ui/TranscriptFind.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 119
+src/features/inbox/model/gitlab.ts
+  s_a58cfe644461b5::t_88b23d748f541f 67
+src/features/notifications/model/notifications.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 12,176,210,232
+src/integrations/harness/providers/fx/fx.ts
+  s_a58cfe644461b5::t_88b23d748f541f 256,279,475
+src/shared/ui/PrivateEmail.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 57,59
+src/features/monos/ui/MonoChangesView.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 411
+src/features/files/ui/FilePicker.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 41
+src/features/inbox/model/inboxSeen.ts
+  s_a58cfe644461b5::t_88b23d748f541f 4-5
+src/features/quick-composer/model/quickComposerDefaults.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 20-21
+src/features/terminal/ui/TerminalView.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 384,461,466
+src-tauri/tauri.conf.json
+  s_a58cfe644461b5::t_00205d2bffe895 17
+  s_a58cfe644461b5::t_383ecde8bd46cd 3
+  s_a58cfe644461b5::t_a87861a13620d0 5
+src/features/settings/model/appearance.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 52-62,95,101,116,120
+src/app/hooks/useIdleSessionDetach.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 107
+src/features/connections/model/remoteSessionTabs.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 7,12,35,44-45,56
+src-tauri/src/rate_limits.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 368,791,793,797
+mobile/src/features/sessions/DictationBar.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 116
+src/integrations/harness/providers/cursor/cursorTitle.ts
+  s_a58cfe644461b5::t_88b23d748f541f 28
+tests/browser/fixtures/resource-load.py
+  s_a58cfe644461b5::t_81d14e6860c847 24
+src/features/connections/ui/RemoteSession.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 129
+src/features/sessions/model/models.ts
+  s_a58cfe644461b5::t_88b23d748f541f 225-231
+src-tauri/src/link_preview.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 13
+crates/mobile-link/src/ffi.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 212,221,223,230
+scripts/repack-appimage.sh
+  s_a58cfe644461b5::t_d0dc3e062a8f1d 19,53,79-80,91,110,117
+host/provider-transport.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 99,282
+src/features/skills/model/skills.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 247
+host/workspace-commands.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 29
+src/integrations/harness/providers/codex/codexProtocol.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 61
+src/integrations/harness/providers/cursor/cursorGit.ts
+  s_a58cfe644461b5::t_88b23d748f541f 70,96
+src/features/files/ui/FileViewMode.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 155
+src/features/orchestration/model/orchestrationWorkspace.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 36
+src/features/sessions/model/inFlight.ts
+  s_a58cfe644461b5::t_88b23d748f541f 8,66,68
+src/integrations/harness/providers/claude/claudeText.ts
+  s_a58cfe644461b5::t_88b23d748f541f 34
+src/features/files/ui/FileTree.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 126
+src-tauri/src/pty.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 270,401
+src/features/providers/ui/ProviderAccountUsage.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 46,48
+tests/browser/layout-opt-in.spec.ts
+  s_a58cfe644461b5::t_88b23d748f541f 54-55,94,148,185
+src/features/settings/model/displayPrefs.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 18,26,34
+src/features/monos/model/monoHabits.ts
+  s_a58cfe644461b5::t_88b23d748f541f 303,315
+src/features/notifications/model/notificationPreferences.ts
+  s_a58cfe644461b5::t_88b23d748f541f 26-27
+src/features/agent-app/model/agentApp.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 717
+src-tauri/src/gitlab.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 14
+src-tauri/src/lib.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 68,395-396,656
+src-tauri/src/menu.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 126,130,135,516,519,537
+host/opencode-v2-transport.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 46
+host/server.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 36,502
+host/windows-bootstrap.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 26,39,48,79,87,96,117-118,129,141
+src/app/model/updateNotice.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 35,37
+src/features/agent-app/model/agentApp.ts
+  s_a58cfe644461b5::t_88b23d748f541f 410
+src/features/connections/model/remoteProjects.ts
+  s_a58cfe644461b5::t_88b23d748f541f 17-18
+src/features/inbox/model/azureDevOps.ts
+  s_a58cfe644461b5::t_88b23d748f541f 68
+src/features/mobile/ui/MobileSettings.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 157
+src/features/providers/model/providerBinaryPaths.ts
+  s_a58cfe644461b5::t_88b23d748f541f 6
+src/features/notifications/model/notificationProjects.ts
+  s_a58cfe644461b5::t_88b23d748f541f 13-14
+src/features/files/model/fileViewMode.ts
+  s_a58cfe644461b5::t_88b23d748f541f 3
+src/features/sessions/ui/AgentTranscript.inlineWork.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 351
+src-tauri/src/tray.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 15-16,20
+src/features/sessions/ui/AgentTranscript.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 37,168-171,2573,2577,2705,2769,2883-2884,3712,3727,3782-3783,4593,4596,4673-4674,4677-4678,4684,4696,4713,4726,4731,4894,4898
+src/features/sessions/ui/Composer.paste.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 92
+src/features/sessions/ui/MarkdownDocumentPreview.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 54
+src/features/settings/model/displayPrefs.ts
+  s_a58cfe644461b5::t_88b23d748f541f 4-8,17,19,22,24,79,86,88
+src/features/sessions/model/plan.ts
+  s_a58cfe644461b5::t_88b23d748f541f 9
+src/features/settings/model/settings.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 55-69
+src/features/notifications/model/notificationPreferences.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 155,166
+src/features/settings/model/sounds.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 25
+mobile/src/features/background/CarvedMark.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 4,7,17,22,30,33
+src/features/settings/model/uiScale.ts
+  s_a58cfe644461b5::t_88b23d748f541f 3,15
+src/app/model/appLifecycle.ts
+  s_a58cfe644461b5::t_88b23d748f541f 170,362-363,471
+src/app/shell/GithubStarPrompt.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 18-19,64,68,85,91,106,145
+src/features/sessions/model/linkPreview.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 38,42,44,47
+host/service.ts
+  s_a58cfe644461b5::t_88b23d748f541f 14,88,209,212,224,254,299,308,314
+src/integrations/harness/providers/codex/codex.ts
+  s_a58cfe644461b5::t_88b23d748f541f 16,476,666-667,678,942,1455
+src/integrations/harness/providers/codex/codexStore.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 20-21
+src/features/sessions/model/checkpoint.ts
+  s_a58cfe644461b5::t_88b23d748f541f 34
+src-tauri/src/harness_updates.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 9,25,70
+src/features/sessions/ui/hardBreaks.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 7
+src/features/inbox/model/inboxFilters.ts
+  s_a58cfe644461b5::t_88b23d748f541f 112-114
+src-tauri/src/mono_chat.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 283,293,480,571,705
+src/features/terminal/model/terminalClose.ts
+  s_a58cfe644461b5::t_88b23d748f541f 34,46,54
+tests/browser/app-view-tabs.spec.ts
+  s_a58cfe644461b5::t_88b23d748f541f 7
+src-tauri/src/macos_background.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 14,46,120
+src/features/sessions/model/streamingPerformance.ts
+  s_a58cfe644461b5::t_88b23d748f541f 7,106,109,111
+host/build.mjs
+  s_a58cfe644461b5::t_81d14e6860c847 6
+src-tauri/src/quick_composer/screenshots.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 12
+src/features/sessions/model/mcpCommand.ts
+  s_a58cfe644461b5::t_88b23d748f541f 9
+src/integrations/harness/providers/cursor/cursorCatalog.ts
+  s_a58cfe644461b5::t_88b23d748f541f 18,37,47,52,87
+src/features/orchestration/model/orchestrationPlan.ts
+  s_a58cfe644461b5::t_88b23d748f541f 244,249,265,304
+scripts/release-channel.test.cjs
+  s_a58cfe644461b5::t_496180065af06e 62
+tests/browser/resource-pressure.spec.ts
+  s_a58cfe644461b5::t_88b23d748f541f 10
+src/features/sessions/ui/ModelPicker.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 546
+src-tauri/src/artifacts.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 96,205
+src/features/sessions/model/draftCommand.ts
+  s_a58cfe644461b5::t_88b23d748f541f 9
+src/platform/tauri/clipboard.ts
+  s_a58cfe644461b5::t_88b23d748f541f 13,33,91
+src/integrations/harness/providers/pi/pi.ts
+  s_a58cfe644461b5::t_88b23d748f541f 26
+src/features/providers/model/providerAccounts.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 39,66,77,83,91,110
+src/shared/lib/drag.ts
+  s_a58cfe644461b5::t_88b23d748f541f 2
+src-tauri/src/checkpoint/turn/tests.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 11,375
+src/features/workspace/model/tabGroups.ts
+  s_a58cfe644461b5::t_88b23d748f541f 26-31,35,78,723
+src/features/files/model/fileIndex.ts
+  s_a58cfe644461b5::t_88b23d748f541f 325
+src/integrations/harness/providers/claude/claudeGit.ts
+  s_a58cfe644461b5::t_88b23d748f541f 66,92
+src/integrations/harness/core/types.ts
+  s_a58cfe644461b5::t_88b23d748f541f 168,170,174,179
+mobile/tests/SessionToolbar.test.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 148,189
+src/features/sessions/model/sessionWorkspaceLifecycle.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 17,42-43,72-73,119-120,125-126,174,177,181-182,186-187,189-190,217,232
+host/bootstrap.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 23,31-32,45,49,59-63,90,122
+src/features/monos/ui/MonoChangesView.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 367
+src/features/projects/model/projectLogos.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 36
+src/features/projects/model/projectOpenRun.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 138,141
+host/git-branches.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 19
+src/features/sessions/model/compact.ts
+  s_a58cfe644461b5::t_88b23d748f541f 9
+src/features/sessions/ui/AgentTranscript.search.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 139,144
+src/app/shell/WhatsNewDialog.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 13
+src-tauri/src/main.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 4,8,13,17
+src/features/mobile/hooks/useMobileWorkspace.ts
+  s_a58cfe644461b5::t_88b23d748f541f 164,228
+src-tauri/Cargo.toml
+  s_a58cfe644461b5::t_ecb7ad636ead75 7
+  s_a58cfe644461b5::t_7cdd7418d9ff0b 19
+  s_a58cfe644461b5::t_0f8a1ed82d2249 2
+  s_a58cfe644461b5::t_c14c5cb90bbd47 5
+  s_a58cfe644461b5::t_13ac5a5dae3ebd 12
+src/features/skills/ui/SkillsPage.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 337,346,414
+host/engine.ts
+  s_a58cfe644461b5::t_88b23d748f541f 743,773
+mobile/tests/WorkspaceProvider.test.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 234-235,240,252-253
+src/features/skills/model/skillCatalog.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 93,355,358
+src/integrations/harness/providers/grok/grokTitle.ts
+  s_a58cfe644461b5::t_88b23d748f541f 23
+src/features/sessions/ui/AgentTranscript.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 67,69,74,76-77,80,82,85,101-105,108-109,112-113,130,141,150,155,157,161,165,167-168,1009,1017-1018
+src-tauri/src/remote_ssh.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 73,242,246,401,419,422,429-430,652,654,706-708,716,722,748,754,813,817,822,826,830,838,892
+src/features/sessions/model/sessionReminders.ts
+  s_a58cfe644461b5::t_88b23d748f541f 4-5
+src/features/settings/model/settings.flags.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 42,49,53,56,60,63,67,70,74,77,84,88,91,98,105,112,119,123
+src/features/sessions/ui/AgentMarkdown.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 191,197-199,773
+src/features/source-control/model/worktrees.ts
+  s_a58cfe644461b5::t_88b23d748f541f 90
+src/integrations/harness/providers/cursor/cursor.ts
+  s_a58cfe644461b5::t_88b23d748f541f 240,318
+src/app/App.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 341,1059,1976,2965,5848,5857,5893,6023,6074,7361,7741,8332,8399,10688,11197,11218,12379,12381,12972,12997,13085
+src/shared/lib/nativeContextMenu.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 81
+host/opencode-transport.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 64
+src/features/sessions/ui/Composer.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 245,320,1693,1748
+mobile/scripts/build-native-link.mjs
+  s_a58cfe644461b5::t_81d14e6860c847 35,57,62-63,67,74-76,88-89,100,103,109,137,142-143
+scripts/assert-appimage-host-libs.sh
+  s_a58cfe644461b5::t_d0dc3e062a8f1d 4,8
+src-tauri/src/skills.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 606,688,708
+mobile/src/features/connection/nativeLink.ts
+  s_a58cfe644461b5::t_88b23d748f541f 8
+src/features/terminal/model/terminalClose.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 16
+src/integrations/harness/providers/opencode/opencode.ts
+  s_a58cfe644461b5::t_88b23d748f541f 479
+src/features/sessions/model/orchestratorCommand.ts
+  s_a58cfe644461b5::t_88b23d748f541f 9
+src/integrations/harness/providers/pi/piSkills.ts
+  s_a58cfe644461b5::t_88b23d748f541f 50
+src-tauri/src/devin_usage.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 89
+src/features/notes/ui/NotesView.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 98,234
+src/features/projects/model/recents.ts
+  s_a58cfe644461b5::t_88b23d748f541f 4-9
+src/integrations/harness/core/child.ts
+  s_a58cfe644461b5::t_88b23d748f541f 37,44,74,579
+src/integrations/harness/providers/claude/claudeProtocol.ts
+  s_a58cfe644461b5::t_88b23d748f541f 267,611
+src-tauri/src/checkpoint/turn.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 236,514,563,649,655-658,681
+mobile/src/ui/brand.ts
+  s_a58cfe644461b5::t_88b23d748f541f 1-2,4
+src/features/artifacts/artifacts.ts
+  s_a58cfe644461b5::t_88b23d748f541f 21-22
+src/integrations/harness/providers/cursor/cursorText.ts
+  s_a58cfe644461b5::t_88b23d748f541f 13,203
+src/integrations/harness/providers/devin/devinProtocol.ts
+  s_a58cfe644461b5::t_88b23d748f541f 34,787
+mobile/app.json
+  s_a58cfe644461b5::t_e86072b523d856 18-19
+  s_a58cfe644461b5::t_956cf47186dfc9 12
+  s_a58cfe644461b5::t_8b92f468df645c 16
+  s_a58cfe644461b5::t_6dee89d19ea47f 65
+  s_a58cfe644461b5::t_4498001dbe02bc 3-4
+  s_a58cfe644461b5::t_5e69f13d6baa66 74
+  s_a58cfe644461b5::t_7c0e6d7944c1e3 80
+src/features/settings/ui/QuickComposerShortcutEditor.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 107,117,142,200,224,253,266,290
+src/integrations/harness/providers/omp/ompLive.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 396
+src/app/model/updater.ts
+  s_a58cfe644461b5::t_88b23d748f541f 28,52-53,105,118,137,151,165,176,243
+src/platform/tauri/clipboard.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 97
+src-tauri/src/remote.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 241,427,450,533
+host/service.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 41,45-47,74,85,111,161,192,194
+src/integrations/harness/providers/antigravity/antigravity.ts
+  s_a58cfe644461b5::t_88b23d748f541f 457,480
+src/features/connections/model/remoteCommands.ts
+  s_a58cfe644461b5::t_88b23d748f541f 65
+src/features/monos/model/mono.ts
+  s_a58cfe644461b5::t_88b23d748f541f 57-59,62-63,66-68,242
+src/features/monos/model/monoFiles.ts
+  s_a58cfe644461b5::t_88b23d748f541f 51,315,341-344,349
+src-tauri/src/devin_config.rs
+  s_a58cfe644461b5::t_a6a6bc5a0f857b 225
+src/features/mobile/hooks/useMobileWorkspace.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 69
+src/features/monos/model/monoSessionCompletion.ts
+  s_a58cfe644461b5::t_88b23d748f541f 114
+src/features/monos/ui/MonoProjectCommit.tsx
+  s_a58cfe644461b5::t_88b23d748f541f 116,243
+src/features/source-control/ui/Worktrees.test.ts
+  s_a58cfe644461b5::t_88b23d748f541f 137
+host/owner.ts
+  s_a58cfe644461b5::t_88b23d748f541f 56
+src/features/sessions/model/transcriptActivity.ts
+  s_a58cfe644461b5::t_88b23d748f541f 19
+  s_a58cfe644461b5::t_880bbecf330064 1070
+src/integrations/harness/providers/codex/codexStore.ts
+  s_a58cfe644461b5::t_88b23d748f541f 3,5,77,119,192
+.github/ISSUE_TEMPLATE/bug_report.yml
+  s_a58cfe644461b5::t_42f9e73959184d 2,8,13
+.github/ISSUE_TEMPLATE/config.yml
+  s_a58cfe644461b5::t_7d493b4fb953a1 4
+.github/ISSUE_TEMPLATE/feature_request.yml
+  s_a58cfe644461b5::t_0b4bc3c0fb90d4 2,9,24
+CHANGELOG.md
+  s_a58cfe644461b5::t_5d1b02653d3579 106,125,138,180,242,267,299,422,426,439,462,543,556,604,672,699,718,720,728,739,874,880,910,932,934,942,975,1000,1035,1043,1063-1064,1233,1235,1242,1282,1388,1406,1430,1493-1494,1535-1536,1584-1659
+CONTRIBUTING.md
+  s_a58cfe644461b5::t_cb39fb620b98be 3,13,37
+README.md
+  s_a58cfe644461b5::t_ecc983cb1b92c7 2,5,12,15,23-26,28,41,65,67
+SECURITY.md
+  s_a58cfe644461b5::t_602cfb63bc7ed9 5,7
+docs/agent-access.md
+  s_a58cfe644461b5::t_e75ffc8d7f20d5 5
+docs/building.md
+  s_a58cfe644461b5::t_22a28e027943ed 3,47
+docs/install.md
+  s_a58cfe644461b5::t_221f5fb338d537 3,10,20,23,29,36,44,70-71,76,85
+docs/providers.md
+  s_a58cfe644461b5::t_08f8e06893ecf2 3,17,19,21,23
+docs/remote-access.md
+  s_a58cfe644461b5::t_57c4f194ed4b70 3,11,15,46,51-52,57,74-78,83,87,89,95,120
+index.html
+  s_a58cfe644461b5::t_f3d5d8bc31da84 6-7,12-13,15,17,34,43,106
+mobile/README.md
+  s_a58cfe644461b5::t_838c9ffe969438 1,36
+mobile/modules/rebase-link/android/src/main/java/expo/modules/rebaselink/RebaseLinkModule.kt
+  s_a58cfe644461b5::t_4a3b06eabda7f8 1,6-7,10
+mobile/modules/rebase-link/ios/RebaseLinkModule.swift
+  s_a58cfe644461b5::t_56ed63528b1077 2,4,6,32,35
+mobile/modules/rebase-link/ios/TranscriptArtwork.swift
+  s_a58cfe644461b5::t_12a2694ea15a9a 26,100
+mobile/modules/rebase-link/ios/TranscriptPresentation.swift
+  s_a58cfe644461b5::t_064f1fb6df8436 127
+mobile/modules/rebase-link/ios/TranscriptSession.swift
+  s_a58cfe644461b5::t_e9c4ca819761e0 3,11,14,26,89
+output/visualizations/search-tool-ui.html
+  s_a58cfe644461b5::t_cf447af37ca0df 46-47,54-55
+quick-composer.html
+  s_a58cfe644461b5::t_ea23c12989413e 6
+scripts/bump-version.mjs
+  s_a58cfe644461b5::t_517aecb6dde8d9 35,40,55
+src-tauri/src/remote_bootstrap.sh
+  s_a58cfe644461b5::t_319bd1f12cd126 3-4,9-10,13,15,30,42,45,49,59
+src/features/sessions/model/rebaseToolCall.test.ts
+  s_a58cfe644461b5::t_65200d4c59e59b 3,9,12,14,19,21,26-27,30,34,37,40,48,52,55,59,63,69,77,79,81,84,91-95,97,100,103,106,109,115-116,118,121,123-124,126-127,129
+src/features/sessions/model/rebaseToolCall.ts
+  s_a58cfe644461b5::t_7fa11655fcdc7e 3,85,98,119-120,130,133
+src/features/sessions/ui/RebaseSparkles.tsx
+  s_a58cfe644461b5::t_79024f3b0078c9 37,49,53,66,70
+src/styles/index.css
+  s_a58cfe644461b5::t_b7ddfa8086908e 902,906,1075,1083,1086,1091,1103,1106,1115,1118,1125,1129,1137,1140,1145,1154,1177,1195,1201,1214,1259,1309,1360,1374,1738-1740,3125,3132,3136-3139,3144,3148,3152,3157,3161
+vendor/portable-pty/UPSTREAM.md
+  s_a58cfe644461b5::t_0e4291adf50d38 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cdbf67c749462a4c39cf2eeca8de926bddf76b57",
+  "prompts": {},
+  "sessions": {
+    "s_a58cfe644461b5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce16b3c8-2963-4868-baf6-a77ac6cdb910",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
