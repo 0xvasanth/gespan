@@ -1,5 +1,5 @@
 pub(crate) mod attachments;
-mod burst;
+pub(crate) mod burst;
 pub(crate) mod dates;
 mod drafts;
 #[cfg(test)]

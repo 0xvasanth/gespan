@@ -93,9 +93,9 @@ impl Burst {
     }
 }
 
-struct Bubble {
-    bounds: Bounds<Pixels>,
-    corners: Corners<Pixels>,
+pub(crate) struct Bubble {
+    pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) corners: Corners<Pixels>,
 }
 
 impl Bubble {
@@ -221,30 +221,30 @@ fn hex(rgb: u32, a: f32) -> Hsla {
 }
 
 /// `color-mix(in srgb, color k%, transparent)`, also used to fade by opacity.
-fn mix(color: Hsla, k: f32) -> Hsla {
+pub(crate) fn mix(color: Hsla, k: f32) -> Hsla {
     Hsla {
         a: color.a * k.clamp(0., 1.),
         ..color
     }
 }
 
-type Ease = (f32, f32, f32, f32);
-const EASE_OUT: Ease = (0., 0., 0.58, 1.);
-const EASE_IN_OUT: Ease = (0.42, 0., 0.58, 1.);
+pub(crate) type Ease = (f32, f32, f32, f32);
+pub(crate) const EASE_OUT: Ease = (0., 0., 0.58, 1.);
+pub(crate) const EASE_IN_OUT: Ease = (0.42, 0., 0.58, 1.);
 const RISE: Ease = (0.3, 0.6, 0.4, 1.);
-const SHEEN: Ease = (0.4, 0., 0.2, 1.);
+pub(crate) const SHEEN: Ease = (0.4, 0., 0.2, 1.);
 
-fn ease(p: f32, (x1, y1, x2, y2): Ease) -> f32 {
+pub(crate) fn ease(p: f32, (x1, y1, x2, y2): Ease) -> f32 {
     crate::reveal::bezier(p, x1, y1, x2, y2)
 }
 
 /// An `animation-fill-mode: both` animation's linear progress at `t` ms.
-fn progress(t: f32, delay: f32, duration: f32) -> f32 {
+pub(crate) fn progress(t: f32, delay: f32, duration: f32) -> f32 {
     ((t - delay) / duration).clamp(0., 1.)
 }
 
 /// One property's keyframes, eased per segment as CSS does.
-fn frames(p: f32, stops: &[(f32, f32)], timing: Ease) -> f32 {
+pub(crate) fn frames(p: f32, stops: &[(f32, f32)], timing: Ease) -> f32 {
     let mut previous = stops[0];
     if p <= previous.0 {
         return previous.1;
@@ -271,34 +271,63 @@ impl Rng {
 
 /// turn-mode-halo / monocode-halo: a ring and glow bloom around the bubble.
 fn paint_halo(bubble: &Bubble, t: f32, ring: Hsla, glow: Hsla, window: &mut Window) {
-    let k = frames(
-        progress(t, 150., 2400.),
-        &[(0., 0.), (0.25, 1.), (1., 0.)],
-        EASE_OUT,
-    );
-    if k <= 0. {
-        return;
+    let halo = Halo {
+        delay: 150.,
+        duration: 2400.,
+        peak: 0.25,
+        blur: 24.,
+        spread: 3.,
+    };
+    halo.paint(bubble, t, ring, glow, window);
+}
+
+/// A one-shot ring-and-glow box-shadow keyframe: none, a peak, then none.
+pub(crate) struct Halo {
+    pub(crate) delay: f32,
+    pub(crate) duration: f32,
+    pub(crate) peak: f32,
+    pub(crate) blur: f32,
+    pub(crate) spread: f32,
+}
+
+impl Halo {
+    pub(crate) fn paint(
+        &self,
+        bubble: &Bubble,
+        t: f32,
+        ring: Hsla,
+        glow: Hsla,
+        window: &mut Window,
+    ) {
+        let k = frames(
+            progress(t, self.delay, self.duration),
+            &[(0., 0.), (self.peak, 1.), (1., 0.)],
+            EASE_OUT,
+        );
+        if k <= 0. {
+            return;
+        }
+        window.paint_drop_shadows(
+            bubble.bounds,
+            bubble.corners,
+            &[
+                BoxShadow {
+                    color: mix(ring, k),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(k),
+                    inset: false,
+                },
+                BoxShadow {
+                    color: mix(glow, k),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(self.blur * k),
+                    spread_radius: px(self.spread * k),
+                    inset: false,
+                },
+            ],
+        );
     }
-    window.paint_drop_shadows(
-        bubble.bounds,
-        bubble.corners,
-        &[
-            BoxShadow {
-                color: mix(ring, k),
-                offset: point(px(0.), px(0.)),
-                blur_radius: px(0.),
-                spread_radius: px(k),
-                inset: false,
-            },
-            BoxShadow {
-                color: mix(glow, k),
-                offset: point(px(0.), px(0.)),
-                blur_radius: px(24. * k),
-                spread_radius: px(3. * k),
-                inset: false,
-            },
-        ],
-    );
 }
 
 /// Paint the bubble's rounded shape, but only inside `mask`, with a gradient
@@ -330,7 +359,11 @@ fn paint_masked(
 /// gradients have two stops, so each stop pair paints in thin horizontal
 /// strips that follow the band's slant.
 fn paint_sheen(bubble: &Bubble, t: f32, stops: &[(f32, Hsla); 4], window: &mut Window) {
-    let p = progress(t, 300., 1100.);
+    paint_sweep(bubble, progress(t, 300., 1100.), stops, window);
+}
+
+/// A 105deg gradient band crossing the bubble at linear progress `p`.
+pub(crate) fn paint_sweep(bubble: &Bubble, p: f32, stops: &[(f32, Hsla)], window: &mut Window) {
     if p <= 0. || p >= 1. {
         return;
     }
@@ -435,7 +468,7 @@ fn twinkle(p: f32) -> (f32, f32, f32) {
     )
 }
 
-fn paint_dot(center: Point<Pixels>, diameter: f32, color: Hsla, window: &mut Window) {
+pub(crate) fn paint_dot(center: Point<Pixels>, diameter: f32, color: Hsla, window: &mut Window) {
     let r = diameter * 0.5;
     window.paint_quad(
         fill(
@@ -449,7 +482,13 @@ fn paint_dot(center: Point<Pixels>, diameter: f32, color: Hsla, window: &mut Win
     );
 }
 
-fn paint_glow(center: Point<Pixels>, diameter: f32, blur: f32, color: Hsla, window: &mut Window) {
+pub(crate) fn paint_glow(
+    center: Point<Pixels>,
+    diameter: f32,
+    blur: f32,
+    color: Hsla,
+    window: &mut Window,
+) {
     let r = diameter * 0.5;
     window.paint_drop_shadows(
         Bounds::new(
@@ -468,7 +507,12 @@ fn paint_glow(center: Point<Pixels>, diameter: f32, blur: f32, color: Hsla, wind
 }
 
 /// `radial-gradient(circle, spark, color 70%)` on a small round glyph.
-fn paint_orb(center: Point<Pixels>, diameter: f32, colors: (Hsla, Hsla), window: &mut Window) {
+pub(crate) fn paint_orb(
+    center: Point<Pixels>,
+    diameter: f32,
+    colors: (Hsla, Hsla),
+    window: &mut Window,
+) {
     paint_dot(center, diameter, colors.1, window);
     paint_dot(center, diameter * 0.55, mix(colors.0, 0.8), window);
 }

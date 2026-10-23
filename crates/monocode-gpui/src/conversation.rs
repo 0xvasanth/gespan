@@ -122,6 +122,10 @@ pub(crate) struct OpenSessionChanges(pub(crate) crate::review::ReviewTab);
 pub(crate) struct Conversation {
     editing_last_turn: edit_last_turn::State,
     btw: Option<Entity<btw::Btw>>,
+    /// The composer box the /btw sheet morphs out of, and how visible the
+    /// composer is under the sheet.
+    btw_home: (AnchorSlot, f32),
+    _btw_observer: Option<Subscription>,
     pub(crate) summary: Session,
     remote_state: remote::State,
     remote_plans: remote_plans::State,
@@ -541,6 +545,8 @@ impl Conversation {
         Self {
             editing_last_turn: Default::default(),
             btw: None,
+            btw_home: (AnchorSlot::default(), 1.),
+            _btw_observer: None,
             store,
             mono_turn: 0,
             submission_generation: 0,
@@ -2601,8 +2607,6 @@ impl Conversation {
     }
     fn composer(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let radius = 12.;
-        let blur = composer_blur();
-        let fill = composer_fill();
         let command = if self.follow_ups.draft_selected {
             Some(input::Command::Draft)
         } else if self.settings.orchestrator {
@@ -2742,31 +2746,8 @@ impl Conversation {
                         }),
                     )
                     .child(self.completion.read(cx).composer_probe())
-                    .child(
-                        canvas(
-                            |_, _, _| {},
-                            move |bounds, _, window, _| {
-                                let surface = gpui::fill(bounds, fill).corner_radii(px(radius - 1.));
-                                #[cfg(target_os = "macos")]
-                                let surface = if blur > 0. {
-                                    surface.border_color(
-                                        gpui_apple::metal_renderer::backdrop_blur_marker(
-                                            blur * window.scale_factor(),
-                                        ),
-                                    )
-                                } else {
-                                    surface
-                                };
-                                #[cfg(not(target_os = "macos"))]
-                                let _ = blur;
-                                window.paint_quad(surface);
-                            },
-                        )
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full(),
-                    )
+                    .child(self.btw_home.0.probe())
+                    .child(composer_surface(radius))
                     .children(self.attachment_chips(cx))
                     .child(
                         div()
@@ -3111,51 +3092,28 @@ impl Conversation {
             && (!self.preparing_worktree || self.busy || self.stopping)
             && (busy || (has_value && self.loaded))
             && (busy || !draft || (!self.busy && self.follow_ups.state.draft.is_none()));
-        let accent = primary_action(enabled);
-        div()
-            .id("send-or-stop")
-            .role(Role::Button)
-            .aria_label(if busy {
+        send_button(
+            "send-or-stop",
+            if busy {
                 "Stop"
             } else if draft {
                 "Save draft"
             } else {
                 "Send"
-            })
-            .cursor_pointer()
-            .flex_shrink_0()
-            .size(px(26.))
-            .rounded_md()
-            .flex()
-            .items_center()
-            .justify_center()
-            .map(|d| match accent {
-                Some((fill, _)) => d
-                    .bg(fill)
-                    .when(enabled, |d| d.hover(|s| s.bg(fill.blend(content(0.12))))),
-                None => d
-                    .bg(white(if enabled { 1. } else { 0.3 }))
-                    .when(enabled, |d| d.hover(|s| s.bg(white(0.9)))),
-            })
-            .map(|d| {
-                let ink = accent.map_or(black(if enabled { 1. } else { 0.4 }), |(_, ink)| ink);
-                if busy {
-                    d.child(div().size(px(10.)).rounded(px(2.)).bg(ink))
-                } else {
-                    d.child(icon("send", 14.).text_color(ink))
-                }
-            })
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if !enabled {
-                    return;
-                }
-                if busy {
-                    this.stop(cx);
-                } else {
-                    this.send(cx);
-                }
-            }))
+            },
+            busy,
+            enabled,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if !enabled {
+                return;
+            }
+            if busy {
+                this.stop(cx);
+            } else {
+                this.send(cx);
+            }
+        }))
     }
     // EmptySession.tsx: the composer centred under its question, or resting
     // where it will dock once a neighbouring pane squeezes it narrower than
@@ -3604,6 +3562,7 @@ impl Render for Conversation {
                         div()
                             .w_full()
                             .max_w(px(COMPOSER_COLUMN))
+                            .opacity(self.btw_home.1)
                             .flex()
                             .flex_col()
                             .px(px(10.))
@@ -3646,6 +3605,70 @@ fn tool_pill(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div>
         .bg(content(0.1))
         .text_color(content(1.))
         .hover(|s| s.bg(content(0.15)))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+/// `[data-composer-box]::before`: the frosted (or, in light themes, solid)
+/// surface inside the composer's border.
+fn composer_surface(radius: f32) -> impl IntoElement {
+    let blur = composer_blur();
+    let fill = composer_fill();
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let surface = gpui::fill(bounds, fill).corner_radii(px(radius - 1.));
+            #[cfg(target_os = "macos")]
+            let surface = if blur > 0. {
+                surface.border_color(gpui_apple::metal_renderer::backdrop_blur_marker(
+                    blur * window.scale_factor(),
+                ))
+            } else {
+                surface
+            };
+            #[cfg(not(target_os = "macos"))]
+            let _ = blur;
+            window.paint_quad(surface);
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+/// ComposerAction: the solid send button, or a stop square while busy.
+fn send_button(
+    id: &'static str,
+    label: &'static str,
+    busy: bool,
+    enabled: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let accent = primary_action(enabled);
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .cursor_pointer()
+        .flex_shrink_0()
+        .size(px(26.))
+        .rounded_md()
+        .flex()
+        .items_center()
+        .justify_center()
+        .map(|d| match accent {
+            Some((fill, _)) => d
+                .bg(fill)
+                .when(enabled, |d| d.hover(|s| s.bg(fill.blend(content(0.12))))),
+            None => d
+                .bg(white(if enabled { 1. } else { 0.3 }))
+                .when(enabled, |d| d.hover(|s| s.bg(white(0.9)))),
+        })
+        .map(|d| {
+            let ink = accent.map_or(black(if enabled { 1. } else { 0.4 }), |(_, ink)| ink);
+            if busy {
+                d.child(div().size(px(10.)).rounded(px(2.)).bg(ink))
+            } else {
+                d.child(icon("send", 14.).text_color(ink))
+            }
+        })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 // GitPickerTrigger: the quiet `h-6` controls in the bar under the box.

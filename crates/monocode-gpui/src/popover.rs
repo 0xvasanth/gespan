@@ -3,7 +3,7 @@
 // src/features/files/ui/ExplorerMenu.tsx.
 use crate::theme::*;
 use gpui::{
-    AnyElement, AnyView, App, Bounds, BoxShadow, Context, DispatchPhase, Display, Element,
+    AnyElement, AnyView, App, Bounds, BoxShadow, Context, Corners, DispatchPhase, Display, Element,
     ElementId, Entity, EventEmitter, FocusHandle, Focusable, GlobalElementId, Hsla,
     InspectorElementId, KeyBinding, LayoutId, MouseDownEvent, Pixels, Point,
     Position as CssPosition, Role, SharedString, Style, Toggled, Window, actions, canvas, deferred,
@@ -479,14 +479,7 @@ impl Popover {
             })
             .rounded(px(radius))
             .opacity(enter)
-            .shadow(vec![
-                BoxShadow::new(px(0.), px(20.), rgba(0x0000001a).into())
-                    .blur_radius(px(25.))
-                    .spread_radius(px(-5.)),
-                BoxShadow::new(px(0.), px(8.), rgba(0x0000001a).into())
-                    .blur_radius(px(10.))
-                    .spread_radius(px(-6.)),
-            ])
+            .shadow(shadow())
             .child(glass(tint, radius))
             .child(
                 div()
@@ -526,29 +519,51 @@ fn tint() -> Hsla {
 // On macOS the renderer blurs what is already drawn behind this quad.
 // Light themes, and platforms without the blur, paint an opaque card.
 fn glass(tint: Hsla, radius: f32) -> impl IntoElement {
-    let opaque = crate::theme::floating_fill();
-    let light = crate::theme::is_light();
     canvas(
         |_, _, _| {},
-        move |bounds, _, window, _| {
-            #[cfg(target_os = "macos")]
-            let quad = if light {
-                gpui::fill(bounds, opaque)
-            } else {
-                gpui::fill(bounds, tint).border_color(
-                    gpui_apple::metal_renderer::backdrop_blur_marker(BLUR * window.scale_factor()),
-                )
-            };
-            #[cfg(not(target_os = "macos"))]
-            let quad = {
-                let _ = (light, tint);
-                gpui::fill(bounds, opaque)
-            };
-            window.paint_quad(quad.corner_radii(px(radius)));
-        },
+        move |bounds, _, window, _| paint_glass(bounds, Corners::all(px(radius)), tint, window),
     )
     .absolute()
     .size_full()
+}
+/// The popover surface: `tint` over a backdrop blur, or the opaque card.
+pub(crate) fn paint_glass(
+    bounds: Bounds<Pixels>,
+    corners: Corners<Pixels>,
+    tint: Hsla,
+    window: &mut Window,
+) {
+    let opaque = crate::theme::floating_fill();
+    let light = crate::theme::is_light();
+    #[cfg(target_os = "macos")]
+    let quad = if light {
+        gpui::fill(bounds, opaque)
+    } else {
+        gpui::fill(bounds, tint).border_color(gpui_apple::metal_renderer::backdrop_blur_marker(
+            BLUR * window.scale_factor(),
+        ))
+    };
+    #[cfg(not(target_os = "macos"))]
+    let quad = {
+        let _ = (light, tint);
+        gpui::fill(bounds, opaque)
+    };
+    window.paint_quad(quad.corner_radii(corners));
+}
+/// The default popover glass tint.
+pub(crate) fn glass_tint() -> Hsla {
+    tint()
+}
+/// The popover's two-layer drop shadow.
+pub(crate) fn shadow() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow::new(px(0.), px(20.), rgba(0x0000001a).into())
+            .blur_radius(px(25.))
+            .spread_radius(px(-5.)),
+        BoxShadow::new(px(0.), px(8.), rgba(0x0000001a).into())
+            .blur_radius(px(10.))
+            .spread_radius(px(-6.)),
+    ]
 }
 
 struct Placed {

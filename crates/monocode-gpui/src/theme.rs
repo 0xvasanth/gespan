@@ -145,6 +145,10 @@ pub(crate) fn composer_blur() -> f32 {
 fn user_accent() -> Option<Hsla> {
     TOKENS.with(|t| t.borrow().as_ref().and_then(|t| t.user_accent))
 }
+/// `var(--user-accent-color, var(--color-accent))`.
+pub(crate) fn picked_accent() -> Hsla {
+    user_accent().unwrap_or_else(accent_color)
+}
 /// `.user-message-bubble`: a picked accent tints sent messages at 24%.
 pub(crate) fn user_bubble_fill() -> Hsla {
     user_accent().map_or(content(0.1), |a| a.opacity(0.24))
