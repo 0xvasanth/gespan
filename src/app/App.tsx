@@ -708,6 +708,11 @@ import { useQuickComposerLaunches } from "../features/quick-composer/hooks/useQu
 import type { QuickLaunch } from "../features/quick-composer/model/quickComposer";
 import { claimInboxAutomationRuns } from "../features/automations/model/automationEvents";
 import type { BoardLinkTarget } from "../features/board/ui/boardFormat";
+import { onLinkedWork } from "../features/board/model/autoMove";
+import {
+  createLinkedTurns,
+  type LinkedTurns,
+} from "../features/board/model/linkedTurns";
 import {
   SECOND_OPINION_TITLE,
   buildSecondOpinionRequest,
@@ -1802,6 +1807,10 @@ function Workspace({
     canForward: false,
   });
   const turnGen = useRef(new Map<string, number>());
+  // Moves board cards linked to a session (or its Pilot) as its turns run.
+  // Runs whether or not the Board is shown; failures only reach the console.
+  const linkedTurns = useRef<LinkedTurns | null>(null);
+  linkedTurns.current ??= createLinkedTurns(onLinkedWork);
   const editedResends = useRef(createEditedResendCoordinator()).current;
   const lastPersisted = useRef(new Map<string, string>());
   const lastBoundProvider = useRef(new Map<string, string>());
@@ -8021,6 +8030,12 @@ function Workspace({
         );
       }
 
+      // The turn is underway from here; the .finally below always settles it.
+      linkedTurns.current!.started(
+        sessionId,
+        gen,
+        pilotForSession(sessionId)?.id,
+      );
       let controlOutcome: ControlOutcome = {
         status: "failed",
         text: "",
@@ -8644,11 +8659,12 @@ function Workspace({
         .finally(() => {
           editedResend?.reject();
           if (editedResend) editedResends.finish(sessionId);
-          options?.onSettled?.(
+          const outcome: ControlOutcome =
             turnGen.current.get(sessionId) !== gen
               ? { status: "cancelled", text: controlText }
-              : controlOutcome,
-          );
+              : controlOutcome;
+          linkedTurns.current!.settled(sessionId, gen, outcome.status);
+          options?.onSettled?.(outcome);
         });
       return true;
     },

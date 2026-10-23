@@ -43,7 +43,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function renderDetail() {
+async function renderDetail(
+  overrides: Partial<ComponentProps<typeof CardDetail>> = {},
+) {
   const props: ComponentProps<typeof CardDetail> = {
     card: CARD,
     columnName: "In Progress",
@@ -52,6 +54,7 @@ async function renderDetail() {
     onClose: vi.fn(),
     onOpenLinkedWork: vi.fn(),
     onError: vi.fn(),
+    ...overrides,
   };
   await act(async () => root.render(createElement(CardDetail, props)));
   await act(async () => {
@@ -82,5 +85,38 @@ describe("CardDetail activity", () => {
     );
     expect(dialogText()).not.toContain("No activity yet");
     expect(dialogText()).toContain("Couldn't load activity");
+  });
+});
+
+describe("CardDetail linked work", () => {
+  const openButton = () =>
+    [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+    ].find((button) => button.textContent?.includes("Open linked work"));
+
+  it("says a linked session missing from the snapshot no longer exists", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    await renderDetail({
+      card: { ...CARD, linkKind: "session", linkId: "gone" },
+      link: { kind: "session", target: null },
+      linkTargets: [{ kind: "session", id: "s1", label: "Other session" }],
+    });
+    const chip = document.querySelector('[role="dialog"] [data-link-chip]')!;
+    expect(chip.getAttribute("data-link-chip")).toBe("missing");
+    expect(chip.textContent).toBe("Linked work no longer exists");
+    expect(openButton()).toBeUndefined();
+  });
+
+  it("offers to open linked work that still exists", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    const target = { kind: "session" as const, id: "s1", label: "Fix login" };
+    const props = await renderDetail({
+      card: { ...CARD, linkKind: "session", linkId: "s1" },
+      link: { kind: "session", target },
+      linkTargets: [target],
+    });
+    expect(dialogText()).not.toContain("Linked work no longer exists");
+    await act(async () => openButton()!.click());
+    expect(props.onOpenLinkedWork).toHaveBeenCalledWith(target);
   });
 });
