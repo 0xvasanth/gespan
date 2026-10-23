@@ -35,7 +35,7 @@ approval for every edit. Native Supervised mode does not add that guarantee.
 | Area | Remaining verification or work |
 | --- | --- |
 | Chat | Live attachment/steering/rewind checks, complete keyboard selection and screen-reader navigation, richer nested task artifacts and provider-specific task controls |
-| History and workspace | Transcript/database paging, cache runtime checks, remaining desktop layout and preference consumers, explicit import/export |
+| History and workspace | Transcript/database paging, cache runtime checks, remaining desktop layout consumers, explicit import/export |
 | Files and Git | Platform visual/IME checks, Linux/Windows media hosting, non-Git checkpoints, per-file checkpoint Undo/Keep and orchestration checkpoint integration |
 | Accounts and settings | Live OAuth/MCP authentication checks and remaining platform-specific settings behavior |
 | Inbox | Runtime/visual checks, inline video, linked-update notices and richer CI evidence/repair progress |
@@ -56,6 +56,11 @@ Linux and Windows GUI builds and interaction have not been verified. In
 particular, HTML panels currently use a text fallback, native notification
 delivery is unavailable, and media hosting still needs platform support.
 Windows close-to-tray behavior also needs implementation/verification.
+Desktop webview preferences (theme, projects, model defaults, and related
+settings) are read from the installed app on Linux as well as macOS. The Windows
+WebView2 reader has synthetic fixture coverage on Linux; real Windows profile
+compatibility and Windows execution remain unverified. The reader opens only a
+temporary copy; copying an actively written profile is best-effort.
 
 The preview workflow checks core on macOS, Linux and Windows, but checks/builds
 the GUI only on macOS.

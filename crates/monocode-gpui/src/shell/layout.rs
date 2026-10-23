@@ -892,8 +892,8 @@ mod tests {
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        for classic in [false, true] {
-            let selectors = if classic {
+        for boxy in [false, true] {
+            let selectors = if boxy {
                 [
                     "right-panel-explorer",
                     "right-panel-changes",
@@ -911,7 +911,7 @@ mod tests {
             for width in [420., 312., 280., 260., 220., 420.] {
                 window
                     .update(visual, |shell, _, cx| {
-                        shell.workspace.classic_layout = classic;
+                        shell.workspace.new_layout_boxy = boxy;
                         shell.workspace.right_panel_width = width;
                         shell
                             .right_panel

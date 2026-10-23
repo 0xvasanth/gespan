@@ -1,10 +1,9 @@
 //! Read desktop webview preferences without modifying WebKit storage or its schema.
 mod session_defaults;
+mod webview;
 mod workspace_preferences;
 mod workspace_snapshot;
 
-#[cfg(any(target_os = "macos", test))]
-use rusqlite::{types::ValueRef, Connection, OpenFlags};
 use serde_json::{json, Map, Value};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -48,13 +47,7 @@ impl DesktopPreferences {
         {
             return Self::default();
         }
-        #[cfg(target_os = "macos")]
-        if let Some(home) = crate::accounts::home() {
-            return Self::load_webkit(
-                &home.join("Library/WebKit/com.monocode.desktop/WebsiteData/Default"),
-            );
-        }
-        Self::default()
+        Self::load_installed(data_dir)
     }
 
     pub fn is_available(&self) -> bool {
@@ -65,69 +58,6 @@ impl DesktopPreferences {
     }
     pub fn json(&self, key: &str) -> Option<Value> {
         serde_json::from_str(self.get(key)?).ok()
-    }
-
-    #[cfg(any(target_os = "macos", test))]
-    fn load_webkit(root: &Path) -> Self {
-        // WebKit stores origins under two opaque directory components. Do not
-        // merge localhost development origins or Inspector storage into the app.
-        let mut paths = Vec::new();
-        if let Ok(first) = std::fs::read_dir(root) {
-            for directory in first.flatten() {
-                if let Ok(second) = std::fs::read_dir(directory.path()) {
-                    for origin in second.flatten() {
-                        let path = origin.path();
-                        if std::fs::read(path.join("origin"))
-                            .ok()
-                            .is_some_and(|bytes| desktop_origin(&bytes))
-                        {
-                            let database = path.join("LocalStorage/localstorage.sqlite3");
-                            if database.is_file() {
-                                paths.push(database);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        paths.sort();
-        paths
-            .into_iter()
-            .find_map(|path| Self::read_database(&path).ok())
-            .unwrap_or_default()
-    }
-
-    #[cfg(any(target_os = "macos", test))]
-    fn read_database(path: &Path) -> Result<Self, String> {
-        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(|e| e.to_string())?;
-        conn.busy_timeout(std::time::Duration::from_millis(150))
-            .map_err(|e| e.to_string())?;
-        let mut query = conn
-            .prepare("SELECT key,value FROM ItemTable WHERE key LIKE 'monocode%' ")
-            .map_err(|e| e.to_string())?;
-        let rows = query
-            .query_map([], |row| {
-                let key: String = row.get(0)?;
-                let value = match row.get_ref(1)? {
-                    ValueRef::Text(bytes) => std::str::from_utf8(bytes).ok().map(str::to_owned),
-                    ValueRef::Blob(bytes) => decode_webkit_value(bytes),
-                    _ => None,
-                };
-                Ok((key, value))
-            })
-            .map_err(|e| e.to_string())?;
-        let mut values = BTreeMap::new();
-        for row in rows {
-            let (key, value) = row.map_err(|e| e.to_string())?;
-            if let Some(value) = value {
-                values.insert(key, value);
-            }
-        }
-        Ok(Self {
-            values,
-            available: true,
-        })
     }
 
     /// Reconcile current desktop project settings on every workspace read.
@@ -572,47 +502,12 @@ fn merge_projects(old: Option<&Value>, current: &Value, source: &Value) -> Value
     }
     Value::Array(merged)
 }
-#[cfg(any(target_os = "macos", test))]
-fn decode_webkit_value(bytes: &[u8]) -> Option<String> {
-    let (pairs, remainder) = bytes.as_chunks::<2>();
-    if !remainder.is_empty() {
-        return None;
-    }
-    String::from_utf16(
-        &pairs
-            .iter()
-            .copied()
-            .map(u16::from_le_bytes)
-            .collect::<Vec<_>>(),
-    )
-    .ok()
-}
-#[cfg(any(target_os = "macos", test))]
-fn desktop_origin(mut bytes: &[u8]) -> bool {
-    fn string(bytes: &mut &[u8]) -> Option<String> {
-        let length = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
-        let ascii = *bytes.get(4)? == 1;
-        *bytes = bytes.get(5..)?;
-        if !ascii {
-            return None;
-        }
-        let value = std::str::from_utf8(bytes.get(..length)?).ok()?.to_owned();
-        *bytes = bytes.get(length..)?;
-        Some(value)
-    }
-    let Some(scheme) = string(&mut bytes) else {
-        return false;
-    };
-    let Some(host) = string(&mut bytes) else {
-        return false;
-    };
-    (scheme == "tauri" && host == "localhost")
-        || ((scheme == "http" || scheme == "https") && host == "tauri.localhost")
-}
 
 #[cfg(test)]
 mod tests {
+    use super::webview::{decode_webkit_value, desktop_origin};
     use super::*;
+    use rusqlite::Connection;
 
     fn prefs(entries: &[(&str, Value)]) -> DesktopPreferences {
         DesktopPreferences {
@@ -822,5 +717,32 @@ mod tests {
     fn isolated_data_directory_cannot_read_desktop_preferences() {
         let directory = tempfile::tempdir().unwrap();
         assert!(DesktopPreferences::load(directory.path()).values.is_empty());
+    }
+
+    #[test]
+    #[ignore = "manual integration check: reads the installed desktop profile"]
+    fn installed_desktop_dir_reads_packaged_webview_preferences_when_present() {
+        let desktop = crate::store::monocode_database();
+        let Some(dir) = desktop.parent() else {
+            return;
+        };
+        let linux = dir.join("localstorage/tauri_localhost_0.localstorage");
+        let macos = crate::accounts::home()
+            .map(|home| home.join("Library/WebKit/com.monocode.desktop/WebsiteData/Default"));
+        if !linux.is_file() && macos.as_ref().is_none_or(|root| !root.is_dir()) {
+            return;
+        }
+        let preferences = DesktopPreferences::load(dir);
+        assert!(
+            preferences.is_available(),
+            "installed desktop webview storage was not read from {}",
+            dir.display()
+        );
+        assert!(
+            preferences
+                .entries()
+                .any(|(key, _)| key.starts_with("monocode")),
+            "desktop webview storage had no monocode keys"
+        );
     }
 }
