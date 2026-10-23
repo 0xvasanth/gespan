@@ -1,0 +1,19 @@
+crates/rebase-core/src/store/shared/tests.rs
+  s_ccb41beff89445::t_dc118de10b8e8c 469-471
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6358aef649c8edbc6b1ac0f9de70ec84c1ad04a8",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
