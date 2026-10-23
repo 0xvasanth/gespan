@@ -1,0 +1,26 @@
+host/process.ts
+  s_232d570adba1f4::t_10e1fcd9d3d53d 23
+host/server.ts
+  s_232d570adba1f4::t_10e1fcd9d3d53d 52,65,84,101
+host/provider-transport.test.ts
+  s_232d570adba1f4::t_10e1fcd9d3d53d 133,239
+host/providers.ts
+  s_232d570adba1f4::t_10e1fcd9d3d53d 10,144-149
+  s_232d570adba1f4::t_fef37bf36bcce3 150-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4076ed971a1d019ebddfb8627455ee73660ae246",
+  "prompts": {},
+  "sessions": {
+    "s_232d570adba1f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "435d0764-4ce0-46d9-b9a4-ba511c96bdd9",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
