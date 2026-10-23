@@ -1,4 +1,5 @@
 pub(crate) mod attachments;
+mod burst;
 pub(crate) mod dates;
 mod drafts;
 #[cfg(test)]
@@ -536,6 +537,8 @@ pub(crate) struct TranscriptView {
     viewport: Bounds<Pixels>,
     anchor_turn: Option<usize>,
     prompt_rise: Option<(usize, Instant)>,
+    /// The /operator, Plan or Orchestrator burst inside a just-sent prompt.
+    burst: Option<burst::Burst>,
     prompt_rise_pending: bool,
     introduced_prompt: Option<usize>,
     show_jump: bool,
@@ -2318,6 +2321,7 @@ impl TranscriptView {
             anchor_turn: None,
             prompt_rise: None,
             prompt_rise_pending: false,
+            burst: None,
             introduced_prompt: None,
             show_jump: false,
             jump_anchor: Default::default(),
@@ -2527,6 +2531,7 @@ impl TranscriptView {
         }
         self.prompt_rise = None;
         self.prompt_rise_pending = false;
+        self.burst = None;
         self.entrances.clear();
         self.follow = Follow::default();
         for reveal in self.reveals.values_mut() {
@@ -2618,6 +2623,10 @@ impl TranscriptView {
             });
         }
         submitted.begin("assistant");
+        if !settings.internal_message && !self.mono && self.visible && !cx.reduce_motion() {
+            self.burst = burst::Kind::from_settings(settings)
+                .map(|kind| burst::Burst::new(self.source.len(), kind));
+        }
         if self.mono {
             self.submitted_mono_message = settings.mono_message_id.clone();
         }
@@ -3801,6 +3810,7 @@ impl TranscriptView {
             || self
                 .prompt_rise
                 .is_some_and(|(_, born)| born.elapsed().as_secs_f32() < 0.88)
+            || self.burst.is_some_and(|burst| burst.active(now))
             || self.chat_animating();
         if smooth {
             self.frame_scheduled = true;
@@ -3880,6 +3890,7 @@ impl TranscriptView {
             });
         }
         self.motions.retain(|_, motion| !motion.finished(now));
+        self.burst = self.burst.filter(|burst| burst.active(now));
         self.entrances
             .retain(|_, born| now.duration_since(*born).as_secs_f32() < 0.4);
         self.pending_entrances
@@ -4777,6 +4788,40 @@ impl TranscriptView {
                                 }),
                         )
                     })
+                    .children(
+                        self.burst
+                            .filter(|burst| {
+                                user && first
+                                    && burst.prompt == message_start
+                                    && burst.active(self.frame_now)
+                            })
+                            .map(|burst| {
+                                let now = self.frame_now;
+                                canvas(
+                                    |_, _, _| {},
+                                    move |bounds, _, window, cx| {
+                                        // The same corners the bubble's fill paints.
+                                        let radius = if last && bounds.size.height <= px(37.) {
+                                            f32::from(bounds.size.height) * 0.5
+                                        } else {
+                                            12.
+                                        };
+                                        let bottom = px(if last { radius } else { 0. });
+                                        let corners = gpui::Corners {
+                                            top_left: px(radius),
+                                            top_right: px(radius),
+                                            bottom_left: bottom,
+                                            bottom_right: bottom,
+                                        };
+                                        burst.paint(bounds, corners, now, window, cx);
+                                    },
+                                )
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                            }),
+                    )
                     .when(overflows, |d| {
                         d.child(
                             div().flex().child(
