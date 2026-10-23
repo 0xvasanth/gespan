@@ -83,16 +83,19 @@ Releases:
   feed's package URLs point at the versioned release's assets.
 
 If a run fails after the versioned release was published but before the feed was
-updated, run the workflow again from the same tag. Published packages are never
-re-uploaded: the run downloads them, signs the feed for exactly those files, and
-uploads only `latest.json` to `native-latest`. It never signs anything: each
-release also holds the `latest.json` signed by the original run, and a rerun
-checks it against the release's `.sig` files and republishes it as is. It fails
-if a published release is missing a package, `.sig` file or `latest.json`; use a
-new preview tag then.
+updated, run the workflow again from the same tag. Nothing is signed and no
+package is re-uploaded on a rerun. When `native-v<version>` already has all of its
+packages, `.sig` files and `latest.json`, the run downloads the original signed
+`latest.json` and the `.sig` files, checks that they match, and republishes that
+same `latest.json` to `native-latest`. If any of those assets is missing, the run
+fails and names them; use a new preview tag then.
 
 Keep the signing secrets in a GitHub Environment with required reviewers, so a
-release run needs an approval before it can use the signing key.
+release run needs an approval before it can use the signing key. If you move
+the secrets into an Environment, also add `environment: <name>` to the `publish`
+job in `native-release.yml`, and to the `build` and `rpm` jobs, which read
+`TAURI_UPDATER_PUBKEY`. Without it those jobs cannot see the secrets, so the
+release breaks silently.
 
 The app's default endpoint is therefore
 `https://github.com/0xvasanth/rebase/releases/download/native-latest/latest.json`.
