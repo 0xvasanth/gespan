@@ -1,0 +1,37 @@
+scripts/release-channel.test.cjs
+  s_ccb41beff89445::t_2f56d69b4f5af9 7,91,134-203
+scripts/release-channel.cjs
+  s_ccb41beff89445::t_3bf1c94a4368b2 51-56,58-92
+.github/workflows/native-release.yml
+  s_ccb41beff89445::t_709307d92d8c1d 63-64,169-170,226-227,246-260
+  s_ccb41beff89445::t_2d4e2ecde3649d 194-195
+crates/rebase-gpui/src/notifications/updater.rs
+  s_ccb41beff89445::t_f2917f69cc58cf 82
+docs/native/README.md
+  s_ccb41beff89445::t_c01c4db23aac35 64-92
+scripts/native-release.test.mjs
+  s_ccb41beff89445::t_2f56d69b4f5af9 14,31,77,82
+crates/rebase-core/src/app_update/tests.rs
+  s_ccb41beff89445::t_f2917f69cc58cf 106-115
+scripts/native-release.mjs
+  s_ccb41beff89445::t_3bf1c94a4368b2 5,8-9,18,20,29,46,113
+  s_ccb41beff89445::t_2d4e2ecde3649d 65-68,70
+crates/rebase-core/src/app_update/mod.rs
+  s_ccb41beff89445::t_7e8f75254e759f 22-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e8ea2bbb26438067b0e0ba4183160c4813b95bae",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
