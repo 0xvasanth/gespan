@@ -82,7 +82,9 @@ impl Conversation {
     pub(crate) fn mono_attention(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         div()
             .child(self.approval_shelf(window, cx))
-            .when_some(self.questions.front(), |d, (card, _)| d.child(card.clone()))
+            .when_some(self.questions.front(), |d, (card, _)| {
+                d.child(div().mb_2().child(card.clone()))
+            })
             .into_any_element()
     }
     pub(crate) fn configure_mono(
@@ -567,12 +569,18 @@ impl Conversation {
                                     )
                             }),
                     )
-                    .when_some(self.questions.front(), |d, (card, _)| d.child(card.clone()))
                     .children(self.usage_notice(true, cx))
                     .children(self.auth_notice(cx))
                     .child(self.approval_shelf(window, cx))
-                    .child(self.mono_composer_box(window, cx))
-                    .child(self.mono_composer_tools(cx)),
+                    .child({
+                        let composer = div()
+                            .child(self.mono_composer_box(window, cx))
+                            .child(self.mono_composer_tools(cx))
+                            .into_any_element();
+                        let focus = self.input.focus_handle(cx);
+                        let card = self.questions.front().map(|(card, _)| card);
+                        self.question_overlay.wrap(composer, card, &focus, window, cx)
+                    }),
             )
             .into_any_element()
     }

@@ -184,6 +184,7 @@ pub(crate) struct Conversation {
     approval_ui: approvals::State,
     questions:
         std::collections::VecDeque<(Entity<crate::questions::QuestionCard>, Vec<Subscription>)>,
+    question_overlay: crate::questions::Overlay,
     controls: Option<std::sync::mpsc::Sender<Control>>,
     branch: Option<String>,
     git: Option<monocode_core::git::Snapshot>,
@@ -601,6 +602,7 @@ impl Conversation {
             approvals: Default::default(),
             approval_ui: Default::default(),
             questions: Default::default(),
+            question_overlay: Default::default(),
             controls: None,
             branch: git.as_ref().and_then(|s| s.current.clone()),
             git,
@@ -1244,7 +1246,9 @@ impl Conversation {
                                         cx.notify();
                                         return;
                                     }
-                                    this.questions.pop_front();
+                                    if let Some((card, _)) = this.questions.pop_front() {
+                                        this.question_overlay.release(card, cx);
+                                    }
                                     this.status = if !this.approvals.is_empty() {
                                         "Waiting for approval"
                                     } else if !this.questions.is_empty() {
@@ -3580,8 +3584,16 @@ impl Render for Conversation {
                             .flex_col()
                             .px(px(10.))
                             .pb(px(6.))
-                            .when_some(self.questions.front(), |d, (card, _)| d.child(card.clone()))
-                            .child(self.composer_motion.clone().wrap(self.composer(window, cx))),
+                            .child({
+                                let composer = self
+                                    .composer_motion
+                                    .clone()
+                                    .wrap(self.composer(window, cx))
+                                    .into_any_element();
+                                let focus = self.input.focus_handle(cx);
+                                let card = self.questions.front().map(|(card, _)| card);
+                                self.question_overlay.wrap(composer, card, &focus, window, cx)
+                            }),
                     ),
             )
             .when_some(self.btw.as_ref(), |d, sheet| d.child(sheet.clone()))
