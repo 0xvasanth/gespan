@@ -1,0 +1,1580 @@
+crates/monocode-gpui/assets/hugeicons/panel-left.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/mobile/router.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-208
+Cargo.toml
+  s_ccb41beff89445::t_6a2798866101b8 4
+crates/monocode-gpui/src/explorer.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1744
+crates/monocode-core/src/remote/attachments.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-214
+crates/monocode-core/src/provider/opencode/client.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-693
+crates/monocode-gpui/src/accounts.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-883
+crates/monocode-core/src/store/shared/blocks.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-806
+crates/monocode-core/src/visual.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-259
+crates/monocode-gpui/src/settings/keymap.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-94
+crates/monocode-gpui/src/monos/scheduler.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1529
+crates/monocode-gpui/src/markdown_model.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-535
+crates/monocode-gpui/src/shell/classic_sidebar.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1138
+crates/monocode-gpui/src/monos/filters.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-142
+crates/monocode-gpui/src/settings/palettes.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-213
+crates/monocode-core/src/files/remote.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-317
+crates/monocode-core/src/tool/tasks.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-848
+crates/monocode-gpui/assets/hugeicons/file.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/resources.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-513
+crates/monocode-gpui/src/file_editor/diff.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-168
+crates/monocode-gpui/src/shell/picker_preferences.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-29
+crates/monocode-gpui/src/shell/notifications.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1395
+crates/monocode-gpui/src/settings/pages/mobile.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1436
+crates/monocode-core/src/accounts/transfer.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-295
+crates/monocode-core/src/follow_up.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-278
+crates/monocode-core/src/search/project.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-486
+crates/monocode-gpui/assets/sidebar.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/monos/search.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-21
+crates/monocode-gpui/assets/inbox-gitlab.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/shell/terminal_dock.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-971
+crates/monocode-gpui/src/monos/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1474
+docs/native/LICENSE-GPUI-APACHE
+  s_ccb41beff89445::t_6a2798866101b8 1-222
+crates/monocode-core/src/session_groups.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-476
+crates/monocode-gpui/src/composer_completion.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1179
+crates/monocode-gpui/src/shell/file_panes.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-938
+crates/monocode-gpui/src/transcript/drafts.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-455
+scripts/dev-native.test.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-201
+crates/monocode-gpui/assets/folder.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/panel-bottom.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+CONTRIBUTING.md
+  s_ccb41beff89445::t_6a2798866101b8 39-48
+crates/monocode-gpui/src/markdown.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1047
+crates/monocode-gpui/src/sound.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-136
+crates/monocode-core/src/desktop_preferences/workspace_preferences.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-828
+crates/monocode-gpui/src/shell/settings.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-816
+crates/monocode-gpui/assets/dark-plus.LICENSE
+  s_ccb41beff89445::t_6a2798866101b8 1-22
+crates/monocode-gpui/src/usage_footer.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1058
+crates/monocode-gpui/src/conversation/composer_features.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-619
+crates/monocode-gpui/src/conversation/remote_tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-437
+crates/monocode-gpui/src/transcript/attachments.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-314
+crates/monocode-gpui/src/transcript/measurements.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-360
+crates/monocode-core/src/app_update/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-113
+crates/monocode-gpui/assets/close.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/comment-add.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/git-branch-2.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/notifications/linked_activity.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-369
+crates/monocode-core/src/scm/shell.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-367
+scripts/native-installer.nsi
+  s_ccb41beff89445::t_6a2798866101b8 1-92
+crates/monocode-gpui/assets/hugeicons/check-circle.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/accounts/desktop.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-199
+crates/monocode-gpui/assets/material-icons.json
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/monos/html.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-316
+crates/monocode-gpui/src/shell/search.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-474
+crates/monocode-gpui/src/resource_pressure.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-857
+scripts/package-native.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-333
+crates/monocode-core/src/store/shared_schema.sql
+  s_ccb41beff89445::t_6a2798866101b8 1-27
+crates/monocode-gpui/assets/plus.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+docs/native/README.md
+  s_ccb41beff89445::t_6a2798866101b8 1-129
+scripts/native-release.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-130
+crates/monocode-gpui/src/visuals/source.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-234
+crates/monocode-gpui/src/usage_footer/resets.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-392
+crates/monocode-gpui/src/main.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-592
+crates/monocode-core/src/accounts/transfer/codex.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-184
+crates/monocode-gpui/assets/inbox-linear.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons.LICENSE
+  s_ccb41beff89445::t_6a2798866101b8 1-21
+crates/monocode-core/src/git/remote.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-147
+crates/monocode-core/src/tool.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-100
+crates/monocode-gpui/src/shell/app_commands.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-368
+crates/monocode-gpui/src/inbox/diff.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-116
+crates/monocode-core/src/store/session_preview.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-89
+crates/monocode-core/src/provider/lifecycle.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-273
+crates/monocode-core/src/app_update/fixtures/feed.json
+  s_ccb41beff89445::t_6a2798866101b8 1-4
+crates/monocode-core/src/provider/text_tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-79
+crates/monocode-gpui/assets/hugeicons/star-filled.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/session_review.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-470
+crates/monocode-gpui/assets/hugeicons/folder-tree.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/open-folder.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/shell/worktrees.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-454
+crates/monocode-gpui/src/arcade.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-449
+crates/monocode-gpui/assets/hugeicons/wand.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/review.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2328
+crates/monocode-gpui/src/git_cache.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-125
+crates/monocode-gpui/src/settings/skill_document.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-256
+crates/monocode-gpui/src/settings/pages/providers.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-306
+crates/monocode-gpui/src/questions.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-903
+crates/monocode-gpui/src/transcript/history.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-502
+docs/native/parity.md
+  s_ccb41beff89445::t_6a2798866101b8 1-66
+crates/monocode-gpui/assets/hugeicons/terminal.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+scripts/native-editor/build.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-67
+crates/monocode-gpui/src/monos/memory_ui.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-489
+crates/monocode-gpui/src/project_search.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-620
+crates/monocode-core/src/mobile/watch.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-205
+crates/monocode-core/src/external_editor.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-261
+crates/monocode-core/src/scm/review.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-453
+crates/monocode-core/src/context.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-57
+crates/monocode-gpui/src/runtime/persistence.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-392
+crates/monocode-gpui/src/file_editor/video.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-167
+crates/monocode-gpui/src/git_graph.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-573
+crates/monocode-gpui/src/accounts/signin.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-273
+crates/monocode-core/src/provider/attachments.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-82
+crates/monocode-core/src/catalog.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-947
+crates/monocode-gpui/src/notifications/platform_macos.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-234
+crates/monocode-gpui/src/quick_composer/hotkey.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-175
+crates/monocode-gpui/src/editor_analysis.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-675
+crates/monocode-gpui/src/monos/overview.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-180
+crates/monocode-gpui/assets/hugeicons/bot.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/inbox-gitlab-color.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/provider/devin.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-781
+crates/monocode-gpui/assets/hugeicons/queue-pause.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+scripts/bundle-native-macos.test.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-62
+docs/native/migration.md
+  s_ccb41beff89445::t_6a2798866101b8 1-51
+crates/monocode-core/src/remote/ssh_askpass.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-201
+crates/monocode-core/src/mono/cards.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-126
+crates/monocode-gpui/src/fonts.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2
+crates/monocode-core/src/inbox/azure_devops.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2045
+crates/monocode-gpui/src/conversation/title.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-174
+crates/monocode-gpui/assets/hugeicons/response-metrics.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/square.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/conversation/submission_tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-303
+crates/monocode-core/src/provider/acp.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1671
+crates/monocode-core/src/usage/pi.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-612
+crates/monocode-gpui/src/shell/sidebar_list.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1309
+crates/monocode-gpui/src/project_background.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-595
+crates/monocode-gpui/assets/hugeicons/clock.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/store.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1469
+crates/monocode-gpui/src/conversation/background_tasks.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-341
+scripts/native-settings/build-arcade.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-40
+crates/monocode-gpui/assets/hugeicons/sticky-note.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/mono/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-162
+crates/monocode-gpui/assets/hugeicons/arrow-down-circle.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/settings/pages/monos.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-100
+crates/monocode-gpui/src/notifications/harness_updates.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-305
+crates/monocode-gpui/assets/inbox-github.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/history.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-770
+crates/monocode-core/src/remote.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-993
+crates/monocode-gpui/assets/hugeicons/search-01.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/list-bullet.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/message-multiple.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/mobile/catalog.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-293
+crates/monocode-core/src/provider/kind.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-125
+crates/monocode-core/src/desktop_preferences/workspace_snapshot.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-337
+crates/monocode-gpui/src/shell/quick_composer.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-144
+crates/monocode-gpui/src/transcript/phases.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-217
+crates/monocode-core/src/store/shared.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1761
+crates/monocode-gpui/src/inbox.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-886
+crates/monocode-gpui/assets/zap.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/git_picker.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-509
+crates/monocode-gpui/src/settings/pages/connections.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1057
+crates/monocode-gpui/src/conversation/approvals.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-300
+crates/monocode-gpui/src/git_status.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-334
+crates/monocode-gpui/src/modal.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-389
+crates/monocode-core/src/visual/model.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-617
+crates/monocode-gpui/assets/omp.svg
+  s_ccb41beff89445::t_6a2798866101b8 1-10
+crates/monocode-core/src/composer.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-438
+crates/monocode-gpui/assets/hugeicons/external-link.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/notifications/file_error.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-45
+crates/monocode-gpui/src/shell/classic_surface_tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-951
+crates/monocode-gpui/src/theme.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-499
+crates/monocode-gpui/src/notifications/updater.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-404
+crates/monocode-gpui/src/shell/quick_open.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-223
+crates/monocode-gpui/assets/editor-palettes.json
+  s_ccb41beff89445::t_6a2798866101b8 1-310
+crates/monocode-gpui/assets/inbox-azuredevops.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+scripts/generate-material-icons.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-28
+crates/monocode-core/src/store/session_metadata.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-191
+crates/monocode-core/src/desktop_preferences/webview.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-603
+crates/monocode-gpui/src/file_editor/search.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-223
+crates/monocode-core/src/inbox/jira.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-916
+crates/monocode-core/src/mono/memory.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-323
+crates/monocode-gpui/assets/hugeicons/chart-square.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/inbox/media.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-340
+crates/monocode-gpui/assets/hugeicons/dashboard.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/file_icons.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-85
+crates/monocode-gpui/src/settings/pages/mcp.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-419
+crates/monocode-core/src/files/name.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-153
+crates/monocode-gpui/src/shell/remote_projects.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-602
+crates/monocode-gpui/src/shell/session_folders.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-402
+crates/monocode-gpui/src/transcript/tasks.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1004
+crates/monocode-gpui/assets/hugeicons/chatting.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/markdown/search.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-170
+scripts/native-dependencies.test.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-88
+crates/monocode-gpui/src/monos/panel_stack.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-268
+crates/monocode-gpui/assets/pi.svg
+  s_ccb41beff89445::t_6a2798866101b8 1-4
+crates/monocode-gpui/src/conversation/edit_last_turn.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-487
+crates/monocode-gpui/src/runtime/remote.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-793
+crates/monocode-gpui/assets/grok.svg
+  s_ccb41beff89445::t_6a2798866101b8 1-4
+scripts/native-editor/index.ts
+  s_ccb41beff89445::t_6a2798866101b8 1-119
+crates/monocode-core/src/store/shared/edit.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-313
+crates/monocode-gpui/assets/hugeicons/git-pull-request.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/package.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/orchestration.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-190
+crates/monocode-core/src/store/side_threads.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-298
+crates/monocode-gpui/assets/hugeicons/file-add.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/mono-attach.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/chevron-down.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/pencil-edit.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/sidebar-right.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/visuals/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-459
+crates/monocode-gpui/assets/hugeicons/pencil-edit-02.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+package.json
+  s_ccb41beff89445::t_6a2798866101b8 29-34
+crates/monocode-gpui/src/terminal.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1478
+crates/monocode-core/src/mono/work.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-340
+crates/monocode-gpui/src/runtime/follow_up_tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-146
+crates/monocode-core/src/remote/remote_bootstrap.ps1
+  s_ccb41beff89445::t_6a2798866101b8 1-111
+crates/monocode-gpui/src/shell.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-12041
+crates/monocode-core/src/inbox/gitlab.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1089
+crates/monocode-gpui/src/particle_text/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-284
+crates/monocode-gpui/assets/hugeicons/bug.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/inbox/avatar.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-42
+crates/monocode-core/src/transcript/attachments.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-85
+crates/monocode-gpui/assets/antigravity.svg
+  s_ccb41beff89445::t_6a2798866101b8 1-70
+crates/monocode-gpui/src/visuals/scene.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-416
+crates/monocode-gpui/src/transcript.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-6547
+crates/monocode-core/src/store/shared/accounts.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-117
+crates/monocode-gpui/assets/hugeicons/loader-03.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/assets.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-223
+crates/monocode-gpui/src/conversation/accounts.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-855
+crates/monocode-gpui/src/activity.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-393
+crates/monocode-gpui/src/shell/orchestration.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-450
+crates/monocode-gpui/src/monos/cards.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-550
+crates/monocode-gpui/src/notifications/errors.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-52
+crates/monocode-gpui/assets/hugeicons/git-pull-request-closed.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/shell/live_agents.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-364
+crates/monocode-gpui/src/search.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-907
+crates/monocode-gpui/src/visuals.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1512
+crates/monocode-gpui/src/conversation/remote_plans.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-278
+crates/monocode-core/src/transcript.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-151
+crates/monocode-gpui/assets/hugeicons/logout-01.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/conversation/composer_shelf.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-126
+crates/monocode-core/src/harness_updates.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-130
+.github/workflows/native-release.yml
+  s_ccb41beff89445::t_6a2798866101b8 1-252
+crates/monocode-gpui/src/conversation.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-4493
+crates/monocode-gpui/assets/devin.svg
+  s_ccb41beff89445::t_6a2798866101b8 1-3
+crates/monocode-gpui/assets/native-editor.LICENSE.txt
+  s_ccb41beff89445::t_6a2798866101b8 1-9100
+crates/monocode-gpui/Cargo.toml
+  s_ccb41beff89445::t_6a2798866101b8 1-105
+crates/monocode-gpui/assets/hugeicons/folder-add.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/case-sensitive.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/file_editor/selection.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-298
+crates/monocode-gpui/assets/hugeicons/sliders.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/mobile/mod.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-5
+crates/monocode-gpui/src/automations/editor.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1338
+crates/monocode-gpui/src/notifications/layout_notice.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-60
+crates/monocode-gpui/src/conversation/response_menu.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-590
+crates/monocode-gpui/src/shell/sidebar_peek.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-327
+crates/monocode-gpui/src/transcript/live_phase.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-467
+crates/monocode-gpui/assets/hugeicons/pipette.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/inbox.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1088
+crates/monocode-gpui/src/settings/pages/chat.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-162
+crates/monocode-core/src/store/managed_sessions.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-73
+crates/monocode-gpui/assets/hugeicons/sparkles.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/file_editor.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1581
+crates/monocode-gpui/src/memory_log.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-61
+crates/monocode-gpui/assets/search.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/automations/gallery.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-228
+crates/monocode-core/src/app_update/fixtures/public-key.txt
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/search/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-210
+crates/monocode-gpui/assets/chevrons-up-down.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/check-hi.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/accounts/masked.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-73
+crates/monocode-gpui/src/settings/pages/appearance.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-627
+crates/monocode-core/src/provider/parked.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-635
+crates/monocode-gpui/assets/hugeicons/smart-phone.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/dark-plus.json
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/settings.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/worktree_management.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-121
+crates/monocode-gpui/assets/hugeicons/smile.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/popover.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2191
+crates/monocode-gpui/build.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-27
+crates/monocode-gpui/assets/hugeicons/app-window.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/file_editor/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-149
+crates/monocode-gpui/assets/hugeicons/queue-steer.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/remote/ssh.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-911
+crates/monocode-gpui/assets/hugeicons/globe.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/notes.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1172
+crates/monocode-gpui/assets/hugeicons/share.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/keyboard.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/app_update/mod.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-394
+crates/monocode-core/src/store/notes.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-810
+crates/monocode-gpui/src/monos/color_picker.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-374
+crates/monocode-core/src/git.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-447
+docs/native/preview-release-notes.md
+  s_ccb41beff89445::t_6a2798866101b8 1-13
+crates/monocode-gpui/src/context_meter.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-60
+crates/monocode-gpui/assets/hugeicons/login-01.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/conversation/notifications.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-91
+crates/monocode-gpui/src/shell/remote_sessions.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-132
+crates/monocode-gpui/assets/hugeicons/cloud-upload.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/regex.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/monos/files.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-279
+crates/monocode-core/src/search.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-379
+crates/monocode-gpui/assets/hugeicons/folder-01.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/inbox/linear.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-695
+crates/monocode-gpui/src/transcript/mascot.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-179
+crates/monocode-gpui/assets/hugeicons/alert-circle.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/transcript/remote_plans.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-129
+README.md
+  s_ccb41beff89445::t_6a2798866101b8 63-79
+crates/monocode-gpui/assets/hugeicons/check.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/right_panel.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-600
+crates/monocode-gpui/assets/hugeicons/square-lock.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/provider/opencode.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-751
+crates/monocode-core/src/accounts/identity.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-223
+crates/monocode-core/src/store/edit.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-397
+crates/monocode-core/src/mono/habits.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-295
+crates/monocode-core/src/usage/devin.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-401
+crates/monocode-core/src/session_filters.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-184
+crates/monocode-gpui/src/project_settings.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1081
+crates/monocode-gpui/assets/hugeicons/eye.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/examples/provider_smoke.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-190
+crates/monocode-core/src/provider/follow_up.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-342
+crates/monocode-gpui/assets/hugeicons/circle-dashed-hi.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/response-activity.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/settings-arcade.js
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/monos/status.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-106
+crates/monocode-gpui/src/runtime/visual_tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-154
+crates/monocode-gpui/assets/hugeicons/bell-off.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/metal_tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-655
+crates/monocode-gpui/assets/filter.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/play.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/lib.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-47
+crates/monocode-gpui/src/composer_runner.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-242
+crates/monocode-gpui/src/fs_watch.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-129
+crates/monocode-gpui/src/image_lightbox.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-698
+crates/monocode-gpui/src/notes/preview.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-160
+crates/monocode-core/src/mono/bridge.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-316
+crates/monocode-gpui/src/tab_motion.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-253
+scripts/bundle-native-macos.sh
+  s_ccb41beff89445::t_6a2798866101b8 1-80
+scripts/package-native.test.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-143
+crates/monocode-core/src/project_appearance.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-603
+crates/monocode-gpui/src/settings/pages/worktrees.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-205
+crates/monocode-core/src/provider/commands.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-353
+crates/monocode-gpui/src/monos/host.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-449
+crates/monocode-gpui/src/transcript/outline.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-548
+crates/monocode-gpui/assets/hugeicons/gauge.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/diff_view.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1951
+crates/monocode-core/src/diff.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-671
+crates/monocode-gpui/assets/chevron-right.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/session_title.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-221
+crates/monocode-gpui/assets/hugeicons/shield-alert.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/provider/questions.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-429
+crates/monocode-gpui/src/fixtures.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-126
+crates/monocode-gpui/src/notifications/platform.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-57
+crates/monocode-gpui/src/shell/project_removal.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-187
+crates/monocode-gpui/src/runtime/handoff.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-129
+crates/monocode-gpui/src/response_actions.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-74
+scripts/test-remote-ssh.py
+  s_ccb41beff89445::t_de5362e7db061b 52,56,108-110
+  s_ccb41beff89445::t_6a2798866101b8 7,33-51,53-55,57-59,111
+crates/monocode-gpui/src/pane_layout.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-808
+crates/monocode-core/src/provider/discovery.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-91
+crates/monocode-gpui/src/accounts/ui.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1109
+crates/monocode-core/src/app_update/fixtures/package.txt
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/circle-dot.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/reveal.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-366
+crates/monocode-gpui/src/transcript/links.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-224
+crates/monocode-core/src/mono/files.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-450
+crates/monocode-core/src/catalog/claude.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-231
+crates/monocode-gpui/assets/hugeicons/git-merge.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/archive.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/notifications/reminders.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-341
+crates/monocode-gpui/assets/hugeicons/palette.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+scripts/generate-hugeicons.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-28
+crates/monocode-gpui/assets/hugeicons/whole-word.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/input/spelling.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-18
+crates/monocode-gpui/src/settings/pages/inbox.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-120
+crates/monocode-gpui/assets/inbox.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/shell/session_preview.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-115
+crates/monocode-gpui/assets/hugeicons/x.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/notifications/approvals.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-311
+crates/monocode-core/src/provider/devin/jsonc.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-59
+crates/monocode-gpui/assets/codex.svg
+  s_ccb41beff89445::t_6a2798866101b8 1-11
+crates/monocode-gpui/assets/hugeicons/pin.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/files/paths.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-331
+crates/monocode-core/src/remote/protocol.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-323
+crates/monocode-gpui/src/inbox/document.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-725
+crates/monocode-gpui/src/inbox/ui.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-3067
+crates/monocode-gpui/src/monos/sprites.json
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/settings/pages/general.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-233
+crates/monocode-gpui/src/shell/session_loading.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-367
+NOTICE
+  s_ccb41beff89445::t_6a2798866101b8 5-68
+crates/monocode-gpui/assets/hugeicons/response-handoff.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/store/monos.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-331
+crates/monocode-gpui/src/automations/trigger_menu.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-186
+crates/monocode-gpui/src/notifications/github_activity.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-478
+crates/monocode-gpui/assets/hugeicons/message-square.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/shell/app_views.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-496
+scripts/build-native.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-41
+crates/monocode-gpui/src/file_editor/chrome.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-219
+crates/monocode-gpui/src/shell/session_filters.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-193
+crates/monocode-gpui/assets/hugeicons/check-circle-2.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/shell/session_groups.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2496
+crates/monocode-core/src/inbox/github.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1351
+docs/native/examples/visual-dashboard.js
+  s_ccb41beff89445::t_6a2798866101b8 1-30
+crates/monocode-core/src/notes.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-285
+crates/monocode-gpui/assets/hugeicons/rotate-ccw.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/response-note.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+docs/native/verification.md
+  s_ccb41beff89445::t_6a2798866101b8 1-111
+crates/monocode-core/src/visual_bridge.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-902
+crates/monocode-gpui/src/file_editor/media.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-705
+crates/monocode-gpui/assets/claude.svg
+  s_ccb41beff89445::t_6a2798866101b8 1-10
+crates/monocode-gpui/src/settings/notification_preferences.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1216
+crates/monocode-gpui/assets/hugeicons/minus-sign.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/chevron-left.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/skills.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1306
+crates/monocode-gpui/src/composer_motion.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-182
+crates/monocode-gpui/assets/hugeicons/delete-02.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/folder-open.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/mobile/host.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-881
+crates/monocode-gpui/src/transcript/dates.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-331
+crates/monocode-core/src/files/document.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-482
+crates/monocode-gpui/src/settings/layout_tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-196
+crates/monocode-gpui/assets/hugeicons/git-compare.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/provider/rewind.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-292
+crates/monocode-gpui/assets/hugeicons/git-pull-request-draft.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/files.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-829
+crates/monocode-core/src/remote/windows-acl.ps1
+  s_ccb41beff89445::t_6a2798866101b8 1-18
+crates/monocode-gpui/assets/hugeicons/pin-off.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/arrow-left.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/shell/image_lightbox_tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-98
+crates/monocode-gpui/assets/hugeicons/trash.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/mobile/project.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1051
+crates/monocode-core/src/mono/desktop.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-347
+crates/monocode-gpui/src/runtime/remote/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-798
+crates/monocode-gpui/src/shell/accounts.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-363
+crates/monocode-gpui/assets/hugeicons/star.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/account-user.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/fold-vertical.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+.github/workflows/native.yml
+  s_ccb41beff89445::t_6a2798866101b8 1-65
+crates/monocode-core/src/automations.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1678
+crates/monocode-gpui/assets/hugeicons/file-diff.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/circle-x.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/desktop_preferences/session_defaults.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-177
+crates/monocode-gpui/src/runtime.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1038
+crates/monocode-core/src/provider/limits.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-160
+crates/monocode-gpui/src/image_memory.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-323
+crates/monocode-gpui/assets/hugeicons/file-script.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/fx.svg
+  s_ccb41beff89445::t_6a2798866101b8 1-3
+crates/monocode-core/src/visual/sdk.js
+  s_ccb41beff89445::t_6a2798866101b8 1-181
+crates/monocode-core/src/scm/text.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-321
+crates/monocode-core/src/provider/tasks.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1015
+crates/monocode-gpui/assets/hugeicons/mono-send.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/mobile.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-10
+crates/monocode-core/src/store/remote_legacy.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-600
+crates/monocode-gpui/assets/hugeicons/undo.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/native-format.js
+  s_ccb41beff89445::t_6a2798866101b8 1-262
+crates/monocode-core/src/files/index.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-453
+crates/monocode-gpui/assets/hugeicons/response-opinion.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/store/monocode_import.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-600
+crates/monocode-gpui/assets/opencode.svg
+  s_ccb41beff89445::t_6a2798866101b8 1-3
+crates/monocode-gpui/src/settings/management.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-918
+crates/monocode-gpui/src/shell/monos.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-109
+crates/monocode-gpui/src/conversation/mono.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1181
+crates/monocode-gpui/src/settings/data.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-115
+crates/monocode-core/src/checkpoint.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1166
+crates/monocode-gpui/assets/hugeicons/panel-right.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/settings/mod.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1033
+crates/monocode-gpui/src/settings/pages/archive.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-172
+crates/monocode-gpui/src/settings/pages/mod.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-47
+crates/monocode-gpui/src/tab_label.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-157
+crates/monocode-gpui/assets/hugeicons/check-2.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+scripts/native-release.test.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-88
+crates/monocode-gpui/assets/hugeicons/add-01.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/ghost.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/conversation/attachment_drop.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-84
+crates/monocode-gpui/src/conversation/remote.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-410
+crates/monocode-core/src/provider.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2200
+crates/monocode-gpui/assets/hugeicons/cursor-magic.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/inbox-hi.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/mobile/transcript.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1050
+crates/monocode-gpui/src/settings/preferences.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-222
+crates/monocode-gpui/src/shell/project_settings.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-329
+crates/monocode-gpui/assets/native-editor.js
+  s_ccb41beff89445::t_6a2798866101b8 1-43
+crates/monocode-gpui/src/transcript/visuals.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-159
+crates/monocode-gpui/src/reflow_motion.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-217
+crates/monocode-gpui/src/monos/notifications.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-65
+crates/monocode-gpui/src/automations/templates.json
+  s_ccb41beff89445::t_6a2798866101b8 1-215
+crates/monocode-gpui/src/shell/title_tabs.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-886
+crates/monocode-core/src/agent.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-251
+crates/monocode-gpui/assets/hugeicons/hammer.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/monos/mod.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1608
+crates/monocode-core/src/provider/pi.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-840
+crates/monocode-core/src/time.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-56
+crates/monocode-gpui/src/shell/mobile_host.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1852
+crates/monocode-gpui/src/shell/layout.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1180
+crates/monocode-gpui/assets/note.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/test-tube.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/inbox/avatar.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-86
+crates/monocode-gpui/src/monos/floating.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-269
+crates/monocode-core/src/usage.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-630
+crates/monocode-gpui/src/input.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2188
+crates/monocode-core/src/app_update/install.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-309
+crates/monocode-gpui/assets/hugeicons/rocket.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/monos/work.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-133
+crates/monocode-gpui/src/shell/classic_surfaces.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-148
+crates/monocode-core/src/provider/compaction.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-46
+crates/monocode-core/src/mobile/catalog.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-119
+crates/monocode-core/src/process.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-222
+crates/monocode-gpui/src/shell/rails.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1122
+crates/monocode-gpui/src/traffic_lights.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-84
+crates/monocode-gpui/src/particle_text.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-481
+crates/monocode-gpui/src/workspace.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1230
+crates/monocode-core/src/response.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-290
+crates/monocode-gpui/assets/hugeicons/panel-top.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/accounts.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-327
+crates/monocode-gpui/assets/hugeicons/git-branch-dot.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/accounts/login.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-195
+crates/monocode-core/src/remote/remote_bootstrap.sh
+  s_ccb41beff89445::t_6a2798866101b8 1-69
+crates/monocode-gpui/src/syntax.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-151
+crates/monocode-gpui/src/transcript/follow_tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2022
+crates/monocode-core/src/scm/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1034
+crates/monocode-core/Cargo.toml
+  s_ccb41beff89445::t_6a2798866101b8 1-62
+crates/monocode-core/examples/verify_native_update.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-67
+crates/monocode-gpui/assets/hugeicons/mono-arrow-up.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/accounts/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-250
+crates/monocode-gpui/assets/hugeicons/unfold-vertical.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/worktree_switcher.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-769
+crates/monocode-core/src/mono/api.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-98
+crates/monocode-gpui/src/editor_syntax.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1155
+crates/monocode-gpui/assets/hugeicons/git-branch.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/notifications/surface.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-50
+crates/monocode-gpui/src/session_mark.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-154
+docs/building.md
+  s_ccb41beff89445::t_6a2798866101b8 83-112
+crates/monocode-gpui/assets/material/LICENSE
+  s_ccb41beff89445::t_6a2798866101b8 1-8
+crates/monocode-gpui/src/input/command.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-179
+crates/monocode-gpui/assets/hugeicons/image-add.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+docs/native/examples/visual-scene.js
+  s_ccb41beff89445::t_6a2798866101b8 1-40
+crates/monocode-gpui/src/notifications/delivery.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-146
+crates/monocode-gpui/src/pulse.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-306
+crates/monocode-gpui/src/notifications/app_update.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-367
+crates/monocode-gpui/src/shell/shortcuts/macos.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-81
+crates/monocode-gpui/src/quick_composer.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-469
+crates/monocode-core/src/mono.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-377
+crates/monocode-core/src/usage/claude.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-195
+crates/monocode-gpui/assets/hugeicons/ai-idea.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/store/remote.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-801
+crates/monocode-gpui/src/input/code.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2439
+crates/monocode-gpui/src/transcript/selection.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-704
+crates/monocode-gpui/assets/hugeicons/queue-play.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/git-branch-hi.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/automations.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1172
+crates/monocode-gpui/src/runtime/visual_discovery.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-215
+crates/monocode-gpui/src/conversation/commands.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-223
+crates/monocode-core/src/visual/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-290
+scripts/dev-native.mjs
+  s_ccb41beff89445::t_6a2798866101b8 1-208
+crates/monocode-core/src/cli.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-154
+crates/monocode-gpui/src/conversation/mobile.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-151
+crates/monocode-gpui/assets/hugeicons/refresh-cw.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/queue-list.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/shell/automation_runs.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-649
+crates/monocode-gpui/assets/cursor.svg
+  s_ccb41beff89445::t_6a2798866101b8 1-3
+crates/monocode-gpui/src/project_tabs.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-205
+crates/monocode-gpui/assets/hugeicons/more-horizontal.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/settings/model.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-580
+crates/monocode-core/src/mcp.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1432
+crates/monocode-gpui/src/shell/idle_agents.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-27
+crates/monocode-gpui/src/transcript/tools.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-831
+crates/monocode-gpui/src/settings/pages/skills.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-742
+crates/monocode-gpui/assets/hugeicons/chevron-down-2.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+docs/native/visuals.md
+  s_ccb41beff89445::t_6a2798866101b8 1-107
+crates/monocode-core/src/desktop_preferences.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-748
+crates/monocode-gpui/src/shell/project_rail.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2149
+crates/monocode-gpui/assets/hugeicons/internet.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/conversation/follow_up.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-964
+crates/monocode-gpui/src/shell/shortcuts.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-199
+crates/monocode-gpui/src/accounts/resets.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-367
+crates/monocode-gpui/assets/inbox-jira.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/store/shared/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1040
+crates/monocode-core/src/accounts/processes.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-65
+crates/monocode-gpui/src/quick_open.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-301
+scripts/native-editor/package.json
+  s_ccb41beff89445::t_6a2798866101b8 1-33
+crates/monocode-gpui/src/dev_reload.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-21
+.gitattributes
+  s_ccb41beff89445::t_6a2798866101b8 3-5
+crates/monocode-gpui/assets/hermes.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/monos/changes.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-857
+crates/monocode-core/src/scm.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1379
+crates/monocode-gpui/src/monos/avatar.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-195
+crates/monocode-gpui/src/shell/actions.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-588
+crates/monocode-gpui/src/pickers.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1322
+crates/monocode-gpui/src/changes.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2035
+crates/monocode-gpui/assets/hugeicons/chevron-down-hi.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/assets/hugeicons/response-copy.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-core/src/checkpoint/tests.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-788
+scripts/native-editor/format.ts
+  s_ccb41beff89445::t_6a2798866101b8 1-22
+crates/monocode-gpui/src/notifications/mod.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-14
+crates/monocode-core/src/usage/opencode.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-282
+crates/monocode-gpui/assets/hugeicons/loader.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/settings/pages/keybindings.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-664
+crates/monocode-gpui/assets/tool-branch.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/conversation/btw.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-1110
+crates/monocode-core/src/tool/presentation.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-894
+crates/monocode-core/src/provider/opencode/events.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-921
+crates/monocode-gpui/src/settings/widgets.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-816
+crates/monocode-gpui/assets/hugeicons/chevron-up.svg
+  s_ccb41beff89445::t_6a2798866101b8 1
+crates/monocode-gpui/src/pane_motion.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-200
+crates/monocode-gpui/src/monos/panels.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-2068
+crates/monocode-gpui/src/editor_scrollbar.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-83
+crates/monocode-gpui/src/conversation/history.rs
+  s_ccb41beff89445::t_6a2798866101b8 1-352
+crates/monocode-gpui/Cargo.lock
+  s_ccb41beff89445::t_e74a73f824b7de 1-8712
+scripts/native-editor/package-lock.json
+  s_ccb41beff89445::t_3916e1ab84f974 1-1023
+vendor/gpui-pre-apple/Cargo.toml
+  s_ccb41beff89445::t_6ac897764d070c 1-288
+vendor/gpui-pre-apple/Cargo.toml.orig
+  s_ccb41beff89445::t_1fc60286700428 1-80
+vendor/gpui-pre-apple/LICENSE-APACHE
+  s_ccb41beff89445::t_ccf2ea19f8465c 1-222
+vendor/gpui-pre-apple/build.rs
+  s_ccb41beff89445::t_bbef4a63400e8d 1-208
+vendor/gpui-pre-apple/src/dispatcher.rs
+  s_ccb41beff89445::t_dc9fa656cea8d7 1-201
+vendor/gpui-pre-apple/src/gpui_apple.rs
+  s_ccb41beff89445::t_17a663e802fada 1-21
+vendor/gpui-pre-apple/src/keychain.rs
+  s_ccb41beff89445::t_c31a837a37de41 1-216
+vendor/gpui-pre-apple/src/metal_atlas.rs
+  s_ccb41beff89445::t_1a801989a57291 1-405
+vendor/gpui-pre-apple/src/metal_renderer.rs
+  s_ccb41beff89445::t_2ab2e61f00e4cb 1-2680
+vendor/gpui-pre-apple/src/open_type.rs
+  s_ccb41beff89445::t_0fb50a916eec7f 1-171
+vendor/gpui-pre-apple/src/shaders.metal
+  s_ccb41beff89445::t_1e3560a62781e3 1-1455
+vendor/gpui-pre-apple/src/text_system.rs
+  s_ccb41beff89445::t_ce5049ff6874bb 1-946
+vendor/gpui-pre-apple/src/thermal.rs
+  s_ccb41beff89445::t_0aae5b1384c7bc 1-113
+vendor/gpui-pre-apple/vendor/gpui/src/color.rs
+  s_ccb41beff89445::t_d2701b96b06821 1-1070
+vendor/gpui-pre-apple/vendor/gpui/src/geometry.rs
+  s_ccb41beff89445::t_8d1f5704e3dc5a 1-4020
+vendor/gpui-pre-apple/vendor/gpui/src/platform.rs
+  s_ccb41beff89445::t_522b0d2334dbd6 1-3836
+vendor/gpui-pre-apple/vendor/gpui/src/scene.rs
+  s_ccb41beff89445::t_1fdb5f43830f5e 1-949
+vendor/gpui-pre-apple/vendor/gpui/src/window.rs
+  s_ccb41beff89445::t_9269403b81b5c6 1-9778
+vendor/gpui-pre-linux/Cargo.toml
+  s_ccb41beff89445::t_9a9403f18beb4e 1-276
+vendor/gpui-pre-linux/Cargo.toml.orig
+  s_ccb41beff89445::t_6364076dcd7a1d 1-102
+vendor/gpui-pre-linux/LICENSE-APACHE
+  s_ccb41beff89445::t_acfb03dccc544f 1-222
+vendor/gpui-pre-linux/src/gpui_linux.rs
+  s_ccb41beff89445::t_050c72f38a4ad7 1-4
+vendor/gpui-pre-linux/src/linux.rs
+  s_ccb41beff89445::t_9fdc3895cb6d80 1-52
+vendor/gpui-pre-linux/src/linux/dispatcher.rs
+  s_ccb41beff89445::t_117515e33ee9a3 1-371
+vendor/gpui-pre-linux/src/linux/display_connection.rs
+  s_ccb41beff89445::t_f38eec45590995 1-222
+vendor/gpui-pre-linux/src/linux/headless.rs
+  s_ccb41beff89445::t_f942873398b121 1-47
+vendor/gpui-pre-linux/src/linux/headless/window.rs
+  s_ccb41beff89445::t_1158de30c5b279 1-208
+vendor/gpui-pre-linux/src/linux/keyboard.rs
+  s_ccb41beff89445::t_644c8d6e0b2c5d 1-22
+vendor/gpui-pre-linux/src/linux/platform.rs
+  s_ccb41beff89445::t_d85db877565468 1-2120
+vendor/gpui-pre-linux/src/linux/system_notifications.rs
+  s_ccb41beff89445::t_4bd128b93a726b 1-154
+vendor/gpui-pre-linux/src/linux/text_system.rs
+  s_ccb41beff89445::t_c11b7fd3cb0092 1
+vendor/gpui-pre-linux/src/linux/wayland.rs
+  s_ccb41beff89445::t_a48efd2b1a3f2c 1-42
+vendor/gpui-pre-linux/src/linux/wayland/client.rs
+  s_ccb41beff89445::t_a9b088a13a315f 1-3479
+vendor/gpui-pre-linux/src/linux/wayland/clipboard.rs
+  s_ccb41beff89445::t_ad62c65924b7ec 1-257
+vendor/gpui-pre-linux/src/linux/wayland/cursor.rs
+  s_ccb41beff89445::t_b4d090f8a5e118 1-152
+vendor/gpui-pre-linux/src/linux/wayland/display.rs
+  s_ccb41beff89445::t_189bdb6a98b25a 1-77
+vendor/gpui-pre-linux/src/linux/wayland/layer_shell.rs
+  s_ccb41beff89445::t_9208673b45cba2 1-26
+vendor/gpui-pre-linux/src/linux/wayland/popup.rs
+  s_ccb41beff89445::t_b3a54a92c585d9 1-38
+vendor/gpui-pre-linux/src/linux/wayland/serial.rs
+  s_ccb41beff89445::t_ddc313996b6e98 1-126
+vendor/gpui-pre-linux/src/linux/wayland/window.rs
+  s_ccb41beff89445::t_68243a31dc530a 1-2416
+vendor/gpui-pre-linux/src/linux/x11.rs
+  s_ccb41beff89445::t_53c352241d3cd2 1-13
+vendor/gpui-pre-linux/src/linux/x11/client.rs
+  s_ccb41beff89445::t_ce97b5e2dd5931 1-3212
+vendor/gpui-pre-linux/src/linux/x11/clipboard.rs
+  s_ccb41beff89445::t_11491560f9226d 1-1288
+vendor/gpui-pre-linux/src/linux/x11/display.rs
+  s_ccb41beff89445::t_d871cf16336554 1-56
+vendor/gpui-pre-linux/src/linux/x11/event.rs
+  s_ccb41beff89445::t_439e8e5ee1b9a7 1-154
+vendor/gpui-pre-linux/src/linux/x11/window.rs
+  s_ccb41beff89445::t_d61a8510e48c80 1-2067
+vendor/gpui-pre-linux/src/linux/x11/xim_handler.rs
+  s_ccb41beff89445::t_1f546cb1fbd746 1-133
+vendor/gpui-pre-linux/src/linux/xdg_desktop_portal.rs
+  s_ccb41beff89445::t_e8d7cbea308661 1-192
+vendor/gpui-pre-windows/Cargo.toml
+  s_ccb41beff89445::t_36c290e96521ec 1-216
+vendor/gpui-pre-windows/Cargo.toml.orig
+  s_ccb41beff89445::t_d3b76aba9acd2d 1-83
+vendor/gpui-pre-windows/LICENSE-APACHE
+  s_ccb41beff89445::t_49aaf44563d9f1 1-222
+vendor/gpui-pre-windows/build.rs
+  s_ccb41beff89445::t_6fe6cfec992a5d 1-244
+vendor/gpui-pre-windows/src/alpha_correction.hlsl
+  s_ccb41beff89445::t_50e3c4edf45e57 1-49
+vendor/gpui-pre-windows/src/clipboard.rs
+  s_ccb41beff89445::t_764c35b1957d35 1-394
+vendor/gpui-pre-windows/src/color_text_raster.hlsl
+  s_ccb41beff89445::t_af31ec9c7356a0 1-44
+vendor/gpui-pre-windows/src/destination_list.rs
+  s_ccb41beff89445::t_1b66daa6d2b08b 1-207
+vendor/gpui-pre-windows/src/dialog.rs
+  s_ccb41beff89445::t_6fb73dee0d99e9 1-340
+vendor/gpui-pre-windows/src/direct_manipulation.rs
+  s_ccb41beff89445::t_d23185ce9a70df 1-359
+vendor/gpui-pre-windows/src/direct_write.rs
+  s_ccb41beff89445::t_ccacee4646c304 1-2170
+vendor/gpui-pre-windows/src/directx_atlas.rs
+  s_ccb41beff89445::t_54cc8a5ef91b29 1-420
+vendor/gpui-pre-windows/src/directx_devices.rs
+  s_ccb41beff89445::t_27ad9bf2d87425 1-194
+vendor/gpui-pre-windows/src/directx_renderer.rs
+  s_ccb41beff89445::t_2881ec8c4517b9 1-2070
+vendor/gpui-pre-windows/src/dispatcher.rs
+  s_ccb41beff89445::t_4315ed4c7b9101 1-191
+vendor/gpui-pre-windows/src/display.rs
+  s_ccb41beff89445::t_a877e83471d9d6 1-244
+vendor/gpui-pre-windows/src/events.rs
+  s_ccb41beff89445::t_b7b111aff86884 1-1804
+vendor/gpui-pre-windows/src/gpui_windows.rs
+  s_ccb41beff89445::t_3d63733838548a 1-43
+vendor/gpui-pre-windows/src/keyboard.rs
+  s_ccb41beff89445::t_b6568ebb48eb87 1-371
+vendor/gpui-pre-windows/src/platform.rs
+  s_ccb41beff89445::t_97d0b7c8e6af7a 1-1977
+vendor/gpui-pre-windows/src/shaders.hlsl
+  s_ccb41beff89445::t_70d704fae50aba 1-1268
+vendor/gpui-pre-windows/src/system_notifications.rs
+  s_ccb41beff89445::t_50dec668bd28c4 1-198
+vendor/gpui-pre-windows/src/system_settings.rs
+  s_ccb41beff89445::t_b8f7b48834571f 1-87
+vendor/gpui-pre-windows/src/util.rs
+  s_ccb41beff89445::t_625346ff6de194 1-191
+vendor/gpui-pre-windows/src/vsync.rs
+  s_ccb41beff89445::t_ec5a4a2be2b676 1-119
+vendor/gpui-pre-windows/src/window.rs
+  s_ccb41beff89445::t_e8de0a405d434d 1-1740
+vendor/gpui-pre-windows/src/wrapper.rs
+  s_ccb41beff89445::t_cf62446494454e 1-53
+vendor/gpui-pre/Cargo.toml
+  s_ccb41beff89445::t_29c714257a92e4 1-477
+vendor/gpui-pre/Cargo.toml.orig
+  s_ccb41beff89445::t_8a2fc55a35454d 1-158
+vendor/gpui-pre/LICENSE-APACHE
+  s_ccb41beff89445::t_733464fb07abc5 1-222
+vendor/gpui-pre/README.md
+  s_ccb41beff89445::t_ddbef01f148a5a 1-101
+vendor/gpui-pre/build.rs
+  s_ccb41beff89445::t_3cc681e08a58db 1-43
+vendor/gpui-pre/docs/contexts.md
+  s_ccb41beff89445::t_961ccafb392fba 1-33
+vendor/gpui-pre/docs/key_dispatch.md
+  s_ccb41beff89445::t_4115b4f8975645 1-100
+vendor/gpui-pre/resources/windows/gpui.manifest.xml
+  s_ccb41beff89445::t_1e467148641ea2 1-33
+vendor/gpui-pre/resources/windows/gpui.rc
+  s_ccb41beff89445::t_636b7f89811567 1-2
+vendor/gpui-pre/src/_accessibility.rs
+  s_ccb41beff89445::t_2b235cb319c807 1-295
+vendor/gpui-pre/src/_ownership_and_data_flow.rs
+  s_ccb41beff89445::t_770e9e77f341d1 1-140
+vendor/gpui-pre/src/action.rs
+  s_ccb41beff89445::t_26badca6d5f8d1 1-459
+vendor/gpui-pre/src/app.rs
+  s_ccb41beff89445::t_725cad234a2508 1-3727
+vendor/gpui-pre/src/app/async_context.rs
+  s_ccb41beff89445::t_420fe22f45c239 1-557
+vendor/gpui-pre/src/app/bench_context.rs
+  s_ccb41beff89445::t_946500fa92f1b5 1-1596
+vendor/gpui-pre/src/app/context.rs
+  s_ccb41beff89445::t_e6d4aea8b0c61e 1-979
+vendor/gpui-pre/src/app/entity_map.rs
+  s_ccb41beff89445::t_6b48d7c915a0b3 1-1308
+vendor/gpui-pre/src/app/headless_app_context.rs
+  s_ccb41beff89445::t_635b9c4c28eaba 1-284
+vendor/gpui-pre/src/app/test_app.rs
+  s_ccb41beff89445::t_f8e1e188d96056 1-645
+vendor/gpui-pre/src/app/test_context.rs
+  s_ccb41beff89445::t_a6c985966602da 1-1469
+vendor/gpui-pre/src/app/visual_test_context.rs
+  s_ccb41beff89445::t_6989b194ee0aba 1-484
+vendor/gpui-pre/src/arena.rs
+  s_ccb41beff89445::t_7b3ae143d0fc9c 1-401
+vendor/gpui-pre/src/asset_cache.rs
+  s_ccb41beff89445::t_54c38145aa3388 1-358
+vendor/gpui-pre/src/assets.rs
+  s_ccb41beff89445::t_83f9ab2f3bb35b 1-133
+vendor/gpui-pre/src/bounds_tree.rs
+  s_ccb41beff89445::t_1825300ba1feac 1-472
+vendor/gpui-pre/src/color.rs
+  s_ccb41beff89445::t_c0b7f28df35516 1-1070
+vendor/gpui-pre/src/colors.rs
+  s_ccb41beff89445::t_e20698e5a0c0bd 1-122
+vendor/gpui-pre/src/debug_overlay.rs
+  s_ccb41beff89445::t_9b6397b5d8618f 1-428
+vendor/gpui-pre/src/element.rs
+  s_ccb41beff89445::t_4384641f3fcad6 1-1003
+vendor/gpui-pre/src/elements/anchored.rs
+  s_ccb41beff89445::t_5a5913e058ab95 1-398
+vendor/gpui-pre/src/elements/animation.rs
+  s_ccb41beff89445::t_166225c9e01afc 1-1028
+vendor/gpui-pre/src/elements/canvas.rs
+  s_ccb41beff89445::t_834ca7a7c2d235 1-95
+vendor/gpui-pre/src/elements/container_query.rs
+  s_ccb41beff89445::t_2276017c5d6780 1-126
+vendor/gpui-pre/src/elements/deferred.rs
+  s_ccb41beff89445::t_0eb58c99ca7a50 1-206
+vendor/gpui-pre/src/elements/div.rs
+  s_ccb41beff89445::t_ce700ba088265f 1-5664
+vendor/gpui-pre/src/elements/image_cache.rs
+  s_ccb41beff89445::t_19050d977971c3 1-330
+vendor/gpui-pre/src/elements/img.rs
+  s_ccb41beff89445::t_c31223c283328e 1-983
+vendor/gpui-pre/src/elements/list.rs
+  s_ccb41beff89445::t_48254337d2d36c 1-2973
+vendor/gpui-pre/src/elements/mod.rs
+  s_ccb41beff89445::t_b5ae76dfe805c8 1-27
+vendor/gpui-pre/src/elements/surface.rs
+  s_ccb41beff89445::t_c1c9b3cebb9456 1-134
+vendor/gpui-pre/src/elements/svg.rs
+  s_ccb41beff89445::t_edca67e9d13c07 1-303
+vendor/gpui-pre/src/elements/text.rs
+  s_ccb41beff89445::t_5538de3f4a2042 1-1349
+vendor/gpui-pre/src/elements/uniform_list.rs
+  s_ccb41beff89445::t_8ad994db774c46 1-936
+vendor/gpui-pre/src/executor.rs
+  s_ccb41beff89445::t_d938a5fdc485c7 1-583
+vendor/gpui-pre/src/geometry.rs
+  s_ccb41beff89445::t_d8922ecf252803 1-4020
+vendor/gpui-pre/src/gestures.rs
+  s_ccb41beff89445::t_4c5985c81748c8 1-2211
+vendor/gpui-pre/src/global.rs
+  s_ccb41beff89445::t_06320049177aa2 1-75
+vendor/gpui-pre/src/gpui.rs
+  s_ccb41beff89445::t_cedeb12ab010e0 1-402
+vendor/gpui-pre/src/input.rs
+  s_ccb41beff89445::t_e54de7f7d8bcfc 1-485
+vendor/gpui-pre/src/inspector.rs
+  s_ccb41beff89445::t_1d36dd17ac61e5 1-271
+vendor/gpui-pre/src/interactive.rs
+  s_ccb41beff89445::t_e3643e23609cb3 1-971
+vendor/gpui-pre/src/key_dispatch.rs
+  s_ccb41beff89445::t_1b49f2f589c2ac 1-2196
+vendor/gpui-pre/src/keymap.rs
+  s_ccb41beff89445::t_15ee80f769021a 1-1135
+vendor/gpui-pre/src/keymap/binding.rs
+  s_ccb41beff89445::t_432dcb6145bd79 1-143
+vendor/gpui-pre/src/keymap/context.rs
+  s_ccb41beff89445::t_e29fc562a43c45 1-891
+vendor/gpui-pre/src/path_builder.rs
+  s_ccb41beff89445::t_0f41b10c0076bf 1-347
+vendor/gpui-pre/src/platform.rs
+  s_ccb41beff89445::t_b918d51afdd618 1-3835
+vendor/gpui-pre/src/platform/app_menu.rs
+  s_ccb41beff89445::t_eb49ecd6584ea5 1-426
+vendor/gpui-pre/src/platform/keyboard.rs
+  s_ccb41beff89445::t_73c2f3b0ccc439 1-41
+vendor/gpui-pre/src/platform/keystroke.rs
+  s_ccb41beff89445::t_f4b145d25aea70 1-782
+vendor/gpui-pre/src/platform/layer_shell.rs
+  s_ccb41beff89445::t_ee90833b433e4a 1-83
+vendor/gpui-pre/src/platform/popup.rs
+  s_ccb41beff89445::t_3c76352b669711 1-134
+vendor/gpui-pre/src/platform/scap_screen_capture.rs
+  s_ccb41beff89445::t_e16eb5f5bf4b80 1-325
+vendor/gpui-pre/src/platform/test.rs
+  s_ccb41beff89445::t_aabfdf0e32a40a 1-12
+vendor/gpui-pre/src/platform/test/dispatcher.rs
+  s_ccb41beff89445::t_bc0434c42dd0c6 1-148
+vendor/gpui-pre/src/platform/test/display.rs
+  s_ccb41beff89445::t_3c5f5227e4fd11 1-44
+vendor/gpui-pre/src/platform/test/platform.rs
+  s_ccb41beff89445::t_b127b6a0e62d4a 1-807
+vendor/gpui-pre/src/platform/test/window.rs
+  s_ccb41beff89445::t_1bafd92fddaf38 1-611
+vendor/gpui-pre/src/platform/threaded_dispatcher.rs
+  s_ccb41beff89445::t_91c2d46dc53e08 1-744
+vendor/gpui-pre/src/platform/visual_test.rs
+  s_ccb41beff89445::t_bb4114a66b0b1a 1-276
+vendor/gpui-pre/src/platform_scheduler.rs
+  s_ccb41beff89445::t_997ba681db5058 1-457
+vendor/gpui-pre/src/prelude.rs
+  s_ccb41beff89445::t_b7cb7058fd45d3 1-9
+vendor/gpui-pre/src/profiler.rs
+  s_ccb41beff89445::t_1cf63c96f9a92a 1-2225
+vendor/gpui-pre/src/profiler/actions.rs
+  s_ccb41beff89445::t_23b05958cdb9d2 1-213
+vendor/gpui-pre/src/profiler/hang.rs
+  s_ccb41beff89445::t_2889aacd5735d5 1-1865
+vendor/gpui-pre/src/profiler/hang/monitor.rs
+  s_ccb41beff89445::t_97c7ec286936e0 1-120
+vendor/gpui-pre/src/profiler/journal.rs
+  s_ccb41beff89445::t_566dd5e4855835 1-3540
+vendor/gpui-pre/src/queue.rs
+  s_ccb41beff89445::t_bb4a745f202c8c 1-499
+vendor/gpui-pre/src/randomized_element_tree.rs
+  s_ccb41beff89445::t_46f5dd9e06d4c8 1-1745
+vendor/gpui-pre/src/scene.rs
+  s_ccb41beff89445::t_fe3908764082e9 1-949
+vendor/gpui-pre/src/seeds.rs
+  s_ccb41beff89445::t_728606714e2c03 1-67
+vendor/gpui-pre/src/shared_uri.rs
+  s_ccb41beff89445::t_25aa173640b973 1-25
+vendor/gpui-pre/src/spring.rs
+  s_ccb41beff89445::t_6ed54745489898 1-830
+vendor/gpui-pre/src/style.rs
+  s_ccb41beff89445::t_a27aa718d07fb4 1-1529
+vendor/gpui-pre/src/styled.rs
+  s_ccb41beff89445::t_f59176b83ed1f4 1-904
+vendor/gpui-pre/src/subscription.rs
+  s_ccb41beff89445::t_fee115e4faf126 1-351
+vendor/gpui-pre/src/svg_renderer.rs
+  s_ccb41beff89445::t_be7d7723d0f7bd 1-419
+vendor/gpui-pre/src/tab_stop.rs
+  s_ccb41beff89445::t_4e8a7e2869a0cb 1-615
+vendor/gpui-pre/src/taffy.rs
+  s_ccb41beff89445::t_efab0e54c1e600 1-776
+vendor/gpui-pre/src/test.rs
+  s_ccb41beff89445::t_e0da3282a69d81 1-172
+vendor/gpui-pre/src/text_system.rs
+  s_ccb41beff89445::t_fc55c614bfd031 1-1505
+vendor/gpui-pre/src/text_system/font_fallbacks.rs
+  s_ccb41beff89445::t_37bede599c728d 1-21
+vendor/gpui-pre/src/text_system/font_features.rs
+  s_ccb41beff89445::t_0bcd32e8465d5f 1-154
+vendor/gpui-pre/src/text_system/line.rs
+  s_ccb41beff89445::t_3bad9d23629d12 1-1979
+vendor/gpui-pre/src/text_system/line_layout.rs
+  s_ccb41beff89445::t_c3f54f26024a55 1-1190
+vendor/gpui-pre/src/text_system/line_wrapper.rs
+  s_ccb41beff89445::t_70e6f6a80bdd7a 1-1921
+vendor/gpui-pre/src/util.rs
+  s_ccb41beff89445::t_91f229b0824d6e 1-252
+vendor/gpui-pre/src/view.rs
+  s_ccb41beff89445::t_034a7b6a1e6333 1-639
+vendor/gpui-pre/src/window.rs
+  s_ccb41beff89445::t_4c35dc88f90a5d 1-9778
+vendor/gpui-pre/src/window/a11y.rs
+  s_ccb41beff89445::t_26094c6300597f 1-905
+vendor/gpui-pre/src/window/a11y/debug.rs
+  s_ccb41beff89445::t_c20471c3ae4743 1-330
+vendor/gpui-pre/src/window/prompts.rs
+  s_ccb41beff89445::t_03a41a92ae9509 1-232
+vendor/gpui-pre/tests/action_macros.rs
+  s_ccb41beff89445::t_f6df2c2439c2b0 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "16bd3d57609fc71a9934fdb5824a33457d364f6e",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
