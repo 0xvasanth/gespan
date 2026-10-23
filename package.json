@@ -64,7 +64,7 @@
     "@hugeicons/react": "^1.1.10",
     "@lezer/highlight": "^1.2.3",
     "@replit/codemirror-lang-svelte": "^6.0.0",
-    "@streamdown/code": "^1.1.1",
+    "@streamdown/code": "^2.0.0",
     "@streamdown/mermaid": "^1.0.2",
     "@tauri-apps/api": "^2.7.0",
     "@tauri-apps/plugin-dialog": "^2.7.2",
