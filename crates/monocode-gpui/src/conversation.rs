@@ -1103,6 +1103,11 @@ impl Conversation {
                         let needed_approval = this.needs_approval();
                         let incoming_notification_input = !stopping
                             && (!update.approvals.is_empty() || !update.questions.is_empty());
+                        let mono_queue_changed = this.settings.mono.is_some()
+                            && (update.turn_ready
+                                || update.delivered.is_some()
+                                || !update.follow_up_delivered.is_empty()
+                                || !update.follow_up_errors.is_empty());
                         this.transcript.update(cx, |v, cx| {
                             v.patch(update.start, update.rows, cx);
                             if stopping {
@@ -1186,15 +1191,22 @@ impl Conversation {
                             this.follow_ups.ready = true;
                         }
                         for id in update.follow_up_delivered {
-                            this.follow_up_delivered(&id, cx);
+                            if this.settings.mono.is_some() {
+                                this.mono_message_delivered(id, cx);
+                            } else {
+                                this.follow_up_delivered(&id, cx);
+                            }
                         }
                         for (id, error) in update.follow_up_errors {
-                            this.fail_follow_up(&id, error, cx);
+                            if this.settings.mono.is_some() {
+                                this.mono_message_failed(id, error);
+                            } else {
+                                this.fail_follow_up(&id, error, cx);
+                            }
                         }
                         if let Some(id) = update.delivered {
                             if this.settings.mono.is_some() {
-                                this.mono_ui.delivered = Some(id);
-                                this.sync_mono_pending(cx);
+                                this.mono_message_delivered(id, cx);
                             } else {
                                 this.follow_up_delivered(&id, cx);
                             }
@@ -1353,6 +1365,7 @@ impl Conversation {
                             this.mono_flush_external(cx);
                             cx.emit(SessionChanged);
                         } else if incoming_notification_input
+                            || mono_queue_changed
                             || needed_approval != this.needs_approval()
                         {
                             cx.emit(SessionChanged);

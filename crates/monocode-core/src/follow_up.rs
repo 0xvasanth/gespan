@@ -8,6 +8,8 @@ use std::path::PathBuf;
 pub struct Message {
     pub id: String,
     pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sent_at: Option<u64>,
     /// Snapshot transport context without exposing it as the editable message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepared_prompt: Option<String>,

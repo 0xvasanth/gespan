@@ -471,6 +471,9 @@ pub(crate) struct TranscriptView {
     follow: Follow,
     /// monoPendingTranscriptBlocks: queued messages, after the transcript.
     pending: Vec<PendingMessage>,
+    /// The outbox keeps this message until storage accepts it, but its prompt
+    /// and Thinking header are already painted in the source transcript.
+    submitted_mono_message: Option<String>,
     saved_draft: Option<monocode_core::follow_up::Message>,
     /// Pending messages just taken, including any entrance still in flight.
     taken: Vec<TakenMessage>,
@@ -720,7 +723,9 @@ impl TranscriptView {
     }
     pub(crate) fn response_rows(&self, turn: usize) -> (Vec<Row>, Vec<Row>) {
         let end = (turn..self.source.len())
-            .find(|&i| self.source[i].is_prompt())
+            .find(|&i| {
+                self.source[i].is_prompt() && !(self.mono && self.mono_next_run_continues(turn, i))
+            })
             .unwrap_or(self.source.len());
         let mut start = self.source[..turn.min(self.source.len())]
             .iter()
@@ -905,9 +910,6 @@ impl TranscriptView {
     /// MonoTurnHeader: the Mono signs its turn with its mascot and name; while
     /// it works, a ticker beside the pill says what it is doing.
     fn mono_turn_header(&self, turn: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some((mascot, color, name)) = self.mono_look.clone() else {
-            return div().into_any_element();
-        };
         // Nearby completion runs continue this header; a new stretch gets its own.
         let latest = self
             .source
@@ -917,6 +919,17 @@ impl TranscriptView {
         let live = self.streaming
             && self.source.len() > self.live_start
             && self.mono_group_start(latest) == turn;
+        self.mono_header(turn, live.then(|| self.mono_work_label(turn)), cx)
+    }
+    fn mono_header(
+        &self,
+        turn: usize,
+        label: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let Some((mascot, color, name)) = self.mono_look.clone() else {
+            return div().into_any_element();
+        };
         let pill = div()
             .debug_selector(|| "mono-signature-pill".into())
             .flex()
@@ -957,15 +970,12 @@ impl TranscriptView {
             .line_height(px(20.))
             .text_color(content(0.5))
             .child(pill)
-            .when(live, |d| {
-                let label = self.mono_work_label(turn);
+            .when_some(label, |d, label| {
                 d.child(div().flex_shrink_0().text_color(content(0.25)).child("·"))
                     .child(
                         div()
                             .id(("mono-turn-ticker", turn))
                             .debug_selector(|| "mono-turn-ticker".into())
-                            .role(Role::Button)
-                            .aria_label("Show activity")
                             .min_w_0()
                             .flex_1()
                             .truncate()
@@ -978,9 +988,13 @@ impl TranscriptView {
                                     self.started.map_or(0., |s| s.elapsed().as_secs_f32()),
                                 )
                             })
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.emit(MonoResponseAction::Activity(turn))
-                            })),
+                            .when(turn < self.source.len(), |d| {
+                                d.role(Role::Button).aria_label("Show activity").on_click(
+                                    cx.listener(move |_, _, _, cx| {
+                                        cx.emit(MonoResponseAction::Activity(turn))
+                                    }),
+                                )
+                            }),
                     )
             })
             .into_any_element()
@@ -1419,6 +1433,11 @@ impl TranscriptView {
             .map(|p| p.id.clone())
             .collect();
         self.pending = pending;
+        if !self.pending.iter().any(|message| {
+            message.error.is_none() && Some(&message.id) == self.submitted_mono_message.as_ref()
+        }) {
+            self.submitted_mono_message = None;
+        }
         if animate {
             for id in added {
                 if let Some(ix) = self.pending.iter().position(|p| p.id == id) {
@@ -1444,6 +1463,9 @@ impl TranscriptView {
     }
     fn push_pending(&mut self, at: usize) {
         for i in 0..self.pending.len() {
+            if Some(&self.pending[i].id) == self.submitted_mono_message.as_ref() {
+                continue;
+            }
             self.rows.push(UiRow {
                 key: (at, 100_000 + i),
                 body: Body::Pending(i),
@@ -1456,6 +1478,16 @@ impl TranscriptView {
             });
         }
     }
+    /// Starting the provider precedes its new prompt. Until that prompt
+    /// arrives, the previous answer remains a finished turn.
+    fn mono_pending_joins_live_turn(&self) -> bool {
+        self.streaming
+            && self
+                .source
+                .iter()
+                .rposition(Row::is_prompt)
+                .is_some_and(|prompt| prompt >= self.live_start)
+    }
     /// Whether `at` sits in a completion run that continues the turn above,
     /// returning the turn that opens the group: groupMonoChatTurns.
     fn mono_group_start(&self, mut turn: usize) -> usize {
@@ -1465,7 +1497,13 @@ impl TranscriptView {
                 break group;
             }
             visited.push(turn);
-            match mono_continues(&self.source, turn) {
+            match self
+                .turns
+                .get(&turn)
+                .and_then(|info| info.joined_turn)
+                .filter(|&root| root < turn)
+                .or_else(|| mono_continues(&self.source, turn))
+            {
                 Some(previous) => turn = previous,
                 None => break turn,
             }
@@ -1475,6 +1513,14 @@ impl TranscriptView {
             groups.insert(turn, group);
         }
         group
+    }
+    fn mono_next_run_continues(&self, turn: usize, end: usize) -> bool {
+        end < self.source.len()
+            && self.mono_group_start(
+                (end..self.source.len())
+                    .find(|&at| !self.source[at].is_prompt())
+                    .unwrap_or(self.source.len()),
+            ) == self.mono_group_start(turn)
     }
     /// The first row of the prompt block that opens `turn`.
     fn prompt_start(&self, turn: usize) -> usize {
@@ -1486,9 +1532,15 @@ impl TranscriptView {
         let end = (at + 1..self.source.len())
             .find(|&i| self.source[i].is_prompt())
             .unwrap_or(self.source.len());
+        let turn = self.source[..at]
+            .iter()
+            .rposition(Row::is_prompt)
+            .map_or(0, |prompt| prompt + 1);
         // Starting a request precedes delivery of its prompt. History remains
         // settled during that gap, even though it is still the source's tail.
         (self.streaming && at >= self.live_start && end == self.source.len())
+            || (self.source.get(end).is_some_and(|row| row.role == "user")
+                && self.mono_next_run_continues(turn, end))
             || self.source[at + 1..end]
                 .iter()
                 .any(|r| r.first && matches!(r.role.as_str(), "tool" | "reasoning"))
@@ -1657,6 +1709,12 @@ impl TranscriptView {
             .pending
             .get(ix + 1)
             .is_some_and(|next| !dates::opens_stretch(next.sent_at, message.sent_at));
+        let thinking = ix + 1 == self.pending.len()
+            && !self.mono_pending_joins_live_turn()
+            && self
+                .pending
+                .first()
+                .is_some_and(|message| message.error.is_none());
         let (mut opacity, mut rise) = (1., 0.);
         if let Some(born) = self.pending_entrances.get(&message.id)
             && !cx.reduce_motion()
@@ -1692,8 +1750,8 @@ impl TranscriptView {
                     .w_full()
                     .max_w(px(COLUMN))
                     .min_w_0()
-                    .pl(px(72.))
-                    .pr(px(32.))
+                    .pl(px(56.))
+                    .pr(px(16.))
                     .pt_1()
                     .pb(px(if stacked { 0. } else { 20. }))
                     .flex()
@@ -1798,6 +1856,16 @@ impl TranscriptView {
                         )
                     }),
             )
+            .when(thinking, |d| {
+                d.child(
+                    div()
+                        .w_full()
+                        .max_w(px(COLUMN))
+                        .min_w_0()
+                        .px_4()
+                        .child(self.mono_header(self.source.len(), Some("Thinking…".into()), cx)),
+                )
+            })
             .into_any_element()
     }
     /// isCompactFollowUp: the next message is the user's too, directly or
@@ -1806,6 +1874,27 @@ impl TranscriptView {
         let mut at = start + 1;
         while at < self.source.len() && !self.source[at].first {
             at += 1;
+        }
+        if let Some(next) =
+            (at..self.source.len()).find(|&i| self.source[i].first && self.source[i].is_prompt())
+            && self.source[next].role == "user"
+            && self.mono_next_run_continues(at, next)
+        {
+            return !self.mono_opens_stretch(next);
+        }
+        if let Some(message) = self
+            .pending
+            .iter()
+            .find(|message| Some(&message.id) != self.submitted_mono_message.as_ref())
+            && self.mono_pending_joins_live_turn()
+            && self
+                .source
+                .iter()
+                .rposition(Row::is_prompt)
+                .is_some_and(|prompt| prompt < at)
+            && !dates::opens_stretch(message.sent_at, self.source[start].sent_at)
+        {
+            return true;
         }
         while let Some(row) = self.source.get(at) {
             if row.is_prompt() {
@@ -2167,6 +2256,7 @@ impl TranscriptView {
             reactions: HashMap::new(),
             follow: Follow::default(),
             pending: Vec::new(),
+            submitted_mono_message: None,
             saved_draft: None,
             taken: Vec::new(),
             pending_entrances: HashMap::new(),
@@ -2521,6 +2611,9 @@ impl TranscriptView {
             });
         }
         submitted.begin("assistant");
+        if self.mono {
+            self.submitted_mono_message = settings.mono_message_id.clone();
+        }
         self.patch(self.source.len(), submitted.rows, cx);
     }
 
@@ -2592,12 +2685,16 @@ impl TranscriptView {
                     let provider = self.provider.clone();
                     let model = self.model.clone();
                     let provider_turn_id = self.active_provider_turn_id.clone();
+                    let joined_turn = self
+                        .active_turn()
+                        .filter(|&root| root < turn && self.source[prompt].role == "user");
                     self.turns
                         .entry(turn)
                         .or_insert_with(|| monocode_core::agent::TurnInfo {
                             provider,
                             model,
                             provider_turn_id,
+                            joined_turn,
                             ..Default::default()
                         });
                 }
@@ -3237,7 +3334,11 @@ impl TranscriptView {
                 attachments,
             });
             let last_prompt = self.source.iter().rposition(|r| r.is_prompt());
-            if self.mono && is_prompt && self.streaming && last_prompt.is_some_and(|p| end > p) {
+            if self.mono
+                && is_prompt
+                && self.mono_pending_joins_live_turn()
+                && last_prompt.is_some_and(|p| end > p)
+            {
                 // The running turn keeps the user's messages together above its work.
                 self.push_pending(at);
             }
@@ -3292,12 +3393,7 @@ impl TranscriptView {
                 && self.source[at].role != monocode_core::transcript::attachments::ROLE
                 && !reaction
                 && end == turn_end
-                && !(self.mono
-                    && self
-                        .source
-                        .get(turn_end)
-                        .is_some_and(|r| r.role == "mono-system")
-                    && !self.mono_opens_stretch(turn_end))
+                && !(self.mono && self.mono_next_run_continues(turn, turn_end))
             {
                 if !self.mono
                     && self.review_shown
@@ -3338,6 +3434,33 @@ impl TranscriptView {
         self.prepared_parsers.clear();
         if self.mono && !self.rows.iter().any(|r| matches!(r.body, Body::Pending(_))) {
             self.push_pending(self.source.len());
+        }
+        if self.mono {
+            // An accepted steer stays beside the original user prompt, both
+            // while streaming and after the provider's final answer is saved.
+            let messages = &self.messages;
+            let pending_group = self.mono_pending_joins_live_turn().then(|| {
+                let latest = self
+                    .source
+                    .iter()
+                    .rposition(Row::is_prompt)
+                    .map_or(0, |at| at + 1);
+                self.mono_group_start(latest)
+            });
+            let tail = self.source.len();
+            self.rows[display_start..].sort_by_key(|row| {
+                let message = messages.get(row.message);
+                let pending = matches!(row.body, Body::Pending(_));
+                let group = message
+                    .map(|m| m.turn)
+                    .or_else(|| pending.then_some(pending_group).flatten())
+                    .unwrap_or(tail);
+                (
+                    group,
+                    !(pending || message.is_some_and(|m| m.role == "user")),
+                    row.key,
+                )
+            });
         }
         self.push_saved_draft();
         let mut pinned_answers = HashMap::new();

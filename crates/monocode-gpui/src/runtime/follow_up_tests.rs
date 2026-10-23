@@ -57,6 +57,7 @@ for line in sys.stdin:
     let message = Message {
         id: "steer".into(),
         text: "Change direction\nwith more detail".into(),
+        sent_at: Some(1_800_000_000_000),
         ..Default::default()
     };
     store
@@ -113,6 +114,7 @@ for line in sys.stdin:
             assert_eq!(response.role, "assistant");
             assert!(response.first && response.text.is_empty());
             assert!(prompt < update.rows.len() - 1);
+            assert_eq!(update.rows[prompt].sent_at, message.sent_at);
             let store = locked(&store).unwrap();
             assert!(store.follow_ups(session).unwrap().messages.is_empty());
             let saved = store.load(session).unwrap();
@@ -122,6 +124,11 @@ for line in sys.stdin:
             assert_eq!(settings.turns[&turn].provider, "codex");
             assert_eq!(settings.turns[&turn].model, "Chosen Model");
             assert!(!settings.turns[&turn].has_duration());
+            assert_eq!(
+                settings.turns[&turn].joined_turn,
+                Some(1),
+                "the accepted steer keeps its original run after reload"
+            );
             receipt_seen = true;
             std::fs::write(fixture.0.join("receipt-observed"), "ready").unwrap();
         }

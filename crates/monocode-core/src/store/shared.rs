@@ -163,12 +163,21 @@ pub(super) fn project_turns(
 ) -> Result<HashMap<usize, crate::agent::TurnInfo>, String> {
     let mut turns = HashMap::new();
     let mut offset = 0;
+    let mut root_turn = None;
     for block in blocks {
         let rows = blocks::project(std::slice::from_ref(block))?;
         if let Some(prompt) = rows.iter().rposition(Row::is_prompt) {
             let model = &block["turnModel"];
             let duration = block["durationMs"].as_u64();
             let started_at = block["startedAt"].as_u64();
+            let turn = offset + prompt + 1;
+            if started_at.is_some() {
+                root_turn = Some(turn);
+            }
+            let joined_turn =
+                (block["role"] == "user" && block["sentAt"].is_number() && started_at.is_none())
+                    .then_some(root_turn)
+                    .flatten();
             let metrics = block
                 .get("turnMetrics")
                 .filter(|value| value.is_object())
@@ -178,10 +187,12 @@ pub(super) fn project_turns(
                 || started_at.is_some()
                 || metrics.is_some()
                 || block["providerTurnId"].is_string()
+                || joined_turn.is_some()
             {
                 turns.insert(
                     offset + prompt + 1,
                     crate::agent::TurnInfo {
+                        joined_turn,
                         provider_turn_id: block["providerTurnId"].as_str().map(str::to_owned),
                         provider: model["harness"].as_str().unwrap_or("").into(),
                         model: model["name"].as_str().unwrap_or("").into(),
@@ -704,6 +715,9 @@ impl Store {
             }
             if source.provider_turn_id.is_some() {
                 info.provider_turn_id = source.provider_turn_id;
+            }
+            if source.joined_turn.is_some() {
+                info.joined_turn = source.joined_turn;
             }
             if source.duration_known {
                 info.duration_ms = source.duration_ms;

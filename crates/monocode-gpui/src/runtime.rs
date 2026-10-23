@@ -571,12 +571,19 @@ fn run_turn_using(
                         }
                         Event::FollowUp(message) => {
                             let at = transcript.begin("user");
+                            transcript.rows[at].sent_at =
+                                message.sent_at.or(transcript.rows[at].sent_at);
                             start = start.min(at);
                             transcript.append(&message.text);
                             transcript.attach_files(&message.attachments);
                             // Paint the working receipt with the accepted steer,
                             // even when the provider has no new output yet.
-                            let turn = transcript.begin("assistant");
+                            transcript.begin("assistant");
+                            let turn = transcript
+                                .rows
+                                .iter()
+                                .rposition(Row::is_prompt)
+                                .map_or(0, |at| at + 1);
                             pending.accept(
                                 &store,
                                 summary.id,
@@ -585,10 +592,11 @@ fn run_turn_using(
                                 &message.id,
                                 std::time::Instant::now(),
                             )?;
-                            if let Some((_, root)) = &turn_receipt {
+                            if let Some((root_turn, root)) = &turn_receipt {
                                 // A steer keeps its send time and model identity,
                                 // while timing/metrics belong to the original run.
                                 let steer = monocode_core::agent::TurnInfo {
+                                    joined_turn: Some(*root_turn),
                                     provider: root.provider.clone(),
                                     model: root.model.clone(),
                                     model_id: root.model_id.clone(),

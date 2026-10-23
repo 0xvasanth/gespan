@@ -24,6 +24,72 @@ fn conversation(cx: &mut TestAppContext) -> WindowHandle<Conversation> {
 }
 
 #[gpui::test]
+fn mono_messages_steer_the_ready_provider_once_and_keep_their_send_time(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    let (send, receive) = std::sync::mpsc::channel();
+    window
+        .update(cx, |view, _, cx| {
+            view.summary.provider = "codex".into();
+            view.configure_mono(
+                monocode_core::mono::Mono::default(),
+                "/tmp".into(),
+                Default::default(),
+                cx,
+            );
+            view.busy = true;
+            view.controls = Some(send);
+            let message = monocode_core::mono::Message {
+                id: "follow-up".into(),
+                text: "is".into(),
+                sent_at: Some(1234),
+                internal: false,
+                error: None,
+                attachments: vec!["/tmp/image.png".into()],
+            };
+            assert!(
+                !view.mono_dispatch(&message, cx),
+                "wait for provider readiness"
+            );
+            view.follow_ups.ready = true;
+            assert!(view.mono_dispatch(&message, cx));
+            let control = receive.try_recv().unwrap();
+            let Decision::Steer(steer) = control.decision else {
+                panic!("expected a real steer");
+            };
+            assert_eq!(steer.id, message.id);
+            assert_eq!(steer.text, "is");
+            assert_eq!(steer.sent_at, Some(1234));
+            assert_eq!(
+                steer.attachments,
+                vec![std::path::PathBuf::from("/tmp/image.png")]
+            );
+            assert!(view.busy);
+            assert!(
+                !view.mono_dispatch(&message, cx),
+                "do not send twice while acknowledgement is pending"
+            );
+            assert!(receive.try_recv().is_err());
+            view.mono_message_delivered(message.id.clone(), cx);
+            assert!(
+                !view.mono_dispatch(&message, cx),
+                "an acknowledged message cannot be resent"
+            );
+            let second = monocode_core::mono::Message {
+                id: "next".into(),
+                ..message
+            };
+            assert!(view.mono_dispatch(&second, cx));
+            view.mono_message_failed(second.id.clone(), "Could not steer".into());
+            assert_eq!(
+                view.mono_take_failures(),
+                vec![(second.id, "Could not steer".into())]
+            );
+            assert!(view.mono_ui.sending.is_none());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn send_paints_before_storage_and_keeps_one_message_after_startup_failure(cx: &mut TestAppContext) {
     for text in [
         "First message".to_owned(),

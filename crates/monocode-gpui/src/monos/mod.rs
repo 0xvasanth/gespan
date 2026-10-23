@@ -891,15 +891,28 @@ impl Monos {
         let delivered = self
             .chats
             .get(id)
-            .and_then(|v| v.read(cx).mono_delivered())
-            .map(str::to_owned);
-        if let Some(message) = delivered
-            && let Some(m) = self
-                .roster
-                .get_mut(id)
-                .filter(|m| m.outbox.first().is_some_and(|q| q.id == message))
-        {
-            m.outbox.remove(0);
+            .map(|v| v.read(cx).mono_delivered().clone())
+            .unwrap_or_default();
+        let failures = self
+            .chats
+            .get(id)
+            .cloned()
+            .map(|view| view.update(cx, |view, _| view.mono_take_failures()))
+            .unwrap_or_default();
+        let mut changed = false;
+        if let Some(mono) = self.roster.get_mut(id) {
+            let before = mono.outbox.len();
+            mono.outbox
+                .retain(|message| !delivered.contains(&message.id));
+            changed = before != mono.outbox.len();
+            for (id, error) in failures {
+                if let Some(message) = mono.outbox.iter_mut().find(|m| m.id == id) {
+                    message.error = Some(error);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
             self.save(cx);
             self.configure_chat(id, cx);
         }
@@ -938,22 +951,20 @@ impl Monos {
                 self.save(cx);
             }
         }
+        let Some(view) = self.chats.get(id).cloned() else {
+            return;
+        };
+        let busy = view.read(cx).busy;
         let Some(message) = self
             .roster
             .get(id)
-            .and_then(|m| m.outbox.first())
+            .and_then(|m| m.outbox.iter().find(|message| !busy || !message.internal))
             .cloned()
             .filter(|m| m.error.is_none() && self.persisted_messages.contains(&m.id))
         else {
             return;
         };
-        let Some(view) = self.chats.get(id).cloned() else {
-            return;
-        };
-        if view.read(cx).busy {
-            return;
-        }
-        if view.update(cx, |v, cx| v.mono_dispatch(&message, cx)) {
+        if view.update(cx, |v, cx| v.mono_dispatch(&message, cx)) && !busy {
             self.inflight.insert(id.into(), message);
         }
     }
@@ -999,8 +1010,8 @@ impl Monos {
             }
             self.check_completions(cx);
             self.reload_files(id, cx);
-            self.dispatch(id, cx);
         }
+        self.dispatch(id, cx);
         self.changed(cx);
     }
     pub(crate) fn open(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {

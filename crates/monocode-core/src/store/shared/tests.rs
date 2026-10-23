@@ -1024,3 +1024,17 @@ fn fresh_receipt_preserves_the_matching_desktop_model_id_spelling() {
         "claude:sonnet-4.6"
     );
 }
+#[test]
+fn desktop_steers_restore_the_original_turn_without_needing_model_metadata() {
+    let turns = project_turns(&[
+        json!({"id":"first","role":"user","text":"what","startedAt":100}),
+        json!({"id":"progress","role":"assistant","text":"Opening thought"}),
+        json!({"id":"steer","role":"user","text":"is","sentAt":110}),
+        json!({"id":"answer","role":"assistant","text":"Final answer"}),
+        json!({"id":"next","role":"user","text":"Next turn","startedAt":200}),
+    ])
+    .unwrap();
+    assert_eq!(turns[&1].joined_turn, None);
+    assert_eq!(turns[&3].joined_turn, Some(1));
+    assert_eq!(turns[&5].joined_turn, None);
+}

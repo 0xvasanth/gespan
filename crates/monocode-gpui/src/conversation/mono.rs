@@ -6,7 +6,9 @@ use std::path::PathBuf;
 pub(super) struct ChatState {
     pub(super) pending: Vec<Message>,
     pub(super) emoji: bool,
-    pub(super) delivered: Option<String>,
+    pub(super) delivered: std::collections::HashSet<String>,
+    pub(super) sending: Option<String>,
+    pub(super) failed: Vec<(String, String)>,
     pub(super) external: Option<(String, bool)>,
     pub(super) floating: std::collections::HashSet<gpui::WindowId>,
     /// ModelPicker with `hideSettings`: the model list opens on its own.
@@ -101,6 +103,9 @@ impl Conversation {
             .update(cx, |t, _| t.mono_mode(&mono.mascot, mono.color, &name));
         self.settings.environment = environment;
         self.mono_ui.pending = mono.outbox.clone();
+        self.mono_ui
+            .delivered
+            .retain(|id| mono.outbox.iter().any(|m| &m.id == id));
         self.sync_mono_pending(cx);
         self.settings.mono = Some(monocode_core::agent::MonoContext {
             mono,
@@ -112,12 +117,11 @@ impl Conversation {
     /// The user's queued messages show in the transcript as bubbles; the one
     /// just delivered is already a transcript row.
     pub(super) fn sync_mono_pending(&mut self, cx: &mut Context<Self>) {
-        let delivered = self.mono_ui.delivered.clone();
         let pending = self
             .mono_ui
             .pending
             .iter()
-            .filter(|m| !m.internal && Some(&m.id) != delivered.as_ref())
+            .filter(|m| !m.internal && !self.mono_ui.delivered.contains(&m.id))
             .map(|m| crate::transcript::PendingMessage {
                 id: m.id.clone(),
                 text: m.text.clone().into(),
@@ -130,6 +134,9 @@ impl Conversation {
             .update(cx, |t, cx| t.set_pending(pending, cx));
     }
     pub(crate) fn mono_dispatch(&mut self, message: &Message, cx: &mut Context<Self>) -> bool {
+        if self.mono_ui.delivered.contains(&message.id) || (self.busy && message.internal) {
+            return false;
+        }
         if !self.history_ready() {
             self.load(cx);
             return false;
@@ -137,14 +144,48 @@ impl Conversation {
         if self.settings.pending_provider_switch.is_some() && self.busy {
             self.stop(cx);
         }
-        if self.busy
-            || self.stopping
+        if self.stopping
             || !self.loaded
             || self.settings.usage_limit.is_some()
             || self.account_switching
         {
             return false;
         }
+        if self.busy {
+            if self.mono_ui.sending.is_some()
+                || !self.follow_ups.ready
+                || !Kind::from_id(&self.summary.provider).can_steer()
+                || self
+                    .questions
+                    .iter()
+                    .any(|(card, _)| card.read(cx).blocks_steering())
+            {
+                return false;
+            }
+            let prepared = self.completion.read(cx).prepare_prompt(&message.text);
+            let steer = monocode_core::follow_up::Message {
+                id: message.id.clone(),
+                text: message.text.clone(),
+                sent_at: message.sent_at,
+                prepared_prompt: (prepared != message.text).then_some(prepared),
+                attachments: message.attachments.iter().map(PathBuf::from).collect(),
+                steer: true,
+                ..Default::default()
+            };
+            if self.controls.as_ref().is_some_and(|controls| {
+                controls
+                    .send(Control {
+                        id: message.id.clone(),
+                        decision: Decision::Steer(steer),
+                    })
+                    .is_ok()
+            }) {
+                self.mono_ui.sending = Some(message.id.clone());
+                return true;
+            }
+            return false;
+        }
+        self.mono_ui.sending = None;
         self.settings.mono_message_id = Some(message.id.clone());
         self.settings.mono_sent_at = message.sent_at;
         self.settings.internal_message = message.internal;
@@ -277,8 +318,24 @@ impl Conversation {
         self.save_settings(cx);
         cx.notify();
     }
-    pub(crate) fn mono_delivered(&self) -> Option<&str> {
-        self.mono_ui.delivered.as_deref()
+    pub(crate) fn mono_delivered(&self) -> &std::collections::HashSet<String> {
+        &self.mono_ui.delivered
+    }
+    pub(super) fn mono_message_delivered(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.mono_ui.sending.as_ref() == Some(&id) {
+            self.mono_ui.sending = None;
+        }
+        self.mono_ui.delivered.insert(id);
+        self.sync_mono_pending(cx);
+    }
+    pub(super) fn mono_message_failed(&mut self, id: String, error: String) {
+        if self.mono_ui.sending.as_ref() == Some(&id) {
+            self.mono_ui.sending = None;
+        }
+        self.mono_ui.failed.push((id, error));
+    }
+    pub(crate) fn mono_take_failures(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.mono_ui.failed)
     }
     pub(crate) fn mono_model_options(&self) -> Vec<MenuItem> {
         let mut items: Vec<MenuAction> = Vec::new();

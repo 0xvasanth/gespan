@@ -161,6 +161,9 @@ pub struct MonoContext {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TurnInfo {
+    /// An accepted steer belongs to the provider run that opened this receipt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub joined_turn: Option<usize>,
     pub provider_turn_id: Option<String>,
     pub provider: String,
     pub model: String,
