@@ -7,7 +7,9 @@ impl Shell {
     /// Finds installed editors once, off the main thread; the first lookup
     /// may read the login shell's PATH.
     pub(super) fn scan_external_editors(&mut self, cx: &mut Context<Self>) {
-        let work = cx.background_executor().spawn(async { external_editor::installed() });
+        let work = cx
+            .background_executor()
+            .spawn(async { external_editor::installed() });
         cx.spawn(async move |this, cx| {
             let editors = work.await;
             let _ = this.update(cx, |this, _| this.external_editors = Some(editors));
@@ -16,15 +18,16 @@ impl Shell {
     }
     pub(super) fn external_editor_menu(&self, path: &str) -> MenuAction {
         let item = MenuAction::new("external-editor", "Open in editor").icon("app-window");
-        let none = |label: &str| vec![MenuAction::new("external-editor:none", label).disabled(true)];
+        let none =
+            |label: &str| vec![MenuAction::new("external-editor:none", label).disabled(true)];
         if path.starts_with("remote://") {
-            return item.disabled(true).submenu(none("Remote folders stay on their host"));
+            return item
+                .disabled(true)
+                .submenu(none("Remote folders stay on their host"));
         }
         match &self.external_editors {
             None => item.disabled(true).submenu(none("Looking for editors…")),
-            Some(editors) if editors.is_empty() => {
-                item.submenu(none("No supported editors found"))
-            }
+            Some(editors) if editors.is_empty() => item.submenu(none("No supported editors found")),
             Some(editors) => item.submenu(
                 editors
                     .iter()
@@ -58,7 +61,12 @@ impl Shell {
 
     /// Closes the project's tabs and drops it from the rail. Its chats stay in
     /// history, and opening the folder again (or a new chat there) restores it.
-    pub(super) fn archive_project(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn archive_project(
+        &mut self,
+        path: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.leave_project(path, window, cx);
         self.workspace.archived_projects.retain(|p| p != path);
         self.workspace.archived_projects.insert(0, path.to_owned());
@@ -97,7 +105,9 @@ impl Shell {
             if prompt.await != Ok(0) {
                 return;
             }
-            let _ = this.update_in(cx, |this, window, cx| this.delete_project(&path, window, cx));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.delete_project(&path, window, cx)
+            });
         })
         .detach();
     }
@@ -162,9 +172,12 @@ impl Shell {
         self.workspace.projects.retain(|p| p != path);
         self.workspace.project_rail_pinned.remove(path);
         if self.workspace.project == path {
-            let next = self.workspace.projects.first().cloned().unwrap_or_else(|| {
-                std::env::var("HOME").unwrap_or_else(|_| "/".into())
-            });
+            let next = self
+                .workspace
+                .projects
+                .first()
+                .cloned()
+                .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".into()));
             if !self.workspace.projects.contains(&next) {
                 self.workspace.add_project(&next);
             }

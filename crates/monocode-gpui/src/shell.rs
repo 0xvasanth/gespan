@@ -5144,9 +5144,7 @@ impl Shell {
                     MenuItem::Separator,
                     self.project_notification_menu(path).into(),
                     MenuItem::Separator,
-                    MenuAction::new("archive", "Archive")
-                        .icon("archive")
-                        .into(),
+                    MenuAction::new("archive", "Archive").icon("archive").into(),
                     MenuAction::new("delete", "Delete")
                         .icon("trash")
                         .danger()

@@ -122,7 +122,14 @@ impl Conversation {
                         .justify_center()
                         .text_color(content(0.45))
                         .hover(|s| s.bg(content(0.08)).text_color(content(0.9)))
-                        .child(icon(if collapsed { "chevron-up" } else { "chevron-down-2" }, 12.)),
+                        .child(icon(
+                            if collapsed {
+                                "chevron-up"
+                            } else {
+                                "chevron-down-2"
+                            },
+                            12.,
+                        )),
                 )
             });
         let rows = div()
@@ -224,14 +231,23 @@ fn background_row(task: &BackgroundTask) -> gpui::Stateful<gpui::Div> {
                             .justify_center()
                             .rounded_full()
                             .bg(live.opacity(0.25 * (1. - breath)))
-                            .child(div().size(px(6.)).rounded_full().bg(live.opacity(0.65 + 0.35 * breath))),
+                            .child(
+                                div()
+                                    .size(px(6.))
+                                    .rounded_full()
+                                    .bg(live.opacity(0.65 + 0.35 * breath)),
+                            ),
                     )
             },
         ))
 }
 
 fn first_line(command: &str) -> &str {
-    command.lines().find(|line| !line.trim().is_empty()).unwrap_or(command).trim()
+    command
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or(command)
+        .trim()
 }
 
 /// A ticking clock, so seconds stay padded once minutes appear.
