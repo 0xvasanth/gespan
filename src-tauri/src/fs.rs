@@ -725,7 +725,7 @@ fn git_ignored_names(dir: &Path, names: &[&str]) -> Option<HashSet<String>> {
     )
 }
 
-/// Ceiling for one `git ls-files` listing. A 2M-file pilotrepo emits roughly
+/// Ceiling for one `git ls-files` listing. A 2M-file monorepo emits roughly
 /// 120 MB of NUL-separated paths; past this the walk takes over, which is
 /// bounded by `MAX_PROJECT_FILES` and cancellable.
 const MAX_LS_FILES_BYTES: usize = 8 * 1024 * 1024;
@@ -734,7 +734,7 @@ fn git_ls_files(root: &Path, cancel: Option<&AtomicBool>) -> Option<Vec<ProjectF
     // Routed through the bounded reader rather than `Command::output()`: this
     // is the path a cancelled search actually takes, because a repository with
     // a git index never reaches the walk. `output()` buffers the whole listing
-    // before anything can look at it, so on a large pilotrepo it held ~100 MB
+    // before anything can look at it, so on a large monorepo it held ~100 MB
     // and ran to completion with no way to interrupt it — the exact cost the
     // walk's cancel check was added to avoid, one function earlier.
     let (raw, truncated) = git_output_capped(
