@@ -3646,10 +3646,10 @@ dependencies = [
  "keyring",
  "libc",
  "minisign-verify",
- "monocode-mobile-link",
  "natpmp",
  "quinn",
  "rand 0.9.5",
+ "rebase-mobile-link",
  "regex",
  "rquickjs",
  "rusqlite",
@@ -3723,25 +3723,6 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "unicode-segmentation",
-]
-
-[[package]]
-name = "monocode-mobile-link"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "jni",
- "p256",
- "pulldown-cmark",
- "quinn",
- "rcgen",
- "rustls",
- "serde",
- "serde_json",
- "sha2",
- "socket2",
- "tokio",
- "x509-parser",
 ]
 
 [[package]]
@@ -5310,6 +5291,25 @@ dependencies = [
  "bytemuck",
  "font-types 0.12.7",
  "once_cell",
+]
+
+[[package]]
+name = "rebase-mobile-link"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "jni",
+ "p256",
+ "pulldown-cmark",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2",
+ "tokio",
+ "x509-parser",
 ]
 
 [[package]]
