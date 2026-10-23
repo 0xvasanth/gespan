@@ -33,8 +33,8 @@ vi.mock("expo-sqlite/kv-store", () => ({
 vi.mock("@/features/connection/ConnectionProvider", () => ({
   useConnection: () => ({
     pairing: link.pairing,
-    catalog: { projects: [{ id: "project" }], monos: [], sessions: [] },
-    selection: { projectIds: ["project"], monoIds: [] },
+    catalog: { projects: [{ id: "project" }], pilots: [], sessions: [] },
+    selection: { projectIds: ["project"], pilotIds: [] },
     command: link.command,
     refresh: link.refresh,
   }),

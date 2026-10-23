@@ -16,7 +16,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { MonoMascot } from "@/features/mascots/PixelMascot";
+import { PilotMascot } from "@/features/mascots/PixelMascot";
 import { ProjectMascot } from "@/features/mascots/ProjectMascot";
 import { SettingsRow } from "@/features/settings/SettingsUI";
 import { GradualBlur } from "@/ui/GradualBlur";
@@ -25,14 +25,14 @@ import { LiquidView } from "@/ui/LiquidView";
 import { withAlpha, radii, themedStyles, useColors } from "@/ui/theme";
 import { useConnection } from "./ConnectionProvider";
 import { connectionStyleSheet } from "./ConnectScreen";
-import { MONOS_ENABLED, type MobileSelection } from "./selection";
+import { PILOTS_ENABLED, type MobileSelection } from "./selection";
 
 /** Room the blur takes past the edge it covers. */
 const FADE = 24;
 
 /**
- * The projects and monos the phone shows, picked as cards; only projects
- * while monos are off (see MONOS_ENABLED). First run shows it
+ * The projects and pilots the phone shows, picked as cards; only projects
+ * while pilots are off (see PILOTS_ENABLED). First run shows it
  * on its own; Settings shows it `editing`, in its sheet under a native header,
  * which the page scrolls under through iOS's automatic insets.
  */
@@ -51,13 +51,13 @@ export function WorkspacePicker({
   const insets = useSafeAreaInsets();
   const androidHeader = editing && Platform.OS === "android";
   const [draft, setDraft] = useState<MobileSelection>(
-    () => connection.selection ?? { projectIds: [], monoIds: [] },
+    () => connection.selection ?? { projectIds: [], pilotIds: [] },
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [footer, setFooter] = useState(120);
   const background = editing ? colors.sheet : colors.background;
-  const monos = MONOS_ENABLED ? connection.catalog.monos : [];
+  const pilots = PILOTS_ENABLED ? connection.catalog.pilots : [];
   const toggle = (field: keyof MobileSelection, id: string) => {
     void Haptics.selectionAsync();
     setDraft((previous) => ({
@@ -83,9 +83,9 @@ export function WorkspacePicker({
     draft.projectIds.filter((id) =>
       connection.catalog.projects.some((project) => project.id === id),
     ).length +
-    draft.monoIds.filter((id) => monos.some((mono) => mono.id === id)).length;
+    draft.pilotIds.filter((id) => pilots.some((pilot) => pilot.id === id)).length;
   const disabled = saving || (!editing && !connection.connected);
-  const empty = !connection.catalog.projects.length && !monos.length;
+  const empty = !connection.catalog.projects.length && !pilots.length;
   const content = (
     <>
       <ScrollView
@@ -106,26 +106,26 @@ export function WorkspacePicker({
           <>
             <Text style={styles.title}>Your mobile{"\n"}workspace</Text>
             <Text style={styles.subtitle}>
-              Pick the {MONOS_ENABLED ? "projects and monos" : "projects"} you
+              Pick the {PILOTS_ENABLED ? "projects and pilots" : "projects"} you
               want here.{"\n"}You can change this anytime in Settings.
             </Text>
           </>
         )}
 
-        {monos.length ? (
-          <Section title="Monos" editing={editing}>
-            {monos.map((mono) => (
+        {pilots.length ? (
+          <Section title="Pilots" editing={editing}>
+            {pilots.map((pilot) => (
               <PickCard
-                key={mono.id}
+                key={pilot.id}
                 editing={editing}
-                label={mono.name}
-                selected={draft.monoIds.includes(mono.id)}
-                onPress={() => toggle("monoIds", mono.id)}
+                label={pilot.name}
+                selected={draft.pilotIds.includes(pilot.id)}
+                onPress={() => toggle("pilotIds", pilot.id)}
                 icon={
-                  <MonoMascot
-                    name={mono.mascot}
-                    color={mono.color}
-                    status={mono.status}
+                  <PilotMascot
+                    name={pilot.mascot}
+                    color={pilot.color}
+                    status={pilot.status}
                     size={24}
                   />
                 }
@@ -157,7 +157,7 @@ export function WorkspacePicker({
         {empty ? (
           connection.connected ? (
             <Text style={styles.empty}>
-              Open a project or create a mono on your desktop, then refresh.
+              Open a project or create a pilot on your desktop, then refresh.
             </Text>
           ) : (
             <ActivityIndicator color={colors.content} style={styles.loading} />

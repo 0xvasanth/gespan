@@ -29,9 +29,9 @@ function Rects({ rects, unit }: { rects: readonly PixelRect[]; unit: number }) {
 }
 
 /**
- * Shaded pixel mascot used for monos, the native take on the desktop PixelMascot.
+ * Shaded pixel mascot used for pilots, the native take on the desktop PixelMascot.
  * Drawn with Views from the same rects, so there is no SVG dependency. Swaps
- * frames while working and shows the bulb when the mono needs you.
+ * frames while working and shows the bulb when the pilot needs you.
  */
 export function PixelMascot({
   name,
@@ -62,7 +62,7 @@ export function PixelMascot({
 }
 
 /** Mascot plus the desktop's status circle in the top-right corner. */
-export function MonoMascot({
+export function PilotMascot({
   name,
   color,
   status = "idle",

@@ -36,7 +36,7 @@ Open a project folder, choose an agent, and send a message. Each tab is a sessio
 - Edit files and review changes in the app.
 - Start a message with `/operator` to let an agent open sessions and manage worktrees and notes.
 
-Monos are experimental agents that work across your projects. They keep a memory and can run scheduled tasks you set up with them.
+Pilots are experimental agents that work across your projects. They keep a memory and can run scheduled tasks you set up with them.
 
 Rebase is still early. If something breaks, [report a bug](https://github.com/hardbeat920/rebase/issues).
 

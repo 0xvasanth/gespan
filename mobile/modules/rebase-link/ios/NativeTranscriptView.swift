@@ -280,7 +280,7 @@ final class NativeTranscriptView: ExpoView, UIScrollViewDelegate {
     {
       loadingOlder = false
     }
-    // Every message sent anchors, as Transcript.tsx; a Mono's chat goes to the end.
+    // Every message sent anchors, as Transcript.tsx; a Pilot's chat goes to the end.
     if newPrompt {
       following = true
       anchoring = style.agent.isEmpty
@@ -584,7 +584,7 @@ final class NativeTranscriptView: ExpoView, UIScrollViewDelegate {
     displayRows()
     publishViewport()
     updateAway()
-    // Only a Mono's chat follows its reply down, as Transcript.tsx.
+    // Only a Pilot's chat follows its reply down, as Transcript.tsx.
     if initialized && scroll.isDragging && !style.agent.isEmpty
       && scroll.contentSize.height - bounds.height - scroll.contentOffset.y < 70
     {

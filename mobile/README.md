@@ -18,14 +18,14 @@ After the first build, use `npm start` for everyday TypeScript and JavaScript ch
 
 The routes are in `src/app/`:
 
-- `_layout.tsx` gates the workspace behind pairing and puts it inside `SimpleDrawer` (`src/ui/SimpleDrawer.tsx`), a gesture-driven side drawer. The drawer content is `src/features/workspace/WorkspaceDrawer.tsx`, which lists monos, projects and recent sessions, with search.
+- `_layout.tsx` gates the workspace behind pairing and puts it inside `SimpleDrawer` (`src/ui/SimpleDrawer.tsx`), a gesture-driven side drawer. The drawer content is `src/features/workspace/WorkspaceDrawer.tsx`, which lists pilots, projects and recent sessions, with search.
 - `project/[projectId]/index.tsx` is the new session screen for a project.
 - `project/[projectId]/session/[sessionId].tsx` is a session transcript.
-- `mono/[monoId].tsx` is a mono's conversation.
+- `pilot/[pilotId].tsx` is a pilot's conversation.
 
 ## Pair with desktop
 
-Run the desktop app from the repository root, open **Settings → Mobile**, enable mobile access and choose **Pair device**. Scan the code in the mobile app, then choose the projects and monos to include. You can select nothing and choose later. **Mobile Settings → Projects and monos** changes the selection at any time; choices are remembered per desktop, including after reconnecting.
+Run the desktop app from the repository root, open **Settings → Mobile**, enable mobile access and choose **Pair device**. Scan the code in the mobile app, then choose the projects and pilots to include. You can select nothing and choose later. **Mobile Settings → Projects and pilots** changes the selection at any time; choices are remembered per desktop, including after reconnecting.
 
 Pairing codes expire after 15 minutes and work once. The shared Rust module uses QUIC and mutually authenticated TLS 1.3, with the desktop identity pinned by the code. Long-lived private keys are stored in the desktop OS keyring and the phone’s SecureStore. Desktop settings list paired devices and let you revoke them. Selection controls what appears on the phone; a paired device has workspace access.
 

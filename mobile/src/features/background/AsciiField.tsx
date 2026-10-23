@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import { useReducedMotion } from "react-native-reanimated";
 
-import { MONO } from "@/features/changes/diffTheme";
+import { CODE_FONT } from "@/features/changes/diffTheme";
 
 /** Characters from empty to dense. */
 const RAMP = " .·:-=+*#%@";
@@ -147,7 +147,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   field: {
-    fontFamily: MONO,
+    fontFamily: CODE_FONT,
     fontSize: FONT_SIZE,
     lineHeight: LINE_HEIGHT,
   },

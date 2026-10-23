@@ -14,7 +14,7 @@ import * as SecureStore from "expo-secure-store";
 import Storage from "expo-sqlite/kv-store";
 import type {
   Project,
-  Mono,
+  Pilot,
   SessionSummary,
   Message,
   Turn,
@@ -31,11 +31,11 @@ import { normalizeSelection, type MobileSelection } from "./selection";
 
 export type Catalog = {
   projects: Project[];
-  monos: Mono[];
+  pilots: Pilot[];
   sessions: SessionSummary[];
   addresses?: Desktop["addresses"];
 };
-const EMPTY: Catalog = { projects: [], monos: [], sessions: [] };
+const EMPTY: Catalog = { projects: [], pilots: [], sessions: [] };
 const PAIRING = "rebase.mobile.pairing";
 const IDENTITY = "rebase.mobile.identity";
 const key = (fingerprint: string, kind: string) =>
@@ -111,7 +111,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       if (active.current !== value || version !== generation.current) return;
       if (
         !Array.isArray(next.projects) ||
-        !Array.isArray(next.monos) ||
+        !Array.isArray(next.pilots) ||
         !Array.isArray(next.sessions)
       )
         throw new Error("Desktop sent an invalid workspace");
@@ -288,14 +288,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   return <Context value={value}>{children}</Context>;
 }
 /**
- * The new catalog, keeping the projects, monos and sessions that did not
+ * The new catalog, keeping the projects, pilots and sessions that did not
  * change as they were, so rows memoized on them skip re-rendering.
  */
 function withUnchanged(previous: Catalog, next: Catalog): Catalog {
   return {
     ...next,
     projects: sameItems(previous.projects, next.projects),
-    monos: sameItems(previous.monos, next.monos),
+    pilots: sameItems(previous.pilots, next.pilots),
     sessions: sameItems(previous.sessions, next.sessions),
   };
 }

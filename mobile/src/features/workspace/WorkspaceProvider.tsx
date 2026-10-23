@@ -25,7 +25,7 @@ import {
 import { selectedWorkspace } from "@/features/connection/selection";
 import type { ModelCatalog, ModelChoice } from "@/features/models/types";
 import { toWire, type Attachment } from "@/features/sessions/attachments";
-import type { Message, Mono, Project, SessionSummary, Turn, TurnItem } from "./types";
+import type { Message, Pilot, Project, SessionSummary, Turn, TurnItem } from "./types";
 import { applyFrames, type WatchFrame } from "./watchUpdates";
 /**
  * The workspace: what the desktop has and what can be done with it. Changes
@@ -38,7 +38,7 @@ type StartChoice = Partial<ModelChoice> & { workspaceMode?: "worktree"; worktree
 
 type Workspace = {
   projects: Project[];
-  monos: Mono[];
+  pilots: Pilot[];
   sessions: SessionSummary[];
   watch: (id: string | null) => void;
   startSession: (
@@ -555,7 +555,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           : session;
     return {
       projects: selected.projects,
-      monos: selected.monos,
+      pilots: selected.pilots,
       sessions: [
         ...selected.sessions,
         ...Object.values(remembered).filter((session) => !known.has(session.id)),
@@ -668,8 +668,8 @@ export function useNativeTranscript(id: string) {
     onStatus: useCallback((status: NativeTranscriptStatus) => nativeTranscriptStatus(id, status), [id, nativeTranscriptStatus]),
   };
 }
-export function monoConversationId(monoId: string) {
-  return "mono:" + monoId;
+export function pilotConversationId(pilotId: string) {
+  return "pilot:" + pilotId;
 }
 
 function countUserItems(turns: Turn[] | undefined) {

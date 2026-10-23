@@ -43,7 +43,7 @@ function activeness(progress: number, index: number) {
  * Glass segmented control, like the Chat / Work switch in the ChatGPT app: a
  * lighter thumb slides behind the selected segment. Unselected segments show
  * only their icon; the selected one reveals its label, like the tabs in desktop
- * mono chats. Everything follows one continuous `progress` (the selected
+ * pilot chats. Everything follows one continuous `progress` (the selected
  * index), so a parent that pages its content by swipe can pass its own and the
  * thumb and labels move with the finger. Without one, a tap animates there.
  */

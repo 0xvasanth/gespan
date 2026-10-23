@@ -3,7 +3,7 @@
 const listeners = new Set<(projectId: string) => void>();
 
 /** Hands a pick from the picker to the screen under it. False when no
- *  screen took it, as a mono's doesn't. */
+ *  screen took it, as a pilot's doesn't. */
 export function pickProject(projectId: string) {
   listeners.forEach((listener) => listener(projectId));
   return listeners.size > 0;

@@ -1,4 +1,4 @@
-// Trimmed-down versions of the desktop shapes (RecentProject, Mono, SessionSummary).
+// Trimmed-down versions of the desktop shapes (RecentProject, Pilot, SessionSummary).
 // These will be filled from the paired desktop once sync exists.
 
 import type { MascotStatus } from "@/features/mascots/PixelMascot";
@@ -90,7 +90,7 @@ export type FileContents = {
 /** One of a project's other working copies, named by its branch. */
 export type Worktree = { path: string; name: string };
 
-export type Mono = {
+export type Pilot = {
   id: string;
   name: string;
   mascot: string;
@@ -98,7 +98,7 @@ export type Mono = {
   projectIds: string[];
   unread: number;
   status: MascotStatus;
-  /** Latest line in the mono's conversation, for its drawer row. */
+  /** Latest line in the pilot's conversation, for its drawer row. */
   lastMessage: string;
   lastActiveAt: number;
   harness?: Harness;
@@ -111,7 +111,7 @@ export type RuntimeMode = "supervised" | "auto-accept-edits" | "auto" | "full-ac
 export type SessionSummary = {
   id: string;
   projectId: string;
-  monoId?: string;
+  pilotId?: string;
   title: string;
   harness: Harness;
   model: string;
@@ -182,7 +182,7 @@ export type Turn = {
   footer?: boolean;
   /** What the footer's copy button copies: the turn's replies, as on desktop. */
   copyText?: string;
-  /** Token accounting for the footer's metrics button; Monos leave it out. */
+  /** Token accounting for the footer's metrics button; Pilots leave it out. */
   metrics?: TurnMetrics;
   durationMs?: number;
 };

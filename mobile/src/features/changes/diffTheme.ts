@@ -3,7 +3,7 @@ import { Platform } from "react-native";
 import type { ChangeStatus } from "@/features/workspace/types";
 import { useScheme } from "@/ui/theme";
 
-export const MONO = Platform.select({ ios: "Menlo", default: "monospace" });
+export const CODE_FONT = Platform.select({ ios: "Menlo", default: "monospace" });
 
 // Status letters from the desktop GitChangesPanel.
 export const STATUS_LETTER: Record<ChangeStatus, string> = {

@@ -5,7 +5,7 @@ import { SessionScreen } from "@/features/sessions/SessionScreen";
 import { useConnectionStyles } from "@/features/connection/ConnectScreen";
 export default function Index() {
   const styles = useConnectionStyles();
-  const { projects, monos } = useWorkspace();
+  const { projects, pilots } = useWorkspace();
   if (projects[0])
     return (
       <Redirect
@@ -15,10 +15,10 @@ export default function Index() {
         }}
       />
     );
-  if (monos[0])
+  if (pilots[0])
     return (
       <Redirect
-        href={{ pathname: "/mono/[monoId]", params: { monoId: monos[0].id } }}
+        href={{ pathname: "/pilot/[pilotId]", params: { pilotId: pilots[0].id } }}
       />
     );
   return (
@@ -26,7 +26,7 @@ export default function Index() {
       <View style={[styles.screen, { justifyContent: "center", gap: 24 }]}>
         <Text style={styles.title}>Make yourself at home.</Text>
         <Text style={styles.subtitle}>
-          Choose the projects and monos you want on your phone.
+          Choose the projects and pilots you want on your phone.
         </Text>
         <Pressable
           style={styles.primary}

@@ -60,7 +60,7 @@ const NO_TURNS: Turn[] = [];
 /**
  * Chat transcript with ChatGPT-style anchoring: the latest user message sits
  * just under the header, with blank space below it for the reply to stream into.
- * A Mono's chat, as on desktop, skips the anchoring and sits at the bottom.
+ * A Pilot's chat, as on desktop, skips the anchoring and sits at the bottom.
  *
  * Per the keyboard-controller chat guide, that space is `blankSpace`: the viewport
  * minus everything from the anchor message down. It is a minimum inset, so the
@@ -334,7 +334,7 @@ export function Transcript({
     jump.visible.set(withTiming(show ? 1 : 0, { duration: 160 }));
   };
 
-  // A Mono's chat follows its reply down while the reader is at the end.
+  // A Pilot's chat follows its reply down while the reader is at the end.
   const atEnd = useRef(true);
   const follow = () => {
     if (!agent || !atEnd.current || pendingScroll.current) return;

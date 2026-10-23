@@ -14,7 +14,7 @@ import { withAlpha, themedStyles, useColors } from "@/ui/theme";
 
 import { CommitSheet } from "./CommitSheet";
 import { keepDiff } from "./shownDiffs";
-import { formatCount, MONO, splitPath, STATUS_LETTER, useDiffTheme } from "./diffTheme";
+import { formatCount, CODE_FONT, splitPath, STATUS_LETTER, useDiffTheme } from "./diffTheme";
 
 /** The commit button: the resting composer's height, so the pages' bottoms match. */
 const BAR = 50;
@@ -587,7 +587,7 @@ const useStyles = themedStyles((colors) => ({
   status: {
     width: 16,
     textAlign: "right",
-    fontFamily: MONO,
+    fontFamily: CODE_FONT,
     fontSize: 12,
     fontWeight: "600",
   },

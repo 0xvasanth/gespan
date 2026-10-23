@@ -136,7 +136,7 @@ export function SessionCard({
 }
 
 /**
- * A session as the desktop's Mono details panel lays out its SessionCard
+ * A session as the desktop's Pilot details panel lays out its SessionCard
  * (`modelInFooter`): the title with the time or status on its right, then the
  * branch with the model and its provider's mark on its right. The desktop
  * reveals the model's name on hover; with no hover here it always shows.

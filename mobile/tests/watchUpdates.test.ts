@@ -51,7 +51,7 @@ describe("watch frames", () => {
 
   it("carries an error until the next good frame", () => {
     expect(
-      applyFrames([], [{ error: "Mono is no longer available" }])!.error,
-    ).toBe("Mono is no longer available");
+      applyFrames([], [{ error: "Pilot is no longer available" }])!.error,
+    ).toBe("Pilot is no longer available");
   });
 });

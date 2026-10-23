@@ -198,7 +198,7 @@ export type Chrome = {
   /** Plain header title; omit for a bare header. */
   title?: string;
   subtitle?: string;
-  /** Glass pill in the header, e.g. a mono's mascot and name, or a session's
+  /** Glass pill in the header, e.g. a pilot's mascot and name, or a session's
    * title over its project and branch. Wins over `title`. */
   pill?: { icon?: ReactNode; label: string; subtitle?: string };
   /** Any element for the header's centre, e.g. a view switch. Wins over `pill` and `title`. */
@@ -232,7 +232,7 @@ const ChromeContext = createContext<(path: string, chrome: Chrome) => void>(
 /**
  * A main-pane screen. Hands its header text and composer to the persistent
  * SessionFrame and renders only its content, so moving between screens (say a
- * mono and a project) swaps the content without rebuilding the header, composer
+ * pilot and a project) swaps the content without rebuilding the header, composer
  * and blur around it. Set in a layout effect, so the frame updates before paint.
  */
 export function SessionScreen({
@@ -390,7 +390,7 @@ export function SessionFrame({
         key: centerKey(layer),
         still: false,
       }));
-  // The right of the header only rolls when it changes, say from a mono's
+  // The right of the header only rolls when it changes, say from a pilot's
   // button to a project's. Between screens sharing the centre it swaps in
   // place, as from a session's new-session button to the empty session's
   // background one, and moving between sessions keeps the one button.

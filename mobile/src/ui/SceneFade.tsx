@@ -5,7 +5,7 @@ import {
   type SharedValue,
 } from "react-native-reanimated";
 
-// The frame's own header, on screens without the stack's native one (a mono):
+// The frame's own header, on screens without the stack's native one (a pilot):
 // as the next screen's header pieces come in from below, the last one's go on
 // up and out. Nothing here fades the screens themselves: the stack moves them,
 // and native glass drawn first inside a view faded to nothing never forms.

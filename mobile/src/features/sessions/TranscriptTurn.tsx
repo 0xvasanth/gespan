@@ -28,7 +28,7 @@ import {
 } from "./transcriptFormat";
 import { TurnMetricsSheet } from "./TurnMetricsSheet";
 
-/** Who a Mono's turns are by, in place of the model and provider mark. */
+/** Who a Pilot's turns are by, in place of the model and provider mark. */
 export type TranscriptAgent = { name: string; mascot: string; color: string };
 
 type HeaderItem = Extract<TurnItem, { type: "header" }>;
@@ -52,7 +52,7 @@ const CONTENT_X = GUTTER + FOLD_MARK + 6;
 /** The desktop footer's `text-content/40` buttons. */
 /** The desktop's rail: content at 14% over the background, opaque so lines meet cleanly. */
 /** The desktop's `bg-content/10` over the background, opaque so the tail can overlap. */
-/** The desktop's `bg-content/[0.07]` pills: day stamps and a Mono's signature. */
+/** The desktop's `bg-content/[0.07]` pills: day stamps and a Pilot's signature. */
 // The desktop's bubble tail (src/styles/index.css), drawn against an 18px corner.
 const TAIL =
   "M9 15.6C9.05 16.3 9.05 17.4 9.05 18.6C9.05 20 8.3 21.4 7.4 22.6Q6.9 23.4 7.8 23.5C9.6 23.3 11.6 22.3 13.2 21.5C15 20.5 16.2 19.6 17.2 18.8C17.9 18.25 18.6 18 19.6 18L18 18A18 18 0 0 1 9 15.6Z";
@@ -60,7 +60,7 @@ const TAIL =
 /**
  * One turn, laid out as AgentTranscript does: the prompt in a bubble on the
  * right, the work folded behind one status line, the answer as full-width
- * Markdown, and when it landed underneath. A Mono's turn signs with its mascot
+ * Markdown, and when it landed underneath. A Pilot's turn signs with its mascot
  * and name in a pill and keeps its work in that line.
  */
 export const TranscriptTurn = memo(function TranscriptTurn({
@@ -83,7 +83,7 @@ export const TranscriptTurn = memo(function TranscriptTurn({
             return <UserMessage key={item.id} item={item} tail={!!agent} />;
           case "header":
             return agent ? (
-              <MonoHeader key={item.id} item={item} agent={agent} />
+              <PilotHeader key={item.id} item={item} agent={agent} />
             ) : (
               <FoldLine key={item.id} item={item} />
             );
@@ -263,7 +263,7 @@ function UserMessage({
   const [overflows, setOverflows] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  // In a Mono's chat a few emoji stand alone, like a reaction: no bubble.
+  // In a Pilot's chat a few emoji stand alone, like a reaction: no bubble.
   if (tail && item.emojiOnly) {
     return (
       <View style={[styles.userRow, item.compact && styles.userRowCompact]}>
@@ -342,7 +342,7 @@ function BubbleTail({ radius }: { radius: number }) {
   );
 }
 
-/** A Mono's emoji answer, on the corner of the message it answers. */
+/** A Pilot's emoji answer, on the corner of the message it answers. */
 function Reaction({ emoji }: { emoji: string }) {
   const styles = useStyles();
   return (
@@ -425,8 +425,8 @@ function FoldLine({ item }: { item: HeaderItem }) {
   );
 }
 
-/** A Mono signs its turns with its mascot and name; live, its status runs beside. */
-function MonoHeader({ item, agent }: { item: HeaderItem; agent: TranscriptAgent }) {
+/** A Pilot signs its turns with its mascot and name; live, its status runs beside. */
+function PilotHeader({ item, agent }: { item: HeaderItem; agent: TranscriptAgent }) {
   const styles = useStyles();
   const signature = (name: string) => (
     <View style={styles.signature}>
@@ -436,12 +436,12 @@ function MonoHeader({ item, agent }: { item: HeaderItem; agent: TranscriptAgent 
       </Text>
     </View>
   );
-  if (!item.live) return <View style={styles.monoHeader}>{signature(item.label ?? agent.name)}</View>;
+  if (!item.live) return <View style={styles.pilotHeader}>{signature(item.label ?? agent.name)}</View>;
   return (
-    <View style={styles.monoHeader}>
+    <View style={styles.pilotHeader}>
       <View style={styles.signatureLive}>{signature(agent.name)}</View>
       <Text style={styles.dot}>·</Text>
-      <Shimmer style={styles.monoStatus}>{item.label ?? "Thinking…"}</Shimmer>
+      <Shimmer style={styles.pilotStatus}>{item.label ?? "Thinking…"}</Shimmer>
     </View>
   );
 }
@@ -682,7 +682,7 @@ const useStyles = themedStyles((colors) => ({
   pressed: {
     opacity: 0.6,
   },
-  monoHeader: {
+  pilotHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -716,7 +716,7 @@ const useStyles = themedStyles((colors) => ({
     color: withAlpha(colors.content, 0.25),
     fontSize: 14,
   },
-  monoStatus: {
+  pilotStatus: {
     flex: 1,
     color: withAlpha(colors.content, 0.5),
     fontSize: 14,

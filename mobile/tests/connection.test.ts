@@ -6,38 +6,38 @@ import {
 import { parseInvitation } from "@/features/connection/invitation";
 const catalog = {
   projects: [{ id: "a" }, { id: "b" }],
-  monos: [{ id: "m" }, { id: "n" }],
+  pilots: [{ id: "m" }, { id: "n" }],
   sessions: [
     { id: "s1", projectId: "a" },
     { id: "s2", projectId: "b" },
-    { id: "s3", projectId: "b", monoId: "m" },
+    { id: "s3", projectId: "b", pilotId: "m" },
   ],
 };
 describe("mobile workspace choices", () => {
-  it("keeps project selection isolated while mono support is disabled", () => {
+  it("keeps project selection isolated while pilot support is disabled", () => {
     const selected = selectedWorkspace(catalog, {
       projectIds: ["a"],
-      monoIds: ["m"],
+      pilotIds: ["m"],
     });
     expect(selected.projects).toEqual([{ id: "a" }]);
-    expect(selected.monos).toEqual([]);
+    expect(selected.pilots).toEqual([]);
     expect(selected.sessions.map((session) => session.id)).toEqual(["s1"]);
   });
   it("preserves an explicit empty choice on restore", () => {
     const restored = normalizeSelection(
-      JSON.parse(JSON.stringify({ projectIds: [], monoIds: [] })),
+      JSON.parse(JSON.stringify({ projectIds: [], pilotIds: [] })),
     );
-    expect(restored).toEqual({ projectIds: [], monoIds: [] });
+    expect(restored).toEqual({ projectIds: [], pilotIds: [] });
     expect(selectedWorkspace(catalog, restored).projects).toEqual([]);
-    expect(normalizeSelection({ projectIds: "all", monoIds: [] })).toBeNull();
+    expect(normalizeSelection({ projectIds: "all", pilotIds: [] })).toBeNull();
   });
   it("retains unavailable choices so they can reappear when a desktop project returns", () => {
     const chosen = normalizeSelection({
       projectIds: ["a", "a", 5, "later"],
-      monoIds: ["m"],
+      pilotIds: ["m"],
     });
     expect(chosen?.projectIds).toEqual(["a", "later"]);
-    expect(chosen?.monoIds).toEqual(["m"]);
+    expect(chosen?.pilotIds).toEqual(["m"]);
     expect(
       selectedWorkspace(
         { ...catalog, projects: [...catalog.projects, { id: "later" }] },

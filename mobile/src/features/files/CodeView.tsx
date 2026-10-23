@@ -23,7 +23,7 @@ import Animated, {
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { MONO } from "@/features/changes/diffTheme";
+import { CODE_FONT } from "@/features/changes/diffTheme";
 import { themedStyles, useScheme, withAlpha } from "@/ui/theme";
 
 /** A diff line's colours: its row, its gutter and its number and sign. */
@@ -442,7 +442,7 @@ const useStyles = themedStyles((colors) => ({
     paddingRight: 8,
     textAlign: "right",
     color: withAlpha(colors.content, 0.35),
-    fontFamily: MONO,
+    fontFamily: CODE_FONT,
     fontSize: 11,
     lineHeight: ROW_HEIGHT,
   },
@@ -450,7 +450,7 @@ const useStyles = themedStyles((colors) => ({
     width: SIGN_WIDTH,
     textAlign: "center",
     color: "transparent",
-    fontFamily: MONO,
+    fontFamily: CODE_FONT,
     fontSize: 12,
     lineHeight: ROW_HEIGHT,
   },
@@ -458,7 +458,7 @@ const useStyles = themedStyles((colors) => ({
     paddingLeft: 4,
     paddingRight: 20,
     color: withAlpha(colors.content, 0.8),
-    fontFamily: MONO,
+    fontFamily: CODE_FONT,
     fontSize: 12,
     lineHeight: ROW_HEIGHT,
   },
@@ -479,7 +479,7 @@ const useStyles = themedStyles((colors) => ({
   },
   hunkText: {
     color: withAlpha(colors.content, 0.4),
-    fontFamily: MONO,
+    fontFamily: CODE_FONT,
     fontSize: 11,
   },
 }));

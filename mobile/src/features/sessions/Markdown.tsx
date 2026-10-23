@@ -21,7 +21,7 @@ import {
 } from "./markdownParser";
 import { closeOpenMarkers, useStreamedText, useWordFade, type WordClock } from "./wordReveal";
 
-const MONO = Platform.select({ ios: "Menlo", default: "monospace" });
+const CODE_FONT = Platform.select({ ios: "Menlo", default: "monospace" });
 
 /** Prose inside a fold: the agent talking while it works, one notch quieter. */
 const Muted = createContext(false);
@@ -370,7 +370,7 @@ const useStyles = themedStyles((colors) => ({
     color: colors.accent,
   },
   inlineCode: {
-    fontFamily: MONO,
+    fontFamily: CODE_FONT,
     fontSize: 15,
   },
   fileRef: {
@@ -394,7 +394,7 @@ const useStyles = themedStyles((colors) => ({
   },
   codeText: {
     color: withAlpha(colors.content, 0.85),
-    fontFamily: MONO,
+    fontFamily: CODE_FONT,
     fontSize: 13,
     lineHeight: 19,
   },
