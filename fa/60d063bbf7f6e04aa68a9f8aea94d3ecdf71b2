@@ -1,0 +1,224 @@
+src/features/sessions/ui/HarnessIcon.tsx
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 9,26,39,88
+src/app/shell/Sidebar.tsx
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 2675
+docs/superpowers/specs/2026-10-23-kiro-cli-provider-design.md
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-128
+host/server.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 52,65,84,101
+src-tauri/Cargo.toml
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 6
+src/features/sessions/model/models.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 198-202,227,258
+  s_ccb41beff89445::t_78bea20c10015e 197
+package.json
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 3-13
+src/integrations/harness/providers/kiro/kiroCatalog.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-88
+src/app/App.tsx
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 176,349,1149,5671,5680,5690-5695,5844-5871,5874,8546-8555,11937-11939,14725
+src/features/inbox/model/githubTasks.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 2,295,304
+src/integrations/harness/providers/kiro/kiroCatalog.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-111
+.github/workflows/release.yml
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 4-8
+src/integrations/harness/providers/claude/claudeProtocol.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 157-162,859-879
+src/features/skills/ui/SkillsPage.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 10,13-15,93,113-130
+src/features/sessions/model/transcriptActivity.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 369-397,1619-1652
+CONTRIBUTING.md
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 64
+host/workspace-commands.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 71-72,189-192,616-648
+  s_ccb41beff89445::t_365ee75ae261cd 649
+src/features/skills/ui/SkillsPage.tsx
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 20,23,130
+src/integrations/harness/core/registry.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 14,115,131,136-143
+  s_ccb41beff89445::t_d5f2798b90a0ac 144-145
+src/integrations/harness/providers/claude/claudeGit.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 15,30,57,90
+src-tauri/src/rate_limits.rs
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 421-428
+src/integrations/harness/core/register.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 7,25
+src/integrations/harness/providers/codex/codexCatalog.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1,9,54-128,131,174,182,364
+src/assets/providers/kiro.svg
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-3
+src/features/inbox/model/githubTasks.repositories.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 3,7,236-266,268
+src/features/files/ui/BinaryFileView.tsx
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 34,58,66,76,97,99,110-113,143-144,609,618-619,622-668,686,688,692-694,697-703,709-738
+  s_ccb41beff89445::t_17309a8ce732e3 739
+src/app/shell/PilotRailSection.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 88-112
+docs/providers.md
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 17
+src/features/skills/model/skills.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 15,317,322-349,454-458
+src/test/noMonoReferences.test.ts
+  s_ccb41beff89445::t_444faaa3714b59 184,194
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 3,117-122,130,140,192-193,197
+  s_ccb41beff89445::t_7ad2d6e34bcd83 195
+src/test/brandIcons.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-156
+LICENSE
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 4
+src/app/shell/PilotRailSection.tsx
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 77,80-83,86-87,91-95
+src/features/source-control/model/worktrees.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 9,178-204
+  s_ccb41beff89445::t_ea049bd27ba452 205-206
+src/integrations/harness/providers/kiro/kiroAdapter.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-33
+src-tauri/icons/icon.svg
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-3,5-17
+src/features/sessions/ui/ModelPicker.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 169-171
+src/features/inbox/model/inboxNotifications.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 21-78,97
+src/styles/index.css
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 3799-3805
+README.md
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 2,15,30
+  s_ccb41beff89445::t_3766c8f3d81ae5 31
+src/integrations/harness/providers/codex/codexCatalog.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-139
+src-tauri/src/control_cli.rs
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 407,412-418
+src-tauri/src/lib.rs
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 503,697-702
+  s_ccb41beff89445::t_62560f92423832 703
+src/features/files/ui/BinaryFileView.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 9-10,23-30,236-327
+  s_ccb41beff89445::t_739bb395f80955 328
+src/integrations/harness/providers/claude/claudeProtocol.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 243-248,259-260,302,1200-1204,1210-1211,1213-1215
+src/integrations/harness/providers/kiro/kiroProtocol.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-361
+src/features/projects/model/projectGroups.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 3-7
+mobile/src/features/sessions/SessionFilterMenu.tsx
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 37
+mobile/src/features/sessions/providerSvgs.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 6,17
+src/features/projects/model/recents.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 2-8,236-282
+  s_ccb41beff89445::t_d4a86cb98a6f8b 283
+src/features/source-control/model/worktrees.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 180-194
+src/integrations/harness/providers/claude/claudeText.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-82
+src-tauri/src/window.rs
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 2,13,16-17,249,259-353,369-387,782-847
+  s_ccb41beff89445::t_fe558a29b9c292 848
+src/features/sessions/ui/DeleteSessionDialog.tsx
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 11,16,22,25,30-32,62-66,68
+host/process.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 23
+src/features/sessions/ui/AgentTranscript.inlineWork.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 910-935
+src/integrations/harness/core/apply.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 672-726
+docs/remote-access.md
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 3
+src/features/connections/model/remoteCommands.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 39-40
+src/integrations/harness/core/apply.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 18,1185-1261
+src/integrations/harness/providers/claude/claudeText.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 15,48,83,95,101-103,126-133,148-149,169-170,178-183,324
+src/integrations/harness/index.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 15,103-110,169
+host/provider-transport.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 133,239
+host/providers.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 10,144-149
+  s_ccb41beff89445::t_41825f4058543a 150-151
+src/integrations/harness/providers/kiro/kiroLaunch.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-89
+src-tauri/src/fs.rs
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 4502-4509
+src/integrations/harness/providers/kiro/kiroProtocol.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-305
+.github/CODEOWNERS
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-2
+.github/dependabot.yml
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-38
+src/features/connections/model/protocol.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 17
+src/features/inbox/model/inboxNotifications.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 70-194
+src/features/projects/model/projectPathsChanged.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-14
+src/features/sessions/model/transcriptActivity.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 552-554,569,575,591,594-598,607,619-664,1186-1189,1197,1213-1220
+  s_ccb41beff89445::t_0ad871f44f1885 1221
+src/features/skills/model/skillCatalog.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 8,12-15,54,94-95,100-160
+  s_ccb41beff89445::t_70dd426790fe3c 161-162
+src/features/sessions/ui/AgentTranscript.foldProse.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 81-102
+src/features/source-control/ui/Worktrees.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1012-1038
+src/integrations/harness/core/availability.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 12,56-61,170-172
+  s_ccb41beff89445::t_acd237a26b2e17 173-177
+src/integrations/harness/providers/claude/claudeTitle.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 6,21
+src/integrations/harness/providers/kiro/kiroLive.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-622
+src-tauri/src/account_identity.rs
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 63-76,81,164-203
+  s_ccb41beff89445::t_f9b85fb2a22456 204
+docs/superpowers/plans/2026-10-23-kiro-cli-provider.md
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-112
+src/features/sessions/model/session.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 28,42,553,568
+src/integrations/harness/providers/kiro/kiroLaunch.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-131
+src/shared/ui/icons.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 7-10,68-78
+  s_ccb41beff89445::t_530586cbbb0088 79
+src/integrations/harness/core/availabilityState.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 20
+src-tauri/src/harness.rs
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 867-879,1855,2096,2143,2218,2515-2538,3739-3771,4365-4369
+docs/building.md
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 82-98
+src/integrations/harness/core/child.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 440,501-504
+  s_ccb41beff89445::t_92fa0471426f13 505-506
+docs/assets/logo.svg
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-17
+mobile/src/features/workspace/types.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 17
+src/features/projects/model/recents.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 3-4,70-71,73-96,150-153,158-160,163-165
+src/features/settings/model/settings.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 448
+src/integrations/harness/core/child.test.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 164,186
+src/integrations/harness/providers/kiro/kiro.ts
+  s_ccb41beff89445::t_6e96ab3ce5ff9c 1-499
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa60d063bbf7f6e04aa68a9f8aea94d3ecdf71b2",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
