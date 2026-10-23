@@ -640,10 +640,7 @@ impl Automations {
                                         "trash",
                                     )
                                     .on_click(cx.listener(
-                                        |this, _, _, cx| {
-                                            this.confirm_delete = !this.confirm_delete;
-                                            cx.notify();
-                                        },
+                                        |this, _, window, cx| this.ask_delete(window, cx),
                                     )),
                                 )
                             }),
@@ -697,39 +694,6 @@ impl Automations {
             .flex()
             .flex_col()
             .child(header)
-            .when(self.confirm_delete, |d| {
-                d.child(
-                    div()
-                        .mx(px(32.))
-                        .mt(px(12.))
-                        .p(px(12.))
-                        .rounded(px(8.))
-                        .border_1()
-                        .border_color(gpui::rgba(0xf8717140))
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .text_size(px(12.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .child("Delete this automation and its run history?"),
-                        )
-                        .child(
-                            button("cancel-delete-automation", "Cancel").on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    this.confirm_delete = false;
-                                    cx.notify();
-                                },
-                            )),
-                        )
-                        .child(
-                            button("confirm-delete-automation", "Delete")
-                                .text_color(rgb(0xfca5a5))
-                                .on_click(cx.listener(|this, _, _, cx| this.delete(cx))),
-                        ),
-                )
-            })
             .child(panel)
             .into_any_element()
     }

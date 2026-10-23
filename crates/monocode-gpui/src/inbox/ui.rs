@@ -2394,16 +2394,18 @@ impl Inbox {
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::rgba(0x00000040))
-            .child(
+            .child(crate::modal::scrim("inbox-connect-scrim"))
+            .child(crate::modal::enter(
+                "inbox-connect-card",
                 div()
+                    .relative()
                     .w(px(440.))
                     .max_w_full()
                     .p(px(24.))
-                    .rounded(px(16.))
+                    .rounded(px(crate::modal::RADIUS))
                     .border_1()
-                    .border_color(content(0.1))
-                    .bg(shell_fill())
+                    .border_color(content(crate::modal::BORDER))
+                    .child(crate::modal::surface(crate::modal::RADIUS - 1.))
                     .flex()
                     .flex_col()
                     .gap(px(12.))
@@ -2498,23 +2500,23 @@ impl Inbox {
                             })
                             .child(div().flex_1())
                             .child(
-                                action(
-                                    "inbox-connect-submit",
-                                    if self.connecting {
-                                        "Connecting…"
-                                    } else if provider == "github" {
-                                        "Check again"
-                                    } else {
-                                        "Connect"
-                                    },
+                                crate::modal::disabled(
+                                    crate::modal::primary_button(
+                                        "inbox-connect-submit",
+                                        if self.connecting {
+                                            "Connecting…"
+                                        } else if provider == "github" {
+                                            "Check again"
+                                        } else {
+                                            "Connect"
+                                        },
+                                    ),
+                                    self.connecting,
                                 )
-                                .bg(content(1.))
-                                .text_color(shell_fill())
-                                .when(self.connecting, |d| d.opacity(0.4))
                                 .on_click(cx.listener(|this, _, _, cx| this.connect(false, cx))),
                             ),
                     ),
-            )
+            ))
             .into_any_element()
     }
 

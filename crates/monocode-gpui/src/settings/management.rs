@@ -1,5 +1,5 @@
 //! React Settings forms and their asynchronous actions.
-use super::widgets::{note, primary_button, red, secondary_button};
+use super::widgets::{note, secondary_button};
 use super::*;
 use monocode_core::provider::Kind;
 
@@ -746,19 +746,18 @@ impl SettingsView {
         };
         actions = actions
             .child(
-                secondary_button("cancel-management", "Cancel", false, busy)
-                    .child("Cancel")
+                crate::modal::disabled(crate::modal::ghost_button("cancel-management", "Cancel"), busy)
                     .on_click(cx.listener(|this, _, window, cx| this.close_management(window, cx))),
             )
             .child(
-                (if matches!(target, Target::DeleteTree(_) | Target::ResetMono(_)) {
-                    secondary_button("submit-management", label, true, busy).bg(red(0.2))
-                } else if matches!(target, Target::Mcp) {
-                    secondary_button("submit-management", label, false, busy)
-                } else {
-                    primary_button("submit-management", label, busy)
-                })
-                .child(label)
+                crate::modal::disabled(
+                    if matches!(target, Target::DeleteTree(_) | Target::ResetMono(_)) {
+                        crate::modal::danger_button("submit-management", label)
+                    } else {
+                        crate::modal::primary_button("submit-management", label)
+                    },
+                    busy,
+                )
                 .on_click(cx.listener(|this, _, _, cx| this.submit_management(cx))),
             );
         rows.push(actions.into_any_element());
@@ -814,7 +813,7 @@ impl SettingsView {
                 .absolute()
                 .inset_0()
                 .occlude()
-                .bg(gpui::rgba(0x00000066))
+                .child(crate::modal::scrim("settings-management-scrim"))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -831,14 +830,11 @@ impl SettingsView {
                             448.
                         }))
                         .max_w_full()
-                        .rounded_xl()
-                        .bg({
-                            let mut fill = shell_fill();
-                            fill.a = 1.;
-                            fill
-                        })
+                        .relative()
+                        .rounded(px(crate::modal::RADIUS))
                         .border_1()
-                        .border_color(content(0.12))
+                        .border_color(content(crate::modal::BORDER))
+                        .child(crate::modal::surface(crate::modal::RADIUS - 1.))
                         .child(
                             div()
                                 .p_4()

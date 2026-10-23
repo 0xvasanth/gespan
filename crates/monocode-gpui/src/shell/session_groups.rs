@@ -1736,7 +1736,7 @@ impl Shell {
             div()
                 .absolute()
                 .size_full()
-                .bg(black(0.4))
+                .child(crate::modal::scrim("link-work-item-scrim"))
                 .child(
                     popover("link-work-item-modal", anchor)
                         .modal_surface(self.workspace.boxy_layout())
@@ -1836,21 +1836,18 @@ impl Shell {
                                                     )
                                                 })
                                                 .child(
-                                                    button("link-cancel", "Cancel")
-                                                        .hover(|s| s.bg(content(0.08)))
+                                                    crate::modal::ghost_button("link-cancel", "Cancel")
+                                                        .cursor_pointer()
                                                         .on_click(cx.listener(|this, _, window, cx| {
                                                             this.close_link_dialog(window, cx)
                                                         })),
                                                 )
                                                 .child(
-                                                    button(
+                                                    crate::modal::primary_button(
                                                         "link-save",
                                                         if dialog.editing { "Update link" } else { "Link" },
                                                     )
-                                                    .bg(rgb(ACCENT))
-                                                    .text_color(gpui::white())
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .hover(|s| s.opacity(0.9))
+                                                    .cursor_pointer()
                                                     .on_click(cx.listener(|this, _, window, cx| {
                                                         this.save_link(true, window, cx)
                                                     })),

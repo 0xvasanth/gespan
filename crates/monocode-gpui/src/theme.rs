@@ -139,6 +139,21 @@ pub(crate) fn composer_blur() -> f32 {
     if light { 0. } else { 24. }
 }
 
+/// Light themes paint floating surfaces opaque instead of frosting them.
+pub(crate) fn is_light() -> bool {
+    TOKENS.with(|tokens| tokens.borrow().as_ref().is_some_and(|t| t.light))
+}
+/// The opaque card behind popovers and modals in light themes, and wherever
+/// the renderer has no backdrop blur.
+pub(crate) fn floating_fill() -> Hsla {
+    let mut fill = if is_light() { inset_pane_fill() } else { pane_fill() };
+    if is_light() {
+        fill.l = fill.l.max(0.995);
+    }
+    fill.a = 1.;
+    fill
+}
+
 pub(crate) fn composer_border(focused: bool) -> Hsla {
     content(if focused { 0.2 } else { 0.1 })
 }

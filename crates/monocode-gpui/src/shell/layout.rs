@@ -829,7 +829,7 @@ impl Shell {
             div()
                 .absolute()
                 .size_full()
-                .bg(black(0.4))
+                .child(crate::modal::scrim("running-work-scrim"))
                 .child(
                     popover("running-work-modal", anchor)
                         .modal_surface(self.workspace.boxy_layout())

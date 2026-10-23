@@ -605,6 +605,22 @@ impl Automations {
         .detach();
         cx.notify();
     }
+    /// Asks with the standard confirmation before deleting the open automation.
+    fn ask_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let prompt = window.prompt(
+            gpui::PromptLevel::Warning,
+            "Delete this automation?",
+            Some("Its run history will be deleted too."),
+            &["Delete", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if prompt.await == Ok(0) {
+                let _ = this.update(cx, |this, cx| this.delete(cx));
+            }
+        })
+        .detach();
+    }
     fn delete(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected.clone() else {
             return;

@@ -431,26 +431,26 @@ impl Render for RemoteProjectPicker {
                 .justify_end()
                 .gap_2()
                 .child(
-                    secondary_button("cancel-remote-project", "Cancel", false, false)
-                        .child("Cancel")
+                    crate::modal::ghost_button("cancel-remote-project", "Cancel")
+                        .cursor_pointer()
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(Picked::Cancel))),
                 )
                 .when(self.loaded && self.machines.is_empty(), |d| {
                     d.child(
-                        secondary_button("add-project-machine", "Add a machine", false, false)
-                            .child("Add a machine")
+                        crate::modal::primary_button("add-project-machine", "Add a machine")
+                            .cursor_pointer()
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(Picked::Connections))),
                     )
                 })
                 .when(!self.machines.is_empty(), |d| {
                     d.child(
-                        secondary_button(
-                            "open-remote-project",
-                            "Open",
-                            false,
+                        crate::modal::disabled(
+                            crate::modal::primary_button(
+                                "open-remote-project",
+                                if self.opening { "Opening…" } else { "Open" },
+                            ),
                             self.opening || self.path.read(cx).content.trim().is_empty(),
                         )
-                        .child(if self.opening { "Opening…" } else { "Open" })
                         .on_click(cx.listener(|this, _, _, cx| this.open(cx))),
                     )
                 }),
@@ -521,7 +521,7 @@ impl Shell {
             div()
                 .absolute()
                 .size_full()
-                .bg(black(0.3))
+                .child(crate::modal::scrim("remote-project-scrim"))
                 .child(
                     popover("remote-project-modal", anchor)
                         .modal_surface(self.workspace.boxy_layout())

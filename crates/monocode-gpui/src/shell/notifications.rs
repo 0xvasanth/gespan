@@ -996,7 +996,7 @@ impl Shell {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(gpui::rgba(0x00000066))
+                    .child(crate::modal::scrim("whats-new-scrim"))
                     .track_focus(&focus)
                     .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
                         if event.keystroke.key == "escape" {

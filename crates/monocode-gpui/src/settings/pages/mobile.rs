@@ -973,15 +973,7 @@ impl SettingsView {
                 .absolute()
                 .inset_0()
                 .occlude()
-                .bg(gpui::rgba(
-                    if self.ctx.classic || self.ctx.new_layout_boxy {
-                        0x00000066
-                    } else if content(1.).l < 0.5 {
-                        0x00000033
-                    } else {
-                        0x00000059
-                    },
-                ))
+                .child(crate::modal::scrim("mobile-pair-scrim"))
                 .flex()
                 .items_center()
                 .justify_center()

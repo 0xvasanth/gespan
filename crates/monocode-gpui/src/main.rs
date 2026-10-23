@@ -39,6 +39,7 @@ mod markdown;
 mod markdown_model;
 #[cfg(target_os = "macos")]
 mod memory_log;
+mod modal;
 #[cfg(all(test, target_os = "macos"))]
 mod metal_tests;
 mod mobile;
@@ -391,6 +392,7 @@ fn main() {
             composer_completion::bind(cx);
             file_editor::bind(cx);
             popover::bind(cx);
+            cx.set_prompt_builder(modal::prompt_builder);
             explorer::bind(cx);
             history::bind(cx);
             diff_view::bind(cx);

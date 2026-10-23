@@ -344,7 +344,8 @@ impl Popover {
         self.animate = false;
         self
     }
-    /// Modal.tsx: 16px corners, a 7% rule and the shared dialog tint.
+    /// The standard modal card ([`crate::modal`]): 16px corners, the 10%
+    /// rule and the dialog tint.
     pub(crate) fn modal_surface(mut self, classic: bool) -> Self {
         self.modal_classic = Some(classic);
         self
@@ -440,7 +441,7 @@ impl Popover {
             RADIUS
         };
         let border = if self.modal_classic.is_some() {
-            0.07
+            crate::modal::BORDER
         } else {
             0.1
         };
@@ -520,21 +521,26 @@ fn tint() -> Hsla {
     content(0.02)
 }
 // On macOS the renderer blurs what is already drawn behind this quad.
-// Elsewhere there is no blur, so the tint becomes an opaque card.
+// Light themes, and platforms without the blur, paint an opaque card.
 fn glass(tint: Hsla, radius: f32) -> impl IntoElement {
+    let opaque = crate::theme::floating_fill();
+    let light = crate::theme::is_light();
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
             #[cfg(target_os = "macos")]
-            let quad = gpui::fill(bounds, tint).border_color(
-                gpui_apple::metal_renderer::backdrop_blur_marker(BLUR * window.scale_factor()),
-            );
+            let quad = if light {
+                gpui::fill(bounds, opaque)
+            } else {
+                gpui::fill(bounds, tint).border_color(
+                    gpui_apple::metal_renderer::backdrop_blur_marker(BLUR * window.scale_factor()),
+                )
+            };
             #[cfg(not(target_os = "macos"))]
-            let quad = gpui::fill(bounds, {
-                let mut fill = crate::theme::pane_fill();
-                fill.a = 1.;
-                fill
-            });
+            let quad = {
+                let _ = (light, tint);
+                gpui::fill(bounds, opaque)
+            };
             window.paint_quad(quad.corner_radii(px(radius)));
         },
     )

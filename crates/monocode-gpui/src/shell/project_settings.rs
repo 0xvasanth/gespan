@@ -157,7 +157,7 @@ impl Shell {
             div()
                 .absolute()
                 .size_full()
-                .bg(black(0.4))
+                .child(crate::modal::scrim("project-background-scrim"))
                 .child(
                     popover("project-background-modal", anchor)
                         .modal_surface(self.workspace.boxy_layout())

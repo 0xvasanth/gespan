@@ -98,7 +98,7 @@ impl Shell {
             div()
                 .absolute()
                 .size_full()
-                .bg(black(0.35))
+                .child(crate::modal::scrim("quick-open-scrim"))
                 .child(
                     popover("quick-open-modal", anchor)
                         .modal_surface(self.workspace.boxy_layout())

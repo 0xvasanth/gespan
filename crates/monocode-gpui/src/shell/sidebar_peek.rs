@@ -256,7 +256,7 @@ impl Shell {
     fn peek_panel(&self, progress: f32, window: &mut Window) -> gpui::Stateful<gpui::Div> {
         // Glass blurs the dimmed workspace under a faint wash; otherwise the
         // panel takes the window's own surface.
-        let glass = self.window_glass == Some(true);
+        let glass = self.window_glass == Some(true) && !is_light();
         let scale = window.scale_factor();
         let sidebar = if self.sidebar_uncached() {
             self.sidebar_frame.clone().into_any_element()

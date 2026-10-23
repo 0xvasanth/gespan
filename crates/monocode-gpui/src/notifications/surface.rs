@@ -3,13 +3,20 @@ use crate::theme::*;
 use gpui::{Div, canvas, div, prelude::*, px};
 
 pub(crate) fn backdrop(radius: f32) -> impl IntoElement {
+    let (light, opaque) = (is_light(), floating_fill());
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
             #[cfg(target_os = "macos")]
-            let quad = gpui::fill(bounds, content(0.02)).border_color(
-                gpui_apple::metal_renderer::backdrop_blur_marker(24. * window.scale_factor()),
-            );
+            let quad = if light {
+                gpui::fill(bounds, opaque)
+            } else {
+                gpui::fill(bounds, content(0.02)).border_color(
+                    gpui_apple::metal_renderer::backdrop_blur_marker(24. * window.scale_factor()),
+                )
+            };
+            #[cfg(not(target_os = "macos"))]
+            let _ = (light, opaque);
             #[cfg(not(target_os = "macos"))]
             let quad = gpui::fill(bounds, pane_fill());
             window.paint_quad(quad.corner_radii(px(radius)));
