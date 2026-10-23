@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo.png" alt="Rebase" width="96" />
+  <img src="docs/assets/logo.png" alt="Rebase" width="112" />
 </p>
 
 <h1 align="center">Rebase</h1>
