@@ -466,7 +466,9 @@ fn tauri_session_with_a_harness_gpui_does_not_know_still_loads_with_the_raw_stri
     store.agent_settings(id).unwrap();
     let harness: String = store
         .conn
-        .query_row("SELECT harness FROM sessions WHERE id=?1", [&source], |r| r.get(0))
+        .query_row("SELECT harness FROM sessions WHERE id=?1", [&source], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(harness, "kiro");
 }
