@@ -32,6 +32,12 @@ on:
       - 'src-tauri/src/pilot.rs'
       - 'src/features/pilots/model/pilot.ts'
       - 'src/integrations/harness/core/register.ts'
+      - 'src/features/settings/model/displayPrefs.ts'
+      - 'src/features/settings/model/settings.ts'
+      - 'src/app/App.tsx'
+      - 'CHANGELOG.md'
+      - 'docs/native/**'
+      - 'src-tauri/macos/AppIcon.icon/Assets/icon.png'
 
 permissions:
   contents: read
