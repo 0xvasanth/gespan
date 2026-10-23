@@ -1,0 +1,33 @@
+src/styles/index.css
+  s_ccb41beff89445::t_cf6b9289597e00 128
+  s_ccb41beff89445::t_ef5f2257e62a67 72,127,132-136
+src/features/pilots/model/pilotFiles.ts
+  s_ccb41beff89445::t_f686c6f57a53b8 306
+src/features/sessions/model/operatorCommand.test.ts
+  s_ccb41beff89445::t_56236135645adc 72-86
+src/features/settings/ui/SettingsView.tsx
+  s_ccb41beff89445::t_0026106af05921 4330
+src/features/terminal/ui/TerminalView.tsx
+  s_ccb41beff89445::t_ef5f2257e62a67 122
+src/features/sessions/model/speechBubble.ts
+  s_ccb41beff89445::t_ef5f2257e62a67 19
+src/features/pilots/model/pilotFiles.test.ts
+  s_ccb41beff89445::t_56236135645adc 17,121,245-247
+  s_ccb41beff89445::t_d2959d7a5f11c3 248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "134662687f57dd82fb754c124e7c396d463bc98e",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
