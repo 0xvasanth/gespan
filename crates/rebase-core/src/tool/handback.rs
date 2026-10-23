@@ -21,30 +21,39 @@ const PREAMBLE_END: &str = "The report follows:";
 /// inside the report is left alone. The `[Subagent hand-back] ... The report follows:` preamble
 /// is removed and the harness's per-line indentation stripped. Anything else is returned as is.
 pub fn parse_handback(text: &str) -> Handback {
-    static TRAILER: OnceLock<Regex> = OnceLock::new();
-    let trailer = TRAILER.get_or_init(|| {
+    static TAIL: OnceLock<Regex> = OnceLock::new();
+    static ID: OnceLock<Regex> = OnceLock::new();
+    let tail = TAIL.get_or_init(|| {
         Regex::new(
-            r"(?s)\AagentId:\s*(\S+).*?subagent_tokens:\s*(\d+)\s*tool_uses:\s*(\d+)\s*duration_ms:\s*(\d+)\s*(?:</usage>)?\s*\z",
+            r"\Asubagent_tokens:\s*(\d+)\s*tool_uses:\s*(\d+)\s*duration_ms:\s*(\d+)\s*(?:</usage>)?\z",
         )
-        .expect("trailer regex")
+        .expect("tail regex")
     });
+    let id = ID.get_or_init(|| Regex::new(r"\AagentId:\s*(\S+)").expect("id regex"));
 
+    // Linear: trim the end once, anchor the usage tail at the last `subagent_tokens:`, then walk
+    // back to the nearest line-start `agentId:` before it.
+    let trimmed = text.trim_end();
     let mut body = text;
     let mut meta = None;
-    let starts = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1));
-    for start in starts.rev() {
-        if !text[start..].starts_with("agentId:") {
-            continue;
-        }
-        if let Some(caps) = trailer.captures(&text[start..]) {
-            meta = Some((
-                caps[1].to_string(),
-                caps[2].parse::<u64>().ok(),
-                caps[3].parse::<u64>().ok(),
-                caps[4].parse::<u64>().ok(),
-            ));
-            body = &text[..start];
-            break;
+    if let Some(tail_start) = trimmed.rfind("subagent_tokens:") {
+        if let Some(usage) = tail.captures(&trimmed[tail_start..]) {
+            let mut end = tail_start;
+            while let Some(at) = trimmed[..end].rfind("agentId:") {
+                if at == 0 || trimmed.as_bytes()[at - 1] == b'\n' {
+                    if let Some(found) = id.captures(&trimmed[at..]) {
+                        meta = Some((
+                            found[1].to_string(),
+                            usage[1].parse::<u64>().ok(),
+                            usage[2].parse::<u64>().ok(),
+                            usage[3].parse::<u64>().ok(),
+                        ));
+                        body = &text[..at];
+                        break;
+                    }
+                }
+                end = at;
+            }
         }
     }
 
@@ -190,6 +199,50 @@ mod tests {
         assert_eq!(parsed.subagent_tokens, Some(5));
         assert_eq!(parsed.tool_uses, Some(1));
         assert_eq!(parsed.duration_ms, Some(20));
+    }
+
+    #[test]
+    fn dedent_keeps_nested_indentation_and_fenced_code() {
+        let text = "[Subagent hand-back] x The report follows:\n  Plan:\n  - one\n    - nested\n  \n    ```rust\n    let a = 1;\n    ```\nagentId: z9 (use SendMessage) subagent_tokens: 1 tool_uses: 2 duration_ms: 3";
+        let parsed = parse_handback(text);
+        assert_eq!(
+            parsed.report,
+            "Plan:\n- one\n  - nested\n\n  ```rust\n  let a = 1;\n  ```"
+        );
+        assert_eq!(parsed.agent_id.as_deref(), Some("z9"));
+    }
+
+    #[test]
+    fn crlf_input_is_parsed() {
+        let text = "[Subagent hand-back] x The report follows:\r\n  Line one\r\n  Line two\r\nagentId: c1 (use SendMessage)\r\n<usage>subagent_tokens: 7\r\ntool_uses: 8\r\nduration_ms: 9</usage>\r\n";
+        let parsed = parse_handback(text);
+        assert_eq!(parsed.report, "Line one\nLine two");
+        assert_eq!(parsed.agent_id.as_deref(), Some("c1"));
+        assert_eq!(parsed.subagent_tokens, Some(7));
+        assert_eq!(parsed.tool_uses, Some(8));
+        assert_eq!(parsed.duration_ms, Some(9));
+    }
+
+    #[test]
+    fn trailer_without_usage_wrapper_is_parsed() {
+        let parsed = parse_handback(
+            "Body\nagentId: w1 (hint)\nsubagent_tokens: 11\ntool_uses: 12\nduration_ms: 13\n",
+        );
+        assert_eq!(parsed.report, "Body");
+        assert_eq!(parsed.agent_id.as_deref(), Some("w1"));
+        assert_eq!(parsed.duration_ms, Some(13));
+    }
+
+    #[test]
+    fn trailer_without_usage_numbers_is_plain_text() {
+        let text = "Body\nagentId: only1 (use SendMessage with to: 'only1')";
+        assert_eq!(
+            parse_handback(text),
+            Handback {
+                report: text.to_string(),
+                ..Handback::default()
+            }
+        );
     }
 
     #[test]
