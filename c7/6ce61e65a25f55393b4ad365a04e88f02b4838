@@ -1,0 +1,32 @@
+docs/native/README.md
+  s_ccb41beff89445::t_a481d0f124cd3d 66-76,85-90,94-98,110-122
+  s_ccb41beff89445::t_03eae4bb307296 123
+src/test/noMonoReferences.test.ts
+  s_ccb41beff89445::t_a481d0f124cd3d 9
+  s_ccb41beff89445::t_3b83103d169e2c 192-195
+scripts/release-channel.cjs
+  s_ccb41beff89445::t_7d3010ff40f395 76-114,116,121-135
+README.md
+  s_ccb41beff89445::t_a481d0f124cd3d 65,74,78,82-85
+  s_ccb41beff89445::t_5c45540c98d2a7 86
+scripts/release-channel.test.cjs
+  s_ccb41beff89445::t_7d3010ff40f395 7,204-239
+.github/workflows/native-release.yml
+  s_ccb41beff89445::t_9aab436564c3d5 4-8,18-26,29,54,77-78,158,164,186-187,238-249,261-263,265,268-274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c76ce61e65a25f55393b4ad365a04e88f02b4838",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
