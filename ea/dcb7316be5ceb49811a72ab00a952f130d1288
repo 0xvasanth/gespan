@@ -1,0 +1,29 @@
+src/features/board/model/linkedTurns.test.ts
+  s_0de52fe47ecaaa::t_910d24191747c7 1-156
+src/features/board/model/linkedTurns.ts
+  s_0de52fe47ecaaa::t_571d795f316d84 1-73
+src/app/App.tsx
+  s_0de52fe47ecaaa::t_d697bd27cfe083 711,1810-1811,8662,8665,8667
+  s_0de52fe47ecaaa::t_0da82c1421ad87 8033
+  s_0de52fe47ecaaa::t_078bff9273b60c 712-715,1812-1813,8034-8038,8666
+src/features/board/ui/CardDetail.test.ts
+  s_0de52fe47ecaaa::t_078bff9273b60c 93-95
+  s_0de52fe47ecaaa::t_9a504ee2e48bbc 46-48,57
+  s_0de52fe47ecaaa::t_4d9faabfbf5b97 90-92,96-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eadcb7316be5ceb49811a72ab00a952f130d1288",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
