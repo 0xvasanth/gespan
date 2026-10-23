@@ -98,7 +98,9 @@ function textSettings(
     promptEffort: effort,
     settings,
     ...(readOnly ? { permissionMode: "plan" as const, maxTurns: 1 } : {}),
-    ...(tools ? { tools } : {}),
+    // A one-turn read-only answer that tries a tool burns its only turn and
+    // fails with "Reached maximum number of turns", so offer it none.
+    ...(tools || readOnly ? { tools: tools ?? CLAUDE_HELPER_TOOLS } : {}),
   };
 }
 

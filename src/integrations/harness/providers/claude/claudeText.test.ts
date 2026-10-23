@@ -58,3 +58,25 @@ it("warms up the tool-less helper", async () => {
   await warmupClaudeText("/repo");
   expect(toolsArg(spawned.at(-1))).toBe("");
 });
+
+it("answers read-only plan side questions with no tools and a single turn", async () => {
+  await runClaudeTextPrompt({
+    cwd: "/repo",
+    prompt: "What does this module do?",
+    intent: "plan",
+  });
+  const args = spawned.at(-1) ?? [];
+  expect(args).toEqual(
+    expect.arrayContaining(["--permission-mode", "plan", "--max-turns", "1"]),
+  );
+  expect(toolsArg(args)).toBe("");
+});
+
+it("does not strip tools from non-plan prompts that restrict nothing", async () => {
+  await runClaudeTextPrompt({
+    cwd: "/repo",
+    prompt: "Explain this file",
+    intent: "build",
+  });
+  expect(spawned.at(-1)).not.toContain("--tools");
+});
