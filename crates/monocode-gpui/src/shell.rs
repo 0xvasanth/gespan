@@ -4698,8 +4698,10 @@ impl Shell {
         if !self.workspace.right_panel_open || self.app_view_open() {
             return natural;
         }
-        let controls =
-            crate::right_panel::tab_icons_width(self.right_tab_count(cx)) + 6. + CORNER_BUTTONS_WIDTH + 12.;
+        let controls = crate::right_panel::tab_icons_width(self.right_tab_count(cx))
+            + 6.
+            + CORNER_BUTTONS_WIDTH
+            + 12.;
         natural.min((self.workspace.right_panel_width - controls).max(48.))
     }
     fn project_tabs_width(&self, cx: &App) -> f32 {
@@ -4856,7 +4858,12 @@ impl Shell {
             MenuTarget::TerminalTab(_) | MenuTarget::RunningTerminals => {
                 ("".into(), Vec::new(), 160., MenuStyle::Explorer)
             }
-            MenuTarget::Actions => ("Actions".into(), self.actions_menu(), 200., MenuStyle::Explorer),
+            MenuTarget::Actions => (
+                "Actions".into(),
+                self.actions_menu(),
+                200.,
+                MenuStyle::Explorer,
+            ),
             MenuTarget::Tab(_)
             | MenuTarget::MonoTab(_)
             | MenuTarget::SearchTab

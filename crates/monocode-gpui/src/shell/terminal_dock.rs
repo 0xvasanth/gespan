@@ -230,7 +230,11 @@ impl Shell {
         cx.notify();
     }
     /// The panel's Terminal tab: the dock's header and its active terminal.
-    pub(super) fn panel_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn panel_terminal(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let project = self.workspace.project.clone();
         self.ensure_terminals(&project, cx);
         let Some(dock) = self.workspace.docks.get(&project).cloned() else {
@@ -848,29 +852,29 @@ impl Shell {
                     )
                     .when(!in_panel, |d| {
                         d.child(
-                        icon_button("move-terminal", "Move Terminal", side)
-                            .child(move_anchor.probe())
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                // ExplorerMenu hangs from the button's bottom-left corner.
-                                let at = this
-                                    .move_terminal_anchor
-                                    .get()
-                                    .map(|b| point(b.left(), b.bottom() + px(4.)))
-                                    .unwrap_or_default();
-                                this.open_menu(
-                                    MenuTarget::TerminalDock,
-                                    Anchor::Point(at),
-                                    window,
-                                    cx,
-                                );
-                            })),
+                            icon_button("move-terminal", "Move Terminal", side)
+                                .child(move_anchor.probe())
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    // ExplorerMenu hangs from the button's bottom-left corner.
+                                    let at = this
+                                        .move_terminal_anchor
+                                        .get()
+                                        .map(|b| point(b.left(), b.bottom() + px(4.)))
+                                        .unwrap_or_default();
+                                    this.open_menu(
+                                        MenuTarget::TerminalDock,
+                                        Anchor::Point(at),
+                                        window,
+                                        cx,
+                                    );
+                                })),
                         )
                     })
                     .when(!in_panel, |d| {
                         d.child(
-                        icon_button("hide-terminal", HIDE_TERMINAL_LABEL, hide).on_click(
-                            cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx)),
-                        ),
+                            icon_button("hide-terminal", HIDE_TERMINAL_LABEL, hide).on_click(
+                                cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx)),
+                            ),
                         )
                     }),
             )

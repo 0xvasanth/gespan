@@ -560,7 +560,12 @@ impl Shell {
             ("right-panel-history", "History", "clock", RightTab::Graph),
         ];
         if self.terminal_in_panel(cx) {
-            tabs.push(("right-panel-terminal", "Terminal", "terminal", RightTab::Terminal));
+            tabs.push((
+                "right-panel-terminal",
+                "Terminal",
+                "terminal",
+                RightTab::Terminal,
+            ));
         }
         let count = tabs.len();
         row.pl_1p5()
