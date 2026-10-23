@@ -1,0 +1,34 @@
+crates/monocode-gpui/src/settings/pages/general.rs
+  s_ccb41beff89445::t_149de54b5a137f 137-139
+crates/monocode-gpui/src/settings/notification_preferences.rs
+  s_ccb41beff89445::t_a352908aa00fba 48-54
+crates/monocode-gpui/src/transcript.rs
+  s_ccb41beff89445::t_a352908aa00fba 3019-3022,3032
+  s_ccb41beff89445::t_1d6deb500a1bff 3033
+crates/monocode-core/src/provider.rs
+  s_ccb41beff89445::t_b4b655528624e1 1631,1635
+crates/monocode-gpui/src/shell.rs
+  s_ccb41beff89445::t_b3b87891885ca7 4816-4821
+crates/monocode-core/src/mobile/router.rs
+  s_ccb41beff89445::t_6754cf90043169 71-76
+crates/monocode-gpui/src/shell/title_tabs.rs
+  s_ccb41beff89445::t_a352908aa00fba 137,140
+crates/monocode-gpui/src/workspace.rs
+  s_ccb41beff89445::t_272bedb9471c1b 156-157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fcc2ce3f2d2fc5bdff1c2fea5ec45856fe1f52e6",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
