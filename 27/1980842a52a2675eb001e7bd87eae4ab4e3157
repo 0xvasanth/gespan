@@ -1,0 +1,27 @@
+src/app/shell/PilotRailSection.test.ts
+  s_3d6000c3007319::t_846f167befc269 88-112
+src/app/shell/Sidebar.tsx
+  s_3d6000c3007319::t_02391a647e10ba 2675
+src/app/shell/PilotRailSection.tsx
+  s_3d6000c3007319::t_02391a647e10ba 81-83,92-93
+  s_3d6000c3007319::t_ecbc140f36daaa 86
+  s_3d6000c3007319::t_846f167befc269 77,80,87,91,94-95
+src/app/App.tsx
+  s_3d6000c3007319::t_02391a647e10ba 11902-11904
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "271980842a52a2675eb001e7bd87eae4ab4e3157",
+  "prompts": {},
+  "sessions": {
+    "s_3d6000c3007319": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d7ce5de9-52e0-4565-a35c-874563a61ab4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
