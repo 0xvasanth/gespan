@@ -16,6 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod acp;
+mod agent_registry;
 mod commands;
 pub use commands::{
     compact, discover_commands, native_invocation, native_prompt, prepare_prompt, supports_compact,
@@ -71,6 +72,9 @@ pub struct Request {
     pub settings: Settings,
 }
 
+// Events are short-lived batches; boxing every tool snapshot would only move
+// the same bytes to the heap and touch every consumer's pattern.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     Ready,
@@ -122,6 +126,12 @@ pub struct BackgroundTask {
     pub command: Option<String>,
     /// Unix milliseconds.
     pub started_at: u64,
+    /// The transcript block (tool call id) that shows this task's work.
+    pub tool_id: Option<String>,
+    /// The task's latest progress description.
+    pub latest: Option<String>,
+    /// Tool steps recorded on that block so far.
+    pub steps: u32,
 }
 
 fn codex_error(error: &Value, fallback: &str) -> String {
@@ -383,6 +393,7 @@ impl Protocol {
                 return Ok(Vec::new());
             }
         }
+        let mut activity_events = Vec::new();
         if self.request.kind == Kind::Claude {
             if v["type"] == "control_cancel_request" {
                 let id = v["request_id"].to_string();
@@ -410,12 +421,19 @@ impl Protocol {
                     || (v["type"] == "stream_event" && v["event"]["type"] == "message_start")
                     || (v["type"] == "system" && v["subtype"] == "init"));
             if starts_message && self.claude_result_seen {
+                // Claude woke itself after a background task's notification:
+                // lead its follow-up with that notification, so the answer is
+                // not read as a reply to the user. Task 3 renders the marker.
+                if let Some(summary) = self.activities.wake_summary.take() {
+                    if self.claude_resume_at.is_some() {
+                        activity_events.push(Self::wake_marker(summary));
+                    }
+                }
                 self.claude_result_seen = false;
                 self.claude_resume_at = None;
                 self.text_key = None;
             }
         }
-        let mut activity_events = Vec::new();
         if self.activity(&v, &mut activity_events) {
             return Ok(activity_events);
         }
@@ -829,6 +847,9 @@ impl Protocol {
                                     .unwrap_or_default();
                                 tool.refresh_agent_input();
                                 events.push(Event::Tool(tool.clone()));
+                                if v["parent_tool_use_id"].is_null() {
+                                    self.claude_note_dispatch(id);
+                                }
                             }
                         }
                         let text = v["message"]["content"]
@@ -843,6 +864,11 @@ impl Protocol {
                     "user" => {
                         for block in v["message"]["content"].as_array().into_iter().flatten() {
                             if block["type"] == "tool_result" {
+                                // A SendMessage that resumed an agent returns a receipt;
+                                // its block shows the resumed work instead.
+                                if self.claude_tool_result(block, &v, &mut events) {
+                                    continue;
+                                }
                                 // A background Agent's launch receipt is not its final report.
                                 if block["is_error"] != true
                                     && block["tool_use_id"].as_str().is_some_and(|id| {
@@ -922,6 +948,12 @@ impl Protocol {
                                 .unwrap_or_else(|| v["errors"].to_string());
                             return Err(self.claude_error(&error, &v));
                         }
+                        // A self-started turn whose start went unseen still gets its marker.
+                        if v["origin"]["kind"] == "task-notification" {
+                            if let Some(summary) = self.activities.wake_summary.take() {
+                                events.push(Self::wake_marker(summary));
+                            }
+                        }
                         // Some versions omit partial/assistant frames in simple turns.
                         if !self.begun {
                             self.text(
@@ -979,6 +1011,15 @@ impl Protocol {
             _ => events.extend(self.acp_frame(v, stdin)?),
         }
         Ok(events)
+    }
+    /// Persisted as an interjection row/block (`customType: "task-notification"`),
+    /// which both apps already store and load.
+    fn wake_marker(summary: String) -> Event {
+        Event::Interjection {
+            text: summary,
+            custom_type: "task-notification".into(),
+            severity: None,
+        }
     }
     fn approval(
         &mut self,
@@ -1520,6 +1561,7 @@ fn run_operation(
         protocol.acp = cached.protocol.acp;
         protocol.pi = cached.protocol.pi;
         protocol.previous_turn = cached.protocol.active_turn;
+        protocol.activities.registry = cached.protocol.activities.registry;
         (cached.wire, protocol, true)
     } else {
         if eligible {
@@ -1533,6 +1575,8 @@ fn run_operation(
             false,
         )
     };
+    // Fresh, warm or `--resume`d: rebuild which call dispatched which agent.
+    protocol.seed_agent_runs();
     let rx = &wire.rx;
     let tail = &wire.tail;
     let mut stdin = &mut wire.stdin;

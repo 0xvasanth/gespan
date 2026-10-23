@@ -498,6 +498,12 @@ fn run_turn_using(
                 prompt = discovery.prepend(prompt);
             }
         }
+        if kind == Kind::Claude {
+            // Seeds the provider's agent registry so a resumed sub-agent's
+            // work finds the Agent call that started it in an earlier turn.
+            settings.agent_runs =
+                rebase_core::tool::tasks::agent_runs(&transcript.rows[..turn_start]);
+        }
         let request = Request {
             kind,
             binary,

@@ -111,6 +111,26 @@ pub struct AgentRun {
     pub brief: String,
     #[serde(default)]
     pub steps: Vec<AgentStep>,
+    /// Claude's sub-agent id (`agentId` in its hand-back trailer, or the
+    /// task id of its task events). Optional: older blocks never had it.
+    #[serde(
+        default,
+        rename = "agentId",
+        alias = "agent_id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_id: Option<String>,
+    /// On a resumption or continuation block: the original Agent tool_use id.
+    #[serde(
+        default,
+        rename = "resumeOf",
+        alias = "resume_of",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resume_of: Option<String>,
+    /// The latest progress description. Never the run's title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentStep {
@@ -656,6 +676,9 @@ pub fn from_desktop(block: &Value) -> Option<Panel> {
         model: agent.get("model").and_then(string),
         agent_type: agent.get("agentType").and_then(string),
         brief,
+        agent_id: agent.get("agentId").and_then(string),
+        resume_of: agent.get("resumeOf").and_then(string),
+        activity: agent.get("activity").and_then(string),
         ..AgentRun::default()
     };
     for step in agent
@@ -717,7 +740,7 @@ pub fn from_desktop(block: &Value) -> Option<Panel> {
 }
 
 pub fn desktop_agent(run: &AgentRun) -> Value {
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "name":run.name.as_deref().filter(|name| !name.trim().is_empty()).unwrap_or_else(|| if run.brief.is_empty() { "Subagent" } else { &run.brief }),
         "model":run.model, "agentType":run.agent_type, "nativeIds":run.ids, "nativeBrief":run.brief,
         "steps":run.steps.iter().map(|step| {
@@ -731,7 +754,28 @@ pub fn desktop_agent(run: &AgentRun) -> Value {
             if let Some(display) = &step.display { value["nativePresentation"] = display.clone(); }
             value
         }).collect::<Vec<_>>()
-    })
+    });
+    // Optional and additive: absent rather than null, so a merge into a block
+    // the other app wrote never erases a value it set.
+    for (key, field) in [
+        ("agentId", &run.agent_id),
+        ("resumeOf", &run.resume_of),
+        ("activity", &run.activity),
+    ] {
+        if let Some(field) = field {
+            value[key] = Value::String(field.clone());
+        }
+    }
+    value
+}
+
+/// Agent-run tool blocks already in a transcript, to seed Claude's registry.
+pub fn agent_runs(rows: &[crate::transcript::Row]) -> Vec<ToolCall> {
+    rows.iter()
+        .filter(|row| row.role == "tool" && row.first)
+        .filter_map(|row| serde_json::from_str::<ToolCall>(&row.text).ok())
+        .filter(|tool| matches!(tool.panel(), Some(Panel::Agent(_))))
+        .collect()
 }
 
 #[cfg(test)]

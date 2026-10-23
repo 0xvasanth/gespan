@@ -16,7 +16,16 @@ pub(super) struct Activities {
     pub(super) claude_tasks: Vec<BackgroundTask>,
     /// What the UI was last told the yielded turn is waiting on.
     pub(super) published: Vec<BackgroundTask>,
+    /// Which Agent call dispatched which sub-agent, across turns.
+    pub(super) registry: super::agent_registry::AgentRegistry,
+    /// Claude `system/init` frames seen; one per turn, user- or self-started.
+    turn: u64,
+    /// The summary of the background task whose notification may wake Claude.
+    pub(super) wake_summary: Option<String>,
 }
+/// Synthetic block ids for work whose parent this session cannot place.
+pub(super) const FALLBACK_PREFIX: &str = "background:";
+const CONTINUED_PREFIX: &str = "continued:";
 fn text(value: &Value) -> Option<&str> {
     value.as_str().filter(|s| !s.trim().is_empty())
 }
@@ -34,6 +43,14 @@ fn state(status: &str) -> Option<ToolState> {
     }
 }
 impl Protocol {
+    /// Seed the agent registry from the conversation's persisted agent runs.
+    /// Called wherever a Claude process is (re)started for a session.
+    pub(super) fn seed_agent_runs(&mut self) {
+        let runs = std::mem::take(&mut self.request.settings.agent_runs);
+        if self.request.kind == Kind::Claude {
+            self.activities.registry.seed_from_blocks(&runs);
+        }
+    }
     pub(super) fn activity(&mut self, value: &Value, events: &mut Vec<Event>) -> bool {
         match self.request.kind {
             Kind::Codex => self.codex_activity(value, events),
@@ -56,6 +73,12 @@ impl Protocol {
             run.model = Some(model.into());
         }
         run.upsert(step);
+        let steps = run.steps.iter().filter(|step| step.kind == "tool").count() as u32;
+        for task in &mut self.activities.claude_tasks {
+            if task.tool_id.as_deref() == Some(parent) {
+                task.steps = steps;
+            }
+        }
         events.push(Event::Tool(tool.clone()));
     }
     fn codex_activity(&mut self, value: &Value, events: &mut Vec<Event>) -> bool {
@@ -374,8 +397,12 @@ impl Protocol {
     }
     fn claude_activity(&mut self, value: &Value, events: &mut Vec<Event>) -> bool {
         self.claude_background_list(value);
+        if value["type"] == "system" && value["subtype"] == "init" {
+            self.activities.turn += 1;
+        }
         let parent = text(&value["parent_tool_use_id"]);
         if let Some(parent) = parent {
+            let hint = text(&value["agent_id"]);
             match value["type"].as_str() {
                 Some("assistant") => {
                     let model = text(&value["message"]["model"]);
@@ -394,8 +421,9 @@ impl Protocol {
                                 let mut child =
                                     ToolCall::new(id, block["name"].as_str().unwrap_or("Tool"));
                                 child.input = block["input"].to_string();
+                                let target = self.claude_route(parent, hint);
                                 self.agent_step(
-                                    parent,
+                                    &target,
                                     AgentStep::from_tool_call(&child),
                                     model,
                                     events,
@@ -412,8 +440,9 @@ impl Protocol {
                                 if narration.is_empty() {
                                     continue;
                                 }
+                                let target = self.claude_route(parent, hint);
                                 self.agent_step(
-                                    parent,
+                                    &target,
                                     AgentStep {
                                         id: format!("{message_id}:{index}"),
                                         kind: if thinking { "reasoning" } else { "message" }.into(),
@@ -438,30 +467,17 @@ impl Protocol {
                         let Some(id) = text(&block["tool_use_id"]) else {
                             continue;
                         };
-                        let Some(tool) = self.tools.get_mut(parent) else {
-                            continue;
-                        };
-                        let Some(run) = tool.agent_mut() else {
-                            continue;
-                        };
-                        let Some(step) = run.steps.iter_mut().find(|step| step.id == id) else {
-                            continue;
-                        };
-                        step.state = Some(if block["is_error"] == true {
-                            ToolState::Failed
-                        } else {
-                            ToolState::Completed
-                        });
-                        step.detail = text_content(&block["content"]);
-                        crate::tool::tasks::bound(&mut step.detail, 16 * 1024);
-                        events.push(Event::Tool(tool.clone()));
+                        self.claude_child_result(parent, hint, id, block, events);
                     }
                 }
                 Some("tool_progress") => self.claude_progress(value, parent, events),
                 _ => {}
             }
-            // Including nested stream deltas: the completed assistant snapshot
-            // supplies stable message IDs and avoids duplicate streamed narration.
+            // Every child step and result above is attached somewhere, at worst
+            // to a visible "Background agent" block. What remains is consumed on
+            // purpose: nested stream deltas (the completed assistant snapshot
+            // supplies stable ids and avoids duplicate narration), the child's
+            // prompt echo, and child rate-limit or status frames.
             return true;
         }
         if value["type"] == "system"
@@ -477,7 +493,19 @@ impl Protocol {
             } else {
                 value
             };
-            if let Some(id) = text(&value["task_id"]) {
+            let task_id = text(&value["task_id"]);
+            let tool_use_id = text(&value["tool_use_id"]);
+            if subtype == "task_started" {
+                self.claude_task_started(value, tool_use_id, task_id, events);
+            }
+            let owner = self
+                .activities
+                .registry
+                .target_for_task(tool_use_id, task_id)
+                .filter(|id| self.tools.contains_key(id))
+                .or_else(|| tool_use_id.map(str::to_owned))
+                .or_else(|| task_id.and_then(|id| self.activities.owners.get(id).cloned()));
+            if let Some(id) = task_id {
                 if patch["is_backgrounded"] == true {
                     self.activities.claude_background.insert(
                         id.into(),
@@ -491,7 +519,10 @@ impl Protocol {
                 if subtype == "task_started" {
                     self.activities.claude_pending.insert(id.into());
                 }
-                self.track_claude_task(id, subtype, value, patch);
+                let card = owner
+                    .as_deref()
+                    .filter(|owner| self.tools.get(*owner).is_some_and(|t| t.panel.is_some()));
+                self.track_claude_task(id, subtype, value, patch, card);
                 if subtype == "task_notification" {
                     let background = self.activities.claude_background.remove(id).is_some();
                     self.activities.claude_pending.remove(id);
@@ -499,15 +530,27 @@ impl Protocol {
                         // Claude may wake itself after a background result. The
                         // desktop adapter leaves a 15s window for that follow-up.
                         self.claude_resume_at = Some(Instant::now() + Duration::from_secs(15));
+                        self.activities.wake_summary = text(&value["summary"])
+                            .or_else(|| text(&value["description"]))
+                            .map(str::to_owned);
                     }
                 }
+                let terminal = subtype == "task_notification"
+                    || patch["status"]
+                        .as_str()
+                        .and_then(state)
+                        .is_some_and(|status| status != ToolState::Running);
+                if terminal
+                    && owner
+                        .as_deref()
+                        .is_some_and(|owner| self.activities.registry.is_resume(owner))
+                {
+                    self.activities.registry.note_finished(id);
+                }
             }
-            let owner = text(&value["tool_use_id"]).map(str::to_owned).or_else(|| {
-                text(&value["task_id"]).and_then(|id| self.activities.owners.get(id).cloned())
-            });
             if let Some(tool) = owner.as_deref().and_then(|owner| self.tools.get_mut(owner)) {
                 if tool.agent_mut().is_some() {
-                    if let Some(id) = text(&value["task_id"]) {
+                    if let Some(id) = task_id {
                         if let Some(run) = tool.agent_mut() {
                             if !run.ids.iter().any(|old| old == id) {
                                 run.ids.push(id.into());
@@ -515,12 +558,6 @@ impl Protocol {
                         }
                         self.activities.owners.insert(id.into(), tool.id.clone());
                     }
-                    let subtype = value["subtype"].as_str().unwrap_or("");
-                    let patch = if subtype == "task_updated" {
-                        &value["patch"]
-                    } else {
-                        value
-                    };
                     if patch["is_backgrounded"] == true {
                         self.activities.background_calls.insert(tool.id.clone());
                     } else if patch["is_backgrounded"] == false || subtype == "task_notification" {
@@ -532,8 +569,13 @@ impl Protocol {
                         tool.state = ToolState::Running;
                     }
                     if let Some(run) = tool.agent_mut() {
-                        // Match React: keep the run's name once its trail starts.
-                        if run.steps.is_empty() {
+                        if subtype == "task_progress" {
+                            // Progress is what the agent is doing now, never its title.
+                            if let Some(description) = text(&value["description"]) {
+                                run.activity = Some(description.into());
+                            }
+                        } else if run.steps.is_empty() {
+                            // Match React: keep the run's name once its trail starts.
                             if let Some(description) = text(&patch["description"]) {
                                 run.brief = description.into();
                             }
@@ -541,7 +583,7 @@ impl Protocol {
                         if let Some(summary) =
                             text(&value["summary"]).filter(|_| subtype == "task_progress")
                         {
-                            if let Some(id) = text(&value["task_id"]) {
+                            if let Some(id) = task_id {
                                 run.upsert(AgentStep {
                                     id: format!("task:{id}"),
                                     kind: "message".into(),
@@ -569,13 +611,280 @@ impl Protocol {
         }
         false
     }
+    /// A task_started names the call behind an agent task: an Agent dispatch
+    /// learns its agent id; a SendMessage becomes that agent's resumption.
+    fn claude_task_started(
+        &mut self,
+        value: &Value,
+        tool_use_id: Option<&str>,
+        task_id: Option<&str>,
+        events: &mut Vec<Event>,
+    ) {
+        let (Some(call), Some(task)) = (tool_use_id, task_id) else {
+            return;
+        };
+        let agent_task = is_agent_task(value["task_type"].as_str());
+        let Some(name) = self.tools.get(call).map(|tool| tool.name.clone()) else {
+            return;
+        };
+        if name == "SendMessage" {
+            if agent_task || self.activities.registry.dispatch_of(task).is_some() {
+                self.claude_resume(call, task, events);
+            }
+        } else if agent_task && !self.activities.registry.is_resume(call) {
+            let Some(tool) = self.tools.get_mut(call) else {
+                return;
+            };
+            if let Some(run) = tool.agent_mut() {
+                run.agent_id.get_or_insert_with(|| task.into());
+                let name = run.display_name();
+                self.activities
+                    .registry
+                    .note_dispatch(call, Some(task), &name);
+            }
+        }
+    }
+    /// A main-thread Agent call: remember it so later turns can place its agent.
+    pub(super) fn claude_note_dispatch(&mut self, id: &str) {
+        if self.activities.registry.is_resume(id) {
+            return;
+        }
+        let Some(tool) = self.tools.get(id).filter(|tool| tool.name != "SendMessage") else {
+            return;
+        };
+        // Read-only: caching a panel here would freeze a still-streaming input.
+        if let Some(Panel::Agent(run)) = tool.panel() {
+            let (agent, name) = (run.agent_id.clone(), run.display_name());
+            self.activities
+                .registry
+                .note_dispatch(id, agent.as_deref(), &name);
+        }
+    }
+    /// A main-thread tool_result for an Agent or SendMessage call. Returns true
+    /// when the result is a resumption receipt rather than a report.
+    pub(super) fn claude_tool_result(
+        &mut self,
+        block: &Value,
+        frame: &Value,
+        events: &mut Vec<Event>,
+    ) -> bool {
+        let Some(id) = text(&block["tool_use_id"]) else {
+            return false;
+        };
+        let Some(tool) = self.tools.get_mut(id) else {
+            return false;
+        };
+        let content = text_content(&block["content"]);
+        if tool.name == "SendMessage" {
+            let resumed = text(&frame["tool_use_result"]["resumedAgentId"])
+                .map(str::to_owned)
+                .or_else(|| {
+                    serde_json::from_str::<Value>(&content)
+                        .ok()
+                        .and_then(|receipt| text(&receipt["resumedAgentId"]).map(str::to_owned))
+                });
+            if let Some(agent) = resumed {
+                self.claude_resume(id, &agent, events);
+            }
+            return self.activities.registry.is_resume(id) && block["is_error"] != true;
+        }
+        if self.activities.registry.is_resume(id) || !matches!(tool.panel(), Some(Panel::Agent(_)))
+        {
+            return false;
+        }
+        let Some(run) = tool.agent_mut() else {
+            return false;
+        };
+        let agent = crate::tool::handback::parse_handback(&content)
+            .agent_id
+            .or_else(|| text(&frame["tool_use_result"]["agentId"]).map(str::to_owned));
+        if let Some(agent) = agent {
+            run.agent_id.get_or_insert_with(|| agent.clone());
+            let name = run.display_name();
+            self.activities
+                .registry
+                .note_dispatch(id, Some(&agent), &name);
+        }
+        false
+    }
+    /// The SendMessage block `send` now shows `agent`'s resumed work.
+    fn claude_resume(&mut self, send: &str, agent: &str, events: &mut Vec<Event>) {
+        let registry = &mut self.activities.registry;
+        let known = registry.resumed_agent(send) == Some(agent);
+        registry.note_resume(send, agent);
+        let origin = registry
+            .dispatch_of(agent)
+            .map(|(id, name)| (id.to_owned(), name.to_owned()));
+        let Some(tool) = self.tools.get_mut(send) else {
+            return;
+        };
+        if known && matches!(&tool.panel, Some(Panel::Agent(run)) if run.agent_id.is_some()) {
+            return;
+        }
+        let input: Value = serde_json::from_str(&tool.input).unwrap_or_default();
+        let name = origin
+            .as_ref()
+            .map(|(_, name)| name.as_str())
+            .filter(|name| !name.is_empty())
+            .or_else(|| text(&input["to"]))
+            .unwrap_or(agent);
+        tool.panel = Some(Panel::Agent(AgentRun {
+            name: Some(format!("Resumed · {name}")),
+            brief: text(&input["message"]).unwrap_or_default().into(),
+            agent_id: Some(agent.into()),
+            resume_of: origin.map(|(id, _)| id),
+            ..AgentRun::default()
+        }));
+        // The receipt is not the agent's report; the notification brings that.
+        tool.state = ToolState::Running;
+        tool.output.clear();
+        events.push(Event::Tool(tool.clone()));
+    }
+    /// Where a child frame of `parent` goes, in the documented order:
+    /// 1. `parent` is a live agent call in this turn;
+    /// 2. the active resumption of the agent `parent` dispatched;
+    /// 3. a per-turn continuation block for a known but finished dispatch;
+    /// 4. a visible "Background agent" block. Never nowhere.
+    fn claude_route(&mut self, parent: &str, agent_hint: Option<&str>) -> String {
+        if let Some(target) = self.claude_placed(parent, agent_hint) {
+            return target;
+        }
+        let registry = &mut self.activities.registry;
+        if let Some(name) = registry.dispatch_name(parent).map(str::to_owned) {
+            let id = format!("{CONTINUED_PREFIX}{parent}:{}", self.activities.turn);
+            if !self.tools.contains_key(&id) {
+                let agent = registry
+                    .dispatch_agent(parent)
+                    .or(agent_hint)
+                    .map(str::to_owned);
+                if let Some(agent) = &agent {
+                    registry.note_resume(&id, agent);
+                }
+                let mut tool = ToolCall::new(&id, "Agent");
+                tool.panel = Some(Panel::Agent(AgentRun {
+                    name: Some(format!(
+                        "Continued · {}",
+                        if name.is_empty() { "agent" } else { &name }
+                    )),
+                    agent_id: agent,
+                    resume_of: Some(parent.into()),
+                    ..AgentRun::default()
+                }));
+                self.tools.insert(id.clone(), tool);
+            }
+            return id;
+        }
+        let id = format!("{FALLBACK_PREFIX}{parent}");
+        self.tools.entry(id.clone()).or_insert_with(|| {
+            let mut tool = ToolCall::new(&id, "Agent");
+            tool.panel = Some(Panel::Agent(AgentRun {
+                name: Some("Background agent".into()),
+                agent_id: agent_hint.map(str::to_owned),
+                ..AgentRun::default()
+            }));
+            // A container of steps that each carry their own state; nothing
+            // reports when unplaced work ends, so it never spins forever.
+            tool.state = ToolState::Completed;
+            tool
+        });
+        id
+    }
+    /// Rules 1 and 2 only: an existing block, never a new one.
+    fn claude_placed(&mut self, parent: &str, agent_hint: Option<&str>) -> Option<String> {
+        if let Some(tool) = self.tools.get(parent) {
+            if tool.state == ToolState::Running && matches!(tool.panel(), Some(Panel::Agent(_))) {
+                return Some(parent.into());
+            }
+        }
+        let registry = &self.activities.registry;
+        registry
+            .target_for_parent(parent)
+            .or_else(|| agent_hint.and_then(|agent| registry.target_for_agent(agent)))
+            .filter(|target| self.tools.contains_key(target))
+    }
+    /// A child tool_result completes the step it answers, wherever that step lives.
+    fn claude_child_result(
+        &mut self,
+        parent: &str,
+        hint: Option<&str>,
+        id: &str,
+        block: &Value,
+        events: &mut Vec<Event>,
+    ) {
+        let has_step = |tool: &ToolCall| matches!(&tool.panel, Some(Panel::Agent(run)) if run.steps.iter().any(|step| step.id == id));
+        let owner = self
+            .claude_placed(parent, hint)
+            .filter(|target| self.tools.get(target).is_some_and(has_step))
+            .or_else(|| {
+                self.tools
+                    .values()
+                    .find(|tool| has_step(tool))
+                    .map(|tool| tool.id.clone())
+            });
+        let state = Some(if block["is_error"] == true {
+            ToolState::Failed
+        } else {
+            ToolState::Completed
+        });
+        let mut detail = text_content(&block["content"]);
+        crate::tool::tasks::bound(&mut detail, 16 * 1024);
+        if let Some(tool) = owner.as_deref().and_then(|owner| self.tools.get_mut(owner)) {
+            if let Some(step) = tool
+                .agent_mut()
+                .and_then(|run| run.steps.iter_mut().find(|step| step.id == id))
+            {
+                step.state = state;
+                step.detail = detail;
+                events.push(Event::Tool(tool.clone()));
+            }
+            return;
+        }
+        // A result for a call this session never saw still shows up.
+        let target = self.claude_route(parent, hint);
+        self.agent_step(
+            &target,
+            AgentStep {
+                id: id.into(),
+                kind: "tool".into(),
+                text: "Tool result".into(),
+                state,
+                detail,
+                ..AgentStep::default()
+            },
+            None,
+            events,
+        );
+    }
     /// Mirrors claude.ts's backgroundTasks: a task runs from task_started
     /// until a terminal update, its notification, or a background_tasks_changed
     /// list that no longer has it.
-    fn track_claude_task(&mut self, id: &str, subtype: &str, value: &Value, patch: &Value) {
+    fn track_claude_task(
+        &mut self,
+        id: &str,
+        subtype: &str,
+        value: &Value,
+        patch: &Value,
+        block: Option<&str>,
+    ) {
+        let steps = block
+            .and_then(|block| self.tools.get(block))
+            .and_then(|tool| match &tool.panel {
+                Some(Panel::Agent(run)) => {
+                    Some(run.steps.iter().filter(|step| step.kind == "tool").count() as u32)
+                }
+                _ => None,
+            })
+            .unwrap_or(0);
         let tasks = &mut self.activities.claude_tasks;
         match subtype {
-            "task_started" if !tasks.iter().any(|task| task.id == id) => {
+            "task_started" => {
+                if let Some(task) = tasks.iter_mut().find(|task| task.id == id) {
+                    if block.is_some() {
+                        task.tool_id = block.map(str::to_owned);
+                        task.steps = steps;
+                    }
+                    return;
+                }
                 let source = text(&value["tool_use_id"]).and_then(|id| self.tools.get(id));
                 let command = source
                     .filter(|tool| tool.name == "Bash")
@@ -593,7 +902,21 @@ impl Protocol {
                     agent: is_agent_task(value["task_type"].as_str()),
                     command,
                     started_at: crate::time::now_ms(),
+                    tool_id: block.map(str::to_owned),
+                    latest: None,
+                    steps,
                 });
+            }
+            "task_progress" => {
+                if let Some(task) = tasks.iter_mut().find(|task| task.id == id) {
+                    if let Some(description) = text(&value["description"]) {
+                        task.latest = Some(description.into());
+                    }
+                    if block.is_some() {
+                        task.tool_id = block.map(str::to_owned);
+                        task.steps = steps;
+                    }
+                }
             }
             "task_updated" => {
                 if let Some(description) = text(&patch["description"]) {
@@ -639,6 +962,9 @@ impl Protocol {
                     agent: is_agent_task(row["task_type"].as_str()),
                     command: None,
                     started_at: crate::time::now_ms(),
+                    tool_id: None,
+                    latest: None,
+                    steps: 0,
                 });
             }
         }
@@ -662,8 +988,9 @@ impl Protocol {
             return;
         };
         // Progress is a child's step, never the parent Agent's final report.
+        let target = self.claude_route(parent, text(&value["agent_id"]));
         self.agent_step(
-            parent,
+            &target,
             AgentStep {
                 id: id.into(),
                 kind: "tool".into(),
@@ -965,8 +1292,16 @@ mod tests {
         let done = p.frame(json!({"type":"system","subtype":"task_notification","task_id":"actual-task","status":"failed","summary":"Provider reported failure"}), &mut Vec::new()).unwrap();
         assert_eq!(tool(&done).state, ToolState::Failed);
         assert_eq!(tool(&done).output, "Provider reported failure");
+        // Work this session cannot place is shown, never merged into the run.
         let orphan = p.frame(json!({"type":"assistant","parent_tool_use_id":"unknown","message":{"id":"x","content":[{"type":"text","text":"Unattributed child"}]}}), &mut Vec::new()).unwrap();
-        assert!(orphan.is_empty());
+        assert_eq!(tool(&orphan).id, "background:unknown");
+        let Some(Panel::Agent(run)) = p.tools["agent"].panel() else {
+            panic!()
+        };
+        assert!(!run
+            .steps
+            .iter()
+            .any(|step| step.text == "Unattributed child"));
     }
     #[test]
     fn claude_background_tasks_show_once_the_answer_yields_and_clear_as_they_finish() {
@@ -1013,3 +1348,7 @@ mod tests {
         assert_eq!(tick(&mut p), Some(Vec::new()));
     }
 }
+
+#[cfg(test)]
+#[path = "tasks/resume_tests.rs"]
+mod resume_tests;

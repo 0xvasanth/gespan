@@ -277,6 +277,9 @@ mod tests {
             agent,
             command: (!agent).then(|| "npm run dev".into()),
             started_at: rebase_core::time::now_ms(),
+            tool_id: None,
+            latest: None,
+            steps: 0,
         }
     }
 
