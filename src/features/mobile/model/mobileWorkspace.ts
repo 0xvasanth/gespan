@@ -37,7 +37,12 @@ import {
   loadPinnedProjects,
   sameProjectPath,
 } from "../../projects/model/recents";
-import { listPilots, pilotLook, pilotState } from "../../pilots/model/pilot";
+import {
+  listPilots,
+  pilotIdFromConversation,
+  pilotLook,
+  pilotState,
+} from "../../pilots/model/pilot";
 import { displayPath, pathKey, projectName } from "../../../shared/lib/paths";
 import {
   getSession,
@@ -251,10 +256,10 @@ export async function mobileConversation(
   saved?: Map<string, Session>,
   range?: (turnIds: string[]) => [number, number],
 ) {
-  const pilot = id.startsWith("pilot:")
-    ? listPilots().find((pilot) => pilot.id === id.slice(5))
-    : undefined;
-  if (id.startsWith("pilot:") && !pilot)
+  const pilotId = pilotIdFromConversation(id);
+  const pilot =
+    pilotId === null ? undefined : listPilots().find((pilot) => pilot.id === pilotId);
+  if (pilotId !== null && !pilot)
     throw new Error("Pilot is no longer available");
   const sessionId = pilot ? pilot.sessionId : id;
   const session = sessionId
@@ -294,9 +299,9 @@ export async function mobileModels(
   );
   let current: Session | undefined;
   if (params.conversationId) {
-    const pilot = params.conversationId.startsWith("pilot:")
-      ? listPilots().find((pilot) => pilot.id === params.conversationId!.slice(5))
-      : undefined;
+    const pilotId = pilotIdFromConversation(params.conversationId);
+    const pilot =
+      pilotId === null ? undefined : listPilots().find((pilot) => pilot.id === pilotId);
     const sessionId = pilot ? pilot.sessionId : params.conversationId;
     current = sessionId
       ? (live.find((session) => session.id === sessionId) ??

@@ -239,6 +239,20 @@ export function createPilot(projects: readonly string[] = []): Pilot {
   return pilot;
 }
 
+const PILOT_CONVERSATION_PREFIX = "pilot:";
+
+/** The id a phone uses for a Pilot's conversation. */
+export function pilotConversationId(pilotId: string): string {
+  return PILOT_CONVERSATION_PREFIX + pilotId;
+}
+
+/** The Pilot id inside a phone conversation id, or null for any other id. */
+export function pilotIdFromConversation(conversationId: string): string | null {
+  return conversationId.startsWith(PILOT_CONVERSATION_PREFIX)
+    ? conversationId.slice(PILOT_CONVERSATION_PREFIX.length)
+    : null;
+}
+
 const OPEN_PILOT_KEY = "rebase:open-pilot";
 
 /** The Pilot whose conversation was open, so the next launch reopens it. */

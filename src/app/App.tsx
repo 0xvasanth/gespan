@@ -618,6 +618,7 @@ import {
 import {
   createPilot,
   findPilot,
+  pilotIdFromConversation,
   pilotWorksOn,
   isPilotSession,
   listPilots,
@@ -9089,8 +9090,9 @@ function Workspace({
         return { sessionId: session.id };
       }
       const conversationId = String(params.conversationId ?? "");
-      const pilot = conversationId.startsWith("pilot:") ? findPilot(conversationId.slice(5)) : undefined;
-      if (conversationId.startsWith("pilot:") && !pilot) throw new Error("Pilot is no longer available");
+      const conversationPilotId = pilotIdFromConversation(conversationId);
+      const pilot = conversationPilotId === null ? undefined : findPilot(conversationPilotId);
+      if (conversationPilotId !== null && !pilot) throw new Error("Pilot is no longer available");
       if (method === "session.rename") {
         // As the sidebar's rename, which also renames a session that isn't open.
         const title = typeof params.title === "string" ? params.title.trim() : "";
