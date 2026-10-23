@@ -1,0 +1,19 @@
+src-tauri/src/fs.rs
+  s_ccb41beff89445::t_e86030f707f75d 728,737
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c32262e8b53c421d610b3e20f68469ce969b757d",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
