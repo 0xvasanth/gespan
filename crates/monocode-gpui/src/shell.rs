@@ -1,4 +1,5 @@
 mod accounts;
+mod actions;
 mod app_commands;
 mod app_views;
 mod automation_runs;
@@ -298,6 +299,8 @@ pub(crate) enum MenuTarget {
     TerminalTab(usize),
     /// The footer chip's list of terminals running a process.
     RunningTerminals,
+    /// The footer Actions button's list of saved commands.
+    Actions,
 }
 pub(crate) struct ShellMenu {
     pub(crate) target: MenuTarget,
@@ -571,6 +574,10 @@ pub(crate) struct Shell {
     reminders: Vec<monocode_core::store::Reminder>,
     renaming: Option<session_groups::Renaming>,
     link_dialog: Option<session_groups::LinkDialog>,
+    action_dialog: Option<actions::ActionDialog>,
+    actions_anchor: AnchorSlot,
+    /// The dock terminal each action last ran in, by project and action id.
+    action_terminals: HashMap<(String, String), gpui::WeakEntity<Terminal>>,
     deleting: HashSet<i64>,
     group_writes: Option<gpui::Task<()>>,
     selected_sessions: HashSet<i64>,
@@ -911,6 +918,9 @@ impl Shell {
             reminders: sidebar_metadata.reminders,
             renaming: None,
             link_dialog: None,
+            action_dialog: None,
+            actions_anchor: AnchorSlot::default(),
+            action_terminals: HashMap::new(),
             deleting: HashSet::new(),
             group_writes: None,
             selected_sessions: HashSet::new(),
@@ -4803,6 +4813,7 @@ impl Shell {
             MenuTarget::TerminalTab(_) | MenuTarget::RunningTerminals => {
                 ("".into(), Vec::new(), 160., MenuStyle::Explorer)
             }
+            MenuTarget::Actions => ("Actions".into(), self.actions_menu(), 200., MenuStyle::Explorer),
             MenuTarget::Tab(_)
             | MenuTarget::MonoTab(_)
             | MenuTarget::SearchTab
@@ -5177,6 +5188,7 @@ impl Shell {
         match target {
             MenuTarget::TerminalTab(ix) => self.run_terminal_tab_menu(ix, action, window, cx),
             MenuTarget::RunningTerminals => self.run_running_terminals_menu(action, window, cx),
+            MenuTarget::Actions => self.run_actions_menu(action, window, cx),
             MenuTarget::TerminalDock => {
                 let side = match action {
                     "top" => DockSide::Top,
@@ -7974,6 +7986,10 @@ impl Render for Shell {
                     this.close_link_dialog(window, cx);
                     return;
                 }
+                if this.action_dialog.is_some() {
+                    this.close_action_dialog(window, cx);
+                    return;
+                }
                 if let Some(settings) = this.settings.clone() {
                     if !settings.update(cx, |s, cx| s.dismiss_transient(window, cx)) {
                         this.close_settings(window, cx);
@@ -8163,6 +8179,9 @@ impl Render for Shell {
                     .when(open.target == MenuTarget::SidebarOptions, |p| {
                         p.align(Align::Start)
                     })
+                    .when(open.target == MenuTarget::Actions, |p| {
+                        p.side(Side::Top).align(crate::popover::Align::End)
+                    })
                     .when(open.target == MenuTarget::RunningTerminals, |p| {
                         p.side(Side::Top).align(crate::popover::Align::End)
                     })
@@ -8170,6 +8189,7 @@ impl Render for Shell {
             .children(self.drag_ghost(cx))
             .children(self.background_modal(window, cx))
             .children(self.link_modal(window, cx))
+            .children(self.action_modal(window, cx))
             .children(self.resource_modal(window, cx))
             .children(self.quick_open_modal(window, cx))
             .children(self.remote_project_modal(window, cx))

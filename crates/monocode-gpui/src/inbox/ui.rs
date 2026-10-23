@@ -6,6 +6,10 @@ use gpui::{
 };
 
 fn action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
+    plain_action(id, label).hover(|s| s.bg(content(0.07)).text_color(content(1.)))
+}
+/// An [`action`] without its hover, for callers that set their own.
+fn plain_action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
     let id: SharedString = id.into();
     let label = label.into();
     div()
@@ -22,7 +26,6 @@ fn action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Statef
         .text_size(px(12.))
         .text_color(content(0.7))
         .cursor_pointer()
-        .hover(|s| s.bg(content(0.07)).text_color(content(1.)))
         .child(label)
 }
 fn icon_action(id: impl Into<SharedString>, label: &str, name: &'static str) -> Stateful<Div> {
@@ -977,7 +980,7 @@ impl Inbox {
                                         *tab != Tab::Checks || item.provider == "github"
                                     })
                                     .map(|(tab, label)| {
-                                        action(format!("inbox-tab-{label}"), label)
+                                        plain_action(format!("inbox-tab-{label}"), label)
                                             .role(Role::Tab)
                                             .h_full()
                                             .px_0()

@@ -112,6 +112,10 @@ pub(crate) struct Workspace {
     pub focused: HashMap<i64, i64>,
     /// Each project's terminal dock (ProjectTerminalDock), by project path.
     pub docks: HashMap<String, TerminalDock>,
+    /// Each project's saved commands, run from the footer's Actions button.
+    pub actions: HashMap<String, Vec<ProjectAction>>,
+    /// The id of the action each project last ran; the footer shows it.
+    pub last_actions: HashMap<String, String>,
     /// Original layout: separate project and session sidebars.
     pub classic_layout: bool,
     /// The new single-sidebar layout can keep its full-height, square frame.
@@ -136,6 +140,28 @@ pub(crate) struct Workspace {
     pub desktop_workspace_snapshot: Option<serde_json::Value>,
     /// Exact source strings retained for preferences with no native equivalent.
     pub desktop_preferences_metadata: Option<serde_json::Value>,
+}
+
+/// A saved command the footer runs in a terminal with one click.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct ProjectAction {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    /// One of `ACTION_ICONS`.
+    pub icon: String,
+}
+/// The icons an action can wear, in picker order; the first is the default.
+pub(crate) const ACTION_ICONS: [&str; 6] = ["play", "test-tube", "hammer", "rocket", "bug", "package"];
+impl ProjectAction {
+    pub fn icon(&self) -> &'static str {
+        ACTION_ICONS
+            .iter()
+            .find(|icon| **icon == self.icon)
+            .copied()
+            .unwrap_or(ACTION_ICONS[0])
+    }
 }
 
 /// Port of src/features/projects/model/projectTerminal.ts.
@@ -288,6 +314,8 @@ impl Default for Workspace {
             layouts: Default::default(),
             focused: Default::default(),
             docks: Default::default(),
+            actions: HashMap::new(),
+            last_actions: HashMap::new(),
             classic_layout: false,
             // Fresh installs start on the boxy frame; saved choices are kept.
             new_layout_boxy: true,

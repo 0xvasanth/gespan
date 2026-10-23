@@ -161,6 +161,15 @@ pub(crate) fn ghost_button(
         .text_color(content(0.6))
         .hover(|s| s.bg(content(0.07)).text_color(content(1.)))
 }
+/// A quiet destructive action, like Delete beside Cancel.
+pub(crate) fn danger_ghost_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+) -> Stateful<Div> {
+    button(id, label)
+        .text_color(danger(1.))
+        .hover(|s| s.bg(danger(0.1)))
+}
 /// The filled confirming action: content ink with the inverse text.
 pub(crate) fn primary_button(
     id: impl Into<ElementId>,

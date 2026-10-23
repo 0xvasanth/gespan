@@ -376,6 +376,16 @@ impl Terminal {
         self.write(bytes);
         cx.notify();
     }
+    /// Types `command` at the prompt and runs it. The footer names it at
+    /// once; the foreground poll corrects the label within a second.
+    pub(crate) fn run(&mut self, command: &str, cx: &mut Context<Self>) {
+        let mut line = command.trim().replace("\r\n", "\r").replace('\n', "\r");
+        line.push('\r');
+        self.input(line.into_bytes(), cx);
+        if let Some(label) = command_label(command.trim()) {
+            self.set_foreground(Some(label), cx);
+        }
+    }
     /// Fit the grid to the painted area; the PTY learns its new size.
     fn resize(&mut self, columns: usize, lines: usize, cell: Size<gpui::Pixels>) {
         let next = GridSize { columns, lines };

@@ -325,6 +325,16 @@ impl Input {
         input.max_height = 124.;
         input
     }
+    /// An action's shell command: three rows growing to six.
+    pub(crate) fn action_command(cx: &mut Context<Self>) -> Self {
+        let mut input = Self::commit_message(cx);
+        input.label = "Command".into();
+        input.placeholder = "bun test".into();
+        input.height = 60.;
+        input.min_height = 60.;
+        input.max_height = 120.;
+        input
+    }
     /// InboxComments' two-row textarea grows within the discussion page.
     pub(crate) fn inbox_comment(cx: &mut Context<Self>) -> Self {
         let mut input = Self::commit_message(cx);

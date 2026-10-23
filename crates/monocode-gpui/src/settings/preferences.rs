@@ -19,6 +19,8 @@ pub(crate) struct Preferences {
     pub quick_composer: bool,
     pub working_agents: bool,
     pub close_to_tray: bool,
+    /// Running an action shows the terminal it runs in.
+    pub action_opens_terminal: bool,
     // Appearance
     pub theme: String,
     pub workspace_theme: String,
@@ -102,6 +104,7 @@ impl Default for Preferences {
             quick_composer: true,
             working_agents: true,
             close_to_tray: true,
+            action_opens_terminal: true,
             theme: "dark".into(),
             workspace_theme: "default".into(),
             inset_glass: true,

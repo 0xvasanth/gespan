@@ -781,16 +781,16 @@ impl Shell {
             return None;
         }
         let classic = self.workspace.boxy_layout();
-        // The terminal group sits 8px on; alone, the chip takes its inset margin.
+        // The terminal group sits one footer gap on; alone, the chip takes its inset margin.
         let alone = self.app_view_open() || self.workspace.project.is_empty();
         Some(
             div()
                 .flex_shrink_0()
                 .map(|d| match (classic, alone) {
                     (true, true) => d,
-                    (true, false) => d.mr(px(8.)),
+                    (true, false) => d.mr(px(super::terminal_dock::FOOTER_GAP)),
                     (false, true) => d.mr(px(6.)).pb(px(2.)),
-                    (false, false) => d.mr(px(8.)).pb(px(2.)),
+                    (false, false) => d.mr(px(super::terminal_dock::FOOTER_GAP)).pb(px(2.)),
                 })
                 .child(self.resources.clone())
                 .into_any_element(),

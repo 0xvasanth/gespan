@@ -788,9 +788,10 @@ impl Shell {
             .flex()
             .flex_shrink_0()
             .items_center()
-            .gap(px(8.))
+            .gap(px(FOOTER_GAP))
             .when(!classic, |d| d.mr(px(6.)).pb(px(2.)))
-            .text_size(px(11.));
+            .text_size(px(11.))
+            .children(self.actions_button(cx));
         if running.is_empty() {
             self.live_mark = None;
             let has_terminals = self
@@ -943,6 +944,9 @@ impl Shell {
     }
 }
 
+/// The space between the footer's right-hand buttons: the resource chip,
+/// Actions, and Terminal or the running-terminals chip.
+pub(super) const FOOTER_GAP: f32 = 4.;
 const NEW_TERMINAL_LABEL: &str = if cfg!(target_os = "macos") {
     "New Terminal (⌘`)"
 } else {

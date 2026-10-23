@@ -130,6 +130,20 @@ impl SettingsView {
                 |this, on, cx| this.update(cx, |p| p.working_agents = on),
             )],
         ));
+        workspace.push(self.row(
+            Some("action-opens-terminal"),
+            false,
+            "Show terminal for actions",
+            Some("Open the terminal when an action runs. Off, actions run in the background.".into()),
+            vec![self.toggle(
+                "action-opens-terminal",
+                "Show terminal for actions",
+                p.action_opens_terminal,
+                false,
+                cx,
+                |this, on, cx| this.update(cx, |p| p.action_opens_terminal = on),
+            )],
+        ));
         if cfg!(target_os = "windows") {
             workspace.push(self.row(
                 Some("close-to-tray"),
