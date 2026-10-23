@@ -111,10 +111,18 @@ export function CardDetail({
     };
   }, [card.boardId, card.id, card.number]);
 
+  const linked = link?.target ?? null;
   const options = useMemo((): SearchableSelectOption[] => {
+    const isLinked = (target: BoardLinkTarget) =>
+      linked?.kind === target.kind && linked.id === target.id;
+    // Archived work stays out of the picker, except the card's own link,
+    // which shows wherever the app found it.
     const linkable = linkTargets.filter(
-      (target) => target.kind === "session" || target.kind === "pilot",
+      (target) =>
+        (target.kind === "session" || target.kind === "pilot") &&
+        (!target.unlisted || isLinked(target)),
     );
+    if (linked && !linkable.some(isLinked)) linkable.push(linked);
     return [
       { value: NO_LINK, label: "No linked work" },
       ...linkable.map((target) => ({
@@ -123,7 +131,7 @@ export function CardDetail({
         keywords: target.detail,
       })),
     ];
-  }, [linkTargets]);
+  }, [linkTargets, linked]);
 
   const saveFields = () => {
     const nextTitle = title.trim();
@@ -158,7 +166,7 @@ export function CardDetail({
 
   const current =
     card.linkKind && card.linkId ? linkValue(card.linkKind, card.linkId) : "";
-  const target = link?.target ?? null;
+  const target = linked;
 
   return (
     <Modal

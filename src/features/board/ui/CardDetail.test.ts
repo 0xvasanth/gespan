@@ -110,6 +110,54 @@ describe("CardDetail linked work", () => {
     expect(openButton()).toBeUndefined();
   });
 
+  it("leaves archived sessions out of the picker but still shows the card's own", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    const archived = {
+      kind: "session" as const,
+      id: "s-old",
+      label: "Old work",
+      unlisted: true,
+    };
+    const otherArchived = { ...archived, id: "s-older", label: "Older work" };
+    const active = { kind: "session" as const, id: "s1", label: "Fix login" };
+    await renderDetail({
+      card: { ...CARD, linkKind: "session", linkId: "s-old" },
+      link: { kind: "session", target: archived },
+      linkTargets: [active, archived, otherArchived],
+    });
+    const trigger = document.querySelector<HTMLButtonElement>(
+      '[role="dialog"] button[aria-label^="Linked work"]',
+    )!;
+    expect(trigger.getAttribute("aria-label")).toBe(
+      "Linked work: Session · Old work",
+    );
+    act(() => trigger.click());
+    const options = [...document.querySelectorAll('[role="option"]')].map(
+      (el) => el.textContent,
+    );
+    expect(options).toEqual([
+      "No linked work",
+      "Session · Fix login",
+      "Session · Old work",
+    ]);
+    expect(openButton()).toBeDefined();
+  });
+
+  it("shows a linked target the picker list doesn't hold", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    const elsewhere = { kind: "session" as const, id: "s9", label: "Elsewhere" };
+    await renderDetail({
+      card: { ...CARD, linkKind: "session", linkId: "s9" },
+      link: { kind: "session", target: elsewhere },
+      linkTargets: [],
+    });
+    expect(
+      document
+        .querySelector('[role="dialog"] button[aria-label^="Linked work"]')!
+        .getAttribute("aria-label"),
+    ).toBe("Linked work: Session · Elsewhere");
+  });
+
   it("offers to open linked work that still exists", async () => {
     vi.mocked(invoke).mockResolvedValue([]);
     const target = { kind: "session" as const, id: "s1", label: "Fix login" };

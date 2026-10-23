@@ -6,6 +6,7 @@ import {
   parseLinkValue,
   relativeTime,
   resolveLink,
+  sessionLinkTarget,
   type BoardLinkTarget,
 } from "./boardFormat";
 
@@ -108,13 +109,16 @@ describe("link values", () => {
     expect(parseLinkValue("")).toBeNull();
   });
 
-  it("resolves a card's link, or marks it missing", () => {
+  it("resolves a card's link, marks it missing only once known gone", () => {
     const session: BoardLinkTarget = {
       kind: "session",
       id: "s1",
       label: "Codex · Fix login",
     };
-    const targets = new Map([[linkValue("session", "s1"), session]]);
+    const targets = new Map<string, BoardLinkTarget | null>([
+      [linkValue("session", "s1"), session],
+      [linkValue("flow-run", "gone"), null],
+    ]);
     expect(resolveLink({ linkKind: null, linkId: null }, targets)).toBeNull();
     expect(resolveLink({ linkKind: "session", linkId: "s1" }, targets)).toEqual(
       { kind: "session", target: session },
@@ -122,5 +126,39 @@ describe("link values", () => {
     expect(
       resolveLink({ linkKind: "flow-run", linkId: "gone" }, targets),
     ).toEqual({ kind: "flow-run", target: null });
+    // Not looked up yet: unconfirmed, not missing.
+    expect(
+      resolveLink({ linkKind: "session", linkId: "elsewhere" }, targets),
+    ).toEqual({ kind: "session", target: null, unconfirmed: true });
+  });
+});
+
+describe("sessionLinkTarget", () => {
+  const session = {
+    id: "s1",
+    title: "Fix login",
+    cwd: "/work/rebase",
+    archived: false,
+    draft: false,
+  };
+
+  it("labels a session with its title and project", () => {
+    expect(sessionLinkTarget(session, "running")).toEqual({
+      kind: "session",
+      id: "s1",
+      label: "Fix login",
+      detail: "rebase",
+      status: "running",
+    });
+    expect(sessionLinkTarget({ ...session, cwd: "" }).detail).toBeUndefined();
+  });
+
+  it("keeps archived and draft sessions as targets but out of the picker", () => {
+    expect(sessionLinkTarget({ ...session, archived: true })).toMatchObject({
+      id: "s1",
+      unlisted: true,
+    });
+    expect(sessionLinkTarget({ ...session, draft: true }).unlisted).toBe(true);
+    expect(sessionLinkTarget(session).unlisted).toBeUndefined();
   });
 });

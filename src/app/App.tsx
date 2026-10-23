@@ -556,6 +556,7 @@ import {
   repairSession,
   applySessionRepair,
   listLinkedSessions,
+  listSessionsByIds,
   listSessionsByProject,
   persistFingerprint,
   rebaseProjectSessions,
@@ -707,7 +708,11 @@ import {
 import { useQuickComposerLaunches } from "../features/quick-composer/hooks/useQuickComposerLaunches";
 import type { QuickLaunch } from "../features/quick-composer/model/quickComposer";
 import { claimInboxAutomationRuns } from "../features/automations/model/automationEvents";
-import type { BoardLinkTarget } from "../features/board/ui/boardFormat";
+import {
+  sessionLinkTarget,
+  type BoardLinkTarget,
+  type LinkRef,
+} from "../features/board/ui/boardFormat";
 import { onLinkedWork } from "../features/board/model/autoMove";
 import {
   createLinkedTurns,
@@ -13910,18 +13915,16 @@ function Workspace({
   const boardLinkTargets = useMemo((): BoardLinkTarget[] => {
     if (!boardShown) return [];
     const busy = new Set(busySessionKey.split("\n"));
+    // Archived and draft sessions stay targets (a card linked to one still
+    // finds it) but are unlisted, so the picker leaves them out.
     const targets: BoardLinkTarget[] = history
-      .filter(
-        (session) =>
-          !session.archived && !session.draft && !isPilotSession(session.id),
-      )
-      .map((session) => ({
-        kind: "session",
-        id: session.id,
-        label: session.title,
-        detail: session.cwd ? projectName(session.cwd) : undefined,
-        status: busy.has(session.id) ? "running" : "completed",
-      }));
+      .filter((session) => !isPilotSession(session.id))
+      .map((session) =>
+        sessionLinkTarget(
+          session,
+          busy.has(session.id) ? "running" : "completed",
+        ),
+      );
     if (pilotsEnabled) {
       for (const pilot of listPilots()) {
         const state = pilotRail.states.get(pilot.id)?.status;
@@ -13937,6 +13940,34 @@ function Workspace({
     // The Pilot roster is read through its snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardShown, busySessionKey, history, pilotsEnabled, pilotRail, pilotsSnap]);
+  // `history` only holds projects visited this run, so the board asks for
+  // the rest by id; a session the store doesn't return was deleted.
+  const lookupBoardLinkTargets = useCallback(
+    async (links: LinkRef[]): Promise<BoardLinkTarget[]> => {
+      const sessionIds = links
+        .filter((link) => link.kind === "session")
+        .map((link) => link.id);
+      const pilotIds = new Set(
+        links.filter((link) => link.kind === "pilot").map((link) => link.id),
+      );
+      const targets = sessionIds.length
+        ? (await listSessionsByIds(sessionIds)).map((session) =>
+            sessionLinkTarget(session),
+          )
+        : [];
+      for (const pilot of listPilots()) {
+        if (!pilotIds.has(pilot.id)) continue;
+        targets.push({
+          kind: "pilot",
+          id: pilot.id,
+          label: pilotLook(pilot).name,
+          unlisted: true,
+        });
+      }
+      return targets;
+    },
+    [],
+  );
   // Rejections reach the board's error toast.
   const onOpenBoardLinkedWork = useCallback(
     async (target: BoardLinkTarget) => {
@@ -14787,6 +14818,7 @@ function Workspace({
                         onToggleSidebar={onToggleSidebar}
                         linkTargets={boardLinkTargets}
                         onOpenLinkedWork={onOpenBoardLinkedWork}
+                        lookupLinkTargets={lookupBoardLinkTargets}
                       />
                     </AppViewSurface>
                   ) : null}

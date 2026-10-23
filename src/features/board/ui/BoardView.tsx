@@ -46,6 +46,7 @@ import {
   linkValue,
   resolveLink,
   type BoardLinkTarget,
+  type LinkRef,
 } from "./boardFormat";
 import { CardComposer } from "./CardComposer";
 import { CardDetail } from "./CardDetail";
@@ -56,7 +57,7 @@ import {
   type DropTarget,
 } from "./kanban/kanbanMove";
 
-export type { BoardLinkTarget } from "./boardFormat";
+export type { BoardLinkTarget, LinkRef } from "./boardFormat";
 
 const OPEN_BOARD_KEY = "rebase:open-board";
 
@@ -97,6 +98,11 @@ type Props = {
   linkTargets: readonly BoardLinkTarget[];
   /** Rejects when the work can't be opened; the board shows the error. */
   onOpenLinkedWork: (target: BoardLinkTarget) => Promise<void>;
+  /**
+   * Finds cards' linked work that `linkTargets` doesn't hold (sessions of
+   * projects not loaded this run, say). Work it doesn't return is gone.
+   */
+  lookupLinkTargets: (links: LinkRef[]) => Promise<BoardLinkTarget[]>;
 };
 
 export function BoardView({
@@ -107,6 +113,7 @@ export function BoardView({
   onToggleSidebar,
   linkTargets,
   onOpenLinkedWork,
+  lookupLinkTargets,
 }: Props) {
   return (
     <div
@@ -139,6 +146,7 @@ export function BoardView({
       <BoardContent
         linkTargets={linkTargets}
         onOpenLinkedWork={onOpenLinkedWork}
+        lookupLinkTargets={lookupLinkTargets}
       />
     </div>
   );
@@ -147,7 +155,8 @@ export function BoardView({
 function BoardContent({
   linkTargets,
   onOpenLinkedWork,
-}: Pick<Props, "linkTargets" | "onOpenLinkedWork">) {
+  lookupLinkTargets,
+}: Pick<Props, "linkTargets" | "onOpenLinkedWork" | "lookupLinkTargets">) {
   const [boards, setBoards] = useState<Board[] | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<BoardDetail | null>(null);
@@ -266,6 +275,49 @@ function BoardContent({
     [linkTargets],
   );
 
+  // Cards' links `linkTargets` doesn't hold, looked up once each: the
+  // target, or null when the work is gone. Absent while unconfirmed.
+  const [lookedUp, setLookedUp] = useState<
+    ReadonlyMap<string, BoardLinkTarget | null>
+  >(() => new Map());
+  const asked = useRef(new Set<string>());
+  useEffect(() => {
+    if (!detail) return;
+    const wanted = new Map<string, LinkRef>();
+    for (const card of detail.cards) {
+      if (!card.linkKind || !card.linkId) continue;
+      const value = linkValue(card.linkKind, card.linkId);
+      // Held by the app now: ask again if it ever drops out (deleted).
+      if (targetsByValue.has(value)) asked.current.delete(value);
+      if (targetsByValue.has(value) || asked.current.has(value)) continue;
+      wanted.set(value, { kind: card.linkKind, id: card.linkId });
+    }
+    if (!wanted.size) return;
+    for (const value of wanted.keys()) asked.current.add(value);
+    lookupLinkTargets([...wanted.values()])
+      .then((found) => {
+        const byValue = new Map(
+          found.map((target) => [linkValue(target.kind, target.id), target]),
+        );
+        setLookedUp((current) => {
+          const next = new Map(current);
+          for (const value of wanted.keys()) {
+            next.set(value, byValue.get(value) ?? null);
+          }
+          return next;
+        });
+      })
+      // Left unconfirmed: a failed lookup says nothing about the work.
+      .catch(fail("Couldn't check linked work"));
+  }, [detail, targetsByValue, lookupLinkTargets, fail]);
+
+  // What the app has loaded wins over a lookup: it carries live status.
+  const linkStates = useMemo(() => {
+    const states = new Map<string, BoardLinkTarget | null>(lookedUp);
+    for (const [value, target] of targetsByValue) states.set(value, target);
+    return states;
+  }, [lookedUp, targetsByValue]);
+
   const onCardMove = useCallback(
     (cardId: string, to: DropTarget) => {
       const before = detailRef.current;
@@ -366,7 +418,7 @@ function BoardContent({
     <BoardCardItem
       card={card}
       done={columnsById.get(card.columnId)?.role === "done"}
-      link={resolveLink(card, targetsByValue)}
+      link={resolveLink(card, linkStates)}
       onOpen={() => setOpenCard({ id: card.id })}
       onOpenLinkedWork={openLinkedWork}
       onRename={() => setOpenCard({ id: card.id, focus: "title" })}
@@ -542,7 +594,7 @@ function BoardContent({
           key={shownCard.id}
           card={shownCard}
           columnName={columnsById.get(shownCard.columnId)?.name ?? ""}
-          link={resolveLink(shownCard, targetsByValue)}
+          link={resolveLink(shownCard, linkStates)}
           linkTargets={linkTargets}
           focus={openCard?.focus}
           onClose={() => setOpenCard(null)}

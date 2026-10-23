@@ -7,6 +7,7 @@ import {
 import type { BoardCard, CardLinkKind } from "../model/board";
 import { ICON_BUTTON, MenuButton, MenuItem, noDrag } from "./boardControls";
 import {
+  LINK_KIND_LABEL,
   relativeTime,
   type BoardLinkTarget,
   type ResolvedLink,
@@ -36,14 +37,20 @@ export function LinkChip({
   const { target } = link;
   return (
     <span
-      data-link-chip={target ? "found" : "missing"}
+      data-link-chip={
+        target ? "found" : link.unconfirmed ? "unconfirmed" : "missing"
+      }
       className={`inline-flex min-w-0 items-center gap-1 ${
         target ? "text-content/70" : "text-content/45"
       }`}
     >
       <Icon className="size-3 shrink-0" strokeWidth={1.75} />
       <span className={full ? "truncate" : "max-w-[140px] truncate"}>
-        {target ? target.label : "Linked work no longer exists"}
+        {target
+          ? target.label
+          : link.unconfirmed
+            ? LINK_KIND_LABEL[link.kind]
+            : "Linked work no longer exists"}
       </span>
       {target?.status ? (
         <span

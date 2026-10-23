@@ -15,6 +15,7 @@ import type {
   BoardDetail,
   ColumnRole,
 } from "../model/board";
+import type { BoardLinkTarget } from "./boardFormat";
 import type { KanbanBoardProps } from "./kanban/KanbanBoard";
 import { BoardView } from "./BoardView";
 import { Sidebar } from "../../../app/shell/Sidebar";
@@ -172,6 +173,7 @@ async function renderBoard(
     onClose: vi.fn(),
     linkTargets: [],
     onOpenLinkedWork: vi.fn(() => Promise.resolve()),
+    lookupLinkTargets: vi.fn(async () => []),
     ...overrides,
   };
   await act(async () => {
@@ -629,6 +631,120 @@ describe("BoardView linked work", () => {
         el.querySelector('button[aria-label="Open linked work"]'),
       ).toBeNull();
     }
+  });
+
+  it("looks up links the app hasn't loaded, and marks only deleted ones missing", async () => {
+    handlers.board_get = () => {
+      const detail = fixture();
+      detail.cards[0] = { ...detail.cards[0], linkKind: "session", linkId: "s1" };
+      detail.cards[1] = {
+        ...detail.cards[1],
+        linkKind: "session",
+        linkId: "other-project",
+      };
+      detail.cards[2] = {
+        ...detail.cards[2],
+        linkKind: "session",
+        linkId: "deleted",
+      };
+      return detail;
+    };
+    const loaded = { kind: "session" as const, id: "s1", label: "Fix login" };
+    const stored = {
+      kind: "session" as const,
+      id: "other-project",
+      label: "Write docs",
+      detail: "docs-site",
+    };
+    let answer!: (targets: BoardLinkTarget[]) => void;
+    const lookupLinkTargets = vi.fn(
+      () =>
+        new Promise<BoardLinkTarget[]>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const props = await renderBoard({
+      linkTargets: [loaded],
+      lookupLinkTargets,
+    });
+    const chip = (id: string) =>
+      container
+        .querySelector(`[data-kanban-card='${id}'] [data-link-chip]`)!
+        .getAttribute("data-link-chip");
+
+    // Only the links the app doesn't know are looked up, in one batch.
+    expect(lookupLinkTargets).toHaveBeenCalledTimes(1);
+    expect(lookupLinkTargets).toHaveBeenCalledWith([
+      { kind: "session", id: "other-project" },
+      { kind: "session", id: "deleted" },
+    ]);
+    // Until the lookup answers, nothing reads as gone.
+    expect([chip("c1"), chip("c2"), chip("c3")]).toEqual([
+      "found",
+      "unconfirmed",
+      "unconfirmed",
+    ]);
+    expect(container.textContent).not.toContain("Linked work no longer exists");
+
+    await act(async () => answer([stored]));
+    await flush();
+    expect([chip("c1"), chip("c2"), chip("c3")]).toEqual([
+      "found",
+      "found",
+      "missing",
+    ]);
+    const c2 = columnEl("backlog").querySelector("[data-kanban-card='c2']")!;
+    expect(c2.textContent).toContain("Write docs");
+    await act(async () =>
+      c2
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Open linked work"]',
+        )!
+        .click(),
+    );
+    expect(props.onOpenLinkedWork).toHaveBeenCalledWith(stored);
+    // A board refresh doesn't ask again.
+    act(() => emitBoardChanged("b1"));
+    await flush();
+    expect(lookupLinkTargets).toHaveBeenCalledTimes(1);
+  });
+
+  it("looks a link up again when the app drops a session it held", async () => {
+    handlers.board_get = () => linkedFixture();
+    const loaded = { kind: "session" as const, id: "s1", label: "Fix login" };
+    const lookupLinkTargets = vi.fn(async () => [loaded]);
+    const props = await renderBoard({ lookupLinkTargets });
+    const chip = () =>
+      container
+        .querySelector("[data-kanban-card='c1'] [data-link-chip]")!
+        .getAttribute("data-link-chip");
+    expect(chip()).toBe("found");
+    // The app loads the session's project, then the session is deleted.
+    await act(async () =>
+      root.render(
+        createElement(BoardView, { ...props, linkTargets: [loaded] }),
+      ),
+    );
+    lookupLinkTargets.mockImplementation(async () => []);
+    await act(async () =>
+      root.render(createElement(BoardView, { ...props, linkTargets: [] })),
+    );
+    await flush();
+    expect(chip()).toBe("missing");
+  });
+
+  it("doesn't call linked work gone when the lookup fails", async () => {
+    handlers.board_get = () => linkedFixture();
+    await renderBoard({
+      lookupLinkTargets: vi.fn(() => Promise.reject("session store is locked")),
+    });
+    const chips = [
+      ...columnEl("backlog").querySelectorAll("[data-link-chip]"),
+    ].map((el) => el.getAttribute("data-link-chip"));
+    expect(chips).toEqual(["unconfirmed", "unconfirmed"]);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "Couldn't check linked work: session store is locked",
+    );
   });
 
   it("opens the card detail with its activity timeline", async () => {

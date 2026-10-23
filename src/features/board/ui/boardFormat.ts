@@ -1,3 +1,4 @@
+import { projectName } from "../../../shared/lib/paths";
 import type {
   BoardActivity,
   BoardCard,
@@ -22,7 +23,37 @@ export type BoardLinkTarget = {
   /** Shown after the label in the picker, e.g. the project. */
   detail?: string;
   status?: "running" | "completed" | "failed";
+  /**
+   * Still the card's linked work, but not offered in the link picker
+   * (an archived or draft session).
+   */
+  unlisted?: boolean;
 };
+
+/** A card's link as a lookup asks for it. */
+export type LinkRef = { kind: CardLinkKind; id: string };
+
+/** A saved session as a link target; archived and draft ones are unlisted. */
+export function sessionLinkTarget(
+  session: {
+    id: string;
+    title: string;
+    cwd?: string;
+    archived?: boolean;
+    draft?: boolean;
+  },
+  status?: BoardLinkTarget["status"],
+): BoardLinkTarget {
+  const target: BoardLinkTarget = {
+    kind: "session",
+    id: session.id,
+    label: session.title,
+    detail: session.cwd ? projectName(session.cwd) : undefined,
+    status,
+  };
+  if (session.archived || session.draft) target.unlisted = true;
+  return target;
+}
 
 export const LINK_KIND_LABEL: Record<CardLinkKind, string> = {
   session: "Session",
@@ -30,21 +61,30 @@ export const LINK_KIND_LABEL: Record<CardLinkKind, string> = {
   "flow-run": "Flow run",
 };
 
-/** A card's linked work: the target, or `null` when it no longer exists. */
+/**
+ * A card's linked work: the target, or `null` when it no longer exists.
+ * `unconfirmed` is neither: the app hasn't found out yet (or couldn't).
+ */
 export type ResolvedLink = {
   kind: CardLinkKind;
   target: BoardLinkTarget | null;
+  unconfirmed?: true;
 };
 
+/**
+ * `targets` maps link values to their target, or to `null` once the work is
+ * known to be gone; a value it doesn't hold is unconfirmed.
+ */
 export function resolveLink(
   card: Pick<BoardCard, "linkKind" | "linkId">,
-  targets: ReadonlyMap<string, BoardLinkTarget>,
+  targets: ReadonlyMap<string, BoardLinkTarget | null>,
 ): ResolvedLink | null {
   if (!card.linkKind || !card.linkId) return null;
-  return {
-    kind: card.linkKind,
-    target: targets.get(linkValue(card.linkKind, card.linkId)) ?? null,
-  };
+  const value = linkValue(card.linkKind, card.linkId);
+  if (!targets.has(value)) {
+    return { kind: card.linkKind, target: null, unconfirmed: true };
+  }
+  return { kind: card.linkKind, target: targets.get(value) ?? null };
 }
 
 export function linkValue(kind: CardLinkKind, id: string): string {
