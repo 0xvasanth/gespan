@@ -45,12 +45,13 @@ fn path_key(path: &str) -> String {
 }
 fn looks_like_project(path: &str) -> bool {
     let key = path_key(path);
-    !path.is_empty()
-        && key != "/"
-        && key != "~"
-        && !(key.len() == 2 && key.ends_with(':'))
-        && !path.contains(".app/")
-        && !path.contains(".app\\")
+    let excluded = path.is_empty()
+        || key == "/"
+        || key == "~"
+        || (key.len() == 2 && key.ends_with(':'))
+        || path.contains(".app/")
+        || path.contains(".app\\");
+    !excluded
         && std::env::var("HOME")
             .ok()
             .is_none_or(|home| path_key(&home) != key)

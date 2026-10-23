@@ -153,7 +153,8 @@ pub(crate) struct ProjectAction {
     pub icon: String,
 }
 /// The icons an action can wear, in picker order; the first is the default.
-pub(crate) const ACTION_ICONS: [&str; 6] = ["play", "test-tube", "hammer", "rocket", "bug", "package"];
+pub(crate) const ACTION_ICONS: [&str; 6] =
+    ["play", "test-tube", "hammer", "rocket", "bug", "package"];
 impl ProjectAction {
     pub fn icon(&self) -> &'static str {
         ACTION_ICONS

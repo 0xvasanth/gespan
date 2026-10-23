@@ -3016,10 +3016,10 @@ impl TranscriptView {
                 && ready
                 && final_answer.is_some_and(|answer| at < answer)
                 && !self.work_folds.get(&turn).copied().unwrap_or(false);
-            if !self.document
-                && !is_prompt
-                && !stopped_notice
-                && !matches!(
+            let skipped = self.document
+                || is_prompt
+                || stopped_notice
+                || matches!(
                     role.as_str(),
                     "mono-card"
                         | "remote-plan"
@@ -3029,7 +3029,8 @@ impl TranscriptView {
                         | "mono-launch"
                         | monocode_core::transcript::attachments::ROLE
                 )
-                && !(self.mono && text.trim().starts_with("<reaction>"))
+                || (self.mono && text.trim().starts_with("<reaction>"));
+            if !skipped
                 && (at == 0
                     || self.source[..at]
                         .iter()

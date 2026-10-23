@@ -4813,7 +4813,12 @@ impl Shell {
             MenuTarget::TerminalTab(_) | MenuTarget::RunningTerminals => {
                 ("".into(), Vec::new(), 160., MenuStyle::Explorer)
             }
-            MenuTarget::Actions => ("Actions".into(), self.actions_menu(), 200., MenuStyle::Explorer),
+            MenuTarget::Actions => (
+                "Actions".into(),
+                self.actions_menu(),
+                200.,
+                MenuStyle::Explorer,
+            ),
             MenuTarget::Tab(_)
             | MenuTarget::MonoTab(_)
             | MenuTarget::SearchTab

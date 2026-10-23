@@ -134,10 +134,10 @@ impl Shell {
     }
 
     pub(super) fn mono_opened(&mut self, id: String, cx: &mut Context<Self>) {
-        if !self
+        if self
             .monos
             .as_ref()
-            .is_some_and(|m| m.read(cx).active.as_deref() == Some(&id))
+            .is_none_or(|m| m.read(cx).active.as_deref() != Some(&id))
         {
             return;
         }

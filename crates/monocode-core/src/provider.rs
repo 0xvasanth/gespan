@@ -1628,11 +1628,11 @@ fn run_operation(
                         Ok(value) => value,
                         // Some CLIs print startup banners before their NDJSON stream.
                         Err(_)
-                            if !line
+                            if line
                                 .iter()
                                 .copied()
                                 .find(|b| !b.is_ascii_whitespace())
-                                .is_some_and(|b| b == b'{') =>
+                                .is_none_or(|b| b != b'{') =>
                         {
                             continue;
                         }

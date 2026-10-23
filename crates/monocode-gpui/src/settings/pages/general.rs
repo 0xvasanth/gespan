@@ -134,7 +134,9 @@ impl SettingsView {
             Some("action-opens-terminal"),
             false,
             "Show terminal for actions",
-            Some("Open the terminal when an action runs. Off, actions run in the background.".into()),
+            Some(
+                "Open the terminal when an action runs. Off, actions run in the background.".into(),
+            ),
             vec![self.toggle(
                 "action-opens-terminal",
                 "Show terminal for actions",
