@@ -1,0 +1,28 @@
+crates/rebase-core/src/provider/tasks.rs
+  s_ccb41beff89445::t_18b2ab120e2eea 23-28,758,761,780-782,787,802-814,822-823,828,1323
+crates/rebase-core/src/provider/tasks/resume_tests.rs
+  s_ccb41beff89445::t_1de20bbaf6f1a5 349-352,460-569,574-601
+  s_ccb41beff89445::t_d336bc9566a701 570-573
+crates/rebase-core/src/provider.rs
+  s_ccb41beff89445::t_18b2ab120e2eea 427-433
+crates/rebase-core/src/store.rs
+  s_ccb41beff89445::t_890741c86d64a5 16-18
+crates/rebase-core/src/provider/follow_up.rs
+  s_ccb41beff89445::t_18b2ab120e2eea 76-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c6acafa647b20aa989f8f8de1d63fb3c3df108d",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
