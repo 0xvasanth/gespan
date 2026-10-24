@@ -5306,25 +5306,33 @@ impl Render for TranscriptView {
             .children(self.selection_menu(cx))
             .child(self.link_overlays(cx))
             .when(self.show_jump, |d| {
+                // The right end of the composer column; the commit pill takes the left.
                 d.child(div().absolute().bottom(px(8.)).left_0().w_full().flex().justify_center().child(
+                    div().w_full().max_w(px(crate::theme::COLUMN)).px(px(10.)).flex().justify_end().child(
                     div().id("jump-to-bottom").child(self.jump_anchor.probe()).role(Role::Button).aria_label("Scroll to bottom")
                         .relative().flex().items_center().justify_center().size(px(30.))
                         .rounded_full().border_1().border_color(content(0.1))
                         .text_color(content(0.7))
                         .hover(|s| s.text_color(content(1.)).bg(content(0.04)))
-                        .child(canvas(|_, _, _| {}, |bounds, _, window, _| {
-                            #[cfg(target_os = "macos")]
-                            window.paint_quad(gpui::fill(bounds, content(0.04)).corner_radii(px(15.)).border_color(
-                                gpui_apple::metal_renderer::backdrop_blur_marker(12. * window.scale_factor())));
-                            #[cfg(not(target_os = "macos"))]
-                            window.paint_quad(gpui::fill(bounds, rgb(CHAT)).corner_radii(px(15.)));
-                        }).absolute().top_0().left_0().size_full())
+                        .child(floating_surface())
                         .child(icon("chevron-down", 16.))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(|this, _, _, cx| this.jump_to_bottom(cx)))
-                ))
+                )))
             })
     }
+}
+
+/// The frosted fill behind the round controls floating over the transcript.
+pub(crate) fn floating_surface() -> impl IntoElement {
+    canvas(|_, _, _| {}, |bounds, _, window, _| {
+        let radius = bounds.size.height / 2.;
+        #[cfg(target_os = "macos")]
+        window.paint_quad(gpui::fill(bounds, content(0.04)).corner_radii(radius).border_color(
+            gpui_apple::metal_renderer::backdrop_blur_marker(12. * window.scale_factor())));
+        #[cfg(not(target_os = "macos"))]
+        window.paint_quad(gpui::fill(bounds, rgb(CHAT)).corner_radii(radius));
+    }).absolute().top_0().left_0().size_full()
 }
 
 fn paint_edge_fade(bounds: Bounds<Pixels>, begin: bool, window: &mut Window) {

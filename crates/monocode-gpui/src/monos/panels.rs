@@ -184,7 +184,9 @@ pub(super) fn search_bar(field: Entity<Input>) -> Div {
 }
 /// Whether `haystack` contains `query`, ignoring case and surrounding spaces.
 pub(super) fn matches_query(query: &str, haystack: &str) -> bool {
-    haystack.to_lowercase().contains(&query.trim().to_lowercase())
+    haystack
+        .to_lowercase()
+        .contains(&query.trim().to_lowercase())
 }
 /// monoPanelParts' EmptyState: an icon over a short, centred note.
 pub(super) fn empty_state(glyph: &'static str, message: &str) -> AnyElement {
@@ -1012,11 +1014,11 @@ impl Monos {
             .cloned()
             .collect();
         let search_bar = search_bar(filter).child(
-                icon_button("mono-session-filter", "Filter Mono sessions", "filter")
-                    .relative()
-                    .child(self.session_filter_anchor.probe())
-                    .on_click(cx.listener(|this, _, window, cx| this.filter_menu(window, cx))),
-            );
+            icon_button("mono-session-filter", "Filter Mono sessions", "filter")
+                .relative()
+                .child(self.session_filter_anchor.probe())
+                .on_click(cx.listener(|this, _, window, cx| this.filter_menu(window, cx))),
+        );
         let no_matches = launches.is_empty() && !mono.launches.is_empty();
         div().size_full().flex().flex_col()
             .when(!mono.launches.is_empty(),|d|d.child(search_bar))

@@ -125,6 +125,7 @@ impl AssetSource for Assets {
    "undo"=>include_bytes!("../assets/hugeicons/undo.svg"),
    "cloud-upload"=>include_bytes!("../assets/hugeicons/cloud-upload.svg"),
    "git-merge"=>include_bytes!("../assets/hugeicons/git-merge.svg"),
+   "git-commit"=>include_bytes!("../assets/hugeicons/git-commit.svg"),
    "git-pull-request-draft"=>include_bytes!("../assets/hugeicons/git-pull-request-draft.svg"),
    "git-pull-request-closed"=>include_bytes!("../assets/hugeicons/git-pull-request-closed.svg"),
    "git-pull-request"=>include_bytes!("../assets/hugeicons/git-pull-request.svg"),

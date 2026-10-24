@@ -8,6 +8,7 @@ pub(crate) mod composer_features;
 mod composer_shelf;
 mod edit_last_turn;
 mod follow_up;
+mod git_actions;
 mod history;
 mod mobile;
 mod mono;
@@ -108,6 +109,8 @@ enum ComposerMenu {
     Workspace,
     /// A Mono's model setting pill: 0 is effort, then each model control.
     Setting(usize),
+    /// The commit pill's chevron above the composer.
+    GitActions,
 }
 struct OpenMenu {
     kind: ComposerMenu,
@@ -205,6 +208,9 @@ pub(crate) struct Conversation {
     access_anchor: AnchorSlot,
     account_anchor: AnchorSlot,
     workspace_anchor: AnchorSlot,
+    git_action_anchor: AnchorSlot,
+    /// The working copy has uncommitted changes, from the Shell's Git watcher.
+    uncommitted: bool,
     branch_anchor: AnchorSlot,
     context_anchor: AnchorSlot,
     composer_anchor: AnchorSlot,
@@ -633,6 +639,8 @@ impl Conversation {
             access_anchor: AnchorSlot::default(),
             account_anchor: AnchorSlot::default(),
             workspace_anchor: AnchorSlot::default(),
+            git_action_anchor: AnchorSlot::default(),
+            uncommitted: false,
             branch_anchor: AnchorSlot::default(),
             context_anchor: AnchorSlot::default(),
             composer_anchor: AnchorSlot::default(),
@@ -1622,7 +1630,7 @@ impl Conversation {
         cx.emit(SessionChanged);
         cx.notify();
     }
-    fn execution_cwd(&self) -> &str {
+    pub(crate) fn execution_cwd(&self) -> &str {
         if self.settings.worktree_removed {
             return &self.summary.cwd;
         }
@@ -1878,6 +1886,9 @@ impl Conversation {
             .detach();
     }
     fn menu_choice(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.git_action_choice(id, cx) {
+            return;
+        }
         if let Some(choice) = id.strip_prefix("recent-model:") {
             if let Ok((provider, model)) = serde_json::from_str::<(String, Option<String>)>(choice)
                 && let Some(kind) = Kind::parse(&provider)
@@ -2227,6 +2238,7 @@ impl Conversation {
             ComposerMenu::Access => &self.access_anchor,
             ComposerMenu::Account => &self.account_anchor,
             ComposerMenu::Workspace => &self.workspace_anchor,
+            ComposerMenu::GitActions => &self.git_action_anchor,
             ComposerMenu::Setting(ix) => self
                 .mono_ui
                 .setting_anchors
@@ -2433,6 +2445,12 @@ impl Conversation {
                 );
                 ("Add to message", items, 250., MenuStyle::Composer)
             }
+            ComposerMenu::GitActions => (
+                "Git actions",
+                self.git_action_menu_items(cx),
+                250.,
+                MenuStyle::Composer,
+            ),
             // ModelPicker: a "Model" row whose flyout lists the models.
             ComposerMenu::Model => {
                 let list = cx.new(|cx| {
@@ -3581,11 +3599,34 @@ impl Render for Conversation {
                 )
             })
             .child(
-                div().flex_1().min_h_0().child(
-                    self.transcript
-                        .clone()
-                        .cached(StyleRefinement::default().size_full()),
-                ),
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        self.transcript
+                            .clone()
+                            .cached(StyleRefinement::default().size_full()),
+                    )
+                    // Level with the transcript's jump button, which sits at
+                    // the column's other end.
+                    .children(self.git_action_pill(cx).map(|pill| {
+                        div()
+                            .absolute()
+                            .bottom(px(8.))
+                            .left_0()
+                            .w_full()
+                            .flex()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(COMPOSER_COLUMN))
+                                    .px(px(10.))
+                                    .flex()
+                                    .child(pill),
+                            )
+                    })),
             )
             .child(
                 div()

@@ -27,7 +27,7 @@ impl Conversation {
             || monocode_core::composer::consume_command(&self.input.read(cx).content, "draft")
                 .is_some()
     }
-    fn message(
+    pub(super) fn message(
         &mut self,
         text: String,
         attachments: Vec<std::path::PathBuf>,

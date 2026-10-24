@@ -203,14 +203,27 @@ impl Monos {
             || habit.enabled && habit.next_run_at <= now_ms()
     }
     pub(super) fn habits_list(&mut self, mono: &Mono, cx: &mut Context<Self>) -> AnyElement {
-        let filter = self.field("mono-habit-search", "Search habits…", String::new(), false, cx);
+        let filter = self.field(
+            "mono-habit-search",
+            "Search habits…",
+            String::new(),
+            false,
+            cx,
+        );
         let query = filter.read(cx).content.to_string();
-        let groups = grouped_habits(&self.habits, now_ms(), |h| self.habit_running_since(h)).map(|items| {
-            items.into_iter().filter(|ix| {
-                let h = &self.habits[*ix];
-                matches_query(&query, &format!("{} {} {}", h.name, h.instructions, h.schedule.label()))
-            }).collect::<Vec<_>>()
-        });
+        let groups =
+            grouped_habits(&self.habits, now_ms(), |h| self.habit_running_since(h)).map(|items| {
+                items
+                    .into_iter()
+                    .filter(|ix| {
+                        let h = &self.habits[*ix];
+                        matches_query(
+                            &query,
+                            &format!("{} {} {}", h.name, h.instructions, h.schedule.label()),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            });
         let no_matches = !self.habits.is_empty() && groups.iter().all(|items| items.is_empty());
         let list = div().id("mono-habits-list").debug_selector(|| "mono-habits-list".into())
             .flex_1().min_h_0().min_w_0().overflow_y_scroll().p_2().flex().flex_col().gap_4()
@@ -225,9 +238,14 @@ impl Monos {
                     .child(div().px_2().text_size(px(11.)).text_color(content(0.4)).child(title))
                     .children(items.into_iter().map(|ix| self.habit_row(&self.habits[ix], mono, cx)))
             }));
-        div().size_full().min_w_0().flex().flex_col()
+        div()
+            .size_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
             .when(!self.habits.is_empty(), |d| d.child(search_bar(filter)))
-            .child(list).into_any_element()
+            .child(list)
+            .into_any_element()
     }
     fn habit_row(&self, h: &Habit, mono: &Mono, cx: &mut Context<Self>) -> AnyElement {
         let id = h.id.clone();
