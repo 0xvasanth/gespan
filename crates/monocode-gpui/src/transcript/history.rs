@@ -335,6 +335,8 @@ impl TranscriptView {
         self.attachment_images.clear();
         self.visuals.clear();
         self.reveals.clear();
+        self.markdown_cache = Default::default();
+        self.measurements = Default::default();
         self.motions.clear();
         self.entrances.clear();
         self.hover_rows.clear();
@@ -364,6 +366,7 @@ impl TranscriptView {
                     .saturating_mul(std::mem::size_of::<Row>()),
             )
             .saturating_add(self.highlight_bytes)
+            .saturating_add(self.markdown_cache.retained_bytes())
             // Charge each retained interpreter's cap to the inactive cache.
             .saturating_add(
                 self.visuals
@@ -407,6 +410,8 @@ impl TranscriptView {
         self.messages = Vec::new();
         self.rows = Vec::new();
         self.reveals = HashMap::new();
+        self.markdown_cache = Default::default();
+        self.measurements = Default::default();
         self.phase_layouts = HashMap::new();
         self.motions = HashMap::new();
         self.entrances = HashMap::new();

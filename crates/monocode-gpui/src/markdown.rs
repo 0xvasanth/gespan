@@ -1,9 +1,11 @@
 //! GPUI port of AgentMarkdown.tsx and its .agent-markdown CSS.
+mod cache;
 mod search;
 use crate::markdown_model::{Block, InlineRun, TableAlign};
 use crate::syntax::HighlightedDocument;
 use crate::theme::*;
 use crate::transcript::selection::TextSelection;
+pub(crate) use cache::{PreparedRow, RenderCache};
 use gpui::Window;
 use gpui::{
     AnyElement, App, ClickEvent, Div, FontStyle, FontWeight, HighlightStyle, InteractiveText,
@@ -71,7 +73,7 @@ pub(crate) const MONO: &str = if cfg!(target_os = "macos") {
 const PART_BYTES: usize = 2048;
 const PART_LINES: usize = 24;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(crate) struct Fence {
     pub code: SharedString,
     pub language: String,
@@ -147,7 +149,7 @@ impl Fence {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(crate) enum Part {
     Text {
         runs: Vec<InlineRun>,
@@ -167,7 +169,7 @@ pub(crate) enum Part {
     Rule,
     Math(String),
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(crate) struct MarkdownRow {
     pub part: Part,
     pub indent: usize,
@@ -364,29 +366,26 @@ fn inline_selected(
     runs: &[InlineRun],
     id: SharedString,
     tone: Tone,
-    fade: Option<&[Instant]>,
+    fade: Option<&crate::reveal::WordFades>,
     now: Instant,
     word_base: usize,
     font_size: f32,
     selection: Option<TextSelection>,
+    prepared: Option<&cache::PreparedInline>,
 ) -> AnyElement {
     if runs.iter().any(|r| r.style.code) {
         return rich_inline(runs, id, tone, fade, now, word_base, font_size, selection);
     }
-    let mut word = word_base;
-    let mut text = String::new();
+    let uncached;
+    let prepared = if let Some(prepared) = prepared {
+        prepared
+    } else {
+        uncached = cache::PreparedInline::new(runs, false);
+        &uncached
+    };
     let mut highlights = Vec::new();
-    let mut fonts = Vec::new();
-    let mut links = Vec::new();
-    let mut urls = Vec::new();
-    for run in runs {
-        let start = text.len();
+    for run in &prepared.runs {
         let style = &run.style;
-        if let Some(task) = &style.task {
-            text.push_str(if task.checked { "☑ " } else { "☐ " });
-        }
-        text.push_str(&run.text);
-        let range = start..text.len();
         let color = if style.link.is_some() {
             rgb(0x38bdf8).into()
         } else if style.bold || style.italic || style.code {
@@ -409,33 +408,27 @@ fn inline_selected(
             }),
             ..Default::default()
         };
-        if !style.code && !style.math && style.link.is_none() {
-            let mut cursor = start;
-            for piece in run.text.split_inclusive(char::is_whitespace) {
+        if fade.is_some_and(|fade| {
+            fade.intersects(word_base + run.word_start..word_base + run.word_start + run.words)
+        }) {
+            for (range, word) in &run.pieces {
                 let mut highlight = highlight;
-                if !piece.trim().is_empty() {
-                    let alpha = crate::reveal::word_opacity(fade.and_then(|f| f.get(word)), now);
+                if let Some(word) = word {
+                    let alpha = fade.map_or(1., |fade| fade.opacity(word_base + *word));
                     highlight.fade_out = Some(1. - (1. - highlight.fade_out.unwrap_or(0.)) * alpha);
-                    word += 1;
                 }
-                highlights.push((cursor..cursor + piece.len(), highlight));
-                cursor += piece.len();
+                highlights.push((range.clone(), highlight));
             }
         } else {
-            highlights.push((range.clone(), highlight));
-        }
-        if style.code || style.math {
-            fonts.push((range.clone(), MONO.into()));
-        }
-        if let Some(url) = &style.link {
-            links.push(range);
-            urls.push(url.clone());
+            highlights.push((run.range.clone(), highlight));
         }
     }
-    let text: SharedString = text.into();
+    let text = prepared.text.clone();
+    let links = prepared.links.clone();
+    let urls = prepared.urls.clone();
     let styled = StyledText::new(text.clone())
         .with_highlights(highlights)
-        .with_font_family_overrides(fonts);
+        .with_font_family_overrides(prepared.fonts.clone());
     let layout = styled.layout().clone();
     let clicked_selection = selection.clone();
     let clicked_layout = layout.clone();
@@ -487,8 +480,8 @@ fn rich_inline(
     runs: &[InlineRun],
     id: SharedString,
     tone: Tone,
-    fade: Option<&[Instant]>,
-    now: Instant,
+    fade: Option<&crate::reveal::WordFades>,
+    _now: Instant,
     mut word: usize,
     font_size: f32,
     selection: Option<TextSelection>,
@@ -563,7 +556,7 @@ fn rich_inline(
                 let alpha = if style.link.is_some() || style.math {
                     1.
                 } else {
-                    let value = crate::reveal::word_opacity(fade.and_then(|f| f.get(word)), now);
+                    let value = fade.map_or(1., |fade| fade.opacity(word));
                     word += 1;
                     value
                 };
@@ -705,22 +698,28 @@ pub(crate) fn body(
     row: &MarkdownRow,
     id: SharedString,
     tone: Tone,
-    fade: Option<&[Instant]>,
+    fade: Option<&crate::reveal::WordFades>,
     now: Instant,
 ) -> AnyElement {
-    body_selected(row, id, tone, fade, now, None)
+    body_selected(row, id, tone, fade, now, None, None)
 }
 pub(crate) fn body_selected(
     row: &MarkdownRow,
     id: SharedString,
     tone: Tone,
-    fade: Option<&[Instant]>,
+    fade: Option<&crate::reveal::WordFades>,
     now: Instant,
     selection: Option<TextSelection>,
+    prepared: Option<&PreparedRow>,
 ) -> AnyElement {
     // Share one logical row across its styled fragments. Selection boundaries
     // then span inline code and formatting without scanning transcript history.
-    let selection = selection.map(|selection| selection.with_text(selection_text(row).into()));
+    let selection = selection.map(|selection| {
+        selection.with_text(prepared.map_or_else(
+            || selection_text(row).into(),
+            |prepared| prepared.selection.clone(),
+        ))
+    });
     let mut body = div()
         .w_full()
         .min_w_0()
@@ -728,17 +727,14 @@ pub(crate) fn body_selected(
         .line_height(px(24.));
     match &row.part {
         Part::Text { runs, heading } => {
-            let mut runs = runs.clone();
-            if *heading > 0 {
-                for run in &mut runs {
+            let mut runs = std::borrow::Cow::Borrowed(runs.as_slice());
+            if *heading > 0 && prepared.and_then(|p| p.inline.as_ref()).is_none() {
+                for run in runs.to_mut() {
                     run.style.bold = true;
                 }
             }
             let heading = if tone == Tone::Work { 0 } else { *heading };
             if heading > 0 {
-                for run in &mut runs {
-                    run.style.bold = true;
-                }
                 body = body
                     .text_size(px(match heading {
                         1 => 22.,
@@ -762,6 +758,7 @@ pub(crate) fn body_selected(
                     _ => 16.,
                 },
                 selection,
+                prepared.and_then(|prepared| prepared.inline.as_ref()),
             ))
             .into_any_element()
         }
@@ -841,6 +838,7 @@ pub(crate) fn body_selected(
                                         selection.as_ref().map(|selection| {
                                             selection.offset(table_offset(&row.part, ix, col))
                                         }),
+                                        None,
                                     ))
                             }))
                     })),

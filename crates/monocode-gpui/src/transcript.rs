@@ -104,16 +104,22 @@ struct Message {
     display_start: usize,
     role: String,
     parser: MarkdownParser,
+    markdown_blocks: Vec<RenderedBlock>,
     under_line: bool,
     /// The turn this message belongs to, as `Body::Actions` numbers it.
     turn: usize,
     attachments: Arc<[attachments::Attachment]>,
 }
+struct RenderedBlock {
+    source: Arc<crate::markdown_model::TopBlock>,
+    rows: Vec<Arc<MarkdownRow>>,
+    words: usize,
+}
 #[derive(Clone)]
 enum Body {
     RemotePlan(crate::conversation::remote_plans::Plan),
     SavedDraft,
-    Markdown(MarkdownRow),
+    Markdown(Arc<MarkdownRow>),
     Visual(Arc<monocode_core::visual::VisualDocument>),
     Plain(SharedString),
     Interjection(monocode_core::transcript::Interjection),
@@ -173,8 +179,6 @@ impl UiRow {
     }
 }
 const TOP_INSET: f32 = 20.;
-/// Streamed text reveals and fades on this cadence (30fps).
-const STREAM_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 // Saved drafts are presentation rows, outside the provider transcript.
 const SAVED_DRAFT_START: usize = usize::MAX - 1;
 const BOTTOM_INSET: f32 = 40.;
@@ -497,6 +501,7 @@ pub(crate) struct TranscriptView {
     /// short of a fast disclosure, so an anchored prompt bounces.
     frame_now: Instant,
     measurements: measurements::Measurements,
+    markdown_cache: markdown::RenderCache,
     messages: Vec<Message>,
     rows: Vec<UiRow>,
     streaming: bool,
@@ -2299,6 +2304,7 @@ impl TranscriptView {
             started_at: Instant::now(),
             frame_now: Instant::now(),
             measurements: Default::default(),
+            markdown_cache: Default::default(),
             messages: Vec::new(),
             rows: Vec::new(),
             streaming: false,
@@ -2388,6 +2394,7 @@ impl TranscriptView {
         self.chat_layout = chat;
         self.anchor_prompts = anchor_prompts;
         self.smooth_reveal = p.paced_reveal;
+        self.measurements.clear();
         if !self.anchor_prompts {
             self.anchor_turn = None;
         }
@@ -2821,7 +2828,6 @@ impl TranscriptView {
         self.rebuild(start, cx);
     }
     fn rebuild(&mut self, start: usize, cx: &mut Context<Self>) {
-        self.measurements.clear();
         #[cfg(test)]
         {
             self.rebuild_passes += 1;
@@ -2964,6 +2970,16 @@ impl TranscriptView {
         };
         let old_count = self.rows.len();
         let old_rows = self.rows[display_start..].to_vec();
+        let old_layouts: Vec<_> = old_rows
+            .iter()
+            .enumerate()
+            .map(|(ix, row)| {
+                (
+                    row.clone(),
+                    measurements::after_receipt(&self.rows, &self.messages, display_start + ix),
+                )
+            })
+            .collect();
         let mut previous: HashMap<_, _> = self
             .messages
             .split_off(message_ix)
@@ -3001,12 +3017,15 @@ impl TranscriptView {
             } else {
                 (None, Arc::default())
             };
-            let mut parser = previous
-                .remove(&at)
-                .filter(|p| p.role == role)
-                .map(|p| p.parser)
-                .or_else(|| self.prepared_parsers.remove(&at))
-                .unwrap_or_default();
+            let old = previous.remove(&at).filter(|p| p.role == role);
+            let (mut parser, mut markdown_blocks) = old
+                .map(|p| (p.parser, p.markdown_blocks))
+                .unwrap_or_else(|| {
+                    (
+                        self.prepared_parsers.remove(&at).unwrap_or_default(),
+                        Vec::new(),
+                    )
+                });
             let message = self.messages.len();
             let first = self.rows.len();
             if at >= turn_end {
@@ -3253,36 +3272,67 @@ impl TranscriptView {
                     });
                 }
                 self.prepare_reveal(at, end, &text, role == "assistant", now, cx.reduce_motion());
-                let paced = self.reveals.get_mut(&at).unwrap();
-                parser.set_text(paced.text());
-                let tree = if paced.behind() || (self.streaming && end == self.source.len()) {
+                parser.set_text(self.reveals.get(&at).map_or(text.as_str(), PacedText::text));
+                let tree = if self.reveals.get(&at).is_some_and(PacedText::behind)
+                    || (self.streaming && end == self.source.len())
+                {
                     parser.display_tree()
                 } else {
+                    parser.finish_display();
                     parser.tree().clone()
                 };
                 let mut word_cursor = 0;
-                for block in tree
+                let mut cached = Vec::new();
+                for (block_ix, block) in tree
                     .blocks
                     .iter()
                     .filter(|_| role != "reasoning" || self.expanded.contains(&at))
+                    .enumerate()
                 {
-                    self.rows
-                        .extend(markdown::rows(&block.block).into_iter().map(|mut row| {
-                            row.word_start = word_cursor;
-                            word_cursor += markdown::word_count(&row);
-                            UiRow {
-                                key: (0, 0),
-                                body: Body::Markdown(row),
-                                message,
-                                first: false,
-                                last: false,
-                                work: false,
-                                work_tail: false,
-                                thought_phase: None,
-                            }
-                        }));
+                    let (rows, words) = if let Some(old) = markdown_blocks
+                        .get(block_ix)
+                        .filter(|old| Arc::ptr_eq(&old.source, block))
+                        .filter(|old| {
+                            old.rows
+                                .first()
+                                .is_none_or(|row| row.word_start == word_cursor)
+                        }) {
+                        (old.rows.clone(), old.words)
+                    } else {
+                        let mut base = word_cursor;
+                        let rows = markdown::rows(&block.block)
+                            .into_iter()
+                            .map(|mut row| {
+                                row.word_start = base;
+                                base += markdown::word_count(&row);
+                                Arc::new(row)
+                            })
+                            .collect();
+                        (rows, base - word_cursor)
+                    };
+                    for row in &rows {
+                        self.rows.push(UiRow {
+                            key: (0, 0),
+                            body: Body::Markdown(row.clone()),
+                            message,
+                            first: false,
+                            last: false,
+                            work: false,
+                            work_tail: false,
+                            thought_phase: None,
+                        });
+                    }
+                    word_cursor += words;
+                    cached.push(RenderedBlock {
+                        source: block.clone(),
+                        rows,
+                        words,
+                    });
                 }
-                paced.words(word_cursor, now);
+                markdown_blocks = cached;
+                if let Some(paced) = self.reveals.get_mut(&at) {
+                    paced.words(word_cursor, now);
+                }
             } else {
                 let text_rows = if let Some(text) = display_text {
                     let mut transcript = monocode_core::transcript::Transcript::default();
@@ -3359,6 +3409,7 @@ impl TranscriptView {
                 display_start: first,
                 role,
                 parser,
+                markdown_blocks,
                 under_line: has_work && final_answer == Some(at),
                 turn: if self.mono {
                     self.mono_group_start(turn)
@@ -3591,8 +3642,14 @@ impl TranscriptView {
         self.index_messages();
         // Preserve surviving indices and scroll offsets while the tail reflows.
         let common = old_count.min(self.rows.len());
-        if display_start < common {
-            self.list.remeasure_items(display_start..common);
+        self.measurements.rows_changed();
+        for ix in display_start..common {
+            let (old, after_receipt) = &old_layouts[ix - display_start];
+            if !measurements::same_layout(old, &self.rows[ix])
+                || *after_receipt != measurements::after_receipt(&self.rows, &self.messages, ix)
+            {
+                self.list.remeasure_items(ix..ix + 1);
+            }
         }
         if old_count != self.rows.len() {
             self.list
@@ -3619,7 +3676,16 @@ impl TranscriptView {
                 offset_in_item: offset.offset_in_item,
             });
         }
+        self.prune_reveals(now);
         cx.notify();
+    }
+    fn prune_reveals(&mut self, now: Instant) {
+        let latest = self
+            .streaming
+            .then(|| self.source.iter().rposition(|row| row.first))
+            .flatten();
+        self.reveals
+            .retain(|at, reveal| Some(*at) == latest || reveal.active(now));
     }
     fn prepare_reveal(
         &mut self,
@@ -3630,6 +3696,17 @@ impl TranscriptView {
         now: Instant,
         reduced: bool,
     ) {
+        if !self.reveals.contains_key(&at)
+            && !(self.visible
+                && self.smooth_reveal
+                && !reduced
+                && self.streaming
+                && end == self.source.len()
+                && at >= self.live_start
+                && assistant)
+        {
+            return;
+        }
         let paced = self.reveals.entry(at).or_insert_with(|| {
             PacedText::new(
                 text,
@@ -3657,7 +3734,7 @@ impl TranscriptView {
         }
         self.reveals
             .get(&answer)
-            .map_or(!self.streaming, |r| !r.text().trim().is_empty())
+            .is_none_or(|r| !r.text().trim().is_empty())
     }
     fn index_messages(&mut self) {
         let mut first = HashMap::new();
@@ -3837,14 +3914,13 @@ impl TranscriptView {
                 let _ = view.update(cx, |this, cx| this.animate_frame(cx));
             });
         } else if self.stream_animating(now) {
-            // Each step re-lays out the live tail of a long transcript, so
-            // streamed text reveals at 30fps rather than the display's rate.
+            // Stream presentation keeps the shared 30Hz budget. Pure fade
+            // frames reuse the parsed blocks, prepared text and measured rows.
             self.frame_scheduled = true;
-            cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(STREAM_FRAME).await;
-                let _ = this.update(cx, |this, cx| this.animate_frame(cx));
-            })
-            .detach();
+            let view = cx.entity().downgrade();
+            crate::pulse::request_frame(crate::pulse::Rate::Smooth, window, cx, move |cx| {
+                let _ = view.update(cx, |this, cx| this.animate_frame(cx));
+            });
         }
     }
     fn animate_frame(&mut self, cx: &mut Context<Self>) {
@@ -3913,6 +3989,7 @@ impl TranscriptView {
             .retain(|_, born| now.duration_since(*born).as_secs_f32() < 0.4);
         self.pending_entrances
             .retain(|_, born| now.duration_since(*born).as_secs_f32() < 0.4);
+        self.prune_reveals(now);
         for (_, born) in self.reactions.values_mut() {
             if born.is_some_and(|b| now.duration_since(b).as_secs_f32() >= 0.4) {
                 *born = None;
@@ -4632,18 +4709,8 @@ impl TranscriptView {
                     .into_any_element()
             }
             Body::Markdown(ref md) => {
-                let resolved =
-                    (self.file_link_base.is_some() || self.search_match.is_some()).then(|| {
-                        let mut md = md.clone();
-                        if let Some(base) = &self.file_link_base {
-                            markdown::resolve_file_links(&mut md, base);
-                        }
-                        if let Some((current, query)) = &self.search_match {
-                            markdown::mark_row(&mut md, query, *current == message_start);
-                        }
-                        md
-                    });
-                let md = resolved.as_ref().unwrap_or(md);
+                let prepared = self.markdown_cache.get(row.key, md);
+                let md = &prepared.row;
                 let body = if let Part::Code { fence, lines } = &md.part {
                     self.code(fence.clone(), lines.clone(), ix, cx)
                 } else {
@@ -4657,15 +4724,14 @@ impl TranscriptView {
                         } else {
                             markdown::Tone::Normal
                         },
-                        self.reveals
-                            .get(&message_start)
-                            .map(|r| r.births.as_slice()),
+                        self.reveals.get(&message_start).map(|r| &r.fades),
                         self.frame_now,
                         if reasoning {
                             None
                         } else {
                             self.text_selection(row.key, message_start, !user && !error, cx)
                         },
+                        Some(&prepared),
                     )
                     .into_any_element()
                 };
@@ -5220,6 +5286,11 @@ impl Render for TranscriptView {
         self.selection.begin_frame();
         self.phase_max_height = live_phase::max_height(window);
         self.frame_now = Instant::now();
+        for reveal in self.reveals.values_mut() {
+            reveal.fades.advance(self.frame_now);
+        }
+        self.markdown_cache
+            .begin_frame(&self.file_link_base, &self.search_match);
         self.begin_measurements(window, cx);
         if !self.scroll_bound {
             self.scroll_bound = true;
@@ -5251,43 +5322,69 @@ impl Render for TranscriptView {
             .track_focus(self.selection_focus.as_ref().unwrap())
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::open_link_menu))
-            .capture_any_mouse_down(cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
-                if event.button == gpui::MouseButton::Right && this.links.open.is_none() {
-                    window.focus(this.selection_focus.as_ref().unwrap(), cx);
+            .capture_any_mouse_down(cx.listener(
+                |this, event: &gpui::MouseDownEvent, window, cx| {
+                    if event.button == gpui::MouseButton::Right && this.links.open.is_none() {
+                        window.focus(this.selection_focus.as_ref().unwrap(), cx);
+                    }
+                },
+            ))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.selection.clear_if_not_dragging();
+                    cx.notify();
+                }),
+            )
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" && this.selection.active() {
+                    this.selection.clear();
+                    cx.notify();
+                    cx.stop_propagation()
                 }
             }))
-            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
-                this.selection.clear_if_not_dragging();
-                cx.notify();
-            }))
-            .on_key_down(cx.listener(|this,event:&gpui::KeyDownEvent,_,cx|{if event.keystroke.key=="escape" && this.selection.active(){this.selection.clear();cx.notify();cx.stop_propagation()}}))
             .on_mouse_move(cx.listener(Self::move_selection))
-            .on_mouse_up(gpui::MouseButton::Left,cx.listener(Self::finish_selection))
-            .on_mouse_up_out(gpui::MouseButton::Left,cx.listener(Self::finish_selection))
+            .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::finish_selection))
+            .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::finish_selection))
             .role(Role::Log)
-            .aria_label(if self.document{"Note body"}else{"Conversation transcript"})
+            .aria_label(if self.document {
+                "Note body"
+            } else {
+                "Conversation transcript"
+            })
             .relative()
             .size_full()
             .overflow_hidden()
-            .child(canvas(move |bounds, window, cx| {
-                let _ = view.update(cx, |this, cx| {
-                    if this.viewport != bounds {
-                        this.selection.clear();
-                        this.viewport = bounds;
-                        this.list.remeasure_items(this.footer_ix()..this.footer_ix() + 1);
-                    }
-                    let resized = this.update_follow_viewport(bounds, window);
-                    // Refresh the row-height baseline after a real resize even
-                    // when the chat is idle, ready for the next send.
-                    this.schedule_frame(resized, window, cx);
-                });
-            }, |bounds, _, window, _| paint_edge_fade(bounds, true, window)).absolute().top_0().left_0().size_full())
+            .child(
+                canvas(
+                    move |bounds, window, cx| {
+                        let _ = view.update(cx, |this, cx| {
+                            if this.viewport != bounds {
+                                this.selection.clear();
+                                this.viewport = bounds;
+                                this.list
+                                    .remeasure_items(this.footer_ix()..this.footer_ix() + 1);
+                            }
+                            let resized = this.update_follow_viewport(bounds, window);
+                            // Refresh the row-height baseline after a real resize even
+                            // when the chat is idle, ready for the next send.
+                            this.schedule_frame(resized, window, cx);
+                        });
+                    },
+                    |bounds, _, window, _| paint_edge_fade(bounds, true, window),
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
             .child(
                 list(
                     self.list.clone(),
                     cx.processor(|this, ix: usize, window, cx| {
-                        if ix == this.footer_ix() { this.footer(window, cx) }
-                        else {
+                        if ix == this.footer_ix() {
+                            this.footer(window, cx)
+                        } else {
                             let row = this.row(ix, window, cx);
                             this.reflow.wrap(this.rows[ix].key, row, this.follow.offset)
                         }
@@ -5296,43 +5393,94 @@ impl Render for TranscriptView {
                 .pt(px(TOP_INSET))
                 .size_full(),
             )
-            .child(canvas(move |_, _, cx| {
-                let _ = after.update(cx, |this, cx| {
-                    this.update_jump(cx);
-                    this.update_outline(cx);
-                });
-            }, |bounds, _, window, _| paint_edge_fade(bounds, false, window)).absolute().top_0().left_0().size_full())
+            .child(
+                canvas(
+                    move |_, _, cx| {
+                        let _ = after.update(cx, |this, cx| {
+                            this.update_jump(cx);
+                            this.update_outline(cx);
+                        });
+                    },
+                    |bounds, _, window, _| paint_edge_fade(bounds, false, window),
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
             .children(self.outline(window, cx))
             .children(self.selection_menu(cx))
             .child(self.link_overlays(cx))
             .when(self.show_jump, |d| {
                 // The right end of the composer column; the commit pill takes the left.
-                d.child(div().absolute().bottom(px(8.)).left_0().w_full().flex().justify_center().child(
-                    div().w_full().max_w(px(crate::theme::COLUMN)).px(px(20.)).flex().justify_end().child(
-                    div().id("jump-to-bottom").child(self.jump_anchor.probe()).role(Role::Button).aria_label("Scroll to bottom")
-                        .relative().flex().items_center().justify_center().size(px(30.))
-                        .rounded_full().border_1().border_color(content(0.1))
-                        .text_color(content(0.7))
-                        .hover(|s| s.text_color(content(1.)).bg(content(0.04)))
-                        .child(floating_surface())
-                        .child(icon("chevron-down", 16.))
-                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(cx.listener(|this, _, _, cx| this.jump_to_bottom(cx)))
-                )))
+                d.child(
+                    div()
+                        .absolute()
+                        .bottom(px(8.))
+                        .left_0()
+                        .w_full()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(crate::theme::COLUMN))
+                                .px(px(20.))
+                                .flex()
+                                .justify_end()
+                                .child(
+                                    div()
+                                        .id("jump-to-bottom")
+                                        .child(self.jump_anchor.probe())
+                                        .role(Role::Button)
+                                        .aria_label("Scroll to bottom")
+                                        .relative()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size(px(30.))
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(content(0.1))
+                                        .text_color(content(0.7))
+                                        .hover(|s| s.text_color(content(1.)).bg(content(0.04)))
+                                        .child(floating_surface())
+                                        .child(icon("chevron-down", 16.))
+                                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.jump_to_bottom(cx)),
+                                        ),
+                                ),
+                        ),
+                )
             })
     }
 }
 
 /// The frosted fill behind the round controls floating over the transcript.
 pub(crate) fn floating_surface() -> impl IntoElement {
-    canvas(|_, _, _| {}, |bounds, _, window, _| {
-        let radius = bounds.size.height / 2.;
-        #[cfg(target_os = "macos")]
-        window.paint_quad(gpui::fill(bounds, content(0.04)).corner_radii(radius).border_color(
-            gpui_apple::metal_renderer::backdrop_blur_marker(12. * window.scale_factor())));
-        #[cfg(not(target_os = "macos"))]
-        window.paint_quad(gpui::fill(bounds, rgb(CHAT)).corner_radii(radius));
-    }).absolute().top_0().left_0().size_full()
+    canvas(
+        |_, _, _| {},
+        |bounds, _, window, _| {
+            let radius = bounds.size.height / 2.;
+            #[cfg(target_os = "macos")]
+            window.paint_quad(
+                gpui::fill(bounds, content(0.04))
+                    .corner_radii(radius)
+                    .border_color(gpui_apple::metal_renderer::backdrop_blur_marker(
+                        12. * window.scale_factor(),
+                    )),
+            );
+            #[cfg(not(target_os = "macos"))]
+            window.paint_quad(gpui::fill(bounds, rgb(CHAT)).corner_radii(radius));
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
 }
 
 fn paint_edge_fade(bounds: Bounds<Pixels>, begin: bool, window: &mut Window) {

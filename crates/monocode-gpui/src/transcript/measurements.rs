@@ -13,14 +13,23 @@ struct LayoutStyle {
 pub(super) struct Measurements {
     style: Option<LayoutStyle>,
     viewport: gpui::Size<Pixels>,
-    row_count: usize,
     rows: HashMap<usize, Pixels>,
-    retained: HashMap<(usize, usize), Pixels>,
+    retained: HashMap<(usize, usize), RetainedHeight>,
+    frame: u64,
     #[cfg(test)]
     pub(super) fresh: usize,
 }
+struct RetainedHeight {
+    height: Pixels,
+    row: UiRow,
+    after_receipt: bool,
+    frame: u64,
+}
 
 impl Measurements {
+    pub(super) fn rows_changed(&mut self) {
+        self.rows.clear();
+    }
     pub(super) fn clear(&mut self) {
         self.rows.clear();
         self.retained.clear();
@@ -42,19 +51,17 @@ impl TranscriptView {
             self.measurements.style = Some(style);
             self.measurements.clear();
         }
-        if self.measurements.viewport != self.viewport.size
-            || self.measurements.row_count != self.rows.len()
-        {
-            // Removing closing rows can also change their neighbours' spacing.
+        if self.measurements.viewport != self.viewport.size {
             self.measurements.clear();
             self.measurements.viewport = self.viewport.size;
-            self.measurements.row_count = self.rows.len();
         }
         self.measurements.rows.clear();
         let motions = &self.motions;
+        let previous = self.measurements.frame;
+        self.measurements.frame = previous.wrapping_add(1);
         self.measurements
             .retained
-            .retain(|key, _| !motions.contains_key(key));
+            .retain(|key, entry| entry.frame == previous && !motions.contains_key(key));
     }
 
     pub(super) fn measure_row_height(
@@ -73,9 +80,15 @@ impl TranscriptView {
         }
         let key = self.rows[ix].key;
         let stable = stable_height(&self.rows[ix], &self.messages, &self.motions);
-        if stable && let Some(&height) = self.measurements.retained.get(&key) {
-            self.measurements.rows.insert(ix, height);
-            return height;
+        let after_receipt = after_receipt(&self.rows, &self.messages, ix);
+        if stable
+            && let Some(retained) = self.measurements.retained.get_mut(&key)
+            && same_layout(&retained.row, &self.rows[ix])
+            && retained.after_receipt == after_receipt
+        {
+            retained.frame = self.measurements.frame;
+            self.measurements.rows.insert(ix, retained.height);
+            return retained.height;
         }
         let mut row = self.row(ix, window, cx);
         let height = row
@@ -94,7 +107,21 @@ impl TranscriptView {
         }
         self.measurements.rows.insert(ix, height);
         if stable {
-            self.measurements.retained.insert(key, height);
+            if self.measurements.retained.len() >= 256
+                && !self.measurements.retained.contains_key(&key)
+            {
+                // This is a viewport/follow working set, never a history cache.
+                self.measurements.retained.clear();
+            }
+            self.measurements.retained.insert(
+                key,
+                RetainedHeight {
+                    height,
+                    row: self.rows[ix].clone(),
+                    after_receipt,
+                    frame: self.measurements.frame,
+                },
+            );
         }
         height
     }
@@ -107,10 +134,30 @@ fn stable_height(
 ) -> bool {
     // Independent child views, attachments and disclosures can resize without
     // a source patch. Retain only text geometry that rebuild invalidates.
-    matches!(row.body, Body::Plain(_) | Body::Markdown(_))
+    matches!(row.body, Body::Markdown(_))
         && !row.in_phase()
         && !motions.contains_key(&row.key)
         && messages[row.message].attachments.is_empty()
+}
+
+pub(super) fn after_receipt(rows: &[UiRow], messages: &[Message], ix: usize) -> bool {
+    messages
+        .get(rows[ix].message)
+        .is_some_and(|message| message.under_line)
+        || (ix > 0 && matches!(rows[ix - 1].body, Body::WorkLine { .. }))
+}
+
+pub(super) fn same_layout(a: &UiRow, b: &UiRow) -> bool {
+    a.key == b.key
+        && a.first == b.first
+        && a.last == b.last
+        && a.work == b.work
+        && a.work_tail == b.work_tail
+        && a.thought_phase == b.thought_phase
+        && match (&a.body, &b.body) {
+            (Body::Markdown(a), Body::Markdown(b)) => Arc::ptr_eq(a, b) || a == b,
+            _ => false,
+        }
 }
 
 #[cfg(test)]
@@ -355,6 +402,43 @@ mod tests {
             let before = view.measurements.fresh;
             assert_eq!(view.measure_row_height(indices[0], window, cx), long);
             assert_eq!(view.measurements.fresh, before + 1);
+        });
+    }
+
+    #[gpui::test]
+    fn streaming_tail_changes_reuse_prefix_rows_and_measurements(cx: &mut TestAppContext) {
+        let window = chat(cx);
+        probe(window, cx, |view, window, cx| {
+            let mut text =
+                "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n\nTail".to_owned();
+            view.patch(1, vec![row("assistant", &text)], cx);
+            view.motions.clear();
+            view.begin_measurements(window, cx);
+            let first = answer(view);
+            let key = view.rows[first].key;
+            let Body::Markdown(original) = view.rows[first].body.clone() else {
+                unreachable!()
+            };
+            let height = view.measure_row_height(first, window, cx);
+            text.push_str(" grows while the prefix stays unchanged.");
+            view.patch(1, vec![row("assistant", &text)], cx);
+            view.motions.clear();
+            view.begin_measurements(window, cx);
+            let first = view.rows.iter().position(|row| row.key == key).unwrap();
+            let Body::Markdown(current) = &view.rows[first].body else {
+                unreachable!()
+            };
+            assert!(Arc::ptr_eq(&original, current));
+            let before = view.measurements.fresh;
+            assert_eq!(view.measure_row_height(first, window, cx), height);
+            assert_eq!(
+                view.measurements.fresh, before,
+                "the stable prefix must not be laid out again"
+            );
+            assert!(
+                view.reveals.is_empty(),
+                "unanimated history must not retain reveal text or word timings"
+            );
         });
     }
 }

@@ -40,10 +40,12 @@ impl Rate {
     }
 }
 
+type FrameCallback = Box<dyn FnOnce(&mut App)>;
 struct Lease {
     rate: Rate,
     /// Painted a loop since the clock last notified it.
     painted: bool,
+    on_tick: Option<FrameCallback>,
 }
 
 #[derive(Default)]
@@ -59,6 +61,26 @@ impl Global for Clock {}
 /// or painting a loop, every time the loop is drawn. Returns false, and
 /// leases nothing, under reduced motion: draw the loop's resting frame.
 pub(crate) fn request(rate: Rate, window: &Window, cx: &mut App) -> bool {
+    request_inner(rate, window, cx, None)
+}
+
+/// Stream presentation uses the same coalesced 30Hz wakeup as decorative
+/// loops, advancing its state before notifying rather than spawning a timer.
+pub(crate) fn request_frame(
+    rate: Rate,
+    window: &Window,
+    cx: &mut App,
+    on_tick: impl FnOnce(&mut App) + 'static,
+) -> bool {
+    request_inner(rate, window, cx, Some(Box::new(on_tick)))
+}
+
+fn request_inner(
+    rate: Rate,
+    window: &Window,
+    cx: &mut App,
+    mut on_tick: Option<FrameCallback>,
+) -> bool {
     if cx.reduce_motion() {
         return false;
     }
@@ -69,13 +91,17 @@ pub(crate) fn request(rate: Rate, window: &Window, cx: &mut App) -> bool {
         .entry(view)
         .and_modify(|lease| {
             lease.painted = true;
+            if on_tick.is_some() {
+                lease.on_tick = on_tick.take();
+            }
             if lease.rate.stride() > rate.stride() {
                 lease.rate = rate;
             }
         })
-        .or_insert(Lease {
+        .or_insert_with(|| Lease {
             rate,
             painted: true,
+            on_tick,
         });
     if !clock.running {
         clock.running = true;
@@ -128,15 +154,19 @@ fn tick(cx: &mut App) -> bool {
             return false;
         }
         lease.painted = false;
-        due.push(*view);
+        due.push((*view, lease.on_tick.take()));
         true
     });
     if clock.leases.is_empty() {
         clock.running = false;
         return false;
     }
-    for view in due {
-        cx.notify(view);
+    for (view, callback) in due {
+        if let Some(callback) = callback {
+            callback(cx);
+        } else {
+            cx.notify(view);
+        }
     }
     true
 }
@@ -302,5 +332,54 @@ mod tests {
             .advance_clock(TICK * BACKGROUND_STRIDE as u32 * 3);
         cx.run_until_parked();
         assert_eq!(renders.get(), first);
+    }
+
+    #[gpui::test]
+    fn stream_callbacks_share_the_clock_and_release_their_lease(cx: &mut TestAppContext) {
+        struct Stream {
+            active: bool,
+            ticks: Rc<Cell<usize>>,
+        }
+        impl Render for Stream {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let active = self.active;
+                let view = cx.entity().downgrade();
+                div().size_4().child(gpui::canvas(
+                    move |_, window, cx| {
+                        if active {
+                            request_frame(Rate::Smooth, window, cx, move |cx| {
+                                let _ = view.update(cx, |stream, cx| {
+                                    if stream.active {
+                                        stream.ticks.set(stream.ticks.get() + 1);
+                                        cx.notify();
+                                    }
+                                });
+                            });
+                        }
+                    },
+                    |_, _, _, _| {},
+                ))
+            }
+        }
+        cx.update(|cx| cx.set_reduce_motion(false));
+        let ticks = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view(|_, _| Stream {
+            active: true,
+            ticks: ticks.clone(),
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(TICK * BACKGROUND_STRIDE as u32);
+        cx.run_until_parked();
+        assert_eq!(ticks.get(), 1);
+        view.update(cx, |stream, cx| {
+            stream.active = false;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(TICK * BACKGROUND_STRIDE as u32 * 3);
+        cx.run_until_parked();
+        assert_eq!(ticks.get(), 1);
+        cx.update(|_, cx| assert!(!running(cx)));
     }
 }
