@@ -116,6 +116,7 @@ actions!(
         ToggleTerminal,
         NewTerminal,
         ToggleLayout,
+        ToggleWorkspaceStyle,
         OpenSettings,
         GoToFile,
         OpenCommandPalette,
@@ -239,6 +240,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-`"), NewTerminal, context),
         // Switch between the original two-sidebar layout and the new layout.
         KeyBinding::new(&format!("{modifier}-shift-l"), ToggleLayout, context),
+        // Switch the Focused layout between its rounded and boxy workspace.
+        KeyBinding::new(&format!("{modifier}-alt-l"), ToggleWorkspaceStyle, context),
         KeyBinding::new(&format!("{modifier}-shift-d"), SplitDown, context),
         KeyBinding::new(&format!("{modifier}-="), ZoomIn, context),
         KeyBinding::new(&format!("{modifier}-+"), ZoomIn, context),
@@ -8268,6 +8271,11 @@ impl Render for Shell {
             )
             .on_action(cx.listener(|this, _: &ToggleLayout, _, cx| this.toggle_layout(cx)))
             .on_action(
+                cx.listener(|this, _: &ToggleWorkspaceStyle, _, cx| {
+                    this.toggle_workspace_style(cx)
+                }),
+            )
+            .on_action(
                 cx.listener(|this, _: &SplitRight, _, cx| this.split_session(SplitDir::Right, cx)),
             )
             .on_action(
@@ -11073,6 +11081,24 @@ mod tests {
                 shell.workspace.classic_layout = true;
                 shell.workspace.new_layout_boxy = false;
                 shell.toggle_layout(cx);
+                assert!(!shell.workspace.new_layout_boxy);
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn workspace_style_shortcut_only_switches_the_focused_layout(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.classic_layout = false;
+                shell.workspace.new_layout_boxy = false;
+                shell.toggle_workspace_style(cx);
+                assert!(shell.workspace.new_layout_boxy);
+                shell.toggle_workspace_style(cx);
+                assert!(!shell.workspace.new_layout_boxy);
+
+                shell.workspace.classic_layout = true;
+                shell.toggle_workspace_style(cx);
                 assert!(!shell.workspace.new_layout_boxy);
             })
             .unwrap();

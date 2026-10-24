@@ -264,7 +264,7 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "terminal-in-panel",
         Section::General,
         "Terminal in side panel",
-        "terminal dock right panel tab shell new layout",
+        "terminal dock right panel tab shell focused layout",
     ),
     (
         "file-tabs",
@@ -336,8 +336,8 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     (
         "inset-layout",
         Section::Appearance,
-        "New layout",
-        "classic preview sidebar navigation tabs inset workspace card rounded floating linear frame",
+        "Layout",
+        "classic focused new preview sidebar navigation tabs inset workspace card rounded floating linear frame",
     ),
     (
         "interface-scale",

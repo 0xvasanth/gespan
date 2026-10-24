@@ -106,7 +106,7 @@ pub(crate) enum SettingsEvent {
     CheckHarnessUpdates,
     ManageInboxProvider(String),
     Changed(Box<Preferences>),
-    /// The Appearance page's New layout switch.
+    /// The Appearance page's Layout picker: true for Focused, false for Classic.
     NewLayout(bool),
     NewLayoutBoxy(bool),
     Section(Section),

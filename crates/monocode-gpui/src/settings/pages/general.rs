@@ -150,7 +150,7 @@ impl SettingsView {
             Some("terminal-in-panel"),
             false,
             "Terminal in side panel",
-            Some("In the new layout, open the terminal as a tab in the right panel instead of below the chat.".into()),
+            Some("In the Focused layout, open the terminal as a tab in the right panel instead of below the chat.".into()),
             vec![self.toggle(
                 "terminal-in-panel",
                 "Terminal in side panel",

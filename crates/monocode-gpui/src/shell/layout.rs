@@ -161,6 +161,16 @@ impl Shell {
         self.layout_changed(cx);
         self.sync_settings(cx);
     }
+    /// Flip the Focused layout between its rounded card and boxy frame.
+    /// Classic has no frame choice, so the shortcut does nothing there.
+    pub(super) fn toggle_workspace_style(&mut self, cx: &mut Context<Self>) {
+        if self.workspace.classic_layout {
+            return;
+        }
+        self.workspace.new_layout_boxy = !self.workspace.new_layout_boxy;
+        self.layout_changed(cx);
+        self.sync_settings(cx);
+    }
     pub(super) fn layout_changed(&mut self, cx: &mut Context<Self>) {
         let classic = self.workspace.boxy_layout();
         if !self.workspace.classic_layout
