@@ -1,7 +1,7 @@
 //! The board, over the same `board*` tables the Tauri app keeps in `rebase.db`.
 //! The logic mirrors `src-tauri/src/board.rs`; `tests/shared_contracts.rs` pins
 //! the DDL and error strings to it.
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::Serialize;
 use std::path::Path;
 use uuid::Uuid;
@@ -406,6 +406,13 @@ pub(crate) fn get_board(conn: &Connection, board_id: &str) -> Result<BoardDetail
     })
 }
 
+/// Board writes take SQLite's write lock before reading what they change, so a
+/// second app (or connection) writing the same board waits out `busy_timeout`
+/// instead of failing at once or acting on rows read before the other write.
+fn write_tx(conn: &Connection) -> Result<Transaction<'_>, String> {
+    Transaction::new_unchecked(conn, TransactionBehavior::Immediate).map_err(db)
+}
+
 pub(crate) fn create_board(conn: &Connection, name: &str) -> Result<Board, String> {
     let name = clean_text(name, "Board name", MAX_NAME)?;
     let now = now_millis();
@@ -415,7 +422,7 @@ pub(crate) fn create_board(conn: &Connection, name: &str) -> Result<Board, Strin
         created_at: now,
         updated_at: now,
     };
-    let tx = conn.unchecked_transaction().map_err(db)?;
+    let tx = write_tx(conn)?;
     tx.execute(
         "INSERT INTO boards (id, name, card_seq, created_at, updated_at)
          VALUES (?1, ?2, 0, ?3, ?3)",
@@ -461,8 +468,8 @@ pub(crate) fn create_column(
     role: Option<&str>,
 ) -> Result<Column, String> {
     let name = clean_text(name, "Column name", MAX_NAME)?;
-    board_exists(conn, board_id)?;
-    let tx = conn.unchecked_transaction().map_err(db)?;
+    let tx = write_tx(conn)?;
+    board_exists(&tx, board_id)?;
     ensure_role_free(&tx, board_id, role, None)?;
     let position: i64 = tx
         .query_row(
@@ -502,8 +509,8 @@ pub(crate) fn update_column(
     role: Option<&str>,
 ) -> Result<String, String> {
     let name = clean_text(name, "Column name", MAX_NAME)?;
-    let column = get_column(conn, column_id)?;
-    let tx = conn.unchecked_transaction().map_err(db)?;
+    let tx = write_tx(conn)?;
+    let column = get_column(&tx, column_id)?;
     ensure_role_free(&tx, &column.board_id, role, Some(column_id))?;
     tx.execute(
         "UPDATE board_columns SET name = ?1, role = ?2 WHERE id = ?3",
@@ -520,8 +527,8 @@ pub(crate) fn move_column(
     column_id: &str,
     index: usize,
 ) -> Result<String, String> {
-    let column = get_column(conn, column_id)?;
-    let tx = conn.unchecked_transaction().map_err(db)?;
+    let tx = write_tx(conn)?;
+    let column = get_column(&tx, column_id)?;
     let mut ids = board_column_ids(&tx, &column.board_id)?;
     ids.retain(|id| id != column_id);
     ids.insert(index.min(ids.len()), column_id.to_string());
@@ -532,8 +539,8 @@ pub(crate) fn move_column(
 
 /// Returns the owning board id.
 pub(crate) fn delete_column(conn: &Connection, column_id: &str) -> Result<String, String> {
-    let column = get_column(conn, column_id)?;
-    let tx = conn.unchecked_transaction().map_err(db)?;
+    let tx = write_tx(conn)?;
+    let column = get_column(&tx, column_id)?;
     let cards: i64 = tx
         .query_row(
             "SELECT COUNT(*) FROM board_cards WHERE column_id = ?1",
@@ -561,8 +568,8 @@ pub(crate) fn create_card(
 ) -> Result<Card, String> {
     let title = clean_text(title, "Card title", MAX_TITLE)?;
     check_body(body)?;
-    let column = get_column(conn, column_id)?;
-    let tx = conn.unchecked_transaction().map_err(db)?;
+    let tx = write_tx(conn)?;
+    let column = get_column(&tx, column_id)?;
     tx.execute(
         "UPDATE boards SET card_seq = card_seq + 1 WHERE id = ?1",
         [&column.board_id],
@@ -637,11 +644,11 @@ pub(crate) fn update_card(
 ) -> Result<String, String> {
     let title = clean_text(title, "Card title", MAX_TITLE)?;
     check_body(body)?;
-    let card = get_card(conn, card_id)?;
+    let tx = write_tx(conn)?;
+    let card = get_card(&tx, card_id)?;
     if card.title == title && card.body == body {
         return Ok(card.board_id);
     }
-    let tx = conn.unchecked_transaction().map_err(db)?;
     tx.execute(
         "UPDATE board_cards SET title = ?1, body = ?2, updated_at = ?3 WHERE id = ?4",
         params![title, body, now_millis(), card_id],
@@ -674,12 +681,12 @@ pub(crate) fn move_card(
     if !ACTORS.contains(&actor) {
         return Err(format!("Unknown actor: {actor}"));
     }
-    let card = get_card(conn, card_id)?;
-    let target = get_column(conn, column_id)?;
+    let tx = write_tx(conn)?;
+    let card = get_card(&tx, card_id)?;
+    let target = get_column(&tx, column_id)?;
     if target.board_id != card.board_id {
         return Err("Column not on this board".into());
     }
-    let tx = conn.unchecked_transaction().map_err(db)?;
     let same_column = card.column_id == column_id;
     let mut target_ids = column_card_ids(&tx, column_id)?;
     let old_index = target_ids.iter().position(|id| id == card_id);
@@ -743,7 +750,8 @@ pub(crate) fn link_card(
         (None, None) => None,
         _ => return Err("A link needs both a kind and an id".into()),
     };
-    let card = get_card(conn, card_id)?;
+    let tx = write_tx(conn)?;
+    let card = get_card(&tx, card_id)?;
     let previous = card.link_kind.as_deref().zip(card.link_id.as_deref());
     if previous == link {
         return Ok(card.board_id);
@@ -754,7 +762,6 @@ pub(crate) fn link_card(
         // Unlinking an unlinked card equals `previous == link`, handled above.
         (None, None) => return Ok(card.board_id),
     };
-    let tx = conn.unchecked_transaction().map_err(db)?;
     tx.execute(
         "UPDATE board_cards SET link_kind = ?1, link_id = ?2, updated_at = ?3 WHERE id = ?4",
         params![link.map(|l| l.0), link.map(|l| l.1), now_millis(), card_id],
@@ -778,9 +785,9 @@ pub(crate) fn link_card(
 
 /// Returns the owning board id.
 pub(crate) fn delete_card(conn: &Connection, card_id: &str) -> Result<String, String> {
-    let card = get_card(conn, card_id)?;
-    let column = get_column(conn, &card.column_id)?;
-    let tx = conn.unchecked_transaction().map_err(db)?;
+    let tx = write_tx(conn)?;
+    let card = get_card(&tx, card_id)?;
+    let column = get_column(&tx, &card.column_id)?;
     // The tombstone has no card_id: the card's own rows cascade away with it.
     let detail = format!("#{} {}", card.number, card.title);
     log_activity(
@@ -868,8 +875,8 @@ pub(crate) fn record_card(
     if !RECORD_KINDS.contains(&kind) {
         return Err(format!("Cannot record activity kind: {kind}"));
     }
-    let card = get_card(conn, card_id)?;
-    let tx = conn.unchecked_transaction().map_err(db)?;
+    let tx = write_tx(conn)?;
+    let card = get_card(&tx, card_id)?;
     log_activity(
         &tx,
         NewActivity {
@@ -1569,6 +1576,58 @@ mod tests {
             service.card_record(bad, "started", None).unwrap_err(),
             "Invalid card id"
         );
+    }
+
+    #[test]
+    fn two_connections_moving_cards_at_once_lose_no_card_and_keep_columns_contiguous() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rebase.db");
+        let mut setup = Service::open(&path).unwrap();
+        let board = setup.create("Shared").unwrap();
+        let columns = setup.get(&board.id).unwrap().columns;
+        let cards: Vec<String> = (0..8)
+            .map(|n| {
+                setup
+                    .card_create(&columns[n % 4].id, &format!("Card {n}"), "")
+                    .unwrap()
+                    .id
+            })
+            .collect();
+        let column_ids: Vec<String> = columns.iter().map(|c| c.id.clone()).collect();
+        let workers: Vec<_> = (0..2u64)
+            .map(|worker| {
+                let (path, cards, column_ids) = (path.clone(), cards.clone(), column_ids.clone());
+                std::thread::spawn(move || {
+                    let mut service = Service::open(&path).unwrap();
+                    let mut seed = 11 + worker * 7919;
+                    for _ in 0..150 {
+                        seed = seed
+                            .wrapping_mul(6364136223846793005)
+                            .wrapping_add(1442695040888963407);
+                        let card = &cards[(seed >> 33) as usize % cards.len()];
+                        let column = &column_ids[(seed >> 13) as usize % column_ids.len()];
+                        let index = (seed >> 7) as usize % 9;
+                        service.card_move(card, column, index, "user").unwrap();
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        let detail = setup.get(&board.id).unwrap();
+        assert_eq!(detail.cards.len(), cards.len());
+        for column in &detail.columns {
+            let mut positions: Vec<i64> = detail
+                .cards
+                .iter()
+                .filter(|card| card.column_id == column.id)
+                .map(|card| card.position)
+                .collect();
+            positions.sort();
+            let expected: Vec<i64> = (0..positions.len() as i64).collect();
+            assert_eq!(positions, expected, "column {} has a gap", column.name);
+        }
     }
 
     #[test]
