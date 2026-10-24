@@ -3954,7 +3954,7 @@ dependencies = [
  "tauri-winrt-notification 0.8.1",
  "time",
  "tokio",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.4+spec-1.1.0",
  "unicode-normalization",
  "ureq",
  "url",
