@@ -656,10 +656,61 @@ fn app_actions_are_project_scoped_and_mutation_retries_are_idempotent(cx: &mut T
         assert_eq!(m.roster.get(&s.id).unwrap().launches.len(), 1);
         let owner = m.owner.upgrade().unwrap();
         let view = owner.read(cx).mono_session_entity(child).unwrap();
-        assert_eq!(view.read(cx).input.read(cx).content, "Review the project");
+        assert!(view.read(cx).has_saved_draft());
+        assert_eq!(
+            locked(&s.store)
+                .unwrap()
+                .follow_ups(child)
+                .unwrap()
+                .draft
+                .unwrap()
+                .text,
+            "Review the project"
+        );
         assert!(!view.read(cx).busy);
         assert!(m.hidden_session(child));
     });
+}
+#[gpui::test]
+fn mono_app_launch_visibility_can_be_toggled_and_survives_roster_reload(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let started = call(
+        &s,
+        "visibility-draft",
+        "sessions.start",
+        json!({"project":s.project,"prompt":"Review quietly","draft":true}),
+        cx,
+    )
+    .try_recv()
+    .unwrap()
+    .unwrap();
+    let child = started["sessionId"].as_i64().unwrap();
+    cx.update(|cx| assert!(s.manager.read(cx).hidden_session(child)));
+    s.manager
+        .update(cx, |m, cx| m.sidebar_preferences(&s.id, true, true, cx));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(!s.manager.read(cx).hidden_session(child));
+        assert!(s.manager.read(cx).is_mono_session(s.session));
+    });
+    assert!(
+        mono::Roster::load(&locked(&s.store).unwrap())
+            .unwrap()
+            .get(&s.id)
+            .unwrap()
+            .show_started_sessions_in_sidebar
+    );
+    s.manager
+        .update(cx, |m, cx| m.sidebar_preferences(&s.id, false, false, cx));
+    cx.run_until_parked();
+    cx.update(|cx| assert!(s.manager.read(cx).hidden_session(child)));
+    assert!(
+        !mono::Roster::load(&locked(&s.store).unwrap())
+            .unwrap()
+            .get(&s.id)
+            .unwrap()
+            .show_started_sessions_in_sidebar
+    );
 }
 #[gpui::test]
 fn queued_messages_are_saved_before_dispatch_and_do_not_run_while_blocked(cx: &mut TestAppContext) {

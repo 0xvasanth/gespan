@@ -579,28 +579,58 @@ impl Store {
         Ok(result)
     }
     pub(super) fn shared_create(&self, provider: &str, cwd: &str) -> Result<Session, String> {
+        self.shared_create_named(provider, cwd, &crate::accounts::request_id())
+            .map(|(session, _)| session)
+    }
+    pub(super) fn shared_create_named(
+        &self,
+        provider: &str,
+        cwd: &str,
+        original: &str,
+    ) -> Result<(Session, bool), String> {
         self.shared_writable()?;
         let label = crate::provider::Kind::parse(provider)
             .ok_or_else(|| format!("Unknown provider: {provider}"))?
             .label();
-        let original = crate::accounts::request_id();
+        let id = self.shared_register(original)?;
+        let exists: bool = sql(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
+            [original],
+            |row| row.get(0),
+        ))?;
+        if exists {
+            let existing = self
+                .shared_sessions()?
+                .into_iter()
+                .find(|s| s.id == id)
+                .ok_or("The session created by this request was removed")?;
+            if existing.provider != provider
+                || crate::files::path_key(&existing.cwd) != crate::files::path_key(cwd)
+            {
+                return Err("Request ID was already used for another session".into());
+            }
+            return Ok((existing, false));
+        }
         let now = crate::time::now_ms().min(i64::MAX as u64) as i64;
         let title = format!("New {label} session");
         sql(self.conn.execute("INSERT INTO sessions(id,cwd,harness,model,model_settings,runtime_mode,title,blocks_json,created_at,updated_at)
             VALUES(?1,?2,?3,?4,'{}','supervised',?5,'[]',?6,?6)",
             params![original,cwd,provider,format!("{provider}:default"),title,now]))?;
-        Ok(Session {
-            id: self.shared_register(&original)?,
-            title,
-            provider: provider.into(),
-            cwd: cwd.into(),
-            provider_id: None,
-            has_messages: false,
-            updated_at: now as u64,
-            archived: false,
-            pinned: false,
-            work_item: None,
-        })
+        Ok((
+            Session {
+                id,
+                title,
+                provider: provider.into(),
+                cwd: cwd.into(),
+                provider_id: None,
+                has_messages: false,
+                updated_at: now as u64,
+                archived: false,
+                pinned: false,
+                work_item: None,
+            },
+            true,
+        ))
     }
     pub(super) fn shared_agent(&self, id: i64) -> Result<Option<Settings>, String> {
         let fields = ["harness", "model", "model_settings", "runtime_mode"]

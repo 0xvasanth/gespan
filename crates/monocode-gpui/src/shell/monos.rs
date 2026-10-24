@@ -13,6 +13,21 @@ pub(crate) struct MonoSession {
     pub model: SharedString,
 }
 impl Shell {
+    pub(crate) fn mono_install_app(
+        &mut self,
+        summary: Session,
+        settings: Settings,
+        draft: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let id = summary.id;
+        self.draft_sessions.insert(id);
+        self.session_worktrees
+            .insert(id, settings.worktree_cwd.clone());
+        self.add_loaded(summary, cx);
+        self.sessions[&id].update(cx, |view, cx| view.install_app_launch(settings, !draft, cx));
+        self.invalidate_chrome(cx);
+    }
     pub(crate) fn close_mono_overview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_right_panel_open(false, window, cx);
     }
@@ -59,25 +74,6 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Conversation>> {
         self.ensure_session(id, cx)
-    }
-    pub(crate) fn mono_install(
-        &mut self,
-        summary: Session,
-        settings: Settings,
-        prompt: String,
-        draft: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let id = summary.id;
-        self.add_loaded(summary, cx);
-        let view = self.sessions[&id].clone();
-        view.update(cx, |v, cx| {
-            v.install_transfer(settings, (!draft).then(|| prompt.clone()), cx);
-            if draft {
-                v.input.update(cx, |i, cx| i.set_text(prompt, cx));
-            }
-        });
-        self.invalidate_chrome(cx);
     }
     pub(crate) fn mono_groups(&self, project: &str) -> monocode_core::session_groups::Groups {
         self.groups.get(project).cloned().unwrap_or_default()

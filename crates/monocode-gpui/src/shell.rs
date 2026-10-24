@@ -533,7 +533,7 @@ pub(crate) struct Shell {
     image_lightbox: Option<(Entity<crate::image_lightbox::ImageLightbox>, Subscription)>,
     app_bridge: Option<monocode_core::mono::bridge::Server>,
     mobile: mobile_host::Mobile,
-    app_results: HashMap<(i64, String), Result<serde_json::Value, String>>,
+    app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
     orchestrations: HashMap<i64, orchestration::Run>,
     /// Each lead's last orchestration, whose agents hang under it in the sidebar.
