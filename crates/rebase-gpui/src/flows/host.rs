@@ -212,8 +212,9 @@ impl Host {
             .is_some_and(|turn| !turn.submitting && !probe.pending)
     }
 
-    /// Reports `session`'s finished turn once. A turn that never started
-    /// (the generation did not move) fails rather than waiting forever.
+    /// Reports `session`'s finished turn once. A stopped turn is cancelled; a
+    /// turn that never started (the generation did not move) fails rather
+    /// than waiting forever.
     pub(crate) fn settle(
         &mut self,
         driver: &mut dyn SessionDriver,
@@ -230,14 +231,15 @@ impl Host {
         let Some((run_id, visit_id)) = self.sessions.get(&session).cloned() else {
             return;
         };
-        let outcome = if probe.generation == turn.generation_before {
-            failed(NOT_STARTED.into())
-        } else if settled.cancelled {
+        // A stop wins even before the turn started, as for automations.
+        let outcome = if settled.cancelled {
             AgentOutcome {
                 status: AgentStatus::Cancelled,
                 text: settled.text,
                 error: None,
             }
+        } else if probe.generation == turn.generation_before {
+            failed(NOT_STARTED.into())
         } else if !settled.ok {
             AgentOutcome {
                 error: Some(settled.message),
@@ -256,6 +258,30 @@ impl Host {
         }
         let effects = self.runner.on_agent_settled(&run_id, &visit_id, outcome);
         self.apply(driver, effects);
+    }
+
+    /// `session` is in worktree `path`, which a conversation reports
+    /// mid-turn. Reported as soon as it is seen, so a cancel or restart
+    /// before the turn settles keeps it; the runner keeps only the first.
+    pub(crate) fn worktree(&mut self, driver: &mut dyn SessionDriver, session: i64, path: &str) {
+        let Some((run_id, _)) = self.sessions.get(&session).cloned() else {
+            return;
+        };
+        let effects = self.runner.on_worktree(&run_id, path);
+        self.apply(driver, effects);
+    }
+
+    /// Whether a run of `flow_id` is in flight, written to the store or not.
+    pub(crate) fn has_active(&self, flow_id: &str) -> bool {
+        self.runner.has_active(flow_id)
+    }
+
+    /// The run whose visit has a turn in flight in `session`.
+    pub(crate) fn run_of(&self, session: i64) -> Option<&str> {
+        if !self.awaiting.contains_key(&session) {
+            return None;
+        }
+        self.sessions.get(&session).map(|(run, _)| run.as_str())
     }
 
     /// The user deleted `session`. A visit still running in it fails; a
@@ -342,6 +368,25 @@ impl Host {
             .ok()
             .filter(|session| self.sessions.contains_key(session))
     }
+}
+
+/// A run recovered without its worktree (the restart came before the turn
+/// settled) takes it from the newest visit session whose saved settings name
+/// one. `saved` reads a session's saved `worktree_cwd`.
+pub(crate) fn fill_worktree(
+    run: &mut FlowRun,
+    visits: &[FlowVisit],
+    mut saved: impl FnMut(i64) -> Option<String>,
+) {
+    if run.worktree_cwd.is_some() {
+        return;
+    }
+    let mut sessions: Vec<_> = visits
+        .iter()
+        .filter_map(|v| Some((v.seq, v.session_id.as_deref()?.parse::<i64>().ok()?)))
+        .collect();
+    sessions.sort_by_key(|(seq, _)| std::cmp::Reverse(*seq));
+    run.worktree_cwd = sessions.into_iter().find_map(|(_, session)| saved(session));
 }
 
 fn failed(error: String) -> AgentOutcome {

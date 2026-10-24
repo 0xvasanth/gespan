@@ -41,6 +41,32 @@ pub(crate) enum Event {
         state_id: String,
     },
     OpenSession(i64),
+    /// The user confirmed deleting this Flow; the shell checks its runs.
+    Delete(String),
+}
+
+/// A Flow session whose running turn waits for the user's approval.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Waiting {
+    pub run_id: String,
+    pub session_title: String,
+}
+
+/// A list row's status pill: its last run's, or the approval wait inside it.
+pub(super) fn row_status(
+    last: Option<&FlowRun>,
+    waiting: &HashMap<i64, Waiting>,
+) -> (&'static str, &'static str) {
+    match last {
+        Some(run)
+            if run.status == rebase_core::flow::RunStatus::Running
+                && waiting.values().any(|w| w.run_id == run.id) =>
+        {
+            ("waiting-approval", "Waiting for approval")
+        }
+        Some(run) => (run.status.as_str(), run_status_label(run.status)),
+        None => ("none", "Never run"),
+    }
 }
 
 pub(super) enum Page {
@@ -59,6 +85,8 @@ pub(crate) struct FlowsView {
     pub(super) last_runs: HashMap<String, FlowRun>,
     /// Flows with a running or waiting-approval run.
     pub(super) active: HashSet<String>,
+    /// Flow sessions waiting for approval, by session id.
+    pub(super) waiting: HashMap<i64, Waiting>,
     pub(super) loading: bool,
     pub(super) error: Option<String>,
     pub(super) page: Page,
@@ -124,6 +152,7 @@ impl FlowsView {
             flows: Vec::new(),
             last_runs: HashMap::new(),
             active: HashSet::new(),
+            waiting: HashMap::new(),
             loading: true,
             error: None,
             page: Page::Empty,
@@ -166,6 +195,13 @@ impl FlowsView {
         self.cwd = cwd;
         self.projects = projects;
         cx.notify();
+    }
+
+    pub(crate) fn set_waiting(&mut self, waiting: HashMap<i64, Waiting>, cx: &mut Context<Self>) {
+        if self.waiting != waiting {
+            self.waiting = waiting;
+            cx.notify();
+        }
     }
 
     pub(crate) fn set_error(&mut self, error: String, cx: &mut Context<Self>) {
@@ -339,13 +375,14 @@ impl FlowsView {
         );
         cx.spawn(async move |this, cx| {
             if prompt.await == Ok(0) {
-                let _ = this.update(cx, |this, cx| this.delete(id, cx));
+                let _ = this.update(cx, |_, cx| cx.emit(Event::Delete(id)));
             }
         })
         .detach();
     }
 
-    pub(super) fn delete(&mut self, id: String, cx: &mut Context<Self>) {
+    /// Deletes without asking the shell; `Shell::delete_flow` is the way in.
+    pub(crate) fn delete(&mut self, id: String, cx: &mut Context<Self>) {
         let Some(store) = self.store.clone() else {
             return;
         };
@@ -540,12 +577,9 @@ impl FlowsView {
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .child(flow.name.clone()),
                             )
-                            .child(match last {
-                                Some(run) => {
-                                    status_chip(run.status.as_str(), run_status_label(run.status))
-                                        .into_any_element()
-                                }
-                                None => status_chip("none", "Never run").into_any_element(),
+                            .child({
+                                let (status, label) = row_status(last, &self.waiting);
+                                status_chip(status, label)
                             }),
                     )
                     .child(
@@ -683,11 +717,13 @@ impl FlowsView {
             .into_any_element()
     }
 
-    fn escape(&mut self, cx: &mut Context<Self>) {
+    fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.project_picker.is_some() {
             self.project_picker = None;
         } else if self.dialog.is_some() {
             self.dialog = None;
+        } else if matches!(&self.page, Page::Editor(editor) if editor.dirty) {
+            self.confirm_discard(window, cx);
         } else if !matches!(self.page, Page::Empty) {
             self.page = Page::Empty;
             self.error = None;
@@ -749,9 +785,9 @@ impl Render for FlowsView {
             .flex()
             .flex_col()
             .text_color(content(1.))
-            .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+            .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
-                    this.escape(cx);
+                    this.escape(window, cx);
                     cx.stop_propagation();
                 }
             }))
@@ -805,6 +841,13 @@ impl FlowsView {
     }
     pub(crate) fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+    pub(crate) fn row_status_of(&self, flow_id: &str) -> &'static str {
+        row_status(self.last_runs.get(flow_id), &self.waiting).1
+    }
+    /// Confirms a delete as the prompt's Delete button does.
+    pub(crate) fn confirm_delete_for_test(&mut self, id: &str, cx: &mut Context<Self>) {
+        cx.emit(Event::Delete(id.to_owned()));
     }
     /// Deletes without the confirmation prompt.
     pub(crate) fn delete_for_test(&mut self, id: &str, cx: &mut Context<Self>) {

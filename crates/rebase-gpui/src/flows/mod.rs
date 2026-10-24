@@ -6,5 +6,5 @@ mod run_view;
 mod ui;
 mod view;
 
-pub(crate) use host::{Host, Probe, SessionDriver, Settled};
-pub(crate) use view::{Event, FlowsView};
+pub(crate) use host::{Host, Probe, SessionDriver, Settled, fill_worktree};
+pub(crate) use view::{Event, FlowsView, Waiting};

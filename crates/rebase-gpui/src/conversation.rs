@@ -303,6 +303,10 @@ impl Conversation {
     pub(crate) fn needs_approval(&self) -> bool {
         !self.approvals.is_empty() || !self.questions.is_empty()
     }
+    #[cfg(test)]
+    pub(crate) fn set_approvals_for_test(&mut self, approvals: Vec<Approval>) {
+        self.approvals = approvals.into();
+    }
     pub(crate) fn responding(&self) -> bool {
         self.busy && !self.stopping
     }

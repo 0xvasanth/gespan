@@ -1,15 +1,17 @@
 //! The JSON editor for a saved Flow. Every change is parsed and run through
 //! `validate_flow`; Save waits until there are no errors.
 use super::{
-    ui::{button, disabled},
+    ui::{Tooltip, button, disabled},
     view::{FlowsView, Page, store_lock},
 };
 use crate::{
     input::{self, Input},
     theme::*,
 };
-use gpui::{AnyElement, Context, Entity, Subscription, div, prelude::*, px, rgb};
+use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px, rgb};
 use rebase_core::flow::{Flow, validate_flow};
+
+pub(super) const RUN_BLOCKED: &str = "Save your changes first";
 
 /// What the editor's text currently says about the Flow.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -68,6 +70,13 @@ pub(super) struct Editor {
     pub dirty: bool,
     pub saving: bool,
     _subscription: Subscription,
+}
+
+impl Editor {
+    /// Why Run is disabled: it starts the saved Flow, not the editor's text.
+    pub(super) fn run_blocked(&self) -> Option<&'static str> {
+        self.dirty.then_some(RUN_BLOCKED)
+    }
 }
 
 impl FlowsView {
@@ -141,6 +150,33 @@ impl FlowsView {
         cx.notify();
     }
 
+    /// Escape on an editor with unsaved edits asks before dropping them.
+    pub(super) fn confirm_discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Page::Editor(editor) = &self.page else {
+            return;
+        };
+        let id = editor.flow.id.clone();
+        let prompt = window.prompt(
+            gpui::PromptLevel::Warning,
+            "Discard your changes to this Flow?",
+            Some("Your unsaved edits will be lost."),
+            &["Discard", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if prompt.await == Ok(0) {
+                let _ = this.update(cx, |this, cx| {
+                    if matches!(&this.page, Page::Editor(editor) if editor.flow.id == id) {
+                        this.page = Page::Empty;
+                        this.error = None;
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
     fn revert_editor(&mut self, cx: &mut Context<Self>) {
         if let Page::Editor(editor) = &self.page {
             let flow = editor.flow.clone();
@@ -191,9 +227,22 @@ impl FlowsView {
                         .on_click(cx.listener(|this, _, _, cx| this.revert_editor(cx))),
                 )
             })
-            .child(button("flow-editor-run", "Run").on_click(
-                cx.listener(move |this, _, window, cx| this.open_run_dialog(&id, window, cx)),
-            ))
+            .child({
+                let blocked = editor.run_blocked();
+                let run = disabled(
+                    button("flow-editor-run", "Run").debug_selector(|| "flow-editor-run".into()),
+                    blocked.is_some(),
+                );
+                if let Some(reason) = blocked {
+                    run.tooltip(move |_, cx| cx.new(|_| Tooltip(reason.into())).into())
+                } else {
+                    run.on_click(
+                        cx.listener(move |this, _, window, cx| {
+                            this.open_run_dialog(&id, window, cx)
+                        }),
+                    )
+                }
+            })
             .child(
                 disabled(
                     button(
@@ -281,6 +330,12 @@ impl FlowsView {
         match &self.page {
             Page::Editor(editor) => editor.check.errors.clone(),
             _ => Vec::new(),
+        }
+    }
+    pub(crate) fn editor_run_blocked(&self) -> Option<&'static str> {
+        match &self.page {
+            Page::Editor(editor) => editor.run_blocked(),
+            _ => None,
         }
     }
     pub(crate) fn editor_can_save(&self) -> bool {

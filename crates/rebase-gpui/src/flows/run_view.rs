@@ -19,6 +19,7 @@ pub(super) const ERROR_PREVIEW: usize = 300;
 
 /// A visit error for the timeline: its first line, at most 300 characters.
 pub(super) fn short_error(error: &str) -> String {
+    let error = error.trim_start();
     let line = error.lines().next().unwrap_or_default();
     let more = line.len() < error.trim_end().len();
     if !more && line.chars().count() <= ERROR_PREVIEW {
@@ -70,6 +71,14 @@ pub(super) fn duration(visit: &FlowVisit, now: i64) -> String {
         format!("{}m {}s", seconds / 60, seconds % 60)
     } else {
         format!("{}h {}m", seconds / 3600, (seconds % 3600) / 60)
+    }
+}
+
+/// The line under a running agent visit: who it waits on, if anyone.
+pub(super) fn running_hint(flow: &str, title: &str, waiting_in: Option<&str>) -> String {
+    match waiting_in {
+        Some(session) => format!("Waiting for your approval in {session}"),
+        None => format!("Running in {flow} · {title} — open the session if it needs your approval"),
     }
 }
 
@@ -568,13 +577,23 @@ impl FlowsView {
             );
         }
         if visit.status == VisitStatus::Running && is_agent(flow, &visit.state_id) {
+            let waiting = self.waiting_in(page, visit);
             card = card.child(
                 div()
+                    .debug_selector({
+                        let seq = visit.seq;
+                        move || format!("flow-visit-hint-{seq}")
+                    })
                     .text_size(px(12.))
-                    .text_color(content(0.5))
-                    .child(format!(
-                        "Running in {} · {title} — open the session if it needs your approval",
-                        flow.name
+                    .text_color(if waiting.is_some() {
+                        gpui::rgb(0xf59e0b).into()
+                    } else {
+                        content(0.5)
+                    })
+                    .child(running_hint(
+                        &flow.name,
+                        &title,
+                        waiting.map(|w| w.session_title.as_str()),
                     )),
             );
         }
@@ -693,6 +712,14 @@ impl FlowsView {
         detail.into_any_element()
     }
 
+    /// The approval wait in `visit`'s session, if its run is this page's.
+    fn waiting_in(&self, page: &RunPage, visit: &FlowVisit) -> Option<&super::view::Waiting> {
+        let session = visit.session_id.as_deref()?.parse::<i64>().ok()?;
+        self.waiting
+            .get(&session)
+            .filter(|w| w.run_id == page.run.id)
+    }
+
     fn decide(&mut self, run_id: String, approved: bool, cx: &mut Context<Self>) {
         let Page::Run(page) = &self.page else {
             return;
@@ -736,6 +763,20 @@ impl FlowsView {
             Page::Run(page) => Some((page.run.clone(), page.visits.clone())),
             _ => None,
         }
+    }
+    /// The line under the open run's running agent visit `seq`.
+    pub(crate) fn running_hint_of(&self, seq: u32) -> Option<String> {
+        let Page::Run(page) = &self.page else {
+            return None;
+        };
+        let visit = page.visits.iter().find(|v| v.seq == seq)?;
+        let title = state_title(&page.run.flow, &visit.state_id);
+        let waiting = self.waiting_in(page, visit);
+        Some(running_hint(
+            &page.run.flow.name,
+            &title,
+            waiting.map(|w| w.session_title.as_str()),
+        ))
     }
     pub(crate) fn resume_choice(&self) -> Option<String> {
         match &self.page {
@@ -874,6 +915,54 @@ mod tests {
         assert!(short.ends_with('…'));
         let exact = "é".repeat(ERROR_PREVIEW);
         assert_eq!(short_error(&exact), exact, "300 multi-byte chars fit");
+    }
+
+    #[test]
+    fn an_error_starting_with_blank_lines_shows_its_first_real_line() {
+        assert_eq!(short_error("\nBoom"), "Boom");
+        assert_eq!(short_error("\n\n  Boom"), "Boom");
+        assert_eq!(short_error("\n\nBoom\nmore"), "Boom…");
+        assert_eq!(short_error("\n"), "");
+    }
+
+    #[test]
+    fn a_running_visit_says_whose_approval_it_waits_for() {
+        assert_eq!(
+            running_hint("Fix", "Triage", Some("Fix · Triage")),
+            "Waiting for your approval in Fix · Triage"
+        );
+        assert_eq!(
+            running_hint("Fix", "Triage", None),
+            "Running in Fix · Triage — open the session if it needs your approval"
+        );
+    }
+
+    #[test]
+    fn a_row_waits_for_approval_only_while_its_last_run_runs_that_session() {
+        use super::super::view::{Waiting, row_status};
+        let waiting = HashMap::from([(
+            77,
+            Waiting {
+                run_id: "r1".into(),
+                session_title: "Fix · Triage".into(),
+            },
+        )]);
+        let running = run(RunStatus::Running, Some("triage"));
+        assert_eq!(
+            row_status(Some(&running), &waiting),
+            ("waiting-approval", "Waiting for approval")
+        );
+        assert_eq!(
+            row_status(Some(&running), &HashMap::new()),
+            ("running", "Running")
+        );
+        // Another run's wait, or a run that has moved on, is not this row's.
+        let mut other = running.clone();
+        other.id = "r2".into();
+        assert_eq!(row_status(Some(&other), &waiting), ("running", "Running"));
+        let failed = run(RunStatus::Failed, Some("triage"));
+        assert_eq!(row_status(Some(&failed), &waiting), ("failed", "Failed"));
+        assert_eq!(row_status(None, &waiting), ("none", "Never run"));
     }
 
     #[test]

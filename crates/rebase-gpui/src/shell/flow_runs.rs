@@ -2,12 +2,14 @@
 //! `crate::flows::Host` owns the routing; this is its session driver.
 use super::automation_runs::{WorktreeChoice, launch_available, managed_settings};
 use super::*;
-use crate::flows::{Host, Probe, SessionDriver, Settled};
+use crate::flows::{Host, Probe, SessionDriver, Settled, Waiting, fill_worktree};
 use rebase_core::flow::{Flow, FlowRun, FlowStore, FlowVisit, LaunchRequest, Runner};
 
 pub(super) type StoreHandle = Arc<Mutex<FlowStore>>;
 
 const STILL_OPENING: &str = "Flows are still opening";
+/// `FlowStore::delete`'s refusal, for a run the store has not seen yet.
+const FLOW_ACTIVE: &str = "Flow has an active run";
 
 #[derive(Default)]
 pub(super) struct State {
@@ -16,6 +18,8 @@ pub(super) struct State {
     host: Option<Host>,
     opening: bool,
     writes: Option<gpui::Task<()>>,
+    /// Flow sessions whose running turn is waiting for the user's approval.
+    pub waiting: HashMap<i64, Waiting>,
 }
 
 impl State {
@@ -164,10 +168,23 @@ impl Shell {
         else {
             return Err(STILL_OPENING.into());
         };
+        let sessions = self.store.clone();
         let work = cx.background_executor().spawn(async move {
-            let store = store_lock(&store)?;
-            let run = store.run(&run_id)?.ok_or("The Flow run no longer exists")?;
-            let visits = store.visits(&run_id)?;
+            let (mut run, visits) = {
+                let store = store_lock(&store)?;
+                let run = store.run(&run_id)?.ok_or("The Flow run no longer exists")?;
+                (run, store.visits(&run_id)?)
+            };
+            // A restart before the first turn settled lost the worktree the
+            // run made; its session's saved settings still have it.
+            let sessions = locked(&sessions)?;
+            fill_worktree(&mut run, &visits, |session| {
+                sessions
+                    .agent_settings(session)
+                    .ok()
+                    .flatten()
+                    .and_then(|settings| settings.worktree_cwd)
+            });
             Ok::<_, String>((run, visits))
         });
         cx.spawn(async move |this, cx| {
@@ -202,21 +219,50 @@ impl Shell {
         }
     }
 
+    /// Deletes a Flow unless a run of it is in flight. The runner knows of a
+    /// run before its records are written, so it is asked as well as the store.
+    pub(crate) fn delete_flow(&mut self, id: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        if self
+            .flows_state
+            .host
+            .as_ref()
+            .is_some_and(|host| host.has_active(id))
+        {
+            return Err(FLOW_ACTIVE.into());
+        }
+        if let Some(view) = &self.flows {
+            view.update(cx, |view, cx| view.delete(id.to_owned(), cx));
+        }
+        Ok(())
+    }
+
     /// The user deleted session `id`; a Flow visit running in it fails.
     pub(super) fn flow_session_closed(&mut self, id: i64, cx: &mut Context<Self>) {
         if self.flows_state.awaits(id) {
             self.with_flow_host(cx, |host, driver| host.session_closed(driver, id));
         }
+        self.sync_flow_waiting(id, cx);
     }
 
-    /// The `SessionChanged` hook: settles a Flow visit's finished turn.
+    /// The `SessionChanged` hook: records a Flow visit's worktree as soon as
+    /// its session has one, settles its finished turn, and tracks whether it
+    /// waits for the user's approval.
     pub(super) fn flow_session_changed(&mut self, id: i64, cx: &mut Context<Self>) {
+        self.settle_flow_session(id, cx);
+        self.sync_flow_waiting(id, cx);
+    }
+
+    fn settle_flow_session(&mut self, id: i64, cx: &mut Context<Self>) {
         if !self.flows_state.awaits(id) {
             return;
         }
         let Some(view) = self.sessions.get(&id).cloned() else {
             return;
         };
+        // Before the turn ends: a cancel or restart must not lose it.
+        if let Some(path) = view.read(cx).settings.worktree_cwd.clone() {
+            self.with_flow_host(cx, |host, driver| host.worktree(driver, id, &path));
+        }
         let view = view.read(cx);
         let probe = Probe {
             pending: view.external_submission_pending(),
@@ -237,6 +283,31 @@ impl Shell {
             view.settings.worktree_cwd.clone(),
         );
         self.with_flow_host(cx, |host, driver| host.settle(driver, id, probe, settled));
+    }
+
+    /// Shows or clears session `id`'s approval wait in the Flows view.
+    fn sync_flow_waiting(&mut self, id: i64, cx: &mut Context<Self>) {
+        let waiting = self
+            .flows_state
+            .host
+            .as_ref()
+            .and_then(|host| host.run_of(id))
+            .zip(self.sessions.get(&id))
+            .and_then(|(run_id, view)| {
+                let view = view.read(cx);
+                view.needs_approval().then(|| Waiting {
+                    run_id: run_id.to_owned(),
+                    session_title: view.summary.title.clone(),
+                })
+            });
+        let changed = match waiting {
+            Some(waiting) => self.flows_state.waiting.insert(id, waiting.clone()) != Some(waiting),
+            None => self.flows_state.waiting.remove(&id).is_some(),
+        };
+        if changed && let Some(view) = &self.flows {
+            let waiting = self.flows_state.waiting.clone();
+            view.update(cx, |view, cx| view.set_waiting(waiting, cx));
+        }
     }
 
     /// Runs `f` with the host and a driver over this shell, then probes the
@@ -372,6 +443,21 @@ mod tests {
             .collect()
     }
 
+    /// Keeps a host's writes and drops its launches.
+    #[derive(Default)]
+    struct Quiet(Vec<(FlowRun, Option<FlowVisit>)>);
+    impl SessionDriver for Quiet {
+        fn launch(&mut self, _: LaunchRequest) {}
+        fn follow_up(&mut self, _: i64, _: String) -> Option<u64> {
+            None
+        }
+        fn stop(&mut self, _: i64) {}
+        fn persist(&mut self, run: FlowRun, visit: Option<FlowVisit>) {
+            self.0.push((run, visit));
+        }
+        fn changed(&mut self, _: &str) {}
+    }
+
     fn shell(store: Store, cwd: &str, cx: &mut TestAppContext) -> WindowHandle<Shell> {
         let store = Arc::new(Mutex::new(store));
         let cwd = cwd.to_string();
@@ -436,6 +522,154 @@ mod tests {
             .unwrap();
         drop(flows);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[gpui::test]
+    fn a_worktree_the_session_reports_mid_turn_is_kept_when_the_run_is_cancelled(
+        cx: &mut TestAppContext,
+    ) {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let window = shell(store, "/work/rebase", cx);
+        let run_id = window
+            .update(cx, |shell, _, cx| {
+                // Known ids: the run is "id1", its first visit "id2".
+                let mut n = 0;
+                shell.flows_state.host = Some(Host::new(Runner::new(now, move || {
+                    n += 1;
+                    format!("id{n}")
+                })));
+                let flow = store_lock(shell.flows_state.store.as_ref().unwrap())
+                    .unwrap()
+                    .upsert(&fix_an_issue("/missing/flow-project"))
+                    .unwrap();
+                let run = shell.start_flow(&flow, &inputs(&flow), cx).unwrap();
+                assert_eq!(run.id, "id1");
+                // The visit's session, as `launch_flow_visit` reports it.
+                let summary = locked(&shell.store)
+                    .unwrap()
+                    .create("claude", "/missing/flow-project")
+                    .unwrap();
+                let id = summary.id;
+                shell.add(summary, cx);
+                let before = shell.sessions[&id].read(cx).submission_generation;
+                assert!(
+                    shell
+                        .with_flow_host(cx, |host, driver| {
+                            host.launched(driver, "id1", "id2", id, before)
+                        })
+                        .unwrap()
+                );
+                // Mid-turn, the conversation moves into its new worktree.
+                shell.sessions[&id].update(cx, |view, _| {
+                    view.settings.worktree_cwd = Some("/missing/flow-project/.wt".into())
+                });
+                shell.flow_session_changed(id, cx);
+                assert!(shell.flows_state.awaits(id), "the turn has not settled");
+                shell.cancel_flow_run(&run.id, cx).unwrap();
+                run.id
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                let store = store_lock(shell.flows_state.store.as_ref().unwrap()).unwrap();
+                let saved = store.run(&run_id).unwrap().unwrap();
+                assert_eq!(saved.status, RunStatus::Cancelled);
+                assert_eq!(
+                    saved.worktree_cwd.as_deref(),
+                    Some("/missing/flow-project/.wt"),
+                    "resume will reuse it"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_flow_session_waiting_for_approval_shows_in_the_flows_view(cx: &mut TestAppContext) {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let window = shell(store, "/work/rebase", cx);
+        let (flow_id, id) = window
+            .update(cx, |shell, window, cx| {
+                let mut n = 0;
+                shell.flows_state.host = Some(Host::new(Runner::new(now, move || {
+                    n += 1;
+                    format!("id{n}")
+                })));
+                let flows = shell.flows_state.store.clone().unwrap();
+                let flow = store_lock(&flows)
+                    .unwrap()
+                    .upsert(&fix_an_issue("/missing/flow-project"))
+                    .unwrap();
+                // Start without launching, so no background launch fails it.
+                let mut host = shell.flows_state.host.take().unwrap();
+                let mut quiet = Quiet::default();
+                host.start(&mut quiet, &flow, &inputs(&flow)).unwrap();
+                shell.flows_state.host = Some(host);
+                for (run, visit) in quiet.0 {
+                    let flows = store_lock(&flows).unwrap();
+                    flows.save_run(&run).unwrap();
+                    if let Some(visit) = visit {
+                        flows.save_visit(&visit).unwrap();
+                    }
+                }
+                let mut summary = locked(&shell.store)
+                    .unwrap()
+                    .create("claude", "/missing/flow-project")
+                    .unwrap();
+                summary.title = "Fix an issue · Triage".into();
+                let id = summary.id;
+                shell.add(summary, cx);
+                let before = shell.sessions[&id].read(cx).submission_generation;
+                shell.with_flow_host(cx, |host, driver| {
+                    host.launched(driver, "id1", "id2", id, before)
+                });
+                shell.open_flows(window, cx);
+                shell.sessions[&id].update(cx, |view, _| {
+                    view.set_approvals_for_test(vec![rebase_core::agent::Approval {
+                        id: "a1".into(),
+                        title: "Run a command?".into(),
+                        detail: "git status".into(),
+                        can_remember: false,
+                    }])
+                });
+                shell.flow_session_changed(id, cx);
+                assert_eq!(
+                    shell.flows_state.waiting.get(&id),
+                    Some(&Waiting {
+                        run_id: "id1".into(),
+                        session_title: "Fix an issue · Triage".into(),
+                    })
+                );
+                (flow.id, id)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                let view = shell.flows.clone().unwrap();
+                assert_eq!(
+                    view.read(cx).row_status_of(&flow_id),
+                    "Waiting for approval"
+                );
+                // Answered: the wait clears from the shell and the view.
+                shell.sessions[&id].update(cx, |view, _| view.set_approvals_for_test(vec![]));
+                shell.flow_session_changed(id, cx);
+                assert!(shell.flows_state.waiting.is_empty());
+                assert_eq!(view.read(cx).row_status_of(&flow_id), "Running");
+
+                // A session that is not running a visit never waits here.
+                shell.sessions[&id].update(cx, |view, _| {
+                    view.set_approvals_for_test(vec![rebase_core::agent::Approval {
+                        id: "a2".into(),
+                        title: "Run a command?".into(),
+                        detail: "ls".into(),
+                        can_remember: false,
+                    }])
+                });
+                shell.flow_session_closed(id, cx);
+                assert!(shell.flows_state.waiting.is_empty());
+            })
+            .unwrap();
     }
 
     #[gpui::test]

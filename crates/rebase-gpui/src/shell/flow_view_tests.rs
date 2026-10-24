@@ -493,3 +493,267 @@ fn a_refused_delete_shows_the_stores_error(cx: &mut TestAppContext) {
     });
     assert_eq!(with_store(window, visual, |s| s.list().unwrap()).len(), 1);
 }
+
+/// Opens `f1` in the editor and changes its name without saving.
+fn dirty_editor(
+    window: WindowHandle<Shell>,
+    visual: &mut VisualTestContext,
+) -> (Entity<FlowsView>, Entity<crate::input::Input>) {
+    open_with(window, visual, &fix_an_issue("f1", "/missing/flow-project"));
+    click(visual, "flow-edit-f1");
+    let view = view(window, visual);
+    let input = view.read_with(visual, |view, _| view.editor_input().unwrap());
+    let text = input.read_with(visual, |input, _| input.content.to_string());
+    set_text(
+        input.clone(),
+        &text.replacen("\"name\": \"Fix an issue\"", "\"name\": \"Unsaved\"", 1),
+        visual,
+    );
+    view.read_with(visual, |view, _| assert!(view.editor_can_save(), "dirty"));
+    (view, input)
+}
+
+fn press_escape(
+    window: WindowHandle<Shell>,
+    input: &Entity<crate::input::Input>,
+    visual: &mut VisualTestContext,
+) {
+    window
+        .update(visual, |_, window, cx| {
+            window.focus(&gpui::Focusable::focus_handle(input.read(cx), cx), cx)
+        })
+        .unwrap();
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+}
+
+#[gpui::test]
+fn the_editors_run_waits_until_its_edits_are_saved(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (view, _) = dirty_editor(window, visual);
+    click(visual, "flow-editor-run");
+    view.read_with(visual, |view, cx| {
+        assert_eq!(view.dialog_missing(cx), None, "no run dialog while dirty");
+        assert_eq!(view.page_name(), "editor");
+    });
+    assert!(
+        with_store(window, visual, |store| store.runs("f1", 10).unwrap()).is_empty(),
+        "nothing ran"
+    );
+
+    // The disabled Run's tooltip says why.
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.editor_run_blocked(), Some("Save your changes first"))
+    });
+
+    // Once saved, Run opens the dialog for the saved Flow.
+    click(visual, "flow-editor-save");
+    view.read_with(visual, |view, _| {
+        assert!(!view.editor_can_save(), "saved");
+        assert_eq!(view.editor_run_blocked(), None);
+    });
+    click(visual, "flow-editor-run");
+    view.read_with(visual, |view, cx| {
+        assert!(view.dialog_missing(cx).is_some(), "the run dialog opened")
+    });
+}
+
+#[gpui::test]
+fn escape_on_a_dirty_editor_asks_before_discarding(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (view, input) = dirty_editor(window, visual);
+
+    press_escape(window, &input, visual);
+    assert!(visual.has_pending_prompt(), "Escape asks first");
+    visual.simulate_prompt_answer("Cancel");
+    visual.run_until_parked();
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.page_name(), "editor");
+        assert!(view.editor_can_save(), "the edits are still there");
+    });
+    let text = input.read_with(visual, |input, _| input.content.to_string());
+    assert!(text.contains("\"name\": \"Unsaved\""));
+
+    press_escape(window, &input, visual);
+    assert!(visual.has_pending_prompt());
+    visual.simulate_prompt_answer("Discard");
+    visual.run_until_parked();
+    view.read_with(visual, |view, _| assert_eq!(view.page_name(), "empty"));
+    let stored = with_store(window, visual, |store| store.list().unwrap());
+    assert_eq!(stored[0].name, "Fix an issue", "nothing was saved");
+}
+
+#[gpui::test]
+fn escape_on_a_clean_editor_closes_it_without_asking(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    open_with(window, visual, &fix_an_issue("f1", "/work/rebase"));
+    click(visual, "flow-edit-f1");
+    let view = view(window, visual);
+    let input = view.read_with(visual, |view, _| view.editor_input().unwrap());
+    press_escape(window, &input, visual);
+    assert!(!visual.has_pending_prompt());
+    view.read_with(visual, |view, _| assert_eq!(view.page_name(), "empty"));
+}
+
+#[gpui::test]
+fn delete_is_refused_while_the_runner_has_a_run_the_store_does_not_show(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    open_with(window, visual, &approval_flow());
+    click(visual, "flow-run-gate1");
+    click(visual, "flow-run-start");
+    let view = view(window, visual);
+    let (run, _) = view.read_with(visual, |view, _| view.open_run().unwrap());
+    assert_eq!(run.status, RunStatus::WaitingApproval);
+    // The store has not caught up: its copy of the run reads as finished.
+    with_store(window, visual, |store| {
+        let mut stale = store.run(&run.id).unwrap().unwrap();
+        stale.status = RunStatus::Failed;
+        store.save_run(&stale).unwrap();
+        assert!(store.active_runs().unwrap().is_empty());
+    });
+
+    view.update(visual, |view, cx| view.confirm_delete_for_test("gate1", cx));
+    visual.run_until_parked();
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.error(), Some("Flow has an active run"))
+    });
+    assert_eq!(with_store(window, visual, |s| s.list().unwrap()).len(), 1);
+
+    // Once the runner lets the run go, the same delete goes through.
+    click(visual, "flow-cancel");
+    view.update(visual, |view, cx| view.confirm_delete_for_test("gate1", cx));
+    visual.run_until_parked();
+    assert!(with_store(window, visual, |s| s.list().unwrap()).is_empty());
+}
+
+#[gpui::test]
+fn a_running_visit_waiting_on_its_session_shows_the_approval_wait(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let flow = with_store(window, visual, |store| {
+        store.upsert(&fix_an_issue("f1", "/work/rebase")).unwrap()
+    });
+    let run = FlowRun {
+        id: "run1".into(),
+        flow_id: flow.id.clone(),
+        flow: flow.clone(),
+        status: RunStatus::Running,
+        inputs: HashMap::from([("issue".to_string(), "42".to_string())]),
+        worktree_cwd: None,
+        current_state: Some("triage".into()),
+        error: None,
+        created_at: 1,
+        finished_at: None,
+    };
+    let mut triage = visit("run1", 1, "triage", VisitStatus::Running);
+    triage.session_id = Some("77".into());
+    triage.finished_at = None;
+    with_store(window, visual, |store| {
+        store.save_run(&run).unwrap();
+        store.save_visit(&triage).unwrap();
+    });
+    window
+        .update(visual, |shell, window, cx| shell.open_flows(window, cx))
+        .unwrap();
+    visual.run_until_parked();
+    click(visual, "flow-row-f1");
+    let view = view(window, visual);
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.row_status_of("f1"), "Running");
+        assert_eq!(
+            view.running_hint_of(1).as_deref(),
+            Some("Running in Fix an issue · Triage — open the session if it needs your approval")
+        );
+    });
+    assert!(visual.debug_bounds("flow-visit-hint-1").is_some());
+
+    let waiting = HashMap::from([(
+        77,
+        crate::flows::Waiting {
+            run_id: "run1".into(),
+            session_title: "Fix an issue · Triage".into(),
+        },
+    )]);
+    view.update(visual, |view, cx| view.set_waiting(waiting, cx));
+    visual.run_until_parked();
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.row_status_of("f1"), "Waiting for approval");
+        assert_eq!(
+            view.running_hint_of(1).as_deref(),
+            Some("Waiting for your approval in Fix an issue · Triage")
+        );
+    });
+
+    // The approval was answered: back to the plain hint.
+    view.update(visual, |view, cx| view.set_waiting(HashMap::new(), cx));
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.row_status_of("f1"), "Running");
+    });
+}
+
+#[gpui::test]
+fn resuming_a_run_that_lost_its_worktree_takes_it_from_the_visit_session(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let flow = with_store(window, visual, |store| {
+        store
+            .upsert(&fix_an_issue("f1", "/missing/flow-project"))
+            .unwrap()
+    });
+    // The interrupted first visit's session moved into a worktree before
+    // the restart, but the run never heard of it.
+    let session = window
+        .update(visual, |shell, _, _| {
+            let store = shell.store.lock().unwrap();
+            let summary = store.create("claude", "/missing/flow-project").unwrap();
+            let mut settings = store
+                .agent_settings(summary.id)
+                .unwrap()
+                .unwrap_or_default();
+            settings.worktree_cwd = Some("/missing/flow-project/.worktrees/flow".into());
+            store.save_agent_settings(summary.id, &settings).unwrap();
+            summary.id
+        })
+        .unwrap();
+    let run = FlowRun {
+        id: "run1".into(),
+        flow_id: flow.id.clone(),
+        flow: flow.clone(),
+        status: RunStatus::Failed,
+        inputs: HashMap::from([
+            ("issue".to_string(), "42".to_string()),
+            ("notes".to_string(), String::new()),
+        ]),
+        worktree_cwd: None,
+        current_state: Some("triage".into()),
+        error: Some("Interrupted by app restart".into()),
+        created_at: 1,
+        finished_at: Some(3_000),
+    };
+    let mut triage = visit("run1", 1, "triage", VisitStatus::Failed);
+    triage.session_id = Some(session.to_string());
+    triage.error = Some("Interrupted by app restart".into());
+    with_store(window, visual, |store| {
+        store.save_run(&run).unwrap();
+        store.save_visit(&triage).unwrap();
+    });
+
+    window
+        .update(visual, |shell, _, cx| {
+            shell.resume_flow_run("run1".into(), "triage".into(), cx)
+        })
+        .unwrap()
+        .unwrap();
+    visual.run_until_parked();
+    let stored = with_store(window, visual, |store| store.run("run1").unwrap().unwrap());
+    assert_eq!(
+        stored.worktree_cwd.as_deref(),
+        Some("/missing/flow-project/.worktrees/flow")
+    );
+    let visits = with_store(window, visual, |store| store.visits("run1").unwrap());
+    assert_eq!(visits.len(), 2, "the resume appended a visit");
+}

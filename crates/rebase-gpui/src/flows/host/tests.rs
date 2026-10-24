@@ -493,3 +493,161 @@ fn closing_a_session_that_is_not_a_running_visit_changes_nothing() {
     assert_eq!(driver.visits()[0].status, VisitStatus::Completed);
     assert_eq!(driver.visits()[1].status, VisitStatus::Running);
 }
+
+#[test]
+fn a_worktree_reported_mid_turn_survives_cancel_and_resume_reuses_it() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    let run = start(&mut host, &mut driver);
+    launch(&mut host, &mut driver, 100);
+    // The conversation moves into its new worktree while the turn runs.
+    host.worktree(&mut driver, 100, "/repo/.worktrees/flow");
+    assert_eq!(
+        driver.last_run().worktree_cwd.as_deref(),
+        Some("/repo/.worktrees/flow")
+    );
+    // A repeat report from the next SessionChanged writes nothing new.
+    let persisted = driver.persisted.len();
+    host.worktree(&mut driver, 100, "/repo/.worktrees/flow");
+    host.worktree(&mut driver, 100, "/elsewhere");
+    assert_eq!(driver.persisted.len(), persisted);
+    // Sessions that are not running a visit report nothing.
+    host.worktree(&mut driver, 555, "/elsewhere");
+    assert_eq!(driver.persisted.len(), persisted);
+
+    host.cancel(&mut driver, &run.id);
+    let cancelled = driver.last_run();
+    assert_eq!(cancelled.status, RunStatus::Cancelled);
+    assert_eq!(
+        cancelled.worktree_cwd.as_deref(),
+        Some("/repo/.worktrees/flow")
+    );
+
+    // Resume, as the shell does, from the stored run and visits.
+    let visits = driver.visits();
+    assert!(host.resume(&mut driver, cancelled, visits, "plan"));
+    let resumed = driver.launches.last().unwrap();
+    assert_eq!(driver.launches.len(), 2);
+    assert_eq!(
+        resumed.worktree_cwd.as_deref(),
+        Some("/repo/.worktrees/flow"),
+        "the resumed visit reuses the worktree"
+    );
+}
+
+#[test]
+fn a_recovered_run_without_a_worktree_resumes_in_its_visit_sessions_worktree() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    start(&mut host, &mut driver);
+    launch(&mut host, &mut driver, 100);
+    let (run, visits) = (driver.last_run(), driver.visits());
+    assert_eq!(run.worktree_cwd, None, "the restart cut the turn off first");
+
+    let (mut restarted, mut after) = (self::host(), Driver::default());
+    restarted.recover(&mut after, vec![(run, visits)]);
+    let (mut run, visits) = (after.last_run(), after.visits());
+    assert_eq!(run.status, RunStatus::Failed);
+
+    // The session's saved settings still name the worktree it moved into.
+    let mut asked = Vec::new();
+    fill_worktree(&mut run, &visits, |session| {
+        asked.push(session);
+        (session == 100).then(|| "/repo/.worktrees/flow".to_string())
+    });
+    assert_eq!(asked, vec![100]);
+    assert_eq!(run.worktree_cwd.as_deref(), Some("/repo/.worktrees/flow"));
+
+    assert!(restarted.resume(&mut after, run, visits, "plan"));
+    let resumed = after.launches.last().unwrap();
+    assert_eq!(
+        resumed.worktree_cwd.as_deref(),
+        Some("/repo/.worktrees/flow")
+    );
+    assert_eq!(
+        after.last_run().worktree_cwd.as_deref(),
+        Some("/repo/.worktrees/flow"),
+        "the resumed run records it"
+    );
+}
+
+#[test]
+fn filling_a_worktree_keeps_a_known_one_and_takes_the_latest_session_that_has_one() {
+    let visit = |seq: u32, session: Option<&str>| FlowVisit {
+        id: format!("v{seq}"),
+        run_id: "r1".into(),
+        seq,
+        state_id: "plan".into(),
+        status: VisitStatus::Failed,
+        prompt: None,
+        session_id: session.map(str::to_owned),
+        outputs: None,
+        error: None,
+        retried: false,
+        note: None,
+        started_at: 0,
+        finished_at: None,
+    };
+    let mut host = host();
+    let mut driver = Driver::default();
+    let mut run = start(&mut host, &mut driver);
+    // Seq 3 failed at launch with no session; seq 2's session has none saved.
+    let visits = vec![visit(3, None), visit(1, Some("100")), visit(2, Some("101"))];
+    let mut asked = Vec::new();
+    fill_worktree(&mut run, &visits, |session| {
+        asked.push(session);
+        (session == 100).then(|| "/wt-100".to_string())
+    });
+    assert_eq!(asked, vec![101, 100], "newest session first");
+    assert_eq!(run.worktree_cwd.as_deref(), Some("/wt-100"));
+
+    // A run that already knows its worktree is left alone.
+    run.worktree_cwd = Some("/known".into());
+    fill_worktree(&mut run, &visits, |_| panic!("not asked"));
+    assert_eq!(run.worktree_cwd.as_deref(), Some("/known"));
+
+    // Nothing saved anywhere: still none.
+    run.worktree_cwd = None;
+    fill_worktree(&mut run, &visits, |_| None);
+    assert_eq!(run.worktree_cwd, None);
+}
+
+#[test]
+fn a_stop_before_the_turn_starts_reports_cancelled_not_a_start_failure() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    start(&mut host, &mut driver);
+    let request = driver.launches[0].clone();
+    assert!(host.launched(&mut driver, &request.run_id, &request.visit_id, 100, 7));
+    host.submitted(100);
+    // The generation never moved: the user stopped it before it started.
+    let stopped = Settled {
+        cancelled: true,
+        ..Default::default()
+    };
+    host.settle(&mut driver, 100, done(7), stopped);
+    assert_eq!(driver.last_run().status, RunStatus::Cancelled);
+    let visit = &driver.visits()[0];
+    assert_eq!(visit.status, VisitStatus::Cancelled);
+    assert_eq!(visit.error, None);
+}
+
+#[test]
+fn has_active_covers_a_run_until_it_finishes() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    assert!(!host.has_active("flow1"));
+    let run = start(&mut host, &mut driver);
+    assert!(host.has_active("flow1"));
+    assert!(!host.has_active("flow2"));
+    host.cancel(&mut driver, &run.id);
+    assert!(!host.has_active("flow1"));
+}
+
+#[test]
+fn run_of_names_the_run_of_a_session_with_a_turn_in_flight() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    let run = start(&mut host, &mut driver);
+    assert_eq!(host.run_of(100), None, "not launched yet");
+    launch(&mut host, &mut driver, 100);
+    assert_eq!(host.run_of(100), Some(run.id.as_str()));
+    assert_eq!(host.run_of(555), None);
+    finish(&mut host, &mut driver, 100, reply(PLAN, Some("/wt")));
+    assert_eq!(host.run_of(100), None, "its visit settled");
+}

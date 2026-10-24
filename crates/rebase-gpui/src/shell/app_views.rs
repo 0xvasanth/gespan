@@ -389,6 +389,7 @@ impl Shell {
                             this.open(*id, window, cx);
                             Ok(())
                         }
+                        flows::Event::Delete(id) => this.delete_flow(id, cx),
                     };
                     if let Err(error) = result {
                         view.update(cx, |view, cx| view.set_error(error, cx));
@@ -400,9 +401,11 @@ impl Shell {
         if let Some(view) = &self.flows {
             let cwd = self.workspace.project.clone();
             let projects = self.workspace.projects.clone();
+            let waiting = self.flows_state.waiting.clone();
             view.update(cx, |view, cx| {
                 view.set_appearances(self.workspace.project_appearance.clone(), cx);
                 view.set_context(cwd, projects, cx);
+                view.set_waiting(waiting, cx);
                 view.refresh(cx);
             });
         }
