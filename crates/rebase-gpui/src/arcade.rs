@@ -1,4 +1,6 @@
-//! React's Pac-man and Snake engines, painted with GPUI rather than a web view.
+//! React's Pac-man and Snake engines, painted with GPUI rather than a web view,
+//! plus a native-only colour Tetris.
+mod tetris;
 use crate::{popover::AnchorSlot, theme::*};
 use gpui::{
     App, Context, FocusHandle, Focusable, Render, Role, Window, canvas, div, fill, point,
@@ -6,6 +8,42 @@ use gpui::{
 };
 use serde::Deserialize;
 use std::time::{Duration, Instant};
+use tetris::{Input, Tetris};
+const GAMES: [&str; 3] = ["Pac-man", "Snake", "Tetris"];
+const TETRIS: usize = 2;
+fn seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |d| d.as_nanos() as u64)
+}
+/// The well fills the pane: cells near 26px in play (8px idle, like the other
+/// attract loops), leaving room for the HUD and, in play, the preview beside
+/// it, so a wide pane plays wide rather than in a phone-shaped column.
+fn tetris_size(width: f32, height: f32, playing: bool) -> (usize, usize) {
+    let (cell, top, preview, max_rows) = if playing {
+        (26., 44., 6., 30.)
+    } else {
+        (8., 16., 0., 22.)
+    };
+    let rows = ((height - top) / cell).floor().clamp(8., max_rows);
+    let cell = ((height - top) / rows).max(4.);
+    let cols = ((width - 16.) / cell).floor() - preview;
+    (cols.clamp(10., 160.) as usize, rows as usize)
+}
+/// Emitted when a game takes or releases the keyboard; the empty session
+/// lifts the arcade over its composer only while one is in play.
+pub(crate) struct PlayingChanged;
+impl gpui::EventEmitter<PlayingChanged> for Arcade {}
+fn tetris_input(key: &str) -> Option<Input> {
+    Some(match key {
+        "left" | "a" => Input::Left,
+        "right" | "d" => Input::Right,
+        "up" | "w" => Input::Rotate,
+        "down" | "s" => Input::SoftDrop,
+        "space" => Input::HardDrop,
+        _ => return None,
+    })
+}
 #[derive(Clone, Default, Deserialize)]
 struct Frame {
     cells: Vec<(usize, f32)>,
@@ -49,6 +87,7 @@ pub(crate) struct Arcade {
     context: rquickjs::Context,
     _runtime: rquickjs::Runtime,
     frame: Frame,
+    tetris: Tetris,
     anchor: AnchorSlot,
     focus: FocusHandle,
     previous: Option<FocusHandle>,
@@ -71,6 +110,7 @@ impl Arcade {
             context,
             _runtime: runtime,
             frame: Frame::default(),
+            tetris: Tetris::new(seed(), 10, 20),
             anchor: Default::default(),
             focus: cx.focus_handle(),
             previous: None,
@@ -84,12 +124,13 @@ impl Arcade {
     }
     fn tick(&mut self, reduced: bool) {
         let now = Instant::now();
-        if now.duration_since(self.last) < Duration::from_millis(33) && !self.frame.cells.is_empty()
+        if now.duration_since(self.last) < Duration::from_millis(33)
+            && (self.index == TETRIS || !self.frame.cells.is_empty())
         {
             return;
         }
         if !self.playing && now.duration_since(self.switched) > Duration::from_secs(16) {
-            self.index = 1 - self.index;
+            self.index = (self.index + 1) % GAMES.len();
             self.switched = now;
         }
         let bounds = self.anchor.get().unwrap_or_default();
@@ -101,6 +142,17 @@ impl Arcade {
             now.duration_since(self.last).as_secs_f32().min(0.1) * 1000.
         };
         self.last = now;
+        if self.index == TETRIS {
+            self.fit_tetris(bounds.size.width.as_f32(), bounds.size.height.as_f32());
+            let interval = match (self.playing, self.mode) {
+                (false, _) => 90.,
+                (true, "low") => 700.,
+                (true, "hard") => 220.,
+                _ => 450.,
+            };
+            self.tetris.update(dt, interval, !self.playing);
+            return;
+        }
         let (dx, dy) = std::mem::take(&mut self.heading);
         let result = self.context.with(|cx| {
             let object: rquickjs::Object = cx.globals().get("NativeArcade")?;
@@ -121,13 +173,41 @@ impl Arcade {
             self.frame = frame;
         }
     }
+    /// Resize the well to the pane. The idle loop always follows; a game in
+    /// play only until its first piece lands, which covers the jump from the
+    /// banner to the full pane on take-control without wiping a real game.
+    fn fit_tetris(&mut self, width: f32, height: f32) {
+        let size = tetris_size(width, height, self.playing);
+        if size != (self.tetris.cols, self.tetris.rows)
+            && (!self.playing || self.tetris.untouched())
+        {
+            self.tetris = Tetris::new(seed(), size.0, size.1);
+        }
+    }
+    pub(crate) fn playing(&self) -> bool {
+        self.playing
+    }
+    pub(crate) fn set_playing(&mut self, playing: bool, cx: &mut Context<Self>) {
+        if self.playing != playing {
+            self.playing = playing;
+            cx.emit(PlayingChanged);
+        }
+        cx.notify();
+    }
+    /// The JS engines' pickup and speech bubble; their last frame lingers
+    /// while Tetris plays, so it must not paint over the well.
+    fn overlays(&self) -> (Option<&Pickup>, Option<&Bubble>) {
+        if self.index == TETRIS {
+            return (None, None);
+        }
+        (self.frame.pickup.as_ref(), self.frame.bubble.as_ref())
+    }
     fn release(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.playing = false;
         self.switched = Instant::now();
+        self.set_playing(false, cx);
         if let Some(focus) = self.previous.take() {
             window.focus(&focus, cx);
         }
-        cx.notify();
     }
 }
 impl Focusable for Arcade {
@@ -144,11 +224,19 @@ impl Render for Arcade {
             window.request_animation_frame();
         }
         let frame = self.frame.clone();
+        let tetris = (self.index == TETRIS).then(|| {
+            (
+                self.tetris.blocks(),
+                self.tetris.next,
+                (self.tetris.cols, self.tetris.rows),
+            )
+        });
         let playing = self.playing;
         let index = self.index;
         let mode = self.mode;
         let mut root = div()
             .id("empty-session-arcade")
+            .debug_selector(|| "empty-session-arcade".into())
             .group("empty-session-arcade")
             .absolute()
             .top_0()
@@ -167,7 +255,17 @@ impl Render for Arcade {
                 {
                     return;
                 }
-                let heading = match event.keystroke.key.as_str() {
+                let key = event.keystroke.key.as_str();
+                if this.index == TETRIS && key != "escape" {
+                    let Some(input) = tetris_input(key) else {
+                        return;
+                    };
+                    this.tetris.input(input);
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                let heading = match key {
                     "up" | "w" => (0, -1),
                     "down" | "s" => (0, 1),
                     "left" | "a" => (-1, 0),
@@ -187,6 +285,10 @@ impl Render for Arcade {
                 canvas(
                     |_, _, _| {},
                     move |bounds, _, window, _| {
+                        if let Some((blocks, next, size)) = &tetris {
+                            paint_tetris(bounds, window, blocks, next, *size, playing);
+                            return;
+                        }
                         let cols = (bounds.size.width.as_f32() / 7.).ceil().max(7.) as usize;
                         let h = bounds.size.height.as_f32();
                         let opacity = |y: f32| {
@@ -275,7 +377,8 @@ impl Render for Arcade {
                 .absolute()
                 .size_full(),
             );
-        if let Some(pickup) = &self.frame.pickup {
+        let (pickup, bubble) = self.overlays();
+        if let Some(pickup) = pickup {
             root = root.child(
                 div()
                     .absolute()
@@ -285,7 +388,7 @@ impl Render for Arcade {
                     .child(provider_icon(&pickup.harness, pickup.cells * 7. - 1.)),
             );
         }
-        if let Some(bubble) = &self.frame.bubble {
+        if let Some(bubble) = bubble {
             root = root.child(
                 div()
                     .absolute()
@@ -335,15 +438,18 @@ impl Render for Arcade {
                     .justify_between()
                     .text_size(px(11.))
                     .font_family(crate::markdown::PILOT)
-                    .child(format!(
-                        "score {} {}",
-                        self.frame.score,
-                        if index == 0 {
+                    .child(match index {
+                        0 => format!(
+                            "score {} {}",
+                            self.frame.score,
                             "•".repeat(self.frame.lives as usize)
-                        } else {
-                            String::new()
+                        ),
+                        TETRIS if self.tetris.game_over() => {
+                            format!("game over · score {}", self.tetris.score)
                         }
-                    ))
+                        TETRIS => format!("score {}", self.tetris.score),
+                        _ => format!("score {}", self.frame.score),
+                    })
                     .child(difficulties)
                     .child(release),
             );
@@ -351,26 +457,24 @@ impl Render for Arcade {
             let play = div()
                 .id("play-arcade")
                 .role(Role::Button)
-                .aria_label(if index == 0 {
-                    "Take control of Pac-man"
-                } else {
-                    "Take control of Snake"
-                })
+                .aria_label(format!("Take control of {}", GAMES[index]))
                 .opacity(0.)
                 .group_hover("empty-session-arcade", |s| s.opacity(1.))
                 .cursor_pointer()
                 .font_family(crate::markdown::PILOT)
                 .text_size(px(11.))
-                .child(if index == 0 {
-                    "[ take control · pac-man ]"
-                } else {
-                    "[ take control · snake ]"
-                })
+                .child(format!(
+                    "[ take control · {} ]",
+                    GAMES[index].to_lowercase()
+                ))
                 .on_click(cx.listener(|this, _, window, cx| {
+                    // Play starts on a clean well, not the attract loop's stack.
+                    if this.index == TETRIS {
+                        this.tetris = Tetris::new(seed(), this.tetris.cols, this.tetris.rows);
+                    }
                     this.previous = window.focused(cx);
-                    this.playing = true;
+                    this.set_playing(true, cx);
                     window.focus(&this.focus, cx);
-                    cx.notify();
                 }));
             let games = div()
                 .absolute()
@@ -380,11 +484,11 @@ impl Render for Arcade {
                 .flex()
                 .justify_center()
                 .gap_1()
-                .children([0, 1].map(|i| {
+                .children((0..GAMES.len()).map(|i| {
                     div()
                         .id(("game", i))
                         .role(Role::Button)
-                        .aria_label(if i == 0 { "pac-man" } else { "snake" })
+                        .aria_label(GAMES[i].to_lowercase())
                         .size_4()
                         .flex()
                         .items_center()
@@ -416,9 +520,206 @@ impl Render for Arcade {
     }
 }
 
+/// The well sits centred under the HUD; idle it paints at half strength
+/// beneath the composer like the other attract loops.
+fn paint_tetris(
+    bounds: gpui::Bounds<gpui::Pixels>,
+    window: &mut Window,
+    blocks: &[(i32, i32, u8)],
+    next: &tetris::Piece,
+    (cols, rows): (usize, usize),
+    playing: bool,
+) {
+    let top = if playing { 36. } else { 8. };
+    // In play the next-piece preview sits a column right of the well, so
+    // centre and size the pair together to keep it inside narrow panes.
+    let span = cols as f32 + if playing { 6. } else { 0. };
+    let cell = ((bounds.size.height.as_f32() - top - 8.) / rows as f32)
+        .min((bounds.size.width.as_f32() - 16.) / span)
+        .floor()
+        .clamp(4., 40.);
+    let left = ((bounds.size.width.as_f32() - cell * span) / 2.).floor();
+    let strength = if playing { 0.92 } else { 0.45 };
+    let mut square = |x: f32, y: f32, color: gpui::Hsla| {
+        window.paint_quad(fill(
+            gpui::Bounds::new(
+                bounds.origin + point(px(left + x * cell), px(top + y * cell)),
+                size(px(cell - 1.), px(cell - 1.)),
+            ),
+            color,
+        ));
+    };
+    for y in 0..rows {
+        for x in 0..cols {
+            square(
+                x as f32,
+                y as f32,
+                content(if playing { 0.06 } else { 0.03 }),
+            );
+        }
+    }
+    for &(x, y, color) in blocks {
+        square(x as f32, y as f32, block_color(color, strength));
+    }
+    if playing {
+        let cells = next.cells();
+        let min_x = cells.iter().map(|c| c.0).min().unwrap_or(0);
+        let min_y = cells.iter().map(|c| c.1).min().unwrap_or(0);
+        for (x, y) in cells {
+            square(
+                (cols as i32 + 1 + x - min_x) as f32,
+                (y - min_y) as f32,
+                block_color(next.color, strength),
+            );
+        }
+    }
+}
+fn block_color(color: u8, alpha: f32) -> gpui::Hsla {
+    const HUES: [f32; tetris::COLORS as usize] = [0.98, 0.12, 0.52];
+    let lightness = if is_light() { 0.5 } else { 0.62 };
+    gpui::hsla(HUES[color as usize % HUES.len()], 0.72, lightness, alpha)
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::AppContext;
+    #[test]
+    fn tetris_keys_cover_arrows_wasd_and_space() {
+        use super::{Input, tetris_input};
+        for (keys, input) in [
+            (["left", "a"], Input::Left),
+            (["right", "d"], Input::Right),
+            (["up", "w"], Input::Rotate),
+            (["down", "s"], Input::SoftDrop),
+        ] {
+            for key in keys {
+                assert_eq!(tetris_input(key), Some(input), "{key}");
+            }
+        }
+        assert_eq!(tetris_input("space"), Some(Input::HardDrop));
+        assert_eq!(tetris_input("escape"), None);
+        assert_eq!(tetris_input("enter"), None);
+    }
+
+    #[gpui::test]
+    fn idle_attract_loop_rotates_through_all_three_games(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(super::Arcade::new);
+        view.update(cx, |a, _| {
+            let mut seen = Vec::new();
+            for _ in 0..4 {
+                a.switched -= std::time::Duration::from_secs(17);
+                a.last -= std::time::Duration::from_millis(40);
+                a.tick(false);
+                seen.push(a.index);
+            }
+            assert_eq!(seen, [1, super::TETRIS, 0, 1]);
+            // Nobody is playing, so the attract loop never stops on one game.
+            a.playing = true;
+            a.switched -= std::time::Duration::from_secs(17);
+            a.last -= std::time::Duration::from_millis(40);
+            a.tick(false);
+            assert_eq!(a.index, 1);
+        });
+    }
+
+    #[gpui::test]
+    fn tetris_ticks_the_native_engine_not_the_js_one(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(super::Arcade::new);
+        view.update(cx, |a, _| {
+            a.index = super::TETRIS;
+            a.playing = true;
+            let before = a.tetris.blocks();
+            // 100ms of "hard" gravity is enough to drop the piece a row.
+            a.mode = "hard";
+            for _ in 0..4 {
+                a.last -= std::time::Duration::from_millis(100);
+                a.tick(false);
+            }
+            assert_ne!(a.tetris.blocks(), before);
+            assert!(a.frame.cells.is_empty(), "the JS engine never ran");
+        });
+    }
+
+    #[gpui::test]
+    fn js_overlays_left_over_from_snake_stay_hidden_under_tetris(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(super::Arcade::new);
+        view.update(cx, |a, _| {
+            a.frame.pickup = Some(super::Pickup {
+                harness: "claude".into(),
+                x: 1.,
+                y: 1.,
+                cells: 2.,
+                alpha: 1.,
+            });
+            a.frame.bubble = Some(super::Bubble {
+                text: "hi".into(),
+                x: 1.,
+                y: 1.,
+                alpha: 1.,
+            });
+            a.index = 1;
+            let (pickup, bubble) = a.overlays();
+            assert!(pickup.is_some() && bubble.is_some());
+            a.index = super::TETRIS;
+            let (pickup, bubble) = a.overlays();
+            assert!(pickup.is_none() && bubble.is_none());
+        });
+    }
+
+    #[test]
+    fn the_well_fills_wide_panes_instead_of_a_phone_column() {
+        use super::tetris_size;
+        // A wide desktop pane plays landscape.
+        let (cols, rows) = tetris_size(1400., 800., true);
+        assert!(cols > rows * 3 / 2, "{cols}x{rows}");
+        assert!((26..=30).contains(&rows), "{rows}");
+        // The preview still fits: well + gap + preview within the width.
+        let cell = (800. - 44.) / rows as f32;
+        assert!((cols + 6) as f32 * cell <= 1400. - 16.);
+        // A narrow pane never drops below a classic 10-wide well.
+        assert_eq!(tetris_size(260., 800., true).0, 10);
+        // Idle, the banner spreads across the width like Pac-man and Snake.
+        let (cols, rows) = tetris_size(1000., 192., false);
+        assert_eq!((cols, rows), (123, 22));
+    }
+
+    #[gpui::test]
+    fn the_well_follows_the_pane_until_a_game_has_something_to_lose(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(super::Arcade::new);
+        view.update(cx, |a, _| {
+            a.fit_tetris(1000., 192.);
+            assert_eq!((a.tetris.cols, a.tetris.rows), (123, 22));
+            // Taking control grows the arcade to the whole pane.
+            a.playing = true;
+            a.fit_tetris(1400., 800.);
+            let wide = (a.tetris.cols, a.tetris.rows);
+            assert_eq!(wide, super::tetris_size(1400., 800., true));
+            // Once a piece has landed, a resize keeps the game as it is.
+            a.tetris.input(super::Input::HardDrop);
+            assert!(!a.tetris.untouched());
+            a.fit_tetris(700., 800.);
+            assert_eq!((a.tetris.cols, a.tetris.rows), wide);
+        });
+    }
+
+    #[gpui::test]
+    fn taking_and_releasing_control_tells_the_session_once(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(super::Arcade::new);
+        let changes = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = changes.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&view, move |arcade, _: &super::PlayingChanged, cx| {
+                seen.borrow_mut().push(arcade.read(cx).playing());
+            })
+        });
+        for playing in [true, true, false] {
+            view.update(cx, |a, cx| a.set_playing(playing, cx));
+            cx.run_until_parked();
+        }
+        // Repeating the same state is not a change.
+        assert_eq!(*changes.borrow(), [true, false]);
+    }
+
     #[gpui::test]
     fn original_engines_support_both_games(cx: &mut gpui::TestAppContext) {
         let view = cx.new(super::Arcade::new);

@@ -421,7 +421,7 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "empty-session-games",
         Section::Chat,
         "Empty session games",
-        "pacman snake arcade grid fun",
+        "pacman snake tetris arcade grid fun",
     ),
     (
         "agent-clis",
