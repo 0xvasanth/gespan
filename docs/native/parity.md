@@ -41,6 +41,7 @@ approval for every edit. Native Supervised mode does not add that guarantee.
 | Inbox | Runtime/visual checks, inline video, linked-update notices and richer CI evidence/repair progress |
 | Notes | Runtime/visual checks and composer note-card presentation |
 | Automations | Scheduler, provider and recovery checks; current implementation has source review only |
+| Board | Runtime/visual checks in `bun run native:dev` (see [verification](verification.md#board--october-24-2026)); keyboard reordering is a "Move to…" menu rather than keyboard dragging; changes from the Tauri app arrive on open, on window focus or within about 2 s |
 | Pilots | Existing-data checks, HTML accessibility, floating-document interactions and durable orchestration recovery |
 | Remote connections | Real-machine installation/update, existing-data restoration and cross-platform checks; the existing host's feature limits still apply |
 | Integrations | Completion/approval notifications, sounds and Dock badges; Quick Composer attachments/shortcut checks, MCP/skills checks and remaining app-control endpoints. macOS reminder delivery and click routing passed on Oct 22 |

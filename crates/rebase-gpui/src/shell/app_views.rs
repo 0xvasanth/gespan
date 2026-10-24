@@ -266,6 +266,12 @@ impl Shell {
                 window,
                 |this, _, event: &board::Event, window, cx| match event {
                     board::Event::Close => this.close_app_view(window, cx),
+                    board::Event::OpenSession(id) => this.open(*id, window, cx),
+                    board::Event::OpenPilot(id) => {
+                        if let Some(pilots) = this.pilots.clone() {
+                            pilots.update(cx, |pilots, cx| pilots.open(id, window, cx));
+                        }
+                    }
                 },
             ));
             self.board = Some(view);

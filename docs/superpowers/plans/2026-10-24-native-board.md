@@ -23,7 +23,7 @@
 - **Busy timeout.** Use `busy_timeout` 5 s and `PRAGMA foreign_keys=ON` per connection, as `automations::Service::open` does.
 - **No new crates.** Add no dependencies to `crates/rebase-gpui/Cargo.lock`. Build with `--locked`.
 - **Gate.** Run `bun run native:check` (it shells to npm internally; leave that as it is). The Tauri side must stay green too: `bun run check:web` and `bun run check:rust`.
-- **Commits** carry no Claude or co-author attribution. Never use "mono" naming.
+- **Commits** carry no Claude or co-author attribution. Use "rebase" naming only, never the old product name.
 
 ## Review Focus
 
@@ -137,7 +137,7 @@
 UI behaviour (copy the Tauri behaviour; the visuals follow the spec's Visual Design table):
 - **Board header:** a switcher (reuse the app's existing picker/popover component; find what `notes.rs` or `automations.rs` uses for a select), "New board", and a trailing `+` that adds a column.
 - **Column header:** role icon (14 px; draw the rings in GPUI with the role colours mapped to native tokens), name, count, and on hover `+` and `…`. The `…` menu has Rename, Set role and Delete. Delete is disabled with the tooltip `"Column has N cards"` while the column isn't empty.
-- **Card:** title (two-line clamp), mono `#N`, link chip, and relative updated time. A card in a `done` column shows its title at 60 %.
+- **Card:** title (two-line clamp), fixed-width `#N`, link chip, and relative updated time. A card in a `done` column shows its title at 60 %.
 - **Composer:** "+ Add card" turns into an input with the hint `"Enter to add · Esc to cancel"`. Enter adds the trimmed title (an empty title adds nothing), Esc cancels.
 - **Remembered board:** the last open board id is kept in the native preferences or workspace state, not localStorage.
 - **Refresh:**

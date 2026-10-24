@@ -1,3 +1,4 @@
+use super::detail::activity_text;
 use super::*;
 use gpui::{
     Bounds, TestAppContext, VisualTestContext, WindowBounds, WindowHandle, WindowOptions, point,
@@ -431,4 +432,137 @@ fn dragging_a_column_header_reorders_the_columns(cx: &mut TestAppContext) {
         .map(|c| c.name.clone())
         .collect();
     assert_eq!(names, ["Done", "Backlog", "In Progress", "Review"]);
+}
+
+fn events(
+    f: &Fixture,
+    visual: &mut VisualTestContext,
+) -> (Rc<std::cell::RefCell<Vec<String>>>, gpui::Subscription) {
+    let seen = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = seen.clone();
+    let entity = f.window.root(visual).unwrap();
+    let subscription = visual.update(|_, cx| {
+        cx.subscribe(&entity, move |_, event: &Event, _| {
+            log.borrow_mut().push(match event {
+                Event::Close => "close".to_string(),
+                Event::OpenSession(id) => format!("session:{id}"),
+                Event::OpenPilot(id) => format!("pilot:{id}"),
+            })
+        })
+    });
+    (seen, subscription)
+}
+
+fn linked(cx: &mut TestAppContext, target: Option<&str>) -> (Fixture, i64) {
+    let f = seeded(cx, &["Linked"]);
+    let session = f.store.lock().unwrap().create("codex", "/work").unwrap().id;
+    let persisted = f
+        .store
+        .lock()
+        .unwrap()
+        .persisted_session_id(session)
+        .unwrap();
+    let card = detail(&f, cx).cards[0].id.clone();
+    Service::open(&f.db)
+        .unwrap()
+        .card_link(&card, Some("session"), Some(target.unwrap_or(&persisted)))
+        .unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    cx.run_until_parked();
+    (f, session)
+}
+
+#[gpui::test]
+fn a_card_linked_in_tauri_form_opens_its_session(cx: &mut TestAppContext) {
+    let (f, session) = linked(cx, None);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let (seen, _subscription) = events(&f, visual);
+    click(visual, "board-card-1");
+    click(visual, "board-open-linked");
+    assert_eq!(*seen.borrow(), [format!("session:{session}")]);
+}
+
+#[gpui::test]
+fn a_missing_session_says_so_and_offers_no_open(cx: &mut TestAppContext) {
+    let (f, _) = linked(cx, Some("deleted-session"));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-link-missing").is_some());
+    assert!(visual.debug_bounds("board-open-linked").is_none());
+}
+
+#[gpui::test]
+fn declining_the_delete_confirm_keeps_the_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Keep"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-card-delete");
+    assert!(visual.has_pending_prompt());
+    visual.simulate_prompt_answer("Cancel");
+    visual.run_until_parked();
+    assert_eq!(detail(&f, visual).cards.len(), 1);
+    click(visual, "board-card-delete");
+    visual.simulate_prompt_answer("Delete");
+    visual.run_until_parked();
+    assert!(detail(&f, visual).cards.is_empty());
+    f.window
+        .read_with(visual, |view, _| assert!(view.card_detail.is_none()))
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_failed_activity_load_says_so(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["History"]);
+    // A database path inside a plain file can never be opened.
+    let blocker = f._dir.0.join("not-a-folder");
+    std::fs::write(&blocker, b"").unwrap();
+    f.window
+        .update(cx, |view, _, _| {
+            view.service = None;
+            view.db_path = blocker.join("rebase.db");
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-activity-failed").is_some());
+}
+
+#[gpui::test]
+fn linking_from_the_picker_stores_the_persisted_session_id(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["To link"]);
+    let session = f.store.lock().unwrap().create("codex", "/work").unwrap().id;
+    let persisted = f
+        .store
+        .lock()
+        .unwrap()
+        .persisted_session_id(session)
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-link-picker");
+    click(visual, "board-link-target-0");
+    let card = detail(&f, visual).cards[0].clone();
+    assert_eq!(card.link_kind.as_deref(), Some("session"));
+    assert_eq!(card.link_id.as_deref(), Some(persisted.as_str()));
+}
+
+#[test]
+fn a_move_reads_from_and_to_with_actor() {
+    let row = rebase_core::board::Activity {
+        id: "a".into(),
+        board_id: "b".into(),
+        card_id: Some("c".into()),
+        kind: "moved".into(),
+        actor: "system".into(),
+        from_column: Some("In Progress".into()),
+        to_column: Some("Review".into()),
+        detail: None,
+        created_at: 0,
+    };
+    assert_eq!(
+        activity_text(&row),
+        "Moved from In Progress to Review · system"
+    );
 }

@@ -1,4 +1,4 @@
-//! One board card: title, mono number, link chip and how long ago it changed.
+//! One board card: title, fixed-width number, link chip and how long ago it changed.
 //! Cards drag between columns; the "…" menu offers Move to… for keyboards.
 use super::{BoardView, DraggedCard, LinkLabel};
 use crate::theme::*;
@@ -69,6 +69,10 @@ impl BoardView {
                 });
                 cx.new(|_| payload.clone())
             })
+            .on_click(cx.listener({
+                let id = card.id.clone();
+                move |this, _, window, cx| this.open_card_detail(id.clone(), window, cx)
+            }))
             .child(anchor.probe())
             .child(
                 div()

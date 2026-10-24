@@ -68,6 +68,29 @@ personal storage. To run that read-only check explicitly:
 cargo test --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core --profile native-dev installed_desktop_dir_reads -- --ignored
 ```
 
+## Board — October 24, 2026
+
+The native Board shares the Tauri app's `boards`, `board_columns`,
+`board_cards` and `board_activity` tables; `tests/shared_contracts.rs` pins the
+DDL, error strings and the `rebase.boardEnabled` key to Tauri. Automated
+coverage: storage, ordering and two-connection writes (core), auto-move and
+turn rules (core), the Board setting and app view, the board view, drag and
+drop and Move to…, card detail, and turn hooks (GPUI tests).
+
+These runtime checks are pending; none has been run by hand yet:
+
+- Turn Board on in Settings → General; the Board entry appears in the rail,
+  sidebar and title tabs.
+- Create a board in native and see it in Tauri; edit it in Tauri and see the
+  change in native within about 2 s.
+- Drag cards within a column, across columns and onto an empty column.
+- Reorder columns by dragging their headers.
+- Use a card's "Move to…" menu.
+- Link a card to a session, send a prompt, and watch the card move to In
+  Progress, then Review.
+- Turn Board off with the view open; the view closes and the same boards are
+  there when it is turned back on.
+
 ## Local checks
 
 Run the complete native check from the repository root:

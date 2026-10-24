@@ -3,6 +3,7 @@
 //! when the window becomes active, and when SQLite's `data_version` moves.
 mod card;
 mod column;
+mod detail;
 mod drop;
 #[cfg(test)]
 mod tests;
@@ -32,6 +33,8 @@ pub(crate) const ROLES: [(&str, &str); 4] = [
 
 pub(crate) enum Event {
     Close,
+    OpenSession(i64),
+    OpenPilot(String),
 }
 
 /// What a card's link chip says about the work it points at.
@@ -87,6 +90,7 @@ pub(crate) struct BoardView {
     pub(crate) last_data_version: i64,
     links: HashMap<String, LinkLabel>,
     pub(crate) composer: Option<Composer>,
+    pub(crate) card_detail: Option<detail::CardDetail>,
     menu: Option<Menu>,
     renaming: Option<(Renaming, Entity<Input>)>,
     switcher_anchor: AnchorSlot,
@@ -143,6 +147,7 @@ impl BoardView {
             last_data_version: 0,
             links: HashMap::new(),
             composer: None,
+            card_detail: None,
             menu: None,
             renaming: None,
             switcher_anchor: AnchorSlot::default(),
@@ -187,7 +192,7 @@ impl BoardView {
             return;
         }
         self.pending_reload = false;
-        if let Err(error) = self.load() {
+        if let Err(error) = self.load(cx) {
             self.error = Some(error);
         }
         cx.notify();
@@ -215,7 +220,7 @@ impl BoardView {
         Ok(self.service.as_mut().expect("opened above"))
     }
 
-    fn load(&mut self) -> Result<(), String> {
+    fn load(&mut self, cx: &App) -> Result<(), String> {
         let wanted = self
             .open_board_id
             .clone()
@@ -233,7 +238,7 @@ impl BoardView {
         self.boards = boards;
         self.open_board_id = open;
         self.detail = detail;
-        self.links = self.resolve_links();
+        self.links = self.resolve_links(cx);
         Ok(())
     }
 
@@ -247,7 +252,7 @@ impl BoardView {
         }
     }
 
-    fn resolve_links(&self) -> HashMap<String, LinkLabel> {
+    fn resolve_links(&self, cx: &App) -> HashMap<String, LinkLabel> {
         let Some(detail) = &self.detail else {
             return HashMap::new();
         };
@@ -266,7 +271,11 @@ impl BoardView {
                         .and_then(|native| sessions.iter().find(|s| s.id == native))
                         .map(|session| LinkLabel::Found(session.title.clone()))
                         .unwrap_or(LinkLabel::Missing),
-                    "pilot" => LinkLabel::Found("Pilot".into()),
+                    "pilot" => turns::pilots(cx)
+                        .into_iter()
+                        .find(|(pilot, _)| pilot == id)
+                        .map(|(_, name)| LinkLabel::Found(name))
+                        .unwrap_or(LinkLabel::Missing),
                     _ => LinkLabel::Missing,
                 };
                 Some((card.id.clone(), label))
@@ -648,6 +657,7 @@ impl BoardView {
         }
         cx.stop_propagation();
         if self.composer.take().is_some()
+            || self.close_card_detail(cx)
             || self.renaming.take().is_some()
             || self.menu.take().is_some()
         {
@@ -1028,6 +1038,7 @@ impl gpui::Render for BoardView {
             .map(|(index, column)| self.render_column(index, column, &detail, cx))
             .collect();
         let menu = self.render_menu(cx);
+        let card_detail = self.render_card_detail(cx);
         root.child(self.render_header(cx))
             .children(error)
             .child(
@@ -1051,6 +1062,7 @@ impl gpui::Render for BoardView {
                             ),
                     ),
             )
+            .children(card_detail)
             .children(menu)
     }
 }

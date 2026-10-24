@@ -82,6 +82,23 @@ pub(crate) fn pilot_of_session(session: i64, cx: &App) -> Option<String> {
     turn_pilot(&pilots.read(cx).roster, session)
 }
 
+/// Every Pilot as `(id, name)`, for linking cards and naming link chips.
+pub(crate) fn pilots(cx: &App) -> Vec<(String, String)> {
+    let Some(pilots) = cx
+        .try_global::<BoardTurns>()
+        .and_then(|board| board.pilots.as_ref()?.upgrade())
+    else {
+        return Vec::new();
+    };
+    pilots
+        .read(cx)
+        .roster
+        .pilots
+        .iter()
+        .map(|pilot| (pilot.id.clone(), pilot.name.clone()))
+        .collect()
+}
+
 fn session_key(store: &Database, session: i64) -> Option<String> {
     locked(store).ok()?.persisted_session_id(session).ok()
 }
