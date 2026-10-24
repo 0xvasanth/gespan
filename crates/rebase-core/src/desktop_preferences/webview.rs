@@ -175,20 +175,11 @@ impl DesktopPreferences {
 
     #[cfg(any(windows, test))]
     fn open_chromium_localstorage(path: &Path) -> Result<Self, String> {
-        Self::open_chromium_with(path, rusty_leveldb::CompressionType::CompressionSnappy).or_else(
-            |_| Self::open_chromium_with(path, rusty_leveldb::CompressionType::CompressionNone),
-        )
-    }
-
-    #[cfg(any(windows, test))]
-    fn open_chromium_with(
-        path: &Path,
-        compression_type: rusty_leveldb::CompressionType,
-    ) -> Result<Self, String> {
+        // Each table block records its own compression, and the default
+        // compressor list decodes both Snappy (what Chromium writes) and none.
         let options = rusty_leveldb::Options {
             create_if_missing: false,
             error_if_exists: false,
-            compression_type,
             ..Default::default()
         };
         let mut db = rusty_leveldb::DB::open(path, options).map_err(|e| e.to_string())?;
@@ -589,6 +580,42 @@ mod tests {
         let loaded = DesktopPreferences::read_chromium_localstorage(root.path()).unwrap();
         assert!(!loaded.is_available());
         assert!(loaded.values.is_empty());
+    }
+
+    #[test]
+    fn webview2_leveldb_reads_snappy_and_uncompressed_tables() {
+        use rusty_leveldb::compressor::{NoneCompressor, SnappyCompressor};
+        use rusty_leveldb::CompressorId;
+        for compressor in [SnappyCompressor::ID, NoneCompressor::ID] {
+            let root = tempfile::tempdir().unwrap();
+            let options = rusty_leveldb::Options {
+                create_if_missing: true,
+                compressor,
+                ..Default::default()
+            };
+            let mut db = rusty_leveldb::DB::open(root.path(), options).unwrap();
+            let mut key = b"_https://tauri.localhost\x00".to_vec();
+            key.extend(b"\x01rebase.workspaceTheme");
+            db.put(&key, b"\x01tidepool").unwrap();
+            // Write the memtable out, so the value is read from a table file
+            // whose blocks use this compressor rather than from the log.
+            db.compact_range(b"\x00", b"\xff").unwrap();
+            drop(db);
+            assert!(
+                std::fs::read_dir(root.path()).unwrap().any(|entry| entry
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .is_some_and(|e| e == "ldb")),
+                "compressor {compressor} wrote no table"
+            );
+            let preferences = DesktopPreferences::read_chromium_localstorage(root.path()).unwrap();
+            assert_eq!(
+                preferences.get("rebase.workspaceTheme"),
+                Some("tidepool"),
+                "compressor {compressor}"
+            );
+        }
     }
 
     #[test]

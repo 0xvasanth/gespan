@@ -552,8 +552,10 @@ fn claude_keychain_service(config_dir: Option<&std::path::Path>) -> String {
     // Claude Code hashes the exact, NFC-normalized selector string and uses
     // the first eight lowercase hex characters as its Keychain service suffix.
     let selector: String = config_dir.to_string_lossy().nfc().collect();
-    let digest = Sha256::digest(selector.as_bytes());
-    let suffix = format!("{digest:x}");
+    let suffix: String = Sha256::digest(selector.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     format!("{LEGACY_KEYCHAIN_SERVICE}-{}", &suffix[..8])
 }
 

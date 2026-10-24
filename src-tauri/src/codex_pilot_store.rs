@@ -278,10 +278,10 @@ fn link_entry(source: &Path, target: &Path) -> Result<(), String> {
 
 fn home_key(home: &Path) -> Result<String, String> {
     let canonical = home.canonicalize().map_err(|e| e.to_string())?;
-    let digest = format!(
-        "{:x}",
-        Sha256::digest(canonical.to_string_lossy().as_bytes())
-    );
+    let digest: String = Sha256::digest(canonical.to_string_lossy().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     Ok(digest[..16].to_owned())
 }
 
@@ -759,6 +759,14 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn home_key_is_the_lowercase_sha256_prefix_of_the_canonical_path() {
+        // Stored per-home data is found by this key, so it must not drift.
+        // SHA-256("/") = 8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1
+        assert_eq!(home_key(Path::new("/")).unwrap(), "8a5edab282632443");
     }
 
     #[test]

@@ -16,7 +16,7 @@ gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-fea
 unicode-segmentation = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 async-channel = "2"
-base64 = "0.22"
+base64 = "0.23"
 # Attachment chips build their thumbnail sprites directly.
 image = { version = "0.25", default-features = false }
 # The terminal dock: PTY, VT parser and grid (as Zed's terminal uses).
@@ -25,11 +25,11 @@ libc = "0.2"
 rquickjs = "0.14.0"
 # The file editor's native syntax: incremental parses, highlights, folds and
 # syntax errors. Languages without a grammar here use the QuickJS fallback.
-tree-sitter = "0.26"
+tree-sitter = "0.27"
 tree-sitter-language = "0.1"
 streaming-iterator = "0.1"
 notify = "8.2"
-similar = "2.7"
+similar = "3.2"
 tree-sitter-javascript = "0.25"
 tree-sitter-typescript = "0.23"
 tree-sitter-json = "0.24"
@@ -68,6 +68,7 @@ mimalloc = { version = "0.1", default-features = false, features = ["v2"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 gpui_apple = { package = "gpui-pre-apple", version = "=0.3.9", features = ["test-support", "runtime_shaders"] }
+# Must match the parking_lot the vendored GPUI exposes in its API (0.12).
 parking_lot = "0.12"
 
 # Experimental native builds resolve separately from the production Tauri app.
