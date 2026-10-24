@@ -1,0 +1,1745 @@
+src/features/sessions/ui/AgentMarkdown.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 191,197-199,773
+tests/fixtures/claude/resumed-background-agent.jsonl
+  s_3d6000c3007319::t_9551e491f0d7c1 19,73,126,195,197
+crates/gespan-gpui/assets/native-editor.js
+  s_3d6000c3007319::t_9551e491f0d7c1 1-43
+src/app/model/appLifecycle.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 400,402
+crates/gespan-gpui/src/sound.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-136
+crates/gespan-gpui/src/file_editor.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-9,11-1581
+  s_3d6000c3007319::t_8dce9efae45dd3 10
+src/features/board/model/board.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 4
+src/features/sessions/model/archiveShortcut.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 28
+src/features/notifications/model/notifications.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 12,176,210,232
+src/features/pilots/model/pilotSpawnedSessions.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 2,93
+crates/gespan-core/src/pilot/desktop.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-347
+src/features/sessions/model/attachmentsPreparation.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 27
+src/app/model/submissionAcceptance.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 40
+mobile/src/features/sessions/EmptySession.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 14,31,95
+crates/gespan-gpui/src/pilots/panels.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 8
+  s_3d6000c3007319::t_9551e491f0d7c1 1-7,9-2069
+SECURITY.md
+  s_3d6000c3007319::t_9551e491f0d7c1 5,7
+crates/gespan-gpui/src/transcript/tasks.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 15-18,1125
+  s_3d6000c3007319::t_9551e491f0d7c1 1-14,19-1124,1126-1697
+src/features/providers/model/providerBinaryPaths.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 14
+src/features/workspace/model/tabGroups.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 362,387,391-392,400,411,415,421,427-428,435,438
+src/integrations/harness/providers/kiro/kiroLaunch.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 12
+scripts/release-channel.cjs
+  s_3d6000c3007319::t_9551e491f0d7c1 12,51,55,182
+crates/gespan-gpui/src/review.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-14,19-2328
+  s_3d6000c3007319::t_8dce9efae45dd3 15-18
+crates/gespan-gpui/src/shell/session_preview.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 7
+  s_3d6000c3007319::t_9551e491f0d7c1 1-6,8-115
+src/features/sessions/model/quoteDraft.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 1
+src/integrations/harness/providers/antigravity/antigravity.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 457,480
+src/features/notifications/model/notificationProjects.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 116
+src/features/projects/model/projectChatBackground.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 11,117
+crates/gespan-core/src/inbox/media.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-340
+crates/gespan-gpui/src/transcript/visuals.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-159
+src-tauri/src/background_work.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 130,143
+crates/gespan-gpui/src/git_status.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 7
+  s_3d6000c3007319::t_9551e491f0d7c1 1-6,8-334
+crates/gespan-gpui/src/changes.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 19-22
+  s_3d6000c3007319::t_9551e491f0d7c1 1-18,23-2035
+crates/gespan-gpui/src/mobile/project.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1051
+crates/gespan-core/src/checkpoint.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1166
+crates/gespan-gpui/src/pilots/mod.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 42-46
+  s_3d6000c3007319::t_9551e491f0d7c1 1-41,47-1621
+crates/gespan-gpui/src/image_lightbox.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-698
+crates/gespan-core/tests/shared_contracts.rs
+  s_3d6000c3007319::t_87c3be575467fd 140-142
+  s_3d6000c3007319::t_8dce9efae45dd3 84-89
+  s_3d6000c3007319::t_9551e491f0d7c1 1-83,90-139,143-395
+crates/gespan-gpui/src/runtime/persistence.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-399
+crates/gespan-gpui/src/transcript/mascot.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-3,5-179
+  s_3d6000c3007319::t_8dce9efae45dd3 4
+crates/gespan-core/src/store/shared/tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1068
+crates/gespan-core/src/git.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-753
+host/windows.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 30,67
+crates/gespan-gpui/src/transcript/phases.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-224
+crates/gespan-gpui/src/shell/title_tabs.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-898
+crates/gespan-gpui/src/settings/pages/mcp.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-419
+src/features/mobile/hooks/useMobileWorkspace.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 164,228
+src/features/settings/model/appearance.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 19-42,44-49,56,102,113,116,122,167
+src/integrations/harness/providers/claude/claudeTitle.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 27
+mobile/app.json
+  s_3d6000c3007319::t_9551e491f0d7c1 3-4,12,16,18-19,65,74,80
+scripts/package-native.test.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 28,31,100,111,114,129
+src/features/workspace/model/workspaceTabGroups.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 279,281,386-387,412,465-467,488-489,525,572-573
+src/integrations/harness/providers/opencode/opencodeCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 56,88
+crates/gespan-gpui/src/inbox.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-17,22-886
+  s_3d6000c3007319::t_8dce9efae45dd3 18-21
+crates/gespan-gpui/src/transcript/drafts.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,4-454
+  s_3d6000c3007319::t_8dce9efae45dd3 3
+src/features/sessions/model/sessionWorkspaceLifecycle.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 17,42-43,72-73,119-120,125-126,174,177,181-182,186-187,189-190,217,232
+src/integrations/harness/providers/opencode/opencodeProtocol.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 155
+src/integrations/harness/providers/pi/piSkills.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 50
+crates/mobile-link/src/ffi.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 212,221,223
+  s_3d6000c3007319::t_e7b25754cbb896 230
+crates/gespan-core/src/provider.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2269
+crates/gespan-core/src/session_title.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-246
+src/features/mobile/ui/MobileSettings.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 42
+crates/gespan-core/src/orchestration.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-190
+crates/gespan-core/src/usage/devin.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-401
+mobile/src/features/connection/useProjectChanges.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 41
+crates/gespan-core/src/board/auto_move.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-366
+crates/gespan-gpui/src/project_settings.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 8-10
+  s_3d6000c3007319::t_9551e491f0d7c1 1-7,11-1081
+src/features/quick-composer/model/quickComposer.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 123,126-127
+crates/gespan-gpui/src/notifications/platform_macos.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-234
+src/features/sessions/model/linkPreview.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 38,42,44,47
+src-tauri/src/pilot_chat/menu_bar.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 51,179
+crates/gespan-gpui/src/board/card.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 10
+  s_3d6000c3007319::t_9551e491f0d7c1 1-9,11-245
+src/features/sessions/model/draftCommand.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9
+src-tauri/src/external_editor.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 526,635,637,648,661
+src/features/skills/model/skills.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 247
+tests/browser/theme-transparency.spec.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 14-15,76
+mobile/modules/gespan-link/android/src/main/java/expo/modules/gespanlink/GespanLinkModule.kt
+  s_3d6000c3007319::t_e7b25754cbb896 1-13
+src/features/sessions/model/checkpoint.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 34
+crates/gespan-gpui/src/board/drop.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-4,6-42,44-164
+  s_3d6000c3007319::t_8dce9efae45dd3 5,43
+crates/gespan-core/src/desktop_preferences/workspace_preferences.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-862
+package.json
+  s_3d6000c3007319::t_9551e491f0d7c1 2,8,11,28,45-46
+  s_3d6000c3007319::t_e4fa97761fce53 13
+src/features/providers/model/providerBinaryPaths.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 6
+src-tauri/src/fs.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 164,1264,1301,1303-1304,1309,1312,1326,1328,1332,2804,2877,3412,4344,5788,6042,6172,6715-6716,6751,6868,7268-7269,7307,7309,7315-7318,8493-8494,8540,8548,8550,8556,8563,8568,8709-8710,8712,9511
+src-tauri/src/harness.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1557,1780,2876,3536,3636,3744,3776,3885,3900,3914,3942,3973,3998,4020,4045,4236,4288,4380
+src-tauri/src/board.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 8
+scripts/native-editor/format.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9
+src/features/mobile/model/mobileAccountUsage.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 40
+crates/gespan-gpui/src/file_editor/diff.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-168
+crates/gespan-gpui/src/settings/layout_tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-196
+crates/gespan-core/src/remote/windows-acl.ps1
+  s_3d6000c3007319::t_9551e491f0d7c1 1-18
+crates/gespan-gpui/src/assets.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-229
+crates/gespan-gpui/src/settings/pages/general.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-263
+src/features/sessions/ui/AgentTranscript.search.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 139,144
+src/features/settings/model/projectSidebarTab.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 4
+src/features/settings/model/workspaceThemes.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 52
+src/shared/lib/branchOwnership.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,14
+crates/gespan-core/src/app_update/fixtures/public-key.txt
+  s_3d6000c3007319::t_bc3521850890bd 1
+crates/gespan-gpui/src/shell/quick_composer.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-144
+src/app/model/updater.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 28,52-53,105,118,137,151,165,176,243
+src/integrations/harness/providers/claude/claudeText.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 35
+src/integrations/harness/providers/cursor/cursorTitle.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 28
+src/shared/lib/nativeContextMenu.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 2,32
+src-tauri/src/remote_ssh.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 73,242,246,401,419,422,429-430,652,654,706-708,716,720,745,751,809,812,817,821,825,833,887
+src-tauri/src/pty.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 270,401
+crates/gespan-gpui/src/transcript/tools.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 5,545
+  s_3d6000c3007319::t_9551e491f0d7c1 1-4,6-544,546-843
+src/features/sessions/ui/documentImageSources.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 5
+crates/gespan-gpui/src/shell/layout.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1201
+crates/gespan-core/src/inbox/azure_devops.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2043
+crates/gespan-core/src/files/remote.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-317
+src/integrations/harness/providers/devin/devinProtocol.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 188
+crates/gespan-core/src/harness_updates.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-130
+src/shared/lib/branchOwnership.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9,12,18,21,26,28-29
+tests/fixtures/claude/heartbeat-agent.jsonl
+  s_3d6000c3007319::t_9551e491f0d7c1 19,111
+src/platform/tauri/clipboard.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 97
+src-tauri/src/remote_bootstrap.ps1
+  s_3d6000c3007319::t_9551e491f0d7c1 3,6-7,10,38,58,60,68-69,73,77,85
+src-tauri/src/devin_config.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 224
+crates/gespan-core/src/provider/parked.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-635
+src/features/projects/model/projectLocation.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 38,40,44-45,47,53
+mobile/tests/SessionToolbar.test.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 148,189
+src/features/files/ui/FilePicker.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 41
+.github/workflows/native-release.yml
+  s_3d6000c3007319::t_9551e491f0d7c1 67,75,125,127,136,185,189-191,234,258-259,262,268-269,279,295,304
+crates/gespan-gpui/src/composer_completion.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-11,16-1175
+  s_3d6000c3007319::t_8dce9efae45dd3 12-15
+crates/gespan-gpui/src/conversation/accounts.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-5,7-855
+  s_3d6000c3007319::t_8dce9efae45dd3 6
+src/features/agent-app/model/agentApp.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 717
+crates/gespan-core/src/remote.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-993
+src/integrations/harness/core/toolElapsed.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 4,41
+src/integrations/harness/providers/claude/claudeCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 206-208,228,241
+src/integrations/harness/providers/devin/devinCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 18,33
+src/features/connections/model/remoteOutbox.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 42
+crates/gespan-gpui/src/shell/search.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-474
+crates/gespan-gpui/src/board/header.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-6,8-22,24-27,29-36,38-49,51-68,70-72,74-76,78-81,83-104,106-122,124-129,131-140,142-262,264-403
+  s_3d6000c3007319::t_8dce9efae45dd3 7
+host/engine.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 17
+crates/gespan-gpui/src/visuals/scene.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-416
+mobile/fingerprint.config.js
+  s_3d6000c3007319::t_9551e491f0d7c1 10-13,16-17,21,26,31
+src/features/sessions/ui/MarkdownDocumentPreview.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 54
+src/app/shell/GithubStarPrompt.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 4-5,9-10,61,79,83,124
+src/integrations/harness/providers/codex/codexCatalog.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 83
+src/integrations/harness/providers/fx/fxCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 19
+src/features/sessions/model/models.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 245
+src/features/files/model/fileViewMode.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 3
+crates/gespan-gpui/src/board/detail/view.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-13,15-955
+  s_3d6000c3007319::t_8dce9efae45dd3 14
+src/integrations/harness/providers/kiro/kiroCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 10,23
+crates/gespan-gpui/src/shell/mobile_host.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-14,16-1860
+  s_3d6000c3007319::t_8dce9efae45dd3 15
+crates/gespan-core/src/mobile/host.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-880
+crates/gespan-gpui/src/settings/mod.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1034
+host/claude-heartbeat.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 4,47
+mobile/src/features/connection/ConnectionProvider.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 39-40,42
+src/integrations/harness/providers/hermes/hermesCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 16,29,79
+crates/gespan-gpui/src/settings/management.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-916
+crates/gespan-gpui/src/settings/pages/connections.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-10,12-1057
+  s_3d6000c3007319::t_8dce9efae45dd3 11
+host/large-sync.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 63
+src/features/projects/model/projectMascots.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 31-32
+src/features/sessions/model/sessionFolderCommand.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9
+crates/gespan-gpui/src/terminal.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1478
+crates/gespan-gpui/src/shell/accounts.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-357
+src/integrations/harness/providers/opencode/opencodeGit.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 66,92
+crates/gespan-gpui/src/notes.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-10,12-1172
+  s_3d6000c3007319::t_8dce9efae45dd3 11
+crates/gespan-core/src/provider/opencode.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-751
+crates/mobile-link/src/lib.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 27,41,67
+crates/gespan-gpui/src/search.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-10,16-723,725-907
+  s_3d6000c3007319::t_8dce9efae45dd3 11-15,724
+mobile/scripts/build-native-link.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 35,57,62-63,67,74-76,88-89,100,103,109,137,142-143
+crates/gespan-core/src/mcp.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1430
+scripts/native-dependencies.test.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 9,14,87
+src/features/sessions/data/sessionStore.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 382,388,724
+src/app/shell/WhatsNewDialog.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 13
+src/features/sessions/data/sessionStoreAgentRun.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 2,51
+src/features/board/ui/boardFormat.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 140,150
+src/features/automations/model/automationEvents.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 30
+src/features/sessions/model/archiveShortcut.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 98
+src/integrations/harness/providers/claude/claudeProtocol.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 275,620
+src-tauri/src/worktree_lifecycle.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 80
+crates/gespan-gpui/src/quick_composer.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-9,11-469
+  s_3d6000c3007319::t_8dce9efae45dd3 10
+scripts/dev-native.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 73,80-81,85,93,96,98,108-109,116,183
+crates/gespan-core/src/files/document.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-479
+src/app/shell/UpdateRailCard.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 25
+CONTRIBUTING.md
+  s_3d6000c3007319::t_9551e491f0d7c1 3,27,32
+crates/gespan-gpui/src/pilots/tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,4-1506
+  s_3d6000c3007319::t_8dce9efae45dd3 3
+src/features/sessions/model/sessionReminders.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 4-5
+src-tauri/src/inbox_media.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 11
+.gitattributes
+  s_3d6000c3007319::t_9551e491f0d7c1 5
+src-tauri/src/pasteboard.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 382,472
+crates/gespan-gpui/src/transcript/live_phase.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-227,229-467
+  s_3d6000c3007319::t_8dce9efae45dd3 228
+src/features/skills/ui/SkillPicker.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 12
+docs/native/visuals.md
+  s_3d6000c3007319::t_9551e491f0d7c1 26-28,31,104
+src/features/inbox/model/linear.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 66-67
+src/features/pilots/model/pilotHabits.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 303,315
+src-tauri/src/devin_usage.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 89
+crates/gespan-core/src/provider/rewind.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-292
+src/features/pilots/ui/PilotChangesView.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 411
+src/integrations/harness/providers/opencode/opencodeText.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 32
+src-tauri/tauri.windows.conf.json
+  s_3d6000c3007319::t_9551e491f0d7c1 7
+crates/gespan-gpui/src/shell/file_panes.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-935
+crates/gespan-core/src/board/extras.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-987
+crates/gespan-gpui/src/pilots/host.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-449
+src-tauri/src/control.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 15,115,262,264,386,467-470,476-477,480-481
+crates/gespan-gpui/src/automations.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 17-20
+  s_3d6000c3007319::t_9551e491f0d7c1 1-16,21-1172
+crates/gespan-core/src/remote/ssh_askpass.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-201
+src/features/sessions/model/streamingPerformance.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 7,106,109,111
+src/features/terminal/ui/TerminalView.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 384,461,466
+src-tauri/src/quick_composer.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 6-7,517,528,567,579,612,656,768,792
+src-tauri/src/main.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 4,8,13,17
+host/service.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 14,88,209,212,224,254,299,308,314
+crates/gespan-core/src/desktop_preferences/webview.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-630
+src/test/sharedContracts.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 20,32-33,50-55,62-64,68,78,81,89-90,97,103,108,111,122
+  s_3d6000c3007319::t_0cae583e2a8f04 60
+crates/gespan-gpui/src/conversation/remote_plans.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-278
+src/integrations/harness/providers/claude/claudeResume.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 4-5,146,488
+src-tauri/src/rate_limits.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 368,801,803,807
+host/owner.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 8
+src/features/sessions/model/gespanToolCall.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 2-3,5-6,9-49,51-72,75-86,89-97,99-118,121-130
+crates/gespan-core/src/inbox/avatar.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-42
+src/features/settings/model/appearance.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 52-62,95,101,116,120
+mobile/src/ui/brand.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,4
+tests/browser/workspace-performance.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 248-251,432,438,447
+crates/gespan-gpui/src/shell.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 65,8285
+  s_3d6000c3007319::t_9551e491f0d7c1 1-64,66-8284,8286-12100
+crates/gespan-gpui/src/shell/image_lightbox_tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-98
+crates/gespan-gpui/src/fixtures.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-127
+src/integrations/harness/providers/opencode/opencodeProtocol.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 134,151
+src/features/connections/ui/AddRemoteProjectDialog.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 133
+src/features/sessions/model/sessionFolders.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 506,516
+crates/gespan-gpui/src/pilots/changes.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-858
+src-tauri/src/automations.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 10,774
+src-tauri/src/quick_composer/screenshots.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 12
+tests/fixtures/claude/heartbeat-bash.jsonl
+  s_3d6000c3007319::t_9551e491f0d7c1 19
+src/features/notes/ui/NotesView.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 98,234
+host/opencode-transport.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 64
+src/features/settings/ui/SettingsView.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 273,296,306-307,322,483,509,526,534,677,689,699,702,705,738,772,1016,1053,1105,1128,1140,1168,1172
+src/features/inbox/model/githubTasks.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 226,231-232,236,240,242,300-301,304
+crates/gespan-gpui/src/inbox/diff.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 7
+  s_3d6000c3007319::t_9551e491f0d7c1 1-6,8-116
+src/integrations/harness/providers/claude/claudeGit.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 69,96
+host/windows-bootstrap.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 26,39,48,79,87,96,117-118,129,141
+src/integrations/harness/providers/pi/piFamily.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 220
+src/features/connections/ui/RemoteSession.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 129,849
+src/integrations/harness/providers/codex/codexQuestions.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 67
+crates/gespan-gpui/src/settings/pages/appearance.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-627
+crates/gespan-gpui/src/transcript/dates.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-331
+crates/gespan-gpui/src/resource_pressure.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-3,5-857
+  s_3d6000c3007319::t_8dce9efae45dd3 4
+src/features/connections/model/remoteProjects.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 17-18
+crates/gespan-core/src/store/session_metadata.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-191
+crates/gespan-core/src/provider/text_tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-79
+src/app/model/updateNotice.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 1
+crates/gespan-gpui/src/transcript/outline.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-548
+src/integrations/harness/providers/codex/codex.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 16,476,666-667,678,942,1455
+src/integrations/harness/providers/hermes/hermesProtocol.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 47
+src-tauri/icons/icon.svg
+  s_3d6000c3007319::t_9551e491f0d7c1 2
+src/features/settings/model/nativeGlass.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 24,66-67
+src-tauri/src/skills.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 606,688,708
+crates/gespan-gpui/src/settings/pages/worktrees.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-203
+src/features/skills/ui/SkillPicker.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 349,351
+crates/gespan-core/src/catalog.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-947
+crates/gespan-core/src/search/tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-211
+docs/superpowers/plans/2026-10-23-flows.md
+  s_3d6000c3007319::t_9551e491f0d7c1 26,246
+crates/gespan-gpui/src/conversation/composer_features.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-619
+src/features/sessions/ui/AgentTranscriptErrorDisclosure.test.ts
+  s_3d6000c3007319::t_e7b25754cbb896 102
+  s_3d6000c3007319::t_9551e491f0d7c1 76,79,81,98,103,105,111,115,124
+crates/gespan-gpui/src/shell/automation_runs.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-649
+src/features/settings/ui/SettingsView.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 939,955,1021,1057,1440,1939,2447,3278,3539-3540
+crates/gespan-core/src/external_editor.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-653
+src/integrations/harness/providers/codex/codexProtocol.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 61
+src/shared/ui/PrivateEmail.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 57,59
+tests/browser/performance.config.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 5
+src/features/sessions/ui/AgentMarkdownMenu.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 83,93,151,169
+src-tauri/src/mobile_router.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 2,47,135
+crates/gespan-gpui/src/fs_watch.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-129
+src/features/connections/model/protocol.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 245
+crates/gespan-gpui/src/file_editor/media.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-705
+src/features/source-control/ui/Worktrees.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 135-136,138,140-141,143-144,157-158
+crates/gespan-gpui/src/shell/session_groups.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 12
+  s_3d6000c3007319::t_9551e491f0d7c1 1-11,13-2497
+crates/gespan-gpui/src/visuals.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,7-1512
+  s_3d6000c3007319::t_8dce9efae45dd3 3-6
+src/integrations/harness/providers/codex/codexStore.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 3,5,77,119,192
+src/features/agent-app/model/agentApp.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 410
+src/features/sessions/model/compact.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9
+crates/gespan-gpui/src/right_panel.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-600
+scripts/bundle-native-macos.sh
+  s_3d6000c3007319::t_9551e491f0d7c1 12-13,15,20,26-27,29-30,33,42-44,50-53,56-57,63,69,76-77,82
+crates/gespan-gpui/src/settings/pages/mobile.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 11
+  s_3d6000c3007319::t_9551e491f0d7c1 1-10,12-1438
+src/app/model/releaseNotes.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 13
+crates/gespan-gpui/src/shell/project_rail.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-8,10-2161
+  s_3d6000c3007319::t_8dce9efae45dd3 9
+scripts/native-editor/package.json
+  s_3d6000c3007319::t_9551e491f0d7c1 2
+src/features/sessions/ui/modeCommands.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 52
+src/integrations/harness/providers/hermes/hermes.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 243,270,392,535
+src/features/sessions/model/projectProviders.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 66,83,85
+mobile/scripts/generate-native-transcript-assets.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 76
+src/features/sessions/ui/AgentTranscript.inlineWork.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 351
+NOTICE
+  s_3d6000c3007319::t_9551e491f0d7c1 1,10,41,45
+  s_3d6000c3007319::t_21751801fe9855 16,22,32
+tests/browser/layout-opt-in.spec.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 54-55,94,148,185
+crates/gespan-gpui/src/notifications/harness_updates.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-7,9-305
+  s_3d6000c3007319::t_8dce9efae45dd3 8
+crates/gespan-core/src/scm/tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1034
+crates/gespan-gpui/src/response_actions.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 7
+  s_3d6000c3007319::t_9551e491f0d7c1 1-6,8-74
+crates/gespan-gpui/src/shell/app_views.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-573
+crates/gespan-gpui/src/pilots/html.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-316
+src/features/artifacts/artifacts.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 21-22
+src/features/pilots/model/pilotCards.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 151,176
+src/features/pilots/ui/FloatingPilotChat.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 213-214,245,482,600-601
+src/features/terminal/model/terminalClose.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 16
+src/features/files/model/fileIndex.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 325
+src/styles/index.css
+  s_3d6000c3007319::t_9551e491f0d7c1 902,906,1075,1083,1086,1091,1103,1106,1115,1118,1125,1129,1137,1140,1145,1154,1177,1195,1201,1214,1259,1309,1360,1374,1738-1740,3125,3132,3136-3139,3144,3148,3152,3157,3161
+src-tauri/src/notifications.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 17,123-124,292,449,453
+src/features/orchestration/model/orchestrationWorkspace.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 36
+src/features/inbox/model/inboxSeen.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 14
+docs/native/README.md
+  s_3d6000c3007319::t_9551e491f0d7c1 1,3,36,46,51,54-55,58,61,101,107,119,121-123,125,127-128,135,139-141,143,145,148,167,187
+crates/gespan-gpui/src/shell/pilots.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-109
+docs/building.md
+  s_3d6000c3007319::t_9551e491f0d7c1 3,20-25,54,82,108,118,128,131
+src/features/pilots/model/pilotRotation.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 213
+mobile/tests/ProjectScreen.test.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 299,343,373
+docs/providers.md
+  s_3d6000c3007319::t_9551e491f0d7c1 3,17-18,20,22,24
+docs/superpowers/plans/2026-10-23-board.md
+  s_3d6000c3007319::t_9551e491f0d7c1 16,19,127,167-168,239,241
+src/features/sessions/model/gespanToolCall.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 1-134
+crates/gespan-gpui/src/pickers.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 5-6
+  s_3d6000c3007319::t_9551e491f0d7c1 1-4,7-1322
+src/features/orchestration/ui/OrchestrationFlow.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 494,622,880
+crates/gespan-core/src/pilot/work.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-337
+crates/gespan-core/Cargo.toml
+  s_3d6000c3007319::t_9551e491f0d7c1 1-62
+crates/gespan-gpui/src/runtime/remote.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-795
+mobile/modules/gespan-link/expo-module.config.json
+  s_3d6000c3007319::t_e7b25754cbb896 4
+  s_3d6000c3007319::t_9551e491f0d7c1 1-3,5
+scripts/repack-appimage.sh
+  s_3d6000c3007319::t_9551e491f0d7c1 19,53,79-80,91,110,117
+mobile/modules/gespan-link/ios/TranscriptArtwork.swift
+  s_3d6000c3007319::t_9551e491f0d7c1 1-101
+scripts/native-editor/build.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 9,36,39,42,44,48
+src/integrations/harness/providers/codex/codexGit.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 66,92
+scripts/bundle-native-macos.test.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 14,29,31,36,50,53,57-59
+src/features/mobile/model/mobileAttachments.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 10,26
+host/package.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 126,128,135,140,143,159
+host/git-branches.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 19
+README.md
+  s_3d6000c3007319::t_9551e491f0d7c1 2,5,12,15,31-34,36,38,51,73,82,86,90-93,97,99
+src/features/automations/model/automations.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 5-6
+src/integrations/harness/core/authSupport.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 13
+src/features/agent-app/model/sessionConversation.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 68-69
+src/features/settings/ui/QuickComposerShortcutEditor.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 107,117,142,200,224,253,266,290
+src/integrations/harness/providers/pi/piSkills.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 114,128,311
+src/integrations/harness/core/auth.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 76,94
+crates/gespan-core/src/mobile/router.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-208
+crates/gespan-gpui/src/shell/classic_sidebar.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1138
+tests/browser/resource-pressure.spec.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 10
+src/app/shell/SidebarRename.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 257,888-893,897,903,905,907-908,1083,1209
+crates/gespan-gpui/src/transcript/history.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-511
+src/integrations/harness/providers/pi/pi.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 26
+src/features/settings/model/displayPrefs.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 19,27,35
+src/features/terminal/model/terminalClose.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 34,46,54
+src/features/sessions/ui/DocumentImage.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 64,76
+src/features/sessions/ui/wordFade.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 9
+src/features/workspace/ui/TabCloseMotion.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 70,224,327
+crates/gespan-gpui/src/pilots/scheduler.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1529
+src/integrations/harness/providers/cursor/cursorGit.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 70,96
+src-tauri/src/pi_usage.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 218,332
+src/integrations/harness/providers/devin/devinText.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 17
+src/features/inbox/model/jira.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 67-68
+src/integrations/harness/providers/antigravity/antigravityLive.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 263
+src/features/quick-composer/model/quickComposerDefaults.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 20-21
+src/features/settings/model/keepAwake.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 50,63
+crates/gespan-gpui/src/settings/pages/skills.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-741
+src/features/settings/model/settings.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 55-69
+src/features/settings/model/displayPrefs.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 4-8,17,19,22,24,79,86,88
+src-tauri/src/link_preview.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 13
+crates/gespan-core/src/store/shared/accounts.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-117
+src/features/quick-composer/model/quickComposer.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 44
+src/features/pilots/model/pilotSpawnedSessions.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 40,59,81-82,99
+src/features/sessions/data/sessionHistory.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 52,241,245-246,251,260,276,288,293
+src/integrations/harness/providers/pi/piCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 34
+crates/gespan-gpui/src/usage_footer/resets.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-392
+src/integrations/harness/providers/codex/codexProtocol.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 361,520
+host/provider-transport.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 99,283
+index.html
+  s_3d6000c3007319::t_9551e491f0d7c1 6-7,12-13,15,17,34,43,106
+host/service.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 41,45-47,74,85,111,161,192,194
+crates/gespan-gpui/src/pilots/cards.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-554
+src/integrations/harness/providers/omp/ompLive.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 396
+src/features/skills/ui/SkillsPage.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 540
+src/app/hooks/useIdleSessionDetach.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 107
+src/integrations/harness/providers/opencode/opencodeLive.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 307,312,343
+crates/gespan-gpui/src/conversation/title.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-376
+crates/gespan-gpui/src/board.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-22,27-1066
+  s_3d6000c3007319::t_8dce9efae45dd3 23-26
+mobile/src/features/changes/CommitSheet.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 408
+mobile/src/features/background/CarvedMark.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 4,7,17,22,30,33
+quick-composer.html
+  s_3d6000c3007319::t_9551e491f0d7c1 6
+src/features/files/ui/FilePane.reviews.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 60
+src-tauri/src/reminders.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 11-12,389,537
+src-tauri/src/provider_session_transfer.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 229
+crates/keep-awake/Cargo.toml
+  s_3d6000c3007319::t_9551e491f0d7c1 2
+src-tauri/src/macos.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 61-64,412,753,845,912,923,933,967,1030,1133,1135,1144-1145,1159-1160,1173-1175,1180-1183
+crates/gespan-gpui/src/conversation/edit_last_turn.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 348
+  s_3d6000c3007319::t_9551e491f0d7c1 1-347,349-483
+src/features/source-control/ui/GitChangesPanel.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 90,608
+src-tauri/src/account_identity.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 166,196
+src/features/sessions/model/subagentHandback.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 82
+crates/gespan-gpui/src/shell/rails.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1122
+src/features/providers/model/rateLimitsFetch.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 25,316-317
+docs/native/migration.md
+  s_3d6000c3007319::t_9551e491f0d7c1 11-13,19
+crates/gespan-gpui/src/runtime/follow_up_tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-146
+scripts/build-native.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 27,29-30,32,37,39
+mobile/modules/gespan-link/ios/TranscriptPresentation.swift
+  s_3d6000c3007319::t_9551e491f0d7c1 1-90,92-96,98-102,104-537,539-647
+  s_3d6000c3007319::t_e379ec1f3b2357 91,97,103,538
+crates/gespan-gpui/src/settings/pages/providers.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-8,10-306
+  s_3d6000c3007319::t_8dce9efae45dd3 9
+mobile/src/features/connection/nativeLink.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 8
+crates/gespan-gpui/assets/native-format.js
+  s_3d6000c3007319::t_9551e491f0d7c1 1-262
+.github/workflows/native.yml
+  s_3d6000c3007319::t_9551e491f0d7c1 1,9-10,78-79,82,89-93
+crates/gespan-core/src/remote/ssh.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-906
+crates/gespan-gpui/src/session_review.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-7,9-470
+  s_3d6000c3007319::t_8dce9efae45dd3 8
+src/features/sessions/model/sessionFilters.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 35,48
+src/features/sessions/ui/MessageQueue.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 29,55
+src/features/settings/model/uiScale.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 3,15
+src/features/connections/model/connections.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 16-18,23-24,27-28,84,292,363
+src/features/skills/model/skillCatalog.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 164,426,429
+crates/gespan-gpui/src/main.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-88,90-470,472-587
+  s_3d6000c3007319::t_8dce9efae45dd3 89,471
+src/features/sessions/model/btw.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 180,384
+src-tauri/src/resources.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 223,234
+docs/superpowers/plans/2026-10-24-claude-heartbeats.md
+  s_3d6000c3007319::t_9551e491f0d7c1 5,9,15,19,24,33,37,42,75,78-80,82,86,102,105,107,123,129
+mobile/modules/gespan-link/ios/GespanLink.h
+  s_3d6000c3007319::t_9551e491f0d7c1 1-12
+src/features/artifacts/ui/HtmlArtifactFrame.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 100,116,119,123
+src-tauri/src/checkpoint.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1485,1500-1503,1513-1514
+tests/browser/workspace-performance.spec.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 18,26,134
+crates/gespan-core/examples/provider_smoke.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-190
+docs/superpowers/plans/2026-10-24-claude-background-agents.md
+  s_3d6000c3007319::t_9551e491f0d7c1 5,12,16,20,27-29,31,48,86-87,108,113,116-117,142,150,154-155,168,184,192,203,208
+src/features/files/ui/FileEditorCrlfGit.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 55
+src/integrations/harness/providers/claude/claudeHeartbeat.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 5
+src/features/files/ui/FilePicker.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 122,141,160
+  s_3d6000c3007319::t_6bb1a62636eb24 157
+src/features/mobile/hooks/useMobileWorkspace.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 69
+crates/gespan-gpui/src/activity.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1,3-393
+  s_3d6000c3007319::t_8dce9efae45dd3 2
+src/integrations/harness/providers/codex/codexText.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 5,25,358-359,402
+crates/gespan-gpui/src/conversation/pilot.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,4-1181
+  s_3d6000c3007319::t_8dce9efae45dd3 3
+crates/gespan-gpui/src/conversation/background_tasks.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 326
+  s_3d6000c3007319::t_9551e491f0d7c1 1-325,327-558
+src/app/shell/Sidebar.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 1539-1540,1685
+src/features/providers/model/rateLimits.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 348
+crates/gespan-gpui/src/board/detail.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 19
+  s_3d6000c3007319::t_9551e491f0d7c1 1-18,20-874
+docs/remote-access.md
+  s_3d6000c3007319::t_9551e491f0d7c1 3,11,15,46,51-52,57,74-78,83,87,89,95,120
+scripts/native-editor/index.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 38,66,94,104,117
+src/integrations/harness/core/apply.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 454,466,1228
+src/platform/tauri/fs.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 159,464
+src/features/pilots/floatingMain.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 40-43,63,65,73,75
+src/features/sessions/ui/Composer.paste.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 92
+src-tauri/src/session_store.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 92,2181,2188,3130,3335,3393,3463
+crates/gespan-gpui/src/git_cache.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-125
+crates/gespan-gpui/src/project_background.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-3,7-595
+  s_3d6000c3007319::t_8dce9efae45dd3 4-6
+src-tauri/src/worktrees.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 161,172,177,457,866,968,980,985,1009,1012-1015,1017,1020,1022,1054-1056,1058,1062-1064,1066,1073,1076,1082-1083,1091,1093,1097-1098,1101
+src/features/board/ui/BoardView.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 62
+mobile/src/features/mascots/MascotRain.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 62
+crates/gespan-core/src/app_update/install.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-309
+host/cli.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 21,29
+crates/gespan-gpui/src/notifications/delivery.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-146
+crates/gespan-gpui/src/shell/worktrees.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-454
+src/integrations/harness/providers/codex/codexTitle.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 26
+src/integrations/harness/providers/pi/piFlavor.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 34-35,50-51
+crates/gespan-core/src/store/managed_sessions.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-73
+src/features/settings/model/sounds.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 25
+crates/gespan-gpui/src/board/turns.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 16,247
+  s_3d6000c3007319::t_9551e491f0d7c1 1-15,17-246,248-475
+Cargo.toml
+  s_3d6000c3007319::t_9551e491f0d7c1 4
+src/features/projects/model/projectGroups.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9-10
+crates/gespan-gpui/src/notifications/updater.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-6,8-404
+  s_3d6000c3007319::t_8dce9efae45dd3 7
+src/features/orchestration/model/orchestrationPlan.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 244,249,265,304
+src-tauri/src/control_cli.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 8,59,74,77,119,142,187,267,296,303,396,398,401,403,407,409,414,416,421,423,428,448,450,452,623-624,626-627,629-630,633-634
+crates/gespan-core/src/desktop_preferences/workspace_snapshot.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-337
+src-tauri/src/menu.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 123,126,130,135,516,519,537
+src/features/notifications/model/notificationPreferences.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 26-27
+src-tauri/src/keep_awake.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 4,49
+crates/gespan-core/src/remote/remote_bootstrap.ps1
+  s_3d6000c3007319::t_9551e491f0d7c1 1-111
+src-tauri/src/dev_identity.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,4,6-7,18
+src/features/providers/model/providerAccounts.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 4-6
+.github/workflows/release.yml
+  s_3d6000c3007319::t_9551e491f0d7c1 147-148,231,233-234,236-237,239,261,319-320,332,334-335,337-339,348,358-361,376-377,388
+crates/gespan-core/src/files.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-829
+src/main.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 28,54-55,57,106
+crates/gespan-gpui/src/mobile/transcript.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1122
+crates/gespan-gpui/src/shell/app_commands.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-368
+src/features/connections/ui/ConnectionsSettings.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 215
+src/integrations/harness/core/registry.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 61,83,506
+src-tauri/src/mobile_access.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 4,56,140,214,225,306,407,410,451,494,636,661,695,812,943
+crates/gespan-core/src/store/shared.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1761
+scripts/assert-appimage-host-libs.sh
+  s_3d6000c3007319::t_9551e491f0d7c1 4,8
+crates/gespan-gpui/src/quick_open.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,4-301
+  s_3d6000c3007319::t_8dce9efae45dd3 3
+src/features/connections/model/remoteProjects.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 17,19,26-27,40,54,56,71
+src/features/inbox/model/linkedSessionSeen.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 1
+src/shared/lib/emojiData.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 140-141
+crates/gespan-gpui/src/accounts.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 14-16
+  s_3d6000c3007319::t_9551e491f0d7c1 1-13,17-883
+crates/gespan-core/src/inbox.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1088
+crates/gespan-gpui/src/editor_analysis.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-675
+crates/gespan-gpui/src/shell/project_removal.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-187
+crates/gespan-gpui/src/usage_footer.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-4,8-1055
+  s_3d6000c3007319::t_8dce9efae45dd3 5-7
+scripts/native-settings/build-arcade.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 5,40
+src/features/notifications/model/notifications.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 11,16,19,173
+src/features/sessions/model/mcpCommand.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9
+src/features/source-control/model/worktrees.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 94,117
+src/features/providers/model/harnessUpdates.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 10
+crates/gespan-gpui/src/shell/notifications.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1395
+host/child-backend.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 79,358
+src/features/files/ui/FileTree.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 126,136,143,147
+crates/gespan-core/src/board/mod.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1660
+crates/gespan-core/src/store/remote_legacy.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-597
+src/features/source-control/model/worktreeBranchName.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 19-21,25-27,30,47
+src/integrations/harness/providers/claude/claude.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 169,1665,1767,1780,2058,2173,2184,2186,2392
+src/integrations/harness/providers/codex/codexStore.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 20-21
+crates/gespan-core/src/app_update/tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-123
+host/engine.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 735,765
+mobile/README.md
+  s_3d6000c3007319::t_9551e491f0d7c1 1,36
+scripts/test-remote-ssh.py
+  s_3d6000c3007319::t_9551e491f0d7c1 23,42,48-50,52,56,63,101,108
+crates/gespan-gpui/src/conversation/remote.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-407
+src/features/sessions/ui/ModelPicker.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 546
+crates/gespan-core/src/provider/devin.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-780
+crates/gespan-core/src/store.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1,3-1472
+  s_3d6000c3007319::t_8dce9efae45dd3 2
+crates/gespan-gpui/build.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-27
+crates/gespan-gpui/src/git_picker.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,4-509
+  s_3d6000c3007319::t_8dce9efae45dd3 3
+src/features/projects/model/projectData.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 51-52,58,78
+src/features/providers/model/accountUsage.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 185
+src-tauri/src/lib.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 72,420-421,684
+crates/gespan-gpui/src/workspace.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1237
+host/git-worktrees.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 21,88,97,104,122,200,203,217-218,221
+src-tauri/src/mcp.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 781,812,837,878,914,946,972,997,1012,1031,1059,1176,1205
+src-tauri/src/windows.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 17,177-178,208
+tests/browser/fixtures/resource-load.py
+  s_3d6000c3007319::t_9551e491f0d7c1 24
+crates/gespan-gpui/src/runtime.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1119
+src/features/sessions/model/sessionFolders.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 8-11
+host/workspace.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 32,42,100,190,211,278,312
+src-tauri/src/harness_updates.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 9,25,70
+.github/ISSUE_TEMPLATE/feature_request.yml
+  s_3d6000c3007319::t_9551e491f0d7c1 2,9,24
+crates/gespan-core/src/process.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-222
+src/features/mobile/ui/MobileSettings.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 157
+crates/gespan-gpui/src/pilots/files.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-279
+src/features/skills/model/createSkill.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 1,5,9,12
+src-tauri/tauri.linux.conf.json
+  s_3d6000c3007319::t_9551e491f0d7c1 7
+src/features/inbox/model/azureDevOps.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 68
+.github/ISSUE_TEMPLATE/bug_report.yml
+  s_3d6000c3007319::t_9551e491f0d7c1 2,8,13
+src/features/sessions/model/streamingPerformance.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 8,14,69
+src/integrations/harness/providers/devin/devinProtocol.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 34,787
+src/features/notifications/model/notificationProjects.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 13-14
+mobile/src/features/connection/ConnectScreen.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 22,84,89,108
+crates/gespan-gpui/src/pilots/floating.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-281
+crates/gespan-gpui/src/shell/orchestration.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-450
+src/features/workspace/model/tabGroups.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 26-31,35,78,723
+src/features/connections/model/remoteSessionTabs.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 7,12,35,44-45,56
+src-tauri/src/artifacts.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 96,205
+src/features/sessions/ui/AgentTranscript.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 43,176-179,2584,2588,2716,2780,2894-2895,3723,3738,3793-3794,4628,4631,4711-4712,4715-4716,4722,4734,4751,4764,4769,4956,4960,5248
+crates/gespan-core/src/provider/lifecycle.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-273
+src/integrations/harness/providers/antigravity/antigravityCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 16,28,77
+src/features/notifications/ui/ResourcePressureNotice.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 281
+docs/superpowers/plans/2026-10-24-native-board.md
+  s_3d6000c3007319::t_9551e491f0d7c1 7,9,11,24,26,28,43-44,47,69-70,72,78,95,104-109,111-112,115,123,132-133,136,166-167,198-201
+scripts/native-release.test.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 22
+crates/gespan-gpui/src/notifications/github_activity.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-6,8-478
+  s_3d6000c3007319::t_8dce9efae45dd3 7
+src/features/projects/model/projectLocation.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 12
+crates/gespan-gpui/src/shell/settings.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-844
+src/features/orchestration/model/orchestrationPlan.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 153,164
+mobile/package.json
+  s_3d6000c3007319::t_9551e491f0d7c1 2
+src-tauri/src/macos_background.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 14,45,117
+crates/gespan-gpui/src/inbox/ui.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-3067
+src/features/projects/model/recents.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 6-10
+src/features/notifications/model/notificationPreferences.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 155,166
+crates/gespan-core/src/resources.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-513
+src/integrations/harness/providers/opencode/opencodeTitle.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 23
+crates/gespan-gpui/src/board/column.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 5
+  s_3d6000c3007319::t_9551e491f0d7c1 1-4,6-305
+crates/gespan-gpui/src/runtime/remote/tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-798
+crates/gespan-gpui/src/board/tests.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 3
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,4-1666
+src/features/sessions/ui/TranscriptFind.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 119
+crates/gespan-gpui/src/settings/data.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-115
+crates/gespan-core/src/pilot.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-378
+crates/gespan-gpui/src/history.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-9,11-770
+  s_3d6000c3007319::t_8dce9efae45dd3 10
+src/app/shell/UsageProviderChip.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 222,227
+src/features/sessions/ui/GespanSparkles.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 1-76
+src/integrations/harness/providers/omp/omp.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 26
+crates/gespan-gpui/src/shell/session_folders.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-402
+src/integrations/harness/core/child.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 37,44,74,586
+src/features/settings/model/projectSidebarTab.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9,43
+crates/gespan-gpui/src/worktree_switcher.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 11-14,540
+  s_3d6000c3007319::t_9551e491f0d7c1 1-10,15-539,541-769
+src/features/settings/model/keepAwake.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 5-7,9
+crates/gespan-core/src/provider/acp.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1671
+crates/gespan-gpui/src/shell/classic_surface_tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1164
+src/features/connections/model/remoteCommands.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 67
+mobile/tests/WorkspaceProvider.test.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 234-235,240,252-253
+src/features/projects/model/projectOpenRun.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 138,141
+crates/gespan-core/src/store/notes.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-810
+src/features/pilots/model/pilot.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 57-59,62-63,66-68,256
+src/features/settings/model/settings.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 18,58,101,666,668,670,672,674,676,678,741,787,828,842,847,868,873,894,899,921,924,943-944,979,985,1008,1022,1028,1051,1058,1093,1105-1106,1136,1148,1297-1298
+src/integrations/harness/index.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 36
+crates/gespan-gpui/src/session_mark.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-154
+src-tauri/src/pilot_chat.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 283,294,481,572,706
+crates/gespan-gpui/src/transcript/follow_tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2019
+crates/gespan-gpui/src/automations/editor.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1335
+output/visualizations/search-tool-ui.html
+  s_3d6000c3007319::t_9551e491f0d7c1 46-47,54-55
+  s_3d6000c3007319::t_d9717cfada993a 4-9,11-12,17,19-21,23-24,26,30,35,51
+src/app/model/releaseNotes.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 39
+src/features/terminal/model/terminalLayout.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 120
+crates/gespan-core/src/desktop_preferences.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-752
+src/platform/tauri/clipboard.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 13,33,91
+host/workspace-commands.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 356,763
+host/windows-acl.ps1
+  s_3d6000c3007319::t_9551e491f0d7c1 1
+mobile/src/ui/theme.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 41
+  s_3d6000c3007319::t_d9717cfada993a 138,180,182
+crates/gespan-gpui/src/input.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2196
+crates/gespan-core/src/checkpoint/tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-788
+crates/gespan-core/src/mobile.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-9
+  s_3d6000c3007319::t_8dce9efae45dd3 10
+crates/gespan-core/src/remote/remote_bootstrap.sh
+  s_3d6000c3007319::t_9551e491f0d7c1 1-69
+host/windows.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 72,99,107,113,124
+crates/gespan-gpui/src/questions.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-3,5-789,791-903
+  s_3d6000c3007319::t_8dce9efae45dd3 4,790
+crates/gespan-core/src/accounts/transfer.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-295
+crates/gespan-gpui/src/runtime/handoff.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-129
+crates/gespan-gpui/src/runtime/visual_discovery.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-215
+src/app/model/appLifecycle.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 170,362-363,471
+src/features/inbox/ui/InboxView.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 249,285,353,364-365
+crates/gespan-gpui/src/metal_tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-655
+src/features/sessions/model/editLastTurn.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 101
+src/features/sessions/model/plan.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9
+src/integrations/harness/providers/opencode/opencode.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 479
+src-tauri/Cargo.toml
+  s_3d6000c3007319::t_9551e491f0d7c1 2,5,7,12,19-20
+  s_3d6000c3007319::t_e4fa97761fce53 8
+tests/browser/right-panel-graph.spec.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 10-13
+src/integrations/harness/providers/grok/grokTitle.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 23
+crates/gespan-gpui/src/editor_syntax.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1155
+src-tauri/Info.plist
+  s_3d6000c3007319::t_9551e491f0d7c1 6,8,10
+crates/gespan-core/src/app_update/fixtures/feed.json
+  s_3d6000c3007319::t_bc3521850890bd 1-4
+mobile/modules/gespan-link/ios/GespanLinkModule.swift
+  s_3d6000c3007319::t_9551e491f0d7c1 1-40
+src/features/projects/model/projectChatBackground.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 14,17
+src/test/legacyNames.test.ts
+  s_3d6000c3007319::t_e379ec1f3b2357 41
+  s_3d6000c3007319::t_b909707982ff2f 151,154-155
+  s_3d6000c3007319::t_5bca1f4ce97b50 2-3,6-13,16-20,22-24,28-30,34-40,42-48,50-53,55-59,61-66,68-85,87-93,97-98,100-107,109-116,119-126,129-132,134-140,145-150,152-153,156-157,160-162,164-167,169-172,175-183,186,189,191-193,195-206,209-224,227-231,234-256
+host/claude-resume.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 79,87
+CHANGELOG.md
+  s_3d6000c3007319::t_9551e491f0d7c1 106,180,422,426,439,462,543,604,672,699,718,720,728,739,874,880,910,932,934,942,975,1000,1035,1043,1063-1064,1233,1235,1242,1282,1388,1406,1430,1493-1494,1535-1536,1584-1659
+  s_3d6000c3007319::t_5154dfcff7aa68 556
+  s_3d6000c3007319::t_f7d16fe6a60a34 58,69,82,102,119-125,129-131,133,136,138-139,141,147-148,150-151,163-164,168-169,171,184,196-197,199-200,202,206-207,209,215,231-233,235,242-243,245-246,258,265-270,276-277,279,284-286,296-301,303-307,317-318,326
+mobile/src/features/workspace/WorkspaceProvider.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 127-128
+mobile/src/features/sessions/NativeTranscript.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 70,167-168
+src-tauri/src/tray.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 15-16,20
+src/features/inbox/model/inboxFilters.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 112-114
+crates/gespan-gpui/src/conversation/remote_tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-437
+scripts/native-release.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 54,63
+crates/gespan-core/src/store/session_preview.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-89
+src/integrations/harness/providers/cursor/cursor.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 240,318
+src/features/sessions/model/orchestratorCommand.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9
+crates/gespan-gpui/src/accounts/resets.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-367
+crates/gespan-gpui/src/conversation/follow_up.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 564
+  s_3d6000c3007319::t_9551e491f0d7c1 1-563,565-964
+src/app/shell/TitleBar.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 919,922,924
+crates/gespan-gpui/src/pilots/filters.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-142
+src/app/model/navigationPerformance.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 5,25-27
+crates/gespan-gpui/src/conversation.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-39,45-3361,3363-3803,3805-4561
+  s_3d6000c3007319::t_8dce9efae45dd3 40-44,3362,3804
+docs/assets/logo.svg
+  s_3d6000c3007319::t_9551e491f0d7c1 2
+src/features/board/ui/BoardView.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 29,263,507,516
+src/features/pilots/ui/PilotActivityView.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 57,68,102
+src/features/sessions/model/subagentHandback.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 153
+src/features/sessions/ui/Composer.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 26,29,245,320,1437,1457,1559,1572,1693,1748
+src/features/settings/model/settings.flags.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 43,50,54,57,61,64,68,71,75,78,82,85,92,96,99,106,113,120,127,131,209
+src-tauri/src/checkpoint/turn/tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 11,375
+docs/native/preview-release-notes.md
+  s_3d6000c3007319::t_9551e491f0d7c1 1,3,5
+scripts/bump-version.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 41
+crates/gespan-gpui/src/dev_reload.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-21
+docs/agent-access.md
+  s_3d6000c3007319::t_9551e491f0d7c1 5
+scripts/release-channel.test.cjs
+  s_3d6000c3007319::t_9551e491f0d7c1 36,79,120,136,162,191-192,247,250,254,256
+mobile/src/features/connection/PairingLinkSheet.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 60
+src/features/quick-composer/ui/QuickComposer.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 616
+src/integrations/harness/providers/cursor/cursorText.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 13,203
+src-tauri/src/ssh_askpass.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 13-14,138
+src/features/inbox/model/ciRepairTracking.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 14
+src/features/pilots/ui/PilotChangesView.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 367
+src/features/inbox/model/inboxSeen.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 4-5
+crates/gespan-gpui/src/settings/notification_preferences.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1217
+src/app/shell/WhatsNewDialog.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 43
+src/features/pilots/model/pilotSessionCompletion.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 114
+src/integrations/harness/providers/fx/fx.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 256,279,475
+src/features/connections/model/remoteCommands.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 175
+crates/gespan-gpui/Cargo.toml
+  s_3d6000c3007319::t_9551e491f0d7c1 1-110
+src/features/skills/model/skills.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 30,33,79,97,112,330,374
+host/process.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 19,46,80,109
+src/features/inbox/model/githubTasks.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 279-281,284-286
+src/features/skills/ui/SkillsPage.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 338,347,415
+.github/ISSUE_TEMPLATE/config.yml
+  s_3d6000c3007319::t_9551e491f0d7c1 4
+src/features/sessions/ui/ModelPicker.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 518
+src/features/orchestration/model/orchestration.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 26,51,57,123,246,249,1218-1222,1224-1225,1228-1230
+src/integrations/harness/providers/grok/grok.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 281,313,330,485,542
+src/app/model/updaterConfig.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 53-54,71,74,91,127
+crates/gespan-gpui/src/conversation/empty_arcade_tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-45
+crates/gespan-gpui/src/shell/actions.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-588
+crates/gespan-gpui/src/shell/live_agents.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-364
+mobile/src/features/sessions/DictationBar.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 116
+src/features/pilots/model/pilotFiles.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 51,315,341-344,349
+src/integrations/harness/core/child.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 153
+crates/gespan-gpui/src/shell/open_in_editor.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-896
+src/integrations/harness/providers/codex/codexLive.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 19,36,186,321,355,374
+crates/gespan-gpui/src/settings/preferences.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-243
+src/features/sessions/model/transcriptActivity.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 20,1198
+crates/gespan-core/src/inbox/gitlab.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1089
+src/shared/lib/emojiData.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 61,64
+host/server.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 36,502
+crates/gespan-gpui/src/inbox/document.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-725
+crates/gespan-gpui/src/input/code.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2439
+crates/gespan-core/src/desktop_preferences/session_defaults.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-171
+docs/native/verification.md
+  s_3d6000c3007319::t_9551e491f0d7c1 23,68,74-75,123-124,131,141-142
+crates/gespan-gpui/src/notifications/app_update.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-8,10-367
+  s_3d6000c3007319::t_8dce9efae45dd3 9
+src/features/providers/ui/ProviderAccountUsage.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 46,48
+crates/gespan-core/src/scm.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1382
+crates/gespan-gpui/src/shell/idle_agents.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-27
+crates/gespan-gpui/src/shell/sidebar_list.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-3,5-1312
+  s_3d6000c3007319::t_8dce9efae45dd3 4
+crates/gespan-gpui/src/accounts/signin.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-273
+crates/gespan-gpui/src/conversation/approvals.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-146,148-300
+  s_3d6000c3007319::t_8dce9efae45dd3 147
+crates/gespan-gpui/src/diff_view.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-13,15-1951
+  s_3d6000c3007319::t_8dce9efae45dd3 14
+crates/gespan-gpui/src/shell/remote_projects.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 5
+  s_3d6000c3007319::t_9551e491f0d7c1 1-4,6-602
+docs/install.md
+  s_3d6000c3007319::t_9551e491f0d7c1 3,10,20,23,29,36,44,70-71,76,85
+src/features/notes/notes.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 59-60
+src/features/sessions/data/sessionStore.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 1008,1423
+src/integrations/harness/providers/kiro/kiro.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 262
+src/features/sessions/model/operatorCommand.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9,11,19,21,27,36,46
+src/features/sessions/ui/agentMarkdownSpacing.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 10
+src/integrations/harness/providers/codex/codexText.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 33
+src-tauri/src/checkpoint/turn.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 236,514,563,649,655-658,681
+src-tauri/src/remote_bootstrap.sh
+  s_3d6000c3007319::t_9551e491f0d7c1 3-4,9-10,13,15,30,42,45,49,59
+crates/gespan-gpui/src/runtime/visual_tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-154
+crates/gespan-gpui/src/transcript.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 29-30
+  s_3d6000c3007319::t_9551e491f0d7c1 1-28,31-6673
+crates/gespan-gpui/src/conversation/btw.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-7,9-1110
+  s_3d6000c3007319::t_8dce9efae45dd3 8
+tests/browser/app-view-tabs.spec.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 7
+src/integrations/harness/providers/claude/claudeLive.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 102,1390
+crates/gespan-core/src/store/gespan_import.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-601
+src/features/pilots/model/pilotFiles.test.ts
+  s_3d6000c3007319::t_5aedfc1d44dc01 121
+  s_3d6000c3007319::t_9551e491f0d7c1 115,120,122,238,243
+src/features/sessions/model/transcriptHighlights.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2
+src/features/providers/model/providerAccounts.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 39,66,77,83,91,110
+src/integrations/harness/providers/cursor/cursorCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 18,37,47,52,87
+crates/gespan-core/src/app_update/mod.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-399
+crates/gespan-core/src/automations.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1678
+crates/gespan-core/src/follow_up.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-278
+crates/gespan-gpui/src/explorer.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-13,15-1744
+  s_3d6000c3007319::t_8dce9efae45dd3 14
+src/features/files/ui/FileViewMode.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 155
+src/integrations/harness/providers/grok/grokGit.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 66,92
+src/app/shell/GithubStarPrompt.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 18-19,64,68,85,91,106,145
+mobile/modules/gespan-link/android/build.gradle
+  s_3d6000c3007319::t_e7b25754cbb896 1-10
+host/opencode-v2-transport.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 46
+crates/gespan-core/src/remote/protocol.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-323
+src/integrations/harness/core/availability.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 84
+src/features/inbox/model/inboxFilters.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 667
+crates/gespan-core/src/usage/pi.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-612
+host/owner.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 56
+host/cli.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 50,78,300
+CLAUDE.md
+  s_3d6000c3007319::t_9551e491f0d7c1 1
+crates/gespan-core/src/accounts/tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-250
+src/features/inbox/model/ciRepairTracking.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 133
+src/features/projects/model/projectPathsChanged.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 1
+src/features/sessions/model/models.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 232-238
+crates/gespan-core/src/inbox/github.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1351
+host/browse.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9
+src-tauri/src/cursor_store.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 324
+crates/gespan-gpui/src/conversation/response_menu.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 7,370
+  s_3d6000c3007319::t_9551e491f0d7c1 1-6,8-369,371-590
+crates/gespan-gpui/src/mobile/catalog.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-293
+mobile/tests/connection.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 59
+src/shared/lib/drag.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 2
+crates/gespan-core/src/visual_bridge.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-902
+crates/gespan-core/src/store/pilots.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-331
+crates/gespan-gpui/src/conversation/history.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 167
+  s_3d6000c3007319::t_9551e491f0d7c1 1-166,168-351
+crates/gespan-gpui/src/notifications/reminders.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-7,9-341
+  s_3d6000c3007319::t_8dce9efae45dd3 8
+crates/gespan-gpui/src/pilots/status.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-106
+crates/mobile-link/Cargo.toml
+  s_3d6000c3007319::t_9551e491f0d7c1 2
+crates/gespan-gpui/src/transcript/links.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-4,6-224
+  s_3d6000c3007319::t_8dce9efae45dd3 5
+host/bootstrap.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 23,31-32,45,49,59-63,90,122
+src/features/agent-app/model/sessionConversation.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 35-36,92
+src/features/pilots/ui/PilotProjectCommit.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 116,243
+src/features/projects/model/recents.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 177-179,182,185,188,190
+src/features/sessions/model/session.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 242,348-349
+src/integrations/harness/providers/claude/claudeHeartbeat.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 3-4
+src/shared/lib/nativeContextMenu.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 81
+crates/gespan-gpui/src/markdown/search.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-170
+src/features/sessions/model/projectProviders.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 11,14
+crates/gespan-gpui/src/transcript/attachments.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-314
+crates/gespan-gpui/src/shell/project_settings.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-329
+crates/gespan-core/examples/verify_native_update.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-67
+crates/gespan-core/src/store/remote.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-801
+mobile/src/features/connection/invitation.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 10,12
+src/app/model/updateNotice.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 35,37
+src/features/sessions/model/operatorCommand.test.ts
+  s_3d6000c3007319::t_5aedfc1d44dc01 73-76,82,85
+  s_3d6000c3007319::t_9551e491f0d7c1 33,44,56,61
+src/features/sessions/ui/Composer.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 575,1923,2269
+crates/gespan-gpui/src/memory_log.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-61
+src/features/files/ui/FilePreviewSearch.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 15-17
+src/integrations/harness/providers/grok/grokCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 21,39,49,54,98
+docs/superpowers/plans/2026-10-24-native-board-v2.md
+  s_3d6000c3007319::t_f3da0a029f3787 154,172
+  s_3d6000c3007319::t_9551e491f0d7c1 14,28,39,60,72,115,122
+host/child-backend.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 12,175,221
+src/features/sessions/model/inFlight.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 8,66,68
+mobile/modules/gespan-link/ios/GespanLink.podspec
+  s_3d6000c3007319::t_9551e491f0d7c1 1-18
+src/app/App.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 343,1089,2030,3026,5940,5949,5985,6116,6167,7455,7835,8440,8507,10813,11322,11343,12543,12545,13147,13173,13262
+crates/gespan-core/src/skills.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-1306
+crates/gespan-core/src/pilot/bridge.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-316
+src/integrations/harness/providers/devin/devin.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 309,407
+crates/gespan-gpui/src/notifications/approvals.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-3,5-311
+  s_3d6000c3007319::t_8dce9efae45dd3 4
+src/features/sessions/ui/hardBreaks.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 7
+crates/mobile-link/src/transport.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 275,296,913
+src-tauri/src/codex_pilot_store.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 24,37,111,160,164,176,506,599,739,905
+crates/gespan-core/src/store/shared/edit.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-313
+scripts/dev-native.test.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 12-13,15-16,27,47,118,121,158-159,167-168,192
+scripts/package-native.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 49-51,56,61,63-64,67,72-73,78,80,86-87,106,131,136,141,184,187,192,194,198,219,225,227,230-231,234-235,239,247,261,264,288,291,295,331
+src-tauri/src/azure_devops.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 19,1195
+crates/gespan-gpui/src/file_editor/tests.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-147
+crates/gespan-gpui/src/project_search.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 8
+  s_3d6000c3007319::t_9551e491f0d7c1 1-7,9-620
+host/workspace-commands.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 29
+scripts/native-installer.nsi
+  s_3d6000c3007319::t_9551e491f0d7c1 4,6-7,11-12,32,35,38,41-42,44,49,54-60,64,66-67,73-74,79,83-85,90-91
+src/integrations/harness/providers/codex/codexCatalog.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 19,43,164-165
+mobile/modules/gespan-link/ios/TranscriptSession.swift
+  s_3d6000c3007319::t_9551e491f0d7c1 1-444
+src/integrations/harness/core/auth.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 16,50
+src/integrations/harness/providers/pi/piTitle.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 27
+src/app/shell/openInEditor.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 12
+src/features/inbox/model/gitlab.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 67
+src-tauri/src/gitlab.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 14
+src/features/connections/ui/ConnectionsSettings.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 222,248,346,350,447
+src/features/mobile/ui/PairPhoneDialog.tsx
+  s_3d6000c3007319::t_9551e491f0d7c1 23,74,87
+crates/gespan-gpui/src/conversation/submission_tests.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 3
+  s_3d6000c3007319::t_9551e491f0d7c1 1-2,4-389
+src/features/pilots/model/pilotMigration.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 21,23,30,53
+src/features/projects/model/projectLogos.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 36
+mobile/.gitignore
+  s_3d6000c3007319::t_9551e491f0d7c1 42-43
+src/features/sessions/ui/AgentTranscript.test.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 67,69,74,76-77,80,82,85,101-105,108-109,112-113,130,141,150,155,157,161,165,167-168,1009,1017-1018
+src/features/settings/model/sounds.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 9-10,17
+src-tauri/tauri.conf.json
+  s_3d6000c3007319::t_9551e491f0d7c1 3,5,17
+src/integrations/harness/providers/claude/claudeAgentRegistry.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 7
+src/integrations/harness/providers/grok/grokText.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 20,211,300
+src-tauri/src/search.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 462
+crates/keep-awake/src/lib.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 7,13,127,275
+src-tauri/src/remote.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 241,427,450,533
+host/build.mjs
+  s_3d6000c3007319::t_9551e491f0d7c1 6
+src/integrations/harness/core/types.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 41,204,206,210,215
+crates/gespan-gpui/src/shell/session_filters.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-193
+src-tauri/src/pilot_transcript.rs
+  s_3d6000c3007319::t_5aedfc1d44dc01 450,472
+  s_3d6000c3007319::t_53a1c454a01928 469-471
+crates/gespan-gpui/src/settings/model.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-615
+.github/workflows/ci.yml
+  s_3d6000c3007319::t_9551e491f0d7c1 243,295,298,301
+crates/gespan-gpui/src/conversation/commands.rs
+  s_3d6000c3007319::t_9551e491f0d7c1 1-223
+crates/gespan-gpui/src/shell/session_loading.rs
+  s_3d6000c3007319::t_8dce9efae45dd3 117
+  s_3d6000c3007319::t_9551e491f0d7c1 1-116,118-367
+src/features/orchestration/model/orchestration.ts
+  s_3d6000c3007319::t_9551e491f0d7c1 163,174,529,531,544,550,554,833,909
+bun.lock
+  s_3d6000c3007319::t_25ca289ba1a266 6
+crates/gespan-gpui/Cargo.lock
+  s_3d6000c3007319::t_43c4c30a2c5254 5272,5289,5314,5338-5339,5369,5376
+mobile/bun.lock
+  s_3d6000c3007319::t_f1f66bc3907bd5 6
+scripts/native-editor/bun.lock
+  s_3d6000c3007319::t_cb37718fa31804 6
+vendor/gpui-pre-apple/src/metal_renderer.rs
+  s_3d6000c3007319::t_cf343674ca09b7 3,271,2029
+vendor/gpui-pre-apple/src/shaders.metal
+  s_3d6000c3007319::t_6c52d24fed6f5e 3,558,1290
+vendor/gpui-pre-apple/src/text_system.rs
+  s_3d6000c3007319::t_c8171c9bfd5466 3,165
+vendor/gpui-pre-apple/vendor/gpui/src/platform.rs
+  s_3d6000c3007319::t_c27ae5292e00dc 3436
+vendor/gpui-pre-linux/Cargo.toml
+  s_3d6000c3007319::t_cfb177d28bf6d4 1
+vendor/gpui-pre-linux/Cargo.toml.orig
+  s_3d6000c3007319::t_00c56b0fb7306d 1
+vendor/gpui-pre-windows/Cargo.toml
+  s_3d6000c3007319::t_3415bca3ed9924 1
+vendor/gpui-pre-windows/Cargo.toml.orig
+  s_3d6000c3007319::t_5a300a85554890 1
+vendor/gpui-pre/Cargo.toml
+  s_3d6000c3007319::t_3af13d51c38dac 1
+vendor/gpui-pre/Cargo.toml.orig
+  s_3d6000c3007319::t_3f57af074aa5a3 1
+vendor/gpui-pre/build.rs
+  s_3d6000c3007319::t_bc13b4df4adee2 1,6
+vendor/gpui-pre/src/platform.rs
+  s_3d6000c3007319::t_6a4bc56e397d76 3436
+vendor/gpui-pre/src/svg_renderer.rs
+  s_3d6000c3007319::t_66f70c16b0d612 356
+Cargo.lock
+  s_3d6000c3007319::t_96b00e5069f7a3 1690-1768
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2831b1d58838b1795863a5116ae05e1e214cd875",
+  "prompts": {},
+  "sessions": {
+    "s_3d6000c3007319": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d7ce5de9-52e0-4565-a35c-874563a61ab4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
