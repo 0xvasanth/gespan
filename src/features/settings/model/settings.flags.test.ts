@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as settings from "./settings";
 import * as appearance from "./appearance";
+import { spyOnStorage } from "../../../test/spyOnStorage";
 
 const platform = vi.hoisted(() => ({ isWindows: true }));
 vi.mock("../../../platform/tauri/platform", async (importOriginal) => ({
@@ -125,7 +126,7 @@ describe.each([
 ] as const)("%s", (key, load, save, fallback, eventName) => {
   it("uses its default when unset or unreadable", () => {
     expect(load()).toBe(fallback);
-    vi.spyOn(localStorage, "getItem").mockImplementation(() => {
+    spyOnStorage(localStorage, "getItem").mockImplementation(() => {
       throw new Error("storage unavailable");
     });
     expect(load()).toBe(fallback);
@@ -167,7 +168,7 @@ describe.each([
   it("still emits its change event when writing fails", () => {
     const value = !fallback;
     const dispatch = vi.spyOn(window, "dispatchEvent");
-    vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+    spyOnStorage(localStorage, "setItem").mockImplementation(() => {
       throw new Error("storage quota exceeded");
     });
 
@@ -197,7 +198,7 @@ describe.each([
 it("disables close-to-tray outside Windows without consulting storage", () => {
   platform.isWindows = false;
   settings.saveCloseToTray(true);
-  const read = vi.spyOn(localStorage, "getItem");
+  const read = spyOnStorage(localStorage, "getItem");
 
   expect(settings.loadCloseToTray()).toBe(false);
   expect(read).not.toHaveBeenCalled();

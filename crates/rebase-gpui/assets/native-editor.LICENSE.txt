@@ -514,7 +514,7 @@ Author: Alex Bell <alex@bellandwhistle.net>
 
 ----------------------------------------
 
-## @typescript-eslint/types@v8.65.0
+## @typescript-eslint/types@v8.70.0
 
 > Types for the TypeScript-ESTree AST spec
 
@@ -546,7 +546,7 @@ Repository: <https://github.com/typescript-eslint/typescript-eslint.git>
 
 ----------------------------------------
 
-## @typescript-eslint/typescript-estree@v8.65.0
+## @typescript-eslint/typescript-estree@v8.70.0
 
 > A parser that converts TypeScript source code into an ESTree compatible form
 
@@ -672,7 +672,7 @@ Author: Ika <ikatyang@gmail.com> (https://github.com/ikatyang)
 
 ----------------------------------------
 
-## angular-html-parser@v10.11.0
+## angular-html-parser@v10.12.0
 
 > A HTML parser extracted from Angular with some modifications
 
@@ -4590,7 +4590,7 @@ Contributors:
 
 ----------------------------------------
 
-## micromark-extension-gfm-table@v2.1.1
+## micromark-extension-gfm-table@v2.1.2
 
 > micromark extension to support GFM tables
 
@@ -8451,7 +8451,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-@codemirror/legacy-modes 6.5.4
+@codemirror/legacy-modes 6.5.5
 MIT License
 
 Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
@@ -8499,7 +8499,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-@codemirror/merge 6.12.2
+@codemirror/merge 6.12.3
 MIT License
 
 Copyright (C) 2018-2022 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
@@ -8523,7 +8523,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-@codemirror/search 6.5.11
+@codemirror/search 6.7.2
 MIT License
 
 Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
@@ -8619,7 +8619,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-@lezer/common 1.5.3
+@lezer/common 1.5.4
 MIT License
 
 Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
@@ -9090,7 +9090,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-prettier 3.9.6
+prettier 3.9.10
 Copyright © James Long and contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:

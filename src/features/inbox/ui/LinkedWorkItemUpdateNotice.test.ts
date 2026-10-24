@@ -113,7 +113,7 @@ describe("linked work item update notice", () => {
         '[aria-label^="New activity on"] > .linked-activity-notice',
       ),
     ).not.toBeNull();
-    expect(play).toHaveBeenCalledExactlyOnceWith("chime");
+    expect(play).toHaveBeenCalledExactlyOnceWith("success");
 
     act(() => {
       root.render(
@@ -161,7 +161,7 @@ describe("linked work item update notice", () => {
     };
 
     renderNotice(baseCard);
-    expect(play).toHaveBeenCalledExactlyOnceWith("chime");
+    expect(play).toHaveBeenCalledExactlyOnceWith("success");
 
     act(() => root.render(null));
     renderNotice({ ...baseCard });

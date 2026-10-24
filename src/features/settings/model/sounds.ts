@@ -25,14 +25,17 @@ export type SoundCue =
   | "switch"
   | "copy";
 
+// cuelume 0.2.4 renamed its palette; these are the canonical cues its legacy
+// aliases resolve to (arrival → navigate, bloom → open, chime → success,
+// scan → select), so each cue plays exactly what it did before the rename.
 const CUES: Record<SoundCue, SoundName> = {
   turnFinished: "success",
-  inputRequested: "arrival",
-  inboxUnseen: "bloom",
-  linkedActivity: "chime",
-  updateAvailable: "arrival",
+  inputRequested: "navigate",
+  inboxUnseen: "open",
+  linkedActivity: "success",
+  updateAvailable: "navigate",
   switch: "toggle",
-  copy: "scan",
+  copy: "select",
 };
 
 export function loadSoundsEnabled(): boolean {
@@ -100,7 +103,7 @@ export function playCue(cue: SoundCue, subject?: NotificationSubject): boolean {
   return true;
 }
 
-/** Past the longest cue's tail (arrival, ~1.75 s), with room to spare. */
+/** Past the longest cue's tail, with room to spare. */
 export const SOUNDS_SUSPEND_MS = 4_000;
 
 let audioContext: AudioContext | undefined;

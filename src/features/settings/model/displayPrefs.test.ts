@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { spyOnStorage } from "../../../test/spyOnStorage";
 import {
   loadComposerAutocorrect,
   loadMaskEmails,
@@ -61,7 +62,7 @@ describe.each(prefs)("$name preference", (pref) => {
   });
 
   it("keeps the saved value in memory when storage rejects the write", () => {
-    vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+    spyOnStorage(localStorage, "setItem").mockImplementation(() => {
       throw new Error("quota");
     });
     const listener = vi.fn();

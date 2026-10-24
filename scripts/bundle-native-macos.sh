@@ -24,7 +24,7 @@ native_bundle="$native_target/Rebase Native.app"
 native_binary="$native_target/rebase-gpui"
 if [ ! -f "$native_binary" ]; then
   echo "Missing native executable: $native_binary" >&2
-  echo 'Build it with cargo first, or use npm run native:build.' >&2
+  echo 'Build it with cargo first, or use bun run native:build.' >&2
   exit 1
 fi
 

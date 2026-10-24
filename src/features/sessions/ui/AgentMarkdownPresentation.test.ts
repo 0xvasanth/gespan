@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import type { StreamdownProps } from "streamdown";
 
 const renderer = vi.hoisted(() => ({
-  blocks: ["Before.", "\n\n", "Unchanged."],
+  blocks: ["Before.\n\n", "Unchanged."],
   listeners: new Set<() => void>(),
   presented: vi.fn(),
 }));
@@ -62,7 +62,7 @@ it("waits for every rendered block, including an edit before an unchanged tail",
     expect(host.textContent).toBe("Before.Unchanged.");
     expect(renderer.presented).not.toHaveBeenCalled();
     await act(async () => {
-      renderer.blocks = ["After.", "\n\n", "Unchanged."];
+      renderer.blocks = ["After.\n\n", "Unchanged."];
       for (const listener of renderer.listeners) listener();
     });
     expect(host.textContent).toBe("After.Unchanged.");

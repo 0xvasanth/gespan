@@ -2,6 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { spyOnStorage } from "../../../test/spyOnStorage";
 import {
   loadNotificationPreferences,
   updateNotificationPreferences,
@@ -192,7 +193,7 @@ it("mutes a repository from its project context menu", async () => {
   expect(mute.getAttribute("aria-haspopup")).toBe("menu");
   act(() => mute.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
   expect(document.querySelector('[role="dialog"]')).toBeNull();
-  const write = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+  const write = spyOnStorage(localStorage, "setItem").mockImplementation(() => {
     throw new Error("Storage full");
   });
   act(() => button("8 hours").click());

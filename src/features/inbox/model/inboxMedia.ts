@@ -26,8 +26,8 @@ export type InboxMediaType = { kind: InboxMediaKind; mime: string };
 // Each file can be up to 25 MB, so keep recent bytes under a total budget
 // instead of every image and video ever shown. Requests in flight are shared.
 const MEDIA_CACHE_BYTES = 32 * 1024 * 1024;
-const mediaCache = new Map<string, Uint8Array>();
-const mediaRequests = new Map<string, Promise<Uint8Array>>();
+const mediaCache = new Map<string, Uint8Array<ArrayBuffer>>();
+const mediaRequests = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
 let mediaCacheBytes = 0;
 
 /** Remote image/video URLs GitHub and Linear actually put in issue bodies. */
@@ -68,7 +68,7 @@ export function sniffInboxMedia(bytes: Uint8Array): InboxMediaType | null {
   return sniffVideoType(bytes);
 }
 
-export function fetchInboxMedia(url: string): Promise<Uint8Array> {
+export function fetchInboxMedia(url: string): Promise<Uint8Array<ArrayBuffer>> {
   const key = url.trim();
   const cached = mediaCache.get(key);
   if (cached) {
@@ -93,7 +93,7 @@ export function fetchInboxMedia(url: string): Promise<Uint8Array> {
   return pending;
 }
 
-function rememberMedia(key: string, bytes: Uint8Array) {
+function rememberMedia(key: string, bytes: Uint8Array<ArrayBuffer>) {
   if (bytes.byteLength > MEDIA_CACHE_BYTES) return;
   const previous = mediaCache.get(key);
   if (previous) {

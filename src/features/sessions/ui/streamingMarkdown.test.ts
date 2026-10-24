@@ -6,8 +6,30 @@ describe("streaming Markdown blocks", () => {
     const blocks = parseStreamingMarkdown(
       "First **unfinished\n\nSecond paragraph.",
     );
-    expect(blocks[0]).toBe("First **unfinished**");
+    expect(blocks[0]).toBe("First **unfinished**\n\n");
     expect(blocks.at(-1)).toBe("Second paragraph.");
+  });
+
+  it.each([
+    ["*", "See *this", "See *this*"],
+    ["~~", "Drop ~~that", "Drop ~~that~~"],
+    ["`", "Run `npm", "Run `npm`"],
+    ["**", "Keep **bold", "Keep **bold**"],
+  ])(
+    "closes %s before the blank line that ends its paragraph",
+    (_marker, open, closed) => {
+      // Streamdown keeps the separator on the end of the paragraph it follows.
+      // Closing after it would render the marker as a paragraph of its own.
+      const blocks = parseStreamingMarkdown(`${open}\n\nNext.`);
+      expect(blocks).toEqual([`${closed}\n\n`, "Next."]);
+    },
+  );
+
+  it("keeps every source character outside the repaired markers", () => {
+    const source = "One **open\n\n\nTwo *open\n\nThree.";
+    expect(parseStreamingMarkdown(source).join("")).toBe(
+      "One **open**\n\n\nTwo *open*\n\nThree.",
+    );
   });
 
   it.each([

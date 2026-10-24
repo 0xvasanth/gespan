@@ -7,7 +7,7 @@ set -euo pipefail
 # first, since webkit2gtk4.1-devel is not in the default Enterprise Linux
 # repositories (and not in EPEL 9, so EL 9 and older are unsupported).
 #
-# Usage: npm run setup:linux:fedora
+# Usage: bun run setup:linux:fedora
 
 if ! command -v dnf >/dev/null 2>&1; then
   echo "This helper currently supports Fedora and Enterprise Linux 10 systems with dnf." >&2

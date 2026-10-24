@@ -181,7 +181,7 @@ describe("input notification delivery", () => {
     session = { ...session, blocks: [approval(1, "Visible request")] };
     await render([session], "first");
     expect(banners()).toEqual([]);
-    expect(play.mock.calls).toEqual([["arrival"]]);
+    expect(play.mock.calls).toEqual([["navigate"]]);
     session = {
       ...session,
       pendingQuestion: question(2, "Hidden session question"),

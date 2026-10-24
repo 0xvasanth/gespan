@@ -10,7 +10,7 @@ export default defineConfig({
   testMatch: "workspace-performance.spec.ts",
   webServer: {
     cwd: fileURLToPath(new URL("../..", import.meta.url)),
-    command: `${process.env.PERFORMANCE_PREBUILT ? "" : `npm run build -- --mode ${process.env.REACT_PROFILE ? "benchmark-profile" : "benchmark"} && `}npx vite preview --host 127.0.0.1 --port 1435`,
+    command: `${process.env.PERFORMANCE_PREBUILT ? "" : `bun run build --mode ${process.env.REACT_PROFILE ? "benchmark-profile" : "benchmark"} && `}bunx vite preview --host 127.0.0.1 --port 1435`,
     url: "http://127.0.0.1:1435/tests/browser/workspace-performance.html",
     timeout: 180_000,
     reuseExistingServer: false,

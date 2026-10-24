@@ -389,7 +389,8 @@ describe("GitChangesPanel folder actions", () => {
   });
 
   it("reports errors and enables folder actions again", async () => {
-    const alert = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const alert = vi.fn();
+    vi.stubGlobal("alert", alert);
     vi.mocked(gitDiffIndex).mockResolvedValue(
       index({ files: [changedFile("src/app.ts")] }),
     );
@@ -411,7 +412,6 @@ describe("GitChangesPanel folder actions", () => {
     expect(alert).toHaveBeenCalledWith("Git index is locked");
     expect(stage.disabled).toBe(false);
     expect(invalidateWatchedFiles).not.toHaveBeenCalled();
-    alert.mockRestore();
   });
 });
 
