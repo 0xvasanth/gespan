@@ -813,7 +813,9 @@ mod tests {
         service
             .set_projects(&card, &["/b".into(), "/a".into()])
             .unwrap();
-        service.set_labels(&card, &[bug.id.clone()]).unwrap();
+        service
+            .set_labels(&card, std::slice::from_ref(&bug.id))
+            .unwrap();
         let after = service.activity(&board, Some(&card), 100).unwrap().len();
         assert_eq!(after, before + 4);
         set_updated_at(&path, &card, 1);
