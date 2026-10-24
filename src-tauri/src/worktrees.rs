@@ -423,7 +423,15 @@ pub async fn git_orchestration_worktree_create(
         .map_err(|error| error.to_string())?
 }
 
-fn rename_branch(root: &Path, path: &Path, branch: &str) -> Result<Worktree, String> {
+/// Renames an app-created worktree branch. With `from`, only while the
+/// worktree is still on that placeholder, so a rename the user made while a
+/// generated name was on its way is kept.
+fn rename_branch(
+    root: &Path,
+    path: &Path,
+    branch: &str,
+    from: Option<&str>,
+) -> Result<Worktree, String> {
     let branch = branch.trim();
     if branch.starts_with('-') || branch.starts_with('@') || branch.is_empty() {
         return Err("Enter a valid branch name".into());
@@ -439,6 +447,9 @@ fn rename_branch(root: &Path, path: &Path, branch: &str) -> Result<Worktree, Str
     let current = tree.branch.as_deref().ok_or("The worktree is detached")?;
     if !is_app_branch(current) {
         return Err("Only automatically created worktree branches can be renamed".into());
+    }
+    if from.is_some_and(|from| from != current) {
+        return Err("The branch was renamed while its name was being generated".into());
     }
     if current == branch {
         return Ok(tree);
@@ -457,15 +468,29 @@ fn rename_branch(root: &Path, path: &Path, branch: &str) -> Result<Worktree, Str
         )
         .is_ok()
     };
-    let branch = std::iter::once(branch.to_owned())
-        .chain((2..=20).map(|n| format!("{branch}-{n}")))
-        .find(|name| name == current || !taken(name))
-        .ok_or_else(|| format!("{branch} and its numbered variants are taken"))?;
-    if branch == current {
-        return Ok(tree);
+    let mut renamed = false;
+    for name in std::iter::once(branch.to_owned()).chain((2..=20).map(|n| format!("{branch}-{n}")))
+    {
+        if name == current {
+            return Ok(tree);
+        }
+        if taken(&name) {
+            continue;
+        }
+        git(root, &["check-ref-format", "--branch", &name])?;
+        match git(Path::new(&tree.path), &["branch", "-m", &name]) {
+            Ok(_) => {
+                renamed = true;
+                break;
+            }
+            // Another session took it between the check and the rename.
+            Err(_) if taken(&name) => continue,
+            Err(error) => return Err(error),
+        }
     }
-    git(root, &["check-ref-format", "--branch", &branch])?;
-    git(Path::new(&tree.path), &["branch", "-m", &branch])?;
+    if !renamed {
+        return Err(format!("{branch} and its numbered variants are taken"));
+    }
     list(root)?
         .into_iter()
         .find(|entry| same_path(Path::new(&entry.path), path))
@@ -477,9 +502,15 @@ pub async fn git_worktree_rename_branch(
     cwd: String,
     path: String,
     branch: String,
+    from: Option<String>,
 ) -> Result<Worktree, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        rename_branch(&expand_home(&cwd), &expand_home(&path), &branch)
+        rename_branch(
+            &expand_home(&cwd),
+            &expand_home(&path),
+            &branch,
+            from.as_deref(),
+        )
     })
     .await
     .map_err(|error| error.to_string())?
@@ -980,7 +1011,7 @@ mod tests {
         let root = repo.0.join("repo");
         let tree = create(&root, "rebase/12345678", "main", false).unwrap();
         assert!(tree.path.ends_with("/rebase-12345678"));
-        let renamed = rename_branch(&root, Path::new(&tree.path), "rebase/faster").unwrap();
+        let renamed = rename_branch(&root, Path::new(&tree.path), "rebase/faster", None).unwrap();
         assert_eq!(renamed.branch.as_deref(), Some("rebase/faster"));
 
         assert!(is_app_branch("rebase/x") && is_app_branch("mc/x"));
@@ -996,17 +1027,24 @@ mod tests {
         let repo = repo();
         let root = repo.0.join("repo");
         let tree = create(&root, "mc/12345678", "main", false).unwrap();
-        let renamed = rename_branch(&root, Path::new(&tree.path), "mc/faster-worktrees").unwrap();
+        let renamed =
+            rename_branch(&root, Path::new(&tree.path), "mc/faster-worktrees", None).unwrap();
         assert_eq!(renamed.branch.as_deref(), Some("mc/faster-worktrees"));
         assert!(git(
             &root,
             &["rev-parse", "--verify", "refs/heads/mc/faster-worktrees"]
         )
         .is_ok());
-        assert!(rename_branch(&root, &root, "mc/nope").is_err());
+        assert!(rename_branch(&root, &root, "mc/nope", None).is_err());
 
         let regular = create(&root, "feature/manual", "main", false).unwrap();
-        assert!(rename_branch(&root, Path::new(&regular.path), "mc/should-not-change").is_err());
+        assert!(rename_branch(
+            &root,
+            Path::new(&regular.path),
+            "mc/should-not-change",
+            None
+        )
+        .is_err());
     }
 
     #[test]
@@ -1017,7 +1055,7 @@ mod tests {
         let second = create(&root, "rebase/bbbbbbbb", "main", false).unwrap();
         let third = create(&root, "rebase/cccccccc", "main", false).unwrap();
         let rename = |tree: &Worktree| {
-            rename_branch(&root, Path::new(&tree.path), "rebase/fix-login")
+            rename_branch(&root, Path::new(&tree.path), "rebase/fix-login", None)
                 .unwrap()
                 .branch
         };
@@ -1026,6 +1064,41 @@ mod tests {
         assert_eq!(rename(&third).as_deref(), Some("rebase/fix-login-3"));
         // Renaming to its own name again changes nothing.
         assert_eq!(rename(&second).as_deref(), Some("rebase/fix-login-2"));
+    }
+
+    #[test]
+    fn a_branch_renamed_while_its_name_was_generated_is_kept() {
+        let repo = repo();
+        let root = repo.0.join("repo");
+        let tree = create(&root, "rebase/aaaaaaaa", "main", false).unwrap();
+        git_checked(
+            Path::new(&tree.path),
+            &["branch", "-m", "rebase/my-own-name"],
+        )
+        .unwrap();
+        assert!(rename_branch(
+            &root,
+            Path::new(&tree.path),
+            "rebase/generated",
+            Some("rebase/aaaaaaaa")
+        )
+        .is_err());
+        let still = list(&root)
+            .unwrap()
+            .into_iter()
+            .find(|t| same_path(Path::new(&t.path), Path::new(&tree.path)))
+            .unwrap();
+        assert_eq!(still.branch.as_deref(), Some("rebase/my-own-name"));
+        // From the right placeholder, it renames.
+        let tree = create(&root, "rebase/bbbbbbbb", "main", false).unwrap();
+        let renamed = rename_branch(
+            &root,
+            Path::new(&tree.path),
+            "rebase/generated",
+            Some("rebase/bbbbbbbb"),
+        )
+        .unwrap();
+        assert_eq!(renamed.branch.as_deref(), Some("rebase/generated"));
     }
 
     #[test]

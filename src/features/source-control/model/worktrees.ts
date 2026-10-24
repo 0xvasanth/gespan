@@ -56,15 +56,18 @@ export async function createOrchestrationWorktree(
   return tree;
 }
 
+/** With `from`, renames only while the worktree is still on that branch. */
 export async function renameWorktreeBranch(
   cwd: string,
   path: string,
   branch: string,
+  from?: string,
 ) {
   const tree = await invoke<Worktree>("git_worktree_rename_branch", {
     cwd,
     path,
     branch,
+    from: from ?? null,
   });
   notifyGitChanged();
   return tree;
@@ -110,7 +113,8 @@ export async function nameWorktreeAfterMessage({
     const fragment = await generate();
     const branch = fragment ? namedWorktreeBranch(fragment) : null;
     return branch ? await rename(branch) : null;
-  } catch {
+  } catch (error) {
+    console.debug("[rebase] worktree branch name", error);
     return null;
   }
 }

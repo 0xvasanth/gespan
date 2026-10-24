@@ -8131,8 +8131,15 @@ function Workspace({
                 workCwd,
                 branchMessage,
               ),
+            // Only while it is still the placeholder: a rename the user
+            // makes meanwhile wins.
             rename: (branch) =>
-              renameWorktreeBranch(current.cwd, tree.path, branch),
+              renameWorktreeBranch(
+                current.cwd,
+                tree.path,
+                branch,
+                tree.branch ?? undefined,
+              ),
           }).then((renamed) => {
             if (!renamed) return;
             setSessions((prev) =>
