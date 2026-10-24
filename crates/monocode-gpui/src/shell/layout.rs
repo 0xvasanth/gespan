@@ -517,8 +517,8 @@ impl Shell {
             && self.settings.is_none()
             && self.app_search.is_none()
     }
-    /// Classic: the panel toggle holds the corner while Explorer, Changes and
-    /// History start at the panel's left edge. The open tab names itself.
+    /// Classic: the panel toggle holds the corner while Explorer and History
+    /// start at the panel's left edge. The open tab names itself.
     pub(super) fn classic_corner(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let row = div()
             .h(px(TITLE_BAR_HEIGHT))
@@ -550,12 +550,6 @@ impl Shell {
                 "Explorer",
                 "file-script",
                 RightTab::Files,
-            ),
-            (
-                "right-panel-changes",
-                "Changes",
-                "git-branch",
-                RightTab::Changes,
             ),
             ("right-panel-history", "History", "clock", RightTab::Graph),
         ];
@@ -602,7 +596,7 @@ impl Shell {
                                     ),
                                     path,
                                     selected,
-                                    tab == RightTab::Changes && changes && !selected,
+                                    false,
                                     unfolded,
                                     window,
                                 )
@@ -911,21 +905,13 @@ mod tests {
         visual.run_until_parked();
         for boxy in [false, true] {
             let selectors = if boxy {
-                [
-                    "right-panel-explorer",
-                    "right-panel-changes",
-                    "right-panel-history",
-                ]
+                ["right-panel-explorer", "right-panel-history"]
             } else {
-                [
-                    "right-panel-tab-Explorer",
-                    "right-panel-tab-Changes",
-                    "right-panel-tab-History",
-                ]
+                ["right-panel-tab-Explorer", "right-panel-tab-History"]
             };
             let label_selector = Box::leak(format!("{}-label", selectors[1]).into_boxed_str());
             let mut full_label_width = None;
-            for width in [420., 312., 280., 260., 220., 420.] {
+            for width in [420., 290., 270., 260., 220., 420.] {
                 window
                     .update(visual, |shell, _, cx| {
                         shell.workspace.new_layout_boxy = boxy;
@@ -934,7 +920,7 @@ mod tests {
                             .right_panel
                             .as_ref()
                             .unwrap()
-                            .update(cx, |panel, cx| panel.select(RightTab::Changes, cx));
+                            .update(cx, |panel, cx| panel.select(RightTab::Graph, cx));
                         shell.invalidate_chrome(cx);
                         cx.notify();
                     })
@@ -946,8 +932,7 @@ mod tests {
                 let toggle = visual.debug_bounds("toggle-right-panel").unwrap();
                 let search = visual.debug_bounds("titlebar-file-search").unwrap();
                 assert!(tabs[0].right() <= tabs[1].left());
-                assert!(tabs[1].right() <= tabs[2].left());
-                assert!(tabs[2].right() <= stats.left());
+                assert!(tabs[1].right() <= stats.left());
                 assert!(stats.right() <= search.left());
                 assert!(search.right() <= toggle.left());
                 assert_eq!(search.left() - stats.right(), px(CORNER_CONTROL_GAP));
@@ -959,7 +944,7 @@ mod tests {
                         assert_eq!(label.size.width, full_width);
                     }
                     full_label_width = Some(label.size.width);
-                } else if width == 312. {
+                } else if width == 290. {
                     let label = visual.debug_bounds(label_selector).unwrap();
                     assert!(label.size.width > px(0.));
                     assert!(label.size.width < full_label_width.unwrap());
@@ -967,13 +952,13 @@ mod tests {
                     assert!(visual.debug_bounds(label_selector).is_none());
                     assert!(tabs.iter().all(|tab| tab.size.width == px(26.)));
                     // The icon keeps its action after the label disappears.
-                    visual.simulate_click(tabs[2].center(), Default::default());
+                    visual.simulate_click(tabs[0].center(), Default::default());
                     visual.run_until_parked();
                     window
                         .update(visual, |shell, _, cx| {
                             assert_eq!(
                                 shell.right_panel.as_ref().unwrap().read(cx).tab(),
-                                RightTab::Graph
+                                RightTab::Files
                             )
                         })
                         .unwrap();

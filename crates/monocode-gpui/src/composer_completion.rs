@@ -67,6 +67,7 @@ pub(crate) struct Completion {
     cancel: Arc<AtomicBool>,
     anchor: AnchorSlot,
     composer_anchor: AnchorSlot,
+    container_anchor: AnchorSlot,
     inline_field: bool,
     _observe: Subscription,
 }
@@ -118,6 +119,7 @@ impl Completion {
             cancel: Arc::new(AtomicBool::new(false)),
             anchor: AnchorSlot::default(),
             composer_anchor: AnchorSlot::default(),
+            container_anchor: AnchorSlot::default(),
             inline_field: false,
             _observe: observe,
         }
@@ -130,6 +132,10 @@ impl Completion {
     pub(crate) fn inline_field(mut self) -> Self {
         self.inline_field = true;
         self
+    }
+    /// Keep composer suggestions inside the conversation, below its tabs.
+    pub(crate) fn container_probe(&self) -> impl IntoElement {
+        self.container_anchor.layout_probe()
     }
     pub(crate) fn composer_probe(&self) -> impl IntoElement {
         // Include the composer's 1px border instead of measuring its padded
@@ -548,40 +554,43 @@ impl Completion {
                 }));
         } else {
             let mut choices = Vec::new();
-            for (id, label, detail) in [
-                (
-                    "add-to-folder",
-                    "Add to folder",
-                    "Place this session in an existing or new sidebar folder",
-                ),
+            for (order, (id, label, detail)) in [
                 (
                     "draft",
                     "Draft",
                     "Save this message without starting the agent",
                 ),
                 (
-                    "compact",
-                    "Compact context",
-                    "Summarize older conversation context to free space",
+                    "orchestrator",
+                    "Orchestrator",
+                    "Plan and coordinate agent work",
                 ),
-                ("mcp", "MCP server", "Find an MCP server for this message"),
-                (
-                    "btw",
-                    "Side question",
-                    "Ask a read-only side question about the current turn",
-                ),
-                ("plan", "Plan mode", "Review a plan before building"),
                 (
                     "operator",
                     "Operator",
                     "Give this thread access to MonoCode",
                 ),
+                ("plan", "Plan mode", "Review a plan before building"),
                 (
-                    "orchestrator",
-                    "Orchestrator",
-                    "Plan and coordinate agent work",
+                    "btw",
+                    "Side question",
+                    "Ask a read-only side question about the current turn",
                 ),
-            ] {
+                (
+                    "compact",
+                    "Compact context",
+                    "Summarize older conversation context to free space",
+                ),
+                (
+                    "add-to-folder",
+                    "Add to folder",
+                    "Place this session in an existing or new sidebar folder",
+                ),
+                ("mcp", "MCP server", "Find an MCP server for this message"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 if id == "btw"
                     && matches!(
                         self.provider,
@@ -593,8 +602,14 @@ impl Completion {
                     continue;
                 }
                 if let Some(score) = composer::score(&token.query, &format!("{id} {label}")) {
+                    // Only the bare slash menu uses the fixed command order.
+                    let priority = if token.query.is_empty() {
+                        100 - order as i64
+                    } else {
+                        100
+                    };
                     choices.push((
-                        score + 100,
+                        score + priority,
                         Choice {
                             label: label.into(),
                             detail: detail.into(),
@@ -913,9 +928,10 @@ impl Render for Completion {
                 .as_f32()
                 .min((window.viewport_size().width.as_f32() - 16.).max(0.));
             let gap = 6.;
-            // Limit the scrollable card to the room above the composer; the
-            // shared popover placement then has no reason to flip below it.
-            let max_height = (bounds.top().as_f32() - gap - 8.).clamp(0., 400.);
+            // Measure from the conversation's top, rather than the window's,
+            // so a centered composer's menu cannot cover the session tabs.
+            let top = self.container_anchor.get().map_or(0., |b| b.top().as_f32());
+            let max_height = (bounds.top().as_f32() - top - gap - 8.).clamp(0., 400.);
             let (anchor, side, width, max_height) = if self.inline_field {
                 let caret = self.input.read(cx).cursor_anchor().unwrap_or(bounds);
                 let above = (caret.top().as_f32() - gap - 8.).max(0.);
@@ -948,6 +964,7 @@ impl Render for Completion {
                     .child(
                         div()
                             .id("composer-completion-list")
+                            .debug_selector(|| "composer-completion-list".into())
                             .role(Role::ListBox)
                             .aria_label(title)
                             .p_2()
@@ -1033,6 +1050,69 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         window
+    }
+    #[gpui::test]
+    fn bare_slash_prioritizes_local_modes_and_typing_filters_skills(cx: &mut TestAppContext) {
+        let window = window(cx);
+        window
+            .update(cx, |view, _, cx| {
+                view.skills = ["zebra", "alpha"]
+                    .into_iter()
+                    .map(|name| DiscoveredSkill {
+                        name: name.into(),
+                        description: String::new(),
+                        path: format!("/skills/{name}/SKILL.md"),
+                        scope: "project".into(),
+                        source: "codex".into(),
+                    })
+                    .collect();
+                view.input
+                    .update(cx, |input, cx| input.set_text("/".into(), cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |view, _, cx| {
+                let commands: Vec<_> = view.choices.iter().map(|c| c.insertion.as_str()).collect();
+                assert_eq!(
+                    commands,
+                    [
+                        "/draft",
+                        "/orchestrator",
+                        "/operator",
+                        "/plan",
+                        "/btw",
+                        "/compact",
+                        "/add-to-folder",
+                        "/mcp",
+                        "/alpha",
+                        "/zebra",
+                    ]
+                );
+                view.input
+                    .update(cx, |input, cx| input.set_text("/alpha".into(), cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |view, _, _| {
+                assert_eq!(view.choices.len(), 1);
+                assert_eq!(view.choices[0].insertion, "/alpha");
+            })
+            .unwrap();
+        window
+            .update(cx, |view, _, cx| {
+                view.input
+                    .update(cx, |input, cx| input.set_text("/o".into(), cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |view, _, _| {
+                assert_eq!(view.choices[0].insertion, "/operator");
+                assert_eq!(view.choices[1].insertion, "/orchestrator");
+            })
+            .unwrap();
     }
     #[gpui::test]
     fn slash_accept_keeps_input_focus_and_does_not_submit(cx: &mut TestAppContext) {

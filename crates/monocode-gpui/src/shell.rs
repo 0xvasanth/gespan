@@ -4732,8 +4732,16 @@ impl Shell {
     }
     fn project_diff_stat(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let width = self.diff_stat_room(cx);
+        // With no Changes tab, the stat marks the open Changes pane.
+        let selected = self.workspace.right_panel_open
+            && !self.app_view_open()
+            && self
+                .right_panel
+                .as_ref()
+                .is_some_and(|p| p.read(cx).tab() == crate::right_panel::RightTab::Changes);
         (width > 0.).then(|| {
             crate::right_panel::diff_stat(self.git.read(cx).stats.as_ref(), width)
+                .when(selected, |d| d.bg(content(0.1)))
                 .when(!self.app_view_open(), |d| {
                     d.cursor_pointer()
                         .hover(|s| s.bg(content(0.1)))
@@ -4798,9 +4806,10 @@ impl Shell {
                 crate::right_panel::tabs_width(self.right_tab_count(cx)),
             )
     }
-    /// Explorer, Changes and History, and Terminal when it lives in the panel.
+    /// Explorer and History, and Terminal when it lives in the panel. Changes
+    /// opens from the diff stat instead.
     fn right_tab_count(&self, cx: &App) -> usize {
-        3 + usize::from(self.terminal_in_panel(cx))
+        2 + usize::from(self.terminal_in_panel(cx))
     }
     /// The toggle's room at the end of the strip: `pl-1.5`, the button, `pr-3`.
     fn toggle_room(&self, cx: &App) -> f32 {
@@ -9732,7 +9741,7 @@ mod tests {
         );
         for (selector, header) in [
             ("right-panel-tab-History", "history-toolbar"),
-            ("right-panel-tab-Changes", "changes-header"),
+            ("project-diff-stat", "changes-header"),
             ("right-panel-tab-Explorer", "explorer-header"),
         ] {
             let tab = cx.debug_bounds(selector).unwrap();
@@ -10362,14 +10371,12 @@ mod tests {
             let (_, main, tabs) = frames(cx);
             let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
             let explorer = visual.debug_bounds("right-panel-explorer").unwrap();
-            let changes = visual.debug_bounds("right-panel-changes").unwrap();
+            assert!(visual.debug_bounds("right-panel-changes").is_none());
             let history = visual.debug_bounds("right-panel-history").unwrap();
             assert_eq!(explorer.left(), main.right() + px(6.));
             assert_eq!(explorer.center().y, closed_corner.center().y);
-            assert_eq!(changes.top(), explorer.top());
             assert_eq!(history.top(), explorer.top());
-            assert!(explorer.right() <= changes.left());
-            assert!(changes.right() <= history.left());
+            assert!(explorer.right() <= history.left());
             assert!(history.right() <= closed_corner.left());
             assert!(tabs.right() <= explorer.left());
             assert_eq!(corner(cx), closed_corner);
@@ -11051,6 +11058,46 @@ mod tests {
             })
             .unwrap();
     }
+    #[gpui::test]
+    fn slash_menu_stays_below_tabs_with_centered_and_docked_input(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, id) = window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        for boxy in [false, true] {
+            for height in [700., 500.] {
+                visual.simulate_resize(gpui::size(px(1200.), px(height)));
+                for has_messages in [false, true] {
+                    window
+                        .update(visual, |shell, window, cx| {
+                            shell.workspace.new_layout_boxy = boxy;
+                            shell.layout_changed(cx);
+                            shell.open(id, window, cx);
+                            shell.sessions[&id].update(cx, |view, cx| {
+                                view.summary.has_messages = has_messages;
+                                window.focus(&view.input.focus_handle(cx), cx);
+                                view.input
+                                    .update(cx, |input, cx| input.set_text("/".into(), cx));
+                                cx.notify();
+                            });
+                        })
+                        .unwrap();
+                    visual.run_until_parked();
+                    visual.refresh().unwrap();
+                    let tabs = visual.debug_bounds("title-tab-strip").unwrap();
+                    let menu = visual.debug_bounds("composer-completion-list").unwrap();
+                    let composer = visual.debug_bounds("composer-box").unwrap();
+                    assert!(
+                        menu.top() >= tabs.bottom(),
+                        "slash menu must leave the tabs visible"
+                    );
+                    assert!(menu.bottom() <= composer.top() - px(6.));
+                    assert!((menu.left() - composer.left()).abs() <= px(2.));
+                    assert!((menu.right() - composer.right()).abs() <= px(2.));
+                }
+            }
+        }
+    }
+
     #[gpui::test]
     fn pane_surfaces_follow_the_edge_at_a_constant_width(cx: &mut TestAppContext) {
         use std::time::Duration;
