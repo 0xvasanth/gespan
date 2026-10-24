@@ -43,7 +43,7 @@ fn path_key(path: &str) -> String {
         normalized.into()
     }
 }
-fn looks_like_project(path: &str) -> bool {
+pub(crate) fn looks_like_project(path: &str) -> bool {
     let key = path_key(path);
     let excluded = path.is_empty()
         || key == "/"
