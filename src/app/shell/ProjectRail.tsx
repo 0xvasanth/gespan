@@ -5,6 +5,7 @@ import {
   FolderPlus,
   Internet,
   Inbox,
+  Kanban,
   MoreHorizontal,
   Pin,
   PinOff,
@@ -128,6 +129,9 @@ type Props = {
   notesActive?: boolean;
   onOpenAutomations?: () => void;
   automationsActive?: boolean;
+  /** Set only while the Board setting is on. */
+  onOpenBoard?: () => void;
+  boardActive?: boolean;
   onTogglePanel?: () => void;
   onSelectProject: (path: string) => void;
   onOpenProject: () => void;
@@ -169,6 +173,8 @@ export function ProjectRail({
   notesActive = false,
   onOpenAutomations,
   automationsActive = false,
+  onOpenBoard,
+  boardActive = false,
   onTogglePanel,
   onSelectProject,
   onOpenProject,
@@ -365,6 +371,7 @@ export function ProjectRail({
     inboxActive ||
     notesActive ||
     automationsActive ||
+    boardActive ||
     !!pilots?.activeId;
   const pinnedIds = sections.pinned.map((item) => item.path);
   const projectIds = groupedProjectSections.ungrouped.map((item) => item.path);
@@ -450,6 +457,15 @@ export function ProjectRail({
               active={automationsActive}
               ariaLabel="Automations"
             />
+            {onOpenBoard ? (
+              <RailAction
+                label="Board"
+                icon={Kanban}
+                onClick={onOpenBoard}
+                active={boardActive}
+                ariaLabel="Board"
+              />
+            ) : null}
           </div>
 
           <div

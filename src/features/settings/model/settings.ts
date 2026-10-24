@@ -242,6 +242,12 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     label: "Notes",
     keywords: "notebook markdown rail scratchpad",
   },
+  {
+    id: "board",
+    section: "general",
+    label: "Board",
+    keywords: "kanban cards columns tasks tickets track",
+  },
   ...(IS_MAC
     ? [
         {
@@ -857,6 +863,32 @@ export function subscribeNotesEnabled(onStoreChange: () => void) {
   window.addEventListener(NOTES_ENABLED_CHANGE_EVENT, onStoreChange);
   return () =>
     window.removeEventListener(NOTES_ENABLED_CHANGE_EVENT, onStoreChange);
+}
+
+const BOARD_ENABLED_KEY = "rebase.boardEnabled";
+
+export const BOARD_ENABLED_DEFAULT = false;
+
+/** Fired on `window` when the Board setting flips. */
+export const BOARD_ENABLED_CHANGE_EVENT = "rebase:board-enabled-change";
+
+export function loadBoardEnabled(): boolean {
+  return readFlag(BOARD_ENABLED_KEY) ?? BOARD_ENABLED_DEFAULT;
+}
+
+export function saveBoardEnabled(value: boolean) {
+  writeFlag(BOARD_ENABLED_KEY, value);
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<boolean>(BOARD_ENABLED_CHANGE_EVENT, { detail: value }),
+  );
+}
+
+export function subscribeBoardEnabled(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(BOARD_ENABLED_CHANGE_EVENT, onStoreChange);
+  return () =>
+    window.removeEventListener(BOARD_ENABLED_CHANGE_EVENT, onStoreChange);
 }
 
 const PILOTS_ENABLED_KEY = "rebase.pilotsEnabled";

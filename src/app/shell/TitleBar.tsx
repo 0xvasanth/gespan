@@ -5,6 +5,7 @@ import {
   Code,
   DashboardSquare,
   Inbox,
+  Kanban,
   PanelLeft,
   GitBranch,
   Plus,
@@ -73,6 +74,7 @@ const APP_VIEW_ICONS = {
   inbox: Inbox,
   notes: StickyNote,
   automations: Zap,
+  board: Kanban,
 };
 
 export type Tab = {

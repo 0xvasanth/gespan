@@ -558,6 +558,7 @@ import {
   repairSession,
   applySessionRepair,
   listLinkedSessions,
+  listSessionsByIds,
   listSessionsByProject,
   persistFingerprint,
   rebaseProjectSessions,
@@ -713,6 +714,17 @@ import { useQuickComposerLaunches } from "../features/quick-composer/hooks/useQu
 import type { QuickLaunch } from "../features/quick-composer/model/quickComposer";
 import { claimInboxAutomationRuns } from "../features/automations/model/automationEvents";
 import {
+  sessionLinkTarget,
+  type BoardLinkTarget,
+  type LinkRef,
+} from "../features/board/ui/boardFormat";
+import { onLinkedWork } from "../features/board/model/autoMove";
+import {
+  createLinkedTurns,
+  turnPilotId,
+  type LinkedTurns,
+} from "../features/board/model/linkedTurns";
+import {
   SECOND_OPINION_TITLE,
   buildSecondOpinionRequest,
   harnessForTurn,
@@ -785,6 +797,7 @@ import {
 import {
   loadCloseToTray,
   loadAutosave,
+  loadBoardEnabled,
   loadCollapsedProjectRailMode,
   loadFileTabMode,
   loadLiveAgentsEnabled,
@@ -800,6 +813,7 @@ import {
   matchCustomKeybinding,
   saveSettingsSection,
   saveAutosave,
+  subscribeBoardEnabled,
   subscribeLiveAgentsEnabled,
   subscribeNotesEnabled,
   type CollapsedProjectRailMode,
@@ -894,6 +908,13 @@ const AutomationsView = lazySurface(
   },
   { suspense: false },
 );
+const BoardView = lazySurface(
+  async () => {
+    const module = await import("../features/board/ui/BoardView");
+    return { default: module.BoardView };
+  },
+  { suspense: false },
+);
 
 type LinkedWorkItemPanelState = {
   item: LinkedWorkItem;
@@ -918,6 +939,8 @@ type SubmitOptions = ComposerTurnOptions & {
   /** An app request that may arrive mid-turn, steering or queuing as one typed here would. */
   followsUp?: boolean;
   pilotSessionCompletion?: Block["pilotSessionCompletion"];
+  /** The Pilot that started or prompted this session through the app CLI. */
+  spawningPilotId?: string;
   onSettled?: (outcome: ControlOutcome) => void;
   /** Generate a fresh title even when this is not the session's first turn. */
   refreshTitle?: boolean;
@@ -1317,6 +1340,7 @@ function Workspace({
   const openingInboxSessions = useRef(new Map<string, Promise<string>>());
   const [notesViewOpen, setNotesViewOpen] = useState(false);
   const [automationsViewOpen, setAutomationsViewOpen] = useState(false);
+  const [boardViewOpen, setBoardViewOpen] = useState(false);
   const [openAppViews, setOpenAppViews] = useState<AppView[]>([]);
   // Pilots open as title tabs in the inset layout, by Pilot id.
   const [openPilotTabs, setOpenPilotTabs] = useState<string[]>([]);
@@ -1331,7 +1355,9 @@ function Workspace({
         ? "notes"
         : automationsViewOpen
           ? "automations"
-          : undefined;
+          : boardViewOpen
+            ? "board"
+            : undefined;
   const rememberAppView = useCallback((view: AppView) => {
     setOpenAppViews((current) =>
       current.includes(view) ? current : [...current, view],
@@ -1355,6 +1381,11 @@ function Workspace({
     subscribeNotesEnabled,
     loadNotesEnabled,
     () => true,
+  );
+  const boardEnabled = useSyncExternalStore(
+    subscribeBoardEnabled,
+    loadBoardEnabled,
+    () => false,
   );
   const liveAgentsEnabled = useSyncExternalStore(
     subscribeLiveAgentsEnabled,
@@ -1448,6 +1479,7 @@ function Workspace({
     inbox: false,
     notes: false,
     automations: false,
+    board: false,
   });
   const [updateNotice, setUpdateNotice] = useState(installedUpdate);
   const [whatsNewVersion, setWhatsNewVersion] = useState<string | null>(null);
@@ -1690,6 +1722,7 @@ function Workspace({
       !inboxViewOpen &&
       !notesViewOpen &&
       !automationsViewOpen &&
+      !boardViewOpen &&
       !settingsOpen &&
       !pilotViewId,
     standaloneSessionId: inboxViewOpen
@@ -1697,6 +1730,7 @@ function Workspace({
       : !searchViewOpen &&
           !notesViewOpen &&
           !automationsViewOpen &&
+          !boardViewOpen &&
           !settingsOpen
         ? (pilotViewId ?? undefined)
         : undefined,
@@ -1705,6 +1739,7 @@ function Workspace({
       !searchViewOpen &&
       !notesViewOpen &&
       !automationsViewOpen &&
+      !boardViewOpen &&
       !settingsOpen
         ? shownPilotSessionId
         : undefined,
@@ -1713,6 +1748,8 @@ function Workspace({
   notesViewOpenRef.current = notesViewOpen;
   const automationsViewOpenRef = useRef(automationsViewOpen);
   automationsViewOpenRef.current = automationsViewOpen;
+  const boardViewOpenRef = useRef(boardViewOpen);
+  boardViewOpenRef.current = boardViewOpen;
   const settingsOpenRef = useRef(settingsOpen);
   settingsOpenRef.current = settingsOpen;
   const sessionNavigationIdsRef = useRef<readonly string[]>([]);
@@ -1744,6 +1781,10 @@ function Workspace({
     if (!notesEnabled) setNotesViewOpen(false);
   }, [notesEnabled]);
 
+  useEffect(() => {
+    if (!boardEnabled) setBoardViewOpen(false);
+  }, [boardEnabled]);
+
   useEffect(
     () =>
       preloadNavigationWhenIdle([
@@ -1752,8 +1793,9 @@ function Workspace({
         AutomationsView.preload,
         listAutomations,
         ...(notesEnabled ? [NotesView.preload, loadNotes] : []),
+        ...(boardEnabled ? [BoardView.preload] : []),
       ]),
-    [notesEnabled],
+    [notesEnabled, boardEnabled],
   );
 
   const projectReturnRef = useRef<ProjectReturnMemory>(
@@ -1779,6 +1821,10 @@ function Workspace({
     canForward: false,
   });
   const turnGen = useRef(new Map<string, number>());
+  // Moves board cards linked to a session (or its Pilot) as its turns run.
+  // Runs whether or not the Board is shown; failures only reach the console.
+  const linkedTurns = useRef<LinkedTurns | null>(null);
+  linkedTurns.current ??= createLinkedTurns(onLinkedWork);
   const editedResends = useRef(createEditedResendCoordinator()).current;
   const lastPersisted = useRef(new Map<string, string>());
   const lastBoundProvider = useRef(new Map<string, string>());
@@ -2449,6 +2495,7 @@ function Workspace({
             !inboxViewOpenRef.current &&
             !notesViewOpenRef.current &&
             !automationsViewOpenRef.current &&
+            !boardViewOpenRef.current &&
             !settingsOpenRef.current
           ) {
             setComposerFocused(true);
@@ -2487,6 +2534,7 @@ function Workspace({
     searchViewOpen,
     notesViewOpen,
     automationsViewOpen,
+    boardViewOpen,
     settingsOpen,
     flushForegroundHarnessEvents,
   ]);
@@ -3002,6 +3050,7 @@ function Workspace({
     setInboxViewOpen(false);
     setNotesViewOpen(false);
     setAutomationsViewOpen(false);
+    setBoardViewOpen(false);
     const cwd = sidebarCwd;
     const session = newWorkspaceSession(cwd, sessionDefaults?.runtimeMode);
     const tab = newTab(session.id);
@@ -3018,6 +3067,7 @@ function Workspace({
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       const existing = findRemoteSessionTab(
         tabsRef.current,
         sessionsRef.current,
@@ -3046,6 +3096,7 @@ function Workspace({
         setInboxViewOpen(false);
         setNotesViewOpen(false);
         setAutomationsViewOpen(false);
+        setBoardViewOpen(false);
         const cwd =
           item.projectPath || active?.cwd || sessionDefaults?.cwd || projectCwd;
         setSidebarTab("sessions", cwd);
@@ -3085,6 +3136,7 @@ function Workspace({
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       const cwd =
         (card.sourceCwd && looksLikeProject(card.sourceCwd)
           ? card.sourceCwd
@@ -5098,6 +5150,7 @@ function Workspace({
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       setPilotViewId(session.id);
       if (insetLayoutRef.current) {
         setOpenPilotTabs((current) =>
@@ -5240,6 +5293,7 @@ function Workspace({
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       if (looksLikeProject(session.cwd))
         setProjectCwd(normalizeProjectPath(session.cwd));
       const linkedUpdate = linkedSessionUpdatesRef.current.get(session.id);
@@ -5325,6 +5379,7 @@ function Workspace({
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       setSettingsOpen(false);
       setFilePickerOpen(false);
       setSidebarTab("sessions", session.cwd);
@@ -5951,6 +6006,7 @@ function Workspace({
             inboxViewOpenRef.current ||
             notesViewOpenRef.current ||
             automationsViewOpenRef.current ||
+            boardViewOpenRef.current ||
             settingsOpenRef.current ||
             filePickerOpenRef.current ||
             whatsNewVersionRef.current,
@@ -6525,6 +6581,7 @@ function Workspace({
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
 
       // At most one folder can take the blank session, and it keeps the
       // retargeting rules `onCwdChange` already owns.
@@ -8016,6 +8073,16 @@ function Workspace({
         );
       }
 
+      // The turn is underway from here; the .finally below always settles it.
+      linkedTurns.current!.started(
+        sessionId,
+        gen,
+        turnPilotId({
+          own: pilotForSession(sessionId)?.id,
+          habitRun: habitRunPilot(sessionId),
+          spawnedBy: options?.spawningPilotId,
+        }),
+      );
       let controlOutcome: ControlOutcome = {
         status: "failed",
         text: "",
@@ -8647,11 +8714,12 @@ function Workspace({
         .finally(() => {
           editedResend?.reject();
           if (editedResend) editedResends.finish(sessionId);
-          options?.onSettled?.(
+          const outcome: ControlOutcome =
             turnGen.current.get(sessionId) !== gen
               ? { status: "cancelled", text: controlText }
-              : controlOutcome,
-          );
+              : controlOutcome;
+          linkedTurns.current!.settled(sessionId, gen, outcome.status);
+          options?.onSettled?.(outcome);
         });
       return true;
     },
@@ -8919,6 +8987,7 @@ function Workspace({
           setInboxViewOpen(false);
           setNotesViewOpen(false);
           setAutomationsViewOpen(false);
+          setBoardViewOpen(false);
           setSidebarTab("sessions", session.cwd);
         }
 
@@ -9014,6 +9083,7 @@ function Workspace({
       placement?: AppSessionPlacement,
       onSettled?: (outcome: ControlOutcome) => void,
       openTab?: boolean,
+      spawningPilotId?: string,
     ) =>
       acceptQuickLaunch(
         launch,
@@ -9065,6 +9135,7 @@ function Workspace({
             setInboxViewOpen(false);
             setNotesViewOpen(false);
             setAutomationsViewOpen(false);
+            setBoardViewOpen(false);
             setSidebarTab("sessions", cwd);
           },
           submit: (id, text, attachments, options) =>
@@ -9074,12 +9145,16 @@ function Workspace({
                     submitSession(id, text, attachments, {
                       ...options,
                       appRequestId: deliveryId,
+                      spawningPilotId,
                       onSettled: settle,
                     }),
                   onSettled,
                   rejectionMessage: "The monitored session could not start.",
                 })
-              : submitSession(id, text, attachments, options),
+              : submitSession(id, text, attachments, {
+                  ...options,
+                  spawningPilotId,
+                }),
           saveDraft: (id, prompt, attachments, requestId) =>
             flushSync(() => onSaveDraft(id, prompt, attachments, requestId)),
         },
@@ -11413,6 +11488,7 @@ function Workspace({
                   placement,
                   onSettled,
                   !!placement || (!isPilotSession(source.id) && launch.reveal),
+                  sourcePilot?.id,
                 );
                 rememberLaunch();
                 onSettled?.accept();
@@ -11523,6 +11599,7 @@ function Workspace({
                     submit: (onSettled) =>
                       submitSessionRef.current(id, prompt, [], {
                         appRequestId: requestId,
+                        spawningPilotId: sourcePilot?.id,
                         onSettled,
                       }),
                     onSettled,
@@ -11531,6 +11608,7 @@ function Workspace({
                   })
                 : await submitSessionRef.current(id, prompt, [], {
                     appRequestId: requestId,
+                    spawningPilotId: sourcePilot?.id,
                   });
               if (!accepted) {
                 onSettled?.discard();
@@ -11916,6 +11994,7 @@ function Workspace({
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       onOpenApprovalSession(sessionId);
     },
     [onOpenApprovalSession],
@@ -11928,7 +12007,11 @@ function Workspace({
       ),
       ...(insetLayout
         ? openAppViews
-            .filter((view) => view !== "notes" || notesEnabled)
+            .filter(
+              (view) =>
+                (view !== "notes" || notesEnabled) &&
+                (view !== "board" || boardEnabled),
+            )
             .map((view): TitleTab => ({
               id: appViewTabId(view),
               appView: view,
@@ -12152,6 +12235,7 @@ function Workspace({
     setInboxViewOpen(false);
     setNotesViewOpen(false);
     setAutomationsViewOpen(false);
+    setBoardViewOpen(false);
     setFilePickerInitialQuery("");
     setFilePickerResetToken((token) => token + 1);
     setFilePickerOpen(true);
@@ -12161,6 +12245,7 @@ function Workspace({
     setInboxViewOpen(false);
     setNotesViewOpen(false);
     setAutomationsViewOpen(false);
+    setBoardViewOpen(false);
     setFilePickerInitialQuery(">");
     setFilePickerResetToken((token) => token + 1);
     setFilePickerOpen(true);
@@ -12177,6 +12262,7 @@ function Workspace({
     setInboxViewOpen(false);
     setNotesViewOpen(false);
     setAutomationsViewOpen(false);
+    setBoardViewOpen(false);
     setSidebarTab("files");
     setFilesSearchOpen(true);
     setSearchFocusToken((token) => token + 1);
@@ -12194,6 +12280,7 @@ function Workspace({
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       setSearchViewOpen(true);
       setSearchViewFocusToken((token) => token + 1);
     });
@@ -12213,6 +12300,7 @@ function Workspace({
       setSearchViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       setInboxViewOpen(true);
     });
   }, []);
@@ -12226,6 +12314,7 @@ function Workspace({
       setSearchViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       setInboxViewOpen(false);
       const cwd =
         sessionsRef.current.find((session) => session.id === sessionId)?.cwd ??
@@ -12331,6 +12420,7 @@ function Workspace({
       setSearchViewOpen(false);
       setInboxViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       setNotesViewOpen(true);
     });
   }, []);
@@ -12349,6 +12439,7 @@ function Workspace({
       setSearchViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
+      setBoardViewOpen(false);
       setAutomationsViewOpen(true);
     });
   }, []);
@@ -12357,12 +12448,33 @@ function Workspace({
     setAutomationsViewOpen(false);
   }, []);
 
+  const onOpenBoard = useCallback(() => {
+    workspaceNavigation.cancel();
+    if (!loadBoardEnabled()) return;
+    startTransition(() => {
+      closePilotView();
+      rememberAppView("board");
+      setFilePickerOpen(false);
+      setSettingsOpen(false);
+      setSearchViewOpen(false);
+      setInboxViewOpen(false);
+      setNotesViewOpen(false);
+      setAutomationsViewOpen(false);
+      setBoardViewOpen(true);
+    });
+  }, []);
+
+  const onLeaveBoard = useCallback(() => {
+    setBoardViewOpen(false);
+  }, []);
+
   const onOpenAutomationSession = useCallback(
     async (sessionId: string) => {
       const session = await ensureOpenSession(sessionId);
       if (!session)
         throw new Error("This conversation is no longer available.");
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       setSearchViewOpen(false);
       setInboxViewOpen(false);
       setNotesViewOpen(false);
@@ -12385,6 +12497,7 @@ function Workspace({
           inbox: inboxViewOpenRef.current,
           notes: notesViewOpenRef.current,
           automations: automationsViewOpenRef.current,
+          board: boardViewOpenRef.current,
         };
       }
       startTransition(() => {
@@ -12393,6 +12506,7 @@ function Workspace({
         setInboxViewOpen(false);
         setNotesViewOpen(false);
         setAutomationsViewOpen(false);
+        setBoardViewOpen(false);
         if (section) {
           setSettingsSection(section);
           saveSettingsSection(section);
@@ -12446,6 +12560,7 @@ function Workspace({
     setInboxViewOpen(returnView.inbox);
     setNotesViewOpen(returnView.notes && loadNotesEnabled());
     setAutomationsViewOpen(returnView.automations);
+    setBoardViewOpen(returnView.board && loadBoardEnabled());
     setSettingsOpen(false);
   }, []);
 
@@ -12483,6 +12598,10 @@ function Workspace({
       setAutomationsViewOpen(false);
       return;
     }
+    if (boardViewOpen) {
+      setBoardViewOpen(false);
+      return;
+    }
     if (pilotViewIdRef.current) {
       closePilotView();
       setComposerFocused(true);
@@ -12498,6 +12617,7 @@ function Workspace({
     inboxViewOpen,
     notesViewOpen,
     automationsViewOpen,
+    boardViewOpen,
   ]);
 
   const onRailForward = useCallback(() => {
@@ -12506,6 +12626,7 @@ function Workspace({
     setInboxViewOpen(false);
     setNotesViewOpen(false);
     setAutomationsViewOpen(false);
+    setBoardViewOpen(false);
     onVisitForward();
   }, [onVisitForward]);
 
@@ -12643,6 +12764,7 @@ function Workspace({
           inbox: onOpenInbox,
           notes: onOpenNotes,
           automations: onOpenAutomations,
+          board: onOpenBoard,
         };
         open[view]();
         return;
@@ -12652,6 +12774,7 @@ function Workspace({
       setInboxViewOpen(false);
       setNotesViewOpen(false);
       setAutomationsViewOpen(false);
+      setBoardViewOpen(false);
       activateTab(id);
     },
     [
@@ -12661,6 +12784,7 @@ function Workspace({
       onOpenInbox,
       onOpenNotes,
       onOpenAutomations,
+      onOpenBoard,
     ],
   );
 
@@ -12694,6 +12818,7 @@ function Workspace({
       if (view === "inbox") setInboxViewOpen(false);
       if (view === "notes") setNotesViewOpen(false);
       if (view === "automations") setAutomationsViewOpen(false);
+      if (view === "board") setBoardViewOpen(false);
       if (nextId) navigation.select?.(nextId);
     });
   }, []);
@@ -13025,6 +13150,7 @@ function Workspace({
             inboxViewOpenRef.current ||
             notesViewOpenRef.current ||
             automationsViewOpenRef.current ||
+            boardViewOpenRef.current ||
             settingsOpenRef.current ||
             filePickerOpenRef.current ||
             Boolean(whatsNewVersionRef.current);
@@ -13113,6 +13239,7 @@ function Workspace({
         !inboxViewOpenRef.current &&
         !notesViewOpenRef.current &&
         !automationsViewOpenRef.current &&
+        !boardViewOpenRef.current &&
         !(
           e.target instanceof Element &&
           e.target.closest("[data-session-drop], [data-agent-tab]")
@@ -13817,6 +13944,83 @@ function Workspace({
       onDeleteRailPilot,
     ],
   );
+  // What a board card can link to: the session history and the Pilots, with
+  // their live status. Only built while the board is on screen.
+  const boardShown =
+    boardEnabled &&
+    (boardViewOpen || (insetLayout && openAppViews.includes("board")));
+  const busySessionKey = boardShown
+    ? promptableSessions
+        .filter((session) => session.busy)
+        .map((session) => session.id)
+        .join("\n")
+    : "";
+  const boardLinkTargets = useMemo((): BoardLinkTarget[] => {
+    if (!boardShown) return [];
+    const busy = new Set(busySessionKey.split("\n"));
+    // Archived and draft sessions stay targets (a card linked to one still
+    // finds it) but are unlisted, so the picker leaves them out.
+    const targets: BoardLinkTarget[] = history
+      .filter((session) => !isPilotSession(session.id))
+      .map((session) =>
+        sessionLinkTarget(
+          session,
+          busy.has(session.id) ? "running" : "completed",
+        ),
+      );
+    if (pilotsEnabled) {
+      for (const pilot of listPilots()) {
+        const state = pilotRail.states.get(pilot.id)?.status;
+        targets.push({
+          kind: "pilot",
+          id: pilot.id,
+          label: pilotLook(pilot).name,
+          status: state && state !== "idle" ? "running" : "completed",
+        });
+      }
+    }
+    return targets;
+    // The Pilot roster is read through its snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardShown, busySessionKey, history, pilotsEnabled, pilotRail, pilotsSnap]);
+  // `history` only holds projects visited this run, so the board asks for
+  // the rest by id; a session the store doesn't return was deleted.
+  const lookupBoardLinkTargets = useCallback(
+    async (links: LinkRef[]): Promise<BoardLinkTarget[]> => {
+      const sessionIds = links
+        .filter((link) => link.kind === "session")
+        .map((link) => link.id);
+      const pilotIds = new Set(
+        links.filter((link) => link.kind === "pilot").map((link) => link.id),
+      );
+      const targets = sessionIds.length
+        ? (await listSessionsByIds(sessionIds)).map((session) =>
+            sessionLinkTarget(session),
+          )
+        : [];
+      for (const pilot of listPilots()) {
+        if (!pilotIds.has(pilot.id)) continue;
+        targets.push({
+          kind: "pilot",
+          id: pilot.id,
+          label: pilotLook(pilot).name,
+          unlisted: true,
+        });
+      }
+      return targets;
+    },
+    [],
+  );
+  // Rejections reach the board's error toast.
+  const onOpenBoardLinkedWork = useCallback(
+    async (target: BoardLinkTarget) => {
+      if (target.kind === "pilot") await onOpenPilot(target.id);
+      else if (target.kind === "session") {
+        await onOpenAutomationSession(target.id);
+      } else throw new Error("This linked work can't be opened yet.");
+    },
+    [onOpenAutomationSession, onOpenPilot],
+  );
   const onDismissUpdate = useCallback(() => setUpdateNotice(null), []);
 
   const chromeSurfaceOpen =
@@ -13824,7 +14028,8 @@ function Workspace({
     settingsOpen ||
     inboxViewOpen ||
     notesViewOpen ||
-    automationsViewOpen;
+    automationsViewOpen ||
+    boardViewOpen;
   const compactProjectRail = collapsedProjectRailMode === "compact";
   const compactRailActive = compactProjectRail && !projectRailOpen;
   const compactTitleNavigation =
@@ -14072,7 +14277,8 @@ function Workspace({
         settingsOpen ||
         inboxViewOpen ||
         notesViewOpen ||
-        automationsViewOpen
+        automationsViewOpen ||
+        boardViewOpen
       }
       canGoForward={tabVisitNav.canForward}
       onGoBack={onRailBack}
@@ -14103,11 +14309,13 @@ function Workspace({
       onOpenInboxItem={onOpenLinkedWorkItem}
       onOpenNotes={notesEnabled ? onOpenNotes : undefined}
       onOpenAutomations={onOpenAutomations}
+      onOpenBoard={boardEnabled ? onOpenBoard : undefined}
       onGoToFile={onGoToFile}
       searchActive={searchViewOpen}
       inboxActive={inboxViewOpen}
       notesActive={notesViewOpen}
       automationsActive={automationsViewOpen}
+      boardActive={boardViewOpen}
       notesEnabled={notesEnabled}
       // The inset layout has no project rail: the sidebar header's menu
       // switches projects.
@@ -14215,7 +14423,8 @@ function Workspace({
                       settingsOpen ||
                       inboxViewOpen ||
                       notesViewOpen ||
-                      automationsViewOpen
+                      automationsViewOpen ||
+                      boardViewOpen
                         ? "hidden"
                         : "flex min-h-0 min-w-0 flex-1 flex-col"
                     }
@@ -14224,7 +14433,8 @@ function Workspace({
                       settingsOpen ||
                       inboxViewOpen ||
                       notesViewOpen ||
-                      automationsViewOpen
+                      automationsViewOpen ||
+                      boardViewOpen
                     }
                     inert={
                       searchViewOpen ||
@@ -14232,6 +14442,7 @@ function Workspace({
                       inboxViewOpen ||
                       notesViewOpen ||
                       automationsViewOpen ||
+                      boardViewOpen ||
                       undefined
                     }
                   >
@@ -14502,6 +14713,7 @@ function Workspace({
                                 !inboxViewOpen &&
                                 !notesViewOpen &&
                                 !automationsViewOpen &&
+                                !boardViewOpen &&
                                 !pilotViewId &&
                                 activeLinkedWorkItemPanel?.sessionId ===
                                   panel.sessionId
@@ -14632,6 +14844,24 @@ function Workspace({
                           launchAutomation(automation, run, true)
                         }
                         onOpenSession={onOpenAutomationSession}
+                      />
+                    </AppViewSurface>
+                  ) : null}
+                  {boardEnabled &&
+                  (boardViewOpen ||
+                    (insetLayout && openAppViews.includes("board"))) ? (
+                    <AppViewSurface active={boardViewOpen}>
+                      <BoardView
+                        tabbed={insetLayout}
+                        besideRail={
+                          insetLayout || projectRailOpen || compactProjectRail
+                        }
+                        compactRail={!insetLayout && compactRailActive}
+                        onClose={onLeaveBoard}
+                        onToggleSidebar={onToggleSidebar}
+                        linkTargets={boardLinkTargets}
+                        onOpenLinkedWork={onOpenBoardLinkedWork}
+                        lookupLinkTargets={lookupBoardLinkTargets}
                       />
                     </AppViewSurface>
                   ) : null}

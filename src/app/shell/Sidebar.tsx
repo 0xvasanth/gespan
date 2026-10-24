@@ -30,6 +30,7 @@ import {
   GitBranch,
   GitPullRequest,
   Inbox,
+  Kanban,
   ListFilter,
   PanelLeft,
   Pin,
@@ -372,11 +373,14 @@ type Props = {
   onOpenInboxItem?: (item: LinkedWorkItem, sessionId: string) => void;
   onOpenNotes?: () => void;
   onOpenAutomations?: () => void;
+  /** Set only while the Board setting is on. */
+  onOpenBoard?: () => void;
   onGoToFile?: () => void;
   searchActive?: boolean;
   inboxActive?: boolean;
   notesActive?: boolean;
   automationsActive?: boolean;
+  boardActive?: boolean;
   notesEnabled?: boolean;
   onToggleProjectRail?: () => void;
   projectRailOpen?: boolean;
@@ -484,11 +488,13 @@ function SidebarComponent({
   onOpenInboxItem,
   onOpenNotes,
   onOpenAutomations,
+  onOpenBoard,
   onGoToFile,
   searchActive = false,
   inboxActive = false,
   notesActive = false,
   automationsActive = false,
+  boardActive = false,
   notesEnabled = true,
   onToggleProjectRail,
   projectRailOpen = true,
@@ -983,6 +989,7 @@ function SidebarComponent({
     inboxActive ||
     notesActive ||
     automationsActive ||
+    boardActive ||
     settingsOpen;
   // A remembered Pilot sits underneath these views; select it only while visible.
   const railPilots = pilots
@@ -2468,6 +2475,12 @@ function SidebarComponent({
           active: automationsActive,
           onClick: onOpenAutomations,
         },
+        onOpenBoard && {
+          label: "Board",
+          icon: Kanban,
+          active: boardActive,
+          onClick: onOpenBoard,
+        },
       ]}
     />
   ) : null;
@@ -2611,10 +2624,12 @@ function SidebarComponent({
               onOpenNotificationSettings={onOpenNotificationSettings}
               onOpenNotes={notesEnabled ? onOpenNotes : undefined}
               onOpenAutomations={onOpenAutomations}
+              onOpenBoard={onOpenBoard}
               searchActive={searchActive}
               inboxActive={inboxActive}
               notesActive={notesActive}
               automationsActive={automationsActive}
+              boardActive={boardActive}
               inboxUnseen={inboxUnseen}
             />
           ) : null}
@@ -3234,6 +3249,8 @@ function SidebarComponent({
           notesActive={notesActive}
           onOpenAutomations={onOpenAutomations}
           automationsActive={automationsActive}
+          onOpenBoard={onOpenBoard}
+          boardActive={boardActive}
           onOpenSettings={onOpenSettings}
           onTogglePanel={onToggleProjectRail}
           onLeaveActive={onGoBack}
@@ -3268,6 +3285,8 @@ function SidebarComponent({
           notesActive={notesActive}
           onOpenAutomations={onOpenAutomations}
           automationsActive={automationsActive}
+          onOpenBoard={onOpenBoard}
+          boardActive={boardActive}
           onTogglePanel={onToggleProjectRail}
           onSelectProject={onSelectProject}
           onOpenProject={onOpenProject}
@@ -3411,10 +3430,12 @@ function SidebarProjectPicker({
   onOpenNotificationSettings,
   onOpenNotes,
   onOpenAutomations,
+  onOpenBoard,
   searchActive = false,
   inboxActive = false,
   notesActive = false,
   automationsActive = false,
+  boardActive = false,
   inboxUnseen = false,
 }: {
   cwd: string;
@@ -3429,10 +3450,12 @@ function SidebarProjectPicker({
   onOpenNotificationSettings?: (projectPath?: string) => void;
   onOpenNotes?: () => void;
   onOpenAutomations?: () => void;
+  onOpenBoard?: () => void;
   searchActive?: boolean;
   inboxActive?: boolean;
   notesActive?: boolean;
   automationsActive?: boolean;
+  boardActive?: boolean;
   inboxUnseen?: boolean;
 }) {
   const [inboxMenu, setInboxMenu] = useState<{ x: number; y: number } | null>(
@@ -3507,6 +3530,11 @@ function SidebarProjectPicker({
             <Zap className="size-3.5" strokeWidth={1.75} />
           </IconButton>
         ) : null}
+        {onOpenBoard ? (
+          <IconButton label="Board" active={boardActive} onClick={onOpenBoard}>
+            <Kanban className="size-3.5" strokeWidth={1.75} />
+          </IconButton>
+        ) : null}
       </div>
       {inboxMenu ? (
         <InboxNotificationMenu
@@ -3549,6 +3577,8 @@ function CompactProjectRail({
   notesActive,
   onOpenAutomations,
   automationsActive,
+  onOpenBoard,
+  boardActive = false,
   onOpenSettings,
   onTogglePanel,
   onLeaveActive,
@@ -3582,6 +3612,8 @@ function CompactProjectRail({
   notesActive: boolean;
   onOpenAutomations?: () => void;
   automationsActive: boolean;
+  onOpenBoard?: () => void;
+  boardActive?: boolean;
   onOpenSettings?: () => void;
   onTogglePanel?: () => void;
   onLeaveActive?: () => void;
@@ -3623,6 +3655,7 @@ function CompactProjectRail({
     !inboxActive &&
     !notesActive &&
     !automationsActive &&
+    !boardActive &&
     !pilotViewActive;
   const openWorkspaceTab = (nextTab: SidebarTab) => {
     if (!workspaceActive) onLeaveActive?.();
@@ -3774,6 +3807,14 @@ function CompactProjectRail({
           active={automationsActive}
           onClick={action(automationsActive, onOpenAutomations)}
         />
+        {onOpenBoard ? (
+          <CompactRailAction
+            label="Board"
+            icon={Kanban}
+            active={boardActive}
+            onClick={action(boardActive, onOpenBoard)}
+          />
+        ) : null}
       </div>
       <div className="min-h-2 flex-1" />
       <div className="flex w-full flex-col items-center gap-1 py-1.5">
