@@ -8,6 +8,7 @@ enum Surface {
     Inbox,
     Notes,
     Automations,
+    Board,
     Search,
     Pilot,
 }
@@ -26,6 +27,10 @@ impl Surface {
                 )));
                 shell.open_automations(window, cx);
             }
+            Self::Board => {
+                shell.workspace.preferences.board = true;
+                shell.open_board(window, cx);
+            }
             Self::Search => shell.open_app_search(window, cx),
             Self::Pilot => {
                 let project = shell.workspace.project.clone();
@@ -43,7 +48,9 @@ impl Surface {
 
     fn close(self, shell: &mut Shell, session: i64, window: &mut Window, cx: &mut Context<Shell>) {
         match self {
-            Self::Inbox | Self::Notes | Self::Automations => shell.close_app_view(window, cx),
+            Self::Inbox | Self::Notes | Self::Automations | Self::Board => {
+                shell.close_app_view(window, cx)
+            }
             Self::Search => shell.close_app_search(window, cx),
             // Returning to a conversation is the same route used by the
             // original project rail and by opening a Pilot's launched session.
@@ -309,6 +316,42 @@ fn original_app_surfaces_inbox_uses_own_header_and_restores_sessions(cx: &mut Te
 #[gpui::test]
 fn original_app_surfaces_notes_uses_own_header_and_restores_sessions(cx: &mut TestAppContext) {
     assert_original_surface(Surface::Notes, cx);
+}
+
+#[gpui::test]
+fn original_app_surfaces_board_uses_own_header_and_restores_sessions(cx: &mut TestAppContext) {
+    assert_original_surface(Surface::Board, cx);
+}
+
+#[gpui::test]
+fn turning_board_off_closes_the_board_and_drops_its_tab(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| {
+            Surface::Board.open(shell, window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, window, cx| {
+            assert_eq!(shell.active_app_view, Some(app_views::AppView::Board));
+            let mut prefs = shell.workspace.preferences.clone();
+            prefs.board = false;
+            shell.set_preferences(prefs, window, cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .read_with(visual, |shell, cx| {
+            assert_eq!(shell.active_app_view, None);
+            assert!(
+                !shell
+                    .visible_tabs(cx)
+                    .contains(&TitleTab::App(app_views::AppView::Board))
+            );
+        })
+        .unwrap();
 }
 
 #[gpui::test]
@@ -701,6 +744,7 @@ fn original_app_surfaces_keep_icon_rail_and_remember_closed_sessions(cx: &mut Te
         Surface::Inbox,
         Surface::Notes,
         Surface::Automations,
+        Surface::Board,
         Surface::Search,
         Surface::Pilot,
     ] {
@@ -825,6 +869,7 @@ fn original_app_surfaces_leave_both_new_layout_styles_tabbed(cx: &mut TestAppCon
             Surface::Inbox,
             Surface::Notes,
             Surface::Automations,
+            Surface::Board,
             Surface::Search,
             Surface::Pilot,
         ] {
@@ -845,6 +890,7 @@ fn original_app_surfaces_leave_both_new_layout_styles_tabbed(cx: &mut TestAppCon
                 Surface::Inbox => Some(app_views::AppView::Inbox),
                 Surface::Notes => Some(app_views::AppView::Notes),
                 Surface::Automations => Some(app_views::AppView::Automations),
+                Surface::Board => Some(app_views::AppView::Board),
                 _ => None,
             };
             if let Some(app) = app {
@@ -886,7 +932,12 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
     for boxy in [false, true] {
         let (window, session) = setup(cx, false, boxy);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        for surface in [Surface::Inbox, Surface::Notes, Surface::Automations] {
+        for surface in [
+            Surface::Inbox,
+            Surface::Notes,
+            Surface::Automations,
+            Surface::Board,
+        ] {
             window
                 .update(visual, |shell, window, cx| surface.open(shell, window, cx))
                 .unwrap();
@@ -898,6 +949,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
                     app_views::AppView::Inbox,
                     app_views::AppView::Notes,
                     app_views::AppView::Automations,
+                    app_views::AppView::Board,
                 ] {
                     assert_eq!(
                         shell
@@ -921,6 +973,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
             app_views::AppView::Inbox,
             app_views::AppView::Notes,
             app_views::AppView::Automations,
+            app_views::AppView::Board,
         ] {
             let selector = Box::leak(format!("app-title-tab-{}", app.label()).into_boxed_str());
             let tab = visual.debug_bounds(selector).unwrap();
@@ -939,7 +992,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
         let close = visual.debug_bounds("close-app-tab-Inbox").unwrap();
         visual.simulate_click(close.center(), Default::default());
         visual.run_until_parked();
-        for _ in 0..2 {
+        for _ in 0..3 {
             visual.simulate_keystrokes("cmd-w");
             visual.run_until_parked();
         }
@@ -958,4 +1011,154 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
             })
             .unwrap();
     }
+}
+
+#[gpui::test]
+fn the_sidebar_board_entry_follows_the_setting_and_opens_the_board(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.refresh().unwrap();
+    let entry = visual
+        .debug_bounds("sidebar-navigation-Board")
+        .expect("Board is on by default");
+    visual.simulate_click(entry.center(), Default::default());
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, window, cx| {
+            assert_eq!(shell.active_app_view, Some(app_views::AppView::Board));
+            let mut prefs = shell.workspace.preferences.clone();
+            prefs.board = false;
+            shell.set_preferences(prefs, window, cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("sidebar-navigation-Board").is_none());
+    window
+        .update(visual, |shell, window, cx| {
+            shell.open_board(window, cx);
+            assert_ne!(shell.active_app_view, Some(app_views::AppView::Board));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn switching_board_off_in_settings_saves_it_and_keeps_focus_on_settings(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| {
+            Surface::Board.open(shell, window, cx);
+            shell.open_settings(crate::settings::Section::General, window, cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let toggle = visual
+        .debug_bounds("settings-toggle-board")
+        .expect("the Board switch is on the General page");
+    visual.simulate_click(toggle.center(), Default::default());
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, window, cx| {
+            assert!(!shell.workspace.preferences.board);
+            assert_eq!(shell.active_app_view, None);
+            let settings = shell.settings.as_ref().expect("Settings stays open");
+            assert!(
+                settings.focus_handle(cx).contains_focused(window, cx),
+                "focus stays on Settings, not the chat behind it"
+            );
+            let saved: serde_json::Value =
+                serde_json::from_str(&shell.latest_state.lock().unwrap()).unwrap();
+            assert_eq!(saved["preferences"]["board"], serde_json::json!(false));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_project_added_while_the_board_is_open_is_offered_as_a_choice_at_once(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| {
+            Surface::Board.open(shell, window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, _, cx| {
+            shell.workspace.projects.push("/work/added-later".into());
+            shell.persist(cx);
+            let board = shell.board.as_ref().unwrap().read(cx);
+            assert!(
+                board
+                    .project_choices()
+                    .contains(&("/work/added-later".into(), "added-later".into())),
+                "{:?}",
+                board.project_choices()
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn opening_a_pilot_from_the_board_leaves_the_board(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| {
+            Surface::Board.open(shell, window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, _, cx| {
+            let project = shell.workspace.project.clone();
+            let id = shell.pilot_manager().update(cx, |pilots, _| {
+                pilots.roster.create(vec![project]).id.clone()
+            });
+            shell
+                .board
+                .as_ref()
+                .unwrap()
+                .update(cx, |_, cx| cx.emit(crate::board::Event::OpenPilot(id)));
+        })
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .read_with(visual, |shell, _| {
+            assert_eq!(
+                shell.active_app_view, None,
+                "the Pilot is not behind the Board"
+            )
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_session_started_in_the_background_offers_its_project_to_the_board(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| {
+            Surface::Board.open(shell, window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, _, cx| {
+            let summary = locked(&shell.store)
+                .unwrap()
+                .create("codex", "/work/background")
+                .unwrap();
+            // What a background start does: add the session, no persist.
+            shell.add(summary, cx);
+            let board = shell.board.as_ref().unwrap().read(cx);
+            assert!(
+                board
+                    .project_choices()
+                    .contains(&("/work/background".into(), "background".into()))
+            );
+        })
+        .unwrap();
 }

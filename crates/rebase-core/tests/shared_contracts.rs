@@ -359,3 +359,84 @@ fn agent_run_and_wake_marker_json_names_match() {
         .iter()
         .any(|(_, text)| text.contains("custom_type: \"task-notification\".into()")));
 }
+
+/// The native board source, as the Tauri board source is read with `tauri`.
+fn native_board() -> String {
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/board/mod.rs")).unwrap()
+}
+
+/// Every board table and index statement, whitespace-normalized.
+fn board_ddl(source: &str) -> Vec<String> {
+    regex::Regex::new(r"CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS board[^;]*;")
+        .unwrap()
+        .find_iter(source)
+        .map(|statement| {
+            statement
+                .as_str()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect()
+}
+
+#[test]
+fn board_tables_match_tauri() {
+    let tauri_ddl = board_ddl(&tauri("src-tauri/src/board.rs"));
+    // Four tables and five indexes; an empty match would pass vacuously.
+    assert_eq!(tauri_ddl.len(), 9, "{tauri_ddl:#?}");
+    assert_eq!(board_ddl(&native_board()), tauri_ddl);
+}
+
+#[test]
+fn board_error_strings_match_tauri() {
+    let tauri_source = tauri("src-tauri/src/board.rs");
+    let native_source = native_board();
+    for message in [
+        "Column not on this board",
+        "Column has {cards} {plural}",
+        "Board not found",
+        "Unknown column role: {role}",
+        "already has the {role} role",
+    ] {
+        assert!(tauri_source.contains(message), "Tauri lacks {message}");
+        assert!(native_source.contains(message), "native lacks {message}");
+    }
+}
+
+#[test]
+fn opening_the_rebase_store_then_the_board_service_creates_the_four_shared_board_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rebase.db");
+    drop(Store::open_rebase(&path).unwrap());
+    drop(rebase_core::board::Service::open(&path).unwrap());
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let names: Vec<String> = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'board%' ORDER BY name")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    // The shared tables are exactly Tauri's four; anything else the native app
+    // adds is its own, prefixed so Tauri never mistakes it for shared data.
+    let (native, shared): (Vec<_>, Vec<_>) = names
+        .iter()
+        .partition(|name| name.starts_with("board_native_"));
+    assert_eq!(
+        shared,
+        ["board_activity", "board_cards", "board_columns", "boards"]
+    );
+    assert!(!native.is_empty());
+}
+
+#[test]
+fn board_setting_key_matches_tauri() {
+    assert!(tauri("src/features/settings/model/settings.ts").contains("\"rebase.boardEnabled\""));
+    let native = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/desktop_preferences/workspace_preferences.rs"),
+    )
+    .unwrap();
+    assert!(native.contains("(\"board\", \"boardEnabled\", true)"));
+}

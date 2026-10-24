@@ -603,6 +603,7 @@ pub(crate) struct Shell {
     notes: Option<Entity<Notes>>,
     inbox: Option<Entity<crate::inbox::Inbox>>,
     automations: Option<Entity<crate::automations::Automations>>,
+    board: Option<Entity<crate::board::BoardView>>,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -949,6 +950,7 @@ impl Shell {
             notes: None,
             inbox: None,
             automations: None,
+            board: None,
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),
@@ -1072,6 +1074,9 @@ impl Shell {
                 cx,
             )
         });
+        if let Ok(path) = locked(&this.store).map(|store| store.database_path().to_path_buf()) {
+            crate::board::turns::install(path, Some(pilots.downgrade()), cx);
+        }
         this.observations.push(
             cx.subscribe(&pilots, |this, _, _: &crate::pilots::Changed, cx| {
                 this.sync_pilot_search(cx);
@@ -1200,6 +1205,9 @@ impl Shell {
     }
     fn add(&mut self, summary: Session, cx: &mut Context<Self>) {
         self.workspace.add_project(&summary.cwd);
+        // A session started in the background adds its project without a
+        // persist, so tell an open Board here too.
+        self.sync_board_projects(cx);
         self.add_loaded(summary, cx);
     }
     /// Loading history must not turn every session directory into a rail project.
@@ -3617,6 +3625,7 @@ impl Shell {
         self.sync_git(cx);
         self.update_chat_visibility(cx);
         self.update_usage_provider(cx);
+        self.sync_board_projects(cx);
         self.invalidate_chrome(cx);
         let state = serde_json::to_string(&self.workspace).unwrap();
         *self.latest_state.lock().unwrap_or_else(|e| e.into_inner()) = state.clone();

@@ -64,7 +64,7 @@ describe.each([
     "rebase.boardEnabled",
     settings.loadBoardEnabled,
     settings.saveBoardEnabled,
-    false,
+    true,
     "rebase:board-enabled-change",
   ],
   [
@@ -203,12 +203,12 @@ describe.each([
 });
 
 describe("board enabled subscription", () => {
-  it("is off by default and exports its event name", () => {
-    expect(settings.BOARD_ENABLED_DEFAULT).toBe(false);
+  it("is on by default and exports its event name", () => {
+    expect(settings.BOARD_ENABLED_DEFAULT).toBe(true);
     expect(settings.BOARD_ENABLED_CHANGE_EVENT).toBe(
       "rebase:board-enabled-change",
     );
-    expect(settings.loadBoardEnabled()).toBe(false);
+    expect(settings.loadBoardEnabled()).toBe(true);
   });
 
   it("notifies subscribers on change and stops after unsubscribing", () => {

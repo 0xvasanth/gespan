@@ -96,6 +96,20 @@ impl SettingsView {
                     }),
                 ],
             ),
+            self.row(
+                Some("board"),
+                false,
+                "Board",
+                Some(
+                    "A Kanban board for tracking work. Cards can link to sessions and Pilots, and move on their own as that work starts and finishes."
+                        .into(),
+                ),
+                vec![
+                    self.toggle("board", "Board", p.board, false, cx, |this, on, cx| {
+                        this.update(cx, |p| p.board = on)
+                    }),
+                ],
+            ),
         ];
         if cfg!(target_os = "macos") {
             workspace.push(self.row(

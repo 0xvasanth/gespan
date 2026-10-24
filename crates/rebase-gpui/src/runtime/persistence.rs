@@ -302,6 +302,10 @@ mod tests {
         let result = rx.try_recv().unwrap();
         assert!(result.finished);
         assert!(result.status.contains("worktree"));
+        assert!(
+            !result.succeeded,
+            "a rejected preflight is not a finished turn"
+        );
         assert!(result.rows.is_empty());
         assert!(
             result.delivered.is_none(),
@@ -374,6 +378,9 @@ mod tests {
         assert!(std::path::Path::new(&cwd).is_dir());
         let finished = rx.try_recv().unwrap();
         assert!(finished.finished);
+        // The test provider cannot launch, so the turn ends in an error.
+        assert!(!finished.succeeded);
+        assert_ne!(finished.status, "Ready");
         assert_eq!(finished.worktree_cwd.as_deref(), Some(cwd.as_str()));
         let store = locked(&store).unwrap();
         let settings = store.agent_settings(id).unwrap().unwrap();
