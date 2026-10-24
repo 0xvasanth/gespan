@@ -1,0 +1,40 @@
+crates/rebase-gpui/src/workspace.rs
+  s_3e9d1be838c67b::t_9b5b2b0712875e 119-120,322
+crates/rebase-gpui/src/shell/open_in_editor.rs
+  s_3e9d1be838c67b::t_1c5a443e8d6eca 364-368,372-376,395-397,459
+  s_3e9d1be838c67b::t_1134e7ceb034ce 44-46,69-72,111-114,146,239-241
+  s_3e9d1be838c67b::t_947a68bcfd3ee4 176-182,190-205
+  s_3e9d1be838c67b::t_9e8c4abe507b39 217,310-363,369-371,377-394,398-458,460-483
+  s_3e9d1be838c67b::t_9b5b2b0712875e 53,307-309
+  s_3e9d1be838c67b::t_6022230e298777 218
+  s_3e9d1be838c67b::t_ca6ea41a014e9f 1-43,47-52,54-68,75,77-81,102-110,115,119-145,147-175,183-189,206-216,219-238,242-306,514-515
+  s_3e9d1be838c67b::t_bb3c49c9c29bbf 73-74,76,82-101,116-118,484-513
+crates/rebase-gpui/src/shell.rs
+  s_3e9d1be838c67b::t_9b5b2b0712875e 18,305-306,584,930,4855-4863,5239
+  s_3e9d1be838c67b::t_1134e7ceb034ce 4463-4475,4525-4532,4559-4562,4695-4696,4707,4735,4739,4742,7031,8236-8237
+  s_3e9d1be838c67b::t_5ad27bdae25c33 8238
+crates/rebase-gpui/src/shell/layout.rs
+  s_3e9d1be838c67b::t_bb3c49c9c29bbf 926-928,973
+  s_3e9d1be838c67b::t_1134e7ceb034ce 504,512,532-535,623-626
+  s_3e9d1be838c67b::t_c636698ca70ff3 952-964
+crates/rebase-gpui/src/settings/notification_preferences.rs
+  s_3e9d1be838c67b::t_9b5b2b0712875e 46
+crates/rebase-gpui/src/settings/mod.rs
+  s_3e9d1be838c67b::t_9b5b2b0712875e 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "107fd215eb5ba7a8364041df0fe0833614425a29",
+  "prompts": {},
+  "sessions": {
+    "s_3e9d1be838c67b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5ba030e-7698-48b9-b0c4-3dfc53ffe6b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
