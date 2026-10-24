@@ -8,6 +8,9 @@ pub(crate) const COLORS: u8 = 3;
 const REPEAT_IN_3: u64 = 2;
 /// How long a topped-out board and its final score stay up before restarting.
 const GAME_OVER_MS: f32 = 2500.;
+/// The idle loop lands each piece within this many columns of where it
+/// appeared, so pieces fall mostly straight down instead of sliding across.
+const AUTO_REACH: i32 = 3;
 
 /// Box size and rotation-zero cells for I, O, T, S, Z, J, L.
 const SHAPES: [(i32, [(i32, i32); 4]); 7] = [
@@ -70,6 +73,12 @@ pub(crate) struct Tetris {
     fall: f32,
     target: Option<(usize, i32)>,
     over: Option<f32>,
+    /// The idle loop is steering, so new pieces drop in anywhere across the width.
+    auto: bool,
+    /// The first piece hasn't been placed for the idle loop yet.
+    fresh: bool,
+    /// The idle loop already turned or stepped the piece on this row.
+    moved_this_row: bool,
 }
 
 impl Tetris {
@@ -86,6 +95,9 @@ impl Tetris {
             fall: 0.,
             target: None,
             over: None,
+            auto: false,
+            fresh: true,
+            moved_this_row: false,
         };
         game.piece = game.random_piece(None);
         game.next = game.random_piece(Some(game.piece.color));
@@ -156,6 +168,9 @@ impl Tetris {
         if self.game_over() {
             return;
         }
+        // A piece someone has played stays where they left it if the idle
+        // loop takes over again.
+        self.fresh = false;
         match input {
             Input::Left => _ = self.shift(-1, 0),
             Input::Right => _ = self.shift(1, 0),
@@ -185,13 +200,16 @@ impl Tetris {
             }
             return;
         }
+        self.auto = auto;
         if auto {
             self.steer();
         }
         self.fall += dt;
         while self.fall >= interval {
             self.fall -= interval;
-            if !self.shift(0, 1) {
+            if self.shift(0, 1) {
+                self.moved_this_row = false;
+            } else {
                 self.lock();
             }
         }
@@ -202,9 +220,13 @@ impl Tetris {
         }
         self.clear_rows();
         self.target = None;
+        self.moved_this_row = false;
         if self.fits(&self.next) {
             self.piece = self.next;
             self.next = self.random_piece(Some(self.piece.color));
+            if self.auto {
+                self.scatter();
+            }
         } else {
             self.over = Some(GAME_OVER_MS);
         }
@@ -222,11 +244,25 @@ impl Tetris {
         self.board = vec![vec![None; self.cols]; cleared];
         self.board.extend(kept);
     }
-    /// Deepest landing spot, favouring cells that touch the same colour.
+    /// Drops the idle loop's new piece in at a random column, the way a banner
+    /// of falling blocks would, rather than always at the centre.
+    fn scatter(&mut self) {
+        self.fresh = false;
+        let span = (self.cols as i32 - SHAPES[self.piece.kind].0).max(0) as u64 + 1;
+        let moved = Piece {
+            x: (self.random() % span) as i32,
+            ..self.piece
+        };
+        if self.fits(&moved) {
+            self.piece = moved;
+        }
+    }
+    /// Deepest landing spot within reach, favouring cells that touch the same
+    /// colour and, on a tie, the spot nearest where the piece is now.
     fn plan(&self) -> (usize, i32) {
-        let mut best = (i32::MIN, self.piece.rotation, self.piece.x);
+        let mut best = (i32::MIN, i32::MIN, self.piece.rotation, self.piece.x);
         for rotation in 0..4 {
-            for x in -2..self.cols as i32 {
+            for x in self.piece.x - AUTO_REACH..=self.piece.x + AUTO_REACH {
                 let mut p = Piece {
                     rotation,
                     x,
@@ -249,12 +285,13 @@ impl Tetris {
                         cy * 2 + same * 3
                     })
                     .sum();
-                if score > best.0 {
-                    best = (score, rotation, x);
+                let near = -(x - self.piece.x).abs();
+                if (score, near) > (best.0, best.1) {
+                    best = (score, near, rotation, x);
                 }
             }
         }
-        (best.1, best.2)
+        (best.2, best.3)
     }
     fn color_at(&self, x: i32, y: i32) -> Option<u8> {
         if (0..self.cols as i32).contains(&x) && (0..self.rows as i32).contains(&y) {
@@ -263,16 +300,27 @@ impl Tetris {
             None
         }
     }
+    /// Plays like a person: one turn or one step per row of fall, so a piece
+    /// drifts a little as it drops instead of skidding sideways.
     fn steer(&mut self) {
+        if self.fresh {
+            self.scatter();
+        }
         let (rotation, x) = match self.target {
             Some(target) => target,
             None => *self.target.insert(self.plan()),
         };
-        if self.piece.rotation != rotation {
-            self.rotate();
-        } else if self.piece.x != x {
-            self.shift((x - self.piece.x).signum(), 0);
+        if self.moved_this_row {
+            return;
         }
+        let moved = if self.piece.rotation != rotation {
+            self.rotate()
+        } else if self.piece.x != x {
+            self.shift((x - self.piece.x).signum(), 0)
+        } else {
+            false
+        };
+        self.moved_this_row = moved;
     }
     /// Every settled cell plus the falling piece, as `(x, y, colour)`.
     pub fn blocks(&self) -> Vec<(i32, i32, u8)> {
@@ -505,6 +553,100 @@ mod tests {
             assert!(t.blocks().iter().all(|&(x, y, c)| {
                 (0..COLS as i32).contains(&x) && (0..ROWS as i32).contains(&y) && c < COLORS
             }));
+        }
+    }
+
+    /// Runs the idle attract loop and calls `seen` with each piece's states,
+    /// in order, from its first frame to its last before it locks.
+    fn watch_idle(t: &mut Tetris, frames: usize, mut seen: impl FnMut(&[Piece])) {
+        let mut states: Vec<Piece> = Vec::new();
+        for _ in 0..frames {
+            t.update(33., 90., true);
+            let piece = t.piece;
+            let same = states.last().is_some_and(|last: &Piece| {
+                last.kind == piece.kind && last.color == piece.color && piece.y >= last.y
+            });
+            if !same && !states.is_empty() {
+                seen(&states);
+                states.clear();
+            }
+            if !t.game_over() {
+                states.push(piece);
+            }
+        }
+    }
+
+    #[test]
+    fn idle_pieces_make_at_most_one_move_per_row() {
+        let mut t = Tetris::new(11, 60, 22);
+        let mut pieces = 0;
+        watch_idle(&mut t, 4_000, |states| {
+            pieces += 1;
+            for row in states.chunk_by(|a, b| a.y == b.y) {
+                let moves = row
+                    .windows(2)
+                    .filter(|w| w[0].rotation != w[1].rotation || w[0].x != w[1].x)
+                    .count();
+                assert!(moves <= 1, "{moves} moves in one row: {row:?}");
+                for w in row.windows(2) {
+                    if w[0].rotation == w[1].rotation {
+                        assert!((w[0].x - w[1].x).abs() <= 1, "jumped sideways: {w:?}");
+                    }
+                }
+            }
+        });
+        assert!(pieces > 20, "only {pieces} pieces fell");
+    }
+
+    #[test]
+    fn idle_pieces_land_near_where_they_appear() {
+        let mut t = Tetris::new(5, 60, 22);
+        watch_idle(&mut t, 4_000, |states| {
+            let (first, last) = (states[0], states[states.len() - 1]);
+            // The reach, plus a rotation's wall kick.
+            assert!(
+                (last.x - first.x).abs() <= AUTO_REACH + 2,
+                "slid from {} to {}",
+                first.x,
+                last.x
+            );
+        });
+    }
+
+    #[test]
+    fn idle_pieces_spread_across_a_wide_well() {
+        let mut t = Tetris::new(9, 60, 22);
+        let mut landed = Vec::new();
+        watch_idle(&mut t, 6_000, |states| {
+            landed.push(states[states.len() - 1].x)
+        });
+        assert!(landed.len() > 30);
+        let left = landed.iter().filter(|&&x| x < 15).count();
+        let right = landed.iter().filter(|&&x| x >= 45).count();
+        assert!(left > 0 && right > 0, "landings {landed:?}");
+        // Not everything heads for the left wall.
+        assert!(left * 2 < landed.len(), "landings {landed:?}");
+    }
+
+    #[test]
+    fn handing_a_played_piece_back_to_the_idle_loop_leaves_it_in_place() {
+        let mut t = Tetris::new(6, 60, 22);
+        t.input(Input::Left);
+        t.input(Input::SoftDrop);
+        let played = t.piece;
+        t.update(1., 90., true);
+        assert_eq!(t.piece.x, played.x);
+        assert_eq!(t.piece.y, played.y);
+    }
+
+    #[test]
+    fn played_pieces_still_spawn_centred() {
+        let mut t = Tetris::new(4, 60, 22);
+        for _ in 0..3 {
+            t.input(Input::HardDrop);
+            let width = SHAPES[t.piece.kind].0;
+            assert_eq!(t.piece.x, (60 - width) / 2);
+            assert_eq!(t.piece.y, 0);
         }
     }
 
