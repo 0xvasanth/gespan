@@ -3697,7 +3697,7 @@ impl TranscriptView {
         self.index_messages();
         // Preserve surviving indices and scroll offsets while the tail reflows.
         let common = old_count.min(self.rows.len());
-        self.measurements.rows_changed();
+        self.measurements.rows_changed(source_start);
         for ix in display_start..common {
             let (old, after_receipt) = &old_layouts[ix - display_start];
             if !measurements::same_layout(old, &self.rows[ix])

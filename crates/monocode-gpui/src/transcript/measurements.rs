@@ -19,6 +19,8 @@ pub(super) struct Measurements {
     frame: u64,
     #[cfg(test)]
     pub(super) fresh: usize,
+    #[cfg(test)]
+    fresh_prompt_widths: usize,
 }
 struct RetainedHeight {
     height: Pixels,
@@ -28,14 +30,23 @@ struct RetainedHeight {
 }
 
 impl Measurements {
-    pub(super) fn rows_changed(&mut self) {
+    pub(super) fn rows_changed(&mut self, source_start: usize) {
         self.rows.clear();
-        self.prompt_widths.clear();
+        // A suffix rebuild leaves earlier messages and their text unchanged.
+        self.prompt_widths.retain(|start, _| *start < source_start);
     }
     pub(super) fn clear(&mut self) {
-        self.rows_changed();
+        self.rows.clear();
+        self.prompt_widths.clear();
         self.retained.clear();
     }
+}
+
+fn prompt_bubble_width(widths: impl Iterator<Item = Pixels>) -> Pixels {
+    // Match StyledText's intrinsic measurement. Without rounding up, adding
+    // then subtracting the padding can leave less room than the widest line.
+    // The minimum also leaves room for the disclosure on a blank last chunk.
+    widths.fold(px(72.), Pixels::max).ceil() + px(24.)
 }
 
 impl TranscriptView {
@@ -51,37 +62,40 @@ impl TranscriptView {
             return Some(*width);
         }
         let width = if message.attachments.is_empty() {
-            self.rows[message.display_start..]
-                .iter()
-                .take_while(|other| other.message == row.message)
-                .filter_map(|other| match &other.body {
-                    Body::Plain(text) => Some(text.clone()),
-                    _ => None,
-                })
-                .flat_map(|text| {
-                    let run = gpui::TextRun {
-                        len: text.len(),
-                        font: window.text_style().font(),
-                        color: Default::default(),
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    };
-                    window
-                        .text_system()
-                        .shape_text(text, px(14.), &[run], None, None)
-                        .unwrap_or_default()
-                })
-                .map(|line| line.width())
-                // Leave room for the disclosure, including a blank last chunk.
-                .fold(px(72.), Pixels::max)
-                + px(24.)
+            prompt_bubble_width(
+                self.rows[message.display_start..]
+                    .iter()
+                    .take_while(|other| other.message == row.message)
+                    .filter_map(|other| match &other.body {
+                        Body::Plain(text) => Some(text.clone()),
+                        _ => None,
+                    })
+                    .flat_map(|text| {
+                        let run = gpui::TextRun {
+                            len: text.len(),
+                            font: window.text_style().font(),
+                            color: Default::default(),
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        };
+                        window
+                            .text_system()
+                            .shape_text(text, px(14.), &[run], None, None)
+                            .unwrap_or_default()
+                    })
+                    .map(|line| line.width()),
+            )
         } else {
             // Attachment chips wrap inside the same column as every text chunk.
             px(576.)
         };
         if self.measurements.prompt_widths.len() >= 256 {
             self.measurements.prompt_widths.clear();
+        }
+        #[cfg(test)]
+        {
+            self.measurements.fresh_prompt_widths += 1;
         }
         self.measurements.prompt_widths.insert(message.start, width);
         Some(width)
@@ -326,6 +340,124 @@ mod tests {
             .iter()
             .position(|row| matches!(row.body, Body::Markdown(_)))
             .unwrap()
+    }
+
+    #[test]
+    fn prompt_padding_does_not_shorten_fractional_text_widths() {
+        // These advances straddle an f32 precision boundary after padding is
+        // added. The old calculation makes the available text width smaller.
+        for base in [104_f32, 232., 488.] {
+            let text = px(f32::from_bits(base.to_bits() + 1));
+            assert!((text + px(24.)) - px(24.) < text);
+            let bubble = prompt_bubble_width([px(40.), text, px(60.)].into_iter());
+            assert!(bubble - px(24.) >= text, "the widest line must still fit");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn shared_prompt_width_keeps_real_font_lines_unwrapped() {
+        let system = gpui::WindowTextSystem::new(Arc::new(gpui::TextSystem::new(Arc::new(
+            gpui_apple::AppleTextSystem::new(),
+        ))));
+        for family in [".AppleSystemUIFont", "Helvetica", "Times New Roman"] {
+            for count in 1..40 {
+                let text: SharedString = format!("{} final word", "iW ".repeat(count)).into();
+                let run = gpui::TextRun {
+                    len: text.len(),
+                    font: gpui::font(family),
+                    color: Default::default(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let natural = system
+                    .shape_text(
+                        text.clone(),
+                        px(14.),
+                        std::slice::from_ref(&run),
+                        None,
+                        None,
+                    )
+                    .unwrap();
+                let width = prompt_bubble_width(natural.iter().map(|line| line.width()));
+                let wrapped = system
+                    .shape_text(text, px(14.), &[run], Some(width - px(24.)), None)
+                    .unwrap();
+                assert!(
+                    wrapped.iter().all(|line| line.wrap_boundaries.is_empty()),
+                    "the widest line must not acquire another line: {family}, {count}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn prompt_widths_survive_streaming_suffix_updates_and_refresh_after_edits(
+        cx: &mut TestAppContext,
+    ) {
+        let window = chat(cx);
+        probe(window, cx, |view, window, cx| {
+            view.visible = false;
+            let mut transcript = monocode_core::transcript::Transcript::default();
+            transcript.begin("user");
+            transcript.append(&"An earlier prompt\n".repeat(13));
+            transcript.begin("assistant");
+            transcript.append("An earlier answer");
+            let prompt = transcript.begin("user");
+            transcript.append(&format!(
+                "A wide prompt line for measurement\n{}",
+                "x\n".repeat(512)
+            ));
+            let assistant = transcript.begin("assistant");
+            transcript.append("Answer");
+            view.expanded_prompts.insert(0);
+            view.expanded_prompts.insert(prompt);
+            view.patch(0, transcript.rows, cx);
+            view.begin_measurements(window, cx);
+            let prefix_width = view.split_prompt_width(0, window).unwrap();
+            let tail = view
+                .rows
+                .iter()
+                .position(|row| view.messages[row.message].start == prompt && row.last)
+                .unwrap();
+            let width = view.split_prompt_width(tail, window).unwrap();
+            let fresh = view.measurements.fresh_prompt_widths;
+            for i in 0..10 {
+                // More than one draw may separate streaming source patches.
+                for _ in 0..3 {
+                    view.begin_measurements(window, cx);
+                }
+                view.patch(
+                    assistant,
+                    vec![row("assistant", &format!("Answer {i}"))],
+                    cx,
+                );
+                assert_eq!(view.split_prompt_width(tail, window), Some(width));
+                assert_eq!(
+                    view.measurements.fresh_prompt_widths, fresh,
+                    "an unchanged, expanded prompt must not be measured again"
+                );
+            }
+            // A continuation edit must invalidate the opening message's key,
+            // even though the supplied source row is not its first row.
+            let mut edited = view.source[prompt + 1].clone();
+            assert!(!edited.first);
+            edited.text = "A longer replacement line ".repeat(20);
+            view.patch(prompt + 1, vec![edited], cx);
+            assert!(view.split_prompt_width(tail, window).unwrap() > width);
+            assert_eq!(view.split_prompt_width(0, window), Some(prefix_width));
+            assert_eq!(view.measurements.fresh_prompt_widths, fresh + 1);
+
+            window.set_rem_size(window.rem_size() + px(1.));
+            view.begin_measurements(window, cx);
+            assert!(
+                view.measurements.prompt_widths.is_empty(),
+                "style changes must still invalidate all prompt widths"
+            );
+            view.split_prompt_width(tail, window).unwrap();
+            assert_eq!(view.measurements.fresh_prompt_widths, fresh + 2);
+        });
     }
 
     #[gpui::test]
