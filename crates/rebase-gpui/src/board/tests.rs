@@ -286,3 +286,149 @@ fn a_session_link_shows_its_title_and_an_unknown_one_shows_it_is_gone(cx: &mut T
         })
         .unwrap();
 }
+
+fn center(visual: &mut VisualTestContext, target: &'static str) -> gpui::Point<gpui::Pixels> {
+    visual.refresh().unwrap();
+    visual
+        .debug_bounds(target)
+        .unwrap_or_else(|| panic!("{target} is not on screen"))
+        .center()
+}
+
+/// Press on `from`, move in steps to `to` with the button held, and release.
+fn drag(
+    visual: &mut VisualTestContext,
+    from: gpui::Point<gpui::Pixels>,
+    to: gpui::Point<gpui::Pixels>,
+) {
+    visual.simulate_mouse_down(from, gpui::MouseButton::Left, Default::default());
+    for step in 1..=4 {
+        let t = step as f32 / 4.;
+        let at = gpui::point(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+        visual.simulate_mouse_move(at, Some(gpui::MouseButton::Left), Default::default());
+        visual.run_until_parked();
+    }
+    visual.simulate_mouse_up(to, gpui::MouseButton::Left, Default::default());
+    visual.run_until_parked();
+}
+
+fn seeded(cx: &mut TestAppContext, titles: &[&str]) -> Fixture {
+    let f = with_board(cx);
+    let backlog = detail(&f, cx).columns[0].id.clone();
+    let mut service = Service::open(&f.db).unwrap();
+    for title in titles {
+        service.card_create(&backlog, title, "").unwrap();
+    }
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    cx.run_until_parked();
+    f
+}
+
+fn column_of(f: &Fixture, cx: &mut impl gpui::AppContext, title: &str) -> String {
+    let detail = detail(f, cx);
+    let card = detail.cards.iter().find(|c| c.title == title).unwrap();
+    detail
+        .columns
+        .iter()
+        .find(|c| c.id == card.column_id)
+        .unwrap()
+        .name
+        .clone()
+}
+
+#[gpui::test]
+fn dragging_a_card_onto_another_column_moves_it_there(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Ship it"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let from = center(visual, "board-card-1");
+    let to = center(visual, "board-column-body-2");
+    drag(visual, from, to);
+    assert_eq!(column_of(&f, visual, "Ship it"), "Review");
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(!view.dragging);
+            assert!(view.drop_target.is_none());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn dropping_a_card_back_in_its_place_writes_nothing(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Stay"]);
+    let board = detail(&f, cx).board.id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let from = center(visual, "board-card-1");
+    drag(visual, from, gpui::point(from.x + px(30.), from.y + px(2.)));
+    let kinds: Vec<String> = Service::open(&f.db)
+        .unwrap()
+        .activity(&board, None, 20)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.kind)
+        .collect();
+    assert!(!kinds.contains(&"moved".to_string()), "{kinds:?}");
+}
+
+#[gpui::test]
+fn move_to_done_moves_the_card_as_the_user(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Finish"]);
+    let board = detail(&f, cx).board.id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-menu-1");
+    click(visual, "board-move-to-3");
+    assert_eq!(column_of(&f, visual, "Finish"), "Done");
+    let moved = Service::open(&f.db)
+        .unwrap()
+        .activity(&board, None, 20)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.kind == "moved")
+        .expect("a moved row");
+    assert_eq!(moved.actor, "user");
+}
+
+#[gpui::test]
+fn a_drop_on_a_column_deleted_mid_drag_reloads_and_reports_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Orphan?"]);
+    let review = detail(&f, cx).columns[2].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let from = center(visual, "board-card-1");
+    let to = center(visual, "board-column-body-2");
+    visual.simulate_mouse_down(from, gpui::MouseButton::Left, Default::default());
+    for step in 1..=4 {
+        let t = step as f32 / 4.;
+        let at = gpui::point(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+        visual.simulate_mouse_move(at, Some(gpui::MouseButton::Left), Default::default());
+        visual.run_until_parked();
+    }
+    Service::open(&f.db)
+        .unwrap()
+        .column_delete(&review)
+        .unwrap();
+    visual.simulate_mouse_up(to, gpui::MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    assert_eq!(column_of(&f, visual, "Orphan?"), "Backlog");
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.error.is_some(), "the failed move is reported");
+            assert_eq!(view.detail.as_ref().unwrap().columns.len(), 3);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn dragging_a_column_header_reorders_the_columns(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    let backlog = visual.debug_bounds("board-column-0").unwrap();
+    let from = center(visual, "board-column-header-3");
+    let to = gpui::point(backlog.left() + px(20.), backlog.top() + px(60.));
+    drag(visual, from, to);
+    let names: Vec<String> = detail(&f, visual)
+        .columns
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    assert_eq!(names, ["Done", "Backlog", "In Progress", "Review"]);
+}

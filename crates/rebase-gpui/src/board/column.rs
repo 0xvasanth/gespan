@@ -1,5 +1,5 @@
 //! One board column: role ring, name, count, actions, cards and the composer.
-use super::BoardView;
+use super::{BoardView, DraggedCard, DraggedColumn};
 use crate::theme::*;
 use gpui::{AnyElement, Context, FontWeight, Hsla, MouseButton, Role, div, prelude::*, px, rgb};
 use rebase_core::board::{BoardDetail, Column};
@@ -83,6 +83,39 @@ impl BoardView {
             .map(|composer| composer.input.clone());
         let add_id = column.id.clone();
         let menu_id = column.id.clone();
+        let card_target = self
+            .drop_target
+            .as_ref()
+            .filter(|(target, _)| *target == column.id)
+            .map(|(_, slot)| *slot);
+        let column_slot = self.column_drop;
+        let last = index + 1 == detail.columns.len();
+        let drop_line = || {
+            div()
+                .flex_shrink_0()
+                .h(px(2.))
+                .mx(px(2.))
+                .rounded(px(2.))
+                .bg(accent_color())
+                .into_any_element()
+        };
+        let mut body: Vec<AnyElement> = Vec::new();
+        for (slot, card) in cards.iter().enumerate() {
+            if card_target == Some(slot) {
+                body.push(drop_line());
+            }
+            body.push(self.render_card(card, done, cx));
+        }
+        if card_target.is_some_and(|slot| slot >= cards.len()) {
+            body.push(drop_line());
+        }
+        let header_payload = DraggedColumn {
+            column_id: column.id.clone(),
+            index,
+            name: column.name.clone(),
+        };
+        let weak = cx.weak_entity();
+        let (move_over_id, drop_over_id) = (column.id.clone(), column.id.clone());
         div()
             .id(("board-column", index))
             .debug_selector(move || format!("board-column-{index}"))
@@ -98,8 +131,35 @@ impl BoardView {
             .border_1()
             .border_color(content(0.07))
             .bg(content(0.025))
+            .when(card_target.is_some(), |d| {
+                d.bg(accent_color().opacity(0.06))
+                    .border_color(accent_color().opacity(0.38))
+            })
+            .when(column_slot == Some(index), |d| {
+                d.border_l_2().border_color(accent_color())
+            })
+            .when(last && column_slot == Some(index + 1), |d| {
+                d.border_r_2().border_color(accent_color())
+            })
+            .on_drag_move::<DraggedColumn>(cx.listener(
+                move |this, event: &gpui::DragMoveEvent<DraggedColumn>, _, cx| {
+                    this.column_drag_over(index, event.bounds, event.event.position, cx)
+                },
+            ))
+            .on_drop::<DraggedColumn>(
+                cx.listener(|this, column: &DraggedColumn, _, cx| this.drop_column(column, cx)),
+            )
             .child(
                 div()
+                    .id(("board-column-header", index))
+                    .debug_selector(move || format!("board-column-header-{index}"))
+                    .on_drag(header_payload, move |payload, _, _, cx| {
+                        let _ = weak.update(cx, |this, cx| {
+                            this.begin_column_drag();
+                            cx.notify();
+                        });
+                        cx.new(|_| payload.clone())
+                    })
                     .h(px(36.))
                     .flex_shrink_0()
                     .px(px(10.))
@@ -175,6 +235,20 @@ impl BoardView {
             .child(
                 div()
                     .id(("board-column-body", index))
+                    .debug_selector(move || format!("board-column-body-{index}"))
+                    .on_drag_move::<DraggedCard>(cx.listener(
+                        move |this, event: &gpui::DragMoveEvent<DraggedCard>, _, cx| {
+                            this.card_drag_over(
+                                &move_over_id,
+                                event.bounds,
+                                event.event.position,
+                                cx,
+                            )
+                        },
+                    ))
+                    .on_drop::<DraggedCard>(cx.listener(move |this, card: &DraggedCard, _, cx| {
+                        this.drop_card(card, &drop_over_id, cx)
+                    }))
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -182,7 +256,7 @@ impl BoardView {
                     .flex()
                     .flex_col()
                     .gap(px(6.))
-                    .children(cards.iter().map(|card| self.render_card(card, done, cx)))
+                    .children(body)
                     .child(match composer {
                         Some(input) => div()
                             .flex()

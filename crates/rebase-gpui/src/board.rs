@@ -3,6 +3,7 @@
 //! when the window becomes active, and when SQLite's `data_version` moves.
 mod card;
 mod column;
+mod drop;
 #[cfg(test)]
 mod tests;
 
@@ -47,6 +48,23 @@ pub(crate) struct Composer {
 enum Menu {
     Switcher,
     Column { column_id: String, roles: bool },
+    Card { card_id: String },
+}
+
+/// A card on the move. It is also the drag preview.
+#[derive(Clone)]
+pub(crate) struct DraggedCard {
+    card_id: String,
+    number: i64,
+    title: String,
+}
+
+/// A column on the move, dragged by its header.
+#[derive(Clone)]
+pub(crate) struct DraggedColumn {
+    column_id: String,
+    index: usize,
+    name: String,
 }
 
 enum Renaming {
@@ -72,6 +90,12 @@ pub(crate) struct BoardView {
     renaming: Option<(Renaming, Entity<Input>)>,
     switcher_anchor: AnchorSlot,
     column_anchors: HashMap<String, AnchorSlot>,
+    card_anchors: HashMap<String, AnchorSlot>,
+    dragged_card: Option<String>,
+    /// The column and slot a dragged card would land in.
+    pub(crate) drop_target: Option<(String, usize)>,
+    /// The slot a dragged column would land in.
+    column_drop: Option<usize>,
     error: Option<String>,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -122,6 +146,10 @@ impl BoardView {
             renaming: None,
             switcher_anchor: AnchorSlot::default(),
             column_anchors: HashMap::new(),
+            card_anchors: HashMap::new(),
+            dragged_card: None,
+            drop_target: None,
+            column_drop: None,
             error: None,
             _poll: poll,
             _subscriptions: vec![activation],
@@ -143,7 +171,6 @@ impl BoardView {
         cx.notify();
     }
 
-    #[allow(dead_code)]
     pub(crate) fn set_dragging(&mut self, dragging: bool, cx: &mut Context<Self>) {
         self.dragging = dragging;
         if !dragging && self.pending_reload {
@@ -450,6 +477,170 @@ impl BoardView {
         }
     }
 
+    fn begin_card_drag(&mut self, card_id: String) {
+        self.dragging = true;
+        self.dragged_card = Some(card_id);
+        self.menu = None;
+    }
+
+    fn begin_column_drag(&mut self) {
+        self.dragging = true;
+        self.menu = None;
+    }
+
+    /// A drag ended without a drop on the board (or after one): forget it and
+    /// catch up on anything that changed meanwhile.
+    fn end_drag(&mut self, cx: &mut Context<Self>) {
+        self.dragged_card = None;
+        self.drop_target = None;
+        self.column_drop = None;
+        self.set_dragging(false, cx);
+        cx.notify();
+    }
+
+    fn card_drag_over(
+        &mut self,
+        column_id: &str,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        pointer: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if !bounds.contains(&pointer) {
+            return;
+        }
+        let Some(detail) = &self.detail else {
+            return;
+        };
+        let mut cards: Vec<_> = detail
+            .cards
+            .iter()
+            .filter(|card| card.column_id == column_id)
+            .collect();
+        cards.sort_by_key(|card| card.position);
+        let measured: Vec<_> = cards
+            .iter()
+            .filter_map(|card| self.card_anchors.get(&card.id)?.get())
+            .collect();
+        let tops: Vec<_> = measured.iter().map(|b| b.top()).collect();
+        let heights: Vec<_> = measured.iter().map(|b| b.size.height).collect();
+        let slot = drop::card_drop_index(&tops, &heights, pointer.y);
+        let target = Some((column_id.to_string(), slot));
+        if self.drop_target != target {
+            self.drop_target = target;
+            cx.notify();
+        }
+    }
+
+    fn drop_card(&mut self, card: &DraggedCard, column_id: &str, cx: &mut Context<Self>) {
+        let slot = match &self.drop_target {
+            Some((target, slot)) if target == column_id => *slot,
+            _ => self.detail.as_ref().map_or(0, |d| {
+                d.cards.iter().filter(|c| c.column_id == column_id).count()
+            }),
+        };
+        let resolved = self
+            .detail
+            .as_ref()
+            .and_then(|detail| drop::resolve_card_drop(detail, &card.card_id, column_id, slot));
+        self.dragging = false;
+        self.dragged_card = None;
+        self.drop_target = None;
+        match resolved {
+            Some((column, index)) => {
+                let card_id = card.card_id.clone();
+                self.write(cx, |service| {
+                    service.card_move(&card_id, &column, index, "user")
+                });
+            }
+            None => self.end_drag(cx),
+        }
+    }
+
+    fn column_drag_over(
+        &mut self,
+        index: usize,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        pointer: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if !bounds.contains(&pointer) {
+            return;
+        }
+        let slot = if pointer.x < bounds.center().x {
+            index
+        } else {
+            index + 1
+        };
+        if self.column_drop != Some(slot) {
+            self.column_drop = Some(slot);
+            cx.notify();
+        }
+    }
+
+    fn drop_column(&mut self, column: &DraggedColumn, cx: &mut Context<Self>) {
+        let resolved = self
+            .column_drop
+            .and_then(|slot| drop::resolve_column_drop(column.index, slot));
+        self.dragging = false;
+        self.column_drop = None;
+        match resolved {
+            Some(index) => {
+                let column_id = column.column_id.clone();
+                self.write(cx, |service| service.column_move(&column_id, index));
+            }
+            None => self.end_drag(cx),
+        }
+    }
+
+    fn move_card_to(&mut self, card_id: String, column_id: String, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.write(cx, |service| {
+            service.card_move(&card_id, &column_id, usize::MAX, "user")
+        });
+    }
+
+    fn open_card_menu(&mut self, card_id: String, cx: &mut Context<Self>) {
+        self.menu = Some(Menu::Card { card_id });
+        cx.notify();
+    }
+
+    fn card_items(&self, card_id: String, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(detail) = &self.detail else {
+            return Vec::new();
+        };
+        let current = detail
+            .cards
+            .iter()
+            .find(|card| card.id == card_id)
+            .map(|card| card.column_id.clone());
+        let mut items = vec![
+            div()
+                .px(px(8.))
+                .pt(px(4.))
+                .pb(px(2.))
+                .text_size(px(11.))
+                .text_color(content(0.45))
+                .child("Move to…")
+                .into_any_element(),
+        ];
+        items.extend(
+            detail
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, column)| Some(&column.id) != current.as_ref())
+                .map(|(index, column)| {
+                    let (card_id, column_id) = (card_id.clone(), column.id.clone());
+                    menu_row(format!("board-move-to-{index}").into(), column.name.clone())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.move_card_to(card_id.clone(), column_id.clone(), cx)
+                        }))
+                        .into_any_element()
+                }),
+        );
+        items
+    }
+
     fn on_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         if event.keystroke.key != "escape" {
             return;
@@ -547,6 +738,10 @@ impl BoardView {
                     .cloned()
                     .unwrap_or_default(),
             ),
+            Menu::Card { card_id } => (
+                "board-card-menu",
+                self.card_anchors.get(card_id).cloned().unwrap_or_default(),
+            ),
         };
         let list = match menu {
             Menu::Switcher => self.switcher_items(cx),
@@ -555,6 +750,7 @@ impl BoardView {
                 roles: true,
             } => self.role_items(column_id.clone(), cx),
             Menu::Column { column_id, .. } => self.column_items(column_id.clone(), cx),
+            Menu::Card { card_id } => self.card_items(card_id.clone(), cx),
         };
         Some(
             popover(id, Anchor::Slot(anchor))
@@ -685,6 +881,55 @@ fn menu_row(id: SharedString, label: impl Into<SharedString>) -> gpui::Stateful<
         .child(label)
 }
 
+impl gpui::Render for DraggedCard {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(column::COLUMN_WIDTH - 24.))
+            .px(px(12.))
+            .py(px(10.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(content(0.16))
+            .bg(pane_fill())
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .line_clamp(2)
+                    .child(self.title.clone()),
+            )
+            .child(
+                div()
+                    .font_family("Menlo")
+                    .text_size(px(11.))
+                    .text_color(content(0.45))
+                    .child(format!("#{}", self.number)),
+            )
+    }
+}
+
+impl gpui::Render for DraggedColumn {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(column::COLUMN_WIDTH))
+            .h(px(36.))
+            .px(px(10.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(content(0.16))
+            .bg(pane_fill())
+            .shadow_lg()
+            .flex()
+            .items_center()
+            .text_size(px(13.))
+            .font_weight(FontWeight::MEDIUM)
+            .child(self.name.clone())
+    }
+}
+
 struct BoardTooltip(SharedString);
 impl gpui::Render for BoardTooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -713,6 +958,14 @@ impl gpui::Render for BoardView {
             .debug_selector(|| "board-view".into())
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| this.on_key(event, cx)))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.dragging {
+                        this.end_drag(cx);
+                    }
+                }),
+            )
             .size_full()
             .flex()
             .flex_col();
@@ -763,6 +1016,9 @@ impl gpui::Render for BoardView {
         };
         for column in &detail.columns {
             self.column_anchors.entry(column.id.clone()).or_default();
+        }
+        for card in &detail.cards {
+            self.card_anchors.entry(card.id.clone()).or_default();
         }
         let columns: Vec<AnyElement> = detail
             .columns
