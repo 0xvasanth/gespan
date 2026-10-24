@@ -911,7 +911,10 @@ impl Service {
         let conn = Connection::open(path).map_err(|e| e.to_string())?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|e| e.to_string())?;
-        conn.execute_batch("PRAGMA foreign_keys=ON;")
+        // WAL, as the native store and the Tauri app open this file, so two
+        // writers wait on the busy timeout rather than on rollback-journal
+        // file locks, which on Windows can outlast it.
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| e.to_string())?;
         ensure_tables(&conn).map_err(|e| e.to_string())?;
         Ok(Self { conn })
@@ -1502,6 +1505,18 @@ mod tests {
         let log = list_activity(&conn, &board.id, None, 2).unwrap();
         let kinds: Vec<&str> = log.iter().map(|row| row.kind.as_str()).collect();
         assert_eq!(kinds, vec!["completed", "started"]);
+    }
+
+    #[test]
+    fn a_fresh_board_database_is_opened_in_wal_mode_like_the_apps_open_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rebase.db");
+        Service::open(&path).unwrap();
+        let mode: String = Connection::open(&path)
+            .unwrap()
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
     }
 
     #[test]
