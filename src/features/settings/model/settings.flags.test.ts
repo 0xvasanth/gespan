@@ -60,6 +60,13 @@ describe.each([
     "rebase:notes-enabled-change",
   ],
   [
+    "rebase.boardEnabled",
+    settings.loadBoardEnabled,
+    settings.saveBoardEnabled,
+    false,
+    "rebase:board-enabled-change",
+  ],
+  [
     "rebase.liveAgentsEnabled",
     settings.loadLiveAgentsEnabled,
     settings.saveLiveAgentsEnabled,
@@ -191,6 +198,44 @@ describe.each([
     vi.stubGlobal("window", undefined);
     save(!fallback);
     expect(load()).toBe(!fallback);
+  });
+});
+
+describe("board enabled subscription", () => {
+  it("is off by default and exports its event name", () => {
+    expect(settings.BOARD_ENABLED_DEFAULT).toBe(false);
+    expect(settings.BOARD_ENABLED_CHANGE_EVENT).toBe(
+      "rebase:board-enabled-change",
+    );
+    expect(settings.loadBoardEnabled()).toBe(false);
+  });
+
+  it("notifies subscribers on change and stops after unsubscribing", () => {
+    const onChange = vi.fn();
+    const unsubscribe = settings.subscribeBoardEnabled(onChange);
+
+    settings.saveBoardEnabled(true);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(settings.loadBoardEnabled()).toBe(true);
+
+    unsubscribe();
+    settings.saveBoardEnabled(false);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(settings.loadBoardEnabled()).toBe(false);
+  });
+
+  it("does not react to other settings changing", () => {
+    const onChange = vi.fn();
+    const unsubscribe = settings.subscribeBoardEnabled(onChange);
+    settings.saveNotesEnabled(false);
+    unsubscribe();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("subscribes safely without a window", () => {
+    vi.stubGlobal("window", undefined);
+    const unsubscribe = settings.subscribeBoardEnabled(vi.fn());
+    expect(() => unsubscribe()).not.toThrow();
   });
 });
 

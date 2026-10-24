@@ -351,6 +351,7 @@ import {
   loadGridArcadeEnabled,
   loadLiveAgentsEnabled,
   loadModelControls,
+  loadBoardEnabled,
   loadNotesEnabled,
   loadPilotsEnabled,
   loadPilotMenuBarIcon,
@@ -374,6 +375,7 @@ import {
   saveGridArcadeEnabled,
   saveLiveAgentsEnabled,
   saveModelControls,
+  saveBoardEnabled,
   saveNotesEnabled,
   savePilotsEnabled,
   subscribePilotsEnabled,
@@ -849,6 +851,7 @@ function GeneralPage({
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission>(cachedNotificationPermission);
   const [notesEnabled, setNotesEnabled] = useState(loadNotesEnabled);
+  const [boardEnabled, setBoardEnabled] = useState(loadBoardEnabled);
   const [liveAgentsEnabled, setLiveAgentsEnabled] = useState(
     loadLiveAgentsEnabled,
   );
@@ -892,6 +895,10 @@ function GeneralPage({
   const onNotesEnabled = (next: boolean) => {
     saveNotesEnabled(next);
     setNotesEnabled(next);
+  };
+  const onBoardEnabled = (next: boolean) => {
+    saveBoardEnabled(next);
+    setBoardEnabled(next);
   };
 
   const onQuickComposerEnabled = (next: boolean) => {
@@ -999,6 +1006,13 @@ function GeneralPage({
           description="A global markdown notebook on the project rail. Save a finished turn from the transcript, then mention it later with @note or add it to chat."
         >
           <Toggle label="Notes" on={notesEnabled} onChange={onNotesEnabled} />
+        </Row>
+        <Row
+          id="board"
+          label="Board"
+          description="A Kanban board for tracking work. Cards can link to sessions and Pilots, and move on their own as that work starts and finishes."
+        >
+          <Toggle label="Board" on={boardEnabled} onChange={onBoardEnabled} />
         </Row>
         {IS_MAC && (
           <Row

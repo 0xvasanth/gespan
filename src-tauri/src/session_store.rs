@@ -305,6 +305,28 @@ pub fn session_list_linked(store: State<'_, SessionStore>) -> Result<Vec<Session
     list_linked(&conn).map_err(|e| e.to_string())
 }
 
+/// Most ids one `session_list_by_ids` call looks up.
+const MAX_SESSION_LOOKUP: usize = 500;
+
+fn validate_session_ids(ids: &[String]) -> Result<(), String> {
+    if ids.len() > MAX_SESSION_LOOKUP {
+        return Err(format!("At most {MAX_SESSION_LOOKUP} sessions per lookup"));
+    }
+    ids.iter().try_for_each(|id| validate_id(id, "session"))
+}
+
+/// Summaries of the given sessions wherever they live, so a reference to a
+/// session (a board card's link) can tell "not loaded yet" from "deleted".
+#[tauri::command(async)]
+pub fn session_list_by_ids(
+    store: State<'_, SessionStore>,
+    session_ids: Vec<String>,
+) -> Result<Vec<SessionSummary>, String> {
+    validate_session_ids(&session_ids)?;
+    let conn = store.conn.lock().map_err(|_| "Session store is locked")?;
+    list_by_ids(&conn, &session_ids).map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 pub fn session_get(
     store: State<'_, SessionStore>,
@@ -1009,6 +1031,7 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     crate::notes::ensure_notes_table(conn)?;
     crate::reminders::ensure_table(conn)?;
     crate::automations::ensure_tables(conn)?;
+    crate::board::ensure_tables(conn)?;
     ensure_orchestration_history(conn)?;
     crate::pilot_transcript::ensure_tables(conn)?;
     Ok(())
@@ -1712,49 +1735,73 @@ fn list_by_project(conn: &Connection, cwd: &str) -> rusqlite::Result<Vec<Session
     rows.collect()
 }
 
-fn list_linked(conn: &Connection) -> rusqlite::Result<Vec<SessionSummary>> {
-    let mut statement = conn.prepare(
-        "SELECT id, cwd, harness, model, runtime_mode, title, provider_session_id,
+/// Summary columns, in the order `summary_from_row` reads them.
+const SUMMARY_COLUMNS: &str = "id, cwd, harness, model, runtime_mode, title, provider_session_id,
                 created_at, updated_at, branch, archived, pinned,
                 linked_work_item_json,
                 (SELECT summary FROM orchestration_sidebar WHERE lead_id = sessions.id), worktree_cwd,
-                worktree_removed, is_draft, automation_id, sidebar_hidden
+                worktree_removed, is_draft, automation_id, sidebar_hidden";
+
+/// A `SUMMARY_COLUMNS` row, with the stored branch and no git lookup.
+fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
+    let archived: i64 = row.get(10)?;
+    let pinned: i64 = row.get(11)?;
+    Ok(SessionSummary {
+        sidebar_hidden: row.get::<_, i64>(18)? != 0,
+        id: row.get(0)?,
+        orchestration_lead_id: None,
+        orchestration: optional_json(row.get(13)?),
+        cwd: row.get(1)?,
+        harness: row.get(2)?,
+        model: row.get(3)?,
+        runtime_mode: row.get(4)?,
+        title: row.get(5)?,
+        provider_session_id: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+        branch: nonempty(row.get(9)?),
+        worktree_cwd: row.get(14)?,
+        worktree_removed: row.get::<_, i64>(15)? != 0,
+        repo: None,
+        additions: 0,
+        deletions: 0,
+        archived: archived != 0,
+        pinned: pinned != 0,
+        draft: row.get::<_, i64>(16)? != 0,
+        linked_work_item: optional_json(row.get(12)?),
+        automation_id: nonempty(row.get(17)?),
+    })
+}
+
+fn list_linked(conn: &Connection) -> rusqlite::Result<Vec<SessionSummary>> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT {SUMMARY_COLUMNS}
          FROM sessions
          WHERE has_user_message = 1
            AND linked_work_item_json IS NOT NULL
            AND id NOT IN (SELECT id FROM sessions WHERE inbox_ask IS NOT NULL)
            AND id NOT IN (SELECT session_id FROM orchestration_workers)
-         ORDER BY updated_at DESC, id ASC",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let archived: i64 = row.get(10)?;
-        let pinned: i64 = row.get(11)?;
-        Ok(SessionSummary {
-            sidebar_hidden: row.get::<_, i64>(18)? != 0,
-            id: row.get(0)?,
-            orchestration_lead_id: None,
-            orchestration: optional_json(row.get(13)?),
-            cwd: row.get(1)?,
-            harness: row.get(2)?,
-            model: row.get(3)?,
-            runtime_mode: row.get(4)?,
-            title: row.get(5)?,
-            provider_session_id: row.get(6)?,
-            created_at: row.get(7)?,
-            updated_at: row.get(8)?,
-            branch: nonempty(row.get(9)?),
-            worktree_cwd: row.get(14)?,
-            worktree_removed: row.get::<_, i64>(15)? != 0,
-            repo: None,
-            additions: 0,
-            deletions: 0,
-            archived: archived != 0,
-            pinned: pinned != 0,
-            draft: row.get::<_, i64>(16)? != 0,
-            linked_work_item: optional_json(row.get(12)?),
-            automation_id: nonempty(row.get(17)?),
-        })
-    })?;
+         ORDER BY updated_at DESC, id ASC"
+    ))?;
+    let rows = statement.query_map([], summary_from_row)?;
+    rows.collect()
+}
+
+/// The stored sessions among `ids`, in any project and archived or not; ids
+/// with no stored session (deleted, or never saved) are left out.
+fn list_by_ids(conn: &Connection, ids: &[String]) -> rusqlite::Result<Vec<SessionSummary>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = serde_json::to_string(ids)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    let mut statement = conn.prepare(&format!(
+        "SELECT {SUMMARY_COLUMNS}
+         FROM sessions
+         WHERE id IN (SELECT value FROM json_each(?1))
+           AND inbox_ask IS NULL"
+    ))?;
+    let rows = statement.query_map(params![ids], summary_from_row)?;
     rows.collect()
 }
 
@@ -2662,6 +2709,45 @@ mod tests {
         assert!(rows.iter().any(|row| row.id == "s1"));
         assert!(rows.iter().any(|row| row.id == "s2"));
         assert!(rows.iter().all(|row| row.linked_work_item.is_some()));
+    }
+
+    #[test]
+    fn list_by_ids_finds_sessions_across_projects_including_archived() {
+        let store = SessionStore::open_in_memory().unwrap();
+        let conn = store.conn.lock().unwrap();
+        upsert_session(&conn, &sample("s1", "/tmp/a", "First")).unwrap();
+        upsert_session(&conn, &sample("s2", "/tmp/b", "Second")).unwrap();
+        upsert_session(&conn, &sample("s3", "/tmp/a", "Archived")).unwrap();
+        upsert_session(&conn, &sample("s4", "/tmp/c", "Deleted")).unwrap();
+        upsert_session(&conn, &sample("s5", "/tmp/c", "Not asked")).unwrap();
+        set_archived(&conn, "s3", true).unwrap();
+        delete_session(&conn, "s4").unwrap();
+
+        let ids = ["s1", "s2", "s3", "s4", "never-existed"].map(String::from);
+        let mut rows = list_by_ids(&conn, &ids).unwrap();
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        let found: Vec<_> = rows
+            .iter()
+            .map(|row| (row.id.as_str(), row.cwd.as_str(), row.archived))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("s1", "/tmp/a", false),
+                ("s2", "/tmp/b", false),
+                ("s3", "/tmp/a", true)
+            ]
+        );
+        assert_eq!(rows[1].title, "Second");
+        assert!(list_by_ids(&conn, &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_by_ids_command_rejects_bad_ids() {
+        assert!(validate_session_ids(&["s1".into(), "a-b_c".into()]).is_ok());
+        assert!(validate_session_ids(&["s1".into(), "x' OR 1=1".into()]).is_err());
+        let too_many = vec!["s1".to_string(); MAX_SESSION_LOOKUP + 1];
+        assert!(validate_session_ids(&too_many).is_err());
     }
 
     #[test]

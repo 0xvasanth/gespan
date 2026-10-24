@@ -5,6 +5,7 @@ mod artifacts;
 mod automations;
 mod azure_devops;
 mod background_work;
+mod board;
 mod chat_background;
 mod checkpoint;
 mod codex_pilot_store;
@@ -368,6 +369,23 @@ pub fn run() {
             automations::automations_claim_due,
             automations::automations_claim_event,
             automations::automation_run_update,
+            board::board_list,
+            board::board_get,
+            board::board_create,
+            board::board_rename,
+            board::board_delete,
+            board::board_column_create,
+            board::board_column_update,
+            board::board_column_move,
+            board::board_column_delete,
+            board::board_card_create,
+            board::board_card_update,
+            board::board_card_move,
+            board::board_card_link,
+            board::board_card_delete,
+            board::board_cards_for_link,
+            board::board_activity,
+            board::board_card_record,
             external_editor::list_external_editors,
             external_editor::open_in_external_editor,
             fs::resolve_project_location,
@@ -542,6 +560,7 @@ pub fn run() {
             session_store::session_list_by_project,
             session_store::session_rebase_project,
             session_store::session_list_linked,
+            session_store::session_list_by_ids,
             session_store::session_search,
             session_store::cancel_session_search,
             session_store::session_get,
