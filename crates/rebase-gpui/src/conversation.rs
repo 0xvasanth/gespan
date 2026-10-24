@@ -7,10 +7,10 @@ mod commands;
 pub(crate) mod composer_features;
 mod composer_shelf;
 mod edit_last_turn;
-mod follow_up;
-mod history;
 #[cfg(test)]
 mod empty_arcade_tests;
+mod follow_up;
+mod history;
 mod mobile;
 mod notifications;
 mod pilot;
