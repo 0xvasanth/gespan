@@ -1,0 +1,23 @@
+crates/rebase-gpui/src/shell/automation_runs.rs
+  s_ccb41beff89445::t_d95c7e8f41df6c 349,387-391,394,486
+  s_ccb41beff89445::t_e2c27938b64478 381-382,633-635,637,716-758,763-769
+  s_ccb41beff89445::t_e8e7cd7e3e9f4d 356,392-393,759-762
+  s_ccb41beff89445::t_4f6c2aa1a710a9 585-600,623-632,636,638-690,770
+  s_ccb41beff89445::t_8874bb19e9ff4d 691
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "445008f801465408c8cbd2bda4649e53df9418ca",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
