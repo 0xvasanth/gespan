@@ -20,7 +20,16 @@ case "$native_data_mode" in
   dev-data|rebase-data) ;;
   *) echo "Unknown data mode: $native_data_mode" >&2; exit 1 ;;
 esac
-native_bundle="$native_target/Rebase Native.app"
+# Development data gets its own app identity, so a dev build never shares the
+# installed app's name, Dock icon, defaults or notification permissions.
+if [ "$native_data_mode" = dev-data ]; then
+  native_app_name="Rebase Native Dev"
+  native_bundle_id="com.rebase.native.dev"
+else
+  native_app_name="Rebase Native"
+  native_bundle_id="com.rebase.native"
+fi
+native_bundle="$native_target/$native_app_name.app"
 native_binary="$native_target/rebase-gpui"
 if [ ! -f "$native_binary" ]; then
   echo "Missing native executable: $native_binary" >&2
@@ -58,9 +67,9 @@ cat > "$native_bundle/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>$native_executable</string>
 <key>RebaseDataMode</key><string>$native_data_mode</string>
-<key>CFBundleIdentifier</key><string>com.rebase.native</string>
-<key>CFBundleName</key><string>Rebase Native</string>
-<key>CFBundleDisplayName</key><string>Rebase Native</string>
+<key>CFBundleIdentifier</key><string>$native_bundle_id</string>
+<key>CFBundleName</key><string>$native_app_name</string>
+<key>CFBundleDisplayName</key><string>$native_app_name</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$native_short_version</string>
 <key>CFBundleVersion</key><string>$native_build_version</string>

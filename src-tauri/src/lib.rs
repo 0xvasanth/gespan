@@ -11,6 +11,8 @@ mod codex_pilot_store;
 mod control;
 pub mod control_cli;
 mod cursor_store;
+#[cfg(debug_assertions)]
+mod dev_identity;
 mod devin_config;
 mod devin_usage;
 mod external_editor;
@@ -238,7 +240,10 @@ fn should_request_quit(code: Option<i32>) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let context = tauri::generate_context!();
+    #[allow(unused_mut)]
+    let mut context = tauri::generate_context!();
+    #[cfg(debug_assertions)]
+    dev_identity::apply(context.config_mut());
     #[cfg(all(debug_assertions, target_os = "macos"))]
     {
         let version = context.package_info().version.to_string();

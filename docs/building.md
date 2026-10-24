@@ -17,6 +17,13 @@ npm install
 npm run tauri dev
 ```
 
+Development builds run as **Rebase Dev** (`com.rebase.desktop.dev`), so they
+keep their own `rebase.db`, settings and notification permissions in
+`~/Library/Application Support/com.rebase.desktop.dev/` and never touch an
+installed Rebase you are using at the same time. `npm run native:dev` likewise
+runs as **Rebase Native Dev** (`com.rebase.native.dev`) with its database in
+`~/Library/Application Support/Rebase Development/`.
+
 ## Ubuntu / Debian packages
 
 On an Ubuntu/Debian workstation, the repository can install the native Tauri prerequisites and build distributable Linux packages directly:
