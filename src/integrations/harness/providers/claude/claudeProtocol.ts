@@ -798,6 +798,9 @@ export type ClaudeToolProgress = {
   parentToolUseId?: string;
   toolName?: string;
   subagentType?: string;
+  /** Claude's keep-alive for a running call, never a step of work. */
+  heartbeat?: boolean;
+  elapsedSeconds?: number;
 };
 
 export function parseToolProgress(
@@ -812,6 +815,10 @@ export function parseToolProgress(
     ...(parent ? { parentToolUseId: parent } : {}),
     toolName: stringField(rec, "tool_name"),
     subagentType: stringField(rec, "subagent_type"),
+    ...(rec.heartbeat === true ? { heartbeat: true } : {}),
+    ...(typeof rec.elapsed_time_seconds === "number"
+      ? { elapsedSeconds: rec.elapsed_time_seconds }
+      : {}),
   };
 }
 

@@ -73,6 +73,13 @@ import {
   type ClaudeControlRequest,
 } from "./claudeProtocol";
 import { isAgentToolName } from "../../core/preview";
+import {
+  clearAllToolElapsed,
+  clearToolElapsed,
+  setToolElapsed,
+} from "../../core/toolElapsed";
+import { heartbeatElapsed, isHeartbeatProgress } from "./claudeHeartbeat";
+import type { ClaudeToolProgress } from "./claudeProtocol";
 import { parseHandback } from "../../../../features/sessions/model/subagentHandback";
 import type { Block } from "../../../../features/sessions/model/session";
 import {
@@ -1056,6 +1063,7 @@ function handleUser(live: Live, rec: Record<string, unknown>): void {
       continue;
     }
     if (isAgentToolName(tool.name)) live.doneTools.add(tool.id);
+    clearToolElapsed(tool.id);
     live.onEvent({
       type: "tool.updated",
       callId: tool.id,
@@ -1537,6 +1545,12 @@ function handleAgentLifecycle(
 function handleToolProgress(live: Live, rec: Record<string, unknown>): void {
   const progress = parseToolProgress(rec);
   if (!progress) return;
+  // A heartbeat is the call itself still running, never a step: dropped before
+  // routing, so it cannot become a never-ending child or a "Background agent".
+  if (isHeartbeatProgress(progress)) {
+    noteHeartbeat(live, progress);
+    return;
+  }
   const own = live.toolsById.get(progress.toolUseId);
   if (!(own && isAgentToolName(own.name)) && progress.parentToolUseId) {
     // A sub-agent's call in flight: a step wherever that agent's work goes.
@@ -1584,6 +1598,16 @@ function handleToolProgress(live: Live, rec: Record<string, unknown>): void {
       ...(progress.subagentType ? { agentType: progress.subagentType } : {}),
     });
   }
+}
+
+/** Live elapsed for the running parent call. In memory only, never saved. */
+function noteHeartbeat(live: Live, progress: ClaudeToolProgress): void {
+  const beat = heartbeatElapsed(progress);
+  if (!beat) return;
+  if (!live.toolsById.has(beat.callId) || live.doneTools.has(beat.callId)) {
+    return;
+  }
+  setToolElapsed(beat.callId, beat.seconds);
 }
 
 /**
@@ -2424,4 +2448,5 @@ export function __claudeTestReset(): void {
   tasksByThread.clear();
   registryByThread.clear();
   cancelledThreads.clear();
+  clearAllToolElapsed();
 }
