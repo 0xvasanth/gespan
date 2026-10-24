@@ -402,15 +402,25 @@ impl Service {
     ) -> Result<Label, String> {
         validate_id(board_id, "board")?;
         let name = clean_text(name, "Label name", MAX_LABEL)?;
+        if color.len() != 6 || !color.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Label colour must be six hex digits".into());
+        }
         let tx = write_tx(&self.conn)?;
-        let taken: bool = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM board_native_labels
-                 WHERE board_id = ?1 AND lower(name) = lower(?2))",
-                params![board_id, name],
-                |r| r.get(0),
-            )
-            .map_err(db)?;
+        // SQLite's lower() folds only ASCII, so compare names in Rust too.
+        let folded = name.to_lowercase();
+        let taken = {
+            let mut statement = tx
+                .prepare("SELECT name FROM board_native_labels WHERE board_id = ?1")
+                .map_err(db)?;
+            let names = statement
+                .query_map([board_id], |r| r.get::<_, String>(0))
+                .map_err(db)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(db)?;
+            names
+                .iter()
+                .any(|existing| existing.to_lowercase() == folded)
+        };
         if taken {
             return Err(format!("A label named {name} already exists"));
         }
@@ -539,6 +549,16 @@ impl Service {
         let Some(card_id) = subtask_card(&tx, subtask_id)? else {
             return Err("Subtask not found".into());
         };
+        let was_done: bool = tx
+            .query_row(
+                "SELECT done != 0 FROM board_native_subtasks WHERE id = ?1",
+                [subtask_id],
+                |r| r.get(0),
+            )
+            .map_err(db)?;
+        if was_done == done {
+            return Ok(());
+        }
         tx.execute(
             "UPDATE board_native_subtasks SET done = ?1 WHERE id = ?2",
             params![i64::from(done), subtask_id],
@@ -651,9 +671,10 @@ mod tests {
     #[test]
     fn default_board_is_the_oldest_of_several() {
         let (_dir, mut service, _) = service();
-        let oldest = service.create("Oldest").unwrap();
-        service.create("Second").unwrap();
-        service.create("Third").unwrap();
+        // Alphabetical order differs from creation order.
+        let oldest = service.create("Zeta").unwrap();
+        service.create("Alpha").unwrap();
+        service.create("Mid").unwrap();
         assert_eq!(service.default_board().unwrap().id, oldest.id);
         assert_eq!(service.list().unwrap().len(), 3);
     }
@@ -711,7 +732,12 @@ mod tests {
         let bug = service.create_label(&board, "Bug", "e5534b").unwrap();
         assert!(service.create_label(&board, "  bug ", "4da3f5").is_err());
         let docs = service.create_label(&board, "Docs", "4da3f5").unwrap();
-        assert_eq!(service.labels(&board).unwrap().len(), 2);
+        // Case is folded beyond ASCII, and colours are plain hex.
+        service.create_label(&board, "Ärger", "e0823d").unwrap();
+        assert!(service.create_label(&board, "ärger", "e0823d").is_err());
+        assert!(service.create_label(&board, "Red", "+12345").is_err());
+        assert!(service.create_label(&board, "Red", "red").is_err());
+        assert_eq!(service.labels(&board).unwrap().len(), 3);
         service
             .set_labels(&card, &[bug.id.clone(), docs.id.clone()])
             .unwrap();
@@ -780,6 +806,12 @@ mod tests {
         set_updated_at(&path, &card, 1);
         service.delete_subtask(&one.id).unwrap();
         assert!(updated_at(&mut service, &board, &card) > 1);
+        // Toggling to the state it already has is not a change.
+        let two = service.add_subtask(&card, "Two").unwrap();
+        service.toggle_subtask(&two.id, true).unwrap();
+        set_updated_at(&path, &card, 1);
+        service.toggle_subtask(&two.id, true).unwrap();
+        assert_eq!(updated_at(&mut service, &board, &card), 1);
         // A subtask already gone is still not found for a toggle, and a
         // repeated delete stays a quiet no-op that touches nothing.
         set_updated_at(&path, &card, 1);
@@ -873,6 +905,50 @@ mod tests {
             .collect();
         assert_eq!(bodies, ["first", "second"]);
         assert_eq!(service.extras(&board).unwrap()[&card].comments, 2);
+    }
+
+    fn native_rows(path: &std::path::Path, card: &str) -> Vec<(&'static str, i64)> {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        [
+            "board_native_meta",
+            "board_native_projects",
+            "board_native_card_labels",
+            "board_native_subtasks",
+            "board_native_comments",
+        ]
+        .into_iter()
+        .map(|table| {
+            let count = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE card_id = ?1"),
+                    [card],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            (table, count)
+        })
+        .collect()
+    }
+
+    fn with_every_extra(service: &mut Service, board: &str, card: &str) {
+        service.set_priority(card, 2).unwrap();
+        service.set_projects(card, &["/a".into()]).unwrap();
+        let label = service.create_label(board, "Bug", "e5534b").unwrap();
+        service.set_labels(card, &[label.id]).unwrap();
+        service.add_subtask(card, "One").unwrap();
+        service.add_comment(card, "Hi").unwrap();
+    }
+
+    #[test]
+    fn deleting_a_card_through_the_service_removes_its_native_rows() {
+        let (_dir, mut service, path) = service();
+        let (board, card) = card(&mut service);
+        with_every_extra(&mut service, &board, &card);
+        assert!(native_rows(&path, &card).iter().all(|(_, n)| *n == 1));
+        service.card_delete(&card).unwrap();
+        for (table, left) in native_rows(&path, &card) {
+            assert_eq!(left, 0, "{table}");
+        }
     }
 
     #[test]
