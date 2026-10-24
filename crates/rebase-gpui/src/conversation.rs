@@ -992,8 +992,7 @@ impl Conversation {
         self.begin_turn(cx);
         let generation = self.submission_generation;
         if !self.is_remote() {
-            let pilot = crate::board::turns::pilot_of_session(self.summary.id, cx);
-            crate::board::turns::turn_started(&self.store, self.summary.id, pilot, generation, cx);
+            crate::board::turns::turn_began(self.store.clone(), self.summary.id, generation, cx);
         }
         let source_provider = self.summary.provider.clone();
         let source_account = self.settings.account.id.clone();

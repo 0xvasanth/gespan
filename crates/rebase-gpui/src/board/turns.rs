@@ -99,6 +99,16 @@ pub(crate) fn pilots(cx: &App) -> Vec<(String, String)> {
         .collect()
 }
 
+/// A session's turn began: record it for the Pilot behind the session. Pilot
+/// chats start turns from inside a `Pilots` update, and finding the Pilot reads
+/// the roster, so this waits until the current update has finished.
+pub(crate) fn turn_began(store: Database, session: i64, turn: u64, cx: &mut App) {
+    cx.defer(move |cx| {
+        let pilot = pilot_of_session(session, cx);
+        turn_started(&store, session, pilot, turn, cx);
+    });
+}
+
 fn session_key(store: &Database, session: i64) -> Option<String> {
     locked(store).ok()?.persisted_session_id(session).ok()
 }

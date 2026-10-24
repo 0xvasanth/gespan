@@ -1476,3 +1476,31 @@ fn sidebar_right_click_opens_pilot_menu_outside_the_pilot_and_edits_its_look(
         .unwrap();
     assert!(visual.debug_bounds("pilot-mascot-0").is_none());
 }
+
+#[gpui::test]
+fn a_pilot_turn_begun_inside_a_pilots_update_moves_the_pilots_card(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let store = s.store.clone();
+    let db = store.lock().unwrap().database_path().to_path_buf();
+    let mut service = rebase_core::board::Service::open(&db).unwrap();
+    let board = service.create("Work").unwrap();
+    let backlog = service.get(&board.id).unwrap().columns[0].id.clone();
+    let card = service.card_create(&backlog, "Pilot work", "").unwrap();
+    service
+        .card_link(&card.id, Some("pilot"), Some(&s.id))
+        .unwrap();
+    // Pilot chats start turns from inside a Pilots update.
+    cx.update(|cx| {
+        s.manager.update(cx, |_, cx| {
+            crate::board::turns::turn_began(store.clone(), s.session, 1, cx)
+        })
+    });
+    cx.run_until_parked();
+    let detail = service.get(&board.id).unwrap();
+    let column = detail
+        .columns
+        .iter()
+        .find(|c| c.id == detail.cards[0].column_id)
+        .unwrap();
+    assert_eq!(column.name, "In Progress");
+}
