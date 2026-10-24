@@ -1,0 +1,37 @@
+src/integrations/harness/providers/claude/claudeHeartbeat.test.ts
+  s_ccb41beff89445::t_ea6c2bce38fe25 33,235-288
+  s_ccb41beff89445::t_9c5144afca4fda 289
+crates/rebase-core/src/tool.rs
+  s_ccb41beff89445::t_8657b6b0118781 54-57
+crates/rebase-gpui/src/transcript/tasks.rs
+  s_ccb41beff89445::t_4f9e8ecc0d1f79 1694-1695
+  s_ccb41beff89445::t_431961e5fd932b 1656-1659
+  s_ccb41beff89445::t_d842edbb1156fc 1632-1655,1660-1664
+  s_ccb41beff89445::t_59dfb9f4454a7d 1631
+src/integrations/harness/providers/claude/claude.ts
+  s_ccb41beff89445::t_4107c638d2a929 201,711,1066,1608-1612,2046,2153-2156,2350-2351
+crates/rebase-gpui/src/runtime.rs
+  s_ccb41beff89445::t_52466b54f7a8c2 887-888,994-1031,1063-1071,1078-1103,1108-1109
+  s_ccb41beff89445::t_4f9e8ecc0d1f79 1072-1077
+  s_ccb41beff89445::t_431961e5fd932b 1104-1107
+crates/rebase-gpui/src/transcript.rs
+  s_ccb41beff89445::t_8657b6b0118781 2476
+src/integrations/harness/core/toolElapsed.ts
+  s_ccb41beff89445::t_4107c638d2a929 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8df0f96e7c11a7f28c0795b0e012024fe1771063",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
