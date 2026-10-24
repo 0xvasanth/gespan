@@ -395,10 +395,8 @@ impl BoardView {
                     _ => None,
                 };
                 match day {
-                    Some(day) => {
-                        let due = day.and_then(style::day_start);
-                        self.write_task(cx, |service| service.set_due(&card_id, due));
-                    }
+                    Some(None) => self.write_task(cx, |service| service.set_due(&card_id, None)),
+                    Some(Some(day)) => self.set_due_day(&card_id, day, cx),
                     None if id == "due-pick" => self.open_picker(Picker::DueDate, window, cx),
                     None => {}
                 }
@@ -447,6 +445,18 @@ impl BoardView {
     }
 
     /// Enter in a pick list: a typed date sets it; a label name creates it.
+    /// Due at the start of `day`; a day the local zone skipped is an error,
+    /// never a cleared due date.
+    fn set_due_day(&mut self, card_id: &str, day: chrono::NaiveDate, cx: &mut Context<Self>) {
+        match style::day_start(day) {
+            Some(due) => self.write_task(cx, |service| service.set_due(card_id, Some(due))),
+            None => {
+                self.error = Some(format!("{day} does not exist in this time zone"));
+                cx.notify();
+            }
+        }
+    }
+
     fn submit_query(&mut self, cx: &mut Context<Self>) {
         let Some(picker) = self.card_detail.as_ref().and_then(|detail| detail.picker) else {
             return;
@@ -459,11 +469,10 @@ impl BoardView {
                 };
                 match chrono::NaiveDate::parse_from_str(&query, "%Y-%m-%d") {
                     Ok(day) => {
-                        let due = style::day_start(day);
                         if let Some(detail) = &mut self.card_detail {
                             detail.picker = None;
                         }
-                        self.write_task(cx, |service| service.set_due(&card.id, due));
+                        self.set_due_day(&card.id, day, cx);
                     }
                     Err(_) => {
                         self.error = Some(format!("“{query}” is not a date like 2026-11-02"));

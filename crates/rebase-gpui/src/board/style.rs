@@ -1,7 +1,7 @@
 //! The board's small visual vocabulary: label colours, priority bars, due
 //! dates and chips, shared by cards and the task drawer.
 use crate::theme::*;
-use chrono::{Datelike, Local, NaiveDate, TimeZone};
+use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone};
 use gpui::{AnyElement, Hsla, div, prelude::*, px, rgb};
 
 /// Label colours, in the order new labels take them.
@@ -51,13 +51,23 @@ pub(crate) fn local_day(at: i64) -> Option<NaiveDate> {
         .map(|time| time.date_naive())
 }
 
-/// Local midnight of `day`, as stored in `due_at`.
+/// The start of `day` in local time, as stored in `due_at`: midnight, or
+/// the first minute that exists when a daylight-saving change skips it.
+/// `None` only for a day the zone skipped entirely.
 pub(crate) fn day_start(day: NaiveDate) -> Option<i64> {
+    first_instant(day, |time| {
+        Local
+            .from_local_datetime(&time)
+            .earliest()
+            .map(|time| time.timestamp_millis())
+    })
+}
+
+fn first_instant(day: NaiveDate, resolve: impl Fn(NaiveDateTime) -> Option<i64>) -> Option<i64> {
     let midnight = day.and_hms_opt(0, 0, 0)?;
-    Local
-        .from_local_datetime(&midnight)
-        .earliest()
-        .map(|time| time.timestamp_millis())
+    (0..24 * 60)
+        .map(|minute| midnight + chrono::Duration::minutes(minute))
+        .find_map(resolve)
 }
 
 pub(crate) fn due_label(due_at: i64, now: i64) -> Option<(String, bool)> {
@@ -153,6 +163,39 @@ mod tests {
             due_text(day(2027, 2, 3), today),
             ("Feb 3, 2027".to_string(), false)
         );
+    }
+
+    #[test]
+    fn a_day_whose_midnight_is_skipped_starts_at_its_first_real_minute() {
+        let day = day(2026, 3, 8);
+        let at = |hour: u32, minute: u32| {
+            day.and_hms_opt(hour, minute, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp_millis()
+        };
+        // A zone that springs forward from 00:00 straight to 01:00.
+        let skips_midnight = |time: NaiveDateTime| {
+            (time.time() >= chrono::NaiveTime::from_hms_opt(1, 0, 0).unwrap())
+                .then(|| time.and_utc().timestamp_millis())
+        };
+        assert_eq!(first_instant(day, skips_midnight), Some(at(1, 0)));
+        // An ordinary day starts at midnight.
+        assert_eq!(
+            first_instant(day, |time| Some(time.and_utc().timestamp_millis())),
+            Some(at(0, 0))
+        );
+        // A day the zone skipped entirely has no start.
+        assert_eq!(first_instant(day, |_| None), None);
+    }
+
+    #[test]
+    fn the_local_start_of_a_day_is_on_that_day() {
+        // Includes days that open with a daylight-saving jump at midnight in
+        // Havana and Santiago, for runs under TZ=America/Havana and the like.
+        for picked in [day(2026, 11, 2), day(2026, 3, 8), day(2026, 9, 6)] {
+            assert_eq!(day_start(picked).and_then(local_day), Some(picked));
+        }
     }
 
     #[test]
