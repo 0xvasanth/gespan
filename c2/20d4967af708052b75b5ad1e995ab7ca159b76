@@ -1,0 +1,187 @@
+docs/superpowers/plans/2026-10-23-board.md
+  s_ccb41beff89445::t_62b91de8db66d9 29
+docs/superpowers/plans/2026-10-24-native-board-v2.md
+  s_ccb41beff89445::t_62b91de8db66d9 1-217
+src/features/source-control/ui/Worktrees.test.ts
+  s_ccb41beff89445::t_62b91de8db66d9 5,44,148-188
+  s_ccb41beff89445::t_c05094a236f1b8 189-190
+crates/rebase-gpui/src/board/header.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-405
+crates/rebase-gpui/src/shell/classic_surface_tests.rs
+  s_ccb41beff89445::t_3fa17d2cfc5ee3 1008
+  s_ccb41beff89445::t_62b91de8db66d9 12,32-35,323-358,755,881,903,950,964,989,1028-1177
+  s_ccb41beff89445::t_2595910adb3bec 53
+crates/rebase-gpui/src/settings/pages/general.rs
+  s_ccb41beff89445::t_62b91de8db66d9 99-112
+crates/rebase-gpui/src/shell.rs
+  s_ccb41beff89445::t_62b91de8db66d9 21,308-309,587-588,610,937-938,959,1084-1086,1216-1218,3637,4483-4495,4545-4552,4579-4582,4715-4716,4727,4755,4759,4762,4814-4823,4885-4890,5266,7058,8263-8264
+  s_ccb41beff89445::t_07e36b91b657da 8265
+src/app/shell/TitleBar.tsx
+  s_ccb41beff89445::t_62b91de8db66d9 47,145-147,765,1059,1066,1070,1073-1094,1096-1104
+crates/rebase-gpui/src/board/drop.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-164
+crates/rebase-gpui/src/board/tests.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-1666
+crates/rebase-gpui/src/runtime.rs
+  s_ccb41beff89445::t_62b91de8db66d9 52-55,262,310,364,828,908,998
+src/app/shell/OpenInEditor.test.ts
+  s_ccb41beff89445::t_62b91de8db66d9 1-446
+src/features/settings/ui/SettingsView.test.ts
+  s_ccb41beff89445::t_62b91de8db66d9 692,699,703-705
+crates/rebase-gpui/src/board/detail.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-874
+crates/rebase-gpui/assets/hugeicons/kanban.svg
+  s_ccb41beff89445::t_62b91de8db66d9 1
+crates/rebase-gpui/src/shell/sidebar_list.rs
+  s_ccb41beff89445::t_62b91de8db66d9 689,697,759
+crates/rebase-gpui/src/board/style.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-230
+crates/rebase-gpui/assets/hugeicons/calendar-03.svg
+  s_ccb41beff89445::t_62b91de8db66d9 1
+crates/rebase-gpui/src/runtime/remote.rs
+  s_ccb41beff89445::t_62b91de8db66d9 39-41
+crates/rebase-gpui/src/shell/settings.rs
+  s_ccb41beff89445::t_62b91de8db66d9 170,341-365
+crates/rebase-core/src/scm.rs
+  s_ccb41beff89445::t_62b91de8db66d9 32-35
+src/features/board/ui/BoardView.test.ts
+  s_ccb41beff89445::t_62b91de8db66d9 801,821-828,830,838
+crates/rebase-gpui/src/conversation.rs
+  s_ccb41beff89445::t_62b91de8db66d9 241-246,258-260,667-670,1021,1083-1084,1131,1145-1153,1161,1165,1450-1454,1720-1726,1746-1747,1751,1759
+crates/rebase-core/src/session_title.rs
+  s_ccb41beff89445::t_62b91de8db66d9 150-175,185,190,200
+crates/rebase-core/src/lib.rs
+  s_ccb41beff89445::t_62b91de8db66d9 6
+crates/rebase-core/src/desktop_preferences/workspace_preferences.rs
+  s_ccb41beff89445::t_62b91de8db66d9 33
+crates/rebase-gpui/src/board/detail/view.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-955
+docs/native/parity.md
+  s_ccb41beff89445::t_62b91de8db66d9 44
+src/features/settings/model/settings.flags.test.ts
+  s_ccb41beff89445::t_62b91de8db66d9 67,206-207,211
+src/features/source-control/model/gitText.test.ts
+  s_ccb41beff89445::t_62b91de8db66d9 1-26
+src/features/source-control/model/gitText.ts
+  s_ccb41beff89445::t_62b91de8db66d9 129-131
+crates/rebase-core/src/board/auto_move.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-366
+crates/rebase-gpui/assets/hugeicons/check-list.svg
+  s_ccb41beff89445::t_62b91de8db66d9 1
+src/app/App.tsx
+  s_ccb41beff89445::t_62b91de8db66d9 110,168,8127-8137,8141-8153,14184-14190
+crates/rebase-core/src/git.rs
+  s_ccb41beff89445::t_62b91de8db66d9 183-185,187-289,468-473,477,480-609
+crates/rebase-gpui/assets/hugeicons/flag-02.svg
+  s_ccb41beff89445::t_62b91de8db66d9 1
+crates/rebase-gpui/assets/hugeicons/link-01.svg
+  s_ccb41beff89445::t_62b91de8db66d9 1
+docs/superpowers/plans/2026-10-24-native-board.md
+  s_ccb41beff89445::t_62b91de8db66d9 1-252
+src/app/shell/OpenInEditorButton.tsx
+  s_ccb41beff89445::t_62b91de8db66d9 1-182
+crates/rebase-core/src/board/extras.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-987
+crates/rebase-gpui/src/board.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-1066
+crates/rebase-gpui/src/shell/title_tabs.rs
+  s_ccb41beff89445::t_62b91de8db66d9 72,178
+crates/rebase-gpui/src/shell/layout.rs
+  s_ccb41beff89445::t_62b91de8db66d9 504,512,532-535,623-626,926-928,952-964,973
+crates/rebase-gpui/src/settings/mod.rs
+  s_ccb41beff89445::t_62b91de8db66d9 11
+crates/rebase-core/src/board/mod.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-1660
+src-tauri/src/external_editor.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1,6,125-273,308,312-391,393-396,411,506-664
+crates/rebase-gpui/Cargo.toml
+  s_ccb41beff89445::t_62b91de8db66d9 54-56
+crates/rebase-gpui/src/main.rs
+  s_ccb41beff89445::t_62b91de8db66d9 11
+src/features/source-control/model/worktreeBranchName.test.ts
+  s_ccb41beff89445::t_62b91de8db66d9 1-49
+crates/rebase-core/src/desktop_preferences.rs
+  s_ccb41beff89445::t_62b91de8db66d9 605-613
+  s_ccb41beff89445::t_13fbb8be649aea 604
+crates/rebase-core/tests/shared_contracts.rs
+  s_ccb41beff89445::t_0be006903f3b6e 429
+  s_ccb41beff89445::t_62b91de8db66d9 430-509
+docs/native/verification.md
+  s_ccb41beff89445::t_62b91de8db66d9 71-107
+crates/rebase-gpui/src/conversation/title.rs
+  s_ccb41beff89445::t_62b91de8db66d9 118-202,259-375
+src/features/settings/model/settings.ts
+  s_ccb41beff89445::t_62b91de8db66d9 870
+crates/rebase-core/src/board/linked_turns.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-233
+crates/rebase-gpui/src/settings/widgets.rs
+  s_ccb41beff89445::t_62b91de8db66d9 256
+crates/rebase-gpui/src/assets.rs
+  s_ccb41beff89445::t_62b91de8db66d9 77-82
+src/app/shell/useProjectMenu.tsx
+  s_ccb41beff89445::t_62b91de8db66d9 21
+crates/rebase-core/src/scm/text.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-2,99-157,381-426
+crates/rebase-gpui/src/popover.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1032-1053
+crates/rebase-gpui/src/board/turns.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-475
+crates/rebase-gpui/src/shell/project_rail.rs
+  s_ccb41beff89445::t_62b91de8db66d9 609,618,660,848,865,893
+crates/rebase-gpui/src/conversation/submission_tests.rs
+  s_ccb41beff89445::t_62b91de8db66d9 223-224,306-389
+crates/rebase-gpui/src/shell/open_in_editor.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-896
+crates/rebase-gpui/src/board/card.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-245
+crates/rebase-gpui/src/input.rs
+  s_ccb41beff89445::t_62b91de8db66d9 410-417
+src/features/source-control/model/worktrees.ts
+  s_ccb41beff89445::t_62b91de8db66d9 59,64,70,99-119
+  s_ccb41beff89445::t_a834e7887543a2 120-121
+crates/rebase-gpui/src/settings/notification_preferences.rs
+  s_ccb41beff89445::t_62b91de8db66d9 46
+src-tauri/src/worktrees.rs
+  s_ccb41beff89445::t_62b91de8db66d9 426-434,451-453,457-493,505,508-513,1014,1030-1031,1038,1041-1101
+crates/rebase-gpui/src/workspace.rs
+  s_ccb41beff89445::t_62b91de8db66d9 15,24,33,146-147,349
+  s_ccb41beff89445::t_82bbbacc94b121 990
+crates/rebase-gpui/src/board/column.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1-305
+crates/rebase-gpui/src/pilots/tests.rs
+  s_ccb41beff89445::t_62b91de8db66d9 1479-1506
+crates/rebase-gpui/src/settings/model.rs
+  s_ccb41beff89445::t_62b91de8db66d9 128,245-250,582-596
+src/app/shell/openInEditor.ts
+  s_ccb41beff89445::t_62b91de8db66d9 1-95
+crates/rebase-gpui/src/runtime/persistence.rs
+  s_ccb41beff89445::t_62b91de8db66d9 305-308,381-383
+crates/rebase-gpui/src/shell/app_views.rs
+  s_ccb41beff89445::t_2595910adb3bec 4
+  s_ccb41beff89445::t_62b91de8db66d9 1-2,19,135-139,206,218,254-320
+  s_ccb41beff89445::t_a577673e197f76 321
+crates/rebase-core/src/external_editor.rs
+  s_ccb41beff89445::t_62b91de8db66d9 6,124-272,307,311-390,392-395,410,494-652
+crates/rebase-gpui/src/settings/preferences.rs
+  s_ccb41beff89445::t_62b91de8db66d9 19,107
+crates/rebase-gpui/assets/hugeicons/tag-01.svg
+  s_ccb41beff89445::t_62b91de8db66d9 1
+crates/rebase-gpui/Cargo.lock
+  s_ccb41beff89445::t_aac2a11e3082b6 5341,5347
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c220d4967af708052b75b5ad1e995ab7ca159b76",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
