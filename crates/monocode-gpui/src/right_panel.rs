@@ -317,11 +317,12 @@ impl RightPanel {
     pub(crate) fn tab(&self) -> RightTab {
         self.tab
     }
-    /// The tabs in strip order: the saved two, then Terminal when enabled.
+    /// The tabs in strip order: the saved two, with Terminal between them
+    /// when enabled.
     pub(crate) fn tabs(&self) -> Vec<RightTab> {
         let mut tabs = self.order.clone();
         if self.terminal_tab {
-            tabs.push(RightTab::Terminal);
+            tabs.insert(1.min(tabs.len()), RightTab::Terminal);
         }
         tabs
     }
@@ -416,6 +417,7 @@ impl RightPanel {
         });
     }
     fn move_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let tabs = self.tabs();
         let Some(drag) = &mut self.drag else {
             return;
         };
@@ -429,13 +431,14 @@ impl RightPanel {
         }
         drag.active = true;
         // Swap with a neighbour once the dragged tab's centre crosses its centre.
-        // Terminal stays last, outside the reorderable tabs.
-        let Some(from) = self.order.iter().position(|t| *t == drag.tab) else {
+        // Terminal holds its slot, outside the reorderable tabs.
+        let Some(from) = tabs.iter().position(|t| *t == drag.tab) else {
             return;
         };
-        let bounds: Vec<Option<Bounds<Pixels>>> = self.tab_bounds[..self.order.len()]
+        let bounds: Vec<Option<Bounds<Pixels>>> = tabs
             .iter()
-            .map(|slot| slot.get())
+            .zip(&self.tab_bounds)
+            .map(|(tab, slot)| slot.get().filter(|_| *tab != RightTab::Terminal))
             .collect();
         if let Some(Some(own)) = bounds.get(from) {
             let centre = own.center().x + drag.offset;
@@ -463,7 +466,13 @@ impl RightPanel {
                 } else {
                     other.left() - own.left()
                 };
-                self.order.swap(from, to);
+                let (a, b) = (
+                    self.order.iter().position(|t| *t == tabs[from]),
+                    self.order.iter().position(|t| *t == tabs[to]),
+                );
+                if let (Some(a), Some(b)) = (a, b) {
+                    self.order.swap(a, b);
+                }
                 drag.origin += shift;
                 drag.offset -= shift;
             }

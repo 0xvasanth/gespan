@@ -517,8 +517,9 @@ impl Shell {
             && self.settings.is_none()
             && self.app_search.is_none()
     }
-    /// Classic: the panel toggle holds the corner while Explorer and History
-    /// start at the panel's left edge. The open tab names itself.
+    /// Classic: the panel toggle holds the corner while Explorer, Terminal (when
+    /// it lives in the panel) and History start at the panel's left edge. The
+    /// open tab names itself.
     pub(super) fn classic_corner(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let row = div()
             .h(px(TITLE_BAR_HEIGHT))
@@ -554,12 +555,15 @@ impl Shell {
             ("right-panel-history", "History", "clock", RightTab::Graph),
         ];
         if self.terminal_in_panel(cx) {
-            tabs.push((
-                "right-panel-terminal",
-                "Terminal",
-                "terminal",
-                RightTab::Terminal,
-            ));
+            tabs.insert(
+                1,
+                (
+                    "right-panel-terminal",
+                    "Terminal",
+                    "terminal",
+                    RightTab::Terminal,
+                ),
+            );
         }
         let count = tabs.len();
         row.pl_1p5()

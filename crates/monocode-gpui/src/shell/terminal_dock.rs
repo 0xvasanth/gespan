@@ -1108,7 +1108,10 @@ mod tests {
                 assert_eq!(shell.terminals[&project].len(), 1);
                 let panel = shell.right_panel.clone().unwrap();
                 assert_eq!(panel.read(cx).tab(), RightTab::Terminal);
-                assert_eq!(panel.read(cx).tabs().last(), Some(&RightTab::Terminal));
+                assert_eq!(
+                    panel.read(cx).tabs(),
+                    [RightTab::Files, RightTab::Terminal, RightTab::Graph]
+                );
             })
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);

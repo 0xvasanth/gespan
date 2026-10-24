@@ -4906,7 +4906,9 @@ impl TranscriptView {
             0.
         } else if receipt || (last && is_tool) {
             4.
-        } else if last && !user {
+        } else if last {
+            // A prompt sits between two turns: match the room above it, so it
+            // doesn't read as part of the reply below.
             8.
         } else {
             0.
