@@ -1,0 +1,74 @@
+crates/rebase-gpui/src/flows/mod.rs
+  s_ccb41beff89445::t_4a047c84520127 2-3,5,7,10
+  s_ccb41beff89445::t_ba9e33d6f68b4a 6
+crates/rebase-gpui/src/shell/app_views.rs
+  s_ccb41beff89445::t_b9e9388d82017d 3,17,198,209,354-409
+  s_ccb41beff89445::t_3e22bae7e21a67 410-411
+crates/rebase-gpui/src/flows/editor.rs
+  s_ccb41beff89445::t_d9e9f4378d82aa 1-2,7-193,197-227,229-356
+  s_ccb41beff89445::t_ba9e33d6f68b4a 3-6
+  s_ccb41beff89445::t_5088ccef139d18 194-196,228
+crates/rebase-gpui/src/shell/project_rail.rs
+  s_ccb41beff89445::t_b9e9388d82017d 608,657,844,860,887
+crates/rebase-gpui/src/shell/sidebar_list.rs
+  s_ccb41beff89445::t_b9e9388d82017d 688,756
+crates/rebase-gpui/src/shell/classic_surface_tests.rs
+  s_ccb41beff89445::t_b47cf5009ab871 11,30,48-50,325-329,713,838,859,901-906,918,942,961
+crates/rebase-gpui/src/shell/session_groups.rs
+  s_ccb41beff89445::t_c3cf8cd60d4998 767-768,824
+crates/rebase-gpui/src/shell/title_tabs.rs
+  s_ccb41beff89445::t_b9e9388d82017d 176
+crates/rebase-gpui/src/flows/run_view.rs
+  s_ccb41beff89445::t_ba9e33d6f68b4a 3-5
+  s_ccb41beff89445::t_5088ccef139d18 164-169,183-184,315-318,381,674-678,685-688,831-834,850-853,855-858,867-870
+  s_ccb41beff89445::t_715b66c60f860d 192,449
+  s_ccb41beff89445::t_9cf50029b05868 1-2,6-22,26,30-163,170-182,185-191,193-314,319-380,382-389,391-448,450-673,679-684,689-700,704-828,835-849,854,859-866,871-889
+  s_ccb41beff89445::t_c55236661cfd7f 701-703
+  s_ccb41beff89445::t_4a047c84520127 23-25,27-29,390
+  s_ccb41beff89445::t_7df7bfe91d9e4a 829-830
+crates/rebase-gpui/src/shell/flow_runs.rs
+  s_ccb41beff89445::t_d3375869c0f9dc 441-449,454-496
+  s_ccb41beff89445::t_c3cf8cd60d4998 10-11,63,91-93,111-117,126,135,138-139,142-148,152,158-165,177,179-183,186,191-209,339-342,345-346
+  s_ccb41beff89445::t_5088ccef139d18 450-453
+crates/rebase-gpui/src/flows/ui.rs
+  s_ccb41beff89445::t_ba9e33d6f68b4a 1-109
+crates/rebase-gpui/src/flows/view.rs
+  s_ccb41beff89445::t_ba9e33d6f68b4a 4-7
+  s_ccb41beff89445::t_5088ccef139d18 496-499,544-547,633-637,639-670,767,778-789
+  s_ccb41beff89445::t_d3375869c0f9dc 809-812
+  s_ccb41beff89445::t_bbff9066923701 14-15,17
+  s_ccb41beff89445::t_27647a60affc3e 1-3,8-13,16,18-495,500-543,548-632,638,671-766,768-777,790-808,813-831
+crates/rebase-gpui/src/flows/host/tests.rs
+  s_ccb41beff89445::t_9f907758299ee0 451-495
+crates/rebase-gpui/src/shell.rs
+  s_ccb41beff89445::t_b9e9388d82017d 604,950
+  s_ccb41beff89445::t_d3375869c0f9dc 12-13
+crates/rebase-gpui/src/shell/flow_view_tests.rs
+  s_ccb41beff89445::t_01b2de3276d4ca 1-67,69-98,100-109,114-119,122-197,199-218,222-296,302-379,384-448,453-495
+  s_ccb41beff89445::t_5088ccef139d18 68,99,110-113,198,219-221,297-301,380-383,449-452
+  s_ccb41beff89445::t_d3375869c0f9dc 120-121
+crates/rebase-gpui/src/flows/host.rs
+  s_ccb41beff89445::t_0f759ac4d21c4e 73,261-272
+  s_ccb41beff89445::t_0b506c7d1a893e 273-275
+crates/rebase-gpui/src/workspace.rs
+  s_ccb41beff89445::t_ebe35aa5e6de28 14,22,30
+  s_ccb41beff89445::t_e44bf504fd50ef 968-1003,1005-1034,1040-1044
+  s_ccb41beff89445::t_6daadb6f2e8fa0 57-75,92,94
+  s_ccb41beff89445::t_5088ccef139d18 1004,1035-1039
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "31a66daa1e3ff340d517637029c4049f04be8aeb",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
