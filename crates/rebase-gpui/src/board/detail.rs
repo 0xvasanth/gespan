@@ -63,6 +63,8 @@ pub(crate) struct CardDetail {
     link_targets: Vec<LinkTarget>,
     query: Entity<Input>,
     subtask_input: Option<Entity<Input>>,
+    /// Enter in the subtask field, replaced each time the field opens.
+    subtask_submit: Option<Subscription>,
     comment: Entity<Input>,
     choice: Option<(Choice, Entity<Menu>, Subscription)>,
     anchors: HashMap<&'static str, AnchorSlot>,
@@ -82,6 +84,17 @@ impl CardDetail {
         } else {
             shown.to_string()
         }
+    }
+
+    /// The description and subtask fields' current text.
+    #[cfg(test)]
+    pub(crate) fn drafts(&self, cx: &gpui::App) -> (String, Option<String>) {
+        (
+            self.body.read(cx).content.to_string(),
+            self.subtask_input
+                .as_ref()
+                .map(|input| input.read(cx).content.to_string()),
+        )
     }
 
     /// What assistive tech calls the description and comment fields.
@@ -134,6 +147,10 @@ impl BoardView {
             return;
         }
         self.close_card_detail(cx);
+        if self.card_detail.is_some() {
+            // The open task's edits could not be saved; it stays open.
+            return;
+        }
         let Some(card) = self.card(&card_id).cloned() else {
             return;
         };
@@ -158,13 +175,13 @@ impl BoardView {
         });
         let subscriptions = vec![
             cx.subscribe(&title, |this, _, _: &input::Submitted, cx| {
-                this.save_card_details(cx)
+                this.save_card_details(cx);
             }),
             cx.on_blur(&title.focus_handle(cx), window, |this, _, cx| {
-                this.save_card_details(cx)
+                this.save_card_details(cx);
             }),
             cx.on_blur(&body.focus_handle(cx), window, |this, _, cx| {
-                this.save_card_details(cx)
+                this.save_card_details(cx);
             }),
             cx.subscribe(&query, |this, _, _: &input::Submitted, cx| {
                 this.submit_query(cx)
@@ -189,6 +206,7 @@ impl BoardView {
             link_targets: Vec::new(),
             query,
             subtask_input: None,
+            subtask_submit: None,
             comment,
             choice: None,
             anchors: [
@@ -209,8 +227,10 @@ impl BoardView {
         if self.card_detail.is_none() {
             return false;
         }
-        self.save_card_details(cx);
-        self.card_detail = None;
+        // A save that fails keeps the drawer, and its text, open with the error.
+        if self.save_card_details(cx) {
+            self.card_detail = None;
+        }
         cx.notify();
         true
     }
@@ -240,39 +260,42 @@ impl BoardView {
         self.card(id).cloned()
     }
 
-    /// Re-read the drawer's subtasks, comments and activity.
-    fn refresh_detail_lists(&mut self) {
+    /// Re-read the drawer's subtasks, comments and activity. Each list keeps
+    /// what it showed when its own read fails, and the failure is reported.
+    pub(super) fn refresh_detail_lists(&mut self) {
         let Some(card) = self.detail_card() else {
             return;
         };
-        let lists = self.service().and_then(|service| {
-            Ok((
+        let (activity, subtasks, comments) = match self.service() {
+            Ok(service) => (
                 // One past the limit says whether there is more than shown.
                 service.activity(&card.board_id, Some(&card.id), ACTIVITY_LIMIT + 1),
-                service.subtasks(&card.id)?,
-                service.comments(&card.id)?,
-            ))
-        });
+                service.subtasks(&card.id),
+                service.comments(&card.id),
+            ),
+            Err(error) => (Err(error.clone()), Err(error.clone()), Err(error)),
+        };
         let Some(detail) = &mut self.card_detail else {
             return;
         };
-        match lists {
-            Ok((activity, subtasks, comments)) => {
-                detail.activity_more = activity
-                    .as_ref()
-                    .is_ok_and(|rows| rows.len() > ACTIVITY_LIMIT);
-                detail.activity = Some(activity.map(|mut rows| {
-                    rows.truncate(ACTIVITY_LIMIT);
-                    rows
-                }));
-                detail.subtasks = subtasks;
-                detail.comments = comments;
-            }
-            // Keep what the drawer showed rather than empty lists.
-            Err(error) => {
-                detail.activity = Some(Err(error.clone()));
-                self.error = Some(format!("Couldn't load this task: {error}"));
-            }
+        detail.activity_more = activity
+            .as_ref()
+            .is_ok_and(|rows| rows.len() > ACTIVITY_LIMIT);
+        detail.activity = Some(activity.map(|mut rows| {
+            rows.truncate(ACTIVITY_LIMIT);
+            rows
+        }));
+        let mut failed = None;
+        match subtasks {
+            Ok(subtasks) => detail.subtasks = subtasks,
+            Err(error) => failed = Some(error),
+        }
+        match comments {
+            Ok(comments) => detail.comments = comments,
+            Err(error) => failed = Some(error),
+        }
+        if let Some(error) = failed {
+            self.error = Some(format!("Couldn't load this task: {error}"));
         }
     }
 
@@ -289,9 +312,10 @@ impl BoardView {
         ok
     }
 
-    fn save_card_details(&mut self, cx: &mut Context<Self>) {
+    /// Save typed title and description edits. False when a save failed.
+    fn save_card_details(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(detail) = &mut self.card_detail else {
-            return;
+            return true;
         };
         let typed = detail.title.read(cx).content.trim().to_string();
         let body = detail.body.read(cx).content.to_string();
@@ -307,7 +331,7 @@ impl BoardView {
             typed
         };
         if title == detail.loaded_title && body == detail.loaded_body {
-            return;
+            return true;
         }
         let card_id = detail.card_id.clone();
         let saved = self.write_task(cx, |service| service.card_update(&card_id, &title, &body));
@@ -320,6 +344,7 @@ impl BoardView {
             detail.loaded_title = title;
             detail.loaded_body = body;
         }
+        saved
     }
 
     /// After a reload, show changes made elsewhere in fields the user hasn't
@@ -375,9 +400,9 @@ impl BoardView {
                     columns.sort_by_key(|column| column.position);
                     columns
                         .into_iter()
-                        .enumerate()
-                        .map(|(index, column)| {
-                            MenuAction::new(format!("status-{index}"), column.name.clone()).into()
+                        .map(|column| {
+                            MenuAction::new(format!("status-{}", column.id), column.name.clone())
+                                .into()
                         })
                         .collect()
                 })
@@ -432,16 +457,16 @@ impl BoardView {
         let card_id = card_id.to_string();
         match choice {
             Choice::Status => {
-                let index = id
+                // The step is named by id, so a reload that reorders steps
+                // while the menu is open cannot change what was picked.
+                let column = id
                     .strip_prefix("status-")
-                    .and_then(|i| i.parse::<usize>().ok());
-                let column = index.and_then(|index| {
-                    let detail = self.detail.as_ref()?;
-                    let mut columns: Vec<_> = detail.columns.iter().collect();
-                    columns.sort_by_key(|column| column.position);
-                    columns.get(index).map(|column| column.id.clone())
-                });
-                if let Some(column) = column {
+                    .filter(|column| self.column(column).is_some())
+                    .map(str::to_string);
+                let current = self.card(&card_id).map(|card| card.column_id.clone());
+                if let Some(column) = column
+                    && current.as_ref() != Some(&column)
+                {
                     self.write_task(cx, |service| {
                         service.card_move(&card_id, &column, usize::MAX, "user")
                     });
@@ -456,8 +481,9 @@ impl BoardView {
                 let today = chrono::Local::now().date_naive();
                 let day = match id {
                     "due-today" => Some(Some(today)),
-                    "due-tomorrow" => Some(today.succ_opt()),
-                    "due-next-week" => Some(today.checked_add_days(chrono::Days::new(7))),
+                    // A date past chrono's range is ignored, never a clear.
+                    "due-tomorrow" => today.succ_opt().map(Some),
+                    "due-next-week" => today.checked_add_days(chrono::Days::new(7)).map(Some),
                     "due-clear" => Some(None),
                     _ => None,
                 };
@@ -712,13 +738,13 @@ impl BoardView {
     fn start_subtask(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let input =
             cx.new(|cx| Input::field("New subtask", "Subtask, then Enter", content(0.4), cx));
-        self._subscriptions
-            .push(cx.subscribe(&input, |this, _, _: &input::Submitted, cx| {
-                this.commit_subtask(cx)
-            }));
+        let submit = cx.subscribe(&input, |this, _, _: &input::Submitted, cx| {
+            this.commit_subtask(cx)
+        });
         window.focus(&input.focus_handle(cx), cx);
         if let Some(detail) = &mut self.card_detail {
             detail.subtask_input = Some(input);
+            detail.subtask_submit = Some(submit);
         }
         cx.notify();
     }
@@ -739,10 +765,12 @@ impl BoardView {
         if title.is_empty() {
             return;
         }
-        input.update(cx, |input, cx| input.set_text(String::new(), cx));
-        self.write_task(cx, |service| {
+        // Cleared only once saved, so a rejected subtask can be corrected.
+        if self.write_task(cx, |service| {
             service.add_subtask(&card.id, &title).map(drop)
-        });
+        }) {
+            input.update(cx, |input, cx| input.set_text(String::new(), cx));
+        }
     }
 
     fn toggle_subtask(&mut self, subtask: Subtask, cx: &mut Context<Self>) {
@@ -770,8 +798,10 @@ impl BoardView {
         if body.is_empty() {
             return;
         }
-        input.update(cx, |input, cx| input.set_text(String::new(), cx));
-        self.write_task(cx, |service| service.add_comment(&card.id, &body).map(drop));
+        // Cleared only once saved, so a failed comment can be sent again.
+        if self.write_task(cx, |service| service.add_comment(&card.id, &body).map(drop)) {
+            input.update(cx, |input, cx| input.set_text(String::new(), cx));
+        }
     }
 
     // ---- top bar ----
@@ -832,8 +862,10 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             if answer.await == Ok(0) {
                 let _ = this.update(cx, |this, cx| {
-                    this.card_detail = None;
-                    this.write(cx, |service| service.card_delete(&card.id));
+                    // The drawer closes only once the task is gone.
+                    if this.write(cx, |service| service.card_delete(&card.id)) {
+                        this.card_detail = None;
+                    }
                 });
             }
         })

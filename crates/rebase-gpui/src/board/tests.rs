@@ -944,12 +944,15 @@ fn due_tomorrow_shows_on_the_card(cx: &mut TestAppContext) {
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-card-1");
     click(visual, "board-drawer-due");
+    let before = chrono::Local::now().date_naive();
     click(visual, "menu-action-due-tomorrow");
+    let after = chrono::Local::now().date_naive();
     let due = extras_of(&f, &card).due_at.expect("a due date");
-    let now = rebase_core::time::now_ms() as i64;
-    assert_eq!(
-        super::style::due_label(due, now).map(|(text, _)| text),
-        Some("Tomorrow".to_string())
+    // The menu read "today" between these two reads, even across midnight.
+    let day = super::style::local_day(due).unwrap();
+    assert!(
+        [before.succ_opt(), after.succ_opt()].contains(&Some(day)),
+        "{day}"
     );
     visual.refresh().unwrap();
     assert!(visual.debug_bounds("board-card-due-1").is_some());
@@ -1365,4 +1368,299 @@ fn label_and_priority_filters_narrow_the_cards_and_combine(cx: &mut TestAppConte
     // Different filters must all match.
     click(visual, "board-filter-priority-3");
     assert_eq!(shown_cards(visual, &[1, 2, 3]), Vec::<i64>::new());
+}
+
+fn activity_kinds(f: &Fixture, card: &str) -> Vec<String> {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    service
+        .activity(&board.id, Some(card), 50)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.kind)
+        .collect()
+}
+
+#[gpui::test]
+fn a_rejected_card_title_stays_in_the_composer(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let long = "x".repeat(501);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-add-card-0");
+    visual.simulate_input(&long);
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, cx| {
+        let composer = view.composer.as_ref().expect("the composer stays open");
+        assert_eq!(composer.input.read(cx).content.to_string(), long);
+        assert_eq!(view.error.as_deref(), Some("Card title is too long"));
+    });
+    assert!(detail(&f, visual).cards.is_empty());
+}
+
+#[gpui::test]
+fn a_rejected_subtask_stays_in_its_field(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let long = "s".repeat(501);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-subtask-add");
+    visual.simulate_input(&long);
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, cx| {
+        let (_, subtask) = view.card_detail.as_ref().unwrap().drafts(cx);
+        assert_eq!(subtask.as_deref(), Some(long.as_str()));
+        assert!(view.error.is_some());
+    });
+}
+
+#[gpui::test]
+fn closing_the_drawer_with_a_rejected_title_keeps_it_open(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Short"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    retype(visual, "board-drawer-title", &"x".repeat(501));
+    click(visual, "board-drawer-close");
+    drawer(&f, visual, |view, _| {
+        assert!(
+            view.card_detail.is_some(),
+            "the unsaved title is not thrown away"
+        );
+        assert_eq!(view.error.as_deref(), Some("Card title is too long"));
+    });
+}
+
+#[gpui::test]
+fn the_drawer_keeps_an_unsaved_description_and_follows_a_move_made_elsewhere(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded(cx, &["Task"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let review = detail(&f, cx).columns[2].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    retype(visual, "board-drawer-description", "Half-written notes");
+    Service::open(&f.db)
+        .unwrap()
+        .card_move(&card, &review, 0, "system")
+        .unwrap();
+    visual.executor().advance_clock(Duration::from_secs(2));
+    visual.run_until_parked();
+    assert_eq!(column_of(&f, visual, "Task"), "Review");
+    drawer(&f, visual, |view, cx| {
+        let detail = view.card_detail.as_ref().unwrap();
+        assert_eq!(detail.drafts(cx).0, "Half-written notes");
+        // The Activity tab shows the move without reopening the drawer.
+        let kinds: Vec<&str> = detail
+            .activity
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|row| row.kind.as_str())
+            .collect();
+        assert_eq!(kinds.first(), Some(&"moved"));
+    });
+}
+
+#[gpui::test]
+fn a_status_picked_after_the_steps_were_reordered_is_the_step_it_named(cx: &mut TestAppContext) {
+    // A second card in the step, so a needless move would be visible.
+    let f = seeded(cx, &["Task", "Below"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let columns = detail(&f, cx).columns.clone();
+    let (backlog, review) = (columns[0].id.clone(), columns[2].id.clone());
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-status");
+    // Another app reorders the steps while the menu is open.
+    Service::open(&f.db)
+        .unwrap()
+        .column_move(&review, 0)
+        .unwrap();
+    visual.executor().advance_clock(Duration::from_secs(2));
+    visual.run_until_parked();
+    // Picking the step the task is already in changes nothing.
+    click(visual, selector(format!("menu-action-status-{backlog}")));
+    assert!(!activity_kinds(&f, &card).contains(&"moved".to_string()));
+    click(visual, "board-drawer-status");
+    click(visual, selector(format!("menu-action-status-{review}")));
+    assert_eq!(column_of(&f, visual, "Task"), "Review");
+}
+
+#[gpui::test]
+fn leaving_the_board_closes_an_open_card_menu(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-menu-1");
+    drawer(&f, visual, |view, _| assert!(view.card_menu.is_some()));
+    f.window
+        .update(visual, |view, _, cx| {
+            view.hidden(cx);
+            view.shown(cx);
+        })
+        .unwrap();
+    drawer(&f, visual, |view, _| assert!(view.card_menu.is_none()));
+}
+
+#[gpui::test]
+fn adding_a_column_clears_an_earlier_error(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    f.window
+        .update(cx, |view, _, cx| {
+            view.error = Some("Earlier failure".into());
+            cx.notify();
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-add-column");
+    assert_eq!(detail(&f, visual).columns.len(), 5);
+    drawer(&f, visual, |view, _| assert_eq!(view.error, None));
+}
+
+#[gpui::test]
+fn a_filter_never_hides_cards_behind_a_choice_that_is_gone(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let board = Service::open(&f.db).unwrap().default_board().unwrap();
+    Service::open(&f.db)
+        .unwrap()
+        .create_label(&board.id, "Bug", "e5534b")
+        .unwrap();
+    f.window
+        .update(cx, |view, _, cx| {
+            view.set_projects(vec![("/gone".into(), "Gone".into())], cx);
+            view.reload(cx);
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-label-0");
+    click(visual, "board-filter-project-0");
+    // The label is deleted elsewhere and the project leaves the workspace.
+    rusqlite::Connection::open(&f.db)
+        .unwrap()
+        .execute("DELETE FROM board_native_labels", [])
+        .unwrap();
+    f.window
+        .update(visual, |view, _, cx| view.set_projects(Vec::new(), cx))
+        .unwrap();
+    visual.executor().advance_clock(Duration::from_secs(2));
+    visual.run_until_parked();
+    drawer(&f, visual, |view, _| {
+        assert!(
+            view.filter.labels.is_empty(),
+            "a deleted label is unselected"
+        );
+        assert!(
+            view.project_choices()
+                .contains(&("/gone".into(), "gone".into())),
+            "a selected project keeps a row so it can be unchecked"
+        );
+    });
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-filter-project-0").is_some());
+}
+
+#[gpui::test]
+fn the_subtask_delete_button_removes_only_that_subtask(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let mut service = Service::open(&f.db).unwrap();
+    service.add_subtask(&card, "Remove me").unwrap();
+    service.add_subtask(&card, "Keep me").unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-subtask-delete-0");
+    let left = Service::open(&f.db).unwrap().subtasks(&card).unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].title, "Keep me");
+    assert!(!left[0].done, "deleting does not tick its neighbour");
+}
+
+#[gpui::test]
+fn a_card_dropped_while_filtered_lands_beside_the_visible_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["First", "Hidden", "Third"]);
+    let cards: Vec<String> = detail(&f, cx).cards.iter().map(|c| c.id.clone()).collect();
+    let mut service = Service::open(&f.db).unwrap();
+    service.set_priority(&cards[0], 3).unwrap();
+    service.set_priority(&cards[2], 3).unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-priority-3");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 3]);
+    let first = visual.debug_bounds("board-card-1").unwrap();
+    let from = center(visual, "board-card-3");
+    drag(
+        visual,
+        from,
+        gpui::point(first.center().x, first.top() + px(2.)),
+    );
+    let mut backlog: Vec<_> = detail(&f, visual)
+        .cards
+        .into_iter()
+        .filter(|card| card.column_id == detail(&f, visual).columns[0].id)
+        .collect();
+    backlog.sort_by_key(|card| card.position);
+    let titles: Vec<String> = backlog.into_iter().map(|card| card.title).collect();
+    assert_eq!(titles, ["Third", "First", "Hidden"]);
+}
+
+#[gpui::test]
+fn the_header_buttons_work_from_the_keyboard(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    f.window
+        .update(visual, |view, window, cx| {
+            window.focus(&view.new_task_focus, cx)
+        })
+        .unwrap();
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, _| assert!(view.composer.is_some()));
+    f.window
+        .update(visual, |view, window, cx| {
+            view.composer = None;
+            window.focus(&view.filter_focus, cx)
+        })
+        .unwrap();
+    visual.simulate_keystrokes("space");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, _| assert!(view.filter_open));
+}
+
+#[gpui::test]
+fn a_link_to_an_archived_session_still_shows_its_title(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let session = f.store.lock().unwrap().create("codex", "/work").unwrap();
+    let persisted = f
+        .store
+        .lock()
+        .unwrap()
+        .persisted_session_id(session.id)
+        .unwrap();
+    f.store
+        .lock()
+        .unwrap()
+        .set_archived(session.id, true)
+        .unwrap();
+    let backlog = detail(&f, cx).columns[0].id.clone();
+    let mut service = Service::open(&f.db).unwrap();
+    let card = service.card_create(&backlog, "Archived work", "").unwrap();
+    service
+        .card_link(&card.id, Some("session"), Some(&persisted))
+        .unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    f.window
+        .read_with(cx, |view, _| {
+            assert_eq!(
+                view.link_label(&card.id),
+                Some(LinkLabel::Found(session.title.clone()))
+            );
+        })
+        .unwrap();
 }

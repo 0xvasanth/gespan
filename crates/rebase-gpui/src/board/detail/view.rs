@@ -657,6 +657,11 @@ impl BoardView {
                     .group(group.clone())
                     .role(Role::CheckBox)
                     .aria_label(subtask.title.clone())
+                    .aria_toggled(if subtask.done {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
                     .h(px(30.))
                     .px(px(6.))
                     .rounded(px(6.))
@@ -697,6 +702,10 @@ impl BoardView {
                     .child(
                         div()
                             .id(SharedString::from(format!("board-subtask-delete-{index}")))
+                            .debug_selector({
+                                let selector = format!("board-subtask-delete-{index}");
+                                move || selector.clone()
+                            })
                             .role(Role::Button)
                             .aria_label("Delete subtask")
                             .size(px(20.))

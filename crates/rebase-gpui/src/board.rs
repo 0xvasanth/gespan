@@ -117,6 +117,10 @@ pub(crate) struct BoardView {
     pub(crate) card_detail: Option<detail::CardDetail>,
     menu: Option<Menu>,
     renaming: Option<(Renaming, Entity<Input>)>,
+    /// Enter in the card composer and the rename field; one each, replaced
+    /// when the field is reopened.
+    composer_submit: Option<Subscription>,
+    rename_submit: Option<Subscription>,
     filter_anchor: AnchorSlot,
     pub(crate) extras: HashMap<String, CardExtras>,
     pub(crate) labels: Vec<Label>,
@@ -125,6 +129,9 @@ pub(crate) struct BoardView {
     search: Entity<Input>,
     pub(crate) filter: Filter,
     filter_open: bool,
+    /// The header's Filter and New task buttons are tab stops.
+    filter_focus: FocusHandle,
+    new_task_focus: FocusHandle,
     column_anchors: HashMap<String, AnchorSlot>,
     card_anchors: HashMap<String, AnchorSlot>,
     dragged_card: Option<String>,
@@ -192,6 +199,8 @@ impl BoardView {
             card_detail: None,
             menu: None,
             renaming: None,
+            composer_submit: None,
+            rename_submit: None,
             filter_anchor: AnchorSlot::default(),
             extras: HashMap::new(),
             labels: Vec::new(),
@@ -199,6 +208,8 @@ impl BoardView {
             search,
             filter: Filter::default(),
             filter_open: false,
+            filter_focus: cx.focus_handle(),
+            new_task_focus: cx.focus_handle(),
             column_anchors: HashMap::new(),
             card_anchors: HashMap::new(),
             dragged_card: None,
@@ -241,6 +252,7 @@ impl BoardView {
         self.visible = false;
         self.composer = None;
         self.menu = None;
+        self.card_menu = None;
         self.renaming = None;
         self.filter_open = false;
         cx.notify();
@@ -264,6 +276,9 @@ impl BoardView {
         self.pending_reload = false;
         self.load_error = self.load(cx).err();
         self.sync_card_detail(cx);
+        if self.load_error.is_none() && self.card_detail.is_some() {
+            self.refresh_detail_lists();
+        }
         cx.notify();
     }
 
@@ -311,8 +326,13 @@ impl BoardView {
         self.detail = Some(detail);
         self.extras = extras;
         self.labels = labels;
-        self.links = self.resolve_links(cx);
+        self.links = self.resolve_links(cx)?;
         self.sync_handles(cx);
+        // A selected label deleted elsewhere would hide every card unseen.
+        let labels = &self.labels;
+        self.filter
+            .labels
+            .retain(|id| labels.iter().any(|label| &label.id == id));
         Ok(())
     }
 
@@ -339,16 +359,16 @@ impl BoardView {
         }
     }
 
-    fn resolve_links(&self, cx: &App) -> HashMap<String, LinkLabel> {
+    /// What each linked card's chip shows. A failed read is an error, not
+    /// every link reported as missing.
+    fn resolve_links(&self, cx: &App) -> Result<HashMap<String, LinkLabel>, String> {
         let Some(detail) = &self.detail else {
-            return HashMap::new();
+            return Ok(HashMap::new());
         };
-        let Ok(store) = locked(&self.store) else {
-            return HashMap::new();
-        };
-        let sessions = store.sessions().unwrap_or_default();
+        let store = locked(&self.store)?;
+        let sessions = store.sessions()?;
         let pilots = turns::pilots(cx);
-        detail
+        Ok(detail
             .cards
             .iter()
             .filter_map(|card| {
@@ -368,7 +388,7 @@ impl BoardView {
                 };
                 Some((card.id.clone(), label))
             })
-            .collect()
+            .collect())
     }
 
     pub(crate) fn link_label(&self, card_id: &str) -> Option<LinkLabel> {
@@ -412,6 +432,7 @@ impl BoardView {
             .and_then(|service| service.column_create(&board_id, "New column", None))
         {
             Ok(column) => {
+                self.error = None;
                 self.reload(cx);
                 self.start_rename(Renaming::Column(column.id), "New column", window, cx);
             }
@@ -429,10 +450,9 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         let input = cx.new(|cx| Input::field("New card", "Card title", content(0.4), cx));
-        self._subscriptions
-            .push(cx.subscribe(&input, |this, _, _: &input::Submitted, cx| {
-                this.commit_composer(cx)
-            }));
+        self.composer_submit = Some(cx.subscribe(&input, |this, _, _: &input::Submitted, cx| {
+            this.commit_composer(cx)
+        }));
         window.focus(&input.focus_handle(cx), cx);
         self.composer = Some(Composer { column_id, input });
         self.menu = None;
@@ -448,10 +468,13 @@ impl BoardView {
             return;
         }
         let column_id = composer.column_id.clone();
-        self.composer = None;
-        self.write(cx, |service| {
+        // The composer closes only once the card exists, so a rejected title
+        // stays in the field to correct.
+        if self.write(cx, |service| {
             service.card_create(&column_id, &title, "").map(drop)
-        });
+        }) {
+            self.composer = None;
+        }
     }
 
     fn start_rename(
@@ -463,10 +486,9 @@ impl BoardView {
     ) {
         let input = cx.new(|cx| Input::field("Name", "Name", content(0.4), cx));
         input.update(cx, |input, cx| input.set_text(current.to_string(), cx));
-        self._subscriptions
-            .push(cx.subscribe(&input, |this, _, _: &input::Submitted, cx| {
-                this.commit_rename(cx)
-            }));
+        self.rename_submit = Some(cx.subscribe(&input, |this, _, _: &input::Submitted, cx| {
+            this.commit_rename(cx)
+        }));
         window.focus(&input.focus_handle(cx), cx);
         self.renaming = Some((target, input));
         self.menu = None;
@@ -482,12 +504,15 @@ impl BoardView {
             cx.notify();
             return;
         }
-        match target {
+        match &target {
             Renaming::Column(id) => {
-                let role = self.column(&id).and_then(|column| column.role.clone());
-                self.write(cx, |service| {
-                    service.column_update(&id, &name, role.as_deref())
-                });
+                let role = self.column(id).and_then(|column| column.role.clone());
+                if !self.write(cx, |service| {
+                    service.column_update(id, &name, role.as_deref())
+                }) {
+                    // Keep the rejected name in the field to correct.
+                    self.renaming = Some((target, input));
+                }
             }
         }
     }
@@ -573,13 +598,19 @@ impl BoardView {
             .filter(|card| card.column_id == column_id && self.card_visible(card, cx))
             .collect();
         cards.sort_by_key(|card| card.position);
-        let measured: Vec<_> = cards
+        // Cards not painted yet have no bounds; slots still count them, so
+        // map the slot among measured cards back to the visible list.
+        let measured: Vec<(usize, gpui::Bounds<gpui::Pixels>)> = cards
             .iter()
-            .filter_map(|card| self.card_anchors.get(&card.id)?.get())
+            .enumerate()
+            .filter_map(|(index, card)| Some((index, self.card_anchors.get(&card.id)?.get()?)))
             .collect();
-        let tops: Vec<_> = measured.iter().map(|b| b.top()).collect();
-        let heights: Vec<_> = measured.iter().map(|b| b.size.height).collect();
-        let slot = drop::card_drop_index(&tops, &heights, pointer.y);
+        let tops: Vec<_> = measured.iter().map(|(_, b)| b.top()).collect();
+        let heights: Vec<_> = measured.iter().map(|(_, b)| b.size.height).collect();
+        let slot = match drop::card_drop_index(&tops, &heights, pointer.y) {
+            slot if slot < measured.len() => measured[slot].0,
+            _ => measured.last().map_or(cards.len(), |(index, _)| index + 1),
+        };
         let target = Some((column_id.to_string(), slot));
         if self.drop_target != target {
             self.drop_target = target;

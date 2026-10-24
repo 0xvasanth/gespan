@@ -51,10 +51,11 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let cards: Vec<_> = {
+            let query = self.query(cx);
             let mut cards: Vec<_> = detail
                 .cards
                 .iter()
-                .filter(|card| card.column_id == column.id && self.card_visible(card, cx))
+                .filter(|card| card.column_id == column.id && self.card_matches(card, &query))
                 .collect();
             cards.sort_by_key(|card| card.position);
             cards

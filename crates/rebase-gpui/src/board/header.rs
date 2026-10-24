@@ -5,9 +5,26 @@ use crate::{
     theme::*,
 };
 use gpui::{
-    AnyElement, App, Context, Focusable, FontWeight, Role, SharedString, div, prelude::*, px,
+    AnyElement, App, Context, Focusable, FontWeight, Role, SharedString, Toggled, div, prelude::*,
+    px,
 };
 use rebase_core::board::{Card, extras::PRIORITIES};
+
+/// A filter row that says whether it is on, to assistive tech as well.
+fn checked_row(
+    id: SharedString,
+    label: impl Into<SharedString>,
+    on: bool,
+) -> gpui::Stateful<gpui::Div> {
+    menu_row(id, label)
+        .role(Role::MenuItemCheckBox)
+        .aria_toggled(if on { Toggled::True } else { Toggled::False })
+}
+
+/// Enter or Space on a focused header button presses it.
+fn presses(event: &gpui::KeyDownEvent) -> bool {
+    matches!(event.keystroke.key.as_str(), "enter" | "space")
+}
 
 impl BoardView {
     /// The workspace projects a task can be tagged with, as (path, name).
@@ -32,13 +49,15 @@ impl BoardView {
     }
 
     /// Projects a task can be tagged or filtered by: the workspace's, then any
-    /// a task still carries after leaving the workspace, so it can be untagged.
+    /// a task still carries after leaving the workspace, so it can be untagged,
+    /// or the filter still selects, so it can be unchecked.
     pub(crate) fn project_choices(&self) -> Vec<(String, String)> {
         let mut choices = self.projects.clone();
         let mut extra: Vec<(String, String)> = self
             .extras
             .values()
             .flat_map(|extras| extras.projects.iter())
+            .chain(self.filter.projects.iter())
             .filter(|path| !self.projects.iter().any(|(known, _)| known == *path))
             .map(|path| (path.clone(), self.project_name(path)))
             .collect();
@@ -48,7 +67,7 @@ impl BoardView {
         choices
     }
 
-    fn query(&self, cx: &App) -> String {
+    pub(crate) fn query(&self, cx: &App) -> String {
         self.search.read(cx).content.trim().to_lowercase()
     }
 
@@ -58,13 +77,17 @@ impl BoardView {
 
     /// Whether a card passes the search and the filter.
     pub(crate) fn card_visible(&self, card: &Card, cx: &App) -> bool {
-        let query = self.query(cx);
+        self.card_matches(card, &self.query(cx))
+    }
+
+    /// `card_visible` with the search query read once by the caller.
+    pub(crate) fn card_matches(&self, card: &Card, query: &str) -> bool {
         let matches_query = if query.is_empty() {
             true
         } else if let Some(number) = query.strip_prefix('#') {
             card.number.to_string() == number
         } else {
-            card.title.to_lowercase().contains(&query)
+            card.title.to_lowercase().contains(query)
         };
         if !matches_query {
             return false;
@@ -93,8 +116,16 @@ impl BoardView {
         if !self.narrowing(cx) {
             return total.to_string();
         }
-        let shown = cards.filter(|card| self.card_visible(card, cx)).count();
+        let query = self.query(cx);
+        let shown = cards.filter(|card| self.card_matches(card, &query)).count();
         format!("{shown}/{total}")
+    }
+
+    /// Open or close the filter. The board takes focus so Escape closes it.
+    fn toggle_filter(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus, cx);
+        self.filter_open = !self.filter_open;
+        cx.notify();
     }
 
     fn new_task(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
@@ -171,6 +202,15 @@ impl BoardView {
                     .cursor_pointer()
                     .hover(|s| s.bg(content(0.06)))
                     .when(self.filter_open || active > 0, |d| d.bg(content(0.05)))
+                    .track_focus(&self.filter_focus)
+                    .tab_index(0)
+                    .focus_visible(|s| s.border_1().border_color(accent_color()))
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                        if presses(event) {
+                            cx.stop_propagation();
+                            this.toggle_filter(window, cx);
+                        }
+                    }))
                     .child(self.filter_anchor.probe())
                     .child(icon("filter", 12.))
                     .child("Filter")
@@ -185,11 +225,7 @@ impl BoardView {
                                 .child(active.to_string()),
                         )
                     })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        window.focus(&this.focus, cx);
-                        this.filter_open = !this.filter_open;
-                        cx.notify();
-                    })),
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_filter(window, cx))),
             )
             .child(div().flex_1())
             .child(
@@ -210,6 +246,15 @@ impl BoardView {
                     .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
                     .hover(|s| s.opacity(0.9))
+                    .track_focus(&self.new_task_focus)
+                    .tab_index(0)
+                    .focus_visible(|s| s.border_1().border_color(white(0.9)))
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                        if presses(event) {
+                            cx.stop_propagation();
+                            this.new_task(window, cx);
+                        }
+                    }))
                     .child(icon("plus", 12.))
                     .child("New task")
                     .on_click(cx.listener(|this, _, window, cx| this.new_task(window, cx))),
@@ -259,17 +304,21 @@ impl BoardView {
             let on = self.filter.projects.contains(path);
             let path = path.clone();
             rows.push(
-                menu_row(format!("board-filter-project-{index}").into(), name.clone())
-                    .flex()
-                    .gap_2()
-                    .child(check(on))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.filter.projects.remove(&path) {
-                            this.filter.projects.insert(path.clone());
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
+                checked_row(
+                    format!("board-filter-project-{index}").into(),
+                    name.clone(),
+                    on,
+                )
+                .flex()
+                .gap_2()
+                .child(check(on))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if !this.filter.projects.remove(&path) {
+                        this.filter.projects.insert(path.clone());
+                    }
+                    cx.notify();
+                }))
+                .into_any_element(),
             );
         }
         if !self.labels.is_empty() {
@@ -279,9 +328,10 @@ impl BoardView {
             let on = self.filter.labels.contains(&label.id);
             let id = label.id.clone();
             rows.push(
-                menu_row(
+                checked_row(
                     format!("board-filter-label-{index}").into(),
                     label.name.clone(),
+                    on,
                 )
                 .flex()
                 .gap_2()
@@ -299,9 +349,10 @@ impl BoardView {
         for priority in (0..PRIORITIES.len() as u8).rev() {
             let on = self.filter.priorities.contains(&priority);
             rows.push(
-                menu_row(
+                checked_row(
                     format!("board-filter-priority-{priority}").into(),
                     SharedString::from(PRIORITIES[priority as usize]),
+                    on,
                 )
                 .flex()
                 .gap_2()

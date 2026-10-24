@@ -9,11 +9,13 @@ pub(crate) const PALETTE: [u32; 8] = [
     0x8a867e, 0xe5534b, 0xe0823d, 0xe8c547, 0x3fb950, 0x2bb3a8, 0x4da3f5, 0xa371f7,
 ];
 
+/// A label's stored colour, or gray when it is not six hex digits.
 pub(crate) fn label_color_hex(hex: &str) -> u32 {
-    u32::from_str_radix(hex.trim_start_matches('#'), 16)
-        .ok()
-        .filter(|value| *value <= 0xffffff && hex.trim_start_matches('#').len() == 6)
-        .unwrap_or(PALETTE[0])
+    let digits = hex.trim_start_matches('#');
+    if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return PALETTE[0];
+    }
+    u32::from_str_radix(digits, 16).unwrap_or(PALETTE[0])
 }
 
 pub(crate) fn label_color(hex: &str) -> Hsla {
@@ -80,7 +82,8 @@ pub(crate) fn priority_glyph(priority: u8) -> AnyElement {
         return div()
             .size(px(12.))
             .rounded(px(3.))
-            .bg(diff_foreground(false))
+            // A fixed red, dark enough for the white mark in every theme.
+            .bg(rgb(PALETTE[1]))
             .flex()
             .items_center()
             .justify_center()
@@ -193,7 +196,13 @@ mod tests {
     fn the_local_start_of_a_day_is_on_that_day() {
         // Includes days that open with a daylight-saving jump at midnight in
         // Havana and Santiago, for runs under TZ=America/Havana and the like.
-        for picked in [day(2026, 11, 2), day(2026, 3, 8), day(2026, 9, 6)] {
+        // 2026-11-01 is Havana's fall back, when midnight comes twice.
+        for picked in [
+            day(2026, 11, 2),
+            day(2026, 3, 8),
+            day(2026, 9, 6),
+            day(2026, 11, 1),
+        ] {
             assert_eq!(day_start(picked).and_then(local_day), Some(picked));
         }
     }
@@ -211,6 +220,10 @@ mod tests {
     fn label_colors_parse_and_fall_back_to_gray() {
         assert_eq!(label_color_hex("e5534b"), 0xe5534b);
         assert_eq!(label_color_hex("not a colour"), PALETTE[0]);
+        assert_eq!(label_color_hex("#4da3f5"), 0x4da3f5);
+        // from_str_radix alone would accept a sign.
+        assert_eq!(label_color_hex("+12345"), PALETTE[0]);
+        assert_eq!(label_color_hex("12345"), PALETTE[0]);
         assert_eq!(next_label_color(0), "8a867e");
         assert_eq!(next_label_color(9), "e5534b");
     }
