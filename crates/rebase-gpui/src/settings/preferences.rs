@@ -60,6 +60,8 @@ pub(crate) struct Preferences {
     pub show_remaining_usage: bool,
     pub mask_emails: bool,
     pub idle_agents: u32,
+    /// `rebase_keep_awake::Mode` value, shared with desktop `rebase.keepAwake`.
+    pub keep_awake: String,
     pub claude_hooks: bool,
     pub binary_paths: HashMap<String, String>,
     pub disabled_skill_paths: Vec<String>,
@@ -138,6 +140,7 @@ impl Default for Preferences {
             show_remaining_usage: false,
             mask_emails: true,
             idle_agents: 3,
+            keep_awake: "off".into(),
             claude_hooks: true,
             binary_paths: HashMap::new(),
             disabled_skill_paths: Vec::new(),
@@ -218,5 +221,21 @@ impl Preferences {
         hidden.sort();
         hidden.dedup();
         hidden
+    }
+}
+
+#[cfg(test)]
+mod keep_awake_tests {
+    use super::Preferences;
+    use rebase_keep_awake::Mode;
+
+    #[test]
+    fn saved_preferences_from_before_keep_awake_load_as_off() {
+        let old: Preferences = serde_json::from_str(r#"{"idle_agents":2}"#).unwrap();
+        assert_eq!(old.idle_agents, 2);
+        assert_eq!(Mode::parse(&old.keep_awake), Some(Mode::Off));
+        let saved: Preferences =
+            serde_json::from_str(r#"{"keep_awake":"agents_running"}"#).unwrap();
+        assert_eq!(Mode::parse(&saved.keep_awake), Some(Mode::AgentsRunning));
     }
 }

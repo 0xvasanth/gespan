@@ -827,6 +827,7 @@ impl Shell {
         self.tab_marks.remove(&id);
         self.order.retain(|s| *s != id);
         self.busy_sessions.remove(&id);
+        self.sync_keep_awake();
         self.unseen_finished.remove(&id);
         self.selected_sessions.remove(&id);
         self.reminders.retain(|r| r.session_id != id);

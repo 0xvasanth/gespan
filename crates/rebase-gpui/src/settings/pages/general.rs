@@ -131,6 +131,20 @@ impl SettingsView {
             )],
         ));
         workspace.push(self.row(
+            Some("keep-awake"),
+            false,
+            "Keep screen awake",
+            Some("Stop the idle timer from dimming and locking the screen, so a locked laptop doesn't pause running agents. Closing the lid or locking the screen yourself still does.".into()),
+            vec![self.segmented(
+                "keep-awake",
+                "Keep screen awake",
+                &p.keep_awake,
+                &rebase_keep_awake::Mode::ALL.map(|mode| (mode.as_str(), mode.label())),
+                cx,
+                |this, value, cx| this.update(cx, |p| p.keep_awake = value.into()),
+            )],
+        ));
+        workspace.push(self.row(
             Some("action-opens-terminal"),
             false,
             "Show terminal for actions",

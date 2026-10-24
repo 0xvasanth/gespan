@@ -49,6 +49,12 @@ impl DesktopPreferences {
                 "dark",
             ),
             (
+                "keep_awake",
+                "keepAwake",
+                &["off", "agents_running", "app_open"][..],
+                "off",
+            ),
+            (
                 "file_tabs",
                 "fileTabMode",
                 &["pane", "workspace"][..],
@@ -642,6 +648,33 @@ mod tests {
                 .map(|(key, value)| ((*key).into(), (*value).into()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn keep_awake_mirrors_desktop_mode_rejects_unknown_values_and_keeps_native_edits() {
+        for (stored, native) in [
+            ("off", "off"),
+            ("agents_running", "agents_running"),
+            ("app_open", "app_open"),
+            // An unknown or legacy value must never hold the screen awake.
+            ("always", "off"),
+        ] {
+            let mut workspace = json!({});
+            source(&[("rebase.keepAwake", stored)]).apply_workspace(&mut workspace);
+            assert_eq!(workspace["preferences"]["keep_awake"], native, "{stored}");
+        }
+        let mut workspace = json!({});
+        source(&[]).apply_workspace(&mut workspace);
+        assert_eq!(workspace["preferences"]["keep_awake"], "off");
+
+        let desktop = source(&[("rebase.keepAwake", "agents_running")]);
+        let mut workspace = json!({});
+        desktop.apply_workspace(&mut workspace);
+        workspace["preferences"]["keep_awake"] = json!("app_open");
+        desktop.apply_workspace(&mut workspace);
+        assert_eq!(workspace["preferences"]["keep_awake"], "app_open");
+        source(&[("rebase.keepAwake", "off")]).apply_workspace(&mut workspace);
+        assert_eq!(workspace["preferences"]["keep_awake"], "off");
     }
 
     #[test]

@@ -336,6 +336,14 @@ impl Shell {
             .and_then(Kind::parse)
             .unwrap_or(Kind::Codex)
     }
+    /// Any busy session counts, including ones in background tabs or panes.
+    pub(super) fn sync_keep_awake(&mut self) {
+        let mode = rebase_keep_awake::Mode::parse(&self.workspace.preferences.keep_awake)
+            .unwrap_or_default();
+        if let Err(error) = self.keep_awake.update(mode, !self.busy_sessions.is_empty()) {
+            eprintln!("rebase: keep screen awake failed: {error}");
+        }
+    }
     pub(super) fn apply_preferences(&mut self, cx: &mut Context<Self>) {
         self.refresh_notification_permission();
         self.configure_quick_composer(cx);
@@ -345,6 +353,7 @@ impl Shell {
         rebase_core::provider::configure_idle_agents(
             self.workspace.preferences.idle_agents as usize,
         );
+        self.sync_keep_awake();
         if let Some(pilots) = &self.pilots {
             let prefs = self.workspace.preferences.clone();
             pilots.update(cx, |m, cx| m.set_preferences(prefs, cx));

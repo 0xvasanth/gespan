@@ -21,6 +21,7 @@ mod harness_updates;
 mod inbox_media;
 mod jira;
 mod jsonc;
+mod keep_awake;
 mod linear;
 mod link_preview;
 #[cfg(target_os = "macos")]
@@ -279,6 +280,7 @@ pub fn run() {
         .manage(pty::PtyHost::new())
         .manage(remote::RemoteConnections::default())
         .manage(window_transfer::WindowTransferState::new())
+        .manage(keep_awake::KeepAwakeState::default())
         .setup(|app| {
             harness::reap_orphaned_harness_processes();
             session_store::init(app.handle())?;
@@ -580,6 +582,7 @@ pub fn run() {
             set_traffic_lights_visible,
             set_window_background_blur,
             set_dock_badge,
+            keep_awake::set_keep_awake,
             set_trackpad_zoom_enabled,
             #[cfg(target_os = "macos")]
             menu::keybindings_set_overrides,
@@ -688,6 +691,7 @@ pub fn run() {
                 .iter()
                 .any(|window| window.label() != label);
             control::window_closed(handle, &label);
+            keep_awake::window_closed(handle, &label);
             #[cfg(target_os = "macos")]
             pilot_chat::window_closed(handle, &label);
             if !other_window {
