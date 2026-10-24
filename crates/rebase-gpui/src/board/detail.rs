@@ -17,6 +17,9 @@ pub(crate) struct CardDetail {
     pub card_id: String,
     title: Entity<Input>,
     body: Entity<Input>,
+    /// What the panel last loaded or saved, so only real edits are written.
+    loaded_title: String,
+    loaded_body: String,
     pub activity: Option<Result<Vec<Activity>, String>>,
     picker: bool,
     _subscriptions: Vec<Subscription>,
@@ -86,6 +89,8 @@ impl BoardView {
             card_id,
             title,
             body,
+            loaded_title: card.title.clone(),
+            loaded_body: card.body.clone(),
             activity: Some(activity),
             picker: false,
             _subscriptions: subscriptions,
@@ -119,20 +124,54 @@ impl BoardView {
     }
 
     fn save_card_details(&mut self, cx: &mut Context<Self>) {
-        let Some(detail) = &self.card_detail else {
+        let Some(detail) = &mut self.card_detail else {
             return;
         };
         let title = detail.title.read(cx).content.trim().to_string();
         let body = detail.body.read(cx).content.to_string();
-        let card_id = detail.card_id.clone();
-        let Some(card) = self.card(&card_id) else {
-            return;
-        };
-        if title.is_empty() || (title == card.title && body == card.body) {
+        if title.is_empty() || (title == detail.loaded_title && body == detail.loaded_body) {
             return;
         }
+        detail.loaded_title = title.clone();
+        detail.loaded_body = body.clone();
+        let card_id = detail.card_id.clone();
         self.write(cx, |service| service.card_update(&card_id, &title, &body));
         self.refresh_activity();
+    }
+
+    /// After a reload, show changes made elsewhere in fields the user hasn't
+    /// touched since the panel last loaded them.
+    pub(super) fn sync_card_detail(&mut self, cx: &mut Context<Self>) {
+        let Some(card) = self
+            .card_detail
+            .as_ref()
+            .and_then(|detail| self.card(&detail.card_id))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(detail) = &mut self.card_detail else {
+            return;
+        };
+        let title_input = detail.title.read(cx).content.trim().to_string();
+        if title_input == detail.loaded_title && card.title != detail.loaded_title {
+            detail.loaded_title = card.title.clone();
+            detail
+                .title
+                .update(cx, |input, cx| input.set_text(card.title, cx));
+        }
+        let body_input = detail.body.read(cx).content.to_string();
+        if body_input == detail.loaded_body && card.body != detail.loaded_body {
+            detail.loaded_body = card.body.clone();
+            detail
+                .body
+                .update(cx, |input, cx| input.set_text(card.body, cx));
+        }
+    }
+
+    pub(crate) fn card_detail_title(&self, cx: &gpui::App) -> Option<String> {
+        let detail = self.card_detail.as_ref()?;
+        Some(detail.title.read(cx).content.to_string())
     }
 
     fn refresh_activity(&mut self) {

@@ -211,6 +211,7 @@ impl BoardView {
         if let Err(error) = self.load(cx) {
             self.error = Some(error);
         }
+        self.sync_card_detail(cx);
         cx.notify();
     }
 

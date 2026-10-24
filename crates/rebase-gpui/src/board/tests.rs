@@ -607,3 +607,40 @@ fn a_drag_released_off_the_board_does_not_freeze_it(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn closing_the_card_detail_keeps_an_edit_made_elsewhere(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Original"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    Service::open(&f.db)
+        .unwrap()
+        .card_update(&card, "Edited in Tauri", "notes from Tauri")
+        .unwrap();
+    visual.executor().advance_clock(Duration::from_secs(2));
+    visual.run_until_parked();
+    click(visual, "board-card-detail-close");
+    let after = detail(&f, visual).cards[0].clone();
+    assert_eq!(after.title, "Edited in Tauri");
+    assert_eq!(after.body, "notes from Tauri");
+}
+
+#[gpui::test]
+fn an_unedited_detail_shows_an_edit_made_elsewhere(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Original"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    Service::open(&f.db)
+        .unwrap()
+        .card_update(&card, "Edited in Tauri", "")
+        .unwrap();
+    visual.executor().advance_clock(Duration::from_secs(2));
+    visual.run_until_parked();
+    let shown = f
+        .window
+        .read_with(visual, |view, cx| view.card_detail_title(cx))
+        .unwrap();
+    assert_eq!(shown.as_deref(), Some("Edited in Tauri"));
+}
