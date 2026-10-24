@@ -95,10 +95,6 @@ impl SessionReview {
     pub(crate) fn shown(&self) -> bool {
         !self.busy && (self.error.is_some() || !self.files.is_empty())
     }
-    /// The settled turn changed files: the commit pill shows beside the card.
-    pub(crate) fn has_files(&self) -> bool {
-        !self.busy && !self.files.is_empty()
-    }
     #[cfg(test)]
     pub(crate) fn set_files(&mut self, files: Vec<CheckpointFile>, cx: &mut Context<Self>) {
         self.publish(Ok(CheckpointStatus { files }), cx);

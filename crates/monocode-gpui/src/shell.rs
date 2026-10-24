@@ -855,7 +855,13 @@ impl Shell {
         });
         let git_project = workspace.project.clone();
         let git = cx.new(|cx| crate::git_status::ProjectGit::new(git_project, cx));
-        let git_observation = cx.observe(&git, |this, _, cx| {
+        let git_observation = cx.observe(&git, |this, git, cx| {
+            let cwd = git.read(cx).root.clone();
+            for view in this.sessions.values() {
+                if view.read(cx).review.read(cx).session().1 == cwd {
+                    view.update(cx, |view, cx| view.refresh_git_actions(cx));
+                }
+            }
             // The title bar's dot and the panel's tab label follow its stats.
             this.sync_project_rail_git_stats(cx);
             if this.workspace.classic_layout {

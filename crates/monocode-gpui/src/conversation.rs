@@ -209,6 +209,11 @@ pub(crate) struct Conversation {
     account_anchor: AnchorSlot,
     workspace_anchor: AnchorSlot,
     git_action_anchor: AnchorSlot,
+    /// Files this session's edit tools changed, across its whole history.
+    session_edits: Vec<String>,
+    /// Some of `session_edits` are still uncommitted: the commit pill shows.
+    session_uncommitted: bool,
+    session_edits_generation: u64,
     branch_anchor: AnchorSlot,
     context_anchor: AnchorSlot,
     composer_anchor: AnchorSlot,
@@ -523,7 +528,6 @@ impl Conversation {
             let shown = review.read(cx).shown();
             this.transcript
                 .update(cx, |view, cx| view.set_review_shown(shown, cx));
-            // The commit pill follows the card.
             cx.notify();
         });
         let transcript = cx.new(|_| {
@@ -640,6 +644,9 @@ impl Conversation {
             account_anchor: AnchorSlot::default(),
             workspace_anchor: AnchorSlot::default(),
             git_action_anchor: AnchorSlot::default(),
+            session_edits: Vec::new(),
+            session_uncommitted: false,
+            session_edits_generation: 0,
             branch_anchor: AnchorSlot::default(),
             context_anchor: AnchorSlot::default(),
             composer_anchor: AnchorSlot::default(),
@@ -703,8 +710,21 @@ impl Conversation {
             let git = crate::git_cache::load(Path::new(execution_cwd)).ok();
             (
                 locked(&store)
-                    .and_then(|s| s.load(id))
-                    .map(|history| crate::transcript::PreparedHistory::new(history.rows, mono)),
+                    .and_then(|s| {
+                        let history = s.load(id)?;
+                        let edits = if mono {
+                            Vec::new()
+                        } else {
+                            git_actions::restored_session_edits(&s, id, &history.rows)?
+                        };
+                        Ok((history, edits))
+                    })
+                    .map(|(history, edits)| {
+                        (
+                            crate::transcript::PreparedHistory::new(history.rows, mono),
+                            edits,
+                        )
+                    }),
                 git,
                 settings,
                 locked(&store).and_then(|s| s.context_usage(id)),
@@ -767,7 +787,8 @@ impl Conversation {
                     this.settings.environment = environment;
                 }
                 match result {
-                    Ok(history) => {
+                    Ok((history, edits)) => {
+                        this.remember_session_edits(edits);
                         let pager = this.history_pager();
                         this.transcript.update(cx, |v, cx| {
                             v.install_prepared_history(history, cx);
@@ -1653,6 +1674,7 @@ impl Conversation {
         if self.settings.mono.is_some() || self.is_remote() {
             return;
         }
+        self.collect_session_edits(cx);
         let cwd = self.execution_cwd().to_owned();
         self.review.update(cx, |review, cx| {
             if review.session().1 == cwd {

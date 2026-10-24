@@ -1210,7 +1210,11 @@ impl Protocol {
             tool.input = input.to_string();
         }
         if let Some(changes) = item["changes"].as_array().filter(|_| name == "fileChange") {
-            tool.input = serde_json::to_string(&json!({"path": changes.first().and_then(|c| c["path"].as_str()).unwrap_or("Files")})).unwrap_or_default();
+            tool.input = json!({
+                "path": changes.first().and_then(|c| c["path"].as_str()).unwrap_or("Files"),
+                "paths": changes.iter().filter_map(|c| c["path"].as_str()).collect::<Vec<_>>(),
+            })
+            .to_string();
             tool.output = changes
                 .iter()
                 .map(|c| {
@@ -1824,6 +1828,22 @@ mod tests {
             model: None,
             settings: Default::default(),
         })
+    }
+    #[test]
+    fn codex_file_changes_retain_every_edited_path() {
+        let mut protocol = protocol(Kind::Codex);
+        let mut events = Vec::new();
+        protocol.codex_tool(&json!({
+            "type":"fileChange", "id":"edit", "status":"completed",
+            "changes":[{"path":"/repo/a.rs", "diff":"first"}, {"path":"/repo/b.rs", "diff":"second"}]
+        }), true, &mut events);
+        let Event::Tool(tool) = &events[0] else {
+            panic!("missing edit tool")
+        };
+        let input: Value = serde_json::from_str(&tool.input).unwrap();
+        assert_eq!(tool.state, ToolState::Completed);
+        assert_eq!(input["path"], "/repo/a.rs");
+        assert_eq!(input["paths"], json!(["/repo/a.rs", "/repo/b.rs"]));
     }
     #[test]
     fn operator_thread_access_keeps_the_codex_app_bridge_reachable_on_later_turns() {

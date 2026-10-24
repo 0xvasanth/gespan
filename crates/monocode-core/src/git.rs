@@ -48,6 +48,46 @@ pub(crate) fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
     }
     String::from_utf8(out.stdout).map_err(|e| e.to_string())
 }
+/// Whether any of `paths` has uncommitted changes, staged or not. Paths
+/// outside the checkout count as clean. Never takes Git's index lock.
+pub fn uncommitted(cwd: &Path, paths: &[String]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+    let Ok(root) = git(cwd, &["rev-parse", "--show-toplevel"]) else {
+        return false;
+    };
+    let root = Path::new(root.trim());
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned());
+    let inside: Vec<String> = paths
+        .iter()
+        .filter(|path| !path.is_empty())
+        .map(|path| crate::files::document::resolve_path(Path::new(path), cwd))
+        // Resolve directory aliases even for deleted files, without following
+        // a final symlink that Git tracks as a file in its own right.
+        .map(|path| {
+            path.parent()
+                .and_then(|parent| std::fs::canonicalize(parent).ok())
+                .zip(path.file_name())
+                .map_or_else(|| path.clone(), |(parent, name)| parent.join(name))
+        })
+        .filter(|path| path.starts_with(&root) && path != &root)
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    if inside.is_empty() {
+        return false;
+    }
+    let mut args = vec![
+        "--no-optional-locks",
+        "--literal-pathspecs",
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+    ];
+    args.extend(inside.iter().map(String::as_str));
+    git(&root, &args).is_ok_and(|out| !out.trim().is_empty())
+}
 pub fn snapshot(cwd: &Path) -> Result<Snapshot, String> {
     if crate::files::remote::is_remote(cwd) {
         return remote::snapshot(cwd);
@@ -310,6 +350,70 @@ pub fn create_project_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn uncommitted_only_checks_the_sessions_paths_staged_or_unstaged() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("project");
+        std::fs::create_dir(&cwd).unwrap();
+        git(&cwd, &["init"]).unwrap();
+        git(&cwd, &["config", "core.autocrlf", "false"]).unwrap();
+        git(&cwd, &["config", "user.name", "Native test"]).unwrap();
+        git(&cwd, &["config", "user.email", "native@example.invalid"]).unwrap();
+        for name in ["a[1].rs", "a1.rs"] {
+            std::fs::write(cwd.join(name), "base\n").unwrap();
+        }
+        assert!(uncommitted(&cwd, &["a[1].rs".into()]), "unborn repository");
+        git(&cwd, &["add", "."]).unwrap();
+        git(
+            &cwd,
+            &["-c", "commit.gpgsign=false", "commit", "-m", "Base"],
+        )
+        .unwrap();
+        let own = vec![cwd.join("a[1].rs").to_string_lossy().into_owned()];
+        let outside = temp
+            .path()
+            .join("outside.rs")
+            .to_string_lossy()
+            .into_owned();
+        std::fs::write(&outside, "outside\n").unwrap();
+        std::fs::write(cwd.join("a1.rs"), "another session\n").unwrap();
+        assert!(!uncommitted(&cwd, &[]));
+        assert!(
+            !uncommitted(&cwd, &own),
+            "pathspec metacharacters are literal"
+        );
+        assert!(!uncommitted(&cwd, std::slice::from_ref(&outside)));
+
+        std::fs::write(cwd.join("a[1].rs"), "this session\n").unwrap();
+        assert!(uncommitted(&cwd, &own));
+        assert!(uncommitted(&cwd, &["./a[1].rs".into()]));
+        assert!(uncommitted(&cwd, &[outside, own[0].clone()]));
+        let nested = cwd.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        assert!(uncommitted(&nested, &["../a[1].rs".into()]));
+        assert!(uncommitted(&nested, &own));
+
+        git(&cwd, &["--literal-pathspecs", "add", "--", "a[1].rs"]).unwrap();
+        assert!(uncommitted(&cwd, &own), "Stage is still uncommitted");
+        git(
+            &cwd,
+            &["-c", "commit.gpgsign=false", "commit", "-m", "Own edits"],
+        )
+        .unwrap();
+        assert!(!uncommitted(&cwd, &own), "other dirty files do not count");
+
+        std::fs::remove_file(cwd.join("a[1].rs")).unwrap();
+        assert!(uncommitted(&cwd, &own), "deleted paths still count");
+        std::fs::write(cwd.join("a[1].rs"), "this session\n").unwrap();
+        assert!(!uncommitted(&cwd, &own), "Undo clears the pill's condition");
+        std::fs::write(cwd.join("new file.rs"), "new\n").unwrap();
+        assert!(uncommitted(&cwd, &["new file.rs".into()]));
+        git(&cwd, &["mv", "--", "a[1].rs", "renamed.rs"]).unwrap();
+        assert!(uncommitted(&cwd, &own), "renamed source paths still count");
+        assert!(uncommitted(&cwd, &["renamed.rs".into()]));
+        assert!(!uncommitted(temp.path(), &own), "not a repository");
+    }
+
     #[test]
     fn sidebar_named_copies_preserve_dirty_files_and_refuse_collisions() {
         let temp = tempfile::tempdir().unwrap();

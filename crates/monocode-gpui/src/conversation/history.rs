@@ -147,6 +147,7 @@ impl Conversation {
                             view.set_history_pager(before, Some(pager));
                         });
                         this.history_unloaded = false;
+                        this.sync_review(cx);
                         this.status = "Ready".into();
                         if let Some((row, query)) = this.pending_search.take() {
                             this.reveal_search(row, query, cx);

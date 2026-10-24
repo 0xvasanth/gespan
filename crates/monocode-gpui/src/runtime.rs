@@ -1006,7 +1006,7 @@ fn run_turn_using(
 }
 
 /// checkpointEdits.ts's sessionEditPaths: files named by successful edit tools.
-fn edited_paths(rows: &[Row]) -> Vec<String> {
+pub(crate) fn edited_paths(rows: &[Row]) -> Vec<String> {
     let mut paths = Vec::new();
     for row in rows.iter().filter(|r| r.role == "tool") {
         let Ok(tool) = serde_json::from_str::<monocode_core::tool::ToolCall>(&row.text) else {
@@ -1015,14 +1015,34 @@ fn edited_paths(rows: &[Row]) -> Vec<String> {
         if tool.state != monocode_core::tool::ToolState::Completed {
             continue;
         }
-        let (action, path) = tool.summary();
+        let shown = tool.presentation();
         if matches!(
-            action.as_str(),
+            shown.action.as_str(),
             "Edit" | "Write" | "MultiEdit" | "NotebookEdit"
-        ) && !path.is_empty()
-            && !paths.contains(&path)
-        {
-            paths.push(path);
+        ) {
+            let input = serde_json::from_str::<serde_json::Value>(&tool.input).unwrap_or_default();
+            let many = input["paths"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|path| path.as_str());
+            let desktop = tool.display.as_ref().unwrap_or(&input["__desktop"]);
+            let desktop_paths = desktop["paths"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|path| path.as_str());
+            for path in shown
+                .file_path
+                .as_deref()
+                .into_iter()
+                .chain(many)
+                .chain(desktop_paths)
+            {
+                if !path.is_empty() && !paths.iter().any(|p| p == path) {
+                    paths.push(path.to_owned());
+                }
+            }
         }
     }
     paths
@@ -1036,4 +1056,60 @@ fn shlex_quote(text: &str) -> String {
             .replace('$', "\\$")
             .replace('`', "\\`")
     )
+}
+
+#[cfg(test)]
+mod edited_paths_tests {
+    use super::*;
+    use monocode_core::tool::{ToolCall, ToolState};
+    use serde_json::json;
+
+    #[test]
+    fn successful_edits_keep_real_paths_across_the_whole_session() {
+        let row = |name: &str, state, input: serde_json::Value| {
+            let mut tool = ToolCall::new("tool", name);
+            tool.state = state;
+            tool.input = input.to_string();
+            Row {
+                role: "tool".into(),
+                text: serde_json::to_string(&tool).unwrap(),
+                first: true,
+                sent_at: None,
+            }
+        };
+        let rows = vec![
+            row(
+                "Edit",
+                ToolState::Completed,
+                json!({"file_path":"/repo/a.rs", "cwd":"/repo"}),
+            ),
+            row(
+                "Read",
+                ToolState::Completed,
+                json!({"file_path":"/repo/read.rs"}),
+            ),
+            row(
+                "Write",
+                ToolState::Failed,
+                json!({"file_path":"/repo/failed.rs"}),
+            ),
+            row(
+                "Edit",
+                ToolState::Running,
+                json!({"file_path":"/repo/running.rs"}),
+            ),
+            Row {
+                role: "user".into(),
+                text: "A plain question".into(),
+                first: true,
+                sent_at: None,
+            },
+            row(
+                "fileChange",
+                ToolState::Completed,
+                json!({"path":"/repo/a.rs", "paths":["/repo/a.rs", "relative.rs"]}),
+            ),
+        ];
+        assert_eq!(edited_paths(&rows), ["/repo/a.rs", "relative.rs"]);
+    }
 }
