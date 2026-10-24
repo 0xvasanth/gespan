@@ -1,0 +1,21 @@
+crates/rebase-core/src/board/mod.rs
+  s_0de52fe47ecaaa::t_1d1efa567c9747 1511-1521
+  s_0de52fe47ecaaa::t_dcb1045f583ead 914-917
+  s_0de52fe47ecaaa::t_a65b0d5f2c81a6 1510
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2b5ad8ef77bcedaf4ca32f92084e7c14e48e1e5e",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
