@@ -5760,8 +5760,6 @@ impl Shell {
                 )
             });
         let suffix = self.session_suffix(id, &session, compact, cx);
-        let archive = (!compact && self.session_hover == Some(id))
-            .then(|| self.session_archive_button(id, &session, cx));
         let body = if compact {
             div()
                 .w_full()
@@ -5823,7 +5821,6 @@ impl Shell {
                                         .child(workspace_label),
                                 ),
                         )
-                        .children(archive)
                         .when(has_badges, |d| d.child(badges))
                         .child(
                             div()
@@ -5991,7 +5988,7 @@ impl Shell {
         cx: &Context<Self>,
     ) -> AnyElement {
         let detailed = !compact;
-        if !detailed && self.session_hover == Some(id) {
+        if self.session_hover == Some(id) {
             return self.session_archive_button(id, session, cx);
         }
         div()
