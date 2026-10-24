@@ -1,0 +1,36 @@
+src/app/shell/OpenInEditorButton.tsx
+  s_3e9d1be838c67b::t_cab5a8f63eb2b7 117-121
+  s_3e9d1be838c67b::t_d130aa23b87595 1-116,122-162
+src/app/shell/openInEditor.ts
+  s_3e9d1be838c67b::t_a295f6e11b2a20 1-2,5,12-29,35-46,48-85
+  s_3e9d1be838c67b::t_2bf3d809aa645d 30,34
+  s_3e9d1be838c67b::t_e447a2b785ab4f 3
+  s_3e9d1be838c67b::t_47b350ef099712 4,6-11,47
+  s_3e9d1be838c67b::t_cab5a8f63eb2b7 31-33
+src/app/App.tsx
+  s_3e9d1be838c67b::t_7eafa78a42efb4 110,14180-14186
+src/app/shell/TitleBar.tsx
+  s_3e9d1be838c67b::t_cab5a8f63eb2b7 47,145-147,765,1059,1066,1070,1073-1074,1076-1094,1096-1104
+  s_3e9d1be838c67b::t_dd69b6a0dce13f 1075
+src/app/shell/useProjectMenu.tsx
+  s_3e9d1be838c67b::t_47b350ef099712 21
+src/app/shell/OpenInEditor.test.ts
+  s_3e9d1be838c67b::t_6289759948313f 1-276,278-282,284-300
+  s_3e9d1be838c67b::t_179a4b99155ce4 277,283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "31bf82584b6bc43c9903a2c33ca0cfa82252b6be",
+  "prompts": {},
+  "sessions": {
+    "s_3e9d1be838c67b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5ba030e-7698-48b9-b0c4-3dfc53ffe6b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
