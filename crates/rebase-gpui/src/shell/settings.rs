@@ -350,6 +350,11 @@ impl Shell {
             && self.active_app_view == Some(app_views::AppView::Board)
         {
             self.close_app_view(window, cx);
+            // Closing the Board moves focus to the chat behind; keep it on
+            // the Settings page the change came from.
+            if let Some(settings) = &self.settings {
+                window.focus(&settings.focus_handle(cx), cx);
+            }
         }
         self.persist(cx);
         self.invalidate_chrome(cx);

@@ -1012,3 +1012,91 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
             .unwrap();
     }
 }
+
+#[gpui::test]
+fn the_sidebar_board_entry_follows_the_setting_and_opens_the_board(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.refresh().unwrap();
+    let entry = visual
+        .debug_bounds("sidebar-navigation-Board")
+        .expect("Board is on by default");
+    visual.simulate_click(entry.center(), Default::default());
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, window, cx| {
+            assert_eq!(shell.active_app_view, Some(app_views::AppView::Board));
+            let mut prefs = shell.workspace.preferences.clone();
+            prefs.board = false;
+            shell.set_preferences(prefs, window, cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("sidebar-navigation-Board").is_none());
+    window
+        .update(visual, |shell, window, cx| {
+            shell.open_board(window, cx);
+            assert_ne!(shell.active_app_view, Some(app_views::AppView::Board));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn switching_board_off_in_settings_saves_it_and_keeps_focus_on_settings(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| {
+            Surface::Board.open(shell, window, cx);
+            shell.open_settings(crate::settings::Section::General, window, cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let toggle = visual
+        .debug_bounds("settings-toggle-board")
+        .expect("the Board switch is on the General page");
+    visual.simulate_click(toggle.center(), Default::default());
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, window, cx| {
+            assert!(!shell.workspace.preferences.board);
+            assert_eq!(shell.active_app_view, None);
+            let settings = shell.settings.as_ref().expect("Settings stays open");
+            assert!(
+                settings.focus_handle(cx).contains_focused(window, cx),
+                "focus stays on Settings, not the chat behind it"
+            );
+            let saved: serde_json::Value =
+                serde_json::from_str(&shell.latest_state.lock().unwrap()).unwrap();
+            assert_eq!(saved["preferences"]["board"], serde_json::json!(false));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_project_added_while_the_board_is_open_can_be_tagged_at_once(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| {
+            Surface::Board.open(shell, window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, _, cx| {
+            shell.workspace.projects.push("/work/added-later".into());
+            shell.persist(cx);
+            let board = shell.board.as_ref().unwrap().read(cx);
+            assert!(
+                board
+                    .project_choices()
+                    .contains(&("/work/added-later".into(), "added-later".into())),
+                "{:?}",
+                board.project_choices()
+            );
+        })
+        .unwrap();
+}

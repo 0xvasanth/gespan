@@ -3622,6 +3622,7 @@ impl Shell {
         self.sync_git(cx);
         self.update_chat_visibility(cx);
         self.update_usage_provider(cx);
+        self.sync_board_projects(cx);
         self.invalidate_chrome(cx);
         let state = serde_json::to_string(&self.workspace).unwrap();
         *self.latest_state.lock().unwrap_or_else(|e| e.into_inner()) = state.clone();
