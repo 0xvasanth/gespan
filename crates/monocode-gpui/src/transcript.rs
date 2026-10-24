@@ -553,6 +553,9 @@ pub(crate) struct TranscriptView {
     prompt_rise_pending: bool,
     introduced_prompt: Option<usize>,
     show_jump: bool,
+    /// The conversation's git action pill holds the column's left end, so the
+    /// jump button moves from the center to the right end.
+    jump_beside_pill: bool,
     jump_anchor: crate::popover::AnchorSlot,
     scroll_bound: bool,
     fold_targets: HashMap<usize, Option<usize>>,
@@ -2353,6 +2356,7 @@ impl TranscriptView {
             burst: None,
             introduced_prompt: None,
             show_jump: false,
+            jump_beside_pill: false,
             jump_anchor: Default::default(),
             scroll_bound: false,
             fold_targets: HashMap::new(),
@@ -5213,6 +5217,12 @@ impl TranscriptView {
             cx.notify();
         }
     }
+    pub(crate) fn set_jump_beside_pill(&mut self, beside: bool, cx: &mut Context<Self>) {
+        if self.jump_beside_pill != beside {
+            self.jump_beside_pill = beside;
+            cx.notify();
+        }
+    }
     pub(crate) fn jump_bounds(&self) -> Option<gpui::Bounds<gpui::Pixels>> {
         self.show_jump.then(|| self.jump_anchor.get()).flatten()
     }
@@ -5424,7 +5434,9 @@ impl Render for TranscriptView {
             .children(self.selection_menu(cx))
             .child(self.link_overlays(cx))
             .when(self.show_jump, |d| {
-                // The right end of the composer column; the commit pill takes the left.
+                // Centered, or the column's right end when the commit pill
+                // takes the left.
+                let beside_pill = self.jump_beside_pill;
                 d.child(
                     div()
                         .absolute()
@@ -5439,7 +5451,13 @@ impl Render for TranscriptView {
                                 .max_w(px(crate::theme::COLUMN))
                                 .px(px(16.))
                                 .flex()
-                                .justify_end()
+                                .map(|d| {
+                                    if beside_pill {
+                                        d.justify_end()
+                                    } else {
+                                        d.justify_center()
+                                    }
+                                })
                                 .child(
                                     div()
                                         .id("jump-to-bottom")

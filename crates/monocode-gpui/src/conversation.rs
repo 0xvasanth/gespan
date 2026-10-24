@@ -3619,7 +3619,11 @@ impl Render for Conversation {
                         .fold(panel, |panel, region| panel.ignore(region.clone())),
                 )
             })
-            .child(
+            .child({
+                let pill = self.git_action_pill(cx);
+                let beside = pill.is_some();
+                self.transcript
+                    .update(cx, |t, cx| t.set_jump_beside_pill(beside, cx));
                 div()
                     .relative()
                     .flex_1()
@@ -3629,9 +3633,9 @@ impl Render for Conversation {
                             .clone()
                             .cached(StyleRefinement::default().size_full()),
                     )
-                    // Level with the transcript's jump button, which sits at
+                    // Level with the transcript's jump button, which moves to
                     // the column's other end.
-                    .children(self.git_action_pill(cx).map(|pill| {
+                    .children(pill.map(|pill| {
                         div()
                             .absolute()
                             .bottom(px(8.))
@@ -3647,8 +3651,8 @@ impl Render for Conversation {
                                     .flex()
                                     .child(pill),
                             )
-                    })),
-            )
+                    }))
+            })
             .child(
                 div()
                     .flex_shrink_0()
