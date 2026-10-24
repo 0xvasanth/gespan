@@ -199,8 +199,8 @@ impl Conversation {
             .aria_label("Git actions")
             .aria_expanded(menu_open)
             .relative()
-            .pl(px(6.))
-            .pr(px(8.))
+            .px(px(7.))
+            .justify_center()
             .when(menu_open, |d| d.bg(content(0.06)).text_color(content(1.)))
             .child(icon("chevron-down", 14.))
             .on_click(cx.listener(|this, _, window, cx| {

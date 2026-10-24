@@ -3621,7 +3621,7 @@ impl Render for Conversation {
                                 div()
                                     .w_full()
                                     .max_w(px(COMPOSER_COLUMN))
-                                    .px(px(20.))
+                                    .px(px(16.))
                                     .flex()
                                     .child(pill),
                             )

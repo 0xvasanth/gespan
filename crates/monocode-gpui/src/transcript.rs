@@ -5437,7 +5437,7 @@ impl Render for TranscriptView {
                             div()
                                 .w_full()
                                 .max_w(px(crate::theme::COLUMN))
-                                .px(px(20.))
+                                .px(px(16.))
                                 .flex()
                                 .justify_end()
                                 .child(
