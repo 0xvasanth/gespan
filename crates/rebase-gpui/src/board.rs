@@ -704,6 +704,7 @@ impl BoardView {
         cx.stop_propagation();
         if self.composer.take().is_some()
             || std::mem::take(&mut self.filter_open)
+            || self.close_detail_layer(cx)
             || self.close_card_detail(cx)
             || self.renaming.take().is_some()
             || self.menu.take().is_some()
@@ -912,8 +913,7 @@ impl gpui::Render for BoardView {
                 }),
             )
             .size_full()
-            .flex()
-            .flex_col();
+            .flex();
         let error = self.error.clone().map(|error| {
             div()
                 .id("board-error")
@@ -925,7 +925,15 @@ impl gpui::Render for BoardView {
                 .child(error)
         });
         let Some(detail) = self.detail.clone() else {
-            return root.child(self.render_header(cx)).children(error);
+            return root.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(self.render_header(cx))
+                    .children(error),
+            );
         };
         for column in &detail.columns {
             self.column_anchors.entry(column.id.clone()).or_default();
@@ -953,7 +961,13 @@ impl gpui::Render for BoardView {
         });
         let card_detail = self.render_card_detail(cx);
         let filter = self.render_filter(cx);
-        root.child(self.render_header(cx))
+        let board = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .child(self.render_header(cx))
             .children(error)
             .child(
                 div()
@@ -975,7 +989,8 @@ impl gpui::Render for BoardView {
                                 cx.listener(|this, _, window, cx| this.add_column(window, cx)),
                             ),
                     ),
-            )
+            );
+        root.child(board)
             .children(card_detail)
             .children(filter)
             .children(menu)

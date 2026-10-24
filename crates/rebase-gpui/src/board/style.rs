@@ -20,6 +20,11 @@ pub(crate) fn label_color(hex: &str) -> Hsla {
     rgb(label_color_hex(hex)).into()
 }
 
+/// The colour a board's `count`-th label gets.
+pub(crate) fn next_label_color(count: usize) -> String {
+    format!("{:06x}", PALETTE[count % PALETTE.len()])
+}
+
 /// How many of the three bars a priority fills. Urgent draws its own glyph.
 pub(crate) fn priority_bars(priority: u8) -> usize {
     priority.min(3) as usize
@@ -44,6 +49,15 @@ pub(crate) fn local_day(at: i64) -> Option<NaiveDate> {
         .timestamp_millis_opt(at)
         .single()
         .map(|time| time.date_naive())
+}
+
+/// Local midnight of `day`, as stored in `due_at`.
+pub(crate) fn day_start(day: NaiveDate) -> Option<i64> {
+    let midnight = day.and_hms_opt(0, 0, 0)?;
+    Local
+        .from_local_datetime(&midnight)
+        .earliest()
+        .map(|time| time.timestamp_millis())
 }
 
 pub(crate) fn due_label(due_at: i64, now: i64) -> Option<(String, bool)> {
@@ -154,5 +168,7 @@ mod tests {
     fn label_colors_parse_and_fall_back_to_gray() {
         assert_eq!(label_color_hex("e5534b"), 0xe5534b);
         assert_eq!(label_color_hex("not a colour"), PALETTE[0]);
+        assert_eq!(next_label_color(0), "8a867e");
+        assert_eq!(next_label_color(9), "e5534b");
     }
 }

@@ -18,6 +18,23 @@ impl BoardView {
         }
     }
 
+    pub(crate) fn project_name(&self, path: &str) -> String {
+        self.projects
+            .iter()
+            .find(|(project, _)| project == path)
+            .map(|(_, name)| name.clone())
+            .unwrap_or_else(|| {
+                std::path::Path::new(path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.to_string())
+            })
+    }
+
+    pub(crate) fn projects(&self) -> &[(String, String)] {
+        &self.projects
+    }
+
     fn query(&self, cx: &App) -> String {
         self.search.read(cx).content.trim().to_lowercase()
     }

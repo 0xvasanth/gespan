@@ -509,12 +509,14 @@ fn declining_the_delete_confirm_keeps_the_card(cx: &mut TestAppContext) {
     let f = seeded(cx, &["Keep"]);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-card-1");
-    click(visual, "board-card-delete");
+    click(visual, "board-drawer-more");
+    click(visual, "menu-action-delete");
     assert!(visual.has_pending_prompt());
     visual.simulate_prompt_answer("Cancel");
     visual.run_until_parked();
     assert_eq!(detail(&f, visual).cards.len(), 1);
-    click(visual, "board-card-delete");
+    click(visual, "board-drawer-more");
+    click(visual, "menu-action-delete");
     visual.simulate_prompt_answer("Delete");
     visual.run_until_parked();
     assert!(detail(&f, visual).cards.is_empty());
@@ -537,7 +539,7 @@ fn a_failed_activity_load_says_so(cx: &mut TestAppContext) {
         .unwrap();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-card-1");
-    visual.refresh().unwrap();
+    click(visual, "board-tab-activity");
     assert!(visual.debug_bounds("board-activity-failed").is_some());
 }
 
@@ -553,7 +555,7 @@ fn linking_from_the_picker_stores_the_persisted_session_id(cx: &mut TestAppConte
         .unwrap();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-card-1");
-    click(visual, "board-link-picker");
+    click(visual, "board-drawer-linked");
     click(visual, "board-link-target-0");
     let card = detail(&f, visual).cards[0].clone();
     assert_eq!(card.link_kind.as_deref(), Some("session"));
@@ -627,7 +629,7 @@ fn closing_the_card_detail_keeps_an_edit_made_elsewhere(cx: &mut TestAppContext)
         .unwrap();
     visual.executor().advance_clock(Duration::from_secs(2));
     visual.run_until_parked();
-    click(visual, "board-card-detail-close");
+    click(visual, "board-drawer-close");
     let after = detail(&f, visual).cards[0].clone();
     assert_eq!(after.title, "Edited in Tauri");
     assert_eq!(after.body, "notes from Tauri");
@@ -796,4 +798,191 @@ fn a_rich_card_shows_its_labels_subtasks_and_due_date_and_a_bare_one_does_not(
             "bare card shows {part}"
         );
     }
+}
+
+fn activity_details(f: &Fixture, card: &str) -> Vec<String> {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    service
+        .activity(&board.id, Some(card), 20)
+        .unwrap()
+        .into_iter()
+        .filter_map(|row| row.detail)
+        .collect()
+}
+
+fn extras_of(f: &Fixture, card: &str) -> rebase_core::board::extras::CardExtras {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    service
+        .extras(&board.id)
+        .unwrap()
+        .remove(card)
+        .unwrap_or_default()
+}
+
+#[gpui::test]
+fn the_drawer_lists_every_property(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    visual.refresh().unwrap();
+    for row in ["status", "priority", "due", "projects", "labels", "linked"] {
+        assert!(
+            visual
+                .debug_bounds(selector(format!("board-drawer-{row}")))
+                .is_some(),
+            "no {row} row"
+        );
+    }
+}
+
+#[gpui::test]
+fn picking_high_priority_marks_the_card_and_logs_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-priority");
+    click(visual, "menu-action-priority-3");
+    assert_eq!(extras_of(&f, &card).priority, 3);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-card-priority-1").is_some());
+    assert!(activity_details(&f, &card).contains(&"priority: High".to_string()));
+}
+
+#[gpui::test]
+fn due_tomorrow_shows_on_the_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-due");
+    click(visual, "menu-action-due-tomorrow");
+    let due = extras_of(&f, &card).due_at.expect("a due date");
+    let now = rebase_core::time::now_ms() as i64;
+    assert_eq!(
+        super::style::due_label(due, now).map(|(text, _)| text),
+        Some("Tomorrow".to_string())
+    );
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-card-due-1").is_some());
+}
+
+#[gpui::test]
+fn tagging_two_projects_stores_both_and_the_filter_finds_either(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Tagged", "Other"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    f.window
+        .update(cx, |view, _, cx| {
+            view.set_projects(
+                vec![("/a".into(), "Alpha".into()), ("/b".into(), "Beta".into())],
+                cx,
+            )
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-projects");
+    click(visual, "board-pick-project-0");
+    click(visual, "board-pick-project-1");
+    let mut projects = extras_of(&f, &card).projects;
+    projects.sort();
+    assert_eq!(projects, ["/a", "/b"]);
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    click(visual, "board-drawer-close");
+    click(visual, "board-filter");
+    click(visual, "board-filter-project-1");
+    assert_eq!(shown_cards(visual, &[1, 2]), [1]);
+}
+
+#[gpui::test]
+fn creating_a_label_puts_its_chip_on_the_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-labels");
+    visual.simulate_input("Bug");
+    visual.run_until_parked();
+    click(visual, "board-create-label");
+    assert_eq!(extras_of(&f, &card).labels.len(), 1);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-card-labels-1").is_some());
+}
+
+#[gpui::test]
+fn adding_and_ticking_a_subtask_fills_the_cards_progress(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-subtask-add");
+    visual.simulate_input("Write tests");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    click(visual, "board-subtask-0");
+    let extras = extras_of(&f, &card);
+    assert_eq!((extras.subtasks_done, extras.subtasks_total), (1, 1));
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-card-subtasks-1").is_some());
+}
+
+#[gpui::test]
+fn a_comment_shows_in_the_list_and_counts_on_the_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-comment-input");
+    visual.simulate_input("Looks good");
+    visual.run_until_parked();
+    click(visual, "board-comment-send");
+    assert_eq!(extras_of(&f, &card).comments, 1);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-comment-0").is_some());
+}
+
+#[gpui::test]
+fn mark_complete_moves_the_task_to_done(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Finish me"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-complete");
+    assert_eq!(column_of(&f, visual, "Finish me"), "Done");
+}
+
+#[gpui::test]
+fn copy_reference_puts_the_number_and_title_on_the_clipboard(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Ship it"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-copy");
+    let copied = visual
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert_eq!(copied, "#1 Ship it");
+}
+
+#[gpui::test]
+fn the_open_drawer_never_covers_the_header(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let first = detail(&f, cx).columns[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    visual.refresh().unwrap();
+    let header = visual.debug_bounds("board-header").unwrap();
+    let drawer = visual.debug_bounds("board-drawer").unwrap();
+    assert!(!header.intersects(&drawer), "{header:?} vs {drawer:?}");
+    click(visual, "board-new-task");
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(
+                view.composer.as_ref().map(|c| c.column_id.clone()),
+                Some(first)
+            )
+        })
+        .unwrap();
 }

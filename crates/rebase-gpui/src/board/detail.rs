@@ -1,17 +1,47 @@
-//! A card's detail panel: title and notes, its link, its activity and delete.
-use super::{BoardView, Event, LinkLabel, menu_row, turns};
+//! The task drawer, laid out like gr8r's: a top bar of actions, the title, a
+//! grid of properties, the description, subtasks, then Comments and Activity.
+//! It docks beside the board instead of covering it.
+mod view;
+
+use super::{BoardView, Event, style, turns};
 use crate::{
     input::{self, Input},
+    popover::{AnchorSlot, Menu, MenuAction, MenuEvent, MenuItem},
     runtime::locked,
     theme::*,
 };
-use gpui::{
-    AnyElement, Context, Entity, Focusable, FontWeight, Role, SharedString, Subscription, Window,
-    div, prelude::*, px,
+use gpui::{ClipboardItem, Context, Entity, Focusable, Subscription, Window, prelude::*};
+use rebase_core::board::{
+    Activity,
+    extras::{Comment, PRIORITIES, Subtask},
 };
-use rebase_core::board::Activity;
+use std::collections::HashMap;
 
 const ACTIVITY_LIMIT: usize = 50;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tab {
+    Comments,
+    Activity,
+}
+
+/// The searchable pick list open under a property row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Picker {
+    Projects,
+    Labels,
+    Link,
+    DueDate,
+}
+
+/// Which keyboard menu is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Choice {
+    Status,
+    Priority,
+    Due,
+    More,
+}
 
 pub(crate) struct CardDetail {
     pub card_id: String,
@@ -21,7 +51,15 @@ pub(crate) struct CardDetail {
     loaded_title: String,
     loaded_body: String,
     pub activity: Option<Result<Vec<Activity>, String>>,
-    picker: bool,
+    subtasks: Vec<Subtask>,
+    comments: Vec<Comment>,
+    tab: Tab,
+    picker: Option<Picker>,
+    query: Entity<Input>,
+    subtask_input: Option<Entity<Input>>,
+    comment: Entity<Input>,
+    choice: Option<(Choice, Entity<Menu>, Subscription)>,
+    anchors: HashMap<&'static str, AnchorSlot>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -33,6 +71,9 @@ pub(crate) fn activity_text(row: &Activity) -> String {
             row.from_column.as_deref().unwrap_or("?"),
             row.to_column.as_deref().unwrap_or("?")
         ),
+        "edited" if row.detail.is_some() => {
+            format!("Changed {}", row.detail.as_deref().unwrap_or_default())
+        }
         kind => {
             let mut chars = kind.chars();
             chars
@@ -45,7 +86,7 @@ pub(crate) fn activity_text(row: &Activity) -> String {
 }
 
 /// Something a card can link to: link kind, link id, what to call it.
-struct LinkTarget {
+pub(crate) struct LinkTarget {
     kind: &'static str,
     id: String,
     label: String,
@@ -65,14 +106,23 @@ impl BoardView {
         let Some(card) = self.card(&card_id).cloned() else {
             return;
         };
-        let title = cx.new(|cx| Input::field("Card title", "Card title", content(0.4), cx));
-        title.update(cx, |input, cx| input.set_text(card.title.clone(), cx));
+        let title = cx.new(|cx| Input::field("Task title", "Task title", content(0.4), cx));
+        title.update(cx, |input, cx| {
+            input.set_font_size(18.);
+            input.set_text(card.title.clone(), cx)
+        });
         let body = cx.new(|cx| {
             let mut input = Input::commit_message(cx);
-            input.set_placeholder("Notes", cx);
+            input.set_placeholder("Add a description…", cx);
             input
         });
         body.update(cx, |input, cx| input.set_text(card.body.clone(), cx));
+        let query = cx.new(|cx| Input::field("Search", "Search…", content(0.4), cx));
+        let comment = cx.new(|cx| {
+            let mut input = Input::commit_message(cx);
+            input.set_placeholder("Leave a comment…", cx);
+            input
+        });
         let subscriptions = vec![
             cx.subscribe(&title, |this, _, _: &input::Submitted, cx| {
                 this.save_card_details(cx)
@@ -83,18 +133,38 @@ impl BoardView {
             cx.on_blur(&body.focus_handle(cx), window, |this, _, cx| {
                 this.save_card_details(cx)
             }),
+            cx.subscribe(&query, |this, _, _: &input::Submitted, cx| {
+                this.submit_query(cx)
+            }),
+            cx.observe(&query, |_, _, cx| cx.notify()),
+            cx.subscribe(&comment, |this, _, _: &input::Submitted, cx| {
+                this.send_comment(cx)
+            }),
         ];
-        let activity = self.load_activity(&card.board_id, &card_id);
         self.card_detail = Some(CardDetail {
             card_id,
             title,
             body,
             loaded_title: card.title.clone(),
             loaded_body: card.body.clone(),
-            activity: Some(activity),
-            picker: false,
+            activity: None,
+            subtasks: Vec::new(),
+            comments: Vec::new(),
+            tab: Tab::Comments,
+            picker: None,
+            query,
+            subtask_input: None,
+            comment,
+            choice: None,
+            anchors: [
+                "status", "priority", "due", "projects", "labels", "linked", "more",
+            ]
+            .into_iter()
+            .map(|key| (key, AnchorSlot::default()))
+            .collect(),
             _subscriptions: subscriptions,
         });
+        self.refresh_detail_lists();
         self.menu = None;
         cx.notify();
     }
@@ -110,6 +180,18 @@ impl BoardView {
         true
     }
 
+    /// Escape inside the drawer closes its innermost open thing first.
+    pub(crate) fn close_detail_layer(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(detail) = &mut self.card_detail else {
+            return false;
+        };
+        if detail.picker.take().is_some() || detail.subtask_input.take().is_some() {
+            cx.notify();
+            return true;
+        }
+        false
+    }
+
     fn card(&self, card_id: &str) -> Option<&rebase_core::board::Card> {
         self.detail
             .as_ref()?
@@ -118,9 +200,44 @@ impl BoardView {
             .find(|card| card.id == card_id)
     }
 
-    fn load_activity(&mut self, board_id: &str, card_id: &str) -> Result<Vec<Activity>, String> {
-        self.service()?
-            .activity(board_id, Some(card_id), ACTIVITY_LIMIT)
+    fn detail_card(&self) -> Option<rebase_core::board::Card> {
+        let id = &self.card_detail.as_ref()?.card_id;
+        self.card(id).cloned()
+    }
+
+    /// Re-read the drawer's subtasks, comments and activity.
+    fn refresh_detail_lists(&mut self) {
+        let Some(card) = self.detail_card() else {
+            return;
+        };
+        let lists = self.service().map(|service| {
+            (
+                service.activity(&card.board_id, Some(&card.id), ACTIVITY_LIMIT),
+                service.subtasks(&card.id).unwrap_or_default(),
+                service.comments(&card.id).unwrap_or_default(),
+            )
+        });
+        if let Some(detail) = &mut self.card_detail {
+            match lists {
+                Ok((activity, subtasks, comments)) => {
+                    detail.activity = Some(activity);
+                    detail.subtasks = subtasks;
+                    detail.comments = comments;
+                }
+                Err(error) => detail.activity = Some(Err(error)),
+            }
+        }
+    }
+
+    /// Run a write for the open task, then refresh the board and the drawer.
+    fn write_task(
+        &mut self,
+        cx: &mut Context<Self>,
+        action: impl FnOnce(&mut rebase_core::board::Service) -> Result<(), String>,
+    ) {
+        self.write(cx, action);
+        self.refresh_detail_lists();
+        cx.notify();
     }
 
     fn save_card_details(&mut self, cx: &mut Context<Self>) {
@@ -135,19 +252,13 @@ impl BoardView {
         detail.loaded_title = title.clone();
         detail.loaded_body = body.clone();
         let card_id = detail.card_id.clone();
-        self.write(cx, |service| service.card_update(&card_id, &title, &body));
-        self.refresh_activity();
+        self.write_task(cx, |service| service.card_update(&card_id, &title, &body));
     }
 
     /// After a reload, show changes made elsewhere in fields the user hasn't
     /// touched since the panel last loaded them.
     pub(super) fn sync_card_detail(&mut self, cx: &mut Context<Self>) {
-        let Some(card) = self
-            .card_detail
-            .as_ref()
-            .and_then(|detail| self.card(&detail.card_id))
-            .cloned()
-        else {
+        let Some(card) = self.detail_card() else {
             return;
         };
         let Some(detail) = &mut self.card_detail else {
@@ -175,20 +286,269 @@ impl BoardView {
         Some(detail.title.read(cx).content.to_string())
     }
 
-    fn refresh_activity(&mut self) {
-        let Some(card_id) = self.card_detail.as_ref().map(|d| d.card_id.clone()) else {
-            return;
-        };
-        let Some(board_id) = self.card(&card_id).map(|card| card.board_id.clone()) else {
-            return;
-        };
-        let activity = self.load_activity(&board_id, &card_id);
+    fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         if let Some(detail) = &mut self.card_detail {
-            detail.activity = Some(activity);
+            detail.tab = tab;
+            cx.notify();
         }
     }
 
-    fn link_targets(&self, cx: &Context<Self>) -> Vec<LinkTarget> {
+    // ---- keyboard menus: status, priority, due date, more ----
+
+    fn open_choice(&mut self, choice: Choice, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(card) = self.detail_card() else {
+            return;
+        };
+        let items: Vec<MenuItem> = match choice {
+            Choice::Status => self
+                .detail
+                .as_ref()
+                .map(|detail| {
+                    let mut columns: Vec<_> = detail.columns.iter().collect();
+                    columns.sort_by_key(|column| column.position);
+                    columns
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, column)| {
+                            MenuAction::new(format!("status-{index}"), column.name.clone()).into()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Choice::Priority => (0..PRIORITIES.len())
+                .rev()
+                .map(|p| MenuAction::new(format!("priority-{p}"), PRIORITIES[p]).into())
+                .collect(),
+            Choice::Due => vec![
+                MenuAction::new("due-today", "Today").into(),
+                MenuAction::new("due-tomorrow", "Tomorrow").into(),
+                MenuAction::new("due-next-week", "Next week").into(),
+                MenuAction::new("due-pick", "Pick a date…").into(),
+                MenuItem::Separator,
+                MenuAction::new("due-clear", "Clear").into(),
+            ],
+            Choice::More => vec![MenuAction::new("delete", "Delete task").danger().into()],
+        };
+        let menu = cx.new(|cx| Menu::new("Task", items, window, cx));
+        let card_id = card.id.clone();
+        let events = cx.subscribe_in(
+            &menu,
+            window,
+            move |this, _, event: &MenuEvent, window, cx| {
+                let Some(detail) = &mut this.card_detail else {
+                    return;
+                };
+                let Some((choice, _, _)) = detail.choice.take() else {
+                    return;
+                };
+                if let MenuEvent::Picked(id, _) = event {
+                    this.apply_choice(choice, id, &card_id, window, cx);
+                }
+                cx.notify();
+            },
+        );
+        if let Some(detail) = &mut self.card_detail {
+            detail.picker = None;
+            detail.choice = Some((choice, menu, events));
+        }
+        cx.notify();
+    }
+
+    fn apply_choice(
+        &mut self,
+        choice: Choice,
+        id: &str,
+        card_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let card_id = card_id.to_string();
+        match choice {
+            Choice::Status => {
+                let index = id
+                    .strip_prefix("status-")
+                    .and_then(|i| i.parse::<usize>().ok());
+                let column = index.and_then(|index| {
+                    let detail = self.detail.as_ref()?;
+                    let mut columns: Vec<_> = detail.columns.iter().collect();
+                    columns.sort_by_key(|column| column.position);
+                    columns.get(index).map(|column| column.id.clone())
+                });
+                if let Some(column) = column {
+                    self.write_task(cx, |service| {
+                        service.card_move(&card_id, &column, usize::MAX, "user")
+                    });
+                }
+            }
+            Choice::Priority => {
+                if let Some(priority) = id.strip_prefix("priority-").and_then(|p| p.parse().ok()) {
+                    self.write_task(cx, |service| service.set_priority(&card_id, priority));
+                }
+            }
+            Choice::Due => {
+                let today = chrono::Local::now().date_naive();
+                let day = match id {
+                    "due-today" => Some(Some(today)),
+                    "due-tomorrow" => Some(today.succ_opt()),
+                    "due-next-week" => Some(today.checked_add_days(chrono::Days::new(7))),
+                    "due-clear" => Some(None),
+                    _ => None,
+                };
+                match day {
+                    Some(day) => {
+                        let due = day.and_then(style::day_start);
+                        self.write_task(cx, |service| service.set_due(&card_id, due));
+                    }
+                    None if id == "due-pick" => self.open_picker(Picker::DueDate, window, cx),
+                    None => {}
+                }
+            }
+            Choice::More => {
+                if id == "delete" {
+                    self.delete_card(window, cx);
+                }
+            }
+        }
+    }
+
+    // ---- pick lists: projects, labels, linked work, a typed date ----
+
+    fn open_picker(&mut self, picker: Picker, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(detail) = &mut self.card_detail else {
+            return;
+        };
+        if detail.picker == Some(picker) {
+            detail.picker = None;
+            cx.notify();
+            return;
+        }
+        detail.picker = Some(picker);
+        detail.choice = None;
+        let placeholder = match picker {
+            Picker::Projects => "Find a project…",
+            Picker::Labels => "Find or create a label…",
+            Picker::Link => "Find a session or Pilot…",
+            Picker::DueDate => "YYYY-MM-DD, then Enter",
+        };
+        let query = detail.query.clone();
+        query.update(cx, |input, cx| {
+            input.set_text(String::new(), cx);
+            input.set_placeholder(placeholder, cx);
+        });
+        window.focus(&query.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    fn picker_query(&self, cx: &gpui::App) -> String {
+        self.card_detail
+            .as_ref()
+            .map(|detail| detail.query.read(cx).content.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Enter in a pick list: a typed date sets it; a label name creates it.
+    fn submit_query(&mut self, cx: &mut Context<Self>) {
+        let Some(picker) = self.card_detail.as_ref().and_then(|detail| detail.picker) else {
+            return;
+        };
+        let query = self.picker_query(cx);
+        match picker {
+            Picker::DueDate => {
+                let Some(card) = self.detail_card() else {
+                    return;
+                };
+                match chrono::NaiveDate::parse_from_str(&query, "%Y-%m-%d") {
+                    Ok(day) => {
+                        let due = style::day_start(day);
+                        if let Some(detail) = &mut self.card_detail {
+                            detail.picker = None;
+                        }
+                        self.write_task(cx, |service| service.set_due(&card.id, due));
+                    }
+                    Err(_) => {
+                        self.error = Some(format!("“{query}” is not a date like 2026-11-02"));
+                        cx.notify();
+                    }
+                }
+            }
+            Picker::Labels if !query.is_empty() => self.create_label(cx),
+            _ => {}
+        }
+    }
+
+    pub(crate) fn card_projects(&self, card_id: &str) -> Vec<String> {
+        self.extras
+            .get(card_id)
+            .map(|extras| extras.projects.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn card_labels(&self, card_id: &str) -> Vec<String> {
+        self.extras
+            .get(card_id)
+            .map(|extras| extras.labels.clone())
+            .unwrap_or_default()
+    }
+
+    fn toggle_project(&mut self, path: String, cx: &mut Context<Self>) {
+        let Some(card) = self.detail_card() else {
+            return;
+        };
+        let mut projects = self.card_projects(&card.id);
+        match projects.iter().position(|p| *p == path) {
+            Some(index) => {
+                projects.remove(index);
+            }
+            None => projects.push(path),
+        }
+        self.write_task(cx, |service| service.set_projects(&card.id, &projects));
+    }
+
+    fn toggle_label(&mut self, label_id: String, cx: &mut Context<Self>) {
+        let Some(card) = self.detail_card() else {
+            return;
+        };
+        let mut labels = self.card_labels(&card.id);
+        match labels.iter().position(|l| *l == label_id) {
+            Some(index) => {
+                labels.remove(index);
+            }
+            None => labels.push(label_id),
+        }
+        self.write_task(cx, |service| service.set_labels(&card.id, &labels));
+    }
+
+    fn create_label(&mut self, cx: &mut Context<Self>) {
+        let Some(card) = self.detail_card() else {
+            return;
+        };
+        let name = self.picker_query(cx);
+        if name.is_empty() {
+            return;
+        }
+        let color = style::next_label_color(self.labels.len());
+        let created = self
+            .service()
+            .and_then(|service| service.create_label(&card.board_id, &name, &color));
+        match created {
+            Ok(label) => {
+                let mut labels = self.card_labels(&card.id);
+                labels.push(label.id);
+                if let Some(detail) = &self.card_detail {
+                    detail
+                        .query
+                        .update(cx, |input, cx| input.set_text(String::new(), cx));
+                }
+                self.write_task(cx, |service| service.set_labels(&card.id, &labels));
+            }
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+            }
+        }
+    }
+
+    pub(crate) fn link_targets(&self, cx: &gpui::App) -> Vec<LinkTarget> {
         let mut targets = Vec::new();
         if let Ok(store) = locked(&self.store) {
             let mut sessions = store.sessions().unwrap_or_default();
@@ -227,21 +587,15 @@ impl BoardView {
             return;
         };
         if let Some(detail) = &mut self.card_detail {
-            detail.picker = false;
+            detail.picker = None;
         }
-        self.write(cx, |service| {
+        self.write_task(cx, |service| {
             service.card_link(&card_id, kind, id.as_deref())
         });
-        self.refresh_activity();
     }
 
     fn open_linked(&mut self, cx: &mut Context<Self>) {
-        let Some(card) = self
-            .card_detail
-            .as_ref()
-            .and_then(|detail| self.card(&detail.card_id))
-            .cloned()
-        else {
+        let Some(card) = self.detail_card() else {
             return;
         };
         match (card.link_kind.as_deref(), card.link_id) {
@@ -262,19 +616,123 @@ impl BoardView {
         }
     }
 
-    fn delete_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(card) = self
+    // ---- subtasks and comments ----
+
+    fn start_subtask(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input =
+            cx.new(|cx| Input::field("New subtask", "Subtask, then Enter", content(0.4), cx));
+        self._subscriptions
+            .push(cx.subscribe(&input, |this, _, _: &input::Submitted, cx| {
+                this.commit_subtask(cx)
+            }));
+        window.focus(&input.focus_handle(cx), cx);
+        if let Some(detail) = &mut self.card_detail {
+            detail.subtask_input = Some(input);
+        }
+        cx.notify();
+    }
+
+    /// Add the typed subtask and keep the field open for the next one.
+    fn commit_subtask(&mut self, cx: &mut Context<Self>) {
+        let Some(card) = self.detail_card() else {
+            return;
+        };
+        let Some(input) = self
             .card_detail
             .as_ref()
-            .and_then(|detail| self.card(&detail.card_id))
-            .cloned()
+            .and_then(|detail| detail.subtask_input.clone())
         else {
+            return;
+        };
+        let title = input.read(cx).content.trim().to_string();
+        if title.is_empty() {
+            return;
+        }
+        input.update(cx, |input, cx| input.set_text(String::new(), cx));
+        self.write_task(cx, |service| {
+            service.add_subtask(&card.id, &title).map(drop)
+        });
+    }
+
+    fn toggle_subtask(&mut self, subtask: Subtask, cx: &mut Context<Self>) {
+        self.write_task(cx, |service| {
+            service.toggle_subtask(&subtask.id, !subtask.done)
+        });
+    }
+
+    fn delete_subtask(&mut self, subtask_id: String, cx: &mut Context<Self>) {
+        self.write_task(cx, |service| service.delete_subtask(&subtask_id));
+    }
+
+    fn send_comment(&mut self, cx: &mut Context<Self>) {
+        let Some(card) = self.detail_card() else {
+            return;
+        };
+        let Some(input) = self
+            .card_detail
+            .as_ref()
+            .map(|detail| detail.comment.clone())
+        else {
+            return;
+        };
+        let body = input.read(cx).content.trim().to_string();
+        if body.is_empty() {
+            return;
+        }
+        input.update(cx, |input, cx| input.set_text(String::new(), cx));
+        self.write_task(cx, |service| service.add_comment(&card.id, &body).map(drop));
+    }
+
+    // ---- top bar ----
+
+    /// The task's step is Done when the step's role is "done".
+    fn task_done(&self, card: &rebase_core::board::Card) -> bool {
+        self.detail.as_ref().is_some_and(|detail| {
+            detail
+                .columns
+                .iter()
+                .any(|column| column.id == card.column_id && column.role.as_deref() == Some("done"))
+        })
+    }
+
+    fn mark_complete(&mut self, cx: &mut Context<Self>) {
+        let Some(card) = self.detail_card() else {
+            return;
+        };
+        let done = self.detail.as_ref().and_then(|detail| {
+            detail
+                .columns
+                .iter()
+                .find(|column| column.role.as_deref() == Some("done"))
+                .or_else(|| detail.columns.iter().max_by_key(|column| column.position))
+                .map(|column| column.id.clone())
+        });
+        if let Some(done) = done
+            && done != card.column_id
+        {
+            self.write_task(cx, |service| {
+                service.card_move(&card.id, &done, usize::MAX, "user")
+            });
+        }
+    }
+
+    fn copy_reference(&mut self, cx: &mut Context<Self>) {
+        if let Some(card) = self.detail_card() {
+            cx.write_to_clipboard(ClipboardItem::new_string(format!(
+                "#{} {}",
+                card.number, card.title
+            )));
+        }
+    }
+
+    fn delete_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(card) = self.detail_card() else {
             return;
         };
         let answer = window.prompt(
             gpui::PromptLevel::Warning,
             &format!("Delete “{}”?", card.title),
-            Some("Its notes and activity are removed."),
+            Some("Its description, subtasks, comments and activity are removed."),
             &["Delete", "Cancel"],
             cx,
         );
@@ -288,234 +746,4 @@ impl BoardView {
         })
         .detach();
     }
-
-    pub(super) fn render_card_detail(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let detail = self.card_detail.as_ref()?;
-        let card = self.card(&detail.card_id)?.clone();
-        let label = self.link_label(&card.id);
-        let mut panel = div()
-            .id("board-card-detail")
-            .debug_selector(|| "board-card-detail".into())
-            .role(Role::Dialog)
-            .aria_label(format!("Card #{}", card.number))
-            .occlude()
-            .absolute()
-            .top_0()
-            .right_0()
-            .bottom_0()
-            .w(px(420.))
-            .bg(pane_fill())
-            .border_l_1()
-            .border_color(content(0.1))
-            .shadow_lg()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .h(px(PANE_HEADER_HEIGHT))
-                    .flex_shrink_0()
-                    .px_4()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .border_b_1()
-                    .border_color(content(0.07))
-                    .child(
-                        div()
-                            .font_family("Menlo")
-                            .text_size(px(12.))
-                            .text_color(content(0.5))
-                            .child(format!("#{}", card.number)),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        icon_button("board-card-detail-close", "Close", "close")
-                            .debug_selector(|| "board-card-detail-close".into())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_card_detail(cx);
-                            })),
-                    ),
-            );
-        let mut body = div()
-            .id("board-card-detail-body")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(section("Title").child(detail.title.clone()))
-            .child(
-                section("Notes").child(
-                    div()
-                        .min_h(px(80.))
-                        .p(px(8.))
-                        .rounded(px(6.))
-                        .border_1()
-                        .border_color(content(0.1))
-                        .child(detail.body.clone()),
-                ),
-            );
-        let mut link = section("Linked work");
-        link = match (&card.link_kind, label) {
-            (Some(_), Some(LinkLabel::Found(name))) => link.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(13.))
-                            .child(name),
-                    )
-                    .child(
-                        text_button("board-open-linked", "Open linked work")
-                            .on_click(cx.listener(|this, _, _, cx| this.open_linked(cx))),
-                    ),
-            ),
-            (Some(_), _) => link.child(
-                div()
-                    .id("board-link-missing")
-                    .debug_selector(|| "board-link-missing".into())
-                    .text_size(px(13.))
-                    .text_color(content(0.45))
-                    .child("Linked work no longer exists"),
-            ),
-            (None, _) => link.child(
-                div()
-                    .text_size(px(13.))
-                    .text_color(content(0.45))
-                    .child("Not linked"),
-            ),
-        };
-        link =
-            link.child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        text_button(
-                            "board-link-picker",
-                            if card.link_kind.is_some() {
-                                "Change link"
-                            } else {
-                                "Link…"
-                            },
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(detail) = &mut this.card_detail {
-                                detail.picker = !detail.picker;
-                            }
-                            cx.notify();
-                        })),
-                    )
-                    .when(card.link_kind.is_some(), |d| {
-                        d.child(text_button("board-unlink", "Unlink").on_click(
-                            cx.listener(|this, _, _, cx| this.link_selected(None, None, cx)),
-                        ))
-                    }),
-            );
-        if detail.picker {
-            let targets = self.link_targets(cx);
-            link = link.child(
-                div()
-                    .id("board-link-targets")
-                    .max_h(px(220.))
-                    .overflow_y_scroll()
-                    .p(px(4.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(content(0.1))
-                    .when(targets.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .p_2()
-                                .text_size(px(12.))
-                                .text_color(content(0.45))
-                                .child("No sessions or Pilots to link"),
-                        )
-                    })
-                    .children(targets.into_iter().enumerate().map(|(index, target)| {
-                        let glyph = if target.kind == "pilot" {
-                            "bot"
-                        } else {
-                            "chatting"
-                        };
-                        let (kind, id) = (target.kind, target.id.clone());
-                        menu_row(format!("board-link-target-{index}").into(), target.label)
-                            .flex()
-                            .gap_2()
-                            .child(icon(glyph, 12.).text_color(content(0.5)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.link_selected(Some(kind), Some(id.clone()), cx)
-                            }))
-                    })),
-            );
-        }
-        body = body.child(link);
-        let activity = match &detail.activity {
-            Some(Ok(rows)) if rows.is_empty() => section("Activity").child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(content(0.45))
-                    .child("No activity yet"),
-            ),
-            Some(Ok(rows)) => {
-                let now = rebase_core::time::now_ms();
-                section("Activity").children(rows.iter().map(|row| {
-                    let when = rebase_core::time::relative(row.created_at.max(0) as u64, now);
-                    div()
-                        .text_size(px(12.))
-                        .text_color(content(0.7))
-                        .child(format!("{} · {when}", activity_text(row)))
-                }))
-            }
-            Some(Err(_)) => section("Activity").child(
-                div()
-                    .id("board-activity-failed")
-                    .debug_selector(|| "board-activity-failed".into())
-                    .text_size(px(12.))
-                    .text_color(diff_foreground(false))
-                    .child("Couldn't load activity"),
-            ),
-            None => section("Activity"),
-        };
-        body = body.child(activity).child(
-            text_button("board-card-delete", "Delete card")
-                .text_color(diff_foreground(false))
-                .on_click(cx.listener(|this, _, window, cx| this.delete_card(window, cx))),
-        );
-        panel = panel.child(body);
-        Some(panel.into_any_element())
-    }
-}
-
-fn section(label: &'static str) -> gpui::Div {
-    div().flex().flex_col().gap_1().child(
-        div()
-            .text_size(px(11.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(content(0.45))
-            .child(label),
-    )
-}
-
-fn text_button(id: &'static str, label: impl Into<SharedString>) -> gpui::Stateful<gpui::Div> {
-    let label = label.into();
-    div()
-        .id(id)
-        .debug_selector(move || id.to_string())
-        .role(Role::Button)
-        .aria_label(label.clone())
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .text_size(px(12.))
-        .cursor_pointer()
-        .hover(|s| s.bg(content(0.06)))
-        .child(label)
 }
