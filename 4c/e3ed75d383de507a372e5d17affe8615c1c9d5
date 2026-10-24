@@ -1,0 +1,21 @@
+docs/native/verification.md
+  s_0de52fe47ecaaa::t_be38df1df0a0cf 75-82,86-94,97-101
+docs/native/parity.md
+  s_0de52fe47ecaaa::t_be38df1df0a0cf 44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ce3ed75d383de507a372e5d17affe8615c1c9d5",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
