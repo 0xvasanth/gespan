@@ -1,0 +1,39 @@
+crates/rebase-gpui/src/flows/host/tests.rs
+  s_ccb41beff89445::t_730a61a5e81a0b 137
+  s_ccb41beff89445::t_22301e00fd88ca 1-133,136,138,145-177,180-185,190-192,195-227,233-234,236,239-242,251-296,298-321,323-335,337-381,383-399,404-432,437-441,443-450
+  s_ccb41beff89445::t_b94e674153e5bf 235,237-238,243-250
+  s_ccb41beff89445::t_3fc78ef2341784 186-189,228-232,400-403,433-436
+  s_ccb41beff89445::t_c9c92f92bfe84f 134-135,139-144,178-179,193-194,297,322,336,382,442
+crates/rebase-gpui/src/shell.rs
+  s_ccb41beff89445::t_e5c628e436adc9 11,605,950,1147,1244
+crates/rebase-gpui/src/shell/flow_runs.rs
+  s_ccb41beff89445::t_3fc78ef2341784 282,306-429
+  s_ccb41beff89445::t_e5c628e436adc9 79
+  s_ccb41beff89445::t_538a81d55f1479 1-78,80-281,283-305,430-431
+crates/rebase-gpui/src/main.rs
+  s_ccb41beff89445::t_e5c628e436adc9 27
+crates/rebase-gpui/src/flows/mod.rs
+  s_ccb41beff89445::t_7437e1bc43d27b 1-5
+crates/rebase-gpui/src/shell/session_loading.rs
+  s_ccb41beff89445::t_e5c628e436adc9 63-67
+  s_ccb41beff89445::t_3fc78ef2341784 68-74
+crates/rebase-gpui/src/flows/host.rs
+  s_ccb41beff89445::t_ef43b140a3bc2f 1-286,297-340
+  s_ccb41beff89445::t_a018fbb42b98a6 287-296
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d20a3a225d4831ae18993990f593b15f8cb459d",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
