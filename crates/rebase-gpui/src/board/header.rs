@@ -31,8 +31,21 @@ impl BoardView {
             })
     }
 
-    pub(crate) fn projects(&self) -> &[(String, String)] {
-        &self.projects
+    /// Projects a task can be tagged or filtered by: the workspace's, then any
+    /// a task still carries after leaving the workspace, so it can be untagged.
+    pub(crate) fn project_choices(&self) -> Vec<(String, String)> {
+        let mut choices = self.projects.clone();
+        let mut extra: Vec<(String, String)> = self
+            .extras
+            .values()
+            .flat_map(|extras| extras.projects.iter())
+            .filter(|path| !self.projects.iter().any(|(known, _)| known == *path))
+            .map(|path| (path.clone(), self.project_name(path)))
+            .collect();
+        extra.sort();
+        extra.dedup();
+        choices.extend(extra);
+        choices
     }
 
     fn query(&self, cx: &App) -> String {
@@ -230,7 +243,8 @@ impl BoardView {
                 })
         };
         let mut rows: Vec<AnyElement> = vec![section("Projects")];
-        if self.projects.is_empty() {
+        let projects = self.project_choices();
+        if projects.is_empty() {
             rows.push(
                 div()
                     .px(px(8.))
@@ -241,7 +255,7 @@ impl BoardView {
                     .into_any_element(),
             );
         }
-        for (index, (path, name)) in self.projects.iter().enumerate() {
+        for (index, (path, name)) in projects.iter().enumerate() {
             let on = self.filter.projects.contains(path);
             let path = path.clone();
             rows.push(

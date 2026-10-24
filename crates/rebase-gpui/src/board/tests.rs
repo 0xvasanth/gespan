@@ -986,3 +986,48 @@ fn the_open_drawer_never_covers_the_header(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn escape_closes_an_open_column_menu_before_the_drawer(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-column-menu-1");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.menu.is_none(), "the menu closes first");
+            assert!(view.card_detail.is_some(), "the drawer stays open");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_project_no_longer_in_the_workspace_can_still_be_untagged_and_filtered(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded(cx, &["Old tag", "Other"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    Service::open(&f.db)
+        .unwrap()
+        .set_projects(&card, &["/gone/legacy".into()])
+        .unwrap();
+    f.window
+        .update(cx, |view, _, cx| {
+            view.set_projects(vec![("/a".into(), "Alpha".into())], cx);
+            view.reload(cx);
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-project-1");
+    assert_eq!(shown_cards(visual, &[1, 2]), [1]);
+    click(visual, "board-filter-clear");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-projects");
+    click(visual, "board-pick-project-1");
+    assert!(extras_of(&f, &card).projects.is_empty());
+}

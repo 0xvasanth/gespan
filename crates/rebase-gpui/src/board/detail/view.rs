@@ -430,7 +430,8 @@ impl BoardView {
         match picker {
             Picker::Projects => {
                 let chosen = self.card_projects(&card.id);
-                for (index, (path, name)) in self.projects().iter().enumerate() {
+                let projects = self.project_choices();
+                for (index, (path, name)) in projects.iter().enumerate() {
                     if !matches(name) {
                         continue;
                     }
@@ -446,7 +447,7 @@ impl BoardView {
                             .into_any_element(),
                     );
                 }
-                if self.projects().is_empty() {
+                if projects.is_empty() {
                     rows.push(
                         div()
                             .px(px(8.))

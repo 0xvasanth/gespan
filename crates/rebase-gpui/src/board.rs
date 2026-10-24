@@ -702,12 +702,13 @@ impl BoardView {
             return;
         }
         cx.stop_propagation();
+        // Innermost first: transient editors and menus, then the drawer.
         if self.composer.take().is_some()
             || std::mem::take(&mut self.filter_open)
-            || self.close_detail_layer(cx)
-            || self.close_card_detail(cx)
             || self.renaming.take().is_some()
             || self.menu.take().is_some()
+            || self.close_detail_layer(cx)
+            || self.close_card_detail(cx)
         {
             cx.notify();
         } else {
