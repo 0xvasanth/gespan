@@ -11,6 +11,12 @@ const GAME_OVER_MS: f32 = 2500.;
 /// The idle loop lands each piece within this many columns of where it
 /// appeared, so pieces fall mostly straight down instead of sliding across.
 const AUTO_REACH: i32 = 3;
+/// A preview's opening stack peaks somewhere between these shares of the
+/// well's height, leaving the spawn rows clear.
+const STACK_PEAK: (f32, f32) = (0.25, 0.45);
+/// Each opening piece settles within this many columns of a random one, so
+/// the stack builds up all across the well rather than from one side.
+const STACK_REACH: i32 = 6;
 
 /// Box size and rotation-zero cells for I, O, T, S, Z, J, L.
 const SHAPES: [(i32, [(i32, i32); 4]); 7] = [
@@ -102,6 +108,89 @@ impl Tetris {
         game.piece = game.random_piece(None);
         game.next = game.random_piece(Some(game.piece.color));
         game
+    }
+    /// A well for the idle preview, opening on a random stack of pieces
+    /// already settled along the bottom, so each showing looks different.
+    pub fn preview(seed: u64, cols: usize, rows: usize) -> Self {
+        let mut game = Self::new(seed, cols, rows);
+        game.stack();
+        game
+    }
+    /// Settles random pieces under a random skyline that rises and falls
+    /// across the well, each where a fair player would put it near a random
+    /// column: deep, with few holes, and the odd gap left in.
+    fn stack(&mut self) {
+        let (low, high) = STACK_PEAK;
+        let share = low + (self.random() % 1_000) as f32 / 1_000. * (high - low);
+        // At least two rows everywhere, so every shape can settle lying flat.
+        let peak = ((self.rows as f32 * share) as i32).max(3);
+        let mut height = 2 + (self.random() % (peak - 1) as u64) as i32;
+        let skyline: Vec<i32> = (0..self.cols)
+            .map(|_| {
+                height = (height + (self.random() % 3) as i32 - 1).clamp(2, peak);
+                self.rows as i32 - height
+            })
+            .collect();
+        // Pieces only fall straight down, so each lands on the highest filled
+        // cell of its columns; tracking those keeps a wide well quick to fill.
+        let mut tops = vec![self.rows as i32; self.cols];
+        let mut color = (self.random() % COLORS as u64) as u8;
+        let (mut misses, mut tries) = (0, 0);
+        while misses < 3 * self.cols && tries < self.cols * self.rows {
+            tries += 1;
+            let kind = (self.random() % SHAPES.len() as u64) as usize;
+            if self.random() % 3 >= REPEAT_IN_3 {
+                color = (self.random() % COLORS as u64) as u8;
+            }
+            let near = (self.random() % self.cols as u64) as i32;
+            let mut best: Option<(i32, [(i32, i32); 4])> = None;
+            for rotation in 0..4 {
+                for x in near - STACK_REACH..=near + STACK_REACH {
+                    let cells = Piece {
+                        kind,
+                        rotation,
+                        x,
+                        y: 0,
+                        color,
+                    }
+                    .cells();
+                    if cells.iter().any(|c| !(0..self.cols as i32).contains(&c.0)) {
+                        continue;
+                    }
+                    let drop = cells
+                        .iter()
+                        .map(|&(x, y)| tops[x as usize] - 1 - y)
+                        .min()
+                        .unwrap_or(-1);
+                    let cells = cells.map(|(x, y)| (x, y + drop));
+                    if drop < 0 || cells.iter().any(|&(x, y)| y < skyline[x as usize]) {
+                        continue;
+                    }
+                    let holes = cells
+                        .iter()
+                        .filter(|&&(x, y)| {
+                            y + 1 < self.rows as i32
+                                && !cells.contains(&(x, y + 1))
+                                && self.board[y as usize + 1][x as usize].is_none()
+                        })
+                        .count() as i32;
+                    let depth: i32 = cells.iter().map(|c| c.1).sum();
+                    let score = depth * 2 - holes * 8 + (self.random() % 4) as i32;
+                    if best.is_none_or(|(top, _)| score > top) {
+                        best = Some((score, cells));
+                    }
+                }
+            }
+            let Some((_, cells)) = best else {
+                misses += 1;
+                continue;
+            };
+            misses = 0;
+            for (x, y) in cells {
+                self.board[y as usize][x as usize] = Some(color);
+                tops[x as usize] = tops[x as usize].min(y);
+            }
+        }
     }
     fn random(&mut self) -> u64 {
         let mut x = self.seed;
@@ -196,7 +285,11 @@ impl Tetris {
                 self.over = Some(left - dt);
             } else {
                 let seed = self.random();
-                *self = Self::new(seed, self.cols, self.rows);
+                *self = if auto {
+                    Self::preview(seed, self.cols, self.rows)
+                } else {
+                    Self::new(seed, self.cols, self.rows)
+                };
             }
             return;
         }
@@ -674,6 +767,99 @@ mod tests {
         assert!(t.board.iter().all(|row| row.len() == 32));
         assert_eq!(t.board[13][20], Some(2));
         assert_eq!(t.board[13][0], None);
+    }
+
+    /// Settled cells, ignoring the falling piece.
+    fn settled(t: &Tetris) -> Vec<(usize, usize, u8)> {
+        (0..t.rows)
+            .flat_map(|y| (0..t.cols).map(move |x| (x, y)))
+            .filter_map(|(x, y)| t.board[y][x].map(|c| (x, y, c)))
+            .collect()
+    }
+
+    #[test]
+    fn a_preview_opens_on_a_colourful_stack_of_whole_pieces() {
+        for seed in 1..40 {
+            let t = Tetris::preview(seed, 60, 22);
+            let cells = settled(&t);
+            // Whole tetrominoes, nothing cleared yet.
+            assert!(cells.len() >= 60, "seed {seed}: only {} cells", cells.len());
+            assert_eq!(cells.len() % 4, 0, "seed {seed}");
+            // Along the bottom, below the spawn rows, so play carries on.
+            assert!(cells.iter().all(|&(_, y, _)| y >= 22 / 2), "seed {seed}");
+            assert!(t.fits(&t.piece), "seed {seed}");
+            // Every colour shows, and the floor is mostly covered end to end.
+            for color in 0..COLORS {
+                assert!(cells.iter().any(|c| c.2 == color), "seed {seed}");
+            }
+            let floor: Vec<_> = cells.iter().filter(|c| c.1 == 21).map(|c| c.0).collect();
+            assert!(floor.len() > 60 / 2, "seed {seed}: floor {floor:?}");
+            assert!(floor.iter().any(|&x| x < 10) && floor.iter().any(|&x| x >= 50));
+        }
+    }
+
+    #[test]
+    fn each_preview_has_its_own_skyline() {
+        let skyline = |t: &Tetris| -> Vec<usize> {
+            (0..t.cols)
+                .map(|x| {
+                    (0..t.rows)
+                        .find(|&y| t.board[y][x].is_some())
+                        .unwrap_or(t.rows)
+                })
+                .collect()
+        };
+        let skylines: Vec<_> = (1..20)
+            .map(|s| skyline(&Tetris::preview(s, 40, 22)))
+            .collect();
+        for (i, a) in skylines.iter().enumerate() {
+            for b in &skylines[i + 1..] {
+                assert_ne!(a, b, "two previews built the same stack");
+            }
+        }
+        // Not a flat slab: each stack rises and falls across the well.
+        for s in &skylines {
+            let (lo, hi) = (s.iter().min().unwrap(), s.iter().max().unwrap());
+            assert!(hi - lo >= 2, "flat skyline {s:?}");
+        }
+        // And how high they reach varies from one preview to the next.
+        let peaks: std::collections::HashSet<_> =
+            skylines.iter().map(|s| *s.iter().min().unwrap()).collect();
+        assert!(peaks.len() >= 3, "peaks {peaks:?}");
+    }
+
+    #[test]
+    fn previews_fill_narrow_and_very_wide_wells() {
+        for (cols, rows) in [(10, 20), (125, 22), (400, 22)] {
+            let t = Tetris::preview(3, cols, rows);
+            let cells = settled(&t);
+            assert!(!cells.is_empty(), "{cols}x{rows}");
+            assert!(cells.iter().all(|&(x, y, _)| x < cols && y >= rows / 2));
+            assert!(t.fits(&t.piece), "{cols}x{rows}");
+        }
+    }
+
+    #[test]
+    fn the_idle_loop_plays_on_from_a_preview_stack() {
+        let mut t = Tetris::preview(8, 30, 22);
+        for _ in 0..5_000 {
+            t.update(33., 90., true);
+            assert!(t.game_over() || t.fits(&t.piece));
+        }
+    }
+
+    #[test]
+    fn an_idle_game_that_tops_out_restarts_on_a_new_stack() {
+        let mut t = Tetris::preview(2, 24, 12);
+        let before = settled(&t);
+        t.over = Some(1.);
+        t.update(5., 100., true);
+        let after = settled(&t);
+        assert!(!after.is_empty() && after != before);
+        // A played game still restarts on a clean well.
+        t.over = Some(1.);
+        t.update(5., 100., false);
+        assert!(t.untouched());
     }
 
     #[test]

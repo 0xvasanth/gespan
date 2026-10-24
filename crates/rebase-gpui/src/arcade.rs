@@ -16,19 +16,28 @@ fn seed() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(1, |d| d.as_nanos() as u64)
 }
+/// The space the well leaves at the pane's (top, bottom, sides): in play the
+/// HUD's bar above and its padding round the rest; idle the banner runs edge
+/// to edge like Pac-man and Snake.
+fn insets(playing: bool) -> (f32, f32, f32) {
+    if playing { (36., 8., 8.) } else { (8., 8., 0.) }
+}
+/// Columns the next-piece preview and its gap take beside the well in play.
+fn preview_cols(playing: bool) -> usize {
+    if playing { 6 } else { 0 }
+}
 /// The well fills the pane: cells near 26px in play (8px idle, like the other
 /// attract loops), leaving room for the HUD and, in play, the preview beside
 /// it, so a wide pane plays wide rather than in a phone-shaped column.
 fn tetris_size(width: f32, height: f32, playing: bool) -> (usize, usize) {
-    let (cell, top, preview, max_rows) = if playing {
-        (26., 44., 6., 30.)
-    } else {
-        (8., 16., 0., 22.)
-    };
-    let rows = ((height - top) / cell).floor().clamp(8., max_rows);
-    let cell = ((height - top) / rows).max(4.);
-    let cols = ((width - 16.) / cell).floor() - preview;
-    (cols.clamp(10., 160.) as usize, rows as usize)
+    let (top, bottom, side) = insets(playing);
+    let (cell, max_rows) = if playing { (26., 30.) } else { (8., 22.) };
+    let room = height - top - bottom;
+    let rows = (room / cell).floor().clamp(8., max_rows);
+    // Whole pixels, as `well` paints them, so the columns fill the width.
+    let cell = (room / rows).floor().max(4.);
+    let cols = ((width - 2. * side) / cell).floor() - preview_cols(playing) as f32;
+    (cols.clamp(10., 400.) as usize, rows as usize)
 }
 /// Emitted when a game takes or releases the keyboard; the empty session
 /// lifts the arcade over its composer only while one is in play.
@@ -130,8 +139,7 @@ impl Arcade {
             return;
         }
         if !self.playing && now.duration_since(self.switched) > Duration::from_secs(16) {
-            self.index = (self.index + 1) % GAMES.len();
-            self.switched = now;
+            self.show((self.index + 1) % GAMES.len());
         }
         let bounds = self.anchor.get().unwrap_or_default();
         let cols = (bounds.size.width.as_f32() / 7.).ceil().clamp(7., 400.) as usize;
@@ -181,8 +189,25 @@ impl Arcade {
         if size != (self.tetris.cols, self.tetris.rows)
             && (!self.playing || self.tetris.untouched())
         {
-            self.tetris = Tetris::new(seed(), size.0, size.1);
+            self.tetris = if self.playing {
+                Tetris::new(seed(), size.0, size.1)
+            } else {
+                Tetris::preview(seed(), size.0, size.1)
+            };
         }
+    }
+    /// Shows a game in the idle rotation. Tetris opens on a freshly shuffled
+    /// stack each time it comes round, so the preview never repeats itself.
+    fn show(&mut self, index: usize) {
+        self.index = index;
+        self.switched = Instant::now();
+        if index == TETRIS && !self.playing {
+            self.tetris = Tetris::preview(seed(), self.tetris.cols, self.tetris.rows);
+        }
+    }
+    /// Play starts on a clean well, not the preview's stack.
+    fn clear_well(&mut self) {
+        self.tetris = Tetris::new(seed(), self.tetris.cols, self.tetris.rows);
     }
     pub(crate) fn playing(&self) -> bool {
         self.playing
@@ -468,9 +493,8 @@ impl Render for Arcade {
                     GAMES[index].to_lowercase()
                 ))
                 .on_click(cx.listener(|this, _, window, cx| {
-                    // Play starts on a clean well, not the attract loop's stack.
                     if this.index == TETRIS {
-                        this.tetris = Tetris::new(seed(), this.tetris.cols, this.tetris.rows);
+                        this.clear_well();
                     }
                     this.previous = window.focused(cx);
                     this.set_playing(true, cx);
@@ -499,8 +523,7 @@ impl Render for Arcade {
                                 .bg(content(if index == i { 0.45 } else { 0.15 })),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.index = i;
-                            this.switched = Instant::now();
+                            this.show(i);
                             cx.notify();
                         }))
                 }));
@@ -520,6 +543,27 @@ impl Render for Arcade {
     }
 }
 
+/// Where a `cols` × `rows` well paints in a pane: its cell size and top-left.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Well {
+    cell: f32,
+    left: f32,
+    top: f32,
+}
+fn well(width: f32, height: f32, (cols, rows): (usize, usize), playing: bool) -> Well {
+    let (top, bottom, side) = insets(playing);
+    // In play the next-piece preview sits a column right of the well, so
+    // centre and size the pair together to keep it inside narrow panes.
+    let span = (cols + preview_cols(playing)) as f32;
+    let (room_x, room_y) = (width - 2. * side, height - top - bottom);
+    let cell = (room_y / rows as f32).min(room_x / span).floor().max(4.);
+    Well {
+        cell,
+        left: side + ((room_x - cell * span) / 2.).floor(),
+        top: top + ((room_y - cell * rows as f32) / 2.).floor(),
+    }
+}
+
 /// The well sits centred under the HUD; idle it paints at half strength
 /// beneath the composer like the other attract loops.
 fn paint_tetris(
@@ -530,15 +574,12 @@ fn paint_tetris(
     (cols, rows): (usize, usize),
     playing: bool,
 ) {
-    let top = if playing { 36. } else { 8. };
-    // In play the next-piece preview sits a column right of the well, so
-    // centre and size the pair together to keep it inside narrow panes.
-    let span = cols as f32 + if playing { 6. } else { 0. };
-    let cell = ((bounds.size.height.as_f32() - top - 8.) / rows as f32)
-        .min((bounds.size.width.as_f32() - 16.) / span)
-        .floor()
-        .clamp(4., 40.);
-    let left = ((bounds.size.width.as_f32() - cell * span) / 2.).floor();
+    let Well { cell, left, top } = well(
+        bounds.size.width.as_f32(),
+        bounds.size.height.as_f32(),
+        (cols, rows),
+        playing,
+    );
     let strength = if playing { 0.92 } else { 0.45 };
     let mut square = |x: f32, y: f32, color: gpui::Hsla| {
         window.paint_quad(fill(
@@ -678,9 +719,71 @@ mod tests {
         assert!((cols + 6) as f32 * cell <= 1400. - 16.);
         // A narrow pane never drops below a classic 10-wide well.
         assert_eq!(tetris_size(260., 800., true).0, 10);
-        // Idle, the banner spreads across the width like Pac-man and Snake.
-        let (cols, rows) = tetris_size(1000., 192., false);
-        assert_eq!((cols, rows), (123, 22));
+        // Idle, the banner spreads across the width like Pac-man and Snake,
+        // even past the 160 columns that once left wide panes gapped.
+        assert_eq!(tetris_size(1000., 192., false), (125, 22));
+        assert_eq!(tetris_size(2000., 192., false), (250, 22));
+    }
+
+    #[test]
+    fn the_idle_banner_spans_the_full_width_like_pacman_and_snake() {
+        use super::{tetris_size, well};
+        for width in (400..=3200).step_by(25) {
+            let width = width as f32;
+            let (cols, rows) = tetris_size(width, 192., false);
+            let w = well(width, 192., (cols, rows), false);
+            let right = width - w.left - w.cell * cols as f32;
+            assert!(w.left >= 0. && right >= 0., "{width}: {w:?}");
+            // Under a cell of slack in all, split evenly between the sides.
+            assert!(w.left + right < w.cell, "{width}: {} + {right}px", w.left);
+            assert!(
+                (w.left - right).abs() <= 1.,
+                "{width}: {} vs {right}",
+                w.left
+            );
+            // Every width keeps the banner's 8px cells and full height.
+            assert_eq!((w.cell, rows), (8., 22), "{width}");
+        }
+    }
+
+    #[test]
+    fn a_game_in_play_fills_the_pane_under_the_hud() {
+        use super::{tetris_size, well};
+        for width in (700..=2600).step_by(50) {
+            for height in (500..=1500).step_by(50) {
+                let (width, height) = (width as f32, height as f32);
+                let (cols, rows) = tetris_size(width, height, true);
+                let w = well(width, height, (cols, rows), true);
+                let at = format!("{width}x{height}: {cols}x{rows} {w:?}");
+                // The well, a column's gap and the next-piece preview.
+                let right = width - w.left - (cols + 6) as f32 * w.cell;
+                let bottom = height - w.top - rows as f32 * w.cell;
+                // Inside the HUD's 8px padding and below its 36px bar, centred.
+                assert!(w.left >= 8. && right >= 8., "{at}");
+                assert!(w.top >= 36. && bottom >= 8., "{at}");
+                assert!((w.left - right).abs() <= 1., "{at}: {} vs {right}", w.left);
+                assert!((w.top - 36. - (bottom - 8.)).abs() <= 1., "{at}: {bottom}");
+                // Less than a cell of slack across and under a pixel per row
+                // down, unless a narrow pane holds the well at its 10 columns.
+                if cols > 10 {
+                    assert!(w.left + right - 16. < w.cell, "{at}: {} + {right}", w.left);
+                    assert!(w.top - 36. + bottom - 8. < rows as f32, "{at}: {bottom}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_game_kept_through_a_resize_stays_inside_the_pane() {
+        use super::{tetris_size, well};
+        let board = tetris_size(1400., 900., true);
+        for (width, height) in [(700., 900.), (1400., 500.), (900., 600.), (2400., 1400.)] {
+            let w = well(width, height, board, true);
+            let at = format!("{width}x{height}: {w:?}");
+            assert!(w.left >= 0., "{at}");
+            assert!(w.left + (board.0 + 6) as f32 * w.cell <= width, "{at}");
+            assert!(w.top + board.1 as f32 * w.cell <= height, "{at}");
+        }
     }
 
     #[gpui::test]
@@ -688,8 +791,10 @@ mod tests {
         let view = cx.new(super::Arcade::new);
         view.update(cx, |a, _| {
             a.fit_tetris(1000., 192.);
-            assert_eq!((a.tetris.cols, a.tetris.rows), (123, 22));
-            // Taking control grows the arcade to the whole pane.
+            assert_eq!((a.tetris.cols, a.tetris.rows), (125, 22));
+            // Taking control clears the preview's stack and grows the
+            // arcade to the whole pane.
+            a.clear_well();
             a.playing = true;
             a.fit_tetris(1400., 800.);
             let wide = (a.tetris.cols, a.tetris.rows);
@@ -699,6 +804,53 @@ mod tests {
             assert!(!a.tetris.untouched());
             a.fit_tetris(700., 800.);
             assert_eq!((a.tetris.cols, a.tetris.rows), wide);
+        });
+    }
+
+    #[gpui::test]
+    fn the_preview_reshuffles_its_stack_each_time_tetris_comes_round(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = cx.new(super::Arcade::new);
+        view.update(cx, |a, _| {
+            let mut stacks = Vec::new();
+            for _ in 0..3 {
+                // Rotate on until Tetris shows again.
+                loop {
+                    a.switched -= std::time::Duration::from_secs(17);
+                    a.last -= std::time::Duration::from_millis(40);
+                    a.tick(false);
+                    if a.index == super::TETRIS {
+                        break;
+                    }
+                }
+                assert!(!a.tetris.untouched(), "the preview opened on an empty well");
+                stacks.push(a.tetris.blocks());
+            }
+            assert_ne!(stacks[0], stacks[1]);
+            assert_ne!(stacks[1], stacks[2]);
+            // Picking Tetris from the dots shows a fresh stack too.
+            a.show(1);
+            a.show(super::TETRIS);
+            assert!(!a.tetris.untouched());
+            assert_ne!(a.tetris.blocks(), stacks[2]);
+        });
+    }
+
+    #[gpui::test]
+    fn taking_control_of_tetris_starts_on_a_clean_well(cx: &mut gpui::TestAppContext) {
+        let view = cx.new(super::Arcade::new);
+        view.update(cx, |a, _| {
+            a.show(super::TETRIS);
+            assert!(!a.tetris.untouched());
+            let size = (a.tetris.cols, a.tetris.rows);
+            a.clear_well();
+            assert!(a.tetris.untouched());
+            assert_eq!((a.tetris.cols, a.tetris.rows), size);
+            // While playing, a resize before the first landing stays clean.
+            a.playing = true;
+            a.fit_tetris(1400., 800.);
+            assert!(a.tetris.untouched());
         });
     }
 
