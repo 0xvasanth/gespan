@@ -44,6 +44,7 @@ struct Fixture {
 
 fn open(cx: &mut TestAppContext) -> Fixture {
     cx.update(crate::input::bind);
+    cx.update(crate::popover::bind);
     cx.update(|cx| cx.set_reduce_motion(true));
     let dir = Scratch::new();
     let db = dir.0.join("rebase.db");
@@ -382,7 +383,7 @@ fn move_to_done_moves_the_card_as_the_user(cx: &mut TestAppContext) {
     let board = detail(&f, cx).board.id.clone();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-card-menu-1");
-    click(visual, "board-move-to-3");
+    click(visual, "menu-action-move-3");
     assert_eq!(column_of(&f, visual, "Finish"), "Done");
     let moved = Service::open(&f.db)
         .unwrap()
@@ -649,4 +650,33 @@ fn an_unedited_detail_shows_an_edit_made_elsewhere(cx: &mut TestAppContext) {
         .read_with(visual, |view, cx| view.card_detail_title(cx))
         .unwrap();
     assert_eq!(shown.as_deref(), Some("Edited in Tauri"));
+}
+
+#[gpui::test]
+fn a_focused_card_moves_with_the_keyboard(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["By keys"]);
+    let board = detail(&f, cx).board.id.clone();
+    let card = detail(&f, cx).cards[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    f.window
+        .update(visual, |view, window, cx| {
+            let handle = view.card_focus.get(&card).unwrap().clone();
+            window.focus(&handle, cx);
+        })
+        .unwrap();
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    // Open card, then Move to In Progress, Review, Done.
+    visual.simulate_keystrokes("down down down enter");
+    visual.run_until_parked();
+    assert_eq!(column_of(&f, visual, "By keys"), "Done");
+    let moved = Service::open(&f.db)
+        .unwrap()
+        .activity(&board, None, 20)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.kind == "moved")
+        .expect("a moved row");
+    assert_eq!(moved.actor, "user");
 }

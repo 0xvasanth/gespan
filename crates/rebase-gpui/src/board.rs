@@ -52,7 +52,12 @@ pub(crate) struct Composer {
 enum Menu {
     Switcher,
     Column { column_id: String, roles: bool },
-    Card { card_id: String },
+}
+
+struct CardMenu {
+    card_id: String,
+    menu: Entity<crate::popover::Menu>,
+    _events: Subscription,
 }
 
 /// A card on the move. It is also the drag preview.
@@ -99,6 +104,9 @@ pub(crate) struct BoardView {
     dragged_card: Option<String>,
     /// The column and slot a dragged card would land in.
     pub(crate) drop_target: Option<(String, usize)>,
+    /// One focus handle per card, so cards are tab stops.
+    pub(crate) card_focus: HashMap<String, FocusHandle>,
+    card_menu: Option<CardMenu>,
     /// The slot a dragged column would land in.
     column_drop: Option<usize>,
     error: Option<String>,
@@ -155,6 +163,8 @@ impl BoardView {
             card_anchors: HashMap::new(),
             dragged_card: None,
             drop_target: None,
+            card_focus: HashMap::new(),
+            card_menu: None,
             column_drop: None,
             error: None,
             _poll: poll,
@@ -630,14 +640,16 @@ impl BoardView {
         });
     }
 
-    fn open_card_menu(&mut self, card_id: String, cx: &mut Context<Self>) {
-        self.menu = Some(Menu::Card { card_id });
-        cx.notify();
-    }
-
-    fn card_items(&self, card_id: String, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The card's actions in the app's keyboard menu: open it, or move it to
+    /// another column. Reached by clicking "…" or pressing Enter on a card.
+    pub(crate) fn open_card_actions(
+        &mut self,
+        card_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(detail) = &self.detail else {
-            return Vec::new();
+            return;
         };
         let current = detail
             .cards
@@ -645,31 +657,45 @@ impl BoardView {
             .find(|card| card.id == card_id)
             .map(|card| card.column_id.clone());
         let mut items = vec![
-            div()
-                .px(px(8.))
-                .pt(px(4.))
-                .pb(px(2.))
-                .text_size(px(11.))
-                .text_color(content(0.45))
-                .child("Move to…")
-                .into_any_element(),
+            crate::popover::MenuAction::new("open", "Open card").into(),
+            crate::popover::MenuItem::Separator,
         ];
-        items.extend(
-            detail
-                .columns
-                .iter()
-                .enumerate()
-                .filter(|(_, column)| Some(&column.id) != current.as_ref())
-                .map(|(index, column)| {
-                    let (card_id, column_id) = (card_id.clone(), column.id.clone());
-                    menu_row(format!("board-move-to-{index}").into(), column.name.clone())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.move_card_to(card_id.clone(), column_id.clone(), cx)
-                        }))
-                        .into_any_element()
-                }),
+        let mut targets = HashMap::new();
+        for (index, column) in detail.columns.iter().enumerate() {
+            if Some(&column.id) == current.as_ref() {
+                continue;
+            }
+            let id = format!("move-{index}");
+            targets.insert(id.clone(), column.id.clone());
+            items.push(
+                crate::popover::MenuAction::new(id, format!("Move to {}", column.name)).into(),
+            );
+        }
+        self.menu = None;
+        let menu = cx.new(|cx| crate::popover::Menu::new("Card actions", items, window, cx));
+        let events = cx.subscribe_in(
+            &menu,
+            window,
+            move |this, _, event: &crate::popover::MenuEvent, window, cx| {
+                let Some(open) = this.card_menu.take() else {
+                    return;
+                };
+                if let crate::popover::MenuEvent::Picked(id, _) = event {
+                    if id.as_ref() == "open" {
+                        this.open_card_detail(open.card_id, window, cx);
+                    } else if let Some(column_id) = targets.get(id.as_ref()) {
+                        this.move_card_to(open.card_id, column_id.clone(), cx);
+                    }
+                }
+                cx.notify();
+            },
         );
-        items
+        self.card_menu = Some(CardMenu {
+            card_id,
+            menu,
+            _events: events,
+        });
+        cx.notify();
     }
 
     fn on_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
@@ -770,10 +796,6 @@ impl BoardView {
                     .cloned()
                     .unwrap_or_default(),
             ),
-            Menu::Card { card_id } => (
-                "board-card-menu",
-                self.card_anchors.get(card_id).cloned().unwrap_or_default(),
-            ),
         };
         let list = match menu {
             Menu::Switcher => self.switcher_items(cx),
@@ -782,7 +804,6 @@ impl BoardView {
                 roles: true,
             } => self.role_items(column_id.clone(), cx),
             Menu::Column { column_id, .. } => self.column_items(column_id.clone(), cx),
-            Menu::Card { card_id } => self.card_items(card_id.clone(), cx),
         };
         Some(
             popover(id, Anchor::Slot(anchor))
@@ -1052,6 +1073,9 @@ impl gpui::Render for BoardView {
         }
         for card in &detail.cards {
             self.card_anchors.entry(card.id.clone()).or_default();
+            if !self.card_focus.contains_key(&card.id) {
+                self.card_focus.insert(card.id.clone(), cx.focus_handle());
+            }
         }
         let columns: Vec<AnyElement> = detail
             .columns
@@ -1060,6 +1084,14 @@ impl gpui::Render for BoardView {
             .map(|(index, column)| self.render_column(index, column, &detail, cx))
             .collect();
         let menu = self.render_menu(cx);
+        let card_menu = self.card_menu.as_ref().map(|open| {
+            let anchor = self
+                .card_anchors
+                .get(&open.card_id)
+                .cloned()
+                .unwrap_or_default();
+            crate::popover::menu_popover(&open.menu, Anchor::Slot(anchor), cx)
+        });
         let card_detail = self.render_card_detail(cx);
         root.child(self.render_header(cx))
             .children(error)
@@ -1086,5 +1118,6 @@ impl gpui::Render for BoardView {
             )
             .children(card_detail)
             .children(menu)
+            .children(card_menu)
     }
 }

@@ -69,6 +69,19 @@ impl BoardView {
                 });
                 cx.new(|_| payload.clone())
             })
+            .when_some(self.card_focus.get(&card.id), |d, focus| {
+                d.track_focus(focus).tab_index(0)
+            })
+            .focus_visible(|s| s.border_color(accent_color()))
+            .on_key_down(cx.listener({
+                let id = card.id.clone();
+                move |this, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "enter" {
+                        cx.stop_propagation();
+                        this.open_card_actions(id.clone(), window, cx);
+                    }
+                }
+            }))
             .on_click(cx.listener({
                 let id = card.id.clone();
                 move |this, _, window, cx| this.open_card_detail(id.clone(), window, cx)
@@ -120,9 +133,10 @@ impl BoardView {
                     .cursor_pointer()
                     .child(icon("more-horizontal", 12.).text_color(content(0.6)))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.open_card_menu(menu_id.clone(), cx)),
-                    ),
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.open_card_actions(menu_id.clone(), window, cx)
+                    })),
             )
             .into_any_element()
     }

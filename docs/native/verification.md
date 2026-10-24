@@ -85,7 +85,10 @@ These runtime checks are pending; none has been run by hand yet:
   change in native within about 2 s.
 - Drag cards within a column, across columns and onto an empty column.
 - Reorder columns by dragging their headers.
-- Use a card's "Move to…" menu.
+- Use a card's "Move to…" menu, both by clicking "…" and from the keyboard
+  (Tab to a card, Enter, arrow keys, Enter).
+- Send a message to a Pilot with Board on and with Board off; a Pilot-linked
+  card moves when Board is on, and nothing breaks either way.
 - Link a card to a session, send a prompt, and watch the card move to In
   Progress, then Review.
 - Turn Board off with the view open; the view closes and the same boards are

@@ -169,6 +169,7 @@ impl BoardView {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn card_detail_title(&self, cx: &gpui::App) -> Option<String> {
         let detail = self.card_detail.as_ref()?;
         Some(detail.title.read(cx).content.to_string())
