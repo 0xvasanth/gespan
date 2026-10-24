@@ -135,6 +135,14 @@ impl Runner {
         }
     }
 
+    /// Whether a run of `flow_id` is running or waiting for approval here,
+    /// including one whose records have not been written yet.
+    pub fn has_active(&self, flow_id: &str) -> bool {
+        self.runs
+            .values()
+            .any(|active| active.run.flow_id == flow_id)
+    }
+
     /// Validates `flow`, resolves its inputs and enters the initial state.
     /// The returned run is the run as it stands after these effects.
     pub fn start(

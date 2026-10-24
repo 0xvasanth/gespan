@@ -1029,3 +1029,26 @@ fn settling_a_visit_whose_state_left_the_snapshot_fails_the_run() {
     assert_eq!(last.error.as_deref(), Some("Unknown state triage"));
     assert_eq!(host.finished(), [RunStatus::Failed]);
 }
+
+#[test]
+fn has_active_tracks_a_flows_in_memory_runs() {
+    let mut host = Host::new();
+    let flow = fix_an_issue();
+    assert!(!host.runner.has_active(&flow.id));
+    let (run, _) = host.start(&flow, &[("issue", "Bug")]);
+    assert!(host.runner.has_active(&flow.id));
+    assert!(!host.runner.has_active("another-flow"));
+    host.runner.cancel(&run.id);
+    assert!(
+        !host.runner.has_active(&flow.id),
+        "a finished run is dropped"
+    );
+
+    // A run waiting for approval is still active.
+    let research = research();
+    let (run, _) = host.start(&research, &[("topic", "t")]);
+    host.outputs(&run.id, json!({"findings": [], "sources": []}));
+    host.outputs(&run.id, json!({"summary": "s"}));
+    assert_eq!(host.last_run().status, RunStatus::WaitingApproval);
+    assert!(host.runner.has_active(&research.id));
+}

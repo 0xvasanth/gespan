@@ -57,6 +57,29 @@ fn err(e: impl ToString) -> String {
     e.to_string()
 }
 
+/// Reads `(id, json)` rows. A row whose JSON no longer parses is skipped and
+/// logged, so one bad record cannot hide every other one.
+fn readable<T: serde::de::DeserializeOwned>(
+    st: &mut rusqlite::Statement<'_>,
+    params: impl rusqlite::Params,
+    table: &str,
+) -> Result<Vec<T>, String> {
+    let rows = st
+        .query_map(params, |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(err)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, raw) = row.map_err(err)?;
+        match serde_json::from_str(&raw) {
+            Ok(value) => out.push(value),
+            Err(error) => eprintln!("rebase: skipped unreadable {table} row {id}: {error}"),
+        }
+    }
+    Ok(out)
+}
+
 /// Own connection to `rebase.db`, like `automations::Service`.
 pub struct FlowStore {
     conn: Connection,
@@ -81,11 +104,9 @@ impl FlowStore {
     pub fn list(&self) -> Result<Vec<Flow>, String> {
         let mut st = self
             .conn
-            .prepare("SELECT definition_json FROM flows ORDER BY updated_at DESC, id")
+            .prepare("SELECT id, definition_json FROM flows ORDER BY updated_at DESC, id")
             .map_err(err)?;
-        let rows = st.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
-        rows.map(|raw| serde_json::from_str(&raw.map_err(err)?).map_err(err))
-            .collect()
+        readable(&mut st, [], "flows")
     }
 
     /// Sets `created_at` on insert (kept on update) and always bumps `updated_at`.
@@ -145,15 +166,11 @@ impl FlowStore {
         let mut st = self
             .conn
             .prepare(
-                "SELECT run_json FROM flow_runs WHERE flow_id = ?1
+                "SELECT id, run_json FROM flow_runs WHERE flow_id = ?1
                  ORDER BY created_at DESC, rowid DESC LIMIT ?2",
             )
             .map_err(err)?;
-        let rows = st
-            .query_map(params![flow_id, limit], |r| r.get::<_, String>(0))
-            .map_err(err)?;
-        rows.map(|raw| serde_json::from_str(&raw.map_err(err)?).map_err(err))
-            .collect()
+        readable(&mut st, params![flow_id, limit], "flow_runs")
     }
 
     /// Runs that are `running` or `waiting-approval`, across all Flows.
@@ -161,12 +178,10 @@ impl FlowStore {
         let mut st = self
             .conn
             .prepare(&format!(
-                "SELECT run_json FROM flow_runs WHERE {ACTIVE} ORDER BY created_at, rowid"
+                "SELECT id, run_json FROM flow_runs WHERE {ACTIVE} ORDER BY created_at, rowid"
             ))
             .map_err(err)?;
-        let rows = st.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
-        rows.map(|raw| serde_json::from_str(&raw.map_err(err)?).map_err(err))
-            .collect()
+        readable(&mut st, [], "flow_runs")
     }
 
     pub fn run(&self, id: &str) -> Result<Option<FlowRun>, String> {
@@ -206,13 +221,9 @@ impl FlowStore {
     pub fn visits(&self, run_id: &str) -> Result<Vec<FlowVisit>, String> {
         let mut st = self
             .conn
-            .prepare("SELECT visit_json FROM flow_visits WHERE run_id = ?1 ORDER BY seq")
+            .prepare("SELECT id, visit_json FROM flow_visits WHERE run_id = ?1 ORDER BY seq")
             .map_err(err)?;
-        let rows = st
-            .query_map([run_id], |r| r.get::<_, String>(0))
-            .map_err(err)?;
-        rows.map(|raw| serde_json::from_str(&raw.map_err(err)?).map_err(err))
-            .collect()
+        readable(&mut st, [run_id], "flow_visits")
     }
 
     /// Upsert by id; `(run_id, seq)` is unique.
@@ -457,6 +468,42 @@ mod tests {
             .is_err());
         assert!(s.run("r1").unwrap().is_none());
         assert!(s.save_visit(&visit("v1", "no-run", 1)).is_err());
+    }
+
+    #[test]
+    fn listings_skip_a_row_whose_json_does_not_parse() {
+        let s = store();
+        let good = s.upsert(&flow("f1")).unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO flows (id, definition_json, updated_at) VALUES ('bad', '{', 0)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(s.list().unwrap(), vec![good.clone()]);
+
+        let running = run("r1", &good, RunStatus::Running, 1);
+        s.save_run(&running).unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO flow_runs (id, flow_id, status, created_at, run_json)
+                 VALUES ('r-bad', 'f1', 'running', 2, 'not json')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(s.active_runs().unwrap(), vec![running.clone()]);
+        assert_eq!(s.runs("f1", 10).unwrap(), vec![running]);
+
+        let v1 = visit("v1", "r1", 1);
+        s.save_visit(&v1).unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO flow_visits (id, run_id, seq, state_id, status, visit_json)
+                 VALUES ('v-bad', 'r1', 2, 'plan', 'running', '[]')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(s.visits("r1").unwrap(), vec![v1]);
     }
 
     #[test]
