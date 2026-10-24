@@ -1,0 +1,53 @@
+crates/rebase-gpui/src/conversation/empty_arcade_tests.rs
+  s_ccb41beff89445::t_65e26f1c2431de 1-45
+crates/rebase-gpui/src/arcade.rs
+  s_6775cd6ea7e1a5::t_0b1ee4aa3477b5 197-204,380-381,391,640-665
+  s_6775cd6ea7e1a5::t_e658b6621cb7bf 554-558
+  s_6775cd6ea7e1a5::t_8c0000057834e5 12,37-46,196,260-261,441-444,446-448,450-452,471,491,534-535,538,541,586-639,721-722
+  s_6775cd6ea7e1a5::t_63dc5bd8cdae31 466-469
+  s_6775cd6ea7e1a5::t_4662e96b6fc724 715-719
+  s_6775cd6ea7e1a5::t_6d0458271a010c 1-3,11,13-18,90,127-128,133,145,147-155,258-259,262-268,290-291,460,472,474,487,523-529,531-533,539,542-551,559-569,571-581
+  s_6775cd6ea7e1a5::t_0191fcdc202089 19-36,113,146,176-189,191-195,207,227-233,288-289,473,476,530,536-537,540,552-553,570,666-714,720
+  s_ccb41beff89445::t_f47722e339392b 239
+  s_ccb41beff89445::t_ea20a3d8ed3df5 190
+  s_ccb41beff89445::t_997144fcd3f806 582
+crates/rebase-gpui/src/conversation.rs
+  s_ccb41beff89445::t_43b02938cfe8ce 3203-3238
+  s_ccb41beff89445::t_821430213fa898 12-13
+  s_ccb41beff89445::t_4941fc1e3b8eaa 3263
+  s_6775cd6ea7e1a5::t_0191fcdc202089 214,3186-3194,3198-3199,3244,3264
+crates/rebase-gpui/src/arcade/tetris.rs
+  s_6775cd6ea7e1a5::t_e4075ab054a0ec 472
+  s_6775cd6ea7e1a5::t_3ffdfce5b1c4db 6-10,72,88,90-91,102,104-107,109,114-116,156-158,179-183,185-187,205-209,283-285,451,468-471,473-478,481-496
+  s_6775cd6ea7e1a5::t_fa69a7af6959af 463-465
+  s_6775cd6ea7e1a5::t_afe99d8f838e26 504
+  s_6775cd6ea7e1a5::t_7526d45d179cd5 267-270
+  s_6775cd6ea7e1a5::t_e9934862dc3138 1-3,5,11-32,34-36,38-62,66-71,73-75,78,84-87,89,92-101,103,117-119,122-155,159-178,188-204,210-212,215-219,221,224-228,230-259,261-266,271-278,281-282,286-298,301-302,304-377,379-390,392-430,432-446,448-450,452-462,467,479-480,497-503,505-507,521,545-546
+  s_6775cd6ea7e1a5::t_3a53b4c2f93191 4,33,37,63-65,76-77,79-83,108,110-113,120-121,184,213-214,220,222-223,229,260,279-280,299-300,303,378,391,431,447,466,508-520,522-544
+crates/rebase-gpui/src/settings/model.rs
+  s_6775cd6ea7e1a5::t_6d0458271a010c 424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2cf4f29db84c508c0a1ed1369b30bdb96017acc2",
+  "prompts": {},
+  "sessions": {
+    "s_6775cd6ea7e1a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "58c6b7fa-3c3f-45d5-9d91-2cafef7b9ddc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
