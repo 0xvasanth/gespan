@@ -95,4 +95,40 @@ describe("GPUI and Tauri share one set of contracts", () => {
     expect(gpui.includes("refs/rebase/checkpoints/"), "refs/rebase/checkpoints/").toBe(true);
     expect(gpui.includes("refs/monocode"), "refs/monocode").toBe(false);
   });
+
+  // Both apps persist the same `agentRun` object and the Claude wake marker row in
+  // `sessions.blocks_json`. Renaming any of these on one side silently drops the
+  // field when the other app loads or saves the block, so each literal is pinned on
+  // both sides. Mirror of `shared_contracts.rs::agent_run_and_wake_marker_json_names_match`.
+  it("shares the agentRun fields and the task-notification row with Rebase Native", () => {
+    const session = read("src/features/sessions/model/session.ts");
+    const store = read("src/features/sessions/data/sessionStore.ts");
+    const claude = read("src/integrations/harness/providers/claude/claude.ts");
+    const agentRun = /export type AgentRunMeta = \{([\s\S]*?)\n\};/.exec(session)?.[1] ?? "";
+    expect(agentRun, "AgentRunMeta in session.ts").not.toBe("");
+    const tasks = readFileSync(join(root, "crates/rebase-core/src/tool/tasks.rs"), "utf8");
+    for (const field of ["agentId", "resumeOf", "activity", "continuation"]) {
+      expect(agentRun, `${field} on AgentRunMeta`).toMatch(new RegExp(`\\b${field}\\?:`));
+      expect(store, `${field} kept by the Tauri store`).toContain(`"${field}"`);
+      // Native reads it from a desktop block, and writes it back under the same name.
+      expect(tasks, `${field} read by Rebase Native`).toMatch(
+        new RegExp(`agent(?:\\.get\\(|\\[)"${field}"`),
+      );
+      expect(tasks, `${field} written by Rebase Native`).toMatch(
+        new RegExp(`\\("${field}",|value\\["${field}"\\] =`),
+      );
+    }
+
+    // The row: `role: "system"`, `interjection: { customType }`, `sentAt`.
+    expect(/export type InterjectionMeta = \{\s*customType: string;/.test(session)).toBe(true);
+    expect(session).toMatch(/\bsentAt\?: number;/);
+    const marker = /function emitWakeMarker[\s\S]*?\n\}/.exec(claude)?.[0] ?? "";
+    expect(marker).toContain('customType: "task-notification"');
+    expect(marker).toContain("sentAt:");
+    const blocks = readFileSync(join(root, "crates/rebase-core/src/store/shared/blocks.rs"), "utf8");
+    expect(blocks).toContain('block["interjection"]["customType"]');
+    expect(blocks).toContain('json!({"customType":note.custom_type})');
+    expect(blocks).toContain('block["sentAt"]');
+    expect(gpui).toContain('custom_type: "task-notification".into()');
+  });
 });

@@ -281,11 +281,7 @@ export class HostEngine {
         );
       }
       if (value.session.providerSessionId)
-        this.provider(value.session.harness).bind(
-          value.session.id,
-          value.session.providerSessionId,
-          value.session.cwd,
-        );
+        this.bindProvider(this.provider(value.session.harness), value.session);
     }
   }
 
@@ -393,12 +389,7 @@ export class HostEngine {
             );
           this.live.delete(id);
           this.running.delete(id);
-          if (latest.session.providerSessionId)
-            provider.bind(
-              id,
-              latest.session.providerSessionId,
-              latest.session.cwd,
-            );
+          this.bindProvider(provider, latest.session);
         } catch (error) {
           console.error(
             "Retrying session persistence:",
@@ -847,9 +838,7 @@ export class HostEngine {
         this.running.delete(session.id);
         // stop/forget releases callbacks and native resources; bind only retained
         // provider conversation identity for an explicit future follow-up.
-        const persisted = this.store.session(session.id).session;
-        if (persisted.providerSessionId)
-          provider.bind(session.id, persisted.providerSessionId, persisted.cwd);
+        this.bindProvider(provider, this.store.session(session.id).session);
       })
       .catch((error) => {
         clearTimeout(this.live.get(session.id)?.timer);
@@ -860,6 +849,17 @@ export class HostEngine {
         void provider.stop(session.id);
         this.retrySettlement(session.id, runId!, provider);
       });
+  }
+
+  /**
+   * Retain the provider conversation for the next turn. The provider was
+   * stopped (forgotten), so it also reseeds from the transcript this host
+   * holds: a later turn can resume agents dispatched in earlier ones.
+   */
+  private bindProvider(provider: HostProvider, session: Session): void {
+    if (!session.providerSessionId) return;
+    provider.bind(session.id, session.providerSessionId, session.cwd);
+    provider.restoreAgentRuns?.(session.id, session.blocks);
   }
 
   private event(id: string, runId: string, event: HarnessEvent): void {

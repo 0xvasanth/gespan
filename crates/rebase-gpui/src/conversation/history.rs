@@ -90,6 +90,7 @@ impl Conversation {
             || self.follow_ups.sending.is_some()
             || self.follow_ups.requested.is_some()
             || self.pending_search.is_some()
+            || self.pending_tool.is_some()
             || self.response_request.is_some()
             || self.response_menu.is_some()
         {
@@ -144,9 +145,7 @@ impl Conversation {
                         });
                         this.history_unloaded = false;
                         this.status = "Ready".into();
-                        if let Some((row, query)) = this.pending_search.take() {
-                            this.reveal_search(row, query, cx);
-                        }
+                        this.finish_pending_reveals(cx);
                         this.run_history_actions(cx);
                         this.pump_follow_ups(cx);
                         this.pilot_flush_external(cx);

@@ -7,6 +7,7 @@ import {
   isSearchTool,
   isWeakToolTitle,
 } from "../../../integrations/harness/core/preview";
+import { handbackMeta, parseHandback } from "./subagentHandback";
 import { leafName } from "../../files/model/fileName";
 import {
   displayPath,
@@ -792,20 +793,31 @@ export function subagentBrief(block: Block): string {
 /** Past this a name stops being a name and starts being the brief again. */
 const MAX_SUBAGENT_NAME = 56;
 
+const RESUMED = "Resumed \u00b7 ";
+const CONTINUED = "Continued \u00b7 ";
+
 /**
  * What to call a run on its row. A row is one line next to a live status, so
  * take the brief's first sentence and cap it on a word — the full text stays
- * one hover away.
+ * one hover away. A resumption or continuation wears its prefix, applied once
+ * to the bare name (providers may have named the block with it already).
  */
 export function subagentName(block: Block): string {
   const brief = subagentBrief(block);
-  const sentence = (brief.match(/^[^.!?]*[.!?]?/)?.[0] ?? brief).trim();
-  const name = sentence || brief;
-  if (name.length <= MAX_SUBAGENT_NAME) return name;
+  const bare = brief.startsWith(RESUMED)
+    ? brief.slice(RESUMED.length)
+    : brief.startsWith(CONTINUED)
+      ? brief.slice(CONTINUED.length)
+      : brief;
+  const sentence = (bare.match(/^[^.!?]*[.!?]?/)?.[0] ?? bare).trim();
+  const name = sentence || bare;
+  const run = block.agentRun;
+  const prefix = run?.continuation ? CONTINUED : run?.resumeOf ? RESUMED : "";
+  if (name.length <= MAX_SUBAGENT_NAME) return prefix + name;
   const cut = name.slice(0, MAX_SUBAGENT_NAME);
   const space = cut.lastIndexOf(" ");
   const trimmed = space > MAX_SUBAGENT_NAME / 2 ? cut.slice(0, space) : cut;
-  return `${trimmed.replace(/[\s,;:]+$/, "")}\u2026`;
+  return `${prefix}${trimmed.replace(/[\s,;:]+$/, "")}\u2026`;
 }
 
 export function subagentModelName(block: Block): string | undefined {
@@ -828,7 +840,16 @@ export function subagentReport(
   detail = block.tool?.detail,
 ): string | undefined {
   if (toolCallState(block) === "pending") return undefined;
-  return detail?.trim() || undefined;
+  return parseHandback(detail?.trim() ?? "").report || undefined;
+}
+
+/** The "N tool uses · N tokens · Ns" line from the report's hand-back trailer. */
+export function subagentReportMeta(
+  block: Block,
+  detail = block.tool?.detail,
+): string | undefined {
+  if (toolCallState(block) === "pending") return undefined;
+  return handbackMeta(parseHandback(detail?.trim() ?? ""));
 }
 
 /** A failed delegated call must stay visible even when the work trail folds. */
@@ -986,6 +1007,9 @@ type PhaseTally = {
   /** Commands the agent left running when it yielded, and how many still are. */
   background: number;
   backgroundLive: number;
+  /** A resumed or continued agent still working, and what it is doing now. */
+  resumedLive: boolean;
+  resumedActivity?: string;
   agents: number;
   others: number;
   /** Interjections the turn absorbed. Status rows count nowhere. */
@@ -1001,6 +1025,7 @@ function tallySteps(steps: Block[]): PhaseTally {
     runs: 0,
     background: 0,
     backgroundLive: 0,
+    resumedLive: false,
     agents: 0,
     others: 0,
     notes: 0,
@@ -1026,9 +1051,20 @@ function tallySteps(steps: Block[]): PhaseTally {
       case "edit":
         tally.edits.add(target);
         break;
-      case "agent":
+      case "agent": {
         tally.agents += 1;
+        const run = block.agentRun;
+        if (
+          (run?.resumeOf || run?.continuation) &&
+          toolCallState(block) === "pending"
+        ) {
+          tally.resumedLive = true;
+          // Blocks run oldest to newest, so the last activity seen is the latest.
+          const activity = run.activity?.trim();
+          if (activity) tally.resumedActivity = activity;
+        }
         break;
+      }
       case "run":
         // A background row is the same command again, waited on. It says
         // what the wait is, not one more command run.
@@ -1083,6 +1119,11 @@ function workSummary(
           : "Ran a command"
         : `${live ? "Running" : "Ran"} ${tally.runs} commands`;
     case "agent":
+      if (tally.resumedLive) {
+        return tally.resumedActivity
+          ? `Running in background \u00b7 ${tally.resumedActivity}`
+          : "Running in background";
+      }
       return tally.agents === 1
         ? live
           ? "Running a subagent"

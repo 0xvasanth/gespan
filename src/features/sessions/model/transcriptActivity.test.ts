@@ -1964,3 +1964,60 @@ describe("subagent model labels", () => {
       expect(subagentModelName(row(model))).toBeUndefined();
   });
 });
+
+describe("resumed background agents", () => {
+  const resumed = (status: string, agentRun: Block["agentRun"]): Block => ({
+    id: "send",
+    role: "tool",
+    text: "Resumed · Review",
+    tool: { callId: "send-1", kind: "agent", status },
+    agentRun,
+  });
+
+  it("adds the latest activity to the running-in-background status", () => {
+    const block = resumed("in_progress", {
+      name: "Resumed · Review",
+      resumeOf: "agent-1",
+      activity: "Reading parser.ts",
+      steps: [],
+    });
+    expect(workSummaryLine([block], true)).toBe(
+      "Running in background · Reading parser.ts",
+    );
+    expect(
+      workSummaryLine(
+        [{ ...block, agentRun: { ...block.agentRun!, activity: undefined } }],
+        true,
+      ),
+    ).toBe("Running in background");
+  });
+
+  it("keeps a plain or finished agent on the ordinary subagent wording", () => {
+    const run = { name: "Review", activity: "Reading parser.ts", steps: [] };
+    expect(workSummaryLine([resumed("in_progress", run)], true)).toBe(
+      "Running a subagent",
+    );
+    expect(
+      workSummaryLine(
+        [resumed("completed", { ...run, resumeOf: "agent-1" })],
+        false,
+      ),
+    ).toBe("Ran a subagent");
+  });
+
+  it("titles runs from the bare name, once", () => {
+    const title = (name: string, extra: object) =>
+      subagentName(resumed("completed", { name, steps: [], ...extra }));
+    expect(title("Review", { resumeOf: "a" })).toBe("Resumed · Review");
+    expect(title("Resumed · Review", { resumeOf: "a" })).toBe(
+      "Resumed · Review",
+    );
+    expect(
+      title("Resumed · Review", { resumeOf: "a", continuation: true }),
+    ).toBe("Continued · Review");
+    expect(title("Continued · Review", { resumeOf: "a" })).toBe(
+      "Resumed · Review",
+    );
+    expect(title("Review", {})).toBe("Review");
+  });
+});

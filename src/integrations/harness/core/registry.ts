@@ -89,6 +89,8 @@ export type HarnessAdapter = {
   ): void;
   /** Seed provider task state from a restored session's persisted panels. */
   restoreTaskLists?(threadId: string, lists: TaskListMeta[]): void;
+  /** Seed provider agent-run state from a restored session's blocks. */
+  restoreAgentRuns?(threadId: string, blocks: Block[]): void;
   /** Refresh the model catalog overlay when supported. */
   refreshCatalog?(): Promise<void>;
   /** Optional LLM tab title for the first turn. */
@@ -438,6 +440,9 @@ export function bindHarnessSession(
 ): void {
   const adapter = getHarness(harness);
   adapter?.bindSession(threadId, providerSessionId, cwd, providerAccountId);
+  // The next process resumes this conversation, so it must know the agents
+  // the transcript already dispatched.
+  if (blocks) adapter?.restoreAgentRuns?.(threadId, blocks);
   if (!blocks || !adapter?.restoreTaskLists) return;
   const lists = blocks.flatMap((block) =>
     block.role === "tasks" && block.taskList ? [block.taskList] : [],

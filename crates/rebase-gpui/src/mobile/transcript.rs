@@ -248,7 +248,10 @@ fn notice(rows: &[Row], at: usize, end: usize) -> Option<Value> {
         "interjection" => serde_json::from_str::<Interjection>(&text)
             .ok()
             .filter(|note| !note.text.trim().is_empty())
-            .map(|note| json!({"type": "notice", "id": id, "text": note.text})),
+            .map(|note| {
+                let text = crate::transcript::finished_marker(&note).unwrap_or(note.text);
+                json!({"type": "notice", "id": id, "text": text})
+            }),
         "visual" => {
             let title = serde_json::from_str::<rebase_core::visual::VisualDocument>(&text)
                 .ok()
@@ -782,6 +785,29 @@ mod tests {
     }
     fn all(source: &Source) -> Vec<Value> {
         build(source, 0..usize::MAX)
+    }
+    #[test]
+    fn a_wake_notification_reads_as_a_finished_background_agent() {
+        let note = |kind: &str| {
+            row(
+                "interjection",
+                &json!({"text":"Review done","custom_type":kind,"severity":null}).to_string(),
+            )
+        };
+        let rows = [note("task-notification"), note("advisor")];
+        let turns = HashMap::new();
+        let built = all(&source(&rows, &turns, false));
+        let texts: Vec<_> = built
+            .iter()
+            .flat_map(|b| b["items"].as_array().cloned().unwrap_or_default())
+            .filter(|i| i["type"] == "notice")
+            .map(|i| i["text"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert!(
+            texts.contains(&"Background agent finished · Review done".to_owned()),
+            "{texts:?}"
+        );
+        assert!(texts.contains(&"Review done".to_owned()), "{texts:?}");
     }
     #[test]
     fn native_visuals_keep_a_readable_phone_fallback_outside_folded_work() {

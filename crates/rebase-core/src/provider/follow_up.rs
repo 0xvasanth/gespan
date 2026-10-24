@@ -73,6 +73,13 @@ impl Protocol {
                     stdin,
                     json!({"type":"user","session_id":"","parent_tool_use_id":null,"message":{"role":"user","content":request.claude_content(&prompt)?}}),
                 )?;
+                // After Claude yielded, the next turn answers this message. Mid-turn,
+                // Claude folds it into the current turn instead.
+                if self.claude_result_seen {
+                    self.activities.user_turn_pending = true;
+                } else {
+                    self.activities.steered_in_turn = true;
+                }
                 self.text_key = None;
                 return Ok(vec![Event::FollowUp(message)]);
             }

@@ -95,6 +95,8 @@ export function applyHarnessEvent(
       });
     case "agent.step":
       return recordAgentStep(session, event);
+    case "agent.run":
+      return recordAgentRun(session, event);
     case "approval.requested":
       return attachApproval(session, event);
     case "approval.resolved": {
@@ -221,6 +223,7 @@ export function applyHarnessEvent(
         id: crypto.randomUUID(),
         role: "system",
         text: event.text,
+        ...(event.sentAt !== undefined ? { sentAt: event.sentAt } : {}),
         interjection: {
           customType: event.customType,
           ...(event.severity ? { severity: event.severity } : {}),
@@ -1062,7 +1065,16 @@ function upsertTool(
   const kind = patch.kind ?? prev.tool?.kind;
   const status = patch.status ?? prev.tool?.status;
   const paths = patch.paths ?? prev.tool?.paths;
-  const agentName = prev.agentRun?.steps.length ? prev.agentRun.name : label;
+  // The run follows the row's label until its trail starts. A resumption or
+  // continuation carries a name of its own that task descriptions must not
+  // replace.
+  const agentName =
+    prev.agentRun?.steps.length ||
+    prev.agentRun?.resumeOf ||
+    prev.agentRun?.name.startsWith("Resumed · ") ||
+    prev.agentRun?.name.startsWith("Continued · ")
+      ? prev.agentRun.name
+      : label;
   if (
     prev.text === label &&
     prev.streaming === patch.streaming &&
@@ -1213,6 +1225,9 @@ function recordAgentStep(
   }
 
   const next: AgentRunMeta = {
+    // Keep what this app does not touch here, including fields Rebase Native
+    // wrote into the shared block.
+    ...run,
     ...(run?.model ? { model: run.model } : {}),
     name:
       event.agentName ||
@@ -1228,6 +1243,40 @@ function recordAgentStep(
   if (run && sameAgentRun(run, next)) return session;
   const blocks = session.blocks.slice();
   blocks[index] = { ...prev, agentRun: next };
+  return { ...session, blocks };
+}
+
+/** Names, ids and the live activity of a run; its steps are left alone. */
+function recordAgentRun(
+  session: Session,
+  event: Extract<HarnessEvent, { type: "agent.run" }>,
+): Session {
+  const index = session.blocks.findIndex(
+    (block) => block.tool?.callId === event.callId,
+  );
+  if (index < 0) return session;
+  const prev = session.blocks[index];
+  const run: AgentRunMeta = prev.agentRun ?? {
+    name: prev.tool?.title || prev.text || "Subagent",
+    steps: [],
+  };
+  const patch: Partial<AgentRunMeta> = {
+    ...(event.name ? { name: event.name } : {}),
+    ...(event.agentId ? { agentId: event.agentId } : {}),
+    ...(event.resumeOf ? { resumeOf: event.resumeOf } : {}),
+    ...(event.activity ? { activity: event.activity } : {}),
+    ...(event.continuation ? { continuation: true } : {}),
+  };
+  if (
+    prev.agentRun &&
+    Object.entries(patch).every(
+      ([key, value]) => run[key as keyof AgentRunMeta] === value,
+    )
+  ) {
+    return session;
+  }
+  const blocks = session.blocks.slice();
+  blocks[index] = { ...prev, agentRun: { ...run, ...patch } };
   return { ...session, blocks };
 }
 

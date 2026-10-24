@@ -98,7 +98,11 @@ impl TranscriptView {
         let before = self
             .history_search
             .as_ref()
-            .map_or(previous, |(row, _)| row.saturating_add(1).min(previous));
+            .map(|(row, _)| *row)
+            .into_iter()
+            .chain(self.history_tool.as_ref().map(|(row, _)| *row))
+            .min()
+            .map_or(previous, |row| row.saturating_add(1).min(previous));
         let start = page_start(&self.source, before);
         // Snapshot only this page. A render/scroll callback must never copy
         // the long-lived conversation or parse its Markdown synchronously.
@@ -121,6 +125,9 @@ impl TranscriptView {
                 if let Some((row, query)) = this.history_search.take() {
                     this.reveal_search(row, &query, cx);
                 }
+                if let Some((_, tool_id)) = this.history_tool.take() {
+                    this.reveal_tool(&tool_id, cx);
+                }
             });
         })
         .detach();
@@ -134,6 +141,7 @@ impl TranscriptView {
         self.history_loading = false;
         self.history_requested = false;
         self.history_search = None;
+        self.history_tool = None;
         self.prepared_parsers.clear();
         self.pilot_groups.get_mut().clear();
         self.active_provider_turn_id = None;
@@ -210,6 +218,7 @@ impl TranscriptView {
         self.history_loading = false;
         self.history_requested = false;
         self.history_search = None;
+        self.history_tool = None;
         self.prepared_parsers = HashMap::new();
         self.pilot_groups = Default::default();
         self.attachment_images = HashMap::new();
