@@ -1,0 +1,29 @@
+src/features/source-control/model/worktrees.ts
+  s_3e9d1be838c67b::t_9f76e608c86664 96-117
+src/features/source-control/ui/Worktrees.test.ts
+  s_3e9d1be838c67b::t_1cf81a6ae03f4a 44,148-188
+  s_3e9d1be838c67b::t_37a63ac6dc6e63 5
+  s_3e9d1be838c67b::t_4801d1c948f113 189-190
+src-tauri/src/worktrees.rs
+  s_3e9d1be838c67b::t_0fb5626fe04e7c 446-468,1012-1029
+  s_3e9d1be838c67b::t_1292c614a178ed 1030
+src/app/App.tsx
+  s_3e9d1be838c67b::t_9f76e608c86664 8127-8146
+  s_3e9d1be838c67b::t_eb02f757516ed9 168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7bd277e2adf29e3886d37cb9701498881abbf0a2",
+  "prompts": {},
+  "sessions": {
+    "s_3e9d1be838c67b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5ba030e-7698-48b9-b0c4-3dfc53ffe6b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
