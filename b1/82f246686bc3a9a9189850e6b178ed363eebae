@@ -1,0 +1,24 @@
+crates/rebase-gpui/src/shell.rs
+  s_3e9d1be838c67b::t_8907fac5a4ebb1 585,932,4796-4805,4869
+crates/rebase-gpui/src/shell/open_in_editor.rs
+  s_3e9d1be838c67b::t_8a0bb6578a5bde 510-565,567-583,587,599-678,690-694
+  s_3e9d1be838c67b::t_8907fac5a4ebb1 10-18,20-21,25,27-30,48,53,66-68,160,176,181-247,261-262,306,326,338,342
+crates/rebase-gpui/src/popover.rs
+  s_3e9d1be838c67b::t_8907fac5a4ebb1 1032-1043
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b182f246686bc3a9a9189850e6b178ed363eebae",
+  "prompts": {},
+  "sessions": {
+    "s_3e9d1be838c67b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5ba030e-7698-48b9-b0c4-3dfc53ffe6b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
