@@ -77,6 +77,8 @@ impl Protocol {
                 // Claude folds it into the current turn instead.
                 if self.claude_result_seen {
                     self.activities.user_turn_pending = true;
+                } else {
+                    self.activities.steered_in_turn = true;
                 }
                 self.text_key = None;
                 return Ok(vec![Event::FollowUp(message)]);

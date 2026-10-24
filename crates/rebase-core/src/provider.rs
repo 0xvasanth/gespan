@@ -427,19 +427,20 @@ impl Protocol {
                 // A turn the user started gets no marker; the summary stays for
                 // the result-origin fallback should Claude still wake itself.
                 let mut woke = false;
-                if !std::mem::take(&mut self.activities.user_turn_pending) {
+                // Without the window the summary stays queued: the wake's result
+                // then shows it, so it is never dropped unseen.
+                if !std::mem::take(&mut self.activities.user_turn_pending)
+                    && self.claude_resume_at.is_some()
+                {
                     if let Some(summary) = self.activities.wake_summaries.pop_front() {
                         woke = true;
-                        if self.claude_resume_at.is_some() {
-                            activity_events.push(Self::wake_marker(summary));
-                        }
+                        activity_events.push(Self::wake_marker(summary));
                     }
                 }
                 self.activities.wake_handled = woke;
+                self.activities.steered_in_turn = false;
                 self.claude_result_seen = false;
-                // Another finished task is still queued: its own wake may follow.
-                self.claude_resume_at = (woke && !self.activities.wake_summaries.is_empty())
-                    .then(|| Instant::now() + Duration::from_secs(15));
+                self.claude_resume_at = None;
                 self.text_key = None;
             }
         }
@@ -961,14 +962,23 @@ impl Protocol {
                         // marker. When a user follow-up wins the race, the marker is
                         // emitted from the result, so it trails the wake's text
                         // rather than leading it.
-                        if v["origin"]["kind"] == "task-notification"
-                            && !self.activities.wake_handled
-                        {
+                        let woke_at_start = self.activities.wake_handled;
+                        if v["origin"]["kind"] == "task-notification" && !woke_at_start {
                             if let Some(summary) = self.activities.wake_summaries.pop_front() {
                                 events.push(Self::wake_marker(summary));
                             }
                         }
                         self.activities.wake_handled = false;
+                        // Another finished task is queued: its own wake may follow.
+                        // The window opens at this result, not the wake's start, since
+                        // a wake can run longer than the grace. A user write into the
+                        // wake leaves the next turn theirs to answer.
+                        if woke_at_start
+                            && !self.activities.wake_summaries.is_empty()
+                            && !self.activities.steered_in_turn
+                        {
+                            self.claude_resume_at = Some(Instant::now() + Duration::from_secs(15));
+                        }
                         // Some versions omit partial/assistant frames in simple turns.
                         if !self.begun {
                             self.text(

@@ -1528,28 +1528,73 @@ describe("clarifying questions", () => {
 });
 
 describe("subagent steps", () => {
-  it("keeps a resumption's name through a title update when its origin is unknown", () => {
+  it.each([["Resumed · Review auth"], ["Continued · Review auth"]])(
+    "keeps the name %s through a title update when its origin is unknown",
+    (name) => {
+      let session = applyHarnessEvent(newSession("claude", "/tmp"), {
+        type: "tool.started",
+        callId: "send",
+        kind: "agent",
+        title: "Send follow-up",
+      });
+      session = applyHarnessEvent(session, {
+        type: "agent.run",
+        callId: "send",
+        name,
+        agentId: "agent-1",
+      });
+      session = applyHarnessEvent(session, {
+        type: "tool.updated",
+        callId: "send",
+        title: "Send follow-up",
+        kind: "agent",
+        status: "in_progress",
+      });
+      expect(session.blocks[0].agentRun?.resumeOf).toBeUndefined();
+      expect(session.blocks[0].agentRun?.name).toBe(name);
+    },
+  );
+
+  it("keeps a run's name when resumeOf is set, whatever it is called", () => {
     let session = applyHarnessEvent(newSession("claude", "/tmp"), {
       type: "tool.started",
       callId: "send",
       kind: "agent",
-      title: "Send follow-up",
+      title: "Send",
     });
     session = applyHarnessEvent(session, {
       type: "agent.run",
       callId: "send",
-      name: "Resumed · Review auth",
-      agentId: "agent-1",
+      name: "Plain name",
+      resumeOf: "spawn",
     });
     session = applyHarnessEvent(session, {
       type: "tool.updated",
       callId: "send",
-      title: "Send follow-up",
-      kind: "agent",
-      status: "in_progress",
+      title: "Other title",
     });
-    expect(session.blocks[0].agentRun?.resumeOf).toBeUndefined();
-    expect(session.blocks[0].agentRun?.name).toBe("Resumed · Review auth");
+    expect(session.blocks[0].agentRun?.name).toBe("Plain name");
+  });
+
+  it("still follows the label of an ordinary dispatch that has an agent id", () => {
+    let session = applyHarnessEvent(newSession("claude", "/tmp"), {
+      type: "tool.started",
+      callId: "spawn",
+      kind: "agent",
+      title: "Review",
+    });
+    session = applyHarnessEvent(session, {
+      type: "agent.run",
+      callId: "spawn",
+      name: "Review",
+      agentId: "agent-1",
+    });
+    session = applyHarnessEvent(session, {
+      type: "tool.updated",
+      callId: "spawn",
+      title: "Review auth",
+    });
+    expect(session.blocks[0].agentRun?.name).toBe("Review auth");
   });
 
   it("keeps model metadata before steps arrive and preserves it through later updates", () => {

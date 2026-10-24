@@ -625,6 +625,75 @@ fn two_close_wakes_are_marked_with_their_own_summary_in_order() {
 }
 
 #[test]
+fn the_window_for_the_next_wake_opens_at_the_result_of_a_long_first_wake() {
+    let frames = frames();
+    let mut p = claude();
+    two_close_notifications(&mut p, &frames);
+    let init = frames[line(197)].clone();
+    let first = replay(&mut p, std::slice::from_ref(&init));
+    assert_eq!(markers(&first[0]), [summary(&frames, SEND)]);
+    // Nothing is armed while the wake runs, so no time into it can expire it.
+    assert!(p.claude_resume_at.is_none());
+    let result = replay(&mut p, &[wake_result()]);
+    assert!(markers(&result[0]).is_empty());
+    // The 15 s are counted from the result, however long the wake took.
+    let at = p.claude_resume_at.expect("window for the queued wake");
+    assert!(at > Instant::now() + Duration::from_secs(10));
+    // The run is not ended inside it, and the second wake is marked.
+    assert!(!p.done);
+    let second = replay(&mut p, &[init]);
+    assert_eq!(markers(&second[0]), ["Second job finished"]);
+}
+
+#[test]
+fn a_summary_a_wake_could_not_lead_with_is_shown_by_its_result() {
+    let frames = frames();
+    let mut p = claude();
+    two_close_notifications(&mut p, &frames);
+    // The window ran out before Claude woke.
+    p.claude_resume_at = None;
+    let start = replay(&mut p, &frames[line(197)..=line(197)]);
+    assert!(markers(&start[0]).is_empty());
+    assert_eq!(
+        p.activities.wake_summaries.len(),
+        2,
+        "nothing dropped unseen"
+    );
+    let result = replay(&mut p, &[wake_result()]);
+    assert_eq!(markers(&result[0]), [summary(&frames, SEND)]);
+}
+
+#[test]
+fn a_user_steer_during_a_wake_does_not_get_the_next_wake_marker() {
+    let frames = frames();
+    let mut p = claude();
+    two_close_notifications(&mut p, &frames);
+    let init = frames[line(197)].clone();
+    let first = replay(&mut p, std::slice::from_ref(&init));
+    assert_eq!(markers(&first[0]), [summary(&frames, SEND)]);
+    // The user writes while the wake is still running.
+    let sent = p
+        .steer(
+            crate::follow_up::Message {
+                id: "follow-up".into(),
+                text: "Also check the logs".into(),
+                ..Default::default()
+            },
+            &mut Vec::new(),
+        )
+        .unwrap();
+    assert!(matches!(sent.as_slice(), [Event::FollowUp(_)]), "{sent:?}");
+    let result = replay(&mut p, &[wake_result()]);
+    assert!(markers(&result[0]).is_empty());
+    // No window for another wake, so the reply is not mistaken for one.
+    assert!(p.claude_resume_at.is_none());
+    let reply = replay(&mut p, &[init]);
+    assert!(markers(&reply[0]).is_empty(), "{:?}", reply[0]);
+    // The second summary is kept for a genuine wake.
+    assert_eq!(p.activities.wake_summaries.len(), 1);
+}
+
+#[test]
 fn two_wakes_whose_starts_went_unseen_are_marked_from_their_results_in_order() {
     let frames = frames();
     let mut p = claude();

@@ -207,10 +207,12 @@ type Live = {
   scope: string;
   /** Task ids Claude reported as backgrounded. */
   backgrounded: Set<string>;
-  /** The summary of the background task whose notification may wake Claude. */
+  /** Summaries of the background tasks whose notifications may wake Claude. */
   wakeSummaries: string[];
   /** The running turn already took its wake summary when it started. */
   wakeHandled: boolean;
+  /** The user wrote into the running turn, so its reply may not be a wake. */
+  steeredInTurn: boolean;
   /**
    * The user wrote a follow-up after Claude yielded: the next turn answers
    * them, so it must not lead with a background-wake marker.
@@ -348,6 +350,7 @@ export async function steerClaudeTurn(input: SteerTurnInput): Promise<void> {
   // answering turn's init can arrive before the write resolves.
   const pending = live.turnResultSeen && !live.userTurnPending;
   if (pending) live.userTurnPending = true;
+  if (!live.turnResultSeen) live.steeredInTurn = true;
   try {
     await writeJson(input.sessionId, message);
   } catch (error) {
@@ -623,6 +626,7 @@ async function ensureLive(input: HarnessSessionInput): Promise<Live> {
     userTurnPending: false,
     wakeSummaries: [],
     wakeHandled: false,
+    steeredInTurn: false,
   };
   liveRef.current = live;
 
@@ -708,6 +712,7 @@ async function runTurn(live: Live, input: SendTurnInput): Promise<void> {
   live.userTurnPending = false;
   live.wakeSummaries = [];
   live.wakeHandled = false;
+  live.steeredInTurn = false;
 
   const turnPromise = new Promise<void>((resolve, reject) => {
     live.turnDone = resolve;
@@ -1117,9 +1122,10 @@ function handleResult(live: Live, rec: Record<string, unknown>): void {
   // A self-started turn whose start went unseen still gets its marker. When a
   // user follow-up wins the race, the marker is emitted from the result, so it
   // trails the wake's text rather than leading it.
+  const wokeAtStart = live.wakeHandled;
   if (
     stringField(asRecord(rec.origin), "kind") === "task-notification" &&
-    !live.wakeHandled
+    !wokeAtStart
   ) {
     const text = live.wakeSummaries.shift();
     if (text !== undefined) emitWakeMarker(live, text);
@@ -1147,6 +1153,18 @@ function handleResult(live: Live, rec: Record<string, unknown>): void {
     live.onEvent({ type: "usage.limited", ...usageLimit });
   }
   live.turnResultSeen = true;
+  // Another finished task is queued: its own wake may follow this one. The
+  // window opens at the wake's result, not its start, since a wake can run
+  // longer than the grace. A user write into the wake leaves the next turn
+  // theirs to answer, so no further wake is awaited.
+  if (
+    wokeAtStart &&
+    live.wakeSummaries.length > 0 &&
+    !live.steeredInTurn &&
+    live.activeTurn
+  ) {
+    armAwaitingResume(live);
+  }
   maybeFinishTurn(live);
   showBackgroundRows(live);
   syncBackgroundWait(live);
@@ -2143,11 +2161,13 @@ function noteClaudeTurnStarted(live: Live): void {
   const userTurn = live.userTurnPending;
   live.userTurnPending = false;
   let woke = false;
-  if (!userTurn && live.wakeSummaries.length > 0) {
-    const summary = live.wakeSummaries.shift();
+  // Without the window the summary stays queued: the wake's result then
+  // shows it, so it is never dropped unseen.
+  if (!userTurn && live.awaitingResume && live.wakeSummaries.length > 0) {
+    marker = live.wakeSummaries.shift();
     woke = true;
-    if (live.awaitingResume) marker = summary;
   }
+  live.steeredInTurn = false;
   live.turnResultSeen = false;
   // A new message, not more of the last one: its snapshot must not be
   // compared against what the earlier turn streamed.
@@ -2167,8 +2187,6 @@ function noteClaudeTurnStarted(live: Live): void {
   live.taskNotes = [];
   clearAwaitingResume(live);
   live.wakeHandled = woke;
-  // Another finished task is still queued: its own wake may follow this one.
-  if (woke && live.wakeSummaries.length > 0) armAwaitingResume(live);
   syncBackgroundWait(live);
 }
 

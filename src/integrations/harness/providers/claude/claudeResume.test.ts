@@ -730,6 +730,88 @@ describe("Claude resumed background agents: parity details", () => {
     await turn.catch(() => undefined);
   });
 
+  /** The first agent's notification (line 195) plus a second job's. */
+  function secondNotification(): string[] {
+    return [
+      JSON.stringify({
+        type: "system",
+        subtype: "task_started",
+        task_id: "bg-2",
+        description: "Second job",
+        is_backgrounded: true,
+        task_type: "local_bash",
+        session_id: PROVIDER_SESSION,
+      }),
+      JSON.stringify({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "bg-2",
+        status: "completed",
+        summary: "Second job finished",
+        session_id: PROVIDER_SESSION,
+      }),
+    ];
+  }
+  const WAKE_RESULT = JSON.stringify({
+    type: "result",
+    subtype: "success",
+    origin: { kind: "task-notification" },
+    session_id: PROVIDER_SESSION,
+  });
+
+  it("opens the window for the next wake at the first wake's result, however long it ran", async () => {
+    rebind("s2", await persistedTurnOne());
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1, 195));
+    feed(events, secondNotification());
+    vi.useFakeTimers();
+    try {
+      const start = feed(events, [INIT]);
+      expect(markers(start[0])).toEqual([summary(SEND)]);
+      // The wake runs far longer than the 15 s grace.
+      vi.advanceTimersByTime(60_000);
+      const result = feed(events, [WAKE_RESULT]);
+      expect(markers(result[0])).toEqual([]);
+      // Counted from the result: still waiting after 10 s, so the turn is open.
+      vi.advanceTimersByTime(10_000);
+      let settled = false;
+      void turn.then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      const second = feed(events, [INIT, WAKE_RESULT]);
+      expect(markers(second[0])).toEqual(["Second job finished"]);
+      expect(markers(second[1])).toEqual([]);
+      await turn;
+      expect(markers(events)).toEqual([summary(SEND), "Second job finished"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not wait for another wake, or mark the reply, when the user steers during a wake", async () => {
+    rebind("s2", await persistedTurnOne());
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1, 195));
+    feed(events, secondNotification());
+    const start = feed(events, [INIT]);
+    expect(markers(start[0])).toEqual([summary(SEND)]);
+    await steerClaudeTurn({
+      sessionId: "s2",
+      cwd: "/repo",
+      model: "claude:claude-sonnet-5",
+      text: "Also check the logs",
+    });
+    const rest = feed(events, [WAKE_RESULT, INIT]);
+    await turn;
+    // The reply to the user carries no wake marker.
+    expect(markers(rest.flat())).toEqual([]);
+    expect(markers(events)).toEqual([summary(SEND)]);
+  });
+
   it("does not carry a summary left by one turn into a later turn", async () => {
     rebind("s2", await persistedTurnOne());
     const events: HarnessEvent[] = [];

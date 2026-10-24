@@ -1071,8 +1071,8 @@ function upsertTool(
   const agentName =
     prev.agentRun?.steps.length ||
     prev.agentRun?.resumeOf ||
-    prev.agentRun?.agentId ||
-    prev.agentRun?.name.startsWith("Resumed · ")
+    prev.agentRun?.name.startsWith("Resumed · ") ||
+    prev.agentRun?.name.startsWith("Continued · ")
       ? prev.agentRun.name
       : label;
   if (

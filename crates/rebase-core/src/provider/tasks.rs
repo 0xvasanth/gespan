@@ -31,6 +31,8 @@ pub(super) struct Activities {
     pub(super) wake_summaries: std::collections::VecDeque<String>,
     /// The running turn already took its wake summary when it started.
     pub(super) wake_handled: bool,
+    /// The user wrote into the running turn, so its reply may not be a wake.
+    pub(super) steered_in_turn: bool,
 }
 /// Synthetic block ids for work whose parent this session cannot place.
 pub(super) const FALLBACK_PREFIX: &str = "background:";
