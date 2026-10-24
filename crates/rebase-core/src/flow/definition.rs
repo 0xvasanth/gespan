@@ -461,6 +461,97 @@ pub fn validate_flow(flow: &Flow) -> Validation {
     Validation { errors, warnings }
 }
 
+/// The JSON keys each Flow type writes. Serde ignores keys it doesn't know,
+/// so the editor compares typed text against these to catch typos. A test
+/// pins every list to what serde writes.
+pub const FLOW_KEYS: &[&str] = &[
+    "id",
+    "name",
+    "description",
+    "cwd",
+    "inputs",
+    "initial",
+    "states",
+    "access",
+    "createdAt",
+    "updatedAt",
+];
+pub const INPUT_KEYS: &[&str] = &["name", "label", "required", "default"];
+pub const AGENT_STATE_KEYS: &[&str] = &[
+    "kind",
+    "id",
+    "title",
+    "harness",
+    "model",
+    "brief",
+    "outputs",
+    "transitions",
+    "maxVisits",
+];
+pub const APPROVAL_STATE_KEYS: &[&str] =
+    &["kind", "id", "title", "message", "transitions", "maxVisits"];
+pub const OUTPUT_FIELD_KEYS: &[&str] = &["name", "type", "description"];
+pub const TRANSITION_KEYS: &[&str] = &["to", "when"];
+pub const STATUS_GUARD_KEYS: &[&str] = &["kind", "is"];
+pub const OUTPUT_GUARD_KEYS: &[&str] = &["kind", "field", "op", "value"];
+
+/// One error per key in `flow_json` that the Flow format doesn't define, such
+/// as a misspelled `maxVisit`. Expects text that already parsed as a `Flow`;
+/// anything of an unexpected shape is skipped.
+pub fn unknown_fields(flow_json: &serde_json::Value) -> Vec<String> {
+    use serde_json::Value;
+    fn name_of(value: &Value, key: &str) -> String {
+        value.get(key).and_then(Value::as_str).unwrap_or("").into()
+    }
+    fn scan(value: &Value, known: &[&str], place: &str, errors: &mut Vec<String>) {
+        if let Some(object) = value.as_object() {
+            for key in object.keys().filter(|k| !known.contains(&k.as_str())) {
+                errors.push(format!("Unknown field \"{key}\" in {place}"));
+            }
+        }
+    }
+    let mut errors = Vec::new();
+    scan(flow_json, FLOW_KEYS, "the Flow", &mut errors);
+    let list = |value: &Value, key: &str| -> Vec<Value> {
+        value
+            .get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    for input in list(flow_json, "inputs") {
+        let place = format!("input {}", name_of(&input, "name"));
+        scan(&input, INPUT_KEYS, &place, &mut errors);
+    }
+    for state in list(flow_json, "states") {
+        let id = name_of(&state, "id");
+        let place = format!("state {id}");
+        let known = if state.get("kind").and_then(Value::as_str) == Some("approval") {
+            APPROVAL_STATE_KEYS
+        } else {
+            AGENT_STATE_KEYS
+        };
+        scan(&state, known, &place, &mut errors);
+        for output in list(&state, "outputs") {
+            let place = format!("state {id} output {}", name_of(&output, "name"));
+            scan(&output, OUTPUT_FIELD_KEYS, &place, &mut errors);
+        }
+        for (index, transition) in list(&state, "transitions").iter().enumerate() {
+            let place = format!("state {id} transition {}", index + 1);
+            scan(transition, TRANSITION_KEYS, &place, &mut errors);
+            if let Some(guard) = transition.get("when") {
+                let known = if guard.get("kind").and_then(Value::as_str) == Some("output") {
+                    OUTPUT_GUARD_KEYS
+                } else {
+                    STATUS_GUARD_KEYS
+                };
+                scan(guard, known, &format!("{place} guard"), &mut errors);
+            }
+        }
+    }
+    errors
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,6 +570,104 @@ mod tests {
             to: target.into(),
             when: None,
         }
+    }
+
+    /// A Flow that writes every key, optional ones included.
+    fn fully_populated() -> Flow {
+        let mut flow = starter_flows().remove(0);
+        flow.inputs[0].default = Some("x".into());
+        let approval = FlowState::Approval(ApprovalState {
+            id: "gate".into(),
+            title: "Gate".into(),
+            message: "ok?".into(),
+            transitions: vec![
+                Transition {
+                    to: SUCCEEDED.into(),
+                    when: Some(Guard::Status {
+                        is: VisitResult::Completed,
+                    }),
+                },
+                Transition {
+                    to: FAILED.into(),
+                    when: Some(Guard::Output {
+                        field: "approved".into(),
+                        op: GuardOp::Eq,
+                        value: Some(serde_json::json!(true)),
+                    }),
+                },
+            ],
+            max_visits: 1,
+        });
+        flow.states.push(approval);
+        flow
+    }
+
+    fn keys(value: &serde_json::Value) -> Vec<String> {
+        let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        keys
+    }
+
+    fn sorted(list: &[&str]) -> Vec<String> {
+        let mut list: Vec<String> = list.iter().map(|s| s.to_string()).collect();
+        list.sort();
+        list
+    }
+
+    #[test]
+    fn the_known_key_lists_match_what_serde_writes() {
+        let json = serde_json::to_value(fully_populated()).unwrap();
+        assert_eq!(keys(&json), sorted(FLOW_KEYS));
+        assert_eq!(keys(&json["inputs"][0]), sorted(INPUT_KEYS));
+        let states = json["states"].as_array().unwrap();
+        let agent = states.iter().find(|s| s["kind"] == "agent").unwrap();
+        let approval = states.iter().find(|s| s["id"] == "gate").unwrap();
+        assert_eq!(keys(agent), sorted(AGENT_STATE_KEYS));
+        assert_eq!(keys(approval), sorted(APPROVAL_STATE_KEYS));
+        assert_eq!(keys(&agent["outputs"][0]), sorted(OUTPUT_FIELD_KEYS));
+        assert_eq!(keys(&approval["transitions"][0]), sorted(TRANSITION_KEYS));
+        assert_eq!(
+            keys(&approval["transitions"][0]["when"]),
+            sorted(STATUS_GUARD_KEYS)
+        );
+        assert_eq!(
+            keys(&approval["transitions"][1]["when"]),
+            sorted(OUTPUT_GUARD_KEYS)
+        );
+        // Everything serde writes is known, so a saved Flow has no unknown keys.
+        assert_eq!(unknown_fields(&json), Vec::<String>::new());
+    }
+
+    #[test]
+    fn unknown_fields_name_the_key_and_where_it_is() {
+        let mut json = serde_json::to_value(fully_populated()).unwrap();
+        json["extra"] = 1.into();
+        json["inputs"][0]["lable"] = 1.into();
+        json["states"][0]["maxVisit"] = 5.into();
+        json["states"][0]["outputs"][0]["desc"] = 1.into();
+        json["states"][0]["transitions"][0]["whn"] = 1.into();
+        let last = json["states"].as_array().unwrap().len() - 1;
+        json["states"][last]["transitions"][1]["when"]["valeu"] = 1.into();
+        json["states"][last]["transitions"][0]["when"]["op"] = "eq".into();
+        let id0 = json["states"][0]["id"].as_str().unwrap().to_owned();
+        let input = json["inputs"][0]["name"].as_str().unwrap().to_owned();
+        let output = json["states"][0]["outputs"][0]["name"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let errors = unknown_fields(&json);
+        assert_eq!(
+            errors,
+            vec![
+                "Unknown field \"extra\" in the Flow".to_string(),
+                format!("Unknown field \"lable\" in input {input}"),
+                format!("Unknown field \"maxVisit\" in state {id0}"),
+                format!("Unknown field \"desc\" in state {id0} output {output}"),
+                format!("Unknown field \"whn\" in state {id0} transition 1"),
+                "Unknown field \"op\" in state gate transition 1 guard".to_string(),
+                "Unknown field \"valeu\" in state gate transition 2 guard".to_string(),
+            ]
+        );
     }
 
     fn when_output(target: &str, field: &str, op: GuardOp) -> Transition {

@@ -1,6 +1,6 @@
 //! Flow, run and visit storage in `rebase.db`. Definitions and records are JSON
 //! blobs with mirrored indexed columns, like `automations`.
-use super::definition::Flow;
+use super::definition::{validate_flow, Flow};
 use super::run::{FlowRun, FlowVisit};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
@@ -110,7 +110,12 @@ impl FlowStore {
     }
 
     /// Sets `created_at` on insert (kept on update) and always bumps `updated_at`.
+    /// Refuses a Flow `validate_flow` reports errors for, so no path stores one.
     pub fn upsert(&self, flow: &Flow) -> Result<Flow, String> {
+        let errors = validate_flow(flow).errors;
+        if !errors.is_empty() {
+            return Err(format!("Flow is invalid: {}", errors.join("; ")));
+        }
         let now = now_millis();
         let previous: Option<String> = self
             .conn
@@ -254,7 +259,7 @@ impl FlowStore {
 mod tests {
     use super::*;
     use crate::flow::run::{FlowRun, FlowVisit, RunStatus, VisitStatus};
-    use crate::flow::{starter_flows, Flow, OutputValue};
+    use crate::flow::{starter_flows, Flow, FlowState, OutputValue};
     use std::collections::HashMap;
 
     fn store() -> FlowStore {
@@ -312,6 +317,25 @@ mod tests {
         assert_eq!(listed, vec![saved.clone()]);
         assert_eq!(listed[0].states, flow("f1").states);
         assert!(saved.created_at > 0 && saved.updated_at >= saved.created_at);
+    }
+
+    #[test]
+    fn upsert_refuses_an_invalid_flow() {
+        let s = store();
+        let mut bad = flow("f1");
+        let FlowState::Agent(first) = &mut bad.states[0] else {
+            panic!("the starter begins with an agent");
+        };
+        first.transitions[0].to = "nowhere".into();
+        let error = s.upsert(&bad).unwrap_err();
+        assert!(error.starts_with("Flow is invalid: "), "{error}");
+        assert!(error.contains("nowhere"), "{error}");
+        assert!(s.list().unwrap().is_empty(), "nothing was stored");
+        // An invalid edit of a stored Flow leaves the stored copy alone.
+        let good = s.upsert(&flow("f1")).unwrap();
+        bad.name = "Renamed".into();
+        assert!(s.upsert(&bad).is_err());
+        assert_eq!(s.list().unwrap(), vec![good]);
     }
 
     #[test]

@@ -1,5 +1,6 @@
-//! The JSON editor for a saved Flow. Every change is parsed and run through
-//! `validate_flow`; Save waits until there are no errors.
+//! The JSON editor for a saved Flow. Every change is parsed and checked live
+//! for the problems panel; Save re-checks the text and refuses while it has
+//! errors.
 use super::{
     ui::{Tooltip, button, disabled},
     view::{FlowsView, Page, store_lock},
@@ -9,6 +10,7 @@ use crate::{
     theme::*,
 };
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px, rgb};
+use rebase_core::flow::definition::unknown_fields;
 use rebase_core::flow::{Flow, validate_flow};
 
 pub(super) const RUN_BLOCKED: &str = "Save your changes first";
@@ -21,15 +23,20 @@ pub(super) struct Check {
     pub warnings: Vec<String>,
 }
 
-/// Parses `text` as a Flow and validates it. A JSON or field error (such as a
-/// fractional `maxVisits`) is reported with serde's message.
+/// Parses `text` as a Flow, rejects keys the format doesn't define (serde would
+/// drop them on save) and validates it. A JSON or field error (such as a
+/// fractional `maxVisits`) is reported with serde's message, line and column.
 pub(super) fn check(text: &str) -> Check {
     match serde_json::from_str::<Flow>(text) {
         Ok(flow) => {
             let validation = validate_flow(&flow);
+            let mut errors = serde_json::from_str::<serde_json::Value>(text)
+                .map(|value| unknown_fields(&value))
+                .unwrap_or_default();
+            errors.extend(validation.errors);
             Check {
                 flow: Some(flow),
-                errors: validation.errors,
+                errors,
                 warnings: validation.warnings,
             }
         }
@@ -116,10 +123,21 @@ impl FlowsView {
         let Page::Editor(editor) = &mut self.page else {
             return;
         };
-        if editor.saving || !editor.check.can_save() {
+        if editor.saving || !editor.dirty {
             return;
         }
-        let Some(edited) = editor.check.flow.as_ref() else {
+        // Save checks the text itself rather than trusting the live check.
+        editor.check = check(editor.input.read(cx).content.as_ref());
+        let Some(edited) = editor
+            .check
+            .flow
+            .as_ref()
+            .filter(|_| editor.check.can_save())
+        else {
+            let count = editor.check.errors.len();
+            let noun = if count == 1 { "problem" } else { "problems" };
+            self.error = Some(format!("Fix {count} {noun} before saving"));
+            cx.notify();
             return;
         };
         let flow = to_save(&editor.flow, edited);
@@ -188,7 +206,7 @@ impl FlowsView {
         let Page::Editor(editor) = &self.page else {
             return div().into_any_element();
         };
-        let blocked = !editor.check.can_save() || editor.saving || !editor.dirty;
+        let blocked = editor.saving || !editor.dirty;
         let id = editor.flow.id.clone();
         let header = div()
             .flex_shrink_0()
@@ -346,7 +364,7 @@ impl FlowsView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rebase_core::flow::starter_flows;
+    use rebase_core::flow::{FlowState, Guard, GuardOp, VisitResult, starter_flows};
 
     fn flow() -> Flow {
         Flow {
@@ -396,6 +414,98 @@ mod tests {
         assert_eq!(checked.flow, None);
         assert_eq!(checked.errors.len(), 1);
         assert!(!checked.can_save());
+    }
+
+    #[test]
+    fn a_misspelled_key_in_a_state_is_an_error() {
+        let text =
+            pretty(&flow()).replacen("\"maxVisits\"", "\"maxVisit\": 5,\n  \"maxVisits\"", 1);
+        let checked = check(&text);
+        let id = flow().states[0].id().to_owned();
+        let expected = format!("Unknown field \"maxVisit\" in state {id}");
+        assert!(checked.errors.contains(&expected), "{:?}", checked.errors);
+        assert!(!checked.can_save());
+    }
+
+    #[test]
+    fn an_unknown_top_level_key_is_an_error() {
+        let text = pretty(&flow()).replacen("\"name\"", "\"nmae\": 1,\n  \"name\"", 1);
+        let checked = check(&text);
+        assert_eq!(
+            checked.errors,
+            vec!["Unknown field \"nmae\" in the Flow".to_string()]
+        );
+        assert!(checked.flow.is_some() && !checked.can_save());
+    }
+
+    #[test]
+    fn an_unknown_key_in_a_guard_is_an_error() {
+        let mut with_guard = flow();
+        let FlowState::Agent(state) = &mut with_guard.states[0] else {
+            panic!("the starter begins with an agent");
+        };
+        state.transitions[0].when = Some(Guard::Status {
+            is: VisitResult::Completed,
+        });
+        let id = state.id.clone();
+        let text = pretty(&with_guard).replacen("\"is\"", "\"iss\": 1, \"is\"", 1);
+        let checked = check(&text);
+        let expected = format!("Unknown field \"iss\" in state {id} transition 1 guard");
+        assert_eq!(checked.errors, vec![expected]);
+    }
+
+    #[test]
+    fn optional_fields_that_serialise_as_absent_are_not_flagged() {
+        let mut with_optionals = flow();
+        with_optionals
+            .inputs
+            .iter_mut()
+            .for_each(|i| i.default = None);
+        for state in &mut with_optionals.states {
+            let transitions = match state {
+                FlowState::Agent(s) => &mut s.transitions,
+                FlowState::Approval(s) => &mut s.transitions,
+            };
+            transitions.iter_mut().for_each(|t| t.when = None);
+        }
+        let text = pretty(&with_optionals);
+        assert!(!text.contains("\"default\"") && !text.contains("\"when\""));
+        let checked = check(&text);
+        assert!(checked.errors.is_empty(), "{:?}", checked.errors);
+        // Written out, they are known too.
+        let mut written = with_optionals;
+        written.inputs[0].default = Some("x".into());
+        let FlowState::Agent(state) = &mut written.states[0] else {
+            panic!("the starter begins with an agent");
+        };
+        state.transitions[0].when = Some(Guard::Output {
+            field: "done".into(),
+            op: GuardOp::Truthy,
+            value: Some(serde_json::json!("yes")),
+        });
+        let written = pretty(&written);
+        assert!(written.contains("\"default\"") && written.contains("\"value\""));
+        let checked = check(&written);
+        let unknown: Vec<_> = checked
+            .errors
+            .iter()
+            .filter(|e| e.starts_with("Unknown field"))
+            .collect();
+        assert!(unknown.is_empty(), "{unknown:?}");
+    }
+
+    #[test]
+    fn a_syntax_error_keeps_serdes_line_and_column() {
+        let text = pretty(&flow()).replacen("\"name\": ", "\"name\" ", 1);
+        let checked = check(&text);
+        assert_eq!(checked.flow, None);
+        assert_eq!(checked.errors.len(), 1);
+        let message = &checked.errors[0];
+        assert!(
+            message.starts_with("Invalid Flow JSON: expected `:`"),
+            "{message}"
+        );
+        assert!(message.contains("at line 3 column"), "{message}");
     }
 
     #[test]

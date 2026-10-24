@@ -792,6 +792,13 @@ impl Render for FlowsView {
                 if event.keystroke.key == "escape" {
                     this.escape(window, cx);
                     cx.stop_propagation();
+                } else if event.keystroke.key == "s"
+                    && event.keystroke.modifiers.secondary()
+                    && matches!(this.page, Page::Editor(_))
+                {
+                    // Cmd-S saves, but only inside the Flow editor.
+                    this.save_editor(cx);
+                    cx.stop_propagation();
                 }
             }))
             .child(

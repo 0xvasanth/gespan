@@ -122,7 +122,7 @@ fn new_flow_from_fix_an_issue_saves_a_valid_flow_in_the_active_project(cx: &mut 
 }
 
 #[gpui::test]
-fn an_unknown_target_in_the_json_shows_the_error_and_disables_save(cx: &mut TestAppContext) {
+fn an_unknown_target_in_the_json_shows_the_error_and_save_refuses(cx: &mut TestAppContext) {
     let window = setup(cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
     let saved = open_with(window, visual, &fix_an_issue("f1", "/work/rebase"));
@@ -148,7 +148,16 @@ fn an_unknown_target_in_the_json_shows_the_error_and_disables_save(cx: &mut Test
     assert!(visual.debug_bounds("flow-editor-error-0").is_some());
     click(visual, "flow-editor-save");
     let stored = with_store(window, visual, |store| store.list().unwrap());
-    assert_eq!(stored, vec![saved.clone()], "Save did nothing");
+    assert_eq!(stored, vec![saved.clone()], "Save stored nothing");
+    view.read_with(visual, |view, _| {
+        let count = view.editor_errors().len();
+        assert!(count > 1, "the bad target also strands states");
+        assert_eq!(
+            view.error(),
+            Some(format!("Fix {count} problems before saving").as_str())
+        );
+        assert_eq!(view.page_name(), "editor");
+    });
 
     // Fixing the target and renaming enables Save, which writes the Flow.
     set_text(
@@ -168,7 +177,7 @@ fn an_unknown_target_in_the_json_shows_the_error_and_disables_save(cx: &mut Test
 }
 
 #[gpui::test]
-fn a_fractional_max_visits_is_an_error_that_disables_save(cx: &mut TestAppContext) {
+fn a_fractional_max_visits_is_an_error_that_save_refuses(cx: &mut TestAppContext) {
     let window = setup(cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
     let saved = open_with(window, visual, &fix_an_issue("f1", "/work/rebase"));
@@ -192,6 +201,139 @@ fn a_fractional_max_visits_is_an_error_that_disables_save(cx: &mut TestAppContex
         with_store(window, visual, |store| store.list().unwrap()),
         vec![saved]
     );
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.error(), Some("Fix 1 problem before saving"))
+    });
+}
+
+#[gpui::test]
+fn a_misspelled_key_blocks_save_and_several_problems_are_counted(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let saved = open_with(window, visual, &fix_an_issue("f1", "/work/rebase"));
+    click(visual, "flow-edit-f1");
+    let view = view(window, visual);
+    let input = view.read_with(visual, |view, _| view.editor_input().unwrap());
+    let text = input.read_with(visual, |input, _| input.content.to_string());
+    let typo = text.replacen("\"maxVisits\"", "\"maxVisit\": 5,\n      \"maxVisits\"", 1);
+    set_text(input.clone(), &typo, visual);
+    click(visual, "flow-editor-save");
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.error(), Some("Fix 1 problem before saving"));
+        assert!(view.editor_errors()[0].starts_with("Unknown field \"maxVisit\" in state "));
+    });
+    assert_eq!(
+        with_store(window, visual, |store| store.list().unwrap()),
+        vec![saved]
+    );
+    // A second problem is counted in the plural.
+    set_text(
+        input,
+        &typo.replacen("\"name\"", "\"nmae\": 1,\n  \"name\"", 1),
+        visual,
+    );
+    click(visual, "flow-editor-save");
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.error(), Some("Fix 2 problems before saving"))
+    });
+}
+
+/// Focuses the editor's input and presses the platform's save chord.
+fn press_save_chord(
+    window: WindowHandle<Shell>,
+    input: &Entity<crate::input::Input>,
+    visual: &mut VisualTestContext,
+) {
+    window
+        .update(visual, |_, window, cx| {
+            window.focus(&gpui::Focusable::focus_handle(input.read(cx), cx), cx)
+        })
+        .unwrap();
+    visual.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-s"
+    } else {
+        "ctrl-s"
+    });
+    visual.run_until_parked();
+}
+
+#[gpui::test]
+fn cmd_s_saves_a_valid_edit_and_reopens_it_pretty_printed(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    open_with(window, visual, &fix_an_issue("f1", "/work/rebase"));
+    click(visual, "flow-edit-f1");
+    let view = view(window, visual);
+    let input = view.read_with(visual, |view, _| view.editor_input().unwrap());
+    let text = input.read_with(visual, |input, _| input.content.to_string());
+    let mut edited: serde_json::Value = serde_json::from_str(&text).unwrap();
+    edited["name"] = "Compact".into();
+    let compact = serde_json::to_string(&edited).unwrap();
+    assert!(!compact.contains('\n'));
+    set_text(input.clone(), &compact, visual);
+    view.read_with(visual, |view, _| assert!(view.editor_can_save()));
+
+    press_save_chord(window, &input, visual);
+
+    let stored = with_store(window, visual, |store| store.list().unwrap());
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].name, "Compact");
+    let input = view.read_with(visual, |view, _| view.editor_input().unwrap());
+    let text = input.read_with(visual, |input, _| input.content.to_string());
+    assert_eq!(text, serde_json::to_string_pretty(&stored[0]).unwrap());
+    assert!(text.contains("\n  \"name\": \"Compact\""), "2-space indent");
+    view.read_with(visual, |view, _| {
+        assert!(!view.editor_can_save(), "clean again");
+        assert_eq!(view.error(), None);
+    });
+}
+
+#[gpui::test]
+fn cmd_s_on_an_invalid_edit_refuses_with_the_banner(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let saved = open_with(window, visual, &fix_an_issue("f1", "/work/rebase"));
+    click(visual, "flow-edit-f1");
+    let view = view(window, visual);
+    let input = view.read_with(visual, |view, _| view.editor_input().unwrap());
+    let text = input.read_with(visual, |input, _| input.content.to_string());
+    set_text(
+        input.clone(),
+        &text.replacen("\"to\": \"implement\"", "\"to\": \"nowhere\"", 1),
+        visual,
+    );
+    press_save_chord(window, &input, visual);
+    assert_eq!(
+        with_store(window, visual, |store| store.list().unwrap()),
+        vec![saved]
+    );
+    view.read_with(visual, |view, _| {
+        let count = view.editor_errors().len();
+        assert_eq!(
+            view.error(),
+            Some(format!("Fix {count} problems before saving").as_str())
+        )
+    });
+}
+
+#[gpui::test]
+fn cmd_s_with_nothing_to_save_changes_nothing(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let saved = open_with(window, visual, &fix_an_issue("f1", "/work/rebase"));
+    click(visual, "flow-edit-f1");
+    let view = view(window, visual);
+    let input = view.read_with(visual, |view, _| view.editor_input().unwrap());
+    let before = input.read_with(visual, |input, _| input.content.to_string());
+    press_save_chord(window, &input, visual);
+    let stored = with_store(window, visual, |store| store.list().unwrap());
+    assert_eq!(stored, vec![saved], "updated_at was not bumped");
+    let after = input.read_with(visual, |input, _| input.content.to_string());
+    assert_eq!(after, before);
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.page_name(), "editor");
+        assert_eq!(view.error(), None);
+    });
 }
 
 #[gpui::test]
