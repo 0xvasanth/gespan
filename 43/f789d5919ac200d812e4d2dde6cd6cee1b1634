@@ -1,0 +1,44 @@
+crates/rebase-gpui/assets/hugeicons/calendar-03.svg
+  s_0de52fe47ecaaa::t_f53e9cf3b989c3 1
+crates/rebase-gpui/src/assets.rs
+  s_0de52fe47ecaaa::t_d1b5a7d10df1d7 78-82
+crates/rebase-gpui/src/board/style.rs
+  s_0de52fe47ecaaa::t_13436eb5125262 43-46,79-83,118-141
+  s_0de52fe47ecaaa::t_3adf17574ae536 1-42,47-78,84-104
+  s_0de52fe47ecaaa::t_d1b5a7d10df1d7 105-117,142-158
+crates/rebase-gpui/assets/hugeicons/link-01.svg
+  s_0de52fe47ecaaa::t_f53e9cf3b989c3 1
+crates/rebase-gpui/src/board/tests.rs
+  s_0de52fe47ecaaa::t_d1b5a7d10df1d7 762-799
+crates/rebase-gpui/assets/hugeicons/tag-01.svg
+  s_0de52fe47ecaaa::t_f53e9cf3b989c3 1
+crates/rebase-gpui/src/board.rs
+  s_0de52fe47ecaaa::t_d1b5a7d10df1d7 9
+crates/rebase-gpui/src/board/card.rs
+  s_0de52fe47ecaaa::t_13436eb5125262 123-127,167-170
+  s_0de52fe47ecaaa::t_09b0267c1bb6b3 1-7,20-26,30-31,34,43-57,82,114-122,128-129,133-153,155-166,171-186,193-213,216
+crates/rebase-core/src/board/extras.rs
+  s_0de52fe47ecaaa::t_13436eb5125262 129,131-136
+crates/rebase-gpui/assets/hugeicons/check-list.svg
+  s_0de52fe47ecaaa::t_f53e9cf3b989c3 1
+crates/rebase-gpui/src/board/column.rs
+  s_0de52fe47ecaaa::t_13436eb5125262 19,76,131,133-134,177
+crates/rebase-gpui/assets/hugeicons/flag-02.svg
+  s_0de52fe47ecaaa::t_f53e9cf3b989c3 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "43f789d5919ac200d812e4d2dde6cd6cee1b1634",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
