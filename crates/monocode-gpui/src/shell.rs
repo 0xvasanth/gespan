@@ -32,6 +32,7 @@ mod session_folders;
 mod session_groups;
 mod session_loading;
 mod session_preview;
+mod session_shortcuts;
 mod settings;
 mod shortcuts;
 mod sidebar_list;
@@ -86,6 +87,7 @@ actions!(
         OpenProject,
         CloseTab,
         CloseAllTabs,
+        ArchiveSession,
         VisitBack,
         VisitForward,
         DismissMenu,
@@ -199,6 +201,11 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-,"), OpenSettings, context),
         KeyBinding::new(&format!("{modifier}-w"), CloseTab, context),
         KeyBinding::new(&format!("{modifier}-shift-w"), CloseAllTabs, context),
+        KeyBinding::new(
+            &format!("{modifier}-shift-a"),
+            ArchiveSession,
+            Some("Session > (Composer || TranscriptSelection) && !CodeEditor && !Completion && !PopoverMenu && !Prompt"),
+        ),
         KeyBinding::new(&format!("{modifier}-["), VisitBack, context),
         KeyBinding::new(&format!("{modifier}-]"), VisitForward, context),
         KeyBinding::new("escape", DismissMenu, context),
@@ -584,6 +591,7 @@ pub(crate) struct Shell {
     quick: crate::quick_composer::Controller,
     unseen_finished: HashSet<i64>,
     archiving: HashSet<i64>,
+    archive_shortcut_held: bool,
     /// Editors offered by a project's "Open in editor"; `None` while scanning.
     external_editors: Option<Vec<monocode_core::external_editor::ExternalEditor>>,
     groups: HashMap<String, monocode_core::session_groups::Groups>,
@@ -929,6 +937,7 @@ impl Shell {
             quick: Default::default(),
             unseen_finished: HashSet::new(),
             archiving: HashSet::new(),
+            archive_shortcut_held: false,
             external_editors: None,
             groups: sidebar_metadata.groups,
             reminders: sidebar_metadata.reminders,
@@ -7934,6 +7943,10 @@ impl Render for Shell {
             .aria_label("Monocode Native")
             .key_context("Workspace")
             .track_focus(&self.focus)
+            .capture_key_up(cx.listener(|this, _, _, _| this.archive_shortcut_held = false))
+            .on_action(cx.listener(|this, _: &ArchiveSession, window, cx| {
+                this.archive_active_session(window, cx)
+            }))
             .on_action(
                 cx.listener(|this, open: &crate::image_lightbox::Open, window, cx| {
                     let view = cx.new(|cx| {

@@ -300,6 +300,13 @@ impl Conversation {
             self.draft_hint
         }
     }
+    pub(crate) fn archive_shortcut_blocked(&self, cx: &gpui::App) -> bool {
+        self.menu.is_some()
+            || self.response_menu.is_some()
+            || self.git_picker.is_some()
+            || self.needs_approval()
+            || self.input.read(cx).is_composing()
+    }
     pub(crate) fn needs_approval(&self) -> bool {
         !self.approvals.is_empty() || !self.questions.is_empty()
     }

@@ -15,6 +15,7 @@ impl Conversation {
         }
         div()
             .id(id)
+            .key_context("Session")
             .relative()
             .child(self.completion.read(cx).container_probe())
             .on_drag_move::<ExternalPaths>(cx.listener(
