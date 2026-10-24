@@ -1528,6 +1528,30 @@ describe("clarifying questions", () => {
 });
 
 describe("subagent steps", () => {
+  it("keeps a resumption's name through a title update when its origin is unknown", () => {
+    let session = applyHarnessEvent(newSession("claude", "/tmp"), {
+      type: "tool.started",
+      callId: "send",
+      kind: "agent",
+      title: "Send follow-up",
+    });
+    session = applyHarnessEvent(session, {
+      type: "agent.run",
+      callId: "send",
+      name: "Resumed · Review auth",
+      agentId: "agent-1",
+    });
+    session = applyHarnessEvent(session, {
+      type: "tool.updated",
+      callId: "send",
+      title: "Send follow-up",
+      kind: "agent",
+      status: "in_progress",
+    });
+    expect(session.blocks[0].agentRun?.resumeOf).toBeUndefined();
+    expect(session.blocks[0].agentRun?.name).toBe("Resumed · Review auth");
+  });
+
   it("keeps model metadata before steps arrive and preserves it through later updates", () => {
     let session = applyHarnessEvent(newSession("codex", "/tmp"), {
       type: "tool.started",

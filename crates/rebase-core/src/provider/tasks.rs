@@ -26,8 +26,11 @@ pub(super) struct Activities {
     /// The user wrote a follow-up after Claude yielded: the next turn answers
     /// them, so it must not lead with a background-wake marker.
     pub(super) user_turn_pending: bool,
-    /// The summary of the background task whose notification may wake Claude.
-    pub(super) wake_summary: Option<String>,
+    /// Summaries of the background tasks whose notifications may wake Claude,
+    /// oldest first: one wake takes one.
+    pub(super) wake_summaries: std::collections::VecDeque<String>,
+    /// The running turn already took its wake summary when it started.
+    pub(super) wake_handled: bool,
 }
 /// Synthetic block ids for work whose parent this session cannot place.
 pub(super) const FALLBACK_PREFIX: &str = "background:";
@@ -536,9 +539,11 @@ impl Protocol {
                         // Claude may wake itself after a background result. The
                         // desktop adapter leaves a 15s window for that follow-up.
                         self.claude_resume_at = Some(Instant::now() + Duration::from_secs(15));
-                        self.activities.wake_summary = text(&value["summary"])
-                            .or_else(|| text(&value["description"]))
-                            .map(str::to_owned);
+                        if let Some(summary) =
+                            text(&value["summary"]).or_else(|| text(&value["description"]))
+                        {
+                            self.activities.wake_summaries.push_back(summary.to_owned());
+                        }
                     }
                 }
                 let terminal = subtype == "task_notification"

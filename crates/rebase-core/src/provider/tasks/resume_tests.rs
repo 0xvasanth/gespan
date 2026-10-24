@@ -585,6 +585,55 @@ fn a_user_follow_up_after_the_notification_is_not_marked_as_a_wake() {
     assert_eq!(markers(&wake), [summary(&frames, SEND)]);
 }
 
+/// Through the first agent's notification (line 195), then a second background
+/// task that finishes right behind it, before Claude wakes for either.
+fn two_close_notifications(p: &mut Protocol, frames: &[Value]) {
+    p.request.settings.agent_runs = persisted_turn_one();
+    p.seed_agent_runs();
+    replay(p, &frames[TURN_ONE..line(196)]);
+    let sid = "afda8336-cc48-4d2b-b8ab-d1ab1dbd059b";
+    replay(
+        p,
+        &[
+            json!({"type":"system","subtype":"task_started","task_id":"bg-2",
+                "description":"Second job","is_backgrounded":true,
+                "task_type":"local_bash","session_id":sid}),
+            json!({"type":"system","subtype":"task_notification","task_id":"bg-2",
+                "status":"completed","summary":"Second job finished","session_id":sid}),
+        ],
+    );
+    assert_eq!(p.activities.wake_summaries.len(), 2);
+}
+fn wake_result() -> Value {
+    json!({"type":"result","subtype":"success","origin":{"kind":"task-notification"}})
+}
+
+#[test]
+fn two_close_wakes_are_marked_with_their_own_summary_in_order() {
+    let frames = frames();
+    let mut p = claude();
+    two_close_notifications(&mut p, &frames);
+    let init = frames[line(197)].clone();
+    let first = replay(&mut p, &[init.clone(), wake_result()]);
+    assert_eq!(markers(&first[0]), [summary(&frames, SEND)]);
+    // The first wake's result must not take the second summary early.
+    assert!(markers(&first[1]).is_empty(), "{:?}", first[1]);
+    let second = replay(&mut p, &[init, wake_result()]);
+    assert_eq!(markers(&second[0]), ["Second job finished"]);
+    assert!(markers(&second[1]).is_empty(), "{:?}", second[1]);
+    assert!(p.activities.wake_summaries.is_empty());
+}
+
+#[test]
+fn two_wakes_whose_starts_went_unseen_are_marked_from_their_results_in_order() {
+    let frames = frames();
+    let mut p = claude();
+    two_close_notifications(&mut p, &frames);
+    let results = replay(&mut p, &[wake_result(), wake_result()]);
+    assert_eq!(markers(&results[0]), [summary(&frames, SEND)]);
+    assert_eq!(markers(&results[1]), ["Second job finished"]);
+}
+
 #[test]
 fn claudes_own_wake_after_a_restart_is_still_marked_when_it_starts() {
     let frames = frames();

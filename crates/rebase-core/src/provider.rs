@@ -426,15 +426,20 @@ impl Protocol {
                 // not read as a reply to the user. Task 3 renders the marker.
                 // A turn the user started gets no marker; the summary stays for
                 // the result-origin fallback should Claude still wake itself.
+                let mut woke = false;
                 if !std::mem::take(&mut self.activities.user_turn_pending) {
-                    if let Some(summary) = self.activities.wake_summary.take() {
+                    if let Some(summary) = self.activities.wake_summaries.pop_front() {
+                        woke = true;
                         if self.claude_resume_at.is_some() {
                             activity_events.push(Self::wake_marker(summary));
                         }
                     }
                 }
+                self.activities.wake_handled = woke;
                 self.claude_result_seen = false;
-                self.claude_resume_at = None;
+                // Another finished task is still queued: its own wake may follow.
+                self.claude_resume_at = (woke && !self.activities.wake_summaries.is_empty())
+                    .then(|| Instant::now() + Duration::from_secs(15));
                 self.text_key = None;
             }
         }
@@ -952,12 +957,18 @@ impl Protocol {
                                 .unwrap_or_else(|| v["errors"].to_string());
                             return Err(self.claude_error(&error, &v));
                         }
-                        // A self-started turn whose start went unseen still gets its marker.
-                        if v["origin"]["kind"] == "task-notification" {
-                            if let Some(summary) = self.activities.wake_summary.take() {
+                        // A self-started turn whose start went unseen still gets its
+                        // marker. When a user follow-up wins the race, the marker is
+                        // emitted from the result, so it trails the wake's text
+                        // rather than leading it.
+                        if v["origin"]["kind"] == "task-notification"
+                            && !self.activities.wake_handled
+                        {
+                            if let Some(summary) = self.activities.wake_summaries.pop_front() {
                                 events.push(Self::wake_marker(summary));
                             }
                         }
+                        self.activities.wake_handled = false;
                         // Some versions omit partial/assistant frames in simple turns.
                         if !self.begun {
                             self.text(

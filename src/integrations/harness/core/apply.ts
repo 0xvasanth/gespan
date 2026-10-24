@@ -1069,7 +1069,10 @@ function upsertTool(
   // continuation carries a name of its own that task descriptions must not
   // replace.
   const agentName =
-    prev.agentRun?.steps.length || prev.agentRun?.resumeOf
+    prev.agentRun?.steps.length ||
+    prev.agentRun?.resumeOf ||
+    prev.agentRun?.agentId ||
+    prev.agentRun?.name.startsWith("Resumed · ")
       ? prev.agentRun.name
       : label;
   if (

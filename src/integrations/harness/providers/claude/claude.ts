@@ -208,7 +208,9 @@ type Live = {
   /** Task ids Claude reported as backgrounded. */
   backgrounded: Set<string>;
   /** The summary of the background task whose notification may wake Claude. */
-  wakeSummary?: string;
+  wakeSummaries: string[];
+  /** The running turn already took its wake summary when it started. */
+  wakeHandled: boolean;
   /**
    * The user wrote a follow-up after Claude yielded: the next turn answers
    * them, so it must not lead with a background-wake marker.
@@ -619,6 +621,8 @@ async function ensureLive(input: HarnessSessionInput): Promise<Live> {
     scope: `${Date.now().toString(16)}${(scopeSequence++).toString(16)}`,
     backgrounded: new Set(),
     userTurnPending: false,
+    wakeSummaries: [],
+    wakeHandled: false,
   };
   liveRef.current = live;
 
@@ -702,6 +706,8 @@ async function runTurn(live: Live, input: SendTurnInput): Promise<void> {
   live.taskNotes = [];
   live.turnResultSeen = false;
   live.userTurnPending = false;
+  live.wakeSummaries = [];
+  live.wakeHandled = false;
 
   const turnPromise = new Promise<void>((resolve, reject) => {
     live.turnDone = resolve;
@@ -1108,15 +1114,17 @@ function handleResult(live: Live, rec: Record<string, unknown>): void {
     live.usageLimit = null;
     return;
   }
-  // A self-started turn whose start went unseen still gets its marker.
+  // A self-started turn whose start went unseen still gets its marker. When a
+  // user follow-up wins the race, the marker is emitted from the result, so it
+  // trails the wake's text rather than leading it.
   if (
     stringField(asRecord(rec.origin), "kind") === "task-notification" &&
-    live.wakeSummary !== undefined
+    !live.wakeHandled
   ) {
-    const text = live.wakeSummary;
-    live.wakeSummary = undefined;
-    emitWakeMarker(live, text);
+    const text = live.wakeSummaries.shift();
+    if (text !== undefined) emitWakeMarker(live, text);
   }
+  live.wakeHandled = false;
   // A /compact result reports the summarizer call's usage, not the rebuilt
   // conversation level. The next real turn will provide the fresh reading.
   if (!live.manualCompaction) {
@@ -1981,7 +1989,8 @@ function noteResumedNotification(
   notice: ClaudeAgentTaskNotification,
 ): void {
   if (live.backgrounded.delete(notice.taskId) && live.turnResultSeen) {
-    live.wakeSummary = notice.summary || notice.description || undefined;
+    const summary = notice.summary || notice.description;
+    if (summary) live.wakeSummaries.push(summary);
   }
   const owner = taskOwner(live, notice.toolUseId, notice.taskId);
   if (!owner || !live.registry.isResume(owner)) return;
@@ -2115,13 +2124,7 @@ function completeAgentTask(
  */
 function finishBackgroundTask(live: Live, taskId: string): void {
   if (!live.backgroundTasks.delete(taskId)) return;
-  if (live.turnResultSeen && live.activeTurn && !live.awaitingResume) {
-    live.awaitingResume = setTimeout(() => {
-      live.awaitingResume = null;
-      maybeFinishTurn(live);
-      syncBackgroundWait(live);
-    }, RESUME_GRACE_MS);
-  }
+  if (live.turnResultSeen && live.activeTurn) armAwaitingResume(live);
   maybeFinishTurn(live);
   syncBackgroundWait(live);
 }
@@ -2139,9 +2142,10 @@ function noteClaudeTurnStarted(live: Live): void {
   let marker: string | undefined;
   const userTurn = live.userTurnPending;
   live.userTurnPending = false;
-  if (!userTurn && live.wakeSummary !== undefined) {
-    const summary = live.wakeSummary;
-    live.wakeSummary = undefined;
+  let woke = false;
+  if (!userTurn && live.wakeSummaries.length > 0) {
+    const summary = live.wakeSummaries.shift();
+    woke = true;
     if (live.awaitingResume) marker = summary;
   }
   live.turnResultSeen = false;
@@ -2162,6 +2166,9 @@ function noteClaudeTurnStarted(live: Live): void {
   }
   live.taskNotes = [];
   clearAwaitingResume(live);
+  live.wakeHandled = woke;
+  // Another finished task is still queued: its own wake may follow this one.
+  if (woke && live.wakeSummaries.length > 0) armAwaitingResume(live);
   syncBackgroundWait(live);
 }
 
@@ -2234,6 +2241,15 @@ function noteTaskNotification(
     (tool && isAgentToolName(tool.name)) || live.agentTasks.has(notice.taskId);
   if (!agent || !live.turnResultSeen) return;
   live.taskNotes.push(notice.summary || "Subagent finished.");
+}
+
+function armAwaitingResume(live: Live): void {
+  if (live.awaitingResume) return;
+  live.awaitingResume = setTimeout(() => {
+    live.awaitingResume = null;
+    maybeFinishTurn(live);
+    syncBackgroundWait(live);
+  }, RESUME_GRACE_MS);
 }
 
 function clearAwaitingResume(live: Live): void {

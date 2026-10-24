@@ -649,6 +649,119 @@ describe("Claude resumed background agents: parity details", () => {
     expect(markers(perLine.flat())).toEqual([NAME]);
   });
 
+  it("marks each of two close wakes with its own summary, in order", async () => {
+    rebind("s2", await persistedTurnOne());
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    // The first agent's notification is line 195; a second background task
+    // finishes right behind it, before Claude wakes for either.
+    feed(events, lines(TURN_ONE + 1, 195));
+    feed(events, [
+      JSON.stringify({
+        type: "system",
+        subtype: "task_started",
+        task_id: "bg-2",
+        description: "Second job",
+        is_backgrounded: true,
+        task_type: "local_bash",
+        session_id: PROVIDER_SESSION,
+      }),
+      JSON.stringify({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "bg-2",
+        status: "completed",
+        summary: "Second job finished",
+        session_id: PROVIDER_SESSION,
+      }),
+    ]);
+    const wakeResult = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      origin: { kind: "task-notification" },
+      session_id: PROVIDER_SESSION,
+    });
+    const first = feed(events, [INIT, wakeResult]);
+    expect(markers(first[0])).toEqual([summary(SEND)]);
+    // The first wake's result must not take the second summary early.
+    expect(markers(first[1])).toEqual([]);
+    const second = feed(events, [INIT, wakeResult]);
+    expect(markers(second[0])).toEqual(["Second job finished"]);
+    expect(markers(second[1])).toEqual([]);
+    await turn;
+    expect(markers(events)).toEqual([summary(SEND), "Second job finished"]);
+  });
+
+  it("marks two wakes whose starts went unseen from their results, in order", async () => {
+    rebind("s2", await persistedTurnOne());
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1, 195));
+    feed(events, [
+      JSON.stringify({
+        type: "system",
+        subtype: "task_started",
+        task_id: "bg-2",
+        description: "Second job",
+        is_backgrounded: true,
+        task_type: "local_bash",
+        session_id: PROVIDER_SESSION,
+      }),
+      JSON.stringify({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "bg-2",
+        status: "completed",
+        summary: "Second job finished",
+        session_id: PROVIDER_SESSION,
+      }),
+    ]);
+    const wakeResult = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      origin: { kind: "task-notification" },
+      session_id: PROVIDER_SESSION,
+    });
+    const results = feed(events, [wakeResult, wakeResult]);
+    expect(markers(results[0])).toEqual([summary(SEND)]);
+    expect(markers(results[1])).toEqual(["Second job finished"]);
+    // No wake started, so the turn waits out its grace; stopping settles it.
+    await stopClaudeSession("s2");
+    await turn.catch(() => undefined);
+  });
+
+  it("does not carry a summary left by one turn into a later turn", async () => {
+    rebind("s2", await persistedTurnOne());
+    const events: HarnessEvent[] = [];
+    const { turn } = await openTurn("s2", events);
+    feed(events, lines(TURN_ONE + 1, 195));
+    // The user's follow-up wins the race and leaves the summary unused.
+    await steerClaudeTurn({
+      sessionId: "s2",
+      cwd: "/repo",
+      model: "claude:claude-sonnet-5",
+      text: "Thanks, what next?",
+    });
+    feed(events, [
+      ...lines(196, 237),
+      JSON.stringify({ type: "result", subtype: "success", session_id: PROVIDER_SESSION }),
+    ]);
+    await turn;
+    // A later turn whose own notification set nothing.
+    const later = await openTurn("s2", events);
+    const out = feed(events, [
+      INIT,
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        origin: { kind: "task-notification" },
+        session_id: PROVIDER_SESSION,
+      }),
+    ]);
+    await later.turn;
+    expect(markers(out.flat())).toEqual([]);
+  });
+
   it("opens no synthetic block for a frame it cannot attach", async () => {
     const events: HarnessEvent[] = [];
     const { turn } = await openTurn("s1", events);
