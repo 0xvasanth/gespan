@@ -47,7 +47,7 @@ Wake is the reference for the model. It links a sub-agent run to its dispatching
   Both apps must load blocks written by the other with or without these fields. No existing field changes meaning. Stored tool output stays raw.
 - **Fixture.** The capture becomes the shared test fixture `tests/fixtures/claude/resumed-background-agent.jsonl`, the 238 stdout frames. Machine-specific absolute paths are replaced with `/tmp/rebase-fixture`. Both parsers' tests replay it.
 - Commits carry no Co-Authored-By trailer and no AI attribution. No local Cubic review. Never stage the user's uncommitted `README.md` edit.
-- Branch: `fix/claude-background-agents`, created from `feat/pilots-flows-board`. It's a stacked PR on #29.
+- Branch: `fix/claude-background-agents`, created from `main`. #29 was merged as 0fb387c7, so this branch sits directly on `main`.
 
 ## Design Decisions
 
@@ -212,4 +212,4 @@ export function parseHandback(text: string): Handback;
   - The report has no hand-back framing.
   - The follow-up turn shows the "Background agent finished" marker.
   - The original session `mc/sql-workflow-state-tracking` still loads.
-- [ ] Push `fix/claude-background-agents` and open a PR stacked on #29, after the user confirms.
+- [ ] Push `fix/claude-background-agents` and open a PR against `main`, after the user confirms.
