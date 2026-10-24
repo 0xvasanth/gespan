@@ -6,6 +6,7 @@ mod column;
 mod detail;
 mod drop;
 mod header;
+pub(crate) mod style;
 #[cfg(test)]
 mod tests;
 pub(crate) mod turns;

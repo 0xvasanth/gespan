@@ -16,7 +16,7 @@ pub(super) fn role_icon(role: Option<&str>) -> AnyElement {
         _ => (content(0.45), 0.),
     };
     let ring = div()
-        .size(px(14.))
+        .size(px(13.))
         .flex_shrink_0()
         .rounded_full()
         .border(px(1.5))
@@ -73,6 +73,7 @@ impl BoardView {
                 .truncate()
                 .text_size(px(13.))
                 .font_weight(FontWeight::MEDIUM)
+                .text_color(content(0.9))
                 .child(column.name.clone())
                 .into_any_element(),
         };
@@ -127,10 +128,10 @@ impl BoardView {
             .max_h_full()
             .flex()
             .flex_col()
-            .rounded(px(8.))
+            .rounded(px(10.))
             .border_1()
-            .border_color(content(0.07))
-            .bg(content(0.025))
+            .border_color(content(0.06))
+            .bg(content(0.02))
             .when(card_target.is_some(), |d| {
                 d.bg(accent_color().opacity(0.06))
                     .border_color(accent_color().opacity(0.38))
@@ -173,7 +174,7 @@ impl BoardView {
                             .id(("board-column-count", index))
                             .debug_selector(move || format!("board-column-count-{index}"))
                             .text_size(px(12.))
-                            .text_color(content(0.45))
+                            .text_color(content(0.4))
                             .child(self.count_label(&column.id, cx)),
                     )
                     .child(div().flex_1())

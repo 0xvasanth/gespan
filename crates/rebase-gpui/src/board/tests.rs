@@ -759,3 +759,41 @@ fn new_task_opens_the_composer_in_the_first_step(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn a_rich_card_shows_its_labels_subtasks_and_due_date_and_a_bare_one_does_not(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded(cx, &["Rich", "Bare"]);
+    let board = detail(&f, cx).board.id.clone();
+    let rich = detail(&f, cx).cards[0].id.clone();
+    let mut service = Service::open(&f.db).unwrap();
+    let bug = service.create_label(&board, "Bug", "e5534b").unwrap();
+    let docs = service.create_label(&board, "Docs", "4da3f5").unwrap();
+    service.set_labels(&rich, &[bug.id, docs.id]).unwrap();
+    service.set_priority(&rich, 3).unwrap();
+    service
+        .set_due(&rich, Some(rebase_core::time::now_ms() as i64))
+        .unwrap();
+    let first = service.add_subtask(&rich, "One").unwrap();
+    service.add_subtask(&rich, "Two").unwrap();
+    service.add_subtask(&rich, "Three").unwrap();
+    service.toggle_subtask(&first.id, true).unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    for part in ["labels", "subtasks", "due", "priority"] {
+        assert!(
+            visual
+                .debug_bounds(selector(format!("board-card-{part}-1")))
+                .is_some(),
+            "rich card lacks {part}"
+        );
+        assert!(
+            visual
+                .debug_bounds(selector(format!("board-card-{part}-2")))
+                .is_none(),
+            "bare card shows {part}"
+        );
+    }
+}

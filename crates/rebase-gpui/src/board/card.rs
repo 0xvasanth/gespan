@@ -1,6 +1,10 @@
-//! One board card: title, fixed-width number, link chip and how long ago it changed.
-//! Cards drag between columns; the "…" menu offers Move to… for keyboards.
-use super::{BoardView, DraggedCard, LinkLabel};
+//! One board card, laid out like gr8r's: label chips, the title, subtask
+//! progress, then a quiet meta row (number, priority, due date, comments, link,
+//! last change). Cards drag between steps; "…" and Enter open Move to….
+use super::{
+    BoardView, DraggedCard, LinkLabel,
+    style::{due_label, label_chip, priority_glyph},
+};
 use crate::theme::*;
 use gpui::{AnyElement, Context, MouseButton, Role, div, prelude::*, px};
 use rebase_core::board::Card;
@@ -13,14 +17,21 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let number = card.number;
+        let extras = self.extras.get(&card.id).cloned().unwrap_or_default();
+        let now = rebase_core::time::now_ms();
+        let labels: Vec<_> = extras
+            .labels
+            .iter()
+            .filter_map(|id| self.labels.iter().find(|label| &label.id == id))
+            .collect();
         let chip = card.link_kind.as_deref().map(|kind| {
             let glyph = if kind == "pilot" { "bot" } else { "chatting" };
             let (text, alpha) = match self.link_label(&card.id) {
-                Some(LinkLabel::Found(title)) => (title, 0.7),
-                _ => ("Linked work no longer exists".to_string(), 0.45),
+                Some(LinkLabel::Found(title)) => (title, 0.65),
+                _ => ("Linked work no longer exists".to_string(), 0.4),
             };
             div()
-                .max_w(px(140.))
+                .max_w(px(120.))
                 .min_w_0()
                 .flex()
                 .items_center()
@@ -29,8 +40,21 @@ impl BoardView {
                 .child(icon(glyph, 11.))
                 .child(div().min_w_0().truncate().child(text))
         });
-        let updated =
-            rebase_core::time::relative(card.updated_at.max(0) as u64, rebase_core::time::now_ms());
+        let due = extras
+            .due_at
+            .and_then(|at| due_label(at, now as i64))
+            .map(|(text, overdue)| {
+                div()
+                    .id(("board-card-due", number as u64))
+                    .debug_selector(move || format!("board-card-due-{number}"))
+                    .flex()
+                    .items_center()
+                    .gap(px(3.))
+                    .when(overdue && !done, |d| d.text_color(diff_foreground(false)))
+                    .child(icon("calendar-03", 11.))
+                    .child(text)
+            });
+        let updated = rebase_core::time::relative(card.updated_at.max(0) as u64, now);
         let anchor = self.card_anchors.get(&card.id).cloned().unwrap_or_default();
         let lifted = self.dragged_card.as_ref() == Some(&card.id);
         let group = format!("board-card-group-{number}");
@@ -55,7 +79,7 @@ impl BoardView {
             .border_1()
             .border_color(content(0.07))
             .bg(pane_fill())
-            .hover(|s| s.border_color(content(0.16)))
+            .hover(|s| s.border_color(content(0.14)))
             .when(lifted, |d| d.opacity(0.35))
             .flex()
             .flex_col()
@@ -87,31 +111,109 @@ impl BoardView {
                 move |this, _, window, cx| this.open_card_detail(id.clone(), window, cx)
             }))
             .child(anchor.probe())
+            .when(!labels.is_empty(), |d| {
+                d.child(
+                    div()
+                        .id(("board-card-labels", number as u64))
+                        .debug_selector(move || format!("board-card-labels-{number}"))
+                        .pr(px(20.))
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(4.))
+                        .children(
+                            labels
+                                .iter()
+                                .map(|label| label_chip(&label.name, &label.color)),
+                        ),
+                )
+            })
             .child(
                 div()
                     .pr(px(20.))
-                    .text_size(px(13.))
-                    .line_height(px(18.))
-                    .line_clamp(2)
-                    .text_ellipsis()
-                    .text_color(content(if done { 0.6 } else { 0.92 }))
-                    .child(card.title.clone()),
+                    .flex()
+                    .items_start()
+                    .gap(px(6.))
+                    .when(done, |d| {
+                        d.child(
+                            div()
+                                .pt(px(2.))
+                                .child(icon("check-circle", 13.).text_color(diff_foreground(true))),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(13.))
+                            .line_height(px(18.))
+                            .line_clamp(2)
+                            .text_ellipsis()
+                            .text_color(content(if done { 0.6 } else { 0.92 }))
+                            .child(card.title.clone()),
+                    ),
             )
+            .when(extras.subtasks_total > 0, |d| {
+                let share = extras.subtasks_done as f32 / extras.subtasks_total as f32;
+                d.child(
+                    div()
+                        .id(("board-card-subtasks", number as u64))
+                        .debug_selector(move || format!("board-card-subtasks-{number}"))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .text_size(px(11.))
+                        .text_color(content(0.5))
+                        .child(icon("check-list", 11.))
+                        .child(format!(
+                            "{}/{}",
+                            extras.subtasks_done, extras.subtasks_total
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .h(px(3.))
+                                .rounded_full()
+                                .bg(content(0.08))
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .w(gpui::relative(share))
+                                        .rounded_full()
+                                        .bg(accent_color()),
+                                ),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(8.))
                     .text_size(px(11.))
-                    .child(
-                        div()
-                            .font_family("Menlo")
-                            .text_color(content(0.45))
-                            .child(format!("#{number}")),
-                    )
+                    .text_color(content(0.45))
+                    .child(div().font_family("Menlo").child(format!("#{number}")))
+                    .when(extras.priority > 0, |d| {
+                        d.child(
+                            div()
+                                .id(("board-card-priority", number as u64))
+                                .debug_selector(move || format!("board-card-priority-{number}"))
+                                .child(priority_glyph(extras.priority)),
+                        )
+                    })
+                    .children(due)
+                    .when(extras.comments > 0, |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(3.))
+                                .child(icon("message-square", 11.))
+                                .child(extras.comments.to_string()),
+                        )
+                    })
                     .children(chip)
                     .child(div().flex_1())
-                    .child(div().text_color(content(0.4)).child(updated)),
+                    .child(div().text_color(content(0.35)).child(updated)),
             )
             .child(
                 div()
