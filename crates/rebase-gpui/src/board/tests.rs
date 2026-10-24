@@ -95,20 +95,20 @@ fn detail(f: &Fixture, cx: &mut impl gpui::AppContext) -> rebase_core::board::Bo
 }
 
 fn with_board(cx: &mut TestAppContext) -> Fixture {
-    let f = open(cx);
-    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
-    click(visual, "board-create");
-    f
+    open(cx)
 }
 
 #[gpui::test]
-fn create_board_shows_four_default_columns_with_their_counts(cx: &mut TestAppContext) {
+fn the_board_opens_with_four_steps_and_no_board_switcher(cx: &mut TestAppContext) {
     let f = with_board(cx);
     let detail = detail(&f, cx);
     let names: Vec<&str> = detail.columns.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, ["Backlog", "In Progress", "Review", "Done"]);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-header").is_some());
+    assert!(visual.debug_bounds("board-switcher").is_none());
+    assert!(visual.debug_bounds("board-new").is_none());
     for index in 0..4 {
         assert!(
             visual
@@ -679,4 +679,83 @@ fn a_focused_card_moves_with_the_keyboard(cx: &mut TestAppContext) {
         .find(|row| row.kind == "moved")
         .expect("a moved row");
     assert_eq!(moved.actor, "user");
+}
+
+fn shown_cards(visual: &mut VisualTestContext, numbers: &[i64]) -> Vec<i64> {
+    visual.refresh().unwrap();
+    numbers
+        .iter()
+        .copied()
+        .filter(|n| {
+            visual
+                .debug_bounds(selector(format!("board-card-{n}")))
+                .is_some()
+        })
+        .collect()
+}
+
+#[gpui::test]
+fn search_narrows_cards_and_finds_a_number(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Alpha", "Beta", "Gamma"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-search");
+    visual.simulate_input("bet");
+    visual.run_until_parked();
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [2]);
+    visual.simulate_keystrokes("backspace backspace backspace");
+    visual.simulate_input("#3");
+    visual.run_until_parked();
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [3]);
+    visual.simulate_keystrokes("backspace backspace");
+    visual.run_until_parked();
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
+}
+
+#[gpui::test]
+fn a_project_filter_shows_tagged_cards_and_clear_restores(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Tagged", "Other", "Third"]);
+    let tagged = detail(&f, cx).cards[0].id.clone();
+    let backlog = detail(&f, cx).columns[0].id.clone();
+    Service::open(&f.db)
+        .unwrap()
+        .set_projects(&tagged, &["/work/a".into()])
+        .unwrap();
+    f.window
+        .update(cx, |view, _, cx| {
+            view.set_projects(vec![("/work/a".into(), "Alpha".into())], cx);
+            view.reload(cx);
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-project-0");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1]);
+    f.window
+        .read_with(visual, |view, cx| {
+            assert_eq!(view.count_label(&backlog, cx), "1/3")
+        })
+        .unwrap();
+    click(visual, "board-filter-clear");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
+    f.window
+        .read_with(visual, |view, cx| {
+            assert_eq!(view.count_label(&backlog, cx), "3")
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn new_task_opens_the_composer_in_the_first_step(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let first = detail(&f, cx).columns[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-new-task");
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(
+                view.composer.as_ref().map(|c| c.column_id.clone()),
+                Some(first)
+            )
+        })
+        .unwrap();
 }

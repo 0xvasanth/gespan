@@ -54,7 +54,7 @@ impl BoardView {
             let mut cards: Vec<_> = detail
                 .cards
                 .iter()
-                .filter(|card| card.column_id == column.id)
+                .filter(|card| card.column_id == column.id && self.card_visible(card, cx))
                 .collect();
             cards.sort_by_key(|card| card.position);
             cards
@@ -174,7 +174,7 @@ impl BoardView {
                             .debug_selector(move || format!("board-column-count-{index}"))
                             .text_size(px(12.))
                             .text_color(content(0.45))
-                            .child(cards.len().to_string()),
+                            .child(self.count_label(&column.id, cx)),
                     )
                     .child(div().flex_1())
                     .child(
@@ -226,8 +226,8 @@ impl BoardView {
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
                                     })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.open_column_menu(menu_id.clone(), cx)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_column_menu(menu_id.clone(), window, cx)
                                     })),
                             ),
                     ),

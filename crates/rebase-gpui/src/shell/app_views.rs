@@ -278,7 +278,30 @@ impl Shell {
         }
         self.show_app_view(AppView::Board, window, cx);
         if let Some(board) = &self.board {
-            board.update(cx, |board, cx| board.shown(cx));
+            let projects = self
+                .workspace
+                .projects
+                .iter()
+                .map(|path| {
+                    let name = self
+                        .workspace
+                        .project_appearance
+                        .get(path)
+                        .map(|appearance| appearance.name.trim().to_string())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| {
+                            std::path::Path::new(path)
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| path.clone())
+                        });
+                    (path.clone(), name)
+                })
+                .collect();
+            board.update(cx, |board, cx| {
+                board.set_projects(projects, cx);
+                board.shown(cx);
+            });
         }
     }
 

@@ -5,6 +5,7 @@ mod card;
 mod column;
 mod detail;
 mod drop;
+mod header;
 #[cfg(test)]
 mod tests;
 pub(crate) mod turns;
@@ -19,11 +20,17 @@ use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, Role,
     SharedString, Subscription, Task, Window, div, prelude::*, px,
 };
-use rebase_core::board::{Board, BoardDetail, Service};
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use rebase_core::board::{
+    BoardDetail, Service,
+    extras::{CardExtras, Label},
+};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::PathBuf,
+    time::Duration,
+};
 
 const POLL: Duration = Duration::from_secs(2);
-const OPEN_BOARD_SETTING: &str = "native-board-open";
 pub(crate) const ROLES: [(&str, &str); 4] = [
     ("todo", "To do"),
     ("doing", "Doing"),
@@ -50,7 +57,6 @@ pub(crate) struct Composer {
 }
 
 enum Menu {
-    Switcher,
     Column { column_id: String, roles: bool },
 }
 
@@ -77,8 +83,21 @@ pub(crate) struct DraggedColumn {
 }
 
 enum Renaming {
-    Board(String),
     Column(String),
+}
+
+/// What the header's Filter narrows the board to. Empty sets match everything.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Filter {
+    pub projects: BTreeSet<String>,
+    pub labels: BTreeSet<String>,
+    pub priorities: BTreeSet<u8>,
+}
+
+impl Filter {
+    pub(crate) fn len(&self) -> usize {
+        self.projects.len() + self.labels.len() + self.priorities.len()
+    }
 }
 
 pub(crate) struct BoardView {
@@ -87,7 +106,6 @@ pub(crate) struct BoardView {
     service: Option<Service>,
     focus: FocusHandle,
     visible: bool,
-    pub(crate) boards: Vec<Board>,
     pub(crate) open_board_id: Option<String>,
     pub(crate) detail: Option<BoardDetail>,
     pub(crate) dragging: bool,
@@ -98,7 +116,14 @@ pub(crate) struct BoardView {
     pub(crate) card_detail: Option<detail::CardDetail>,
     menu: Option<Menu>,
     renaming: Option<(Renaming, Entity<Input>)>,
-    switcher_anchor: AnchorSlot,
+    filter_anchor: AnchorSlot,
+    pub(crate) extras: HashMap<String, CardExtras>,
+    pub(crate) labels: Vec<Label>,
+    /// Workspace projects as (path, name), for tagging and filtering.
+    projects: Vec<(String, String)>,
+    search: Entity<Input>,
+    pub(crate) filter: Filter,
+    filter_open: bool,
     column_anchors: HashMap<String, AnchorSlot>,
     card_anchors: HashMap<String, AnchorSlot>,
     dragged_card: Option<String>,
@@ -136,6 +161,8 @@ impl BoardView {
                 }
             }
         });
+        let search = cx.new(|cx| Input::field("Search tasks", "Search tasks", content(0.4), cx));
+        let searching = cx.observe(&search, |_, _, cx| cx.notify());
         let activation = cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() && this.visible {
                 this.reload(cx);
@@ -147,7 +174,6 @@ impl BoardView {
             service: None,
             focus: cx.focus_handle(),
             visible: false,
-            boards: Vec::new(),
             open_board_id: None,
             detail: None,
             dragging: false,
@@ -158,7 +184,13 @@ impl BoardView {
             card_detail: None,
             menu: None,
             renaming: None,
-            switcher_anchor: AnchorSlot::default(),
+            filter_anchor: AnchorSlot::default(),
+            extras: HashMap::new(),
+            labels: Vec::new(),
+            projects: Vec::new(),
+            search,
+            filter: Filter::default(),
+            filter_open: false,
             column_anchors: HashMap::new(),
             card_anchors: HashMap::new(),
             dragged_card: None,
@@ -168,7 +200,7 @@ impl BoardView {
             column_drop: None,
             error: None,
             _poll: poll,
-            _subscriptions: vec![activation],
+            _subscriptions: vec![activation, searching],
         }
     }
 
@@ -199,6 +231,7 @@ impl BoardView {
         self.composer = None;
         self.menu = None;
         self.renaming = None;
+        self.filter_open = false;
         cx.notify();
     }
 
@@ -252,35 +285,18 @@ impl BoardView {
     }
 
     fn load(&mut self, cx: &App) -> Result<(), String> {
-        let wanted = self
-            .open_board_id
-            .clone()
-            .or_else(|| self.remembered_board());
         let service = self.service()?;
-        let boards = service.list()?;
-        let open = wanted
-            .filter(|id| boards.iter().any(|board| &board.id == id))
-            .or_else(|| boards.first().map(|board| board.id.clone()));
-        let detail = match &open {
-            Some(id) => Some(service.get(id)?),
-            None => None,
-        };
+        let board = service.default_board()?;
+        let detail = service.get(&board.id)?;
+        let extras = service.extras(&board.id)?;
+        let labels = service.labels(&board.id)?;
         self.last_data_version = service.data_version()?;
-        self.boards = boards;
-        self.open_board_id = open;
-        self.detail = detail;
+        self.open_board_id = Some(board.id);
+        self.detail = Some(detail);
+        self.extras = extras;
+        self.labels = labels;
         self.links = self.resolve_links(cx);
         Ok(())
-    }
-
-    fn remembered_board(&self) -> Option<String> {
-        locked(&self.store).ok()?.setting(OPEN_BOARD_SETTING).ok()?
-    }
-
-    fn remember_board(&self) {
-        if let (Some(id), Ok(store)) = (&self.open_board_id, locked(&self.store)) {
-            let _ = store.save_setting(OPEN_BOARD_SETTING, id);
-        }
     }
 
     fn resolve_links(&self, cx: &App) -> HashMap<String, LinkLabel> {
@@ -344,49 +360,6 @@ impl BoardView {
             Err(error) => self.error = Some(error),
         }
         self.reload(cx);
-    }
-
-    fn create_board(&mut self, cx: &mut Context<Self>) {
-        match self.service().and_then(|service| service.create("Board")) {
-            Ok(board) => {
-                self.open_board_id = Some(board.id);
-                self.remember_board();
-                self.error = None;
-            }
-            Err(error) => self.error = Some(error),
-        }
-        self.reload(cx);
-    }
-
-    fn open_board(&mut self, board_id: String, cx: &mut Context<Self>) {
-        self.open_board_id = Some(board_id);
-        self.remember_board();
-        self.menu = None;
-        self.composer = None;
-        self.reload(cx);
-    }
-
-    fn delete_board(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(board) = self.detail.as_ref().map(|detail| detail.board.clone()) else {
-            return;
-        };
-        self.menu = None;
-        let answer = window.prompt(
-            gpui::PromptLevel::Warning,
-            &format!("Delete “{}”?", board.name),
-            Some("Its columns, cards and activity are removed."),
-            &["Delete", "Cancel"],
-            cx,
-        );
-        cx.spawn(async move |this, cx| {
-            if answer.await == Ok(0) {
-                let _ = this.update(cx, |this, cx| {
-                    this.open_board_id = None;
-                    this.write(cx, |service| service.delete(&board.id));
-                });
-            }
-        })
-        .detach();
     }
 
     fn add_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -469,7 +442,6 @@ impl BoardView {
             return;
         }
         match target {
-            Renaming::Board(id) => self.write(cx, |service| service.rename(&id, &name)),
             Renaming::Column(id) => {
                 let role = self.column(&id).and_then(|column| column.role.clone());
                 self.write(cx, |service| {
@@ -495,7 +467,9 @@ impl BoardView {
         self.write(cx, |service| service.column_delete(&column_id));
     }
 
-    fn open_column_menu(&mut self, column_id: String, cx: &mut Context<Self>) {
+    /// Menus take the board's focus so Escape closes them wherever focus was.
+    fn open_column_menu(&mut self, column_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus, cx);
         self.menu = Some(Menu::Column {
             column_id,
             roles: false,
@@ -555,7 +529,7 @@ impl BoardView {
         let mut cards: Vec<_> = detail
             .cards
             .iter()
-            .filter(|card| card.column_id == column_id)
+            .filter(|card| card.column_id == column_id && self.card_visible(card, cx))
             .collect();
         cards.sort_by_key(|card| card.position);
         let measured: Vec<_> = cards
@@ -572,9 +546,33 @@ impl BoardView {
         }
     }
 
+    /// A slot among the cards on screen, as a slot in the whole column: before
+    /// the visible card it points at, or after the last visible one.
+    fn full_slot(&self, column_id: &str, slot: usize, cx: &App) -> usize {
+        let Some(detail) = &self.detail else {
+            return slot;
+        };
+        let mut cards: Vec<_> = detail
+            .cards
+            .iter()
+            .filter(|card| card.column_id == column_id)
+            .collect();
+        cards.sort_by_key(|card| card.position);
+        let visible: Vec<usize> = cards
+            .iter()
+            .enumerate()
+            .filter(|(_, card)| self.card_visible(card, cx))
+            .map(|(index, _)| index)
+            .collect();
+        match visible.get(slot) {
+            Some(&index) => index,
+            None => visible.last().map_or(cards.len(), |&last| last + 1),
+        }
+    }
+
     fn drop_card(&mut self, card: &DraggedCard, column_id: &str, cx: &mut Context<Self>) {
         let slot = match &self.drop_target {
-            Some((target, slot)) if target == column_id => *slot,
+            Some((target, slot)) if target == column_id => self.full_slot(column_id, *slot, cx),
             _ => self.detail.as_ref().map_or(0, |d| {
                 d.cards.iter().filter(|c| c.column_id == column_id).count()
             }),
@@ -704,6 +702,7 @@ impl BoardView {
         }
         cx.stop_propagation();
         if self.composer.take().is_some()
+            || std::mem::take(&mut self.filter_open)
             || self.close_card_detail(cx)
             || self.renaming.take().is_some()
             || self.menu.take().is_some()
@@ -714,81 +713,10 @@ impl BoardView {
         }
     }
 
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let name: SharedString = self
-            .detail
-            .as_ref()
-            .map(|detail| detail.board.name.clone())
-            .unwrap_or_default()
-            .into();
-        let board_rename = match &self.renaming {
-            Some((Renaming::Board(_), input)) => Some(input.clone()),
-            _ => None,
-        };
-        div()
-            .h(px(PANE_HEADER_HEIGHT))
-            .flex_shrink_0()
-            .px_4()
-            .flex()
-            .items_center()
-            .gap_2()
-            .border_b_1()
-            .border_color(content(0.07))
-            .child(match board_rename {
-                Some(input) => div().w(px(220.)).child(input).into_any_element(),
-                None => div()
-                    .id("board-switcher")
-                    .debug_selector(|| "board-switcher".into())
-                    .relative()
-                    .role(Role::Button)
-                    .aria_label("Switch board")
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(content(0.06)))
-                    .child(self.switcher_anchor.probe())
-                    .child(icon("kanban", 14.).text_color(content(0.6)))
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(name),
-                    )
-                    .child(icon("chevron-down", 12.).text_color(content(0.45)))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.menu = Some(Menu::Switcher);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            })
-            .child(div().flex_1())
-            .child(
-                div()
-                    .id("board-new")
-                    .debug_selector(|| "board-new".into())
-                    .role(Role::Button)
-                    .aria_label("New board")
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .text_size(px(12.))
-                    .text_color(content(0.7))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(content(0.06)))
-                    .child("New board")
-                    .on_click(cx.listener(|this, _, _, cx| this.create_board(cx))),
-            )
-    }
-
     fn render_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let menu = self.menu.as_ref()?;
         let weak = cx.weak_entity();
         let (id, anchor) = match menu {
-            Menu::Switcher => ("board-switcher-menu", self.switcher_anchor.clone()),
             Menu::Column { column_id, .. } => (
                 "board-column-menu",
                 self.column_anchors
@@ -798,7 +726,6 @@ impl BoardView {
             ),
         };
         let list = match menu {
-            Menu::Switcher => self.switcher_items(cx),
             Menu::Column {
                 column_id,
                 roles: true,
@@ -817,43 +744,6 @@ impl BoardView {
                 .child(div().p(px(4.)).flex().flex_col().children(list))
                 .into_any_element(),
         )
-    }
-
-    fn switcher_items(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let mut items: Vec<AnyElement> = self
-            .boards
-            .iter()
-            .map(|board| {
-                let id = board.id.clone();
-                let open = self.open_board_id.as_ref() == Some(&board.id);
-                menu_row(
-                    format!("board-pick-{}", board.id).into(),
-                    board.name.clone(),
-                )
-                .when(open, |d| d.bg(content(0.06)))
-                .on_click(cx.listener(move |this, _, _, cx| this.open_board(id.clone(), cx)))
-                .into_any_element()
-            })
-            .collect();
-        if let Some(detail) = &self.detail {
-            let name = detail.board.name.clone();
-            let board_id = detail.board.id.clone();
-            items.push(div().h(px(1.)).my_1().bg(content(0.07)).into_any_element());
-            items.push(
-                menu_row("board-rename".into(), "Rename board")
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.start_rename(Renaming::Board(board_id.clone()), &name, window, cx)
-                    }))
-                    .into_any_element(),
-            );
-            items.push(
-                menu_row("board-delete".into(), "Delete board")
-                    .text_color(diff_foreground(false))
-                    .on_click(cx.listener(|this, _, window, cx| this.delete_board(window, cx)))
-                    .into_any_element(),
-            );
-        }
-        items
     }
 
     fn role_items(&self, column_id: String, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -1034,39 +924,7 @@ impl gpui::Render for BoardView {
                 .child(error)
         });
         let Some(detail) = self.detail.clone() else {
-            return root.child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .text_color(content(0.5))
-                            .child("No boards yet"),
-                    )
-                    .child(
-                        div()
-                            .id("board-create")
-                            .debug_selector(|| "board-create".into())
-                            .role(Role::Button)
-                            .aria_label("Create board")
-                            .px_3()
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(content(0.1))
-                            .text_size(px(12.))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(content(0.06)))
-                            .child("Create board")
-                            .on_click(cx.listener(|this, _, _, cx| this.create_board(cx))),
-                    )
-                    .children(error),
-            );
+            return root.child(self.render_header(cx)).children(error);
         };
         for column in &detail.columns {
             self.column_anchors.entry(column.id.clone()).or_default();
@@ -1093,6 +951,7 @@ impl gpui::Render for BoardView {
             crate::popover::menu_popover(&open.menu, Anchor::Slot(anchor), cx)
         });
         let card_detail = self.render_card_detail(cx);
+        let filter = self.render_filter(cx);
         root.child(self.render_header(cx))
             .children(error)
             .child(
@@ -1117,6 +976,7 @@ impl gpui::Render for BoardView {
                     ),
             )
             .children(card_detail)
+            .children(filter)
             .children(menu)
             .children(card_menu)
     }
