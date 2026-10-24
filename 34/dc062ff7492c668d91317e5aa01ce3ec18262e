@@ -1,0 +1,36 @@
+crates/rebase-core/src/desktop_preferences.rs
+  s_0de52fe47ecaaa::t_32537ad3444e6e 606-608,611
+src/features/board/ui/BoardView.test.ts
+  s_0de52fe47ecaaa::t_31cb4c64d1479b 801,821-828,830,838
+crates/rebase-gpui/src/settings/model.rs
+  s_0de52fe47ecaaa::t_32537ad3444e6e 593-594
+src/features/settings/model/settings.ts
+  s_0de52fe47ecaaa::t_fb6ec00bad3f54 870
+src/features/settings/model/settings.flags.test.ts
+  s_0de52fe47ecaaa::t_b98afb7a091fe3 67
+  s_0de52fe47ecaaa::t_32537ad3444e6e 206-207,211
+crates/rebase-core/tests/shared_contracts.rs
+  s_0de52fe47ecaaa::t_32537ad3444e6e 435
+crates/rebase-gpui/src/settings/preferences.rs
+  s_0de52fe47ecaaa::t_fb6ec00bad3f54 107
+crates/rebase-core/src/desktop_preferences/workspace_preferences.rs
+  s_0de52fe47ecaaa::t_fb6ec00bad3f54 33
+src/features/settings/ui/SettingsView.test.ts
+  s_0de52fe47ecaaa::t_32537ad3444e6e 692,699,703-705
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34dc062ff7492c668d91317e5aa01ce3ec18262e",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

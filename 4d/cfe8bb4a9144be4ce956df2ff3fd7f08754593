@@ -1,0 +1,39 @@
+crates/rebase-gpui/src/input.rs
+  s_0de52fe47ecaaa::t_b7703ad6b3595d 414-417
+  s_0de52fe47ecaaa::t_444e66227cafde 410-413
+crates/rebase-gpui/src/board/tests.rs
+  s_0de52fe47ecaaa::t_3e87cb2db40780 1173,1177-1178,1180-1182
+  s_0de52fe47ecaaa::t_a357ee9b347cc0 1174
+  s_0de52fe47ecaaa::t_e52a0007b3abd0 1120-1172,1175-1176,1179,1183-1275,1278-1343
+  s_0de52fe47ecaaa::t_ad885daece12bd 1276-1277
+crates/rebase-gpui/src/board.rs
+  s_0de52fe47ecaaa::t_444e66227cafde 398-401,403
+  s_0de52fe47ecaaa::t_49f1c8109c29f0 490
+crates/rebase-gpui/src/board/detail.rs
+  s_0de52fe47ecaaa::t_e52a0007b3abd0 5-6
+  s_0de52fe47ecaaa::t_b7703ad6b3595d 72-96
+  s_0de52fe47ecaaa::t_49f1c8109c29f0 465-467,530-532
+  s_0de52fe47ecaaa::t_444e66227cafde 56-57,62-63,147,155,184,189,248-254,256-274,280,285-286,289,296,298-309,313-322,494-503,540,641,779-789,791,798-808
+crates/rebase-gpui/src/board/detail/view.rs
+  s_0de52fe47ecaaa::t_e52a0007b3abd0 22
+  s_0de52fe47ecaaa::t_b7703ad6b3595d 158-163,173-174,737
+  s_0de52fe47ecaaa::t_aea8ea391b8852 21,23-26,546-552
+  s_0de52fe47ecaaa::t_72e498f593dacc 180-184
+  s_0de52fe47ecaaa::t_444e66227cafde 531,542-545,738,757,852,929
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4dcfe8bb4a9144be4ce956df2ff3fd7f08754593",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

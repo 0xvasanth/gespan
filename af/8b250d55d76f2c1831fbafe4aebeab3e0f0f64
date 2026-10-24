@@ -1,0 +1,45 @@
+crates/rebase-gpui/src/board/card.rs
+  s_0de52fe47ecaaa::t_aa0f7effb7a380 1
+  s_0de52fe47ecaaa::t_647f5d3d5a0d8a 72-75
+crates/rebase-gpui/src/board/tests.rs
+  s_0de52fe47ecaaa::t_37603a818cb8d8 543
+  s_0de52fe47ecaaa::t_8a0d3e06f0833e 436,441-458,465-516,525-535,542,544-568
+  s_0de52fe47ecaaa::t_fdbaf699792b20 437-440,459-464,536-541
+  s_0de52fe47ecaaa::t_7bc34903796609 517-524
+  s_0de52fe47ecaaa::t_4317aee514d08a 1
+crates/rebase-gpui/src/shell/app_views.rs
+  s_0de52fe47ecaaa::t_647f5d3d5a0d8a 269-274
+docs/superpowers/plans/2026-10-23-board.md
+  s_0de52fe47ecaaa::t_9926a3489bdcab 29
+crates/rebase-gpui/src/board/turns.rs
+  s_0de52fe47ecaaa::t_647f5d3d5a0d8a 85-101
+crates/rebase-gpui/src/board.rs
+  s_0de52fe47ecaaa::t_647f5d3d5a0d8a 6,36-37,93,150,195,223,241,255,274-278,660,1041,1065
+docs/native/parity.md
+  s_0de52fe47ecaaa::t_46b13750cdc04f 44
+crates/rebase-gpui/src/board/detail.rs
+  s_0de52fe47ecaaa::t_feaf46d284df4e 1-8,11-68,70-155,157-171,177-179,186-191,195-326,335-354,375,382-402,408-481
+  s_0de52fe47ecaaa::t_38805ec864a653 156
+  s_0de52fe47ecaaa::t_4317aee514d08a 9-10,69
+  s_0de52fe47ecaaa::t_fdbaf699792b20 172-176,180-185,192-194,327-334,355-374,376-381,403-407
+docs/native/verification.md
+  s_0de52fe47ecaaa::t_46b13750cdc04f 71-93
+docs/superpowers/plans/2026-10-24-native-board.md
+  s_0de52fe47ecaaa::t_88aab0197d8a6c 26,140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af8b250d55d76f2c1831fbafe4aebeab3e0f0f64",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

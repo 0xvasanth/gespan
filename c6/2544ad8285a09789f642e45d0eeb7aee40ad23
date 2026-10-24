@@ -1,0 +1,30 @@
+crates/rebase-gpui/src/board.rs
+  s_0de52fe47ecaaa::t_381e81429eece5 57-60,107-109,166-167,643-650,652,660-661,663-691,693-698,1076-1078,1087-1094,1121
+  s_0de52fe47ecaaa::t_501efecdd0e7e2 55-56
+crates/rebase-gpui/src/board/card.rs
+  s_0de52fe47ecaaa::t_0991994872e9c0 72-84,136-139
+docs/native/verification.md
+  s_0de52fe47ecaaa::t_6da8c3bdfc0065 88-91
+crates/rebase-gpui/src/board/tests.rs
+  s_0de52fe47ecaaa::t_e45b2c7eedbb63 47
+  s_0de52fe47ecaaa::t_aec7e162b7fa83 386,654-681
+  s_0de52fe47ecaaa::t_dd168d6d295cb8 682
+crates/rebase-gpui/src/board/detail.rs
+  s_0de52fe47ecaaa::t_32cfdebefa6f5f 172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c62544ad8285a09789f642e45d0eeb7aee40ad23",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
