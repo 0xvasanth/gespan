@@ -991,9 +991,7 @@ impl Conversation {
             .update(cx, |v, _| v.identity(&self.summary.provider, &model_label));
         self.begin_turn(cx);
         let generation = self.submission_generation;
-        if !self.is_remote() {
-            crate::board::turns::turn_began(self.store.clone(), self.summary.id, generation, cx);
-        }
+        let board_turn = (!self.is_remote()).then(|| (self.store.clone(), self.summary.id));
         let source_provider = self.summary.provider.clone();
         let source_account = self.settings.account.id.clone();
         self.status = if self.settings.pending_provider_switch.is_some() {
@@ -1103,6 +1101,7 @@ impl Conversation {
             })
             .detach();
         cx.spawn(async move |this, cx| {
+            let mut tracker = crate::board::turns::TurnTracker::default();
             while let Ok(update) = rx.recv().await {
                 let finished = update.finished;
                 if this
@@ -1111,11 +1110,19 @@ impl Conversation {
                             return;
                         }
                         let stopping = this.stopping;
-                        let turn_ok = update.succeeded;
                         // The final update settles accepted rows and storage.
                         // Ignore streaming notifications after the user stops.
                         if stopping && !finished {
                             return;
+                        }
+                        if let Some((store, session)) = &board_turn {
+                            let turn = crate::board::turns::TurnUpdate {
+                                finished,
+                                stopping,
+                                succeeded: update.succeeded,
+                                has_rows: !update.rows.is_empty(),
+                            };
+                            tracker.observe(store, *session, generation, turn, cx);
                         }
                         let source_selected = this.summary.provider == source_provider
                             && this.settings.account.id == source_account;
@@ -1332,16 +1339,6 @@ impl Conversation {
                             this.status = "Waiting for your answer".into();
                         }
                         if finished {
-                            if !this.is_remote() {
-                                crate::board::turns::turn_settled(
-                                    &this.store,
-                                    this.summary.id,
-                                    generation,
-                                    stopping,
-                                    turn_ok,
-                                    cx,
-                                );
-                            }
                             if this.is_remote() {
                                 this.settings.remote_action = None;
                                 this.remote_state.refreshing = false;
@@ -1422,6 +1419,11 @@ impl Conversation {
                 {
                     break;
                 }
+            }
+            // The view closed or a newer turn replaced this one before its
+            // final update: close the Board turn the way a stop does.
+            if let Some((store, session)) = &board_turn {
+                cx.update(|cx| tracker.abandon(store, *session, generation, cx));
             }
         })
         .detach();

@@ -50,7 +50,8 @@ pub(crate) struct Update {
     pub(crate) handoff: Option<Option<rebase_core::agent::Handoff>>,
     pub(crate) status: String,
     /// On the final update: the provider finished the turn without an error.
-    /// Saving its metadata or handoff can still fail and add to `status`.
+    /// It stays true when saving the transcript, metadata or handoff fails
+    /// afterwards: the work itself is done, and `status` reports the save.
     pub(crate) succeeded: bool,
     pub(crate) finished: bool,
 }

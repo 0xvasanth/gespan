@@ -159,6 +159,77 @@ pub(crate) fn turn_settled(
     dispatch(calls, cx);
 }
 
+/// What one runtime update says about a local turn, for the Board.
+pub(crate) struct TurnUpdate {
+    pub finished: bool,
+    /// The user asked the turn to stop.
+    pub stopping: bool,
+    /// The provider finished the turn without an error (final update only).
+    pub succeeded: bool,
+    /// The update carries transcript rows, so the prompt was taken.
+    pub has_rows: bool,
+}
+
+/// One local turn's life on the Board, fed every runtime update the
+/// conversation applies. The Board turn starts on the first update that
+/// shows the prompt was taken, so a rejected preflight never moves a card,
+/// and a view that goes away mid-turn closes its turn like a stop.
+#[derive(Default)]
+pub(crate) struct TurnTracker {
+    began: bool,
+    settled: bool,
+}
+
+impl TurnTracker {
+    pub(crate) fn observe(
+        &mut self,
+        store: &Database,
+        session: i64,
+        turn: u64,
+        update: TurnUpdate,
+        cx: &mut App,
+    ) {
+        if self.settled {
+            return;
+        }
+        if !self.began {
+            // A final update first means nothing ran: the runtime rejected
+            // the prompt, or the user stopped it before it started.
+            if update.finished && (update.stopping || !(update.has_rows || update.succeeded)) {
+                self.settled = true;
+                return;
+            }
+            self.began = true;
+            turn_began(store.clone(), session, turn, cx);
+        }
+        if update.finished {
+            self.settle(store, session, turn, update.stopping, update.succeeded, cx);
+        }
+    }
+
+    /// The conversation stopped reading updates before the final one.
+    pub(crate) fn abandon(&mut self, store: &Database, session: i64, turn: u64, cx: &mut App) {
+        if self.began && !self.settled {
+            self.settle(store, session, turn, true, false, cx);
+        }
+    }
+
+    fn settle(
+        &mut self,
+        store: &Database,
+        session: i64,
+        turn: u64,
+        stopped: bool,
+        ok: bool,
+        cx: &mut App,
+    ) {
+        self.settled = true;
+        let store = store.clone();
+        // Deferred like `turn_began`, so a turn's start is always queued first.
+        cx.defer(move |cx| turn_settled(&store, session, turn, stopped, ok, cx));
+    }
+}
+
 fn dispatch(calls: Vec<LinkedCall>, cx: &mut App) {
     if !calls.is_empty() {
         let _ = cx.global::<BoardTurns>().queue.try_send(calls);
@@ -297,6 +368,75 @@ mod tests {
         cx.update(|cx| turn_started(&s.store, s.session, None, 1, cx));
         cx.run_until_parked();
         assert_eq!(state(&s).0, "Backlog");
+    }
+
+    fn update(finished: bool, succeeded: bool, has_rows: bool) -> TurnUpdate {
+        TurnUpdate {
+            finished,
+            stopping: false,
+            succeeded,
+            has_rows,
+        }
+    }
+
+    fn observe(cx: &mut TestAppContext, s: &Setup, tracker: &mut TurnTracker, turn: TurnUpdate) {
+        cx.update(|cx| tracker.observe(&s.store, s.session, 1, turn, cx));
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn a_prompt_the_runtime_rejects_never_moves_its_card(cx: &mut TestAppContext) {
+        let s = setup(cx, None);
+        let mut tracker = TurnTracker::default();
+        // A rejected preflight's only update is a final one with no rows.
+        observe(cx, &s, &mut tracker, update(true, false, false));
+        assert_eq!(state(&s), ("Backlog".to_string(), Vec::<String>::new()));
+    }
+
+    #[gpui::test]
+    fn a_tracked_turn_starts_on_its_first_update_and_settles_on_its_last(cx: &mut TestAppContext) {
+        let s = setup(cx, None);
+        let mut tracker = TurnTracker::default();
+        observe(cx, &s, &mut tracker, update(false, false, true));
+        assert_eq!(state(&s).0, "In Progress");
+        observe(cx, &s, &mut tracker, update(false, false, true));
+        observe(cx, &s, &mut tracker, update(true, true, true));
+        let (column, kinds) = state(&s);
+        assert_eq!(column, "Review");
+        assert_eq!(kinds, ["completed", "moved", "started", "moved"]);
+    }
+
+    #[gpui::test]
+    fn a_turn_whose_only_update_is_a_failure_starts_then_fails(cx: &mut TestAppContext) {
+        let s = setup(cx, None);
+        let mut tracker = TurnTracker::default();
+        // A provider that fails to launch still took the prompt (its rows).
+        observe(cx, &s, &mut tracker, update(true, false, true));
+        let (column, kinds) = state(&s);
+        assert_eq!(column, "In Progress");
+        assert_eq!(kinds, ["failed", "started", "moved"]);
+    }
+
+    #[gpui::test]
+    fn a_view_closed_mid_turn_frees_its_turn_for_the_next_view(cx: &mut TestAppContext) {
+        let s = setup(cx, None);
+        let mut closed = TurnTracker::default();
+        observe(cx, &s, &mut closed, update(false, false, true));
+        cx.update(|cx| closed.abandon(&s.store, s.session, 1, cx));
+        cx.run_until_parked();
+        assert_eq!(state(&s).1, ["started", "moved"], "closed like a stop");
+        // A new view numbers its turns from 1 again; its turn still counts.
+        let mut next = TurnTracker::default();
+        observe(cx, &s, &mut next, update(false, false, true));
+        observe(cx, &s, &mut next, update(true, true, true));
+        let (column, kinds) = state(&s);
+        assert_eq!(column, "Review");
+        assert_eq!(kinds[0], "completed");
+        let started = kinds.iter().filter(|kind| *kind == "started").count();
+        assert_eq!(
+            started, 2,
+            "the second view's turn started afresh: {kinds:?}"
+        );
     }
 
     fn roster_with(session: i64) -> (Roster, [String; 3]) {
