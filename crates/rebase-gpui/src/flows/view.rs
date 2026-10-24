@@ -721,7 +721,10 @@ impl FlowsView {
         if self.project_picker.is_some() {
             self.project_picker = None;
         } else if self.dialog.is_some() {
-            self.dialog = None;
+            // An open access menu closes first; the dialog stays.
+            if !self.close_access_menu() {
+                self.dialog = None;
+            }
         } else if matches!(&self.page, Page::Editor(editor) if editor.dirty) {
             self.confirm_discard(window, cx);
         } else if !matches!(self.page, Page::Empty) {
@@ -807,6 +810,9 @@ impl Render for FlowsView {
             );
         if self.dialog.is_some() {
             root = root.child(self.render_dialog(cx));
+        }
+        if let Some(menu) = self.render_access_menu(cx) {
+            root = root.child(menu);
         }
         if let Some(picker) = &self.project_picker {
             let weak = cx.weak_entity();

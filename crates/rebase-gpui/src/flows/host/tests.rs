@@ -118,6 +118,7 @@ fn two_states() -> Flow {
             ),
             agent("build", vec![], "$succeeded"),
         ],
+        access: "auto".into(),
         created_at: 0,
         updated_at: 0,
     }
@@ -650,4 +651,28 @@ fn run_of_names_the_run_of_a_session_with_a_turn_in_flight() {
     assert_eq!(host.run_of(555), None);
     finish(&mut host, &mut driver, 100, reply(PLAN, Some("/wt")));
     assert_eq!(host.run_of(100), None, "its visit settled");
+}
+
+#[test]
+fn every_visit_launches_with_the_run_snapshots_access_mode() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    let mut flow = two_states();
+    flow.access = "full-access".into();
+    let inputs = HashMap::from([("issue".to_string(), "42".to_string())]);
+    let run = host.start(&mut driver, &flow, &inputs).unwrap();
+    assert_eq!(run.flow.access, "full-access");
+    assert_eq!(driver.launches[0].access, "full-access");
+    launch(&mut host, &mut driver, 100);
+    finish(&mut host, &mut driver, 100, reply(PLAN, Some("/wt")));
+    assert_eq!(
+        driver.launches[1].access, "full-access",
+        "the next visit too"
+    );
+
+    // A resume reads the stored snapshot, not the Flow as saved now.
+    host.cancel(&mut driver, &run.id);
+    let (cancelled, visits) = (driver.last_run(), driver.visits());
+    assert_eq!(cancelled.flow.access, "full-access");
+    assert!(host.resume(&mut driver, cancelled, visits, "build"));
+    assert_eq!(driver.launches.last().unwrap().access, "full-access");
 }

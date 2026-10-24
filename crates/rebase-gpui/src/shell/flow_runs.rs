@@ -331,7 +331,8 @@ impl Shell {
         let kind = Kind::from_id(&request.harness);
         let mut settings =
             managed_settings(Default::default(), kind, &request.cwd, &request.model, cx);
-        settings.access = crate::conversation::default_access(cx);
+        // The run snapshot's mode, so a resume launches as the run started.
+        settings.access = rebase_core::agent::AccessMode::from_id(&request.access);
         let store = self.store.clone();
         let launch = request.clone();
         let work = cx.background_executor().spawn(async move {
@@ -670,6 +671,51 @@ mod tests {
                 assert!(shell.flows_state.waiting.is_empty());
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_visit_session_is_created_with_the_run_snapshots_access_mode(cx: &mut TestAppContext) {
+        let project = std::env::temp_dir().join(format!(
+            "rebase-flow-access-{}",
+            rebase_core::automations::new_id()
+        ));
+        std::fs::create_dir_all(&project).unwrap();
+        let cwd = project.to_string_lossy().to_string();
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let window = shell(store, "/work/rebase", cx);
+        let sessions = window
+            .update(cx, |shell, _, cx| {
+                let mut flow = fix_an_issue(&cwd);
+                flow.access = "full-access".into();
+                let flow = store_lock(shell.flows_state.store.as_ref().unwrap())
+                    .unwrap()
+                    .upsert(&flow)
+                    .unwrap();
+                let run = shell.start_flow(&flow, &inputs(&flow), cx).unwrap();
+                // Cancelled while its session is created: it gets no prompt.
+                shell.cancel_flow_run(&run.id, cx).unwrap();
+                shell.sessions.keys().copied().collect::<Vec<_>>()
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                let created: Vec<i64> = shell
+                    .sessions
+                    .keys()
+                    .copied()
+                    .filter(|id| !sessions.contains(id))
+                    .collect();
+                assert_eq!(created.len(), 1, "the visit's session");
+                let settings = locked(&shell.store)
+                    .unwrap()
+                    .agent_settings(created[0])
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(settings.access, rebase_core::agent::AccessMode::FullAccess);
+            })
+            .unwrap();
+        let _ = std::fs::remove_dir_all(project);
     }
 
     #[gpui::test]

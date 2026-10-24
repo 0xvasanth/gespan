@@ -159,8 +159,28 @@ pub struct Flow {
     pub inputs: Vec<FlowInput>,
     pub initial: String,
     pub states: Vec<FlowState>,
+    /// The `AccessMode` id every agent visit of a run launches with. Flows
+    /// saved without it, like the TS app's, read as `"auto"`.
+    #[serde(default = "default_access")]
+    pub access: String,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// Agents run unattended in a Flow, so they default to Auto, like automations.
+pub const DEFAULT_ACCESS: &str = "auto";
+
+/// The exact `AccessMode` ids: `AccessMode::from_id` falls back silently.
+pub const ACCESS_MODES: [&str; 5] = [
+    "read-only",
+    "supervised",
+    "auto-accept-edits",
+    "auto",
+    "full-access",
+];
+
+fn default_access() -> String {
+    DEFAULT_ACCESS.into()
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -260,6 +280,9 @@ pub fn validate_flow(flow: &Flow) -> Validation {
 
     if flow.states.len() < MIN_STATES {
         errors.push("Flow needs at least 1 state".into());
+    }
+    if !ACCESS_MODES.contains(&flow.access.as_str()) {
+        errors.push(format!("Unknown access mode {}", flow.access));
     }
     if flow.states.len() > MAX_STATES {
         errors.push(format!("Flow can have at most {MAX_STATES} states"));
@@ -491,6 +514,7 @@ mod tests {
             inputs: vec![],
             initial: "a".into(),
             states,
+            access: "auto".into(),
             created_at: 0,
             updated_at: 0,
         }
@@ -919,13 +943,55 @@ mod tests {
                     "transitions": [{"to": "$succeeded"}]
                 }
             ],
+            "access": "full-access",
             "createdAt": 10,
             "updatedAt": 20
         });
         let flow: Flow = serde_json::from_value(fixture.clone()).unwrap();
         assert_eq!(flow.created_at, 10);
+        assert_eq!(flow.access, "full-access");
         assert!(matches!(&flow.states[1], FlowState::Approval(s) if s.max_visits == 1));
         assert_eq!(serde_json::to_value(&flow).unwrap(), fixture);
+    }
+
+    #[test]
+    fn a_flow_saved_without_access_reads_as_auto_and_writes_it_back() {
+        // A Flow saved before access existed, or written by the TS app.
+        let mut older =
+            serde_json::to_value(make_flow(vec![FlowState::Agent(agent("a"))])).unwrap();
+        older.as_object_mut().unwrap().remove("access");
+        let flow: Flow = serde_json::from_value(older).unwrap();
+        assert_eq!(flow.access, "auto");
+        assert_eq!(serde_json::to_value(&flow).unwrap()["access"], "auto");
+        assert_eq!(validate_flow(&flow), Validation::default());
+    }
+
+    #[test]
+    fn access_mode_ids_match_the_agents_access_modes() {
+        for id in ACCESS_MODES {
+            assert_eq!(crate::agent::AccessMode::from_id(id).id(), id);
+        }
+    }
+
+    #[test]
+    fn access_must_be_an_exact_access_mode_id() {
+        for id in [
+            "read-only",
+            "supervised",
+            "auto-accept-edits",
+            "auto",
+            "full-access",
+        ] {
+            let mut flow = one(agent("a"));
+            flow.access = id.into();
+            assert_eq!(validate_flow(&flow), Validation::default(), "{id}");
+        }
+        // `AccessMode::from_id` would quietly read these as supervised.
+        for id in ["root", "", "Auto", "full_access"] {
+            let mut flow = one(agent("a"));
+            flow.access = id.into();
+            assert_eq!(errors_of(&flow), format!("Unknown access mode {id}"));
+        }
     }
 
     #[test]

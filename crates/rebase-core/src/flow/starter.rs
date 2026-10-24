@@ -91,6 +91,7 @@ fn flow(
         inputs,
         initial: initial.into(),
         states,
+        access: super::definition::DEFAULT_ACCESS.into(),
         created_at: 0,
         updated_at: 0,
     }
@@ -214,6 +215,7 @@ mod tests {
         for f in &starters {
             assert!(f.id.is_empty() && f.cwd.is_empty());
             assert_eq!((f.created_at, f.updated_at), (0, 0));
+            assert_eq!(f.access, "auto");
         }
     }
 

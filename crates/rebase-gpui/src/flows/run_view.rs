@@ -7,6 +7,7 @@ use super::{
 use crate::{
     input::{self, Input},
     modal,
+    popover::{Anchor, AnchorSlot, Menu, MenuEvent, MenuStyle, menu_popover},
     theme::*,
 };
 use gpui::{AnyElement, Context, Entity, SharedString, Subscription, Window, div, prelude::*, px};
@@ -112,7 +113,16 @@ fn is_agent(flow: &Flow, id: &str) -> bool {
 pub(super) struct RunDialog {
     pub flow: Flow,
     pub fields: Vec<(FlowInput, Entity<Input>)>,
+    /// The access mode for this run only; starts as the Flow's.
+    pub access: String,
+    access_anchor: AnchorSlot,
+    access_menu: Option<(Entity<Menu>, Subscription)>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// An `AccessMode` id's label, as the composer's access picker shows it.
+pub(super) fn access_label(id: &str) -> &'static str {
+    rebase_core::agent::AccessMode::from_id(id).label()
 }
 
 impl RunDialog {
@@ -201,8 +211,11 @@ impl FlowsView {
             window.focus(&gpui::Focusable::focus_handle(first.read(cx), cx), cx);
         }
         self.dialog = Some(RunDialog {
+            access: flow.access.clone(),
             flow,
             fields,
+            access_anchor: AnchorSlot::default(),
+            access_menu: None,
             _subscriptions: subscriptions,
         });
         self.error = None;
@@ -216,10 +229,60 @@ impl FlowsView {
         let Ok(inputs) = checked_inputs(&dialog.flow, &dialog.values(cx)) else {
             return;
         };
-        let flow = Box::new(dialog.flow.clone());
+        // The choice is this run's; the saved Flow keeps its own.
+        let flow = Box::new(Flow {
+            access: dialog.access.clone(),
+            ..dialog.flow.clone()
+        });
         self.dialog = None;
         cx.emit(Event::Start { flow, inputs });
         cx.notify();
+    }
+
+    /// Opens the access-mode menu under the dialog's access button.
+    fn open_access_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dialog) = &self.dialog else {
+            return;
+        };
+        let items = crate::conversation::access_menu_items(&dialog.access);
+        let menu = cx.new(|cx| {
+            Menu::new("Permissions", items, window, cx)
+                .style(MenuStyle::Access)
+                .width(288.)
+        });
+        let events = cx.subscribe(&menu, |this, _, event: &MenuEvent, cx| {
+            if let Some(dialog) = &mut this.dialog {
+                if let MenuEvent::Picked(id, _) = event
+                    && let Some(access) = id.strip_prefix("access:")
+                {
+                    dialog.access = access.to_owned();
+                }
+                dialog.access_menu = None;
+            }
+            cx.notify();
+        });
+        if let Some(dialog) = &mut self.dialog {
+            dialog.access_menu = Some((menu, events));
+        }
+        cx.notify();
+    }
+
+    /// Closes the dialog's access menu; false when it was not open.
+    pub(super) fn close_access_menu(&mut self) -> bool {
+        self.dialog
+            .as_mut()
+            .and_then(|dialog| dialog.access_menu.take())
+            .is_some()
+    }
+
+    pub(super) fn render_access_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let dialog = self.dialog.as_ref()?;
+        let (menu, _) = dialog.access_menu.as_ref()?;
+        Some(
+            menu_popover(menu, Anchor::Slot(dialog.access_anchor.clone()), cx)
+                .priority(60)
+                .into_any_element(),
+        )
     }
 
     pub(super) fn render_dialog(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -262,6 +325,36 @@ impl FlowsView {
                     ),
             );
         }
+        body = body.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .text_size(px(12.))
+                .child(div().text_color(content(0.7)).child("Access"))
+                .child(
+                    div()
+                        .id("flow-run-access")
+                        .debug_selector(|| "flow-run-access".into())
+                        .role(gpui::Role::Button)
+                        .aria_label(format!("Access: {}", access_label(&dialog.access)))
+                        .px(px(8.))
+                        .h(px(26.))
+                        .rounded(px(6.))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .bg(content(0.1))
+                        .hover(|s| s.bg(content(0.14)))
+                        .cursor_pointer()
+                        .child(dialog.access_anchor.probe())
+                        .child(access_label(&dialog.access))
+                        .child(icon("chevron-down", 12.).text_color(content(0.45)))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_access_menu(window, cx)),
+                        ),
+                ),
+        );
         for message in &missing {
             body = body.child(
                 div()
@@ -345,6 +438,24 @@ impl FlowsView {
                         )
                     }),
             );
+        header = header.child(
+            div()
+                .debug_selector(|| "flow-run-access-mode".into())
+                .flex()
+                .gap(px(6.))
+                .text_size(px(12.))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(content(0.45))
+                        .child("Access"),
+                )
+                .child(
+                    div()
+                        .text_color(content(0.8))
+                        .child(access_label(&run.flow.access)),
+                ),
+        );
         let mut inputs: Vec<_> = run.inputs.iter().filter(|(_, v)| !v.is_empty()).collect();
         inputs.sort();
         for (name, value) in inputs {
@@ -751,6 +862,9 @@ impl FlowsView {
                 .err()
                 .unwrap_or_default(),
         )
+    }
+    pub(crate) fn dialog_access(&self) -> Option<String> {
+        self.dialog.as_ref().map(|d| d.access.clone())
     }
     pub(crate) fn run_note(&self) -> Option<Entity<Input>> {
         match &self.page {

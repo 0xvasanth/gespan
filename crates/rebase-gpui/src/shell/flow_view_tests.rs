@@ -264,6 +264,7 @@ fn approval_flow() -> Flow {
             ],
             max_visits: 3,
         })],
+        access: "auto".into(),
         created_at: 0,
         updated_at: 0,
     }
@@ -756,4 +757,40 @@ fn resuming_a_run_that_lost_its_worktree_takes_it_from_the_visit_session(cx: &mu
     );
     let visits = with_store(window, visual, |store| store.visits("run1").unwrap());
     assert_eq!(visits.len(), 2, "the resume appended a visit");
+}
+
+#[gpui::test]
+fn the_run_dialogs_access_choice_reaches_the_runs_snapshot_only(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let mut flow = approval_flow();
+    flow.access = "supervised".into();
+    open_with(window, visual, &flow);
+    click(visual, "flow-run-gate1");
+    let view = view(window, visual);
+    view.read_with(visual, |view, _| {
+        assert_eq!(
+            view.dialog_access().as_deref(),
+            Some("supervised"),
+            "the Flow's mode"
+        )
+    });
+
+    click(visual, "flow-run-access");
+    click(visual, "menu-action-access:full-access");
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.dialog_access().as_deref(), Some("full-access"))
+    });
+    click(visual, "flow-run-start");
+
+    let runs = with_store(window, visual, |store| store.runs("gate1", 10).unwrap());
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].flow.access, "full-access", "the run's snapshot");
+    let saved = with_store(window, visual, |store| store.list().unwrap());
+    assert_eq!(saved[0].access, "supervised", "the saved Flow is unchanged");
+    // The run page names the run's mode.
+    assert!(visual.debug_bounds("flow-run-access-mode").is_some());
+    view.read_with(visual, |view, _| {
+        assert_eq!(view.open_run().unwrap().0.flow.access, "full-access")
+    });
 }

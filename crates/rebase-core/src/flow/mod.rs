@@ -10,7 +10,7 @@ pub mod template;
 pub use definition::{
     approval_outputs, outputs_of, validate_flow, AgentState, ApprovalState, Flow, FlowInput,
     FlowState, Guard, GuardOp, OutputField, OutputType, OutputValue, Transition, Validation,
-    VisitResult, FAILED, SUCCEEDED,
+    VisitResult, ACCESS_MODES, DEFAULT_ACCESS, FAILED, SUCCEEDED,
 };
 pub use run::{FlowRun, FlowVisit, RunStatus, VisitStatus};
 pub use runner::{AgentOutcome, AgentStatus, Effect, LaunchRequest, Runner, MAX_RUN_STEPS};

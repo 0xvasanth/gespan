@@ -88,6 +88,29 @@ const ACCESS_MODES: &[(&str, &str, &str, &str)] = &[
         "shield-alert",
     ),
 ];
+/// The access-mode menu's rows, without provider-specific hints, for pickers
+/// outside a session: Read-only, then `ACCESS_MODES`, `checked` ticked.
+pub(crate) fn access_menu_items(checked: &str) -> Vec<MenuItem> {
+    let mut items = vec![
+        MenuAction::new("access:read-only", "Read-only")
+            .icon("square-lock")
+            .description("Inspect without changing files.")
+            .checked(checked == "read-only")
+            .into(),
+    ];
+    items.extend(ACCESS_MODES.iter().map(|(id, label, hint, glyph)| {
+        let action = MenuAction::new(format!("access:{id}"), *label)
+            .icon(glyph)
+            .description(*hint)
+            .checked(checked == *id);
+        MenuItem::from(if *id == "full-access" {
+            action.icon_color(tint(AMBER_400, 0.9))
+        } else {
+            action
+        })
+    }));
+    items
+}
 // Tailwind v4 accents the composer menus tint their icons with.
 const YELLOW_300: u32 = 0xffdf20;
 const SKY_300: u32 = 0x74d4ff;

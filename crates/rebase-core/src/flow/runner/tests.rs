@@ -250,6 +250,7 @@ fn custom(initial: &str, states: Vec<FlowState>) -> Flow {
         inputs: vec![],
         initial: initial.into(),
         states,
+        access: "auto".into(),
         created_at: 0,
         updated_at: 0,
     }
@@ -1051,4 +1052,17 @@ fn has_active_tracks_a_flows_in_memory_runs() {
     host.outputs(&run.id, json!({"summary": "s"}));
     assert_eq!(host.last_run().status, RunStatus::WaitingApproval);
     assert!(host.runner.has_active(&research.id));
+}
+
+#[test]
+fn launches_carry_the_snapshots_access_mode() {
+    let mut host = Host::new();
+    let mut flow = fix_an_issue();
+    assert_eq!(flow.access, "auto");
+    host.start(&flow, &[("issue", "Bug")]);
+    assert_eq!(host.last_launch().access, "auto");
+    flow.access = "read-only".into();
+    flow.id = "flow-ro".into();
+    host.start(&flow, &[("issue", "Bug")]);
+    assert_eq!(host.last_launch().access, "read-only");
 }

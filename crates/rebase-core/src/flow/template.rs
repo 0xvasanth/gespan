@@ -298,6 +298,7 @@ mod tests {
             inputs,
             initial: String::new(),
             states: vec![],
+            access: "auto".into(),
             created_at: 0,
             updated_at: 0,
         }

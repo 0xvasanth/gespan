@@ -19,6 +19,8 @@ pub struct LaunchRequest {
     pub model: String,
     pub cwd: String,
     pub worktree_cwd: Option<String>,
+    /// The run snapshot's `AccessMode` id; every visit of a run shares it.
+    pub access: String,
     pub title: String,
     pub prompt: String,
 }
@@ -582,6 +584,7 @@ impl Runner {
                     model: agent.model.clone(),
                     cwd: active.run.flow.cwd.clone(),
                     worktree_cwd: active.run.worktree_cwd.clone(),
+                    access: active.run.flow.access.clone(),
                     title: format!("{} · {}", active.run.flow.name, agent.title),
                     prompt,
                 };
