@@ -1076,7 +1076,7 @@ fn switching_board_off_in_settings_saves_it_and_keeps_focus_on_settings(cx: &mut
 }
 
 #[gpui::test]
-fn a_project_added_while_the_board_is_open_can_be_tagged_at_once(cx: &mut TestAppContext) {
+fn a_project_added_while_the_board_is_open_is_offered_as_a_choice_at_once(cx: &mut TestAppContext) {
     let (window, _) = setup(cx, false, false);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
     window
@@ -1096,6 +1096,68 @@ fn a_project_added_while_the_board_is_open_can_be_tagged_at_once(cx: &mut TestAp
                     .contains(&("/work/added-later".into(), "added-later".into())),
                 "{:?}",
                 board.project_choices()
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn opening_a_pilot_from_the_board_leaves_the_board(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| {
+            Surface::Board.open(shell, window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, _, cx| {
+            let project = shell.workspace.project.clone();
+            let id = shell.pilot_manager().update(cx, |pilots, _| {
+                pilots.roster.create(vec![project]).id.clone()
+            });
+            shell
+                .board
+                .as_ref()
+                .unwrap()
+                .update(cx, |_, cx| cx.emit(crate::board::Event::OpenPilot(id)));
+        })
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .read_with(visual, |shell, _| {
+            assert_eq!(
+                shell.active_app_view, None,
+                "the Pilot is not behind the Board"
+            )
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_session_started_in_the_background_offers_its_project_to_the_board(cx: &mut TestAppContext) {
+    let (window, _) = setup(cx, false, false);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| {
+            Surface::Board.open(shell, window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .update(visual, |shell, _, cx| {
+            let summary = locked(&shell.store)
+                .unwrap()
+                .create("codex", "/work/background")
+                .unwrap();
+            // What a background start does: add the session, no persist.
+            shell.add(summary, cx);
+            let board = shell.board.as_ref().unwrap().read(cx);
+            assert!(
+                board
+                    .project_choices()
+                    .contains(&("/work/background".into(), "background".into()))
             );
         })
         .unwrap();

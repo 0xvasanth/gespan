@@ -349,14 +349,16 @@ impl Shell {
         if !self.workspace.preferences.board
             && self.active_app_view == Some(app_views::AppView::Board)
         {
+            // Closing saves the workspace, including the new preferences.
             self.close_app_view(window, cx);
             // Closing the Board moves focus to the chat behind; keep it on
             // the Settings page the change came from.
             if let Some(settings) = &self.settings {
                 window.focus(&settings.focus_handle(cx), cx);
             }
+        } else {
+            self.persist(cx);
         }
-        self.persist(cx);
         self.invalidate_chrome(cx);
         cx.notify();
     }

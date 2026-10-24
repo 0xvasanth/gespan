@@ -1,4 +1,5 @@
-//! The three application destinations share one navigation and focus boundary.
+//! The application destinations (Inbox, Notes, Automations and Board) share
+//! one navigation and focus boundary.
 use super::*;
 use crate::{automations, board, inbox, notes};
 
@@ -251,14 +252,17 @@ impl Shell {
         if !self.workspace.preferences.board {
             return;
         }
+        // Find the database before leaving the current view, so a failure
+        // leaves the user where they were.
+        let path = match &self.board {
+            Some(_) => None,
+            None => match locked(&self.store) {
+                Ok(store) => Some(store.database_path().to_path_buf()),
+                Err(_) => return,
+            },
+        };
         self.prepare_app_view(window, cx);
-        if self.board.is_none() {
-            let Some(path) = locked(&self.store)
-                .ok()
-                .map(|store| store.database_path().to_path_buf())
-            else {
-                return;
-            };
+        if let Some(path) = path {
             let store = self.store.clone();
             let view = cx.new(|cx| board::BoardView::new(store, path, window, cx));
             self.app_view_events.push(cx.subscribe_in(

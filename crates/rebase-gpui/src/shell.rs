@@ -1205,6 +1205,9 @@ impl Shell {
     }
     fn add(&mut self, summary: Session, cx: &mut Context<Self>) {
         self.workspace.add_project(&summary.cwd);
+        // A session started in the background adds its project without a
+        // persist, so tell an open Board here too.
+        self.sync_board_projects(cx);
         self.add_loaded(summary, cx);
     }
     /// Loading history must not turn every session directory into a rail project.
