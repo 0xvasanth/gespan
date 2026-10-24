@@ -126,6 +126,9 @@ export function parsePrContent(raw: string): PrContent | null {
 
 export function parseBranchName(raw: string): string | null {
   const rec = parseJsonObject(raw);
+  // JSON that does not parse would otherwise name the branch after its
+  // braces and key (`branch-fix-login`); keep the placeholder instead.
+  if (!rec && raw.includes("{")) return null;
   const branch = sanitizeBranchFragment(
     rec ? stringField(rec, "branch") : raw,
   );

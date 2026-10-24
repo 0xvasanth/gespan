@@ -29,7 +29,10 @@ pub fn terminal_search_path() -> String {
 pub fn resolve_gui_binary(name: &str) -> Option<std::path::PathBuf> {
     shell::resolve_gui_binary(name)
 }
-pub use text::{commit_message_prompt, parse_commit_message, parse_pr_content, pr_content_prompt};
+pub use text::{
+    branch_name_prompt, commit_message_prompt, parse_branch_name, parse_commit_message,
+    parse_pr_content, pr_content_prompt,
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

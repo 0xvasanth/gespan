@@ -220,6 +220,8 @@ fn worktree_setup_shows_the_prompt_immediately_and_preserves_it_on_failure(
             view.send(cx);
             assert!(view.busy && view.preparing_worktree);
             assert_eq!(view.status, "Creating worktree…");
+            // The new worktree's branch is named after this message.
+            assert_eq!(view.branch_seed.as_deref(), Some("Start in a worktree"));
             assert!(view.input.read(cx).content.is_empty());
             assert!(!view.settings.plan);
             assert_eq!(
@@ -300,4 +302,88 @@ fn stopping_before_the_worker_runs_keeps_the_optimistic_message(cx: &mut TestApp
             })
             .unwrap();
     }
+}
+
+#[gpui::test]
+fn a_created_worktree_hands_its_first_message_to_branch_naming(cx: &mut TestAppContext) {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("project");
+    std::fs::create_dir(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&["init", "-b", "main"]);
+    std::fs::write(repo.join("file"), "x\n").unwrap();
+    git(&["add", "file"]);
+    git(&["commit", "-m", "init"]);
+    let store = Store::open(Path::new(":memory:")).unwrap();
+    // The worktree is created before the fixture provider fails the turn.
+    let mut summary = store.create("codex", &repo.to_string_lossy()).unwrap();
+    summary.provider = "fixture".into();
+    let window = cx.update(|cx| {
+        input::bind(cx);
+        cx.open_window(Default::default(), |_, cx| {
+            cx.new(|cx| {
+                let mut view = Conversation::new(summary, Arc::new(Mutex::new(store)), cx);
+                view.loaded = true;
+                view
+            })
+        })
+        .unwrap()
+    });
+    window
+        .update(cx, |view, _, cx| {
+            view.settings.new_worktree = true;
+            view.input.update(cx, |input, cx| {
+                input.set_text("Fix the login flow".into(), cx)
+            });
+            view.send(cx);
+            assert_eq!(view.branch_seed.as_deref(), Some("Fix the login flow"));
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |view, _, _| {
+            assert!(
+                view.settings.worktree_cwd.is_some(),
+                "the worktree was created"
+            );
+            assert_eq!(view.branch_seed, None, "and handed its message to naming");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_retry_after_a_failed_worktree_is_named_after_the_retry(cx: &mut TestAppContext) {
+    // The project folder is missing, so the first worktree cannot be created.
+    let window = conversation(cx);
+    window
+        .update(cx, |view, _, cx| {
+            view.settings.new_worktree = true;
+            view.input
+                .update(cx, |input, cx| input.set_text("First attempt".into(), cx));
+            view.send(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |view, _, cx| {
+            assert!(view.settings.worktree_cwd.is_none(), "creation failed");
+            view.settings.new_worktree = true;
+            view.input
+                .update(cx, |input, cx| input.set_text("Second attempt".into(), cx));
+            view.send(cx);
+            assert_eq!(view.branch_seed.as_deref(), Some("Second attempt"));
+        })
+        .unwrap();
 }
