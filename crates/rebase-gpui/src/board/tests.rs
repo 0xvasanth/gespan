@@ -232,6 +232,92 @@ fn a_write_from_another_connection_appears_after_the_poll_tick(cx: &mut TestAppC
 }
 
 #[gpui::test]
+fn a_write_that_lands_while_the_board_reloads_still_appears_on_the_next_tick(
+    cx: &mut TestAppContext,
+) {
+    let f = with_board(cx);
+    let review = detail(&f, cx).columns[2].id.clone();
+    let db = f.db.clone();
+    let mut once = Some(review);
+    f.window
+        .update(cx, |view, _, cx| {
+            view.after_load_reads = Some(Box::new(move || {
+                if let Some(review) = once.take() {
+                    Service::open(&db)
+                        .unwrap()
+                        .card_create(&review, "Mid-reload", "")
+                        .unwrap();
+                }
+            }));
+            view.reload(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(
+        detail(&f, cx).cards.is_empty(),
+        "the reload read the board before the write"
+    );
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    let titles: Vec<String> = detail(&f, cx)
+        .cards
+        .iter()
+        .map(|c| c.title.clone())
+        .collect();
+    assert_eq!(titles, ["Mid-reload"]);
+}
+
+#[gpui::test]
+fn a_failed_reload_shows_its_error_until_a_later_reload_succeeds(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let raw = rusqlite::Connection::open(&f.db).unwrap();
+    raw.execute_batch("ALTER TABLE board_native_labels RENAME TO hidden_labels;")
+        .unwrap();
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-error").is_some());
+    raw.execute_batch("ALTER TABLE hidden_labels RENAME TO board_native_labels;")
+        .unwrap();
+    visual.executor().advance_clock(Duration::from_secs(2));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(
+        visual.debug_bounds("board-error").is_none(),
+        "the banner clears once the board loads again"
+    );
+}
+
+#[gpui::test]
+fn a_card_deleted_elsewhere_leaves_no_focus_handle_or_anchor_behind(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Keep", "Gone"]);
+    let gone = detail(&f, cx)
+        .cards
+        .iter()
+        .find(|c| c.title == "Gone")
+        .unwrap()
+        .id
+        .clone();
+    f.window
+        .read_with(cx, |view, _| {
+            assert!(view.card_focus.contains_key(&gone));
+            assert!(view.card_anchors.contains_key(&gone));
+        })
+        .unwrap();
+    Service::open(&f.db).unwrap().card_delete(&gone).unwrap();
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    f.window
+        .read_with(cx, |view, _| {
+            assert_eq!(view.card_focus.len(), 1);
+            assert!(!view.card_focus.contains_key(&gone));
+            assert!(!view.card_anchors.contains_key(&gone));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn a_poll_during_a_drag_waits_until_the_drag_ends(cx: &mut TestAppContext) {
     let f = seeded(cx, &["Held"]);
     let review = detail(&f, cx).columns[2].id.clone();

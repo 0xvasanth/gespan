@@ -135,7 +135,14 @@ pub(crate) struct BoardView {
     card_menu: Option<CardMenu>,
     /// The slot a dragged column would land in.
     column_drop: Option<usize>,
+    /// The last write's error, or a message about a rejected edit.
     error: Option<String>,
+    /// Why the last reload failed; cleared by the next one that succeeds.
+    load_error: Option<String>,
+    /// Runs between a reload's reads and the end of the load, so a test can
+    /// commit from another connection exactly there.
+    #[cfg(test)]
+    pub(crate) after_load_reads: Option<Box<dyn FnMut()>>,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -200,6 +207,9 @@ impl BoardView {
             card_menu: None,
             column_drop: None,
             error: None,
+            load_error: None,
+            #[cfg(test)]
+            after_load_reads: None,
             _poll: poll,
             _subscriptions: vec![activation, searching],
         }
@@ -252,9 +262,7 @@ impl BoardView {
             return;
         }
         self.pending_reload = false;
-        if let Err(error) = self.load(cx) {
-            self.error = Some(error);
-        }
+        self.load_error = self.load(cx).err();
         self.sync_card_detail(cx);
         cx.notify();
     }
@@ -287,17 +295,48 @@ impl BoardView {
 
     fn load(&mut self, cx: &App) -> Result<(), String> {
         let service = self.service()?;
+        // Read the version first: a commit landing during the reads below
+        // then shows up as a newer version on the next poll and reloads again.
+        let version = service.data_version()?;
         let board = service.default_board()?;
         let detail = service.get(&board.id)?;
         let extras = service.extras(&board.id)?;
         let labels = service.labels(&board.id)?;
-        self.last_data_version = service.data_version()?;
+        #[cfg(test)]
+        if let Some(hook) = self.after_load_reads.as_mut() {
+            hook();
+        }
+        self.last_data_version = version;
         self.open_board_id = Some(board.id);
         self.detail = Some(detail);
         self.extras = extras;
         self.labels = labels;
         self.links = self.resolve_links(cx);
+        self.sync_handles(cx);
         Ok(())
+    }
+
+    /// One anchor per column and card, and one focus handle per card, for
+    /// exactly the cards and columns on the board now.
+    fn sync_handles(&mut self, cx: &App) {
+        let Some(detail) = &self.detail else {
+            return;
+        };
+        self.column_anchors
+            .retain(|id, _| detail.columns.iter().any(|column| &column.id == id));
+        self.card_anchors
+            .retain(|id, _| detail.cards.iter().any(|card| &card.id == id));
+        self.card_focus
+            .retain(|id, _| detail.cards.iter().any(|card| &card.id == id));
+        for column in &detail.columns {
+            self.column_anchors.entry(column.id.clone()).or_default();
+        }
+        for card in &detail.cards {
+            self.card_anchors.entry(card.id.clone()).or_default();
+            self.card_focus
+                .entry(card.id.clone())
+                .or_insert_with(|| cx.focus_handle());
+        }
     }
 
     fn resolve_links(&self, cx: &App) -> HashMap<String, LinkLabel> {
@@ -308,6 +347,7 @@ impl BoardView {
             return HashMap::new();
         };
         let sessions = store.sessions().unwrap_or_default();
+        let pilots = turns::pilots(cx);
         detail
             .cards
             .iter()
@@ -319,10 +359,10 @@ impl BoardView {
                         .and_then(|native| sessions.iter().find(|s| s.id == native))
                         .map(|session| LinkLabel::Found(session.title.clone()))
                         .unwrap_or(LinkLabel::Missing),
-                    "pilot" => turns::pilots(cx)
-                        .into_iter()
+                    "pilot" => pilots
+                        .iter()
                         .find(|(pilot, _)| pilot == id)
-                        .map(|(_, name)| LinkLabel::Found(name))
+                        .map(|(_, name)| LinkLabel::Found(name.clone()))
                         .unwrap_or(LinkLabel::Missing),
                     _ => LinkLabel::Missing,
                 };
@@ -915,17 +955,21 @@ impl gpui::Render for BoardView {
             )
             .size_full()
             .flex();
-        let error = self.error.clone().map(|error| {
-            div()
-                .id("board-error")
-                .debug_selector(|| "board-error".into())
-                .px_4()
-                .py_1()
-                .text_size(px(12.))
-                .text_color(diff_foreground(false))
-                .child(error)
-        });
-        let Some(detail) = self.detail.clone() else {
+        let error = self
+            .error
+            .clone()
+            .or_else(|| self.load_error.clone())
+            .map(|error| {
+                div()
+                    .id("board-error")
+                    .debug_selector(|| "board-error".into())
+                    .px_4()
+                    .py_1()
+                    .text_size(px(12.))
+                    .text_color(diff_foreground(false))
+                    .child(error)
+            });
+        let Some(detail) = self.detail.as_ref() else {
             return root.child(
                 div()
                     .flex_1()
@@ -936,20 +980,11 @@ impl gpui::Render for BoardView {
                     .children(error),
             );
         };
-        for column in &detail.columns {
-            self.column_anchors.entry(column.id.clone()).or_default();
-        }
-        for card in &detail.cards {
-            self.card_anchors.entry(card.id.clone()).or_default();
-            if !self.card_focus.contains_key(&card.id) {
-                self.card_focus.insert(card.id.clone(), cx.focus_handle());
-            }
-        }
         let columns: Vec<AnyElement> = detail
             .columns
             .iter()
             .enumerate()
-            .map(|(index, column)| self.render_column(index, column, &detail, cx))
+            .map(|(index, column)| self.render_column(index, column, detail, cx))
             .collect();
         let menu = self.render_menu(cx);
         let card_menu = self.card_menu.as_ref().map(|open| {
