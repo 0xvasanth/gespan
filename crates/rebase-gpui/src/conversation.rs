@@ -1111,7 +1111,7 @@ impl Conversation {
                             return;
                         }
                         let stopping = this.stopping;
-                        let turn_ok = update.status == "Ready";
+                        let turn_ok = update.succeeded;
                         // The final update settles accepted rows and storage.
                         // Ignore streaming notifications after the user stops.
                         if stopping && !finished {
