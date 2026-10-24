@@ -654,6 +654,8 @@ fn run_turn_using(
                                 }
                                 .into();
                             }
+                            // Saved rows leave live elapsed out; the view reads it here.
+                            rebase_core::tool::live::record(&tool);
                             let ix = *tool_rows
                                 .entry(tool.id.clone())
                                 .or_insert_with(|| transcript.begin("tool"));

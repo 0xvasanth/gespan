@@ -35,7 +35,7 @@ pub(super) struct Activities {
     pub(super) steered_in_turn: bool,
 }
 /// Synthetic block ids for work whose parent this session cannot place.
-pub(super) const FALLBACK_PREFIX: &str = "background:";
+pub(super) const FALLBACK_PREFIX: &str = crate::tool::tasks::SYNTHETIC_BLOCK_PREFIX;
 const CONTINUED_PREFIX: &str = "continued:";
 fn text(value: &Value) -> Option<&str> {
     value.as_str().filter(|s| !s.trim().is_empty())
@@ -84,7 +84,7 @@ impl Protocol {
             run.model = Some(model.into());
         }
         run.upsert(step);
-        let steps = run.steps.iter().filter(|step| step.kind == "tool").count() as u32;
+        let steps = run.tool_step_count() as u32;
         for task in &mut self.activities.claude_tasks {
             if task.tool_id.as_deref() == Some(parent) {
                 task.steps = steps;
@@ -406,7 +406,25 @@ impl Protocol {
         }
         events.push(Event::Tool(tool.clone()));
     }
+    /// A heartbeat is the tool call itself still running, never a step: it
+    /// must not reach routing, or it becomes a never-ending child step.
+    fn claude_heartbeat(&mut self, value: &Value, events: &mut Vec<Event>) {
+        let Some((parent, elapsed)) = crate::tool::tasks::heartbeat_progress(value) else {
+            return;
+        };
+        let Some(tool) = self.tools.get_mut(parent) else {
+            return;
+        };
+        if tool.state == ToolState::Running && tool.live_elapsed_secs != Some(elapsed) {
+            tool.live_elapsed_secs = Some(elapsed);
+            events.push(Event::Tool(tool.clone()));
+        }
+    }
     fn claude_activity(&mut self, value: &Value, events: &mut Vec<Event>) -> bool {
+        if crate::tool::tasks::is_heartbeat_frame(value) {
+            self.claude_heartbeat(value, events);
+            return true;
+        }
         self.claude_background_list(value);
         if value["type"] == "system" && value["subtype"] == "init" {
             self.activities.turn += 1;
@@ -903,9 +921,7 @@ impl Protocol {
         let steps = block
             .and_then(|block| self.tools.get(block))
             .and_then(|tool| match &tool.panel {
-                Some(Panel::Agent(run)) => {
-                    Some(run.steps.iter().filter(|step| step.kind == "tool").count() as u32)
-                }
+                Some(Panel::Agent(run)) => Some(run.tool_step_count() as u32),
                 _ => None,
             })
             .unwrap_or(0);
@@ -1383,6 +1399,9 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+#[path = "tasks/heartbeat_tests.rs"]
+mod heartbeat_tests;
 #[cfg(test)]
 #[path = "tasks/resume_tests.rs"]
 mod resume_tests;
