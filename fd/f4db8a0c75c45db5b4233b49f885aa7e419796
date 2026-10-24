@@ -1,0 +1,58 @@
+crates/rebase-gpui/src/conversation.rs
+  s_ccb41beff89445::t_c3f690a9473936 306-309
+crates/rebase-gpui/src/flows/view.rs
+  s_ccb41beff89445::t_d3798b010db54f 582
+  s_ccb41beff89445::t_7d83fb5910cf5b 720,725-726,788,790
+  s_ccb41beff89445::t_1383346eca25ef 44-69,88-89,155,200-206,378,384-385,580-581
+  s_ccb41beff89445::t_912dca56e2b621 845-851
+crates/rebase-gpui/src/flows/host.rs
+  s_ccb41beff89445::t_6efe13868e1783 215-217,234-235,241-242
+  s_ccb41beff89445::t_42cc37d65c3536 263-286,373-389
+  s_ccb41beff89445::t_c2e446b2f8d7e6 390-391
+crates/rebase-gpui/src/shell/flow_runs.rs
+  s_ccb41beff89445::t_c3f690a9473936 588-597,600-602,615-672
+  s_ccb41beff89445::t_33df8de9d9b2ce 311,459,527-587,673
+  s_ccb41beff89445::t_b15cbbb893c709 5,11-12,21-22,171,173-187,222-238,244,247-249,251-255,262-265,288-303,305-310
+  s_ccb41beff89445::t_55863ab1b1f91e 304
+  s_ccb41beff89445::t_343b3798a16915 446-458,598-599,603-614
+  s_ccb41beff89445::t_6d3a7dad24be24 312,460,674
+crates/rebase-gpui/src/flows/mod.rs
+  s_ccb41beff89445::t_1383346eca25ef 10
+  s_ccb41beff89445::t_42cc37d65c3536 9
+crates/rebase-gpui/src/shell/app_views.rs
+  s_ccb41beff89445::t_1383346eca25ef 392,404,408
+crates/rebase-gpui/src/flows/host/tests.rs
+  s_ccb41beff89445::t_7ef0ef2a6e1abd 526-527
+  s_ccb41beff89445::t_55863ab1b1f91e 593
+  s_ccb41beff89445::t_6d323db19a8e2e 496-525,528-592,594-653
+crates/rebase-gpui/src/flows/run_view.rs
+  s_ccb41beff89445::t_912dca56e2b621 580,715-722,767-779
+  s_ccb41beff89445::t_5595047c2e206f 22,77-84,583-586,588-596,780,920-966
+  s_ccb41beff89445::t_374953c48ef33b 967
+crates/rebase-gpui/src/flows/editor.rs
+  s_ccb41beff89445::t_7d83fb5910cf5b 4,11,14-15,153-154,159-168,170-179,230,232-233,235,238,244
+  s_ccb41beff89445::t_55863ab1b1f91e 239-243
+  s_ccb41beff89445::t_d3798b010db54f 155-158,169
+  s_ccb41beff89445::t_fd243f16e6f689 75-79,231,234,236-237,335-338,340
+  s_ccb41beff89445::t_b8056c101a5dca 80-81,245,339
+crates/rebase-gpui/src/shell/flow_view_tests.rs
+  s_ccb41beff89445::t_fd243f16e6f689 545-548,552-555
+  s_ccb41beff89445::t_80700a4706427f 496-544,549-551,556-601,603-637,639-698,700-712,717-759
+  s_ccb41beff89445::t_55863ab1b1f91e 602,638,699,713-716
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fdf4db8a0c75c45db5b4233b49f885aa7e419796",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
