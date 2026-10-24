@@ -1029,6 +1029,18 @@ impl Menu {
         }
         cx.emit(event);
     }
+    /// Each action's label and note's text, for tests to read what is shown.
+    #[cfg(test)]
+    pub(crate) fn item_texts(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Action(action) => Some(action.label.to_string()),
+                MenuItem::Note(text) => Some(text.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
     pub(crate) fn replace_items(&mut self, items: Vec<MenuItem>, cx: &mut Context<Self>) {
         self.rows.resize_with(items.len(), AnchorSlot::default);
         self.items = items;

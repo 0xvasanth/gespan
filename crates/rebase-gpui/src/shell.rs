@@ -582,6 +582,7 @@ pub(crate) struct Shell {
     action_dialog: Option<actions::ActionDialog>,
     actions_anchor: AnchorSlot,
     editor_anchor: AnchorSlot,
+    editor_menu: open_in_editor::EditorMenu,
     /// The dock terminal each action last ran in, by project and action id.
     action_terminals: HashMap<(String, String), gpui::WeakEntity<Terminal>>,
     deleting: HashSet<i64>,
@@ -928,6 +929,7 @@ impl Shell {
             action_dialog: None,
             actions_anchor: AnchorSlot::default(),
             editor_anchor: AnchorSlot::default(),
+            editor_menu: Default::default(),
             action_terminals: HashMap::new(),
             deleting: HashSet::new(),
             group_writes: None,
@@ -4791,6 +4793,16 @@ impl Shell {
                     menu.update(cx, |menu, cx| menu.replace_items(items, cx));
                     return;
                 }
+                // Editor rows stay open while the editor starts, so a failure
+                // can be shown in the menu itself.
+                if let MenuEvent::Picked(id, _) = event
+                    && let Some(editor) = id.strip_prefix(open_in_editor::EDITOR_ITEM_PREFIX)
+                    && let Some(MenuTarget::OpenInEditor(path)) =
+                        this.menu.as_ref().map(|m| m.target.clone())
+                {
+                    this.pick_external_editor(path, editor.to_owned(), cx);
+                    return;
+                }
                 if let MenuEvent::Picked(id, _) = event
                     && id != "archived"
                     && let Some(open) = this
@@ -4854,10 +4866,7 @@ impl Shell {
             ),
             MenuTarget::OpenInEditor(path) => (
                 format!("Open {} in", project_name(path)).into(),
-                open_in_editor::open_in_editor_menu(
-                    self.external_editors.as_deref(),
-                    self.workspace.last_external_editor.as_deref(),
-                ),
+                self.editor_menu_items(),
                 232.,
                 MenuStyle::Explorer,
             ),
