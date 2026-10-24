@@ -86,7 +86,7 @@ pub(crate) fn previous_send(source: &[Row], start: usize) -> Option<u64> {
 
 /// A reply posted without a prompt, such as a habit report, on a later day
 /// than the message before it. It continues the turn but opens its own day.
-fn opens_later_day(source: &[Row], start: usize) -> bool {
+pub(super) fn opens_later_day(source: &[Row], start: usize) -> bool {
     let row = &source[start];
     let Some(day) = row.sent_at.and_then(local_day) else {
         return false;
@@ -211,6 +211,14 @@ mod tests {
             assert_eq!(view.mono_stamp(3), None, "same-day runs stack");
             assert_eq!(view.mono_stamp(4), Some(at(19, 9, 0)));
             assert_eq!(view.mono_stamp(5), Some(at(21, 9, 1)));
+            // The Mono signs each later day again, under that day's badge.
+            let headers: Vec<_> = view
+                .rows
+                .iter()
+                .filter(|r| matches!(r.body, Body::WorkLine { .. }))
+                .map(|r| (view.messages[r.message].start, r.first))
+                .collect();
+            assert_eq!(headers, [(1, true), (2, true), (4, true), (5, true)]);
         });
     }
 

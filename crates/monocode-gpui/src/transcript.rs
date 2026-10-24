@@ -3066,7 +3066,10 @@ impl TranscriptView {
                         .iter()
                         .rev()
                         .find(|row| row.role != monocode_core::transcript::attachments::ROLE)
-                        .is_some_and(Row::is_prompt))
+                        .is_some_and(Row::is_prompt)
+                    // A run on a later day, such as a habit report, signs
+                    // again under its own day.
+                    || (self.mono && dates::opens_later_day(&self.source, at)))
                 && !(self.mono
                     && self.mono_group_start(turn) != turn
                     && !(self.history_start > 0 && self.prompt_start(turn) == self.history_start))
