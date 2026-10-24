@@ -72,27 +72,37 @@ cargo test --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core
 
 The native Board shares the Tauri app's `boards`, `board_columns`,
 `board_cards` and `board_activity` tables; `tests/shared_contracts.rs` pins the
-DDL, error strings and the `rebase.boardEnabled` key to Tauri. Automated
-coverage: storage, ordering and two-connection writes (core), auto-move and
-turn rules (core), the Board setting and app view, the board view, drag and
-drop and Move to…, card detail, and turn hooks (GPUI tests).
+DDL, error strings and the `rebase.boardEnabled` key to Tauri, and checks that
+anything else is a `board_native_*` table. Task projects, labels, priority, due
+date, subtasks and comments live only in those native tables and are removed
+with their card in either app. The Board setting is on by default in both apps.
+Automated coverage: storage, ordering, extras and concurrent writes (core);
+auto-move and turn rules (core); the setting and app view; the one-board view
+with search and filters; card and step styling; drag and drop and Move to…;
+the task drawer; and turn hooks (GPUI tests).
 
 These runtime checks are pending; none has been run by hand yet:
 
-- Turn Board on in Settings → General; the Board entry appears in the rail,
-  sidebar and title tabs.
-- Create a board in native and see it in Tauri; edit it in Tauri and see the
-  change in native within about 2 s.
-- Drag cards within a column, across columns and onto an empty column.
-- Reorder columns by dragging their headers.
+- Board is on by default; turning it off in Settings → General hides the rail,
+  sidebar and title-tab entries, and turning it on again shows the same board.
+- The header has no board switcher: search narrows cards (also by `#12`),
+  Filter narrows by project, label and priority, counts read `shown/total`,
+  and New task opens the add field in the first step.
+- Cards show label chips, subtask progress, priority, due date (red when
+  past), comment count and linked work; steps add, rename, reorder and delete.
+- Drag cards within a step, across steps and onto an empty step, including
+  while a filter is on.
 - Use a card's "Move to…" menu, both by clicking "…" and from the keyboard
   (Tab to a card, Enter, arrow keys, Enter).
+- Open a task: the drawer sits beside the board and never covers the header.
+  Change status, priority, due date (including "Pick a date…"), projects,
+  labels (including creating one), linked work, description, subtasks and
+  comments; Mark complete, copy reference and Delete.
+- Edit a board in Tauri and see the change in native within about 2 s.
 - Send a message to a Pilot with Board on and with Board off; a Pilot-linked
   card moves when Board is on, and nothing breaks either way.
 - Link a card to a session, send a prompt, and watch the card move to In
   Progress, then Review.
-- Turn Board off with the view open; the view closes and the same boards are
-  there when it is turned back on.
 
 ## Local checks
 
