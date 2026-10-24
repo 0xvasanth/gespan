@@ -13,8 +13,8 @@ On Windows, the packaging script uses `stable-x86_64-pc-windows-msvc`. The insta
 From the repository root:
 
 ```bash
-npm install
-npm run tauri dev
+bun install
+bun run tauri dev
 ```
 
 ## Ubuntu / Debian packages
@@ -22,9 +22,9 @@ npm run tauri dev
 On an Ubuntu/Debian workstation, the repository can install the native Tauri prerequisites and build distributable Linux packages directly:
 
 ```bash
-npm run setup:linux:deb
-npm ci
-npm run build:linux
+bun run setup:linux:deb
+bun install --frozen-lockfile
+bun run build:linux
 ```
 
 The Linux build emits `.deb` and AppImage bundles under `target/release/bundle/`, in the `deb/` and `appimage/` directories. `build:linux` repacks the AppImage so it uses the host WebKitGTK 4.1 stack instead of bundled Ubuntu libraries. See [Linux installation](install.md) for runtime dependencies and package instructions.
@@ -34,9 +34,9 @@ The Linux build emits `.deb` and AppImage bundles under `target/release/bundle/`
 On Fedora or Enterprise Linux 10 (registered RHEL, Rocky, Alma, CentOS Stream, Oracle):
 
 ```bash
-npm run setup:linux:fedora
-npm ci
-npm run build:fedora
+bun run setup:linux:fedora
+bun install --frozen-lockfile
+bun run build:fedora
 ```
 
 On EL 10, the setup helper enables EPEL 10 and CRB automatically, since the development packages need CRB. On Oracle Linux it enables `ol10_codeready_builder` and `ol10_developer_EPEL`. Fedora does not need these extra repositories.
@@ -52,8 +52,8 @@ EL 9 and older are unsupported (`webkit2gtk4.1-devel` only exists in EPEL 10). T
 ## Windows packages
 
 ```bash
-npm ci
-npm run build:windows
+bun install --frozen-lockfile
+bun run build:windows
 ```
 
 The Windows build emits an NSIS installer under `target/release/bundle/nsis/`.
@@ -84,7 +84,7 @@ The [release workflow](../.github/workflows/release.yml) packages the platform b
 The release workflow runs only when started by hand, so pushing a tag never publishes anything on its own.
 
 1. Add every secret below under Settings → Secrets and variables → Actions.
-2. Bump the version (`npm run set-version`), update [CHANGELOG.md](../CHANGELOG.md), and merge that through a pull request.
+2. Bump the version (`bun run set-version`), update [CHANGELOG.md](../CHANGELOG.md), and merge that through a pull request.
 3. Tag the merge commit as `vX.Y.Z` (or `vX.Y.Z-beta.N` for a beta) and push the tag.
 4. In the Actions tab, open **Release**, choose **Run workflow**, set **Use workflow from** to that tag, and run it. Any other ref fails immediately.
 
@@ -104,12 +104,12 @@ The experimental GPUI app uses a separate Cargo workspace. The production
 commands above continue to build React/Tauri.
 
 Requires Node.js 22+, stable Rust, and Xcode with macOS components on macOS.
-Native commands do not need npm dependencies installed.
+Native commands do not need JavaScript dependencies installed.
 
 ```sh
-npm run native:dev     # launch with a separate development database
-npm run native:build   # create an optimized app using installed Rebase data
-npm run native:check   # run native checks
+bun run native:dev     # launch with a separate development database
+bun run native:build   # create an optimized app using installed Rebase data
+bun run native:check   # run native checks
 ```
 
 Type `r` then Enter in the development terminal to rebuild and restart. There is

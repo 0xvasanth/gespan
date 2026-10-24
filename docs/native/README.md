@@ -11,7 +11,7 @@ uses React/Tauri. Native builds have their own Cargo workspace and lockfile.
   `pkg-config` on Debian/Ubuntu).
 - At least one installed, signed-in agent CLI. See [provider setup](../providers.md).
 
-The native commands do not require `npm install` or a frontend build.
+The native commands do not require `bun install` or a frontend build.
 macOS is the primary preview target. Linux and Windows GUI builds and interaction
 remain unverified; see [preview limitations](parity.md).
 
@@ -20,13 +20,13 @@ remain unverified; see [preview limitations](parity.md).
 From the repository root:
 
 ```sh
-npm run native:dev
+bun run native:dev
 ```
 
 Development uses a separate database. To open a particular project:
 
 ```sh
-npm run native:dev -- --cwd /path/to/project
+bun run native:dev --cwd /path/to/project
 ```
 
 Type `r` then Enter in the terminal to rebuild and restart. The current app stays
@@ -39,7 +39,7 @@ platforms launch the executable directly.
 ## Build
 
 ```sh
-npm run native:build
+bun run native:build
 ```
 
 This creates an optimized build without launching it. **The release app uses the
@@ -173,7 +173,7 @@ continues to use each provider's existing sign-in.
 ## Checks and fixtures
 
 ```sh
-npm run native:check
+bun run native:check
 ```
 
 This runs the script tests, Rust formatting, strict Clippy and native tests.
@@ -184,7 +184,7 @@ A synthetic long-history fixture uses development data and makes no provider
 request:
 
 ```sh
-REBASE_NATIVE_DATA_DIR=/tmp/rebase-native-lab npm run native:dev -- --fixture
+REBASE_NATIVE_DATA_DIR=/tmp/rebase-native-lab bun run native:dev --fixture
 ```
 
 Fixtures are refused with production data. Use a fresh temporary directory when

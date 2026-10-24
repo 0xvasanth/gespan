@@ -16,10 +16,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       - run: node --test scripts/release-channel.test.cjs
@@ -30,43 +30,40 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            mobile/package-lock.json
-      - run: npm ci
-      - run: npm ci
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
         working-directory: mobile
-      - run: npm run lint
+      - run: bun run lint
         working-directory: mobile
-      - run: npx tsc --noEmit
+      - run: bunx tsc --noEmit
         working-directory: mobile
-      - run: npx vitest run --config mobile/vitest.config.ts
+      - run: bunx vitest run --config mobile/vitest.config.ts
 
   browser:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium webkit
-      - run: npm run test:browser
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium webkit
+      - run: bun run test:browser
       - name: Upload browser failure traces
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: browser-test-results
           path: test-results/
@@ -80,14 +77,14 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run test:host
-      - run: npm run host:package
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run test:host
+      - run: bun run host:package
 
   check:
     strategy:
@@ -96,24 +93,24 @@ jobs:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: bash scripts/install-linux-deps-debian.sh --sources /etc/apt/sources.list.d/ubuntu.sources
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
-          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - run: npm ci
-      - run: npm test
-      - run: npx tsc --noEmit
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run test
+      - run: bunx tsc --noEmit
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo check
@@ -127,7 +124,7 @@ jobs:
     # A full tauri release build is too expensive for every PR. Run when
     # packaging inputs change; the release linux job still always asserts.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -160,11 +157,10 @@ jobs:
             echo "Packaging files unchanged; skipping AppImage build."
           fi
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.packaging.outputs.run == 'true'
         with:
           node-version: 20
-          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
         if: steps.packaging.outputs.run == 'true'
@@ -173,12 +169,14 @@ jobs:
         if: steps.packaging.outputs.run == 'true'
         run: bash scripts/install-linux-deps-debian.sh
 
-      - run: npm ci
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: steps.packaging.outputs.run == 'true'
+      - run: bun install --frozen-lockfile
         if: steps.packaging.outputs.run == 'true'
 
       - name: Build Linux packages
         if: steps.packaging.outputs.run == 'true'
-        run: npm run build:linux
+        run: bun run build:linux
 
       - name: Assert AppImage uses host libraries
         if: steps.packaging.outputs.run == 'true'
@@ -197,26 +195,27 @@ jobs:
         image: [fedora:43, almalinux:10]
     steps:
       # Neither fedora:43 nor almalinux:10 ships git, which actions/checkout
-      # otherwise has to work around with a REST API tarball download.
-      - name: Install git
-        run: dnf install -y git
+      # otherwise has to work around with a REST API tarball download, or the
+      # unzip that setup-bun extracts Bun with.
+      - name: Install git and unzip
+        run: dnf install -y git unzip
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Install system dependencies
         run: bash scripts/install-linux-deps-fedora.sh
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
-          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - run: npm ci
-      - run: npm run build:fedora
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run build:fedora
 
       - name: Install the generated rpm
         run: |
@@ -247,7 +246,7 @@ jobs:
         # Ship and test the EL 10 build. Fedora 43's glibc is newer, so a
         # fedora:43 rpm can dnf-install on AlmaLinux 10 and still fail to load.
         if: matrix.image == 'almalinux:10'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpm-package
           path: target/release/bundle/rpm/*.rpm
@@ -267,14 +266,14 @@ jobs:
       - name: Install git
         run: dnf install -y git
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Enable EPEL 10
         run: dnf install -y epel-release
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: rpm-package
           path: rpm
