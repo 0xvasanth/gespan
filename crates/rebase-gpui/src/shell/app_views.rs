@@ -130,6 +130,11 @@ impl Shell {
         {
             notes.update(cx, |notes, cx| notes.flush(cx));
         }
+        if self.active_app_view == Some(AppView::Board)
+            && let Some(board) = &self.board
+        {
+            board.update(cx, |board, cx| board.hidden(cx));
+        }
         self.active_app_view = None;
         self.invalidate_chrome(cx);
     }
@@ -254,7 +259,8 @@ impl Shell {
             else {
                 return;
             };
-            let view = cx.new(|cx| board::BoardView::new(path, cx));
+            let store = self.store.clone();
+            let view = cx.new(|cx| board::BoardView::new(store, path, window, cx));
             self.app_view_events.push(cx.subscribe_in(
                 &view,
                 window,
@@ -265,6 +271,9 @@ impl Shell {
             self.board = Some(view);
         }
         self.show_app_view(AppView::Board, window, cx);
+        if let Some(board) = &self.board {
+            board.update(cx, |board, cx| board.shown(cx));
+        }
     }
 
     pub(super) fn open_inbox(&mut self, window: &mut Window, cx: &mut Context<Self>) {
