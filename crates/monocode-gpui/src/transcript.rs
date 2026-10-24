@@ -4409,6 +4409,7 @@ impl TranscriptView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let row = self.rows[ix].clone();
+        let prompt_width = self.split_prompt_width(ix, window);
         let message = &self.messages[row.message];
         let user = message.role == "user";
         let stacked = user && self.mono && self.stacks_on_next(message.start);
@@ -5163,6 +5164,7 @@ impl TranscriptView {
                                     .relative()
                                     .min_w_0()
                                     .when(user && self.chat_layout, |d| d.max_w(px(576.)))
+                                    .when_some(prompt_width, |d, width| d.w(width))
                                     .when(user && !self.chat_layout, |d| d.w_full())
                                     .when(!user, |d| d.w_full())
                                     .when(row.work, |d| {
@@ -5662,6 +5664,115 @@ mod scroll_tests {
         view.prompt_rise = None;
         view.motions.clear();
         view.rebuild(0, cx);
+    }
+
+    #[gpui::test]
+    fn expanded_user_chunks_paint_one_aligned_bubble(cx: &mut TestAppContext) {
+        // Compare settled bubble geometry rather than per-row resize glides.
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let window = cx.update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(900.), px(1000.)),
+                    ))),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(|_| TranscriptView::new()),
+            )
+            .unwrap()
+        });
+        // Newline splitting produces three rows, with the widest text in the
+        // middle. Check both natural-width and capped, wrapped messages.
+        for (wide, width) in [
+            ("a medium length line".to_owned(), 900.),
+            ("wide text ".repeat(20), 900.),
+            ("wide text ".repeat(20), 400.),
+        ] {
+            cx.simulate_window_resize(window.into(), size(px(width), px(1000.)));
+            let mut transcript = monocode_core::transcript::Transcript::default();
+            transcript.begin("user");
+            transcript.append(&format!(
+                "{}\n{wide}\n{}",
+                "x\n".repeat(12),
+                "y\n".repeat(12)
+            ));
+            assert!(transcript.rows.len() >= 3);
+            window
+                .update(cx, |view, _, cx| {
+                    view.patch(0, transcript.rows, cx);
+                    if !view.expanded_prompts.contains(&0) {
+                        view.toggle_prompt(0, cx);
+                    }
+                    settle(view, cx);
+                })
+                .unwrap();
+            // The viewport probe invalidates retained list heights after a
+            // resize; draw again to inspect the resulting geometry.
+            for _ in 0..2 {
+                window.update(cx, |_, _, cx| cx.notify()).unwrap();
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+            }
+            window
+                .update(cx, |view, window, _| {
+                    let mut bubbles: Vec<_> = window
+                        .painted_quads()
+                        .into_iter()
+                        .filter(|quad| quad.background == user_bubble_fill().into())
+                        .collect();
+                    bubbles.sort_by(|a, b| a.bounds.top().0.total_cmp(&b.bounds.top().0));
+                    assert_eq!(bubbles.len(), view.rows.len());
+                    assert!(bubbles.len() >= 3);
+                    let first = &bubbles[0];
+                    let last = bubbles.last().unwrap();
+                    assert!(first.corner_radii.top_left.0 > 0.);
+                    assert!(last.corner_radii.bottom_left.0 > 0.);
+                    for pair in bubbles.windows(2) {
+                        let (a, b) = (&pair[0], &pair[1]);
+                        assert_eq!(a.bounds.left(), b.bounds.left(), "shared left edge");
+                        assert_eq!(a.bounds.size.width, b.bounds.size.width, "shared width");
+                        assert_eq!(a.bounds.bottom(), b.bounds.top(), "no gaps between chunks");
+                        assert_eq!(a.corner_radii.bottom_left.0, 0.);
+                        assert_eq!(b.corner_radii.top_left.0, 0.);
+                    }
+                    assert!(first.bounds.size.width.0 / window.scale_factor() <= 576.);
+                })
+                .unwrap();
+        }
+        window
+            .update(cx, |view, _, cx| {
+                // A source patch updates rows in place; it does not truncate
+                // the previous prompt's continuation rows.
+                *view = TranscriptView::new();
+                view.patch(0, vec![row("user", "Hi")], cx);
+                settle(view, cx);
+            })
+            .unwrap();
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |_, window, _| {
+                let bubble = window
+                    .painted_quads()
+                    .into_iter()
+                    .find(|quad| quad.background == user_bubble_fill().into())
+                    .unwrap();
+                assert!(
+                    bubble.bounds.size.width.0 / window.scale_factor() < 96.,
+                    "short messages still shrink to their text"
+                );
+                assert_eq!(
+                    bubble.corner_radii.top_left.0 * 2.,
+                    bubble.bounds.size.height.0
+                );
+                assert_eq!(
+                    bubble.corner_radii.top_left,
+                    bubble.corner_radii.bottom_left
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]

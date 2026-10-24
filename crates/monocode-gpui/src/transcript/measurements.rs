@@ -14,6 +14,7 @@ pub(super) struct Measurements {
     style: Option<LayoutStyle>,
     viewport: gpui::Size<Pixels>,
     rows: HashMap<usize, Pixels>,
+    prompt_widths: HashMap<usize, Pixels>,
     retained: HashMap<(usize, usize), RetainedHeight>,
     frame: u64,
     #[cfg(test)]
@@ -29,14 +30,63 @@ struct RetainedHeight {
 impl Measurements {
     pub(super) fn rows_changed(&mut self) {
         self.rows.clear();
+        self.prompt_widths.clear();
     }
     pub(super) fn clear(&mut self) {
-        self.rows.clear();
+        self.rows_changed();
         self.retained.clear();
     }
 }
 
 impl TranscriptView {
+    /// Virtualized chunks share one bubble width, even when only a narrow
+    /// continuation is on screen. Single-row prompts keep their natural layout.
+    pub(super) fn split_prompt_width(&mut self, ix: usize, window: &Window) -> Option<Pixels> {
+        let row = &self.rows[ix];
+        let message = &self.messages[row.message];
+        if !self.chat_layout || message.role != "user" || (row.first && row.last) {
+            return None;
+        }
+        if let Some(width) = self.measurements.prompt_widths.get(&message.start) {
+            return Some(*width);
+        }
+        let width = if message.attachments.is_empty() {
+            self.rows[message.display_start..]
+                .iter()
+                .take_while(|other| other.message == row.message)
+                .filter_map(|other| match &other.body {
+                    Body::Plain(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .flat_map(|text| {
+                    let run = gpui::TextRun {
+                        len: text.len(),
+                        font: window.text_style().font(),
+                        color: Default::default(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    };
+                    window
+                        .text_system()
+                        .shape_text(text, px(14.), &[run], None, None)
+                        .unwrap_or_default()
+                })
+                .map(|line| line.width())
+                // Leave room for the disclosure, including a blank last chunk.
+                .fold(px(72.), Pixels::max)
+                + px(24.)
+        } else {
+            // Attachment chips wrap inside the same column as every text chunk.
+            px(576.)
+        };
+        if self.measurements.prompt_widths.len() >= 256 {
+            self.measurements.prompt_widths.clear();
+        }
+        self.measurements.prompt_widths.insert(message.start, width);
+        Some(width)
+    }
+
     pub(super) fn begin_measurements(&mut self, window: &Window, cx: &Context<Self>) {
         let style = LayoutStyle {
             text: window.text_style(),
