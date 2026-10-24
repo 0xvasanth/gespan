@@ -1,0 +1,43 @@
+crates/rebase-gpui/src/board/tests.rs
+  s_0de52fe47ecaaa::t_fbb31731900f7b 1470-1471
+  s_0de52fe47ecaaa::t_4a6b91b6cff6a6 947,949,951-955,1372-1469,1472-1511,1516-1519,1521-1634,1636,1638,1643,1645,1648,1650,1652,1654,1656-1658,1664-1666
+  s_0de52fe47ecaaa::t_27ee68d07a2ec8 1520
+  s_0de52fe47ecaaa::t_9a09c21d52016f 1512-1515
+  s_0de52fe47ecaaa::t_4d4b8f4965d7f3 1635,1637,1639-1642,1644,1646-1647,1649,1651,1653,1655,1659-1663
+crates/rebase-gpui/src/board/detail/view.rs
+  s_0de52fe47ecaaa::t_19d6f6c7bf0bfe 660-664
+  s_0de52fe47ecaaa::t_27ee68d07a2ec8 705-708
+crates/rebase-gpui/src/board/column.rs
+  s_0de52fe47ecaaa::t_97555bf3176882 54,58
+crates/rebase-gpui/src/board/detail.rs
+  s_0de52fe47ecaaa::t_530e7367e2c9ed 66-67,150-153,209,230-233,263-265,269-270,273-277,281-298,315-316,318,334,347,403-405,460-462,464-469,484-486,741-743,747,768-769,771-773,801-804,865-868
+  s_0de52fe47ecaaa::t_4a6b91b6cff6a6 89-99
+  s_0de52fe47ecaaa::t_6dd2625273f7d5 178,181,184
+crates/rebase-gpui/src/board/header.rs
+  s_0de52fe47ecaaa::t_7d1e9069d1bde9 14-18,307-321
+  s_0de52fe47ecaaa::t_97555bf3176882 52-53,60,70,80-84,90,119-120
+  s_0de52fe47ecaaa::t_19d6f6c7bf0bfe 8-9,13,19-28,124-130,205-213,228,249-257,331,334,352,355
+crates/rebase-gpui/src/board.rs
+  s_0de52fe47ecaaa::t_6564117b9ba028 120-123,202-203,255,279-281,329,331-335,362-364,366,368-369
+  s_0de52fe47ecaaa::t_19d6f6c7bf0bfe 132-134,211-212
+  s_0de52fe47ecaaa::t_91b4024a4579a1 371
+  s_0de52fe47ecaaa::t_8341f5c4160f95 391,435,453-455,471-473,475-477,489-491,507,509-515,601-603,605-606,608-613
+crates/rebase-gpui/src/board/style.rs
+  s_0de52fe47ecaaa::t_97555bf3176882 12,14-18,85-86,199-205,223-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c5dc15ae7e5ece575116597bc70fc78a79183738",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
