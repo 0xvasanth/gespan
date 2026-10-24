@@ -30,7 +30,7 @@ vi.mock("../../core/child", () => ({
   }),
 }));
 
-const { sendClaudeTurn, __claudeTestReset } = await import("./claude");
+const { sendClaudeTurn, cancelClaudeTurn, __claudeTestReset } = await import("./claude");
 
 function fixture(name: string): string[] {
   return readFileSync(
@@ -231,4 +231,59 @@ it("ignores a heartbeat for a call this turn does not know", async () => {
     }),
   );
   expect(toolElapsed("toolu_unknown")).toBeUndefined();
+});
+
+describe("elapsed entries for calls that stop without a result", () => {
+  const BASH = "toolu_014zyZxk9DWdV8hmrxt56vP3";
+
+  /** Starts a Bash turn and feeds frames up to and including the first heartbeat. */
+  async function runningBash(): Promise<{ turn: Promise<void>; frames: string[] }> {
+    const frames = fixture("heartbeat-bash");
+    const turn = sendClaudeTurn({
+      sessionId: "heartbeat-stop",
+      cwd: "/repo",
+      model: "claude:claude-sonnet-5",
+      modelSettings: {},
+      runtimeMode: "supervised",
+      text: "go",
+      attachments: [],
+      onEvent: () => undefined,
+    });
+    await waitFor(() => sent.length > 0, "initialize");
+    for (const frame of frames.slice(0, 18)) onLine!(frame);
+    await waitFor(() => sent.some((line) => line.includes('"type":"user"')), "prompt");
+    const firstBeat = frames.findIndex(isHeartbeatFrame);
+    for (const frame of frames.slice(18, firstBeat + 1)) onLine!(frame);
+    expect(toolElapsed(BASH)).toBe(30);
+    return { turn, frames };
+  }
+
+  it("drops the entry when the turn is cancelled with the call still running", async () => {
+    const { turn } = await runningBash();
+    await cancelClaudeTurn("heartbeat-stop");
+    expect(toolElapsed(BASH)).toBeUndefined();
+    await turn;
+  });
+
+  it("does not bring the entry back for a heartbeat after the turn stopped", async () => {
+    const { turn, frames } = await runningBash();
+    await cancelClaudeTurn("heartbeat-stop");
+    await turn;
+    onLine!(frames.filter(isHeartbeatFrame)[1]);
+    expect(toolElapsed(BASH)).toBeUndefined();
+  });
+
+  it("does not create an entry for a heartbeat that arrives after a Bash tool_result", async () => {
+    const frames = fixture("heartbeat-bash");
+    const late = frames.filter(isHeartbeatFrame)[1];
+    const seen: Array<number | undefined> = [];
+    await replay("heartbeat-bash", (frame) => {
+      if (frame.includes('"type":"tool_result"')) {
+        onLine!(late);
+        seen.push(toolElapsed(BASH));
+      }
+    });
+    expect(seen).toEqual([undefined]);
+    expect(toolElapsed(BASH)).toBeUndefined();
+  });
 });

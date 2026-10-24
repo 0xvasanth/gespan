@@ -51,6 +51,10 @@ pub mod live {
     pub fn elapsed(id: &str) -> Option<u64> {
         map().get(id).copied()
     }
+    /// Forget a call's elapsed, for a call that left Running without a result.
+    pub fn remove(id: &str) {
+        map().remove(id);
+    }
     /// Follow a call's latest state: keep its elapsed while it runs, drop it after.
     pub fn record(call: &ToolCall) {
         match call.live_elapsed_secs {

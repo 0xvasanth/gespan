@@ -2473,6 +2473,7 @@ impl TranscriptView {
                 && tool.state == ToolState::Running
             {
                 tool.state = ToolState::Cancelled;
+                rebase_core::tool::live::remove(&tool.id);
                 if tool.output.is_empty() {
                     tool.output = "Cancelled".into();
                 }

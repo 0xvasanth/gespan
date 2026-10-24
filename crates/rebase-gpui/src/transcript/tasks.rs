@@ -1629,6 +1629,40 @@ mod tests {
     }
 
     #[gpui::test]
+    fn stopping_a_turn_forgets_live_elapsed_of_its_running_calls(cx: &mut TestAppContext) {
+        let call = |id: &str, state: ToolState| {
+            let mut call = ToolCall::new(id, "Bash");
+            call.state = state;
+            serde_json::to_string(&call).unwrap()
+        };
+        let window = open_view(
+            cx,
+            vec![
+                row("tool", &call("toolu_stop_old", ToolState::Running)),
+                row("user", "Go"),
+                row("tool", &call("toolu_stop_running", ToolState::Running)),
+                row("tool", &call("toolu_stop_done", ToolState::Completed)),
+            ],
+        );
+        for id in ["toolu_stop_old", "toolu_stop_running", "toolu_stop_done"] {
+            rebase_core::tool::live::set_elapsed(id, 60);
+        }
+        window
+            .update(cx, |view, _, cx| view.stop_streaming(cx))
+            .unwrap();
+        assert_eq!(rebase_core::tool::live::elapsed("toolu_stop_running"), None);
+        // Only the current turn's running calls are settled here.
+        assert_eq!(rebase_core::tool::live::elapsed("toolu_stop_old"), Some(60));
+        assert_eq!(
+            rebase_core::tool::live::elapsed("toolu_stop_done"),
+            Some(60)
+        );
+        for id in ["toolu_stop_old", "toolu_stop_done"] {
+            rebase_core::tool::live::remove(id);
+        }
+    }
+
+    #[gpui::test]
     fn a_running_bash_row_with_live_elapsed_shows_2m_30s(cx: &mut TestAppContext) {
         let window = open_view(cx, vec![row("user", "Go")]);
         window
@@ -1657,5 +1691,7 @@ mod tests {
         cx.refresh().unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         assert!(visual.debug_bounds("tool-elapsed-1").is_some());
+        // The map is global; leave nothing behind for other tests.
+        rebase_core::tool::live::remove("toolu_long");
     }
 }

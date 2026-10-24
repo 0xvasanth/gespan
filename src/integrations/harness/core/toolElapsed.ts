@@ -3,6 +3,7 @@
  * heartbeat frames. Held in memory only: it is never part of a session, so it
  * is never saved, and the shared rebase.db format is unchanged.
  */
+// Keyed by Claude `toolu_` ids, which are globally unique across sessions.
 const elapsed = new Map<string, number>();
 const listeners = new Set<() => void>();
 

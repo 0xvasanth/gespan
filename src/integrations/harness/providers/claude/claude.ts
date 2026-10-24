@@ -198,7 +198,7 @@ type Live = {
   compactionConfirmed: boolean;
   /** Which Agent call dispatched which sub-agent; outlives turns and processes. */
   registry: AgentRegistry;
-  /** Main-thread agent calls that have finished; only a running one is a live parent. */
+  /** Main-thread calls that have their result (or finished, for agents); only a running agent is a live parent. */
   doneTools: Set<string>;
   /** Sub-agent step id -> the block it was attached to. */
   stepOwners: Map<string, string>;
@@ -708,6 +708,7 @@ async function runTurn(live: Live, input: SendTurnInput): Promise<void> {
   live.emittedReasoning = "";
   live.pendingAssistantBoundary = false;
   live.toolsByIndex.clear();
+  for (const id of live.toolsById.keys()) clearToolElapsed(id);
   live.toolsById.clear();
   live.agentTasks.clear();
   live.backgroundTasks.clear();
@@ -1062,7 +1063,7 @@ function handleUser(live: Live, rec: Record<string, unknown>): void {
     if (isAgentToolName(tool.name) && isBackgroundedAgentTool(live, tool.id)) {
       continue;
     }
-    if (isAgentToolName(tool.name)) live.doneTools.add(tool.id);
+    live.doneTools.add(tool.id);
     clearToolElapsed(tool.id);
     live.onEvent({
       type: "tool.updated",
@@ -1604,7 +1605,11 @@ function handleToolProgress(live: Live, rec: Record<string, unknown>): void {
 function noteHeartbeat(live: Live, progress: ClaudeToolProgress): void {
   const beat = heartbeatElapsed(progress);
   if (!beat) return;
-  if (!live.toolsById.has(beat.callId) || live.doneTools.has(beat.callId)) {
+  if (
+    !live.activeTurn ||
+    !live.toolsById.has(beat.callId) ||
+    live.doneTools.has(beat.callId)
+  ) {
     return;
   }
   setToolElapsed(beat.callId, beat.seconds);
@@ -2038,6 +2043,7 @@ function noteResumedNotification(
   if (!owner || !live.registry.isResume(owner)) return;
   live.registry.noteFinished(notice.taskId);
   live.doneTools.add(owner);
+  clearToolElapsed(owner);
   live.onEvent({
     type: "tool.updated",
     callId: owner,
@@ -2144,7 +2150,10 @@ function completeAgentTask(
 ): void {
   const task = live.agentTasks.get(taskId);
   live.agentTasks.delete(taskId);
-  if (task?.toolUseId) live.doneTools.add(task.toolUseId);
+  if (task?.toolUseId) {
+    live.doneTools.add(task.toolUseId);
+    clearToolElapsed(task.toolUseId);
+  }
   if (task && !task.toolUseId && live.registry.dispatchOf(taskId)) {
     // A resumed agent seen only in the task list never had a row of its own.
   } else if (task) {
@@ -2338,6 +2347,8 @@ function finishActiveTurn(live: Live, extraEvents: HarnessEvent[] = []): void {
   clearAwaitingResume(live);
   live.turnEndPending = false;
   live.activeTurn = false;
+  // A call still running when the turn ends or is cancelled gets no result.
+  for (const id of live.toolsById.keys()) clearToolElapsed(id);
   for (const event of extraEvents) live.onEvent(event);
   const done = live.turnDone;
   const failed = live.turnFailed;

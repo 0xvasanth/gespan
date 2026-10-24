@@ -884,30 +884,8 @@ fn run_turn_using(
     } else {
         transcript.rows.len()
     };
-    for (ix, row) in transcript.rows.iter_mut().enumerate().skip(turn_start) {
-        if row.role != "tool" {
-            continue;
-        }
-        if let Ok(mut tool) = serde_json::from_str::<rebase_core::tool::ToolCall>(&row.text)
-            && tool.state == rebase_core::tool::ToolState::Running
-        {
-            tool.state = if cancelled {
-                rebase_core::tool::ToolState::Cancelled
-            } else {
-                rebase_core::tool::ToolState::Failed
-            };
-            if tool.output.is_empty() {
-                tool.output = if cancelled {
-                    "Cancelled".into()
-                } else {
-                    result.as_ref().err().cloned().unwrap_or_else(|| {
-                        "No completion result was received before the turn ended.".into()
-                    })
-                };
-            }
-            row.text = serde_json::to_string(&tool).unwrap();
-            final_start = final_start.min(ix);
-        }
+    if let Some(ix) = settle_running_tools(&mut transcript.rows, turn_start, cancelled, &result) {
+        final_start = final_start.min(ix);
     }
     if let Some((cwd, id)) = &checkpoint
         && let Some(store) = rebase_core::checkpoint::store()
@@ -1013,6 +991,44 @@ fn run_turn_using(
 }
 
 /// checkpointEdits.ts's sessionEditPaths: files named by successful edit tools.
+/// Flip tools still Running at turn end to Cancelled or Failed, and forget their
+/// live elapsed. Returns the first row changed.
+fn settle_running_tools<T>(
+    rows: &mut [Row],
+    turn_start: usize,
+    cancelled: bool,
+    result: &Result<T, String>,
+) -> Option<usize> {
+    let mut first = None;
+    for (ix, row) in rows.iter_mut().enumerate().skip(turn_start) {
+        if row.role != "tool" {
+            continue;
+        }
+        if let Ok(mut tool) = serde_json::from_str::<rebase_core::tool::ToolCall>(&row.text)
+            && tool.state == rebase_core::tool::ToolState::Running
+        {
+            tool.state = if cancelled {
+                rebase_core::tool::ToolState::Cancelled
+            } else {
+                rebase_core::tool::ToolState::Failed
+            };
+            if tool.output.is_empty() {
+                tool.output = if cancelled {
+                    "Cancelled".into()
+                } else {
+                    result.as_ref().err().cloned().unwrap_or_else(|| {
+                        "No completion result was received before the turn ended.".into()
+                    })
+                };
+            }
+            rebase_core::tool::live::remove(&tool.id);
+            row.text = serde_json::to_string(&tool).unwrap();
+            first = Some(first.map_or(ix, |f: usize| f.min(ix)));
+        }
+    }
+    first
+}
+
 fn edited_paths(rows: &[Row]) -> Vec<String> {
     let mut paths = Vec::new();
     for row in rows.iter().filter(|r| r.role == "tool") {
@@ -1043,4 +1059,51 @@ fn shlex_quote(text: &str) -> String {
             .replace('$', "\\$")
             .replace('`', "\\`")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rebase_core::tool::{ToolCall, ToolState, live};
+
+    fn tool_row(id: &str, state: ToolState) -> Row {
+        let mut call = ToolCall::new(id, "Bash");
+        call.state = state;
+        Row {
+            role: "tool".into(),
+            text: serde_json::to_string(&call).unwrap(),
+            first: true,
+            sent_at: None,
+        }
+    }
+
+    #[test]
+    fn turn_end_settling_forgets_live_elapsed_of_running_tools_only() {
+        for (cancelled, expected) in [(true, ToolState::Cancelled), (false, ToolState::Failed)] {
+            live::set_elapsed("toolu_rt_running", 90);
+            live::set_elapsed("toolu_rt_before_turn", 40);
+            let mut rows = vec![
+                tool_row("toolu_rt_before_turn", ToolState::Running),
+                tool_row("toolu_rt_running", ToolState::Running),
+                tool_row("toolu_rt_done", ToolState::Completed),
+            ];
+            let first = settle_running_tools::<()>(&mut rows, 1, cancelled, &Ok(()));
+            assert_eq!(first, Some(1));
+            let settled: ToolCall = serde_json::from_str(&rows[1].text).unwrap();
+            assert_eq!(settled.state, expected);
+            assert_eq!(live::elapsed("toolu_rt_running"), None);
+            // A row from an earlier turn is not this turn's to settle.
+            assert_eq!(live::elapsed("toolu_rt_before_turn"), Some(40));
+            live::remove("toolu_rt_before_turn");
+        }
+    }
+
+    #[test]
+    fn turn_end_settling_with_nothing_running_changes_nothing() {
+        let mut rows = vec![tool_row("toolu_rt_ok", ToolState::Completed)];
+        assert_eq!(
+            settle_running_tools::<()>(&mut rows, 0, false, &Ok(())),
+            None
+        );
+    }
 }
