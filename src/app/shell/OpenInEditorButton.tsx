@@ -31,8 +31,10 @@ export function OpenInEditorButton({ cwd }: { cwd: string }) {
   const [scanFailed, setScanFailed] = useState(false);
   const scan = useRef(0);
   // The menu stays open while an editor starts; a second pick meanwhile
-  // would launch it twice.
-  const launching = useRef(false);
+  // would launch it twice. Moving to another folder drops the launch, so
+  // its result cannot block or close that folder's menu.
+  const launch = useRef<{ id: number; cwd: string } | null>(null);
+  const launches = useRef(0);
 
   // Scan again on every open: an editor installed since launch shows up
   // without a restart. The previous list stays up while the scan runs.
@@ -61,6 +63,7 @@ export function OpenInEditorButton({ cwd }: { cwd: string }) {
   useEffect(() => {
     setMenu(null);
     setError(null);
+    launch.current = null;
   }, [cwd]);
 
   const close = () => {
@@ -91,18 +94,23 @@ export function OpenInEditorButton({ cwd }: { cwd: string }) {
   const onPick = (id: string) => {
     if (id.startsWith(EDITOR_ITEM_PREFIX)) {
       const editorId = id.slice(EDITOR_ITEM_PREFIX.length);
-      if (launching.current) return;
+      if (launch.current?.cwd === cwd) return;
       if (!editors?.some((editor) => editor.id === editorId)) return;
-      launching.current = true;
+      const launchId = ++launches.current;
+      launch.current = { id: launchId, cwd };
+      const current = () => launch.current?.id === launchId;
       void openInExternalEditor(editorId, cwd)
         .then(() => {
+          // It opened, so it leads the list even if the folder changed.
           saveLastExternalEditor(editorId);
           setLastEditorId(editorId);
-          close();
+          if (current()) close();
         })
-        .catch(fail)
+        .catch((cause: unknown) => {
+          if (current()) fail(cause);
+        })
         .finally(() => {
-          launching.current = false;
+          if (current()) launch.current = null;
         });
       return;
     }

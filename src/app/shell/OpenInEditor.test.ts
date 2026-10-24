@@ -345,6 +345,61 @@ describe("title bar Open in editor", () => {
     expect(launches()).toHaveLength(2);
   });
 
+  it("lets another folder launch while the previous one still starts", async () => {
+    let release!: () => void;
+    launchGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    await renderTitleBar({ openInEditorCwd: WORKTREE });
+    await openMenu();
+    await act(async () => menuItem("Zed").click());
+
+    // The session changes while Zed is still starting.
+    await renderTitleBar({ openInEditorCwd: "/work/other" });
+    await openMenu();
+    await act(async () => menuItem("WebStorm").click());
+    const launches = vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "open_in_external_editor");
+    expect(launches.map(([, args]) => args)).toEqual([
+      { editorId: "zed", cwd: WORKTREE },
+      { editorId: "webstorm", cwd: "/work/other" },
+    ]);
+    await act(async () => release());
+  });
+
+  it("an old launch settling leaves the next folder's menu open", async () => {
+    let release!: () => void;
+    launchGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    await renderTitleBar({ openInEditorCwd: WORKTREE });
+    await openMenu();
+    await act(async () => menuItem("Zed").click());
+    await renderTitleBar({ openInEditorCwd: "/work/other" });
+    await openMenu();
+    await act(async () => release());
+    expect(menu()).not.toBeNull();
+    // It still opened, so it leads the list next time.
+    expect(localStorage.getItem(LAST_EXTERNAL_EDITOR_KEY)).toBe("zed");
+  });
+
+  it("an old launch failing shows nothing in the next folder's menu", async () => {
+    let release!: () => void;
+    launchGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    await renderTitleBar({ openInEditorCwd: WORKTREE });
+    await openMenu();
+    await act(async () => menuItem("Zed").click());
+    await renderTitleBar({ openInEditorCwd: "/work/other" });
+    await openMenu();
+    openError = "Zed is no longer installed.";
+    await act(async () => release());
+    expect(menu()).not.toBeNull();
+    expect(menu()!.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("reveals or copies the folder", async () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
