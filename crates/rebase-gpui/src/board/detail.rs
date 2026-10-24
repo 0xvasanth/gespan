@@ -2,6 +2,8 @@
 //! grid of properties, the description, subtasks, then Comments and Activity.
 //! It docks beside the board instead of covering it.
 mod view;
+#[cfg(test)]
+pub(crate) use view::SEND_HINT;
 
 use super::{BoardView, Event, style, turns};
 use crate::{
@@ -51,16 +53,45 @@ pub(crate) struct CardDetail {
     loaded_title: String,
     loaded_body: String,
     pub activity: Option<Result<Vec<Activity>, String>>,
+    /// The card has more activity than the drawer loads.
+    activity_more: bool,
     subtasks: Vec<Subtask>,
     comments: Vec<Comment>,
     tab: Tab,
     picker: Option<Picker>,
+    /// What the Link picker offers, read once when it opens.
+    link_targets: Vec<LinkTarget>,
     query: Entity<Input>,
     subtask_input: Option<Entity<Input>>,
     comment: Entity<Input>,
     choice: Option<(Choice, Entity<Menu>, Subscription)>,
     anchors: HashMap<&'static str, AnchorSlot>,
     _subscriptions: Vec<Subscription>,
+}
+
+impl CardDetail {
+    /// The Activity tab's count: "50+" when the card has more than it loads.
+    pub(crate) fn activity_badge(&self) -> String {
+        let shown = self
+            .activity
+            .as_ref()
+            .and_then(|rows| rows.as_ref().ok())
+            .map_or(0, Vec::len);
+        if self.activity_more {
+            format!("{shown}+")
+        } else {
+            shown.to_string()
+        }
+    }
+
+    /// What assistive tech calls the description and comment fields.
+    #[cfg(test)]
+    pub(crate) fn field_labels(&self, cx: &gpui::App) -> (String, String) {
+        (
+            self.body.read(cx).label().to_string(),
+            self.comment.read(cx).label().to_string(),
+        )
+    }
 }
 
 /// One activity row as the timeline reads it, before its relative time.
@@ -113,6 +144,7 @@ impl BoardView {
         });
         let body = cx.new(|cx| {
             let mut input = Input::commit_message(cx);
+            input.set_label("Description");
             input.set_placeholder("Add a description…", cx);
             input
         });
@@ -120,6 +152,7 @@ impl BoardView {
         let query = cx.new(|cx| Input::field("Search", "Search…", content(0.4), cx));
         let comment = cx.new(|cx| {
             let mut input = Input::commit_message(cx);
+            input.set_label("New comment");
             input.set_placeholder("Leave a comment…", cx);
             input
         });
@@ -148,10 +181,12 @@ impl BoardView {
             loaded_title: card.title.clone(),
             loaded_body: card.body.clone(),
             activity: None,
+            activity_more: false,
             subtasks: Vec::new(),
             comments: Vec::new(),
             tab: Tab::Comments,
             picker: None,
+            link_targets: Vec::new(),
             query,
             subtask_input: None,
             comment,
@@ -210,49 +245,81 @@ impl BoardView {
         let Some(card) = self.detail_card() else {
             return;
         };
-        let lists = self.service().map(|service| {
-            (
-                service.activity(&card.board_id, Some(&card.id), ACTIVITY_LIMIT),
-                service.subtasks(&card.id).unwrap_or_default(),
-                service.comments(&card.id).unwrap_or_default(),
-            )
+        let lists = self.service().and_then(|service| {
+            Ok((
+                // One past the limit says whether there is more than shown.
+                service.activity(&card.board_id, Some(&card.id), ACTIVITY_LIMIT + 1),
+                service.subtasks(&card.id)?,
+                service.comments(&card.id)?,
+            ))
         });
-        if let Some(detail) = &mut self.card_detail {
-            match lists {
-                Ok((activity, subtasks, comments)) => {
-                    detail.activity = Some(activity);
-                    detail.subtasks = subtasks;
-                    detail.comments = comments;
-                }
-                Err(error) => detail.activity = Some(Err(error)),
+        let Some(detail) = &mut self.card_detail else {
+            return;
+        };
+        match lists {
+            Ok((activity, subtasks, comments)) => {
+                detail.activity_more = activity
+                    .as_ref()
+                    .is_ok_and(|rows| rows.len() > ACTIVITY_LIMIT);
+                detail.activity = Some(activity.map(|mut rows| {
+                    rows.truncate(ACTIVITY_LIMIT);
+                    rows
+                }));
+                detail.subtasks = subtasks;
+                detail.comments = comments;
+            }
+            // Keep what the drawer showed rather than empty lists.
+            Err(error) => {
+                detail.activity = Some(Err(error.clone()));
+                self.error = Some(format!("Couldn't load this task: {error}"));
             }
         }
     }
 
     /// Run a write for the open task, then refresh the board and the drawer.
+    /// True when the write succeeded.
     fn write_task(
         &mut self,
         cx: &mut Context<Self>,
         action: impl FnOnce(&mut rebase_core::board::Service) -> Result<(), String>,
-    ) {
-        self.write(cx, action);
+    ) -> bool {
+        let ok = self.write(cx, action);
         self.refresh_detail_lists();
         cx.notify();
+        ok
     }
 
     fn save_card_details(&mut self, cx: &mut Context<Self>) {
         let Some(detail) = &mut self.card_detail else {
             return;
         };
-        let title = detail.title.read(cx).content.trim().to_string();
+        let typed = detail.title.read(cx).content.trim().to_string();
         let body = detail.body.read(cx).content.to_string();
-        if title.is_empty() || (title == detail.loaded_title && body == detail.loaded_body) {
+        // A task needs a title: a cleared one goes back to the saved title,
+        // and a description edit still saves with it.
+        let title = if typed.is_empty() {
+            let saved = detail.loaded_title.clone();
+            detail
+                .title
+                .update(cx, |input, cx| input.set_text(saved.clone(), cx));
+            saved
+        } else {
+            typed
+        };
+        if title == detail.loaded_title && body == detail.loaded_body {
             return;
         }
-        detail.loaded_title = title.clone();
-        detail.loaded_body = body.clone();
         let card_id = detail.card_id.clone();
-        self.write_task(cx, |service| service.card_update(&card_id, &title, &body));
+        let saved = self.write_task(cx, |service| service.card_update(&card_id, &title, &body));
+        // Only a write that landed is the new baseline; a failed one keeps
+        // the typed text as an unsaved edit.
+        if saved
+            && let Some(detail) = &mut self.card_detail
+            && detail.card_id == card_id
+        {
+            detail.loaded_title = title;
+            detail.loaded_body = body;
+        }
     }
 
     /// After a reload, show changes made elsewhere in fields the user hasn't
@@ -395,7 +462,9 @@ impl BoardView {
                     _ => None,
                 };
                 match day {
-                    Some(None) => self.write_task(cx, |service| service.set_due(&card_id, None)),
+                    Some(None) => {
+                        self.write_task(cx, |service| service.set_due(&card_id, None));
+                    }
                     Some(Some(day)) => self.set_due_day(&card_id, day, cx),
                     None if id == "due-pick" => self.open_picker(Picker::DueDate, window, cx),
                     None => {}
@@ -422,6 +491,16 @@ impl BoardView {
         }
         detail.picker = Some(picker);
         detail.choice = None;
+        detail.link_targets = Vec::new();
+        if picker == Picker::Link {
+            let targets = self.link_targets(cx);
+            if let Some(detail) = &mut self.card_detail {
+                detail.link_targets = targets;
+            }
+        }
+        let Some(detail) = &mut self.card_detail else {
+            return;
+        };
         let placeholder = match picker {
             Picker::Projects => "Find a project…",
             Picker::Labels => "Find or create a label…",
@@ -444,12 +523,13 @@ impl BoardView {
             .unwrap_or_default()
     }
 
-    /// Enter in a pick list: a typed date sets it; a label name creates it.
     /// Due at the start of `day`; a day the local zone skipped is an error,
     /// never a cleared due date.
     fn set_due_day(&mut self, card_id: &str, day: chrono::NaiveDate, cx: &mut Context<Self>) {
         match style::day_start(day) {
-            Some(due) => self.write_task(cx, |service| service.set_due(card_id, Some(due))),
+            Some(due) => {
+                self.write_task(cx, |service| service.set_due(card_id, Some(due)));
+            }
             None => {
                 self.error = Some(format!("{day} does not exist in this time zone"));
                 cx.notify();
@@ -457,6 +537,7 @@ impl BoardView {
         }
     }
 
+    /// Enter in a pick list: a typed date sets it; a label name creates it.
     fn submit_query(&mut self, cx: &mut Context<Self>) {
         let Some(picker) = self.card_detail.as_ref().and_then(|detail| detail.picker) else {
             return;
@@ -557,6 +638,7 @@ impl BoardView {
         }
     }
 
+    /// The 50 most recent sessions, then every Pilot.
     pub(crate) fn link_targets(&self, cx: &gpui::App) -> Vec<LinkTarget> {
         let mut targets = Vec::new();
         if let Ok(store) = locked(&self.store) {
@@ -694,34 +776,36 @@ impl BoardView {
 
     // ---- top bar ----
 
-    /// The task's step is Done when the step's role is "done".
+    /// The step with the Done role, which Mark complete moves a task to.
+    fn done_column(&self) -> Option<String> {
+        self.detail
+            .as_ref()?
+            .columns
+            .iter()
+            .find(|column| column.role.as_deref() == Some("done"))
+            .map(|column| column.id.clone())
+    }
+
+    /// The task is complete when it sits in the Done step.
     fn task_done(&self, card: &rebase_core::board::Card) -> bool {
-        self.detail.as_ref().is_some_and(|detail| {
-            detail
-                .columns
-                .iter()
-                .any(|column| column.id == card.column_id && column.role.as_deref() == Some("done"))
-        })
+        self.done_column().as_deref() == Some(card.column_id.as_str())
     }
 
     fn mark_complete(&mut self, cx: &mut Context<Self>) {
         let Some(card) = self.detail_card() else {
             return;
         };
-        let done = self.detail.as_ref().and_then(|detail| {
-            detail
-                .columns
-                .iter()
-                .find(|column| column.role.as_deref() == Some("done"))
-                .or_else(|| detail.columns.iter().max_by_key(|column| column.position))
-                .map(|column| column.id.clone())
-        });
-        if let Some(done) = done
-            && done != card.column_id
-        {
-            self.write_task(cx, |service| {
-                service.card_move(&card.id, &done, usize::MAX, "user")
-            });
+        match self.done_column() {
+            Some(done) if done != card.column_id => {
+                self.write_task(cx, |service| {
+                    service.card_move(&card.id, &done, usize::MAX, "user")
+                });
+            }
+            Some(_) => {}
+            None => {
+                self.error = Some("No step has the Done role. Set one from a step's menu.".into());
+                cx.notify();
+            }
         }
     }
 

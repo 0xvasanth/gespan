@@ -395,12 +395,12 @@ impl BoardView {
         &mut self,
         cx: &mut Context<Self>,
         action: impl FnOnce(&mut Service) -> Result<(), String>,
-    ) {
-        match self.service().and_then(action) {
-            Ok(()) => self.error = None,
-            Err(error) => self.error = Some(error),
-        }
+    ) -> bool {
+        let result = self.service().and_then(action);
+        let ok = result.is_ok();
+        self.error = result.err();
         self.reload(cx);
+        ok
     }
 
     fn add_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -487,7 +487,7 @@ impl BoardView {
                 let role = self.column(&id).and_then(|column| column.role.clone());
                 self.write(cx, |service| {
                     service.column_update(&id, &name, role.as_deref())
-                })
+                });
             }
         }
     }

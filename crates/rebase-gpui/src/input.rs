@@ -407,6 +407,14 @@ impl Input {
         input.height = 120.;
         input
     }
+    /// The name assistive tech reads for the field.
+    pub(crate) fn set_label(&mut self, label: impl Into<SharedString>) {
+        self.label = label.into();
+    }
+    #[cfg(test)]
+    pub(crate) fn label(&self) -> &SharedString {
+        &self.label
+    }
     pub(crate) fn set_placeholder(
         &mut self,
         text: impl Into<SharedString>,

@@ -18,6 +18,12 @@ use gpui::{
 use rebase_core::board::{Card, extras::PRIORITIES};
 
 const DRAWER_WIDTH: f32 = 440.;
+/// The comment field sends on the platform's secondary submit chord.
+pub(crate) const SEND_HINT: &str = if cfg!(target_os = "macos") {
+    "⌘Enter"
+} else {
+    "Ctrl+Enter"
+};
 
 fn section(label: impl Into<SharedString>) -> gpui::Div {
     div()
@@ -149,7 +155,12 @@ impl BoardView {
             .flex()
             .flex_col()
             .gap_5()
-            .child(div().child(detail.title.clone()))
+            .child(
+                div()
+                    .id("board-drawer-title")
+                    .debug_selector(|| "board-drawer-title".into())
+                    .child(detail.title.clone()),
+            )
             .child(self.render_properties(detail, &card, cx))
             .child(
                 div()
@@ -159,11 +170,18 @@ impl BoardView {
                     .child(section("Description"))
                     .child(
                         div()
+                            .id("board-drawer-description")
+                            .debug_selector(|| "board-drawer-description".into())
                             .min_h(px(72.))
                             .px(px(8.))
                             .py(px(6.))
                             .rounded(px(6.))
                             .hover(|s| s.bg(content(0.03)))
+                            .cursor_text()
+                            .on_click({
+                                let focus = detail.body.focus_handle(cx);
+                                move |_, window, cx| window.focus(&focus, cx)
+                            })
                             .child(detail.body.clone()),
                     ),
             )
@@ -510,7 +528,7 @@ impl BoardView {
                 }
             }
             Picker::Link => {
-                for (index, target) in self.link_targets(cx).into_iter().enumerate() {
+                for (index, target) in detail.link_targets.iter().enumerate() {
                     if !matches(&target.label) {
                         continue;
                     }
@@ -521,14 +539,17 @@ impl BoardView {
                     };
                     let (kind, id) = (target.kind, target.id.clone());
                     rows.push(
-                        menu_row(format!("board-link-target-{index}").into(), target.label)
-                            .flex()
-                            .gap_2()
-                            .child(icon(glyph, 12.).text_color(content(0.5)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.link_selected(Some(kind), Some(id.clone()), cx)
-                            }))
-                            .into_any_element(),
+                        menu_row(
+                            format!("board-link-target-{index}").into(),
+                            target.label.clone(),
+                        )
+                        .flex()
+                        .gap_2()
+                        .child(icon(glyph, 12.).text_color(content(0.5)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.link_selected(Some(kind), Some(id.clone()), cx)
+                        }))
+                        .into_any_element(),
                     );
                 }
                 if card.link_kind.is_some() {
@@ -713,12 +734,8 @@ impl BoardView {
     }
 
     fn render_tabs(&self, detail: &CardDetail, cx: &mut Context<Self>) -> impl IntoElement {
-        let activity_count = detail
-            .activity
-            .as_ref()
-            .and_then(|a| a.as_ref().ok())
-            .map_or(0, Vec::len);
-        let tab = |id: &'static str, label: &'static str, count: usize, on: bool| {
+        let activity_count = detail.activity_badge();
+        let tab = |id: &'static str, label: &'static str, count: String, on: bool| {
             div()
                 .id(id)
                 .debug_selector(move || id.to_string())
@@ -737,7 +754,7 @@ impl BoardView {
                     div()
                         .text_size(px(11.))
                         .text_color(content(0.4))
-                        .child(count.to_string()),
+                        .child(count),
                 )
         };
         let body: AnyElement = match detail.tab {
@@ -832,7 +849,7 @@ impl BoardView {
                                         div()
                                             .text_size(px(11.))
                                             .text_color(content(0.35))
-                                            .child("⌘Enter"),
+                                            .child(SEND_HINT),
                                     )
                                     .child(
                                         div()
@@ -909,7 +926,7 @@ impl BoardView {
                         tab(
                             "board-tab-comments",
                             "Comments",
-                            detail.comments.len(),
+                            detail.comments.len().to_string(),
                             detail.tab == Tab::Comments,
                         )
                         .on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Comments, cx))),

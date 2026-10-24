@@ -1117,3 +1117,227 @@ fn a_project_no_longer_in_the_workspace_can_still_be_untagged_and_filtered(
     click(visual, "board-pick-project-1");
     assert!(extras_of(&f, &card).projects.is_empty());
 }
+
+/// Select everything in a drawer field and type over it.
+fn retype(visual: &mut VisualTestContext, field: &'static str, text: &str) {
+    click(visual, field);
+    let select_all = if cfg!(target_os = "macos") {
+        "cmd-a"
+    } else {
+        "ctrl-a"
+    };
+    visual.simulate_keystrokes(select_all);
+    if text.is_empty() {
+        visual.simulate_keystrokes("backspace");
+    } else {
+        visual.simulate_input(text);
+    }
+    visual.run_until_parked();
+}
+
+fn drawer<R>(
+    f: &Fixture,
+    cx: &mut impl gpui::AppContext,
+    read: impl FnOnce(&BoardView, &App) -> R,
+) -> R {
+    f.window.read_with(cx, |view, cx| read(view, cx)).unwrap()
+}
+
+#[gpui::test]
+fn editing_the_drawer_saves_the_title_and_description_on_close(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Original"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    retype(visual, "board-drawer-title", "Renamed");
+    retype(visual, "board-drawer-description", "Steps to reproduce");
+    click(visual, "board-drawer-close");
+    let card = detail(&f, visual).cards[0].clone();
+    assert_eq!(card.title, "Renamed");
+    assert_eq!(card.body, "Steps to reproduce");
+    let kinds: Vec<String> = Service::open(&f.db)
+        .unwrap()
+        .activity(&card.board_id, Some(&card.id), 10)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.kind)
+        .collect();
+    assert!(kinds.contains(&"edited".to_string()), "{kinds:?}");
+}
+
+#[gpui::test]
+fn a_cleared_title_comes_back_and_the_description_edit_still_saves(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Keep this title"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    retype(visual, "board-drawer-title", "");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(
+        drawer(&f, visual, |view, cx| view.card_detail_title(cx)).as_deref(),
+        Some("Keep this title"),
+        "an emptied title goes back to the saved one"
+    );
+    // Cleared again, then closed with a description edit: the edit saves.
+    retype(visual, "board-drawer-title", "");
+    retype(visual, "board-drawer-description", "new notes");
+    click(visual, "board-drawer-close");
+    let card = detail(&f, visual).cards[0].clone();
+    assert_eq!(card.title, "Keep this title");
+    assert_eq!(card.body, "new notes");
+}
+
+#[gpui::test]
+fn a_title_the_board_rejects_stays_in_the_field_with_its_error(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Short"]);
+    let long = "x".repeat(501);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    retype(visual, "board-drawer-title", &long);
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    for _ in 0..2 {
+        drawer(&f, visual, |view, cx| {
+            assert_eq!(view.error.as_deref(), Some("Card title is too long"));
+            assert_eq!(view.card_detail_title(cx).as_deref(), Some(long.as_str()));
+        });
+        // A later poll must not treat the rejected text as saved.
+        Service::open(&f.db)
+            .unwrap()
+            .card_create(&detail(&f, visual).columns[1].id, "Elsewhere", "")
+            .unwrap();
+        visual.executor().advance_clock(Duration::from_secs(2));
+        visual.run_until_parked();
+    }
+    assert_eq!(detail(&f, visual).cards[0].title, "Short");
+}
+
+#[gpui::test]
+fn mark_complete_without_a_done_step_says_so_and_moves_nothing(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Stay put"]);
+    let done = detail(&f, cx).columns[3].clone();
+    Service::open(&f.db)
+        .unwrap()
+        .column_update(&done.id, &done.name, None)
+        .unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-complete");
+    assert_eq!(column_of(&f, visual, "Stay put"), "Backlog");
+    drawer(&f, visual, |view, _| {
+        assert!(
+            view.error
+                .as_deref()
+                .is_some_and(|e| e.contains("Done role"))
+        );
+    });
+}
+
+#[gpui::test]
+fn a_failed_comment_read_is_reported_and_keeps_the_list_shown(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    Service::open(&f.db)
+        .unwrap()
+        .add_comment(&card, "Earlier")
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-comment-0").is_some());
+    rusqlite::Connection::open(&f.db)
+        .unwrap()
+        .execute_batch("ALTER TABLE board_native_comments RENAME TO hidden_comments;")
+        .unwrap();
+    click(visual, "board-subtask-add");
+    visual.simulate_input("Next step");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-error").is_some());
+    assert!(
+        visual.debug_bounds("board-comment-0").is_some(),
+        "a failed read is not shown as no comments"
+    );
+}
+
+#[gpui::test]
+fn the_link_picker_reads_its_targets_when_it_opens(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["To link"]);
+    f.store.lock().unwrap().create("codex", "/first").unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-linked");
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-link-target-0").is_some());
+    assert!(visual.debug_bounds("board-link-target-1").is_none());
+    // Typing filters the list read at open; it does not query again.
+    f.store.lock().unwrap().create("codex", "/second").unwrap();
+    visual.simulate_input("x");
+    visual.simulate_keystrokes("backspace");
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-link-target-1").is_none());
+    // Reopening reads the sessions again.
+    click(visual, "board-drawer-linked");
+    click(visual, "board-drawer-linked");
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-link-target-1").is_some());
+}
+
+#[gpui::test]
+fn the_drawer_fields_have_their_own_accessible_names(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    let labels = drawer(&f, visual, |view, cx| {
+        view.card_detail.as_ref().unwrap().field_labels(cx)
+    });
+    assert_eq!(labels, ("Description".into(), "New comment".into()));
+}
+
+#[gpui::test]
+fn a_card_with_more_activity_than_the_drawer_loads_shows_a_plus(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Busy", "Quiet"]);
+    let busy = detail(&f, cx).cards[0].id.clone();
+    let mut service = Service::open(&f.db).unwrap();
+    for n in 0..55 {
+        service
+            .card_update(&busy, &format!("Busy {n}"), "")
+            .unwrap();
+    }
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    drawer(&f, visual, |view, _| {
+        let detail = view.card_detail.as_ref().unwrap();
+        assert_eq!(detail.activity_badge(), "50+");
+        assert_eq!(
+            detail.activity.as_ref().unwrap().as_ref().unwrap().len(),
+            50
+        );
+    });
+    click(visual, "board-drawer-close");
+    click(visual, "board-card-2");
+    drawer(&f, visual, |view, _| {
+        // Only its "created" row.
+        assert_eq!(view.card_detail.as_ref().unwrap().activity_badge(), "1");
+    });
+}
+
+#[gpui::test]
+fn the_send_hint_names_the_chord_that_sends_a_comment(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    let chord = super::detail::SEND_HINT
+        .replace('⌘', "cmd-")
+        .replace("Ctrl+", "ctrl-")
+        .to_lowercase();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-comment-input");
+    visual.simulate_input("Sent by keyboard");
+    visual.simulate_keystrokes(&chord);
+    visual.run_until_parked();
+    assert_eq!(extras_of(&f, &card).comments, 1, "{chord} sends");
+}
