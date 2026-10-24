@@ -1,0 +1,33 @@
+crates/rebase-core/src/lib.rs
+  s_ccb41beff89445::t_8d468c2af80e79 13
+crates/rebase-core/src/flow/starter.rs
+  s_ccb41beff89445::t_c0c1a064000461 1-6,8-187,189-266
+  s_ccb41beff89445::t_8d468c2af80e79 7,188,267
+crates/rebase-core/src/flow/definition.rs
+  s_ccb41beff89445::t_c0c1a064000461 208-209,219-228,299-302,324-327,345-346,522-526,544-547,625-628,632-635,644-647,662-665,704-707,755-759,762-766,776-778,849-852,863-865,871-874
+  s_ccb41beff89445::t_829205261a4893 1-207,210-218,229-296,304-323,328-344,348-439
+  s_ccb41beff89445::t_a783d91c7d6565 297-298,303,347
+  s_ccb41beff89445::t_bd67b583edd6ac 440-521,527-543,548-624,629-631,636-643,648-661,666-703,708-754,760-761,767-775,779-848,853-862,866-870,875-944
+crates/rebase-core/src/flow/mod.rs
+  s_ccb41beff89445::t_c0c1a064000461 7-9,12
+  s_ccb41beff89445::t_829205261a4893 1-6,10-11
+crates/rebase-core/src/flow/template.rs
+  s_ccb41beff89445::t_8d468c2af80e79 1-2,4,6-12,24-25,34-35,87,90,108-117,122-138,144,152-166,175-188,193-219,223-251,256-316,325-338
+  s_ccb41beff89445::t_c0c1a064000461 3,5,13-23,26-33,36-86,88-89,91-107,118-121,139-143,145-151,167-174,189-192,220-222,252-255,317-324
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "46bcc5d07016a742d3a292af5fda5d321433ec4b",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
