@@ -1,0 +1,113 @@
+src/features/board/ui/boardControls.tsx
+  s_142fc49e010749::t_09e0f7019939fd 1-209
+src/features/board/ui/BoardColumnHeader.tsx
+  s_142fc49e010749::t_09e0f7019939fd 1-132
+src/features/board/ui/kanban/kanbanMove.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-380
+src/features/board/ui/kanban/kanbanSession.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-144
+src/features/board/ui/kanban/KanbanCard.tsx
+  s_142fc49e010749::t_09e0f7019939fd 1-72
+src/features/board/ui/boardFormat.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-164
+src/features/board/ui/kanban/kanbanSession.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-276
+src/features/board/ui/BoardCardItem.tsx
+  s_142fc49e010749::t_09e0f7019939fd 1-159
+src/features/board/ui/CardDetail.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-224
+src/features/board/ui/kanban/ColumnRoleIcon.tsx
+  s_142fc49e010749::t_09e0f7019939fd 1-64
+src/app/shell/TitleBar.tsx
+  s_142fc49e010749::t_09e0f7019939fd 8,77
+src/features/board/ui/kanban/KanbanColumn.tsx
+  s_142fc49e010749::t_09e0f7019939fd 1-108
+src/features/workspace/model/appViewTabs.ts
+  s_142fc49e010749::t_09e0f7019939fd 6
+src/features/settings/model/settings.ts
+  s_142fc49e010749::t_09e0f7019939fd 245-250,866-891
+src-tauri/src/session_store.rs
+  s_142fc49e010749::t_09e0f7019939fd 308-329,1034,1738-1739,1743-1778,1784-1804,2715-2751,2753
+  s_142fc49e010749::t_9f682874c306fc 2752
+src/features/board/ui/kanban/KanbanBoard.tsx
+  s_142fc49e010749::t_09e0f7019939fd 1-269
+src/features/board/ui/boardFormat.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-153
+src/features/settings/ui/SettingsView.tsx
+  s_142fc49e010749::t_09e0f7019939fd 354,378,854,899-902,1010-1015
+  s_142fc49e010749::t_1438504d5195fb 1016
+src/features/board/ui/CardComposer.tsx
+  s_142fc49e010749::t_09e0f7019939fd 1-95
+src/features/sessions/data/sessionStoreLookup.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-37
+src/shared/ui/icons.tsx
+  s_142fc49e010749::t_09e0f7019939fd 65,233
+src/features/board/ui/BoardView.tsx
+  s_142fc49e010749::t_09e0f7019939fd 1-611
+src/features/sessions/data/sessionStore.ts
+  s_142fc49e010749::t_09e0f7019939fd 509-531
+src/features/board/ui/BoardView.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-839
+package.json
+  s_142fc49e010749::t_09e0f7019939fd 69-71
+src/features/board/ui/kanban/announcements.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-159
+src/features/board/model/autoMove.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-256
+src/features/board/ui/CardDetail.tsx
+  s_142fc49e010749::t_09e0f7019939fd 1-272
+src/features/board/model/autoMove.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-85
+docs/superpowers/plans/2026-10-23-board.md
+  s_142fc49e010749::t_09e0f7019939fd 5,7,9,11,17-20,29,31,35-54,60-61,63-65,79,81,86,94-95,106,113,117,122,134-135,157-232,235-236,239-241,245-249,252-258,261
+src/features/board/model/linkedTurns.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-87
+src/app/shell/Sidebar.tsx
+  s_142fc49e010749::t_09e0f7019939fd 33,376-377,383,491,497,992,2478-2483,2627,2632,3252-3253,3288-3289,3433,3438,3453,3458,3533-3537,3580-3581,3615-3616,3658,3810-3817
+src/features/board/model/linkedTurns.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-227
+src/features/board/ui/kanban/announcements.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-194
+src/features/board/ui/kanban/KanbanBoard.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-368
+src/features/board/ui/kanban/kanbanMove.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-209
+src/features/board/model/board.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-72
+src/app/App.tsx
+  s_142fc49e010749::t_09e0f7019939fd 561,716-726,800,816,911-917,942-943,1343,1358-1360,1385-1389,1482,1725,1733,1742,1751-1752,1784-1787,1796,1798,1824-1827,2498,2537,3053,3070,3099,3139,5153,5296,5382,6009,6584,8076-8085,8717,8720-8722,8990,9086,9138,9148,9154-9157,11491,11602,11611,11997,12010-12014,12238,12248,12265,12283,12303,12317,12423,12442,12451-12470,12477,12500,12509,12563,12601-12604,12620,12629,12767,12777,12787,12821,13153,13242,13947-14023,14031-14032,14280-14281,14312,14318,14426-14427,14436-14437,14445,14716,14850-14864
+  s_142fc49e010749::t_47e341ae0b6825 14865-14867
+src/features/board/model/board.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-197
+src/features/settings/model/settings.flags.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 64-69,205-240
+  s_142fc49e010749::t_a78e5ceeeddd9f 63,241-242
+src/app/shell/ProjectRail.tsx
+  s_142fc49e010749::t_09e0f7019939fd 8,132-134,176-177,374,460-468
+src/features/board/ui/kanban/useReducedMotion.ts
+  s_142fc49e010749::t_09e0f7019939fd 1-25
+src/features/settings/ui/SettingsView.test.ts
+  s_142fc49e010749::t_09e0f7019939fd 692-722
+src-tauri/src/board.rs
+  s_142fc49e010749::t_09e0f7019939fd 1-1565
+src-tauri/src/lib.rs
+  s_142fc49e010749::t_09e0f7019939fd 8,372-388,563
+bun.lock
+  s_142fc49e010749::t_9d6341a5bbed42 28-30,136-143,1020-1021
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e26f1154719180c975ac3909db96766831ea9841",
+  "prompts": {},
+  "sessions": {
+    "s_142fc49e010749": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64288a0b-d712-42fe-8181-a2df6ee5b96b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
