@@ -93,6 +93,28 @@ export function namedWorktreeBranch(fragment: string): string | null {
   return clean ? `${APP_BRANCH_PREFIX}${clean}` : null;
 }
 
+/**
+ * Renames a new session worktree's placeholder branch after the work its
+ * first message asks for. A provider without a suggestion, or a failed
+ * rename, keeps the placeholder: the session works the same either way.
+ */
+export async function nameWorktreeAfterMessage({
+  generate,
+  rename,
+}: {
+  /** The provider's branch name fragment for the first message. */
+  generate: () => Promise<string | null>;
+  rename: (branch: string) => Promise<Worktree>;
+}): Promise<Worktree | null> {
+  try {
+    const fragment = await generate();
+    const branch = fragment ? namedWorktreeBranch(fragment) : null;
+    return branch ? await rename(branch) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function removeWorktree(
   cwd: string,
   path: string,

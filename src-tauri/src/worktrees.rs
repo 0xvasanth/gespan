@@ -443,7 +443,29 @@ fn rename_branch(root: &Path, path: &Path, branch: &str) -> Result<Worktree, Str
     if current == branch {
         return Ok(tree);
     }
-    git(Path::new(&tree.path), &["branch", "-m", branch])?;
+    // Another worktree already took this name: number it, as Rebase Native's
+    // rename_app_branch does, instead of keeping the placeholder.
+    let taken = |name: &str| {
+        git(
+            root,
+            &[
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{name}"),
+            ],
+        )
+        .is_ok()
+    };
+    let branch = std::iter::once(branch.to_owned())
+        .chain((2..=20).map(|n| format!("{branch}-{n}")))
+        .find(|name| name == current || !taken(name))
+        .ok_or_else(|| format!("{branch} and its numbered variants are taken"))?;
+    if branch == current {
+        return Ok(tree);
+    }
+    git(root, &["check-ref-format", "--branch", &branch])?;
+    git(Path::new(&tree.path), &["branch", "-m", &branch])?;
     list(root)?
         .into_iter()
         .find(|entry| same_path(Path::new(&entry.path), path))
@@ -985,6 +1007,25 @@ mod tests {
 
         let regular = create(&root, "feature/manual", "main", false).unwrap();
         assert!(rename_branch(&root, Path::new(&regular.path), "mc/should-not-change").is_err());
+    }
+
+    #[test]
+    fn a_taken_generated_name_gets_the_next_number() {
+        let repo = repo();
+        let root = repo.0.join("repo");
+        let first = create(&root, "rebase/aaaaaaaa", "main", false).unwrap();
+        let second = create(&root, "rebase/bbbbbbbb", "main", false).unwrap();
+        let third = create(&root, "rebase/cccccccc", "main", false).unwrap();
+        let rename = |tree: &Worktree| {
+            rename_branch(&root, Path::new(&tree.path), "rebase/fix-login")
+                .unwrap()
+                .branch
+        };
+        assert_eq!(rename(&first).as_deref(), Some("rebase/fix-login"));
+        assert_eq!(rename(&second).as_deref(), Some("rebase/fix-login-2"));
+        assert_eq!(rename(&third).as_deref(), Some("rebase/fix-login-3"));
+        // Renaming to its own name again changes nothing.
+        assert_eq!(rename(&second).as_deref(), Some("rebase/fix-login-2"));
     }
 
     #[test]

@@ -165,7 +165,7 @@ import {
   detachSessionWorktree,
   checkWorktreeRemoval,
   listWorktrees,
-  namedWorktreeBranch,
+  nameWorktreeAfterMessage,
   orchestrationWorktreeBranchName,
   removeOrchestrationBranch,
   removeOrchestrationWorktree,
@@ -8124,29 +8124,26 @@ function Workspace({
 
           const branchMessage =
             harnessText || attachments.map((file) => file.name).join(", ");
-          void generateHarnessBranchName(
-            pickTextHarness(current.harness),
-            workCwd,
-            branchMessage,
-          )
-            .then(async (fragment) => {
-              const branch = fragment ? namedWorktreeBranch(fragment) : null;
-              if (!branch) return;
-              const renamed = await renameWorktreeBranch(
-                current.cwd,
-                tree.path,
-                branch,
-              );
-              setSessions((prev) =>
-                prev.map((session) =>
-                  session.id === sessionId &&
-                  pathKey(sessionWorkCwd(session)) === pathKey(tree.path)
-                    ? { ...session, branch: renamed.branch ?? undefined }
-                    : session,
-                ),
-              );
-            })
-            .catch(() => undefined);
+          void nameWorktreeAfterMessage({
+            generate: () =>
+              generateHarnessBranchName(
+                pickTextHarness(current.harness),
+                workCwd,
+                branchMessage,
+              ),
+            rename: (branch) =>
+              renameWorktreeBranch(current.cwd, tree.path, branch),
+          }).then((renamed) => {
+            if (!renamed) return;
+            setSessions((prev) =>
+              prev.map((session) =>
+                session.id === sessionId &&
+                pathKey(sessionWorkCwd(session)) === pathKey(tree.path)
+                  ? { ...session, branch: renamed.branch ?? undefined }
+                  : session,
+              ),
+            );
+          });
         }
         launchTitleGeneration(workCwd);
         if (turnGen.current.get(sessionId) !== gen) return;
