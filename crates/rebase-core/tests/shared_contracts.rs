@@ -358,6 +358,8 @@ fn agent_run_and_wake_marker_json_names_match() {
     assert!(native_sources()
         .iter()
         .any(|(_, text)| text.contains("custom_type: \"task-notification\".into()")));
+}
+
 /// The native board source, as the Tauri board source is read with `tauri`.
 fn native_board() -> String {
     fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/board/mod.rs")).unwrap()
