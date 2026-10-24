@@ -7,6 +7,8 @@ mod commands;
 pub(crate) mod composer_features;
 mod composer_shelf;
 mod edit_last_turn;
+#[cfg(test)]
+mod empty_arcade_tests;
 mod follow_up;
 mod history;
 mod mobile;
@@ -209,7 +211,7 @@ pub(crate) struct Conversation {
     // A split or review pane sits beside this chat; only then does a narrow
     // pane rest the composer where it docks.
     beside_pane: bool,
-    arcade: Option<Entity<crate::arcade::Arcade>>,
+    arcade: Option<(Entity<crate::arcade::Arcade>, Subscription)>,
     runner: Option<Entity<crate::composer_runner::Runner>>,
     cancel: Arc<AtomicBool>,
     title_cancel: Option<Arc<AtomicBool>>,
@@ -3181,23 +3183,65 @@ impl Conversation {
                 .try_global::<crate::settings::Preferences>()
                 .is_none_or(|p| p.chat_background.is_none());
         let arcade = if games {
-            Some(
-                self.arcade
-                    .get_or_insert_with(|| cx.new(crate::arcade::Arcade::new))
-                    .clone(),
-            )
+            let (arcade, _) = self.arcade.get_or_insert_with(|| {
+                let arcade = cx.new(crate::arcade::Arcade::new);
+                let changes = cx
+                    .subscribe(&arcade, |_, _, _: &crate::arcade::PlayingChanged, cx| {
+                        cx.notify()
+                    });
+                (arcade, changes)
+            });
+            Some(arcade.clone())
         } else {
             None
         };
+        // A game in play covers the composer instead of sitting beneath it.
+        let playing = arcade.as_ref().is_some_and(|a| a.read(cx).playing());
         let this = cx.entity().downgrade();
         let narrow = self.narrow;
         let docked = narrow && self.beside_pane;
+        // The playing arcade's fill is translucent on macOS, so anything drawn
+        // beneath it would show through; leave the question and composer out.
+        let column = (!playing).then(|| {
+            div()
+                .w_full()
+                .max_w(px(COMPOSER_COLUMN))
+                .flex()
+                .flex_col()
+                .px(px(10.))
+                .pt(px(24.))
+                .pb(px(6.))
+                .child(div().flex_grow(1.).flex_basis(px(0.)))
+                .when(!docked, |d| {
+                    d.child(
+                        div()
+                            .id("empty-session-title")
+                            .debug_selector(|| "empty-session-title".into())
+                            .role(Role::Heading)
+                            .flex_shrink_0()
+                            .mb_4()
+                            .px(px(10.))
+                            .text_size(px(18.))
+                            .line_height(px(28.))
+                            .text_color(content(1.))
+                            .truncate()
+                            .child(format!(
+                                "What should we work on in {}?",
+                                self.project_appearance.label(&self.summary.cwd)
+                            )),
+                    )
+                })
+                .child(self.composer(window, cx))
+                .when(!docked, |d| {
+                    d.child(div().flex_grow(1.).flex_shrink(1.).flex_basis(px(18.)))
+                })
+        });
         self.attachment_drop_target("empty-session", cx)
             .relative()
             .size_full()
             .flex()
             .justify_center()
-            .children(arcade)
+            .when(!playing, |d| d.children(arcade.clone()))
             .child(
                 canvas(
                     move |bounds, _, cx| {
@@ -3216,39 +3260,8 @@ impl Conversation {
                 .absolute()
                 .size_full(),
             )
-            .child(
-                div()
-                    .w_full()
-                    .max_w(px(COMPOSER_COLUMN))
-                    .flex()
-                    .flex_col()
-                    .px(px(10.))
-                    .pt(px(24.))
-                    .pb(px(6.))
-                    .child(div().flex_grow(1.).flex_basis(px(0.)))
-                    .when(!docked, |d| {
-                        d.child(
-                            div()
-                                .id("empty-session-title")
-                                .role(Role::Heading)
-                                .flex_shrink_0()
-                                .mb_4()
-                                .px(px(10.))
-                                .text_size(px(18.))
-                                .line_height(px(28.))
-                                .text_color(content(1.))
-                                .truncate()
-                                .child(format!(
-                                    "What should we work on in {}?",
-                                    self.project_appearance.label(&self.summary.cwd)
-                                )),
-                        )
-                    })
-                    .child(self.composer(window, cx))
-                    .when(!docked, |d| {
-                        d.child(div().flex_grow(1.).flex_shrink(1.).flex_basis(px(18.)))
-                    }),
-            )
+            .children(column)
+            .when(playing, |d| d.children(arcade))
             .into_any()
     }
 }
