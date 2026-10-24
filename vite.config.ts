@@ -2,7 +2,6 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-// @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig(async ({ mode }) => {
@@ -10,7 +9,7 @@ export default defineConfig(async ({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss()],
-    worker: { format: "es" },
+    worker: { format: "es" as const },
     resolve: {
       alias: [
         ...(mode.startsWith("benchmark")
@@ -31,7 +30,7 @@ export default defineConfig(async ({ mode }) => {
     },
     clearScreen: false,
     build: {
-      rollupOptions: {
+      rolldownOptions: {
         // The quick composer panel loads its own page so it does not boot the
         // whole workspace.
         input: {

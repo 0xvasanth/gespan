@@ -134,7 +134,6 @@ export function DictationBar({ onClose }: { onClose: (words: string | null) => v
       await setIsAudioActiveAsync(true);
       // Made here rather than with useAudioRecorder, so it is only made when
       // dictation starts, and is stopped before it is released on unmount.
-      // eslint-disable-next-line import/namespace -- a native class the rule can't see
       created = new AudioModule.AudioRecorder(OPTIONS);
       recorder.current = created;
       created.addListener("recordingStatusUpdate", (status) => {

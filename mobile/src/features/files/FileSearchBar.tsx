@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { Pressable, TextInput } from "react-native";
 import Animated from "react-native-reanimated";
 
@@ -36,7 +36,7 @@ export function FileSearchBar({
   const styles = useStyles();
   const { dockBottom, keyboardOffset } = useSessionLayout();
   const lift = useKeyboardLift(keyboardOffset);
-  const input = useRef<TextInput>(null);
+  const input = useRef<ComponentRef<typeof TextInput>>(null);
   const [focused, setFocused] = useState(false);
 
   const close = () => {

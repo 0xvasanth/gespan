@@ -13,7 +13,7 @@ export default defineConfig({
     { name: "webkit", use: { browserName: "webkit" } },
   ],
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1 --port 1435",
+    command: "bun run dev --host 127.0.0.1 --port 1435",
     url: "http://127.0.0.1:1435/tests/browser/transcript.html",
     reuseExistingServer: false,
   },

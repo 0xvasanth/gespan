@@ -1,6 +1,12 @@
 import Storage from "expo-sqlite/kv-store";
 import { useSyncExternalStore } from "react";
-import { StyleSheet, useColorScheme } from "react-native";
+import {
+  StyleSheet,
+  useColorScheme,
+  type ImageStyle,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 
 export type Scheme = "light" | "dark";
 
@@ -226,7 +232,10 @@ export function useColors() {
  * returning the one in use. Each is built the first time it is drawn and
  * kept, so switching back costs nothing.
  */
-export function themedStyles<T extends StyleSheet.NamedStyles<T>>(
+/** React Native 0.87 dropped `StyleSheet.NamedStyles` from its public types. */
+type NamedStyles<T> = { [P in keyof T]: ViewStyle | TextStyle | ImageStyle };
+
+export function themedStyles<T extends NamedStyles<T>>(
   build: (colors: Palette) => T,
 ) {
   const sheets = new Map<string, T>();

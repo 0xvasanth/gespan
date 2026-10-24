@@ -17,14 +17,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
-          cache: npm
 
       - name: Select release channel
         run: node scripts/release-channel.cjs
@@ -52,7 +51,8 @@ jobs:
           printf '%s\n' "$APPLE_API_KEY_P8" > "$HOME/private_keys/AuthKey_${APPLE_API_KEY}.p8"
           echo "APPLE_API_KEY_PATH=$HOME/private_keys/AuthKey_${APPLE_API_KEY}.p8" >> "$GITHUB_ENV"
 
-      - run: npm ci
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
 
       - name: Check tag matches app version
         run: |
@@ -125,8 +125,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config "$RUNNER_TEMP/tauri.release.conf.json"
-          npx tauri build --target x86_64-apple-darwin --bundles app,dmg --config "$RUNNER_TEMP/tauri.release.conf.json"
+          bunx tauri build --target aarch64-apple-darwin --bundles app,dmg --config "$RUNNER_TEMP/tauri.release.conf.json"
+          bunx tauri build --target x86_64-apple-darwin --bundles app,dmg --config "$RUNNER_TEMP/tauri.release.conf.json"
 
       - name: Verify macOS package architectures and signatures
         run: |
@@ -148,25 +148,25 @@ jobs:
           verify_app "target/x86_64-apple-darwin/release/bundle/macos/Rebase.app" x86_64
 
       - name: Download Linux packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-packages
           path: target/release/bundle/linux
 
       - name: Download Linux rpm package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-rpm-package
           path: target/release/bundle/rpm
 
       - name: Download Windows packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: windows-packages
           path: target/release/bundle/nsis
 
       - name: Download host packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: host-packages
           path: build/host-packages
@@ -455,18 +455,18 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run test:host
-      - run: npm run host:package -- --all
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run test:host
+      - run: bun run host:package --all
         if: runner.os == 'Linux'
-      - run: npm run host:package
+      - run: bun run host:package
         if: runner.os != 'Linux'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: runner.os == 'Linux'
         with:
           name: host-packages
@@ -480,12 +480,11 @@ jobs:
     name: Linux packages
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
-          cache: npm
 
       - name: Select release channel
         run: node scripts/release-channel.cjs
@@ -495,7 +494,8 @@ jobs:
       - name: Install Linux system dependencies
         run: bash scripts/install-linux-deps-debian.sh
 
-      - run: npm ci
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
 
       - name: Write updater release config
         env:
@@ -518,12 +518,12 @@ jobs:
           );
           NODE
 
-      # Same as `npm run build:linux`, with the updater config merged in.
-      # npm would append extra args to the repack script, not tauri build.
+      # Same as `bun run build:linux`, with the updater config merged in.
+      # Extra args to the script would reach the repack script, not tauri build.
       - name: Build Linux packages
         run: |
           set -euo pipefail
-          npx tauri build --bundles deb,appimage --config "$RUNNER_TEMP/tauri.release.conf.json"
+          bunx tauri build --bundles deb,appimage --config "$RUNNER_TEMP/tauri.release.conf.json"
           bash scripts/repack-appimage.sh
 
       - name: Assert AppImage uses host libraries
@@ -543,7 +543,7 @@ jobs:
             echo "Expected exactly one AppImage" >&2
             exit 1
           fi
-          npx tauri signer sign "${appimage[0]}"
+          bunx tauri signer sign "${appimage[0]}"
           test -s "${appimage[0]}.sig"
 
       - name: Stage Linux packages
@@ -564,7 +564,7 @@ jobs:
           cp "${deb[0]}" "${appimage[0]}" "${appimage[0]}.sig" release-artifacts/
 
       - name: Upload Linux packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-packages
           path: release-artifacts/
@@ -579,28 +579,28 @@ jobs:
     container: almalinux:10
     steps:
       # almalinux:10 ships no git, which actions/checkout otherwise has to work
-      # around with a REST API tarball download.
-      - name: Install git
-        run: dnf install -y git
+      # around with a REST API tarball download, nor the unzip setup-bun needs.
+      - name: Install git and unzip
+        run: dnf install -y git unzip
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
-          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install Enterprise Linux system dependencies
         run: bash scripts/install-linux-deps-fedora.sh
 
-      - run: npm ci
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
 
       - name: Build rpm package
-        run: npm run build:fedora
+        run: bun run build:fedora
 
       - name: Install and stage the generated rpm
         run: |
@@ -627,7 +627,7 @@ jobs:
           cp "${bundle[0]}" release-artifacts/
 
       - name: Upload rpm package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-rpm-package
           path: release-artifacts/
@@ -637,19 +637,19 @@ jobs:
     name: Windows packages
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
-          cache: npm
 
       - name: Select release channel
         run: node scripts/release-channel.cjs
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - run: npm ci
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
 
       - name: Write updater release config
         env:
@@ -684,7 +684,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
-          npx tauri build --bundles nsis --config "$env:RUNNER_TEMP\tauri.release.conf.json"
+          bunx tauri build --bundles nsis --config "$env:RUNNER_TEMP\tauri.release.conf.json"
 
       - name: Stage Windows packages
         run: |
@@ -698,7 +698,7 @@ jobs:
           Copy-Item -Path $artifacts -Destination "release-artifacts/"
 
       - name: Upload Windows packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-packages
           path: release-artifacts/

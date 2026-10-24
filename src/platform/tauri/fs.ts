@@ -609,7 +609,9 @@ export function readTextFile(path: string): Promise<string> {
 }
 
 /** Raw bytes for media previews. Arrives as an ArrayBuffer, not base64. */
-export async function readBinaryFile(path: string): Promise<Uint8Array> {
+export async function readBinaryFile(
+  path: string,
+): Promise<Uint8Array<ArrayBuffer>> {
   const buffer = await invoke<ArrayBuffer | string>("read_binary_file", {
     path,
   });
@@ -624,7 +626,10 @@ export async function readBinaryFile(path: string): Promise<Uint8Array> {
  * `root`, and the file is read only if it resolves inside `root`, symlinks
  * included. A connected machine already keeps every read inside its projects.
  */
-export function readProjectImage(root: string, path: string): Promise<Uint8Array> {
+export function readProjectImage(
+  root: string,
+  path: string,
+): Promise<Uint8Array<ArrayBuffer>> {
   if (root.startsWith(REMOTE_PATH_PREFIX))
     return readBinaryFile(joinPath(root, path));
   return invokeLocal<ArrayBuffer>("read_project_image", { root, path }).then(

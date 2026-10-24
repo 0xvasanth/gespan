@@ -82,15 +82,33 @@ describe("sounds", () => {
     expect(setVolume).toHaveBeenCalledWith(SOUNDS_VOLUME);
     expect(play).toHaveBeenCalledWith("success");
     playCue("inboxUnseen", { projectId: "work", category: "issues" });
-    expect(play).toHaveBeenCalledWith("bloom");
+    expect(play).toHaveBeenCalledWith("open");
     playCue("linkedActivity", { projectId: "work", category: "pullRequests" });
-    expect(play).toHaveBeenCalledWith("chime");
+    expect(play).toHaveBeenCalledWith("success");
     playCue("updateAvailable");
-    expect(play).toHaveBeenCalledWith("arrival");
+    expect(play).toHaveBeenCalledWith("navigate");
     playCue("switch");
     expect(play).toHaveBeenCalledWith("toggle");
     playCue("copy");
-    expect(play).toHaveBeenCalledWith("scan");
+    expect(play).toHaveBeenCalledWith("select");
+  });
+
+  it("plays only cues cuelume ships under their canonical names", async () => {
+    // The mock above accepts any name, so check against the real palette:
+    // cuelume renamed every cue once already and drops the old aliases in 1.0.
+    const { sounds } =
+      await vi.importActual<typeof import("cuelume")>("cuelume");
+    const subject = { projectId: "work", category: "issues" } as const;
+    playCue("turnFinished", subject);
+    playCue("inputRequested", subject);
+    playCue("inboxUnseen", subject);
+    playCue("linkedActivity", subject);
+    playCue("updateAvailable");
+    playCue("switch");
+    playCue("copy");
+    const played = play.mock.calls.map(([name]) => name);
+    expect(played).toHaveLength(7);
+    for (const name of played) expect(sounds).toContain(name);
   });
 
   it("is silent when muted", () => {
@@ -109,7 +127,7 @@ describe("sounds", () => {
     expect(play).not.toHaveBeenCalled();
     playCue("inboxUnseen", { projectId: "work", category: "pullRequests" });
     playCue("updateAvailable");
-    expect(play.mock.calls).toEqual([["bloom"], ["arrival"]]);
+    expect(play.mock.calls).toEqual([["open"], ["navigate"]]);
   });
 
   it("does not catch up on project activity from before global sounds were re-enabled", () => {
@@ -130,7 +148,7 @@ describe("sounds", () => {
         category: "issues",
         occurredAt: 2050,
       });
-      expect(play).toHaveBeenCalledExactlyOnceWith("bloom");
+      expect(play).toHaveBeenCalledExactlyOnceWith("open");
     } finally {
       vi.useRealTimers();
     }
@@ -139,7 +157,7 @@ describe("sounds", () => {
   it("dings once per update version", () => {
     announceUpdateAvailable("0.2.0");
     expect(play).toHaveBeenCalledTimes(1);
-    expect(play).toHaveBeenCalledWith("arrival");
+    expect(play).toHaveBeenCalledWith("navigate");
     announceUpdateAvailable("0.2.0");
     expect(play).toHaveBeenCalledTimes(1);
     announceUpdateAvailable("0.2.1");

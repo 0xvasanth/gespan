@@ -2,6 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { spyOnStorage } from "../../../test/spyOnStorage";
 import { invoke } from "@tauri-apps/api/core";
 import { InboxView } from "./InboxView";
 import { inboxItemKey, type InboxItem } from "../model/githubTasks";
@@ -67,7 +68,7 @@ it("reports a failed mark-all write in Inbox and clears the error after retry", 
     onAskMount: () => {}, onOpenIntegrations: () => {},
   })));
   const markAll = container.querySelector<HTMLButtonElement>('button[aria-label="Mark all as read"]')!;
-  const write = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+  const write = spyOnStorage(localStorage, "setItem").mockImplementation(() => {
     throw new Error("Storage full");
   });
   act(() => markAll.click());

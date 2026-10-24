@@ -1,4 +1,4 @@
-import { act, createRef, type ReactNode } from "react";
+import { act, createRef, type ComponentRef, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { GlassBlurTarget, LiquidView } from "@/ui/LiquidView";
@@ -62,7 +62,7 @@ beforeEach(() => {
 });
 afterEach(() => act(() => root.unmount()));
 it("enables Android blur against an explicit target and lightens the surface overlay", () => {
-  const target = createRef<View>();
+  const target = createRef<ComponentRef<typeof View>>();
   act(() =>
     root.render(
       <GlassBlurTarget value={target}>
@@ -94,7 +94,7 @@ it("preserves the untargeted fallback and iOS blur settings", () => {
   runtime.os = "ios";
   act(() =>
     root.render(
-      <GlassBlurTarget value={createRef<View>()}>
+      <GlassBlurTarget value={createRef<ComponentRef<typeof View>>()}>
         <LiquidView>
           <span>Input</span>
         </LiquidView>

@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, expect, it, vi } from "vitest";
+import { spyOnStorage } from "../../../test/spyOnStorage";
 import { buildCiRepairRequest } from "./ciRepair";
 
 const request = buildCiRepairRequest({
@@ -146,7 +147,7 @@ it("keeps a completed repair in memory when storage fills up", async () => {
     finish = settle;
     return true;
   });
-  const write = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+  const write = spyOnStorage(localStorage, "setItem").mockImplementation(() => {
     throw new Error("Quota exceeded");
   });
   try {

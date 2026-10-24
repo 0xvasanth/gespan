@@ -2,6 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { spyOnStorage } from "../../../test/spyOnStorage";
 import {
   loadNotificationPreferences,
   updateNotificationPreferences,
@@ -124,7 +125,7 @@ describe("NotificationMuteControl", () => {
         .click(),
     );
     type("17:00");
-    const write = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+    const write = spyOnStorage(localStorage, "setItem").mockImplementation(() => {
       throw new Error("Storage full");
     });
     click("Mute until then");

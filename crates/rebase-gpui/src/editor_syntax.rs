@@ -296,7 +296,7 @@ fn highlight(grammar: &Grammar, tree: &Tree, text: &str, range: Range<usize>) ->
         if grammar.skipped[found.pattern_index] {
             continue;
         }
-        let capture = found.captures[*ix];
+        let capture = found.captures()[*ix];
         let kind = grammar.captures[capture.index as usize];
         if matches!(kind, Capture::Ignore) {
             continue;

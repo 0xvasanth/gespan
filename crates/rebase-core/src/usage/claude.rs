@@ -125,7 +125,10 @@ fn keychain_service(config: Option<&std::path::Path>) -> String {
     config
         .map(|dir| {
             let selector: String = dir.to_string_lossy().nfc().collect();
-            let digest = format!("{:x}", Sha256::digest(selector.as_bytes()));
+            let digest: String = Sha256::digest(selector.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
             format!("Claude Code-credentials-{}", &digest[..8])
         })
         .unwrap_or_else(|| "Claude Code-credentials".into())
@@ -182,6 +185,17 @@ fn keychain(config: Option<&std::path::Path>) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn custom_config_dir_selects_claudes_hashed_keychain_service() {
+        // Claude Code names the Keychain item with the first eight lowercase hex
+        // characters of the selector's SHA-256; any drift loses the login.
+        assert_eq!(
+            keychain_service(Some(std::path::Path::new("/tmp/profile"))),
+            "Claude Code-credentials-902e721c"
+        );
+        assert_eq!(keychain_service(None), "Claude Code-credentials");
+    }
     #[test]
     fn accepts_nested_and_legacy_credentials_without_logging_secrets() {
         assert!(

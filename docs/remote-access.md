@@ -46,8 +46,8 @@ Use Node.js 24 or newer on the host. Install and sign in to the providers you wa
 From a checkout of this version of Rebase on the host:
 
 ```sh
-npm ci
-npm run host:build
+bun install --frozen-lockfile
+bun run host:build
 node build/host/rebase-host.mjs start
 node build/host/rebase-host.mjs pair --name "My laptop"
 ```
@@ -90,7 +90,7 @@ On Windows, the launcher is `%USERPROFILE%\.rebase-host\bin\rebase-host.cmd`. Th
 
 ## Release packaging
 
-`npm run host:package` builds a self-contained package for the current Windows/Mac/Linux architecture. `npm run host:package -- --all` builds all six archives, using pinned official Node binaries and checksums. Archives contain the host bundle, runtime, launcher, and licenses. `host/package.mjs` pins the runtime version. Cross-packaging Windows on Unix requires `zip` and `unzip`; native Windows packaging uses PowerShell.
+`bun run host:package` builds a self-contained package for the current Windows/Mac/Linux architecture. `bun run host:package --all` builds all six archives, using pinned official Node binaries and checksums. Archives contain the host bundle, runtime, launcher, and licenses. `host/package.mjs` pins the runtime version. Cross-packaging Windows on Unix requires `zip` and `unzip`; native Windows packaging uses PowerShell.
 
 The release workflow publishes `rebase-host-{darwin,linux}-{arm64,x64}.tar.gz`, `rebase-host-win32-{arm64,x64}.zip`, and their `.sha256` files alongside the desktop release. SSH setup downloads from the exact desktop version's GitHub release, then installs under `~/.rebase-host/runtime`.
 
@@ -107,16 +107,16 @@ The headless host runs the reused TypeScript adapters with a Node process backen
 ## Verify
 
 ```sh
-npm run host:build
-npm run test:host
-npm run check:web
+bun run host:build
+bun run test:host
+bun run check:web
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test
 ```
 
-Host tests use fake provider executables and temporary loopback servers. They do not contact paid models. They cover the Codex and Claude transports, Pi/OMP RPC, ACP providers, OpenCode HTTP and event streaming, cross-client reattachment, duplicate sends, approval races, interruption recovery, device revocation, path checks, and detached host lifecycle. On Node 26, use `NODE_OPTIONS=--no-experimental-webstorage npm run check:web` to avoid its experimental global storage interfering with the existing happy-dom tests.
+Host tests use fake provider executables and temporary loopback servers. They do not contact paid models. They cover the Codex and Claude transports, Pi/OMP RPC, ACP providers, OpenCode HTTP and event streaming, cross-client reattachment, duplicate sends, approval races, interruption recovery, device revocation, path checks, and detached host lifecycle. On Node 26, use `NODE_OPTIONS=--no-experimental-webstorage bun run check:web` to avoid its experimental global storage interfering with the existing happy-dom tests.
 
-For the real OpenSSH transport and native askpass smoke test on Linux/macOS, build with `npm run host:package` and `cargo build --bin rebase`, then run `python3 scripts/test-remote-ssh.py`. It uses a disposable loopback sshd, temporary keys and known-hosts file, and an isolated packaged host. It leaves personal SSH configuration, provider credentials, and OS services untouched.
+For the real OpenSSH transport and native askpass smoke test on Linux/macOS, build with `bun run host:package` and `cargo build --bin rebase`, then run `python3 scripts/test-remote-ssh.py`. It uses a disposable loopback sshd, temporary keys and known-hosts file, and an isolated packaged host. It leaves personal SSH configuration, provider credentials, and OS services untouched.
 
 Host CI runs on Windows, macOS, and Linux. Windows-specific tests cover ACL inheritance, Task Scheduler definitions, bootstrap parsing/installation, and provider child-process cleanup. They use temporary data and mocked task registration so normal test runs do not install or replace a real user's background task. Full SSH-to-Task-Scheduler setup must also be validated on a signed-in Windows host before a supported release.

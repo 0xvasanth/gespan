@@ -11,8 +11,8 @@ You need Node.js 20+, a current stable Rust toolchain, and at least one provider
 macOS, Linux, and Windows are supported targets. See [building from source](docs/building.md) for platform prerequisites and packaging commands.
 
 ```bash
-npm install
-npm run tauri dev
+bun install
+bun run tauri dev
 ```
 
 ## Where things live
@@ -30,25 +30,25 @@ npm run tauri dev
 
 The production React/Tauri app continues to use the commands above. GPUI work
 lives in `crates/rebase-core` and `crates/rebase-gpui`, with an independent
-Cargo workspace and lockfile. Use `npm run native:dev` to develop,
-`npm run native:build` to package an optimized build, and
-`npm run native:check` for its checks. Keep production UI behavior, dependencies,
+Cargo workspace and lockfile. Use `bun run native:dev` to develop,
+`bun run native:build` to package an optimized build, and
+`bun run native:check` for its checks. Keep production UI behavior, dependencies,
 CI and release/update distribution intact while the native port is tested.
 See the [native guide](docs/native/README.md) and [architecture](docs/native/migration.md).
 
 ## Before you push
 
 ```bash
-npm run check
+bun run check
 ```
 
-That runs what CI runs: vitest, `tsc --noEmit`, `cargo fmt`, `cargo clippy`, and `cargo test`. If it’s green locally it should be green on GitHub. `npm run check:web` and `npm run check:rust` run the two halves separately when you only touched one side.
+That runs what CI runs: vitest, `tsc --noEmit`, `cargo fmt`, `cargo clippy`, and `cargo test`. If it’s green locally it should be green on GitHub. `bun run check:web` and `bun run check:rust` run the two halves separately when you only touched one side.
 
 For transcript layout and scrolling changes, also run the real-browser tests:
 
 ```bash
-npx playwright install chromium webkit
-npm run test:browser
+bunx playwright install chromium webkit
+bun run test:browser
 ```
 
 These render the actual transcript and stylesheet in Chromium and WebKit, checking scroll geometry that the DOM-mocked unit tests cannot exercise. They start an isolated Vite server on port 1435 and need no provider or Tauri app.

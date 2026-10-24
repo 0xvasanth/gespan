@@ -142,7 +142,7 @@ it("honors category choices before and after a project mute while another projec
   expect(activity.unseen).toBe(false);
   expect(isInboxEntryUnseen(entry(2))).toBe(true);
   await pollUpdated(0);
-  expect(play.mock.calls).toEqual([["bloom"]]);
+  expect(play.mock.calls).toEqual([["open"]]);
   expect(activity.unseen).toBe(true);
   play.mockClear();
   mute(projectRow("one"));
@@ -153,7 +153,7 @@ it("honors category choices before and after a project mute while another projec
 
   // Muted activity arrives first and must not consume the batch's sound slot.
   await pollUpdated(0, 1);
-  expect(play.mock.calls).toEqual([["bloom"]]);
+  expect(play.mock.calls).toEqual([["open"]]);
   expect(activity.unseen).toBe(true);
   expect(isInboxEntryUnseen(entry(0))).toBe(true);
   expect(isInboxEntryUnseen(entry(1))).toBe(true);
@@ -171,7 +171,7 @@ it("honors category choices before and after a project mute while another projec
   expect(play).not.toHaveBeenCalled();
   expect(activity.unseen).toBe(false);
   await pollUpdated(0);
-  expect(play.mock.calls).toEqual([["bloom"]]);
+  expect(play.mock.calls).toEqual([["open"]]);
   expect(activity.unseen).toBe(true);
 });
 
@@ -204,7 +204,7 @@ it("restores a timed mute from storage on remount and expires without replaying 
   await act(async () => vi.advanceTimersByTimeAsync(15_000));
   expect(play).not.toHaveBeenCalled();
   await pollUpdated(0);
-  expect(play.mock.calls).toEqual([["bloom"]]);
+  expect(play.mock.calls).toEqual([["open"]]);
 });
 
 it("bulk mutes through Settings and resumes just one project without losing unread items", async () => {
@@ -234,6 +234,6 @@ it("bulk mutes through Settings and resumes just one project without losing unre
   expect(play).not.toHaveBeenCalled();
   await pollUpdated(0, 1);
   expect(activity.unseen).toBe(true);
-  expect(play.mock.calls).toEqual([["bloom"]]);
+  expect(play.mock.calls).toEqual([["open"]]);
   expect(isInboxEntryUnseen(entry(1))).toBe(true);
 });

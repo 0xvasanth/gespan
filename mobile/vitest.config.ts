@@ -12,7 +12,10 @@ export default defineConfig({
       "react-dom": `${root}node_modules/react-dom`,
     },
   },
-  esbuild: { jsx: "automatic" },
+  oxc: { jsx: { runtime: "automatic" } },
+  // Vite only serves files inside the workspace root, which stops at mobile/.
+  // The protocol tests in ../tests/mobile load from the repository root.
+  server: { fs: { allow: [fileURLToPath(new URL("..", import.meta.url))] } },
   test: {
     environment: "happy-dom",
     // Protocol round trips need both the desktop and mobile dependency trees.
@@ -22,6 +25,5 @@ export default defineConfig({
       "../tests/mobile/**/*.test.ts",
     ],
     maxWorkers: 1,
-    minWorkers: 1,
   },
 });

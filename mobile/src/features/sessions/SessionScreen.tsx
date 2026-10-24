@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentRef,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -109,7 +110,9 @@ const SessionLayoutContext = createContext<SessionLayout>({
   settled: true,
 });
 
-const ContentBlurTarget = createContext<RefObject<View | null> | undefined>(undefined);
+const ContentBlurTarget = createContext<
+  RefObject<ComponentRef<typeof View> | null> | undefined
+>(undefined);
 const ContentBlurReady = createContext<(() => void) | undefined>(undefined);
 
 /** Record page content only; native header declarations must stay outside. */
@@ -443,7 +446,7 @@ export function SessionFrame({
   // Recording that whole tree can include a blur sampling its own RenderNode.
   // Only the per-screen frame may record content for its sibling surfaces.
   const androidBlur = Platform.OS === "android" && native;
-  const blurTarget = useRef<View>(null);
+  const blurTarget = useRef<ComponentRef<typeof View>>(null);
   const [blurTargetReady, setBlurTargetReady] = useState(false);
   const onBlurTargetLayout = useCallback(() => {
     if (blurTarget.current) setBlurTargetReady(true);

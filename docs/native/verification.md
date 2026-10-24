@@ -8,8 +8,8 @@ remaining runtime and platform work.
 
 | Check | Result |
 | --- | --- |
-| Complete native check (`npm run native:check`) | Passed |
-| Native script tests (`npm run native:test:dev`) | 19 passed, including development restarts, bundle data modes and dependency guards |
+| Complete native check (`bun run native:check`) | Passed |
+| Native script tests (`bun run native:test:dev`) | 19 passed, including development restarts, bundle data modes and dependency guards |
 | Native Rust formatting and strict Clippy | Passed for core and GPUI, including all targets |
 | Native core tests | 547 passed, 1 ignored |
 | GPUI tests | 551 passed, 11 ignored |
@@ -73,7 +73,7 @@ cargo test --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core
 Run the complete native check from the repository root:
 
 ```sh
-npm run native:check
+bun run native:check
 ```
 
 Core tests run in parallel. GPUI tests run serially to isolate rendering state
@@ -82,10 +82,10 @@ and avoid CPU contention with the interpreter's wall-clock limits.
 For focused work, run the relevant part:
 
 ```sh
-npm run native:test:dev
+bun run native:test:dev
 cargo fmt --manifest-path crates/rebase-gpui/Cargo.toml --all --check
 cargo clippy --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core -p rebase-gpui --all-targets --profile native-dev -- -D warnings
-npm run native:test
+bun run native:test
 ```
 
 On macOS with a Metal device, the renderer regression opens no window:

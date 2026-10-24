@@ -1,4 +1,4 @@
-import MaskedView from "@react-native-masked-view/masked-view";
+import { MaskedView } from "../../ui/MaskedView";
 import { Image, StyleSheet, View } from "react-native";
 
 import { REBASE_MARK, REBASE_MARK_INVERSE } from "@/ui/brand";

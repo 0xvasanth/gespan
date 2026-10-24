@@ -4,6 +4,7 @@ import { Storage } from "happy-dom";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { queueSelectionChange } from "../../../test/queueSelectionChange";
 import { FILE_EDITOR_AUTOSAVE_DELAY_MS, FileEditor } from "./FileEditor";
 import { saveAutosave } from "../../settings/model/settings";
 import { invalidateWatchedFiles } from "../model/fileWatch";
@@ -34,6 +35,7 @@ describe("file editor line endings", () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
+    queueSelectionChange();
     // CodeMirror schedules timers while mounting. Keep those callbacks on the
     // same clock as the autosave debounce instead of switching clocks afterward.
     vi.useFakeTimers();

@@ -3,6 +3,7 @@ import { EditorView } from "@codemirror/view";
 import { act, createElement, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { queueSelectionChange } from "../../../test/queueSelectionChange";
 import { newEditorPane, newFileTab } from "../../workspace/model/layout";
 import { invalidateWatchedFiles } from "../model/fileWatch";
 import { FilePane } from "./FilePane";
@@ -37,6 +38,7 @@ describe("file pane source navigation", () => {
   let paneProps: ComponentProps<typeof FilePane>;
 
   beforeEach(() => {
+    queueSelectionChange();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const storage = new Map<string, string>();
     vi.stubGlobal("localStorage", {

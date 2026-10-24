@@ -94,7 +94,7 @@ it("plays the input cue only when the question banner is not sent", async () => 
 
   invoke.mockRejectedValue(new Error("No native bridge"));
   await announceSessionInput(session, event, false);
-  expect(play.mock.calls).toEqual([["arrival"]]);
+  expect(play.mock.calls).toEqual([["navigate"]]);
 
   updateNotificationPreferences(["local:/work"], { mutedUntil: null });
   await announceSessionInput(session, event, false);

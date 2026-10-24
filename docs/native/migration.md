@@ -33,7 +33,7 @@ identities, bounded blocks and virtualized layout; streaming updates should
 preserve the reader's position. Cancellation must remain responsive under load.
 
 The editor embeds generated analysis and formatting bundles. After changing their
-source services or dependencies, run `npm ci` and `npm run build` inside
+source services or dependencies, run `bun install --frozen-lockfile` and `bun run build` inside
 `scripts/native-editor/`. Generated bundles and their license notices belong
 in the repository.
 
