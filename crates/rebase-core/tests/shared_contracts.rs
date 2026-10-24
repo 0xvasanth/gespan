@@ -405,7 +405,7 @@ fn board_error_strings_match_tauri() {
 }
 
 #[test]
-fn opening_the_rebase_store_then_the_board_service_creates_the_four_board_tables() {
+fn opening_the_rebase_store_then_the_board_service_creates_the_four_shared_board_tables() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("rebase.db");
     drop(Store::open_rebase(&path).unwrap());
@@ -418,10 +418,16 @@ fn opening_the_rebase_store_then_the_board_service_creates_the_four_board_tables
         .unwrap()
         .map(Result::unwrap)
         .collect();
+    // The shared tables are exactly Tauri's four; anything else the native app
+    // adds is its own, prefixed so Tauri never mistakes it for shared data.
+    let (native, shared): (Vec<_>, Vec<_>) = names
+        .iter()
+        .partition(|name| name.starts_with("board_native_"));
     assert_eq!(
-        names,
+        shared,
         ["board_activity", "board_cards", "board_columns", "boards"]
     );
+    assert!(!native.is_empty());
 }
 
 #[test]

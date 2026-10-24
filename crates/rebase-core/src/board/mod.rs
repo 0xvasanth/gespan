@@ -7,6 +7,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 pub mod auto_move;
+pub mod extras;
 pub mod linked_turns;
 
 fn now_millis() -> i64 {
@@ -153,7 +154,8 @@ pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
            ON board_activity (board_id, created_at DESC);
          CREATE INDEX IF NOT EXISTS board_activity_card_idx
            ON board_activity (card_id, created_at DESC);",
-    )
+    )?;
+    extras::ensure_tables(conn)
 }
 
 fn db(error: rusqlite::Error) -> String {
