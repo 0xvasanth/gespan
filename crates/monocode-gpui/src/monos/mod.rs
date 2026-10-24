@@ -853,6 +853,14 @@ impl Monos {
     }
     fn configure_chat(&mut self, id: &str, cx: &mut Context<Self>) {
         self.refresh_work(id, cx);
+        if let Some(mono) = self.roster.get(id) {
+            // The shell may be mid-update when this runs; reach it afterwards.
+            let launches = mono.launches.iter().map(|l| l.session_id).collect();
+            let owner = self.owner.clone();
+            cx.defer(move |cx| {
+                let _ = owner.update(cx, |shell, cx| shell.mono_track_sessions(launches, cx));
+            });
+        }
         if let (Some(mono), Some(view)) =
             (self.roster.get(id).cloned(), self.chats.get(id).cloned())
         {

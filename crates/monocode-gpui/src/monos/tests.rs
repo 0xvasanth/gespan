@@ -672,6 +672,36 @@ fn app_actions_are_project_scoped_and_mutation_retries_are_idempotent(cx: &mut T
     });
 }
 #[gpui::test]
+fn sidebar_hidden_launches_still_list_in_the_mono_panel_after_a_restart(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let started = call(
+        &s,
+        "hidden-launch",
+        "sessions.start",
+        json!({"project":s.project,"prompt":"Review quietly","title":"Quiet review","draft":true}),
+        cx,
+    )
+    .try_recv()
+    .unwrap()
+    .unwrap();
+    let child = started["sessionId"].as_i64().unwrap();
+    let owner = cx.update(|cx| s.manager.read(cx).owner.upgrade().unwrap());
+    cx.update(|cx| {
+        assert!(s.manager.read(cx).hidden_session(child));
+        owner.update(cx, |shell, _| shell.mono_forget_session(child));
+        assert!(!owner.read(cx).mono_session_views(cx).iter().any(|v| v.id == child));
+    });
+    s.manager.update(cx, |m, cx| m.configure_chat(&s.id, cx));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let views = owner.read(cx).mono_session_views(cx);
+        let view = views.iter().find(|v| v.id == child).expect("the launch lists again");
+        assert!(view.title.contains("Quiet review"), "{}", view.title);
+        assert!(owner.update(cx, |shell, cx| shell.mono_ensure_session(child, cx)).is_some());
+        assert!(s.manager.read(cx).hidden_session(child));
+    });
+}
+#[gpui::test]
 fn mono_app_launch_visibility_can_be_toggled_and_survives_roster_reload(cx: &mut TestAppContext) {
     let s = setup(cx);
     let started = call(

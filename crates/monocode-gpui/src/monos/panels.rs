@@ -1303,7 +1303,8 @@ impl Monos {
         let Some(chat) = self.chat() else {
             return empty("Loading…");
         };
-        let source = chat.read(cx).mono_rows(cx);
+        // Response actions number turns across every loaded page.
+        let source = chat.read(cx).transcript.read(cx).history_rows();
         let Some(start) = self.activity_turn.filter(|i| *i < source.len()) else {
             return empty_state(
                 "list-bullet",

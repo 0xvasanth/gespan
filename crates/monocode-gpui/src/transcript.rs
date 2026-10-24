@@ -5,7 +5,7 @@ mod drafts;
 #[cfg(test)]
 mod follow_tests;
 mod history;
-pub(crate) use history::PreparedHistory;
+pub(crate) use history::{HistoryPager, PreparedHistory};
 mod links;
 mod live_phase;
 mod mascot;
@@ -112,7 +112,6 @@ struct Message {
 #[derive(Clone)]
 enum Body {
     RemotePlan(crate::conversation::remote_plans::Plan),
-    OlderHistory,
     SavedDraft,
     Markdown(MarkdownRow),
     Visual(Arc<monocode_core::visual::VisualDocument>),
@@ -449,6 +448,13 @@ pub(crate) struct TranscriptView {
     history_start: usize,
     history_loading: bool,
     history_requested: bool,
+    /// Rows of older pages above the store's window. Store row `i` is `base + i`.
+    base: usize,
+    /// The store cursor for the turns above the loaded rows, if any.
+    history_before: Option<i64>,
+    history_pager: Option<history::HistoryPager>,
+    /// The last page read failed; only a scroll retries it.
+    history_failed: bool,
     history_search: Option<(usize, String)>,
     prepared_parsers: HashMap<usize, MarkdownParser>,
     mono: bool,
@@ -642,8 +648,19 @@ impl TranscriptView {
         }
         cx.notify();
     }
+    /// The rows of the store's window, numbered as the store numbers them.
+    /// Older pages above it are read-only and never part of a save.
     pub(crate) fn source_rows(&self) -> &[Row] {
+        &self.source[self.base..]
+    }
+    /// Every loaded row, older pages included, numbered as this view's turns
+    /// and response actions are.
+    pub(crate) fn history_rows(&self) -> &[Row] {
         &self.source
+    }
+    /// Whether `history_rows` holds every turn, not only the newest pages.
+    pub(crate) fn history_complete(&self) -> bool {
+        self.history_before.is_none()
     }
     pub(crate) fn document(text: String, cx: &mut Context<Self>) -> Self {
         let mut view = Self::new();
@@ -1059,6 +1076,7 @@ impl TranscriptView {
             .collect();
         let copied = self.copied.is_some_and(|id| id == start as u64);
         let sent_at = self.source[start].sent_at;
+        let base = self.base;
         let stamp_anchor = self
             .action_anchors
             .entry((start, "sent-at"))
@@ -1103,6 +1121,7 @@ impl TranscriptView {
                     && monocode_core::provider::supports_rewind(
                         monocode_core::provider::Kind::from_id(&self.provider),
                     )
+                    && start >= base
                     && self
                         .source
                         .iter()
@@ -1118,7 +1137,7 @@ impl TranscriptView {
                             false,
                         )
                         .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.emit(ResponseRequest::EditLastTurn { turn: start })
+                            cx.emit(ResponseRequest::EditLastTurn { turn: start - base })
                         })),
                     )
                 },
@@ -2253,6 +2272,10 @@ impl TranscriptView {
             history_start: 0,
             history_loading: false,
             history_requested: false,
+            base: 0,
+            history_before: None,
+            history_pager: None,
+            history_failed: false,
             history_search: None,
             prepared_parsers: HashMap::new(),
             mono: false,
@@ -2630,10 +2653,14 @@ impl TranscriptView {
         if self.mono {
             self.submitted_mono_message = settings.mono_message_id.clone();
         }
-        self.patch(self.source.len(), submitted.rows, cx);
+        self.patch_view(self.source.len(), submitted.rows, cx);
     }
 
+    /// Patch the store's window from `start`, a row of `source_rows`.
     pub(crate) fn patch(&mut self, start: usize, rows: Vec<Row>, cx: &mut Context<Self>) {
+        self.patch_view(self.base + start, rows, cx);
+    }
+    fn patch_view(&mut self, start: usize, rows: Vec<Row>, cx: &mut Context<Self>) {
         if rows.is_empty() {
             return;
         }
@@ -2944,18 +2971,6 @@ impl TranscriptView {
             .map(|m| (m.start, m))
             .collect();
         self.rows.truncate(display_start);
-        if display_start == 0 && self.history_start > 0 {
-            self.rows.push(UiRow {
-                key: (self.history_start, 8),
-                body: Body::OlderHistory,
-                message: 0,
-                first: false,
-                last: false,
-                work: false,
-                work_tail: false,
-                thought_phase: None,
-            });
-        }
         let activity = if self.mono {
             phases::Phases::default()
         } else {
@@ -4150,7 +4165,6 @@ impl TranscriptView {
             return self.phase_window(ix, group, active, window, cx);
         }
         match self.rows[ix].body {
-            Body::OlderHistory => return self.older_history_row(cx),
             Body::SavedDraft => return self.saved_draft_row(cx),
             Body::Pending(i) => return self.pending_row(i, cx),
             Body::Launch(id) => return self.launch_row(ix, id, cx),
@@ -4366,11 +4380,9 @@ impl TranscriptView {
                     .into_any_element()
             }
             Body::MonoCard(ref value) => crate::monos::cards::render(value, cx),
-            Body::OlderHistory
-            | Body::Pending(_)
-            | Body::Launch(_)
-            | Body::Review { .. }
-            | Body::SavedDraft => div().into_any_element(),
+            Body::Pending(_) | Body::Launch(_) | Body::Review { .. } | Body::SavedDraft => {
+                div().into_any_element()
+            }
             Body::Actions { turn, complete } => self.response_actions(turn, complete, cx),
             Body::WorkLine { turn, .. } if self.mono => self.mono_turn_header(turn, cx),
             Body::WorkLine { turn, expandable } => {
@@ -5184,9 +5196,18 @@ impl TranscriptView {
 impl gpui::EventEmitter<ResponseRequest> for TranscriptView {}
 impl Render for TranscriptView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if std::mem::take(&mut self.history_requested)
+        let top = self.list.logical_scroll_top();
+        // Rows that don't fill the viewport can't scroll, so their top being
+        // on screen asks for older turns too. Layout must have run first.
+        let short = top.item_ix == 0
+            && top.offset_in_item <= px(0.)
+            && !self.history_failed
+            && (self.history_start > 0 || self.history_before.is_some())
+            && self.list.bounds_for_item(0).is_some();
+        if (std::mem::take(&mut self.history_requested)
             && !self.list.is_following_tail()
-            && self.list.logical_scroll_top().item_ix <= 2
+            && top.item_ix <= 2)
+            || short
         {
             self.load_older_history(cx);
         }
@@ -5204,7 +5225,8 @@ impl Render for TranscriptView {
                 // Read the final scroll geometry in our trailing layout probe.
                 .set_scroll_handler(cx.listener(|this, _, _, cx| {
                     this.selection.clear();
-                    this.history_requested = this.history_start > 0;
+                    this.history_requested =
+                        this.history_start > 0 || this.history_before.is_some();
                     cx.notify()
                 }));
         }
@@ -5283,9 +5305,9 @@ impl Render for TranscriptView {
             .when(self.show_jump, |d| {
                 d.child(div().absolute().bottom(px(8.)).left_0().w_full().flex().justify_center().child(
                     div().id("jump-to-bottom").child(self.jump_anchor.probe()).role(Role::Button).aria_label("Scroll to bottom")
-                        .relative().flex().items_center().gap(px(6.)).h(px(30.)).px(px(10.))
+                        .relative().flex().items_center().justify_center().size(px(30.))
                         .rounded_full().border_1().border_color(content(0.1))
-                        .text_size(px(12.)).line_height(px(16.)).text_color(content(0.8))
+                        .text_color(content(0.7))
                         .hover(|s| s.text_color(content(1.)).bg(content(0.04)))
                         .child(canvas(|_, _, _| {}, |bounds, _, window, _| {
                             #[cfg(target_os = "macos")]
@@ -5294,8 +5316,7 @@ impl Render for TranscriptView {
                             #[cfg(not(target_os = "macos"))]
                             window.paint_quad(gpui::fill(bounds, rgb(CHAT)).corner_radii(px(15.)));
                         }).absolute().top_0().left_0().size_full())
-                        .child(icon("arrow-down", 14.).text_color(content(0.5)))
-                        .child("Scroll to bottom")
+                        .child(icon("chevron-down", 16.))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(|this, _, _, cx| this.jump_to_bottom(cx)))
                 ))

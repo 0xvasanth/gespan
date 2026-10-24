@@ -31,6 +31,13 @@ impl Shell {
     pub(crate) fn close_mono_overview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_right_panel_open(false, window, cx);
     }
+    /// As a restart would: the store's session list omits hidden launches.
+    #[cfg(test)]
+    pub(crate) fn mono_forget_session(&mut self, id: i64) {
+        self.order.retain(|s| *s != id);
+        self.session_summaries.remove(&id);
+        self.sessions.remove(&id);
+    }
     #[cfg(test)]
     pub(crate) fn mono_manager(&self) -> Entity<crate::monos::Monos> {
         self.monos.as_ref().unwrap().clone()
@@ -45,8 +52,16 @@ impl Shell {
             .is_some_and(|m| m.read(cx).active.is_some())
     }
     pub(crate) fn mono_session_views(&self, cx: &App) -> Vec<MonoSession> {
+        // A Mono's launches are usually hidden from the sidebar, so they are
+        // known by summary only, outside the sidebar's order.
+        let listed: HashSet<_> = self.order.iter().collect();
+        let hidden = self
+            .session_summaries
+            .keys()
+            .filter(|id| !listed.contains(id));
         self.order
             .iter()
+            .chain(hidden)
             .map(|&id| {
                 let metadata = self.session_metadata(id, cx);
                 let live = self.sessions.get(&id).map(|v| v.read(cx));
@@ -64,6 +79,45 @@ impl Shell {
                 }
             })
             .collect()
+    }
+    /// Load the sessions a Mono launched that the sidebar hides, so its panel
+    /// can list and open them. They stay out of the sidebar.
+    pub(crate) fn mono_track_sessions(&mut self, ids: Vec<i64>, cx: &mut Context<Self>) {
+        let missing: Vec<_> = ids
+            .into_iter()
+            .filter(|id| !self.session_summaries.contains_key(id) && !self.deleting.contains(id))
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let store = self.store.clone();
+        let work = cx.background_executor().spawn(async move {
+            let store = locked(&store)?;
+            Ok::<_, String>(
+                missing
+                    .into_iter()
+                    .filter_map(|id| store.mono_session(id).ok().flatten())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(found) = work.await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                for summary in found {
+                    if this.session_summaries.contains_key(&summary.id) {
+                        continue;
+                    }
+                    this.sidebar_hidden_sessions.insert(summary.id);
+                    this.session_summaries.insert(summary.id, summary);
+                }
+                if let Some(monos) = &this.monos {
+                    monos.update(cx, |_, cx| cx.notify());
+                }
+            });
+        })
+        .detach();
     }
     pub(crate) fn mono_session_entity(&self, id: i64) -> Option<Entity<Conversation>> {
         self.sessions.get(&id).cloned()

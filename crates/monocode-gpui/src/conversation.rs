@@ -656,7 +656,13 @@ impl Conversation {
             return;
         }
         self.transcript
-            .update(cx, |view, cx| view.reveal_search(row, &query, cx));
+            .update(cx, |view, cx| view.reveal_saved_search(row, &query, cx));
+    }
+    /// Reads this conversation's older turns for the transcript as it scrolls.
+    pub(crate) fn history_pager(&self) -> crate::transcript::HistoryPager {
+        let store = self.store.clone();
+        let id = self.summary.id;
+        Arc::new(move |before, all| locked(&store)?.load_before(id, before, all))
     }
     pub(crate) fn load(&mut self, cx: &mut Context<Self>) {
         if self.is_remote() {
@@ -693,10 +699,11 @@ impl Conversation {
                 settings,
                 locked(&store).and_then(|s| s.context_usage(id)),
                 locked(&store).and_then(|s| s.follow_ups(id)),
+                locked(&store).and_then(|s| s.history_before(id)),
             )
         });
         cx.spawn(async move |this, cx| {
-            let (result, git, settings, context, follow_ups) = work.await;
+            let (result, git, settings, context, follow_ups, before) = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
                 this.branch = git.as_ref().and_then(|s| s.current.clone());
@@ -722,7 +729,7 @@ impl Conversation {
                 // historical turn provenance still belongs to the loaded rows.
                 if let Ok(Some(settings)) = &settings {
                     this.transcript
-                        .update(cx, |view, _| view.turns = settings.turns.clone());
+                        .update(cx, |view, _| view.set_turns(settings.turns.clone()));
                     this.settings.turns = settings.turns.clone();
                 }
                 if let Ok(Some(mut settings)) = settings
@@ -751,8 +758,11 @@ impl Conversation {
                 }
                 match result {
                     Ok(history) => {
-                        this.transcript
-                            .update(cx, |v, cx| v.install_prepared_history(history, cx));
+                        let pager = this.history_pager();
+                        this.transcript.update(cx, |v, cx| {
+                            v.install_prepared_history(history, cx);
+                            v.set_history_pager(before.ok().flatten(), Some(pager));
+                        });
                         this.status = "Ready".into();
                         this.loaded = true;
                         if let Some((row, query)) = this.pending_search.take() {
@@ -1371,7 +1381,7 @@ impl Conversation {
                             } else {
                                 this.finish_orchestration_plan(cx);
                             }
-                            this.settings.turns = this.transcript.read(cx).turns.clone();
+                            this.settings.turns = this.transcript.read(cx).window_turns();
                             this.save_settings(cx);
                             this.refresh_git(cx);
                             this.run_history_actions(cx);

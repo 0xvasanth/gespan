@@ -5,6 +5,8 @@ pub(super) mod blocks;
 mod edit;
 #[cfg(test)]
 mod tests;
+mod window;
+pub use window::{HistoryPage, PAGE_TURNS};
 
 use super::{Reminder, Session, Store};
 use crate::{
@@ -27,6 +29,8 @@ pub(super) struct Shared {
     extras: RefCell<BTreeMap<String, String>>,
     extras_path: Option<PathBuf>,
     snapshots: RefCell<HashMap<i64, HistoryRevision>>,
+    /// The first block sequence of each indexed Mono's row numbering.
+    windows: RefCell<HashMap<i64, i64>>,
     queues: RefCell<HashMap<i64, String>>,
     account_source: RefCell<Option<crate::accounts::Book>>,
     preferences: std::sync::Arc<crate::desktop_preferences::DesktopPreferences>,
@@ -304,6 +308,7 @@ impl Store {
                 extras: RefCell::new(extras),
                 extras_path,
                 snapshots: RefCell::new(HashMap::new()),
+                windows: RefCell::new(HashMap::new()),
                 queues: RefCell::new(HashMap::new()),
                 account_source: RefCell::new(None),
                 preferences: preferences.unwrap_or_else(|| {
@@ -468,11 +473,7 @@ impl Store {
             .and_then(|v| v.split_once(':'))
         {
             if let Ok(id) = id.parse::<i64>() {
-                if self
-                    .shared_blocks(id)?
-                    .iter()
-                    .any(|b| b["appRequestId"].as_str() == Some(message))
-                {
+                if self.shared_delivered(id, message)? {
                     return Ok(Some("1".into()));
                 }
             }
@@ -956,23 +957,12 @@ impl Store {
             window: window.filter(|w| *w > 0).map(|w| w as u64),
         }))
     }
+    /// The blocks whose rows this store numbers: an indexed Mono's window, or
+    /// the whole history of one stored as a blob.
     pub(super) fn shared_blocks(&self, id: i64) -> Result<Vec<Value>, String> {
         let original = self.persisted_session_id(id)?;
-        if has_table(&self.conn, "mono_transcripts")?
-            && sql(self.conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM mono_transcripts WHERE session_id=?1)",
-                [&original],
-                |r| r.get::<_, bool>(0),
-            ))?
-        {
-            let mut query = sql(self
-                .conn
-                .prepare("SELECT block_json FROM mono_blocks WHERE session_id=?1 ORDER BY seq"))?;
-            let mut result = Vec::new();
-            for row in sql(query.query_map([&original], |r| r.get::<_, String>(0)))? {
-                result.push(parse(&sql(row)?)?);
-            }
-            Ok(result)
+        if let Some(from) = self.shared_window(id, &original)? {
+            self.shared_indexed_blocks(&original, from, i64::MAX)
         } else {
             let raw: String = sql(self.conn.query_row(
                 "SELECT blocks_json FROM sessions WHERE id=?1",
@@ -984,21 +974,15 @@ impl Store {
     }
     pub(super) fn shared_load(&self, id: i64) -> Result<Transcript, String> {
         let original = self.persisted_session_id(id)?;
-        if has_table(&self.conn, "mono_transcripts")?
-            && sql(self.conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM mono_transcripts WHERE session_id=?1)",
-                [&original],
-                |row| row.get::<_, bool>(0),
-            ))?
-        {
+        if let Some(from) = self.shared_window(id, &original)? {
             // Project one source block at a time. A long Mono must not retain
             // a second complete JSON history alongside its display rows.
             // The scalar count and the rows share one SQLite read snapshot.
             let mut query = sql(self.conn.prepare(
-                "SELECT block_json,(SELECT count(*) FROM mono_blocks WHERE session_id=?1)
-                 FROM mono_blocks WHERE session_id=?1 ORDER BY seq",
+                "SELECT block_json,(SELECT count(*) FROM mono_blocks WHERE session_id=?1 AND seq>=?2)
+                 FROM mono_blocks WHERE session_id=?1 AND seq>=?2 ORDER BY seq",
             ))?;
-            let mut records = sql(query.query([&original]))?;
+            let mut records = sql(query.query(params![original, from]))?;
             let mut rows = Vec::new();
             let mut digest = HistoryRevision::start(0);
             let mut first = true;
@@ -1032,40 +1016,53 @@ impl Store {
     }
     pub(super) fn shared_store_blocks(&self, id: i64, blocks: &[Value]) -> Result<(), String> {
         let original = self.persisted_session_id(id)?;
-        let indexed = has_table(&self.conn, "mono_transcripts")?
-            && sql(self.conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM mono_transcripts WHERE session_id=?1)",
+        let (has_user, draft) = if let Some(from) = self.shared_window(id, &original)? {
+            self.shared_store_indexed_blocks(&original, from, blocks)?;
+            // Blocks before the window count too, and were never read.
+            sql(self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM mono_blocks WHERE session_id=?1 AND is_user=1),
+                 EXISTS(SELECT 1 FROM mono_blocks WHERE session_id=?1 AND is_user=1 AND is_draft=1)",
                 [&original],
-                |r| r.get::<_, bool>(0),
-            ))?;
-        if indexed {
-            self.shared_store_indexed_blocks(&original, blocks)?;
+                |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+            ))?
         } else {
             self.shared_patch(id, &[("blocks_json", json!(encode(&blocks)?))])?;
-        }
+            (
+                blocks.iter().any(|b| b["role"] == "user"),
+                blocks
+                    .iter()
+                    .any(|b| b["role"] == "user" && b["draft"] == true),
+            )
+        };
         self.shared_patch(
             id,
             &[
-                (
-                    "has_user_message",
-                    json!(blocks.iter().any(|b| b["role"] == "user")),
-                ),
-                (
-                    "is_draft",
-                    json!(blocks
-                        .iter()
-                        .any(|b| b["role"] == "user" && b["draft"] == true)),
-                ),
+                ("has_user_message", json!(has_user)),
+                ("is_draft", json!(draft)),
             ],
         )
     }
-    fn shared_store_indexed_blocks(&self, original: &str, blocks: &[Value]) -> Result<(), String> {
+    /// Replace the window's blocks, from sequence `from` on. Earlier blocks are
+    /// outside every row index this store handed out, so they stay untouched.
+    fn shared_store_indexed_blocks(
+        &self,
+        original: &str,
+        from: i64,
+        blocks: &[Value],
+    ) -> Result<(), String> {
         let mut query = sql(self.conn.prepare(
-            "SELECT seq,block_id,block_json FROM mono_blocks WHERE session_id=?1 ORDER BY seq",
+            "SELECT seq,block_id,block_json FROM mono_blocks WHERE session_id=?1 AND seq>=?2 ORDER BY seq",
         ))?;
         let mut old = HashMap::new();
-        let mut max_seq = 0;
-        for row in sql(query.query_map([original], |r| {
+        // New blocks always land inside the window, after everything stored.
+        let first = from.max(1);
+        let mut max_seq = sql(self.conn.query_row(
+            "SELECT coalesce(max(seq),0) FROM mono_blocks WHERE session_id=?1",
+            [original],
+            |row| row.get::<_, i64>(0),
+        ))?
+        .max(first - 1);
+        for row in sql(query.query_map(params![original, from], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
@@ -1073,7 +1070,6 @@ impl Store {
             ))
         }))? {
             let (seq, id, raw) = sql(row)?;
-            max_seq = max_seq.max(seq);
             old.insert(id, (seq, parse::<Value>(&raw)?));
         }
         let retained: HashSet<_> = blocks.iter().filter_map(|b| b["id"].as_str()).collect();
@@ -1096,14 +1092,16 @@ impl Store {
         if resequence {
             // An explicit insertion/reorder changes turn positions. Payloads
             // and block identities survive, in one enclosing transaction.
-            sql(self
-                .conn
-                .execute("DELETE FROM mono_turns WHERE session_id=?1", [original]))?;
-            sql(self
-                .conn
-                .execute("DELETE FROM mono_blocks WHERE session_id=?1", [original]))?;
+            sql(self.conn.execute(
+                "DELETE FROM mono_turns WHERE session_id=?1 AND seq>=?2",
+                params![original, from],
+            ))?;
+            sql(self.conn.execute(
+                "DELETE FROM mono_blocks WHERE session_id=?1 AND seq>=?2",
+                params![original, from],
+            ))?;
             old.clear();
-            max_seq = 0;
+            max_seq = first - 1;
         } else {
             for (id, (seq, _)) in &old {
                 if !retained.contains(id.as_str()) {
@@ -1567,7 +1565,7 @@ impl Store {
                 if cancel.load(Ordering::Acquire) {
                     return Ok((Vec::new(), false));
                 }
-                let rows = blocks::project(&self.shared_blocks(summary.id)?)?;
+                let rows = blocks::project(&self.shared_all_blocks(summary.id)?)?;
                 let mut ix = 0;
                 while ix < rows.len() {
                     if cancel.load(Ordering::Acquire) {
