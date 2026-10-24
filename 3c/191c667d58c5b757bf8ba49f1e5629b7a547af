@@ -1,0 +1,45 @@
+crates/rebase-gpui/src/arcade.rs
+  s_4a99e4b779e8a6::t_7a218d4a818056 546-553,555-556,565-566,577-582
+  s_4a99e4b779e8a6::t_06552d0c8b534c 722-725
+  s_4a99e4b779e8a6::t_a1d8ad18798dec 794
+  s_4a99e4b779e8a6::t_165e63f0858d7d 19-28,33-40
+  s_4a99e4b779e8a6::t_2e4bbae2a064c3 554,557-564
+  s_4a99e4b779e8a6::t_fc0f564751f18e 192-205,208-210
+  s_4a99e4b779e8a6::t_71d223fa8e7d69 497
+  s_4a99e4b779e8a6::t_08fcb47b34b831 526
+  s_4a99e4b779e8a6::t_06c271b56e5eec 739-743
+  s_4a99e4b779e8a6::t_d12dcbad483b79 761,766-771
+  s_4a99e4b779e8a6::t_f447fbdf8a7a82 795-797
+  s_4a99e4b779e8a6::t_9aa49b7df00b1d 728-738,744-760,762-765,772-786
+  s_4a99e4b779e8a6::t_c31eca78eed8d3 142
+  s_4a99e4b779e8a6::t_e0c80df25e5cbe 211,726,810-856
+  s_4a99e4b779e8a6::t_aec4dbbba4da34 727
+crates/rebase-gpui/src/arcade/tetris.rs
+  s_4a99e4b779e8a6::t_70e979048da0d6 17-19
+  s_4a99e4b779e8a6::t_2ce7271cb8160a 119-121
+  s_4a99e4b779e8a6::t_4abed56fe3283b 134-136,149,156-158,160-166
+  s_4a99e4b779e8a6::t_3822b699317e37 14-16
+  s_4a99e4b779e8a6::t_da5aea7ff7ffa9 288-292
+  s_4a99e4b779e8a6::t_23b086133823d8 112-118,122-124,128-129,131-133,137-144,183,185-186,188-190,192-194
+  s_4a99e4b779e8a6::t_f08b2f8769a9c8 145-148,150-155,159,167-182,184,187
+  s_4a99e4b779e8a6::t_94bb1eb049194e 772-804,810-811,815-864
+  s_4a99e4b779e8a6::t_11b3dcacbfa327 191
+  s_4a99e4b779e8a6::t_f42985c3c69d11 805-809,812-814
+  s_4a99e4b779e8a6::t_f0d021f87659c1 125-127,130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c191c667d58c5b757bf8ba49f1e5629b7a547af",
+  "prompts": {},
+  "sessions": {
+    "s_4a99e4b779e8a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "532c64ac-3294-4bfd-856e-094418f0c6a6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
