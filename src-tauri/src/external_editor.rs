@@ -311,7 +311,8 @@ fn installed_windows_app(editor: &EditorDefinition) -> Option<PathBuf> {
 
 /// `relative` under `root`, where a path segment ending in `*` matches
 /// versioned install folders such as `JetBrains/WebStorm 2025.2`. The
-/// newest-sorting match wins.
+/// highest version wins, whatever the edition: `PyCharm 2024.3` loses to
+/// `PyCharm Community Edition 2025.2`.
 #[cfg(any(windows, test))]
 fn installed_file(root: &Path, relative: &str) -> Option<PathBuf> {
     let Some((before, after)) = relative.split_once('*') else {
@@ -320,20 +321,26 @@ fn installed_file(root: &Path, relative: &str) -> Option<PathBuf> {
     };
     let (parent, prefix) = before.rsplit_once('/').unwrap_or(("", before));
     let rest = after.strip_prefix('/')?;
-    let mut matches: Vec<PathBuf> = std::fs::read_dir(root.join(parent))
+    std::fs::read_dir(root.join(parent))
         .ok()?
         .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| name.starts_with(prefix))
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let path = entry.path().join(rest);
+            (name.starts_with(prefix) && path.is_file()).then(|| (folder_version(&name), path))
         })
-        .map(|entry| entry.path().join(rest))
-        .filter(|path| path.is_file())
-        .collect();
-    matches.sort();
-    matches.pop()
+        .max()
+        .map(|(_, path)| path)
+}
+
+/// The `2025.2` in `WebStorm 2025.2`, compared numerically so `2024.10`
+/// beats `2024.9`. A folder without one sorts first.
+#[cfg(any(windows, test))]
+fn folder_version(name: &str) -> Vec<u32> {
+    name.rsplit(' ')
+        .next()
+        .and_then(|token| token.split('.').map(|part| part.parse().ok()).collect())
+        .unwrap_or_default()
 }
 
 /// JetBrains Toolbox writes a launcher script for each IDE it installs here,
@@ -363,11 +370,30 @@ fn toolbox_script(dir: &Path, editor: &EditorDefinition) -> Option<PathBuf> {
         } else {
             dir.join(command)
         };
-        path.is_file().then_some(path)
+        launchable(&path).then_some(path)
     })
 }
 
+/// A script that can run as it is: on Unix it needs an execute bit, as a
+/// PATH lookup would require.
+fn launchable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
 fn resolve_editor(editor: &EditorDefinition) -> Option<EditorLauncher> {
+    resolve_editor_in(editor, toolbox_scripts_dir().as_deref())
+}
+
+fn resolve_editor_in(editor: &EditorDefinition, toolbox: Option<&Path>) -> Option<EditorLauncher> {
     #[cfg(target_os = "macos")]
     if let Some(path) = installed_mac_app(editor) {
         return Some(EditorLauncher::MacApp(path));
@@ -382,7 +408,7 @@ fn resolve_editor(editor: &EditorDefinition) -> Option<EditorLauncher> {
         .commands
         .iter()
         .find_map(|command| harness::resolve_gui_binary(command))
-        .or_else(|| toolbox_script(&toolbox_scripts_dir()?, editor))
+        .or_else(|| toolbox_script(toolbox?, editor))
         .map(EditorLauncher::Command)
 }
 
@@ -508,6 +534,23 @@ mod tests {
         std::fs::write(path, b"").unwrap();
     }
 
+    fn touch_executable(path: &Path) {
+        touch(path);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    fn script_name(command: &str) -> String {
+        if cfg!(windows) {
+            format!("{command}.cmd")
+        } else {
+            command.to_owned()
+        }
+    }
+
     #[test]
     fn versioned_install_folder_resolves_to_the_newest_match() {
         let root = scratch("versioned");
@@ -551,14 +594,72 @@ mod tests {
         let webstorm = definition("webstorm").unwrap();
         assert_eq!(toolbox_script(&dir, webstorm), None);
 
-        let script = if cfg!(windows) {
-            dir.join("webstorm.cmd")
-        } else {
-            dir.join("webstorm")
-        };
-        touch(&script);
+        let script = dir.join(script_name("webstorm"));
+        touch_executable(&script);
         assert_eq!(toolbox_script(&dir, webstorm), Some(script));
         assert_eq!(toolbox_script(&dir, definition("goland").unwrap()), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_highest_version_wins_across_editions() {
+        let root = scratch("editions");
+        touch(&root.join("JetBrains/PyCharm 2024.3/bin/pycharm64.exe"));
+        touch(&root.join("JetBrains/PyCharm Community Edition 2025.2/bin/pycharm64.exe"));
+        assert_eq!(
+            installed_file(&root, "JetBrains/PyCharm*/bin/pycharm64.exe"),
+            Some(root.join("JetBrains/PyCharm Community Edition 2025.2/bin/pycharm64.exe"))
+        );
+
+        // Numeric, not text: 2024.10 is newer than 2024.9.
+        touch(&root.join("JetBrains/GoLand 2024.9/bin/goland64.exe"));
+        touch(&root.join("JetBrains/GoLand 2024.10/bin/goland64.exe"));
+        assert_eq!(
+            installed_file(&root, "JetBrains/GoLand*/bin/goland64.exe"),
+            Some(root.join("JetBrains/GoLand 2024.10/bin/goland64.exe"))
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn folder_versions_parse_the_trailing_number() {
+        assert_eq!(folder_version("WebStorm 2025.2"), vec![2025, 2]);
+        assert_eq!(folder_version("JetBrains Rider 2024.3.1"), vec![2024, 3, 1]);
+        assert_eq!(folder_version("Android Studio"), Vec::<u32>::new());
+    }
+
+    /// Not in the catalog, so nothing on this machine can answer for it.
+    const TOOLBOX_ONLY: EditorDefinition = EditorDefinition {
+        id: "toolbox-only",
+        name: "Toolbox Only",
+        commands: &["rebase-toolbox-only-test-ide"],
+        #[cfg(target_os = "macos")]
+        mac_apps: &["Rebase Toolbox Only Test IDE.app"],
+        #[cfg(windows)]
+        windows_paths: &[],
+    };
+
+    #[test]
+    fn an_ide_installed_only_through_toolbox_resolves_to_its_script() {
+        let dir = scratch("toolbox-resolve");
+        assert!(resolve_editor_in(&TOOLBOX_ONLY, Some(&dir)).is_none());
+        assert!(resolve_editor_in(&TOOLBOX_ONLY, None).is_none());
+
+        let script = dir.join(script_name("rebase-toolbox-only-test-ide"));
+        touch_executable(&script);
+        assert!(matches!(
+            resolve_editor_in(&TOOLBOX_ONLY, Some(&dir)),
+            Some(EditorLauncher::Command(path)) if path == script
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_toolbox_script_without_an_execute_bit_is_not_offered() {
+        let dir = scratch("toolbox-noexec");
+        touch(&dir.join("rebase-toolbox-only-test-ide"));
+        assert!(resolve_editor_in(&TOOLBOX_ONLY, Some(&dir)).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
