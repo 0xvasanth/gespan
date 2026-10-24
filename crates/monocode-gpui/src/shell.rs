@@ -8010,13 +8010,13 @@ impl Render for Shell {
             }))
             .on_action(|_: &About, window, cx| {
                 let detail = format!("Version {}", crate::notifications::updater::version());
-                let _ = window.prompt(
+                drop(window.prompt(
                     gpui::PromptLevel::Info,
                     "Monocode Native",
                     Some(&detail),
                     &["OK"],
                     cx,
-                );
+                ));
             })
             .on_action(|_: &ZoomWindow, window, _| window.zoom_window())
             .on_action(
