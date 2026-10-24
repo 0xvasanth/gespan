@@ -24,6 +24,7 @@ mod explorer;
 mod file_editor;
 mod file_icons;
 mod fixtures;
+mod flows;
 mod fonts;
 mod fs_watch;
 mod git_cache;

@@ -1,0 +1,431 @@
+//! Flow visits run as background sessions, launched like automation runs.
+//! `crate::flows::Host` owns the routing; this is its session driver.
+use super::automation_runs::{WorktreeChoice, launch_available, managed_settings};
+use super::*;
+use crate::flows::{Host, Probe, SessionDriver, Settled};
+use rebase_core::flow::{Flow, FlowRun, FlowStore, FlowVisit, LaunchRequest, Runner};
+
+pub(super) type StoreHandle = Arc<Mutex<FlowStore>>;
+
+#[derive(Default)]
+pub(super) struct State {
+    pub store: Option<StoreHandle>,
+    /// Taken while it applies effects, so the driver can borrow the shell.
+    host: Option<Host>,
+    opening: bool,
+    writes: Option<gpui::Task<()>>,
+}
+
+impl State {
+    /// A Flow turn still in flight; its history must stay loaded to settle.
+    pub(super) fn awaits(&self, session: i64) -> bool {
+        self.host.as_ref().is_some_and(|host| host.awaits(session))
+    }
+}
+
+fn now() -> i64 {
+    rebase_core::time::now_ms().min(i64::MAX as u64) as i64
+}
+
+fn store_lock(store: &StoreHandle) -> Result<std::sync::MutexGuard<'_, FlowStore>, String> {
+    store.lock().map_err(|_| "Flows are unavailable".into())
+}
+
+struct Driver<'a, 'c> {
+    shell: &'a mut Shell,
+    cx: &'a mut Context<'c, Shell>,
+}
+
+impl SessionDriver for Driver<'_, '_> {
+    fn launch(&mut self, request: LaunchRequest) {
+        self.shell.launch_flow_visit(request, self.cx);
+    }
+    fn follow_up(&mut self, session: i64, prompt: String) -> Option<u64> {
+        let view = self.shell.sessions.get(&session)?.clone();
+        let (before, settings) = {
+            let view = view.read(self.cx);
+            (view.submission_generation, view.settings.clone())
+        };
+        view.update(self.cx, |view, cx| view.quick_submit(prompt, settings, cx));
+        Some(before)
+    }
+    fn stop(&mut self, session: i64) {
+        if let Some(view) = self.shell.sessions.get(&session) {
+            view.update(self.cx, |view, cx| view.stop_if_busy(cx));
+        }
+    }
+    fn persist(&mut self, run: FlowRun, visit: Option<FlowVisit>) {
+        self.shell.persist_flow_run(run, visit, self.cx);
+    }
+    fn changed(&mut self, _run_id: &str) {
+        // The Flows view refreshes from here once it exists.
+        self.cx.notify();
+    }
+}
+
+impl Shell {
+    pub(super) fn initialize_flows(&mut self, cx: &mut Context<Self>) {
+        if self.flows_state.opening || self.flows_state.store.is_some() {
+            return;
+        }
+        self.flows_state.opening = true;
+        let store = self.store.clone();
+        let work = cx.background_executor().spawn(async move {
+            let path = locked(&store)?.database_path().to_path_buf();
+            let flows = FlowStore::open(&path)?;
+            let active = flows
+                .active_runs()?
+                .into_iter()
+                .map(|run| flows.visits(&run.id).map(|visits| (run, visits)))
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok::<_, String>((Arc::new(Mutex::new(flows)), active))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.flows_state.opening = false;
+                match result {
+                    Ok((store, active)) => {
+                        this.flows_state.store = Some(store);
+                        this.flows_state.host = Some(Host::new(Runner::new(
+                            now,
+                            rebase_core::automations::new_id,
+                        )));
+                        this.with_flow_host(cx, |host, driver| host.recover(driver, active));
+                    }
+                    Err(error) => {
+                        this.error = Some(format!("Could not open Flows: {error}"));
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Starts a saved Flow. Errors are the definition's or the inputs'.
+    #[allow(dead_code)] // Called by the Flows view.
+    pub(crate) fn start_flow(
+        &mut self,
+        flow: &Flow,
+        inputs: &HashMap<String, String>,
+        cx: &mut Context<Self>,
+    ) -> Result<FlowRun, Vec<String>> {
+        self.with_flow_host(cx, |host, driver| host.start(driver, flow, inputs))
+            .unwrap_or_else(|| Err(vec!["Flows are still opening".into()]))
+    }
+
+    #[allow(dead_code)] // Called by the Flows view.
+    pub(crate) fn resolve_flow_approval(
+        &mut self,
+        run_id: &str,
+        approved: bool,
+        note: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.with_flow_host(cx, |host, driver| {
+            host.resolve_approval(driver, run_id, approved, note)
+        });
+    }
+
+    #[allow(dead_code)] // Called by the Flows view.
+    pub(crate) fn cancel_flow_run(&mut self, run_id: &str, cx: &mut Context<Self>) {
+        self.with_flow_host(cx, |host, driver| host.cancel(driver, run_id));
+    }
+
+    /// Re-enters `state_id` of a failed or cancelled run, in its worktree.
+    #[allow(dead_code)] // Called by the Flows view.
+    pub(crate) fn resume_flow_run(
+        &mut self,
+        run_id: String,
+        state_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(store) = self.flows_state.store.clone() else {
+            return;
+        };
+        let work = cx.background_executor().spawn(async move {
+            let store = store_lock(&store)?;
+            let run = store.run(&run_id)?.ok_or("The Flow run no longer exists")?;
+            let visits = store.visits(&run_id)?;
+            Ok::<_, String>((run, visits))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                let resumed = result.and_then(|(run, visits)| {
+                    this.with_flow_host(cx, |host, driver| {
+                        host.resume(driver, run, visits, &state_id)
+                    })
+                    .filter(|resumed| *resumed)
+                    .ok_or_else(|| format!("This run cannot resume from {state_id}"))
+                });
+                if let Err(error) = resumed {
+                    this.error = Some(format!("Could not resume Flow: {error}"));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The `SessionChanged` hook: settles a Flow visit's finished turn.
+    pub(super) fn flow_session_changed(&mut self, id: i64, cx: &mut Context<Self>) {
+        if !self.flows_state.awaits(id) {
+            return;
+        }
+        let Some(view) = self.sessions.get(&id).cloned() else {
+            return;
+        };
+        let view = view.read(cx);
+        let probe = Probe {
+            pending: view.external_submission_pending(),
+            generation: view.submission_generation,
+        };
+        if !self
+            .flows_state
+            .host
+            .as_ref()
+            .is_some_and(|host| host.ready(id, probe))
+        {
+            return;
+        }
+        let settled = Settled::read(
+            view.transcript.read(cx).source_rows(),
+            view.external_outcome(cx),
+            view.notification_was_cancelled(),
+            view.settings.worktree_cwd.clone(),
+        );
+        self.with_flow_host(cx, |host, driver| host.settle(driver, id, probe, settled));
+    }
+
+    /// Runs `f` with the host and a driver over this shell, then probes the
+    /// sessions it re-armed. `None` until the Flow store has opened.
+    fn with_flow_host<R>(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Host, &mut dyn SessionDriver) -> R,
+    ) -> Option<R> {
+        let mut host = self.flows_state.host.take()?;
+        let result = f(&mut host, &mut Driver { shell: self, cx });
+        let recheck = host.take_rechecks();
+        self.flows_state.host = Some(host);
+        for id in recheck {
+            self.flow_session_changed(id, cx);
+        }
+        Some(result)
+    }
+
+    fn launch_flow_visit(&mut self, request: LaunchRequest, cx: &mut Context<Self>) {
+        let kind = Kind::from_id(&request.harness);
+        let mut settings =
+            managed_settings(Default::default(), kind, &request.cwd, &request.model, cx);
+        settings.access = crate::conversation::default_access(cx);
+        let store = self.store.clone();
+        let launch = request.clone();
+        let work = cx.background_executor().spawn(async move {
+            launch_available(
+                "Flow",
+                &launch.harness,
+                &launch.cwd,
+                launch.worktree_cwd.as_deref(),
+            )?;
+            // Later visits reuse the first visit's worktree; the first makes
+            // one when the project is a Git repository.
+            let worktree = match launch.worktree_cwd.clone() {
+                Some(path) => WorktreeChoice::Reuse(path),
+                None if rebase_core::git::worktrees(std::path::Path::new(&launch.cwd)).is_ok() => {
+                    WorktreeChoice::New
+                }
+                None => WorktreeChoice::Current,
+            };
+            worktree.apply(&mut settings);
+            let store = locked(&store)?;
+            let mut summary = store.create(&launch.harness, &launch.cwd)?;
+            summary.title = launch.title.clone();
+            store.title(summary.id, &summary.title)?;
+            store.save_agent_settings(summary.id, &settings)?;
+            Ok::<_, String>((summary, settings))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok((summary, settings)) => {
+                    let id = summary.id;
+                    this.add(summary, cx);
+                    let before = this.sessions[&id].read(cx).submission_generation;
+                    let submit = this
+                        .with_flow_host(cx, |host, driver| {
+                            host.launched(driver, &request.run_id, &request.visit_id, id, before)
+                        })
+                        .unwrap_or(false);
+                    if submit {
+                        this.submit_in_background(id, request.prompt, settings, cx);
+                        if let Some(host) = &mut this.flows_state.host {
+                            host.submitted(id);
+                        }
+                        this.flow_session_changed(id, cx);
+                    }
+                    this.persist(cx);
+                }
+                Err(error) => {
+                    this.with_flow_host(cx, |host, driver| {
+                        host.launch_failed(driver, &request.run_id, &request.visit_id, error)
+                    });
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Writes run in order, one after another, like automation results.
+    fn persist_flow_run(&mut self, run: FlowRun, visit: Option<FlowVisit>, cx: &mut Context<Self>) {
+        let Some(store) = self.flows_state.store.clone() else {
+            return;
+        };
+        let previous = self.flows_state.writes.take();
+        self.flows_state.writes = Some(cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            let work = cx.background_executor().spawn(async move {
+                let store = store_lock(&store)?;
+                store.save_run(&run)?;
+                if let Some(visit) = visit {
+                    store.save_visit(&visit)?;
+                }
+                Ok::<_, String>(())
+            });
+            if let Err(error) = work.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.error = Some(format!("Could not save Flow run: {error}"));
+                    cx.notify();
+                });
+            }
+        }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, WindowHandle};
+    use rebase_core::flow::{Effect, RunStatus, VisitStatus, starter_flows};
+    use rebase_core::store::Store;
+
+    fn fix_an_issue(cwd: &str) -> Flow {
+        let mut flow = starter_flows()
+            .into_iter()
+            .find(|f| f.name == "Fix an issue")
+            .unwrap();
+        flow.id = "flow1".into();
+        flow.cwd = cwd.into();
+        flow
+    }
+
+    fn inputs(flow: &Flow) -> HashMap<String, String> {
+        flow.inputs
+            .iter()
+            .map(|input| (input.name.clone(), "42".to_string()))
+            .collect()
+    }
+
+    fn shell(store: Store, cwd: &str, cx: &mut TestAppContext) -> WindowHandle<Shell> {
+        let store = Arc::new(Mutex::new(store));
+        let cwd = cwd.to_string();
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| Shell::new(store, vec![], cwd, None, cx))
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+        window
+    }
+
+    #[gpui::test]
+    fn startup_recovery_marks_a_persisted_running_visit_interrupted(cx: &mut TestAppContext) {
+        let dir = std::env::temp_dir().join(format!(
+            "rebase-flow-recovery-{}",
+            rebase_core::automations::new_id()
+        ));
+        let path = dir.join("rebase.db");
+        let store = Store::open(&path).unwrap();
+        // A run the previous app session left mid-visit.
+        let (run_id, visit_id) = {
+            let flows = FlowStore::open(&path).unwrap();
+            let flow = flows.upsert(&fix_an_issue("/repo")).unwrap();
+            let mut runner = Runner::new(now, rebase_core::automations::new_id);
+            let (run, effects) = runner.start(&flow, &inputs(&flow)).unwrap();
+            let mut visit_id = None;
+            for effect in effects {
+                if let Effect::Persist { run, visit } = effect {
+                    flows.save_run(&run).unwrap();
+                    if let Some(visit) = visit {
+                        visit_id = Some(visit.id.clone());
+                        flows.save_visit(&visit).unwrap();
+                    }
+                }
+            }
+            (run.id, visit_id.expect("a running visit"))
+        };
+
+        let window = shell(store, "/repo", cx);
+        cx.run_until_parked();
+
+        let flows = FlowStore::open(&path).unwrap();
+        let run = flows.run(&run_id).unwrap().unwrap();
+        assert_eq!(run.status, RunStatus::Failed);
+        assert_eq!(run.error.as_deref(), Some("Interrupted by app restart"));
+        let visits = flows.visits(&run_id).unwrap();
+        assert_eq!(visits.len(), 1);
+        assert_eq!(visits[0].id, visit_id);
+        assert_eq!(visits[0].status, VisitStatus::Failed);
+        assert_eq!(
+            visits[0].error.as_deref(),
+            Some("Interrupted by app restart")
+        );
+        assert!(flows.active_runs().unwrap().is_empty());
+        window
+            .update(cx, |shell, _, _| {
+                assert!(shell.flows_state.host.is_some());
+                assert_eq!(shell.error, None);
+            })
+            .unwrap();
+        drop(flows);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[gpui::test]
+    fn a_visit_whose_project_folder_is_missing_fails_without_a_session(cx: &mut TestAppContext) {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let window = shell(store, "/work/rebase", cx);
+        let flow = fix_an_issue("/missing/flow-project");
+        let (run, sessions) = window
+            .update(cx, |shell, _, cx| {
+                let saved = store_lock(shell.flows_state.store.as_ref().unwrap())
+                    .unwrap()
+                    .upsert(&flow)
+                    .unwrap();
+                let run = shell.start_flow(&saved, &inputs(&saved), cx).unwrap();
+                (run, shell.sessions.len())
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                assert_eq!(shell.sessions.len(), sessions, "no session was created");
+                let store = store_lock(shell.flows_state.store.as_ref().unwrap()).unwrap();
+                let saved = store.run(&run.id).unwrap().unwrap();
+                assert_eq!(saved.status, RunStatus::Failed);
+                let visits = store.visits(&run.id).unwrap();
+                assert_eq!(visits[0].status, VisitStatus::Failed);
+                assert_eq!(visits[0].session_id, None);
+                assert_eq!(
+                    visits[0].error.as_deref(),
+                    Some("The Flow's project folder is unavailable")
+                );
+            })
+            .unwrap();
+    }
+}
