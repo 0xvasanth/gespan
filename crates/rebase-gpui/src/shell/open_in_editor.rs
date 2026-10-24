@@ -10,10 +10,17 @@ pub(super) const OPEN_IN_EDITOR_WIDTH: f32 = 24. + CORNER_CONTROL_GAP;
 /// The menu's launch state while it is open.
 #[derive(Default)]
 pub(super) struct EditorMenu {
-    /// An editor is starting; another pick waits for it.
-    pending: bool,
+    /// The editor starting now, and for which folder. Another pick for that
+    /// folder waits for it; a pick for another folder replaces it.
+    launch: Option<Launch>,
+    launches: u64,
     /// Why the last pick failed, shown above the editors.
     error: Option<String>,
+}
+
+struct Launch {
+    id: u64,
+    path: String,
 }
 
 /// The editors to offer, the last one used first and checked; the rest keep
@@ -198,44 +205,68 @@ impl Shell {
             menu.update(cx, |menu, cx| menu.replace_items(items, cx));
         }
     }
-    /// Starts `editor` on `path`, unless an earlier pick is still starting.
+    /// Starts `editor` on `path`, unless an earlier pick for the same folder
+    /// is still starting.
     pub(super) fn pick_external_editor(
         &mut self,
         path: String,
         editor: String,
         cx: &mut Context<Self>,
     ) {
-        if self.editor_menu.pending {
+        let menu = &mut self.editor_menu;
+        if menu
+            .launch
+            .as_ref()
+            .is_some_and(|launch| launch.path == path)
+        {
             return;
         }
-        self.editor_menu.pending = true;
+        menu.launches += 1;
+        let id = menu.launches;
+        menu.launch = Some(Launch {
+            id,
+            path: path.clone(),
+        });
         let work = cx.background_executor().spawn({
-            let editor = editor.clone();
+            let (editor, path) = (editor.clone(), path.clone());
             async move { external_editor::open(&editor, &path) }
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
-            let _ = this.update(cx, |this, cx| this.finish_editor_launch(editor, result, cx));
+            let _ = this.update(cx, |this, cx| {
+                this.finish_editor_launch(id, &path, editor, result, cx)
+            });
         })
         .detach();
     }
-    /// A started editor is remembered and closes the menu. A failure stays in
-    /// the open menu, or reaches the error banner if it has closed.
+    /// A started editor is remembered and closes its folder's menu. A failure
+    /// stays in that menu; once the menu has closed or moved to another
+    /// folder, it reaches the error banner. Only the latest launch clears the
+    /// pending slot, so an older one finishing cannot unblock a newer one.
     pub(super) fn finish_editor_launch(
         &mut self,
+        id: u64,
+        path: &str,
         editor: String,
         result: Result<(), String>,
         cx: &mut Context<Self>,
     ) {
-        self.editor_menu.pending = false;
+        let current = self.editor_menu.launch.as_ref().is_some_and(|l| l.id == id);
+        if current {
+            self.editor_menu.launch = None;
+        }
+        let own_menu = self
+            .menu
+            .as_ref()
+            .is_some_and(|m| m.target == MenuTarget::OpenInEditor(path.to_owned()));
         match result {
             Ok(()) => {
                 self.remember_external_editor(editor, cx);
-                if self.editor_menu_entity().is_some() {
+                if own_menu {
                     self.close_menu(cx);
                 }
             }
-            Err(error) if self.editor_menu_entity().is_some() => {
+            Err(error) if own_menu => {
                 self.editor_menu.error = Some(error);
                 self.refresh_editor_menu(cx);
             }
@@ -571,10 +602,14 @@ mod tests {
         open_editor_menu(window, visual);
         window
             .update(visual, |shell, _, cx| {
-                shell.finish_editor_launch("zed".into(), Ok(()), cx);
+                shell.editor_menu.launch = Some(Launch {
+                    id: 7,
+                    path: "/work/rebase".into(),
+                });
+                shell.finish_editor_launch(7, "/work/rebase", "zed".into(), Ok(()), cx);
                 assert!(shell.editor_menu_entity().is_none());
                 assert_eq!(shell.workspace.last_external_editor.as_deref(), Some("zed"));
-                assert!(!shell.editor_menu.pending);
+                assert!(shell.editor_menu.launch.is_none());
             })
             .unwrap();
     }
@@ -597,23 +632,157 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_second_pick_while_an_editor_starts_is_ignored(cx: &mut TestAppContext) {
+    fn a_second_pick_for_the_same_folder_is_ignored_while_one_starts(cx: &mut TestAppContext) {
         let (window, _, _) = window(cx);
         window
             .update(cx, |shell, _, cx| {
                 shell.pick_external_editor("/work/rebase".into(), "not-an-editor".into(), cx);
-                assert!(shell.editor_menu.pending);
-                // Would fail differently, and never launches: no such folder.
-                shell.pick_external_editor("/definitely/missing".into(), "zed".into(), cx);
+                assert!(shell.editor_menu.launch.is_some());
+                // Would fail differently if it ran; Zed never starts on it.
+                shell.pick_external_editor("/work/rebase".into(), "zed".into(), cx);
             })
             .unwrap();
         cx.run_until_parked();
         window
             .update(cx, |shell, _, _| {
                 assert_eq!(shell.error.as_deref(), Some("Unknown external editor."));
-                assert!(!shell.editor_menu.pending);
+                assert!(shell.editor_menu.launch.is_none());
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn another_folder_can_launch_while_the_first_still_starts(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.pick_external_editor("/work/rebase".into(), "not-an-editor".into(), cx);
+                // No such folder, so this never starts a real editor.
+                shell.pick_external_editor("/definitely/missing".into(), "zed".into(), cx);
+                let launch = shell.editor_menu.launch.as_ref().unwrap();
+                assert_eq!(launch.path, "/definitely/missing", "not ignored");
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                assert!(shell.editor_menu.launch.is_none())
+            })
+            .unwrap();
+    }
+
+    fn open_menu_for(
+        window: WindowHandle<Shell>,
+        visual: &mut VisualTestContext,
+        path: &str,
+        editors: Vec<ExternalEditor>,
+    ) {
+        window
+            .update(visual, |shell, w, cx| {
+                // Opened directly, so no rescan replaces these editors.
+                shell.external_editors = Some(editors);
+                shell.open_menu(
+                    MenuTarget::OpenInEditor(path.into()),
+                    Anchor::Point(Default::default()),
+                    w,
+                    cx,
+                );
+            })
+            .unwrap();
+        visual.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn an_old_launch_leaves_the_next_folders_menu_alone(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = window(cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        open_menu_for(window, visual, "/work/other", EDITORS.to_vec());
+        window
+            .update(visual, |shell, _, cx| {
+                // Started for /work/rebase before the session changed.
+                shell.editor_menu.launch = Some(Launch {
+                    id: 1,
+                    path: "/work/rebase".into(),
+                });
+                shell.finish_editor_launch(1, "/work/rebase", "zed".into(), Ok(()), cx);
+                assert!(shell.editor_menu_entity().is_some(), "still open");
+                assert_eq!(shell.workspace.last_external_editor.as_deref(), Some("zed"));
+
+                // An older launch's failure goes to the banner, not this menu,
+                // and leaves the newer launch pending.
+                shell.editor_menu.launch = Some(Launch {
+                    id: 3,
+                    path: "/work/other".into(),
+                });
+                shell.finish_editor_launch(
+                    2,
+                    "/work/rebase",
+                    "zed".into(),
+                    Err("Zed is no longer installed.".into()),
+                    cx,
+                );
+                assert!(shell.editor_menu_entity().is_some());
+                assert_eq!(shell.editor_menu.error, None);
+                assert_eq!(shell.error.as_deref(), Some("Zed is no longer installed."));
+                assert!(shell.editor_menu.launch.is_some(), "the newer launch stays");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn activating_an_editor_row_launches_it_and_keeps_the_menu(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = window(cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        // Not in the catalog, so the launch fails without starting anything.
+        let ghost = ExternalEditor {
+            id: "ghost",
+            name: "Ghost Editor",
+        };
+        open_menu_for(window, visual, "/work/rebase", vec![ghost]);
+        window
+            .update(visual, |shell, w, cx| {
+                let menu = shell.editor_menu_entity().unwrap();
+                menu.update(cx, |menu, cx| menu.pick_label("Ghost Editor", w, cx));
+            })
+            .unwrap();
+        visual.run_until_parked();
+        let texts = menu_texts(window, visual).expect("the row kept the menu open");
+        assert_eq!(texts[0], "Unknown external editor.");
+        assert_eq!(texts[1], "Ghost Editor");
+        window
+            .update(visual, |shell, _, _| {
+                assert!(shell.editor_menu.launch.is_none());
+                assert_eq!(shell.workspace.last_external_editor, None);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn activating_copy_path_copies_and_closes_the_menu(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = window(cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        open_menu_for(
+            window,
+            visual,
+            "/work/rebase/.worktrees/feature-login",
+            EDITORS.to_vec(),
+        );
+        window
+            .update(visual, |shell, w, cx| {
+                let menu = shell.editor_menu_entity().unwrap();
+                menu.update(cx, |menu, cx| menu.pick_label("Copy path", w, cx));
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(menu_texts(window, visual).is_none());
+        let copied = visual.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+        assert_eq!(
+            copied.as_deref(),
+            Some("/work/rebase/.worktrees/feature-login")
+        );
     }
 
     #[gpui::test]
