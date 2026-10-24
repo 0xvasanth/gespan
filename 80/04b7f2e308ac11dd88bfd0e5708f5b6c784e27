@@ -1,0 +1,35 @@
+src/integrations/harness/core/apply.ts
+  s_ccb41beff89445::t_5269bf9842ffd9 1074-1075
+crates/rebase-core/src/provider/tasks.rs
+  s_ccb41beff89445::t_0db62d4ddb3db5 34-35
+src/integrations/harness/providers/claude/claude.ts
+  s_ccb41beff89445::t_94fd693b9b8f05 210,214-215,353,629,715,1125,1128,1156-1167,2164-2167,2170
+src/integrations/harness/core/apply.test.ts
+  s_ccb41beff89445::t_5269bf9842ffd9 1531-1558,1563,1568-1569,1574-1582,1584-1595,1597
+crates/rebase-core/src/provider/follow_up.rs
+  s_ccb41beff89445::t_0db62d4ddb3db5 80-81
+src/integrations/harness/providers/claude/claudeResume.test.ts
+  s_ccb41beff89445::t_5e32855b129d4a 733-814
+crates/rebase-core/src/provider.rs
+  s_ccb41beff89445::t_0db62d4ddb3db5 430-434,437,441,443,965-966,972-981
+crates/rebase-core/src/provider/tasks/resume_tests.rs
+  s_ccb41beff89445::t_33aebcdf25add4 627-632,634-654,656,662-671,673-695
+  s_ccb41beff89445::t_b35e8bda2d65dd 633,655,672
+  s_ccb41beff89445::t_3e41403065c9b5 657-661
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8004b7f2e308ac11dd88bfd0e5708f5b6c784e27",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
