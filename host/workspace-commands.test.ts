@@ -26,7 +26,7 @@ function fixture() {
   // Use the same native resolution as fs/promises.realpath in the host,
   // including expansion of Windows short directory names such as RUNNER~1.
   const home = realpathSync.native(
-    mkdtempSync(join(tmpdir(), "rebase-selected-git-")),
+    mkdtempSync(join(tmpdir(), "gespan-selected-git-")),
   );
   const store = new HostStore(join(home, "host.db"));
   cleanups.push(() => {

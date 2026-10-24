@@ -9,7 +9,7 @@ function releaseChannel(tag) {
 
 // GitHub's /releases/latest skips prereleases, so the stable feed can live on
 // GitHub Releases. The beta feed (beta/latest.json) stays R2-only.
-const GITHUB_STABLE_FEED = "https://github.com/0xvasanth/rebase/releases/latest/download/latest.json";
+const GITHUB_STABLE_FEED = "https://github.com/0xvasanth/gespan/releases/latest/download/latest.json";
 
 function updaterEndpoint(env) {
   const { prerelease, feedKey } = releaseChannel(env.GITHUB_REF_NAME);
@@ -48,11 +48,11 @@ function r2Status(env) {
   return { enabled: missing.length === 0, missing };
 }
 
-// Rebase Native has its own fixed feed: the `native-latest` release holds only
+// Gespan Native has its own fixed feed: the `native-latest` release holds only
 // latest.json (overwritten per native-v* release), so it never competes with
 // the Tauri app for /releases/latest. Packages stay on the versioned native-v*
 // release, which latest.json points at.
-const GITHUB_RELEASES = "https://github.com/0xvasanth/rebase/releases/download";
+const GITHUB_RELEASES = "https://github.com/0xvasanth/gespan/releases/download";
 const GITHUB_NATIVE_FEED = `${GITHUB_RELEASES}/native-latest/latest.json`;
 
 function nativeUpdaterEndpoint(env) {
@@ -179,7 +179,7 @@ if (require.main === module && process.argv[2] === "native-ref") {
   if (!process.env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
   const pubkey = updaterPubkey(process.env);
   const endpoint = nativeUpdaterEndpoint(process.env);
-  fs.appendFileSync(process.env.GITHUB_ENV, `REBASE_NATIVE_UPDATER_ENDPOINT=${endpoint}\nREBASE_NATIVE_UPDATER_PUBKEY=${pubkey}\n`);
+  fs.appendFileSync(process.env.GITHUB_ENV, `GESPAN_NATIVE_UPDATER_ENDPOINT=${endpoint}\nGESPAN_NATIVE_UPDATER_PUBKEY=${pubkey}\n`);
   console.log(`Native updater endpoint: ${endpoint}`);
 } else if (require.main === module && process.argv[2] === "native-r2") {
   const { enabled, missing } = nativeR2Status(process.env);

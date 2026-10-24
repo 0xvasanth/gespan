@@ -3,7 +3,7 @@ import { copyFile } from "node:fs/promises";
 
 await build({
   entryPoints: ["host/cli.ts"],
-  outfile: "build/host/rebase-host.mjs",
+  outfile: "build/host/gespan-host.mjs",
   bundle: true,
   platform: "node",
   format: "esm",

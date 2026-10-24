@@ -49,7 +49,7 @@ describe("historyWithLiveSessions", () => {
     status: "active",
     allowedHarnesses: ["codex"],
     maxWorkers: 2,
-    cli: "rebase",
+    cli: "gespan",
     continuations: 0,
     requests: {},
     tasks: ["worker-a", "worker-b"].map((id) => ({
@@ -238,17 +238,17 @@ describe("historyWithLiveSessions", () => {
   });
 
   it("stamps composer git onto a live session that is not persisted yet", () => {
-    const session = newSession("cursor", "/tmp/rebase");
+    const session = newSession("cursor", "/tmp/gespan");
     session.blocks = [{ id: "u1", role: "user", text: "hello" }];
     session.busy = true;
 
-    const rows = historyWithLiveSessions([], [session], "/tmp/rebase", {
-      repo: "rebase",
+    const rows = historyWithLiveSessions([], [session], "/tmp/gespan", {
+      repo: "gespan",
       branch: "main",
     });
     expect(rows[0]).toMatchObject({
       id: session.id,
-      repo: "rebase",
+      repo: "gespan",
       branch: "main",
     });
   });
@@ -257,7 +257,7 @@ describe("historyWithLiveSessions", () => {
     const history = [
       {
         ...summary("a1", "/tmp/agent-terminal"),
-        repo: "rebase",
+        repo: "gespan",
         branch: "main",
       },
     ];
@@ -273,7 +273,7 @@ describe("historyWithLiveSessions", () => {
     );
     const live = rows.find((row) => row.id === session.id);
     expect(live).toMatchObject({
-      repo: "rebase",
+      repo: "gespan",
       branch: "fix-gutter",
     });
   });
@@ -285,12 +285,12 @@ describe("historyWithLiveSessions", () => {
     session.branch = "feat/picker";
 
     const rows = historyWithLiveSessions([], [session], "/tmp/agent-terminal", {
-      repo: "rebase",
+      repo: "gespan",
       branch: "main",
     });
     expect(rows[0]).toMatchObject({
       id: session.id,
-      repo: "rebase",
+      repo: "gespan",
       branch: "feat/picker",
     });
   });

@@ -1,6 +1,6 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
-const UI_SCALE_KEY = "rebase.uiScale";
+const UI_SCALE_KEY = "gespan.uiScale";
 
 export const UI_SCALE_DEFAULT = 1;
 export const UI_SCALE_MIN = 0.5;
@@ -12,7 +12,7 @@ export const UI_SCALE_PERCENTS = Array.from(
 );
 
 /** Fired on `window` whenever the UI scale changes (detail: number). */
-export const UI_SCALE_CHANGE_EVENT = "rebase:uiscalechange";
+export const UI_SCALE_CHANGE_EVENT = "gespan:uiscalechange";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));

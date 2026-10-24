@@ -1,4 +1,4 @@
-name: Rebase Native Preview
+name: Gespan Native Preview
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'crates/rebase-core/**'
-      - 'crates/rebase-gpui/**'
+      - 'crates/gespan-core/**'
+      - 'crates/gespan-gpui/**'
       - 'crates/mobile-link/**'
       - 'vendor/gpui-pre*/**'
       - 'scripts/*native*'
@@ -75,20 +75,20 @@ jobs:
           sudo apt-get install --no-install-recommends -y libdbus-1-dev pkg-config
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun run native:test:dev
-      - run: cargo clippy --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core --all-targets --profile native-dev -- -D warnings
-      - run: cargo test --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core --profile native-dev
+      - run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --all-targets --profile native-dev -- -D warnings
+      - run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev
 
   desktop:
-    name: Rebase Native (macOS)
+    name: Gespan Native (macOS)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - run: cargo fmt --manifest-path crates/rebase-gpui/Cargo.toml --all --check
-      - run: cargo clippy --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core -p rebase-gpui --all-targets --profile native-dev -- -D warnings
-      - run: cargo test --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core --profile native-dev
-      - run: cargo test --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-gpui --profile native-dev -- --test-threads=1
-      - run: cargo build --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-gpui --profile native-dev
+      - run: cargo fmt --manifest-path crates/gespan-gpui/Cargo.toml --all --check
+      - run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core -p gespan-gpui --all-targets --profile native-dev -- -D warnings
+      - run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev
+      - run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --profile native-dev -- --test-threads=1
+      - run: cargo build --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --profile native-dev
 

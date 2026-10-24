@@ -280,7 +280,7 @@ fn menu(
     let mut builder = MenuBuilder::new(app).item(&header).separator();
     if pilots.is_empty() {
         let empty =
-            MenuItemBuilder::with_id("pilot-chat-empty", "Create a Pilot in Rebase to chat here")
+            MenuItemBuilder::with_id("pilot-chat-empty", "Create a Pilot in Gespan to chat here")
                 .enabled(false)
                 .build(app)?;
         builder = builder.item(&empty);
@@ -291,7 +291,7 @@ fn menu(
             if let Some(icon) = menu_bar::icon_for(&pilot.id, mascots) {
                 item = item.icon(icon);
             } else {
-                eprintln!("rebase: missing menu portrait for Pilot {}", pilot.id);
+                eprintln!("gespan: missing menu portrait for Pilot {}", pilot.id);
             }
             let item = item.build(app)?;
             builder = builder.item(&item);
@@ -478,7 +478,7 @@ pub fn open(app: &AppHandle, pilot_id: String) -> Result<(), String> {
     let handle = app.clone();
     app.run_on_main_thread(move || {
         if let Err(error) = select(&handle, &pilot_id) {
-            eprintln!("rebase: open floating Pilot: {error}");
+            eprintln!("gespan: open floating Pilot: {error}");
             handle
                 .state::<PilotChatState>()
                 .0
@@ -569,7 +569,7 @@ pub fn pilot_chat_switch(
             None => select(&handle, &to),
         };
         if let Err(error) = result {
-            eprintln!("rebase: switch floating Pilot: {error}");
+            eprintln!("gespan: switch floating Pilot: {error}");
             handle
                 .state::<PilotChatState>()
                 .0
@@ -703,7 +703,7 @@ pub async fn pilot_chat_ready(app: AppHandle, window: WebviewWindow) -> Result<(
                 .ready
                 .insert(window.label().to_owned());
         } else if let Err(error) = &result {
-            eprintln!("rebase: {error}");
+            eprintln!("gespan: {error}");
         }
         let _ = tx.try_send(result);
     })

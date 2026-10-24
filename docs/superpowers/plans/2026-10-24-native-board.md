@@ -4,11 +4,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Bring the Board (already shipped in the Tauri app on this branch) to the native Rust/GPUI app, reading and writing the same `rebase.db` tables, behind a native "Board" setting that is off by default.
+**Goal:** Bring the Board (already shipped in the Tauri app on this branch) to the native Rust/GPUI app, reading and writing the same `gespan.db` tables, behind a native "Board" setting that is off by default.
 
-**Architecture:** `rebase-core` gets a `board` module with the Tauri DDL byte-for-byte, a `Service` like `automations::Service`, and ports of the auto-move and linked-turn rules. Contract tests pin the shared DDL, error strings, link-id formats and the `boardEnabled` key against the Tauri sources. `rebase-gpui` gets `AppView::Board`, a board view with mouse drag-and-drop built on GPUI `on_drag`/`on_drop`, a "Move to…" card menu instead of keyboard dragging, and turn hooks in `conversation.rs` and `pilots/mod.rs`. The view reloads when it opens, when the window regains focus, and when `PRAGMA data_version` changes, checked every 2 s while the view is open.
+**Architecture:** `gespan-core` gets a `board` module with the Tauri DDL byte-for-byte, a `Service` like `automations::Service`, and ports of the auto-move and linked-turn rules. Contract tests pin the shared DDL, error strings, link-id formats and the `boardEnabled` key against the Tauri sources. `gespan-gpui` gets `AppView::Board`, a board view with mouse drag-and-drop built on GPUI `on_drag`/`on_drop`, a "Move to…" card menu instead of keyboard dragging, and turn hooks in `conversation.rs` and `pilots/mod.rs`. The view reloads when it opens, when the window regains focus, and when `PRAGMA data_version` changes, checked every 2 s while the view is open.
 
-**Tech Stack:** Rust, rusqlite, GPUI (`vendor/gpui-pre` 0.3.9), the `crates/rebase-gpui/Cargo.toml` workspace (separate lockfile, profile `native-dev`).
+**Tech Stack:** Rust, rusqlite, GPUI (`vendor/gpui-pre` 0.3.9), the `crates/gespan-gpui/Cargo.toml` workspace (separate lockfile, profile `native-dev`).
 
 **Spec:** `docs/superpowers/plans/2026-10-23-board.md` (behaviour, Design Decisions, Visual Design). The Tauri implementation on this branch is the reference: `src-tauri/src/board.rs`, `src/features/board/**`. Native-specific decisions are from the 2026-10-24 conversation (user approved the defaults): ship in the same PR; native v1 gets a "Move to…" menu instead of keyboard dragging; changes made in the other app are picked up by reloading on open and on focus, plus a 2 s `data_version` poll while the view is open.
 
@@ -21,11 +21,11 @@
 - **Auto-move** is forward-only. It records `started` / `completed` / `failed` after a move and when the card stays. A stopped turn sends no terminal event (no `completed` or `failed`); its `started` record still goes out. Pilot resolution is own chat → habit run → spawning Pilot, decided at turn start.
 - **Setting.** The native preference is `board: bool`, default `false`. It is imported once from the Tauri `boardEnabled` key. Its row sits in General, after Notes, with this copy: `"A Kanban board for tracking work. Cards can link to sessions and Pilots, and move on their own as that work starts and finishes."`
 - **No Flow runs** (Flows isn't built), and no keyboard dragging in native v1.
-- **Look.** Use the Visual Design table in the spec, with values mapped to native tokens in `crates/rebase-gpui/src/theme.rs`. Don't invent new colors.
+- **Look.** Use the Visual Design table in the spec, with values mapped to native tokens in `crates/gespan-gpui/src/theme.rs`. Don't invent new colors.
 - **Busy timeout.** Use `busy_timeout` 5 s and `PRAGMA foreign_keys=ON` per connection, as `automations::Service::open` does.
-- **No new crates.** Add no dependencies to `crates/rebase-gpui/Cargo.lock`. Build with `--locked`.
+- **No new crates.** Add no dependencies to `crates/gespan-gpui/Cargo.lock`. Build with `--locked`.
 - **Gate.** Run `bun run native:check` (it shells to npm internally; leave that as it is). The Tauri side must stay green too: `bun run check:web` and `bun run check:rust`.
-- **Commits** carry no Claude or co-author attribution. Use "rebase" naming only, never the old product name.
+- **Commits** carry no Claude or co-author attribution. Use "gespan" naming only, never the old product name.
 
 ## Review Focus
 
@@ -40,11 +40,11 @@
 ### Task 1: Core board storage and shared-contract tests
 
 **Files:**
-- Create: `crates/rebase-core/src/board/mod.rs` (Task 2 adds submodules beside it)
-- Modify: `crates/rebase-core/src/lib.rs` (`pub mod board;`), `crates/rebase-core/tests/shared_contracts.rs`
+- Create: `crates/gespan-core/src/board/mod.rs` (Task 2 adds submodules beside it)
+- Modify: `crates/gespan-core/src/lib.rs` (`pub mod board;`), `crates/gespan-core/tests/shared_contracts.rs`
 
 **Interfaces:**
-- Produces, in `rebase_core::board`:
+- Produces, in `gespan_core::board`:
   - Types: `Board { id, name, created_at, updated_at }`, `Column { id, board_id, name, position, role: Option<String> }`, `Card { id, board_id, column_id, number, title, body, position, link_kind: Option<String>, link_id: Option<String>, created_at, updated_at }`, `Activity { id, board_id, card_id: Option<String>, kind, actor, from_column: Option<String>, to_column: Option<String>, detail: Option<String>, created_at }`, `BoardDetail { board, columns, cards }`.
   - `pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()>`
   - `pub struct Service` with:
@@ -66,16 +66,16 @@
   In `tests/shared_contracts.rs`, add:
   - `board_tables_match_tauri`: extract every `CREATE TABLE IF NOT EXISTS board…` and `CREATE … INDEX IF NOT EXISTS board…` statement (up to its closing `;`) from `tauri("src-tauri/src/board.rs")` and from the native source, normalize whitespace runs to a single space, and assert the two lists are equal. The two copies sit at different indentation in their Rust sources, so "byte-identical" means identical apart from whitespace.
   - `board_error_strings_match_tauri`: assert each Global Constraints error string appears in both sources.
-  - Also assert that `Store::open_rebase` on a fresh temp DB followed by `board::Service::open` creates exactly the four board tables.
-- [ ] **Step 2: Run:** `cargo test --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core --profile native-dev board` → FAIL (module missing).
+  - Also assert that `Store::open_gespan` on a fresh temp DB followed by `board::Service::open` creates exactly the four board tables.
+- [ ] **Step 2: Run:** `cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev board` → FAIL (module missing).
 - [ ] **Step 3: Implement.** Copy the DDL string from Tauri verbatim. Port the transaction and renumbering logic; write transactions use `TransactionBehavior::Immediate` so two connections writing at once wait on `busy_timeout` instead of failing with SQLITE_BUSY. `Service::open` follows `automations::Service::open` (`automations.rs:663-676`). `data_version` follows `store/pilots.rs:83`.
-- [ ] **Step 4: Run:** the same command, plus `cargo test … -p rebase-core --test shared_contracts` → PASS.
+- [ ] **Step 4: Run:** the same command, plus `cargo test … -p gespan-core --test shared_contracts` → PASS.
 - [ ] **Step 5: Commit:** `git commit -m "Add native board storage sharing the Tauri board tables"`
 
 ### Task 2: Core auto-move and linked-turn rules
 
 **Files:**
-- Create: `crates/rebase-core/src/board/auto_move.rs`, `crates/rebase-core/src/board/linked_turns.rs`
+- Create: `crates/gespan-core/src/board/auto_move.rs`, `crates/gespan-core/src/board/linked_turns.rs`
 
 **Interfaces:**
 - Consumes: Task 1's `Service`, `Column`, `Card`.
@@ -92,7 +92,7 @@
     It keeps no I/O. Callers dispatch the returned calls.
 
 - [ ] **Step 1: Write the failing tests.** Port the cases from `src/features/board/model/autoMove.test.ts` and `src/features/board/model/linkedTurns.test.ts` with the same scenarios and expectations: forward-only targets, no-review fallback, a `role:null` column between doing and review, a missing doing column, move-then-record order, record-only when staying, failure isolation, one started and one terminal per turn, a late settle after cancel ignored, the Pilot precedence cases, and session-only when no Pilot. Run `on_linked_work` against a real in-memory `Service`, not a mock.
-- [ ] **Step 2: Run:** `cargo test --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core --profile native-dev board::` → FAIL.
+- [ ] **Step 2: Run:** `cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev board::` → FAIL.
 - [ ] **Step 3: Implement**, comparing columns by `position`.
 - [ ] **Step 4: Run:** the same command → PASS.
 - [ ] **Step 5: Commit:** `git commit -m "Port board auto-move and linked-turn rules to native core"`
@@ -101,18 +101,18 @@
 
 **Files:**
 - Modify:
-  - `crates/rebase-gpui/src/settings/preferences.rs` (`board: bool`, default `false`, next to `notes`)
-  - `crates/rebase-core/src/desktop_preferences/workspace_preferences.rs` (add `("board", "boardEnabled", false)`)
-  - `crates/rebase-gpui/src/settings/pages/general.rs` (row after Notes, ~:89-94), `settings/model.rs` (search entry `id "board"`, label `"Board"`, keywords `"kanban cards columns tasks tickets track"`, ~:240), `settings/widgets.rs` (id list, ~:255)
-  - `crates/rebase-gpui/src/workspace.rs` (`AppView::Board`, label `"Board"`, icon `"kanban"`)
-  - `crates/rebase-gpui/src/shell/app_views.rs` (label, render, focus, `open_board`, like `open_notes`), `shell/project_rail.rs` (~:835-882), `shell/title_tabs.rs` (gate at ~:71: `view != Board || preferences.board`), `shell/classic_surfaces.rs`, `shell/classic_sidebar.rs`, `shell/classic_surface_tests.rs` (~:846-923)
-  - `crates/rebase-gpui/src/shell.rs` (lazy `board: Option<Entity<BoardView>>`)
+  - `crates/gespan-gpui/src/settings/preferences.rs` (`board: bool`, default `false`, next to `notes`)
+  - `crates/gespan-core/src/desktop_preferences/workspace_preferences.rs` (add `("board", "boardEnabled", false)`)
+  - `crates/gespan-gpui/src/settings/pages/general.rs` (row after Notes, ~:89-94), `settings/model.rs` (search entry `id "board"`, label `"Board"`, keywords `"kanban cards columns tasks tickets track"`, ~:240), `settings/widgets.rs` (id list, ~:255)
+  - `crates/gespan-gpui/src/workspace.rs` (`AppView::Board`, label `"Board"`, icon `"kanban"`)
+  - `crates/gespan-gpui/src/shell/app_views.rs` (label, render, focus, `open_board`, like `open_notes`), `shell/project_rail.rs` (~:835-882), `shell/title_tabs.rs` (gate at ~:71: `view != Board || preferences.board`), `shell/classic_surfaces.rs`, `shell/classic_sidebar.rs`, `shell/classic_surface_tests.rs` (~:846-923)
+  - `crates/gespan-gpui/src/shell.rs` (lazy `board: Option<Entity<BoardView>>`)
 - Create:
-  - `crates/rebase-gpui/assets/hugeicons/kanban.svg`: Hugeicons free `KanbanIcon`, converted to the same SVG format as the neighbouring files. The license is already in `crates/rebase-gpui/assets/hugeicons.LICENSE`, beside the `hugeicons/` folder.
-  - `crates/rebase-gpui/src/board.rs`: a stub `BoardView` that renders "No boards yet" and a "Create board" button. Task 4 fills it in.
+  - `crates/gespan-gpui/assets/hugeicons/kanban.svg`: Hugeicons free `KanbanIcon`, converted to the same SVG format as the neighbouring files. The license is already in `crates/gespan-gpui/assets/hugeicons.LICENSE`, beside the `hugeicons/` folder.
+  - `crates/gespan-gpui/src/board.rs`: a stub `BoardView` that renders "No boards yet" and a "Create board" button. Task 4 fills it in.
 
 **Interfaces:**
-- Produces: `AppView::Board`, `Shell::open_board(&mut self, cx)`, `preferences.board`, and `BoardView::new(db_path: PathBuf, cx) -> Self` in `crates/rebase-gpui/src/board.rs`.
+- Produces: `AppView::Board`, `Shell::open_board(&mut self, cx)`, `preferences.board`, and `BoardView::new(db_path: PathBuf, cx) -> Self` in `crates/gespan-gpui/src/board.rs`.
 
 - [ ] **Step 1: Write the failing tests:**
   - `preferences.rs`: `board` defaults to `false`.
@@ -120,7 +120,7 @@
   - `classic_surface_tests.rs`: extend the per-surface enumeration so Board is reachable when `board` is on and absent when it's off.
   - A `#[gpui::test]`: with Board open, flipping `preferences.board` to `false` closes the view and removes its title tab.
   - A settings search test that `"kanban"` finds the Board row.
-  - In `shared_contracts.rs`: assert `tauri("src/features/settings/model/settings.ts")` contains `"rebase.boardEnabled"`, and the native import list contains `"boardEnabled"`.
+  - In `shared_contracts.rs`: assert `tauri("src/features/settings/model/settings.ts")` contains `"gespan.boardEnabled"`, and the native import list contains `"boardEnabled"`.
 - [ ] **Step 2: Run:** `bun run native:test` → FAIL.
 - [ ] **Step 3: Implement** by mirroring `notes` and `Notes` in every file listed. Make surgical edits only.
 - [ ] **Step 4: Run:** `bun run native:check` → PASS.
@@ -129,11 +129,11 @@
 ### Task 4: Native board view (columns, cards, composer, refresh)
 
 **Files:**
-- Modify: `crates/rebase-gpui/src/board.rs`
-- Create: `crates/rebase-gpui/src/board/` submodules if `board.rs` would exceed about 800 lines (`header.rs`, `column.rs`, `card.rs`), following the `notes/` folder pattern.
+- Modify: `crates/gespan-gpui/src/board.rs`
+- Create: `crates/gespan-gpui/src/board/` submodules if `board.rs` would exceed about 800 lines (`header.rs`, `column.rs`, `card.rs`), following the `notes/` folder pattern.
 
 **Interfaces:**
-- Consumes: `rebase_core::board::Service` (Task 1), `AppView::Board` wiring (Task 3).
+- Consumes: `gespan_core::board::Service` (Task 1), `AppView::Board` wiring (Task 3).
 - Produces: `BoardView` state: `boards`, `open_board_id`, `detail: Option<BoardDetail>`, `dragging: bool`, `pending_reload: bool`, `last_data_version: i64`. Also `BoardView::reload(&mut self, cx)`, called by Tasks 5–6.
 
 UI behaviour (copy the Tauri behaviour; the visuals follow the spec's Visual Design table):
@@ -163,8 +163,8 @@ UI behaviour (copy the Tauri behaviour; the visuals follow the spec's Visual Des
 ### Task 5: Native drag-and-drop and "Move to…"
 
 **Files:**
-- Modify: `crates/rebase-gpui/src/board.rs` (or its `card.rs` / `column.rs`)
-- Create: `crates/rebase-gpui/src/board/drop.rs`, containing the pure drop-index logic
+- Modify: `crates/gespan-gpui/src/board.rs` (or its `card.rs` / `column.rs`)
+- Create: `crates/gespan-gpui/src/board/drop.rs`, containing the pure drop-index logic
 
 **Interfaces:**
 - Consumes: Task 4 `BoardView`, `Service::card_move` / `column_move`.
@@ -195,10 +195,10 @@ Behaviour:
 
 **Files:**
 - Modify:
-  - `crates/rebase-gpui/src/board.rs` (card detail: title and body edit, link picker, "Open linked work", activity timeline, Delete with confirmation)
-  - `crates/rebase-gpui/src/conversation.rs` (turn start ~:1061, settle ~:1292)
-  - `crates/rebase-gpui/src/pilots/mod.rs` (Pilot chat finish ~:995)
-  - wherever native habit runs start (`rebase_core::pilot::habits`)
+  - `crates/gespan-gpui/src/board.rs` (card detail: title and body edit, link picker, "Open linked work", activity timeline, Delete with confirmation)
+  - `crates/gespan-gpui/src/conversation.rs` (turn start ~:1061, settle ~:1292)
+  - `crates/gespan-gpui/src/pilots/mod.rs` (Pilot chat finish ~:995)
+  - wherever native habit runs start (`gespan_core::pilot::habits`)
 - Modify: `docs/native/parity.md` (add a Board row), `docs/native/verification.md` (a Board section listing the manual checks below as pending)
 
 **Interfaces:**

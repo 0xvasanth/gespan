@@ -1,4 +1,4 @@
-const KEY = "rebase.linkedSessionSeen";
+const KEY = "gespan.linkedSessionSeen";
 const MAX_ENTRIES = 500;
 
 type SeenMap = Record<string, number>;

@@ -40,95 +40,95 @@ afterEach(() => {
 
 describe.each([
   [
-    "rebase.tabAnimationsEnabled",
+    "gespan.tabAnimationsEnabled",
     settings.loadTabAnimationsEnabled,
     settings.saveTabAnimationsEnabled,
     false,
     undefined,
   ],
   [
-    "rebase.composerRunner",
+    "gespan.composerRunner",
     settings.loadComposerRunner,
     settings.saveComposerRunner,
     true,
-    "rebase:composer-runner-change",
+    "gespan:composer-runner-change",
   ],
   [
-    "rebase.notesEnabled",
+    "gespan.notesEnabled",
     settings.loadNotesEnabled,
     settings.saveNotesEnabled,
     true,
-    "rebase:notes-enabled-change",
+    "gespan:notes-enabled-change",
   ],
   [
-    "rebase.boardEnabled",
+    "gespan.boardEnabled",
     settings.loadBoardEnabled,
     settings.saveBoardEnabled,
     true,
-    "rebase:board-enabled-change",
+    "gespan:board-enabled-change",
   ],
   [
-    "rebase.liveAgentsEnabled",
+    "gespan.liveAgentsEnabled",
     settings.loadLiveAgentsEnabled,
     settings.saveLiveAgentsEnabled,
     true,
-    "rebase:live-agents-enabled-change",
+    "gespan:live-agents-enabled-change",
   ],
   [
-    "rebase.pilotsEnabled",
+    "gespan.pilotsEnabled",
     settings.loadPilotsEnabled,
     settings.savePilotsEnabled,
     true,
-    "rebase:pilots-enabled-change",
+    "gespan:pilots-enabled-change",
   ],
   [
-    "rebase.closeToTray",
+    "gespan.closeToTray",
     settings.loadCloseToTray,
     settings.saveCloseToTray,
     true,
     undefined,
   ],
   [
-    "rebase.gridArcadeEnabled",
+    "gespan.gridArcadeEnabled",
     settings.loadGridArcadeEnabled,
     settings.saveGridArcadeEnabled,
     true,
-    "rebase:grid-arcade-enabled-change",
+    "gespan:grid-arcade-enabled-change",
   ],
   [
-    "rebase.claudeHooks",
+    "gespan.claudeHooks",
     settings.loadClaudeHooks,
     settings.saveClaudeHooks,
     true,
     undefined,
   ],
   [
-    "rebase.bodyGlass",
+    "gespan.bodyGlass",
     appearance.loadBodyGlass,
     appearance.saveBodyGlass,
     appearance.BODY_GLASS_DEFAULT,
     undefined,
   ],
   [
-    "rebase.projectRailOpen",
+    "gespan.projectRailOpen",
     appearance.loadProjectRailOpen,
     appearance.saveProjectRailOpen,
     true,
     undefined,
   ],
   [
-    "rebase.sessionSidebarOpen",
+    "gespan.sessionSidebarOpen",
     appearance.loadSessionSidebarOpen,
     appearance.saveSessionSidebarOpen,
     true,
     undefined,
   ],
   [
-    "rebase.transcriptAnchor",
+    "gespan.transcriptAnchor",
     appearance.loadTranscriptAnchor,
     appearance.saveTranscriptAnchor,
     true,
-    "rebase:transcriptanchorchange",
+    "gespan:transcriptanchorchange",
   ],
 ] as const)("%s", (key, load, save, fallback, eventName) => {
   it("uses its default when unset or unreadable", () => {
@@ -206,7 +206,7 @@ describe("board enabled subscription", () => {
   it("is on by default and exports its event name", () => {
     expect(settings.BOARD_ENABLED_DEFAULT).toBe(true);
     expect(settings.BOARD_ENABLED_CHANGE_EVENT).toBe(
-      "rebase:board-enabled-change",
+      "gespan:board-enabled-change",
     );
     expect(settings.loadBoardEnabled()).toBe(true);
   });

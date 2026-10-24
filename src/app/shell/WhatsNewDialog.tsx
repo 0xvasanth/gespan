@@ -40,7 +40,7 @@ export function WhatsNewDialog({ version, onClose }: Props) {
     <Modal
       onClose={onClose}
       title="What's new"
-      description={`Rebase ${version}${date ? ` · ${date}` : ""}`}
+      description={`Gespan ${version}${date ? ` · ${date}` : ""}`}
       size="md"
       className="h-[min(72vh,640px)]"
     >

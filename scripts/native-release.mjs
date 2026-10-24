@@ -51,7 +51,7 @@ export function nativeManifest({ version, assetBaseUrl, artifacts, notes = "" })
     if (!platforms[target])
       throw new Error(`Missing native package: ${target}`);
   return {
-    app_id: "com.rebase.native",
+    app_id: "dev.gespan.native",
     channel: "native-preview",
     version,
     notes,
@@ -60,7 +60,7 @@ export function nativeManifest({ version, assetBaseUrl, artifacts, notes = "" })
 }
 
 export async function prepareNativeRelease(directory, env = process.env) {
-  const version = env.REBASE_NATIVE_VERSION;
+  const version = env.GESPAN_NATIVE_VERSION;
   previewVersion(version);
   const missing = ["TAURI_SIGNING_PRIVATE_KEY", "TAURI_UPDATER_PUBKEY"].filter(
     (name) => !env[name],

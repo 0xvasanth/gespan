@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "rebase-native-editor-analysis",
+      "name": "gespan-native-editor-analysis",
       "dependencies": {
         "@codemirror/lang-cpp": "latest",
         "@codemirror/lang-css": "latest",

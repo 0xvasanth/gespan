@@ -52,7 +52,7 @@ describe("CRLF editor Git boundaries", () => {
     git(["commit", "-qm", "Initial content"]);
   }
   beforeEach(() => {
-    directory = mkdtempSync(join(tmpdir(), "rebase-crlf-git-"));
+    directory = mkdtempSync(join(tmpdir(), "gespan-crlf-git-"));
     gitEnvironment = {
       ...process.env,
       GIT_CONFIG_NOSYSTEM: "1",

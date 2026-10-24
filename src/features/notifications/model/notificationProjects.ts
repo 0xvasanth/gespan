@@ -10,8 +10,8 @@ export type NotificationProject = {
   paths: string[];
 };
 
-const CATALOG_KEY = "rebase.notificationProjects.v2";
-const CATALOG_CHANGE = "rebase:notification-projects-change";
+const CATALOG_KEY = "gespan.notificationProjects.v2";
+const CATALOG_CHANGE = "gespan:notification-projects-change";
 let catalogValue: string | null | undefined;
 let catalog: NotificationProject[] = [];
 

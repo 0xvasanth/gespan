@@ -161,7 +161,7 @@ pub struct OmpAssistantText {
     concat: String,
 }
 
-/// Recover displayed OMP custom messages that older Rebase builds omitted
+/// Recover displayed OMP custom messages that older Gespan builds omitted
 /// from their persisted transcript. The provider id is already stored with the
 /// session; matching the original JSONL keeps the repair deterministic instead
 /// of guessing from neighbouring reasoning text.
@@ -1261,7 +1261,7 @@ pub enum GitHubStarStatus {
     Unavailable,
 }
 
-const REBASE_STAR_ENDPOINT: &str = "/user/starred/0xvasanth/rebase";
+const GESPAN_STAR_ENDPOINT: &str = "/user/starred/0xvasanth/gespan";
 
 /// Whether the GitHub CLI is installed and has an active authenticated account.
 #[tauri::command]
@@ -1298,18 +1298,18 @@ fn git_github_status_for() -> GitHubStatus {
     }
 }
 
-/// Whether the active GitHub CLI account has starred the Rebase repository.
+/// Whether the active GitHub CLI account has starred the Gespan repository.
 #[tauri::command]
-pub async fn github_rebase_star_status() -> Result<GitHubStarStatus, String> {
-    tauri::async_runtime::spawn_blocking(github_rebase_star_status_for)
+pub async fn github_gespan_star_status() -> Result<GitHubStarStatus, String> {
+    tauri::async_runtime::spawn_blocking(github_gespan_star_status_for)
         .await
         .map_err(|error| error.to_string())
 }
 
-fn github_rebase_star_status_for() -> GitHubStarStatus {
+fn github_gespan_star_status_for() -> GitHubStarStatus {
     let result = gh_run(
         Path::new("."),
-        &["api", "--silent", REBASE_STAR_ENDPOINT],
+        &["api", "--silent", GESPAN_STAR_ENDPOINT],
         true,
     );
     github_star_status_from_result(result)
@@ -1323,13 +1323,13 @@ fn github_star_status_from_result(result: Result<String, String>) -> GitHubStarS
     }
 }
 
-/// Star the Rebase repository for the active GitHub CLI account.
+/// Star the Gespan repository for the active GitHub CLI account.
 #[tauri::command]
-pub async fn github_star_rebase() -> Result<(), String> {
+pub async fn github_star_gespan() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(|| {
         gh_run(
             Path::new("."),
-            &["api", "--silent", "--method", "PUT", REBASE_STAR_ENDPOINT],
+            &["api", "--silent", "--method", "PUT", GESPAN_STAR_ENDPOINT],
             true,
         )
         .map(|_| ())
@@ -2801,7 +2801,7 @@ impl Drop for GitSelectionIndex {
 
 fn git_selected_context_for(root: &Path, paths: &[String]) -> Result<GitStagedContext, String> {
     let paths = git_selected_paths(root, paths)?;
-    let index_dir = std::env::temp_dir().join(format!("rebase-git-selection-{}", Uuid::new_v4()));
+    let index_dir = std::env::temp_dir().join(format!("gespan-git-selection-{}", Uuid::new_v4()));
     let directory = std::fs::DirBuilder::new();
     #[cfg(unix)]
     let directory = {
@@ -2874,7 +2874,7 @@ fn with_signing_hint(error: String) -> String {
         return error;
     }
     format!(
-        "{error}\n\nGit couldn't sign this commit. Rebase runs git without a terminal, \
+        "{error}\n\nGit couldn't sign this commit. Gespan runs git without a terminal, \
          so your signer needs a GUI passphrase prompt (e.g. pinentry-mac) or an unlocked agent."
     )
 }
@@ -3409,7 +3409,7 @@ fn with_temp_markdown(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let path = std::env::temp_dir().join(format!("rebase-comment-{stamp}.md"));
+    let path = std::env::temp_dir().join(format!("gespan-comment-{stamp}.md"));
     std::fs::write(&path, body).map_err(|error| error.to_string())?;
     let path_str = path.to_string_lossy().into_owned();
     let result = run(&path_str);
@@ -4341,7 +4341,7 @@ fn git_pr_create_for(root: &Path, input: &GitPrCreateInput) -> Result<String, St
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let body_path = std::env::temp_dir().join(format!("rebase-pr-{stamp}.md"));
+    let body_path = std::env::temp_dir().join(format!("gespan-pr-{stamp}.md"));
     std::fs::write(&body_path, input.body.trim()).map_err(|e| e.to_string())?;
     let result = gh_checked(
         root,
@@ -5785,7 +5785,7 @@ fn write_attachment_sync(name: &str, data: &str) -> Result<String, String> {
             MAX_ATTACHMENT_EMBED_BYTES / 1024 / 1024
         ));
     }
-    let dir = std::env::temp_dir().join("rebase-attachments");
+    let dir = std::env::temp_dir().join("gespan-attachments");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -6039,7 +6039,7 @@ fn write_text_file_sync(path: &str, content: &str) -> Result<(), String> {
     let mut temporary = None;
     for attempt in 0..100 {
         let candidate = parent.join(format!(
-            ".{name}.rebase-{}-{stamp}-{attempt}.tmp",
+            ".{name}.gespan-{}-{stamp}-{attempt}.tmp",
             std::process::id()
         ));
         match std::fs::OpenOptions::new()
@@ -6169,7 +6169,7 @@ fn rename_path_sync(path: &str, name: &str) -> Result<String, String> {
             .unwrap_or_default()
             .as_nanos();
         let tmp = parent.join(format!(
-            ".{}.rebase-rename-{stamp}",
+            ".{}.gespan-rename-{stamp}",
             file_label(&from, "tmp")
         ));
         std::fs::rename(&from, &tmp).map_err(|e| e.to_string())?;
@@ -6712,8 +6712,8 @@ mod tests {
     #[test]
     fn project_location_follows_a_sibling_rename() {
         let parent = tmp("project-location-rename");
-        let original = parent.0.join("rebase");
-        let renamed = parent.0.join("rebase-personal");
+        let original = parent.0.join("gespan");
+        let renamed = parent.0.join("gespan-personal");
         std::fs::create_dir(&original).unwrap();
 
         let first = resolve_project_location_sync(&path_to_js(&original), None)
@@ -6748,7 +6748,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let dir =
-            std::env::temp_dir().join(format!("rebase-editor-{}-{stamp}", std::process::id()));
+            std::env::temp_dir().join(format!("gespan-editor-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("example.rs");
         std::fs::write(&path, "fn old() {}\n").unwrap();
@@ -6865,7 +6865,7 @@ mod tests {
                 .as_nanos();
             let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
             let dir = std::env::temp_dir().join(format!(
-                "rebase-{label}-{}-{stamp}-{seq}",
+                "gespan-{label}-{}-{stamp}-{seq}",
                 std::process::id()
             ));
             match std::fs::create_dir(&dir) {
@@ -7265,8 +7265,8 @@ mod tests {
                 return false;
             }
         }
-        git(dir, &["config", "user.name", "Rebase"])
-            && git(dir, &["config", "user.email", "rebase@test"])
+        git(dir, &["config", "user.name", "Gespan"])
+            && git(dir, &["config", "user.email", "gespan@test"])
             && git(dir, &["config", "commit.gpgsign", "false"])
             && git(dir, &["config", "core.autocrlf", "false"])
     }
@@ -7304,18 +7304,18 @@ mod tests {
         Command::new("git")
             .args([
                 "-c",
-                "user.name=Rebase",
+                "user.name=Gespan",
                 "-c",
-                "user.email=rebase@test",
+                "user.email=gespan@test",
                 "-c",
                 "commit.gpgsign=false",
             ])
             .args(args)
             .current_dir(dir)
-            .env("GIT_AUTHOR_NAME", "Rebase")
-            .env("GIT_AUTHOR_EMAIL", "rebase@test")
-            .env("GIT_COMMITTER_NAME", "Rebase")
-            .env("GIT_COMMITTER_EMAIL", "rebase@test")
+            .env("GIT_AUTHOR_NAME", "Gespan")
+            .env("GIT_AUTHOR_EMAIL", "gespan@test")
+            .env("GIT_COMMITTER_NAME", "Gespan")
+            .env("GIT_COMMITTER_EMAIL", "gespan@test")
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
@@ -8490,8 +8490,8 @@ mod tests {
                 .status()
                 .map(|status| !status.success())
                 .unwrap_or(true)
-            || !git(&b.0, &["config", "user.name", "Rebase"])
-            || !git(&b.0, &["config", "user.email", "rebase@test"])
+            || !git(&b.0, &["config", "user.name", "Gespan"])
+            || !git(&b.0, &["config", "user.email", "gespan@test"])
             || !git(&b.0, &["config", "commit.gpgsign", "false"])
             || !git(&b.0, &["config", "core.autocrlf", "false"])
             || !git(&b.0, &["checkout", "--", "."])
@@ -8537,7 +8537,7 @@ mod tests {
     #[test]
     fn pr_head_filter_qualifies_branch_with_repo_owner() {
         assert_eq!(
-            github_pr_head_filter("0xvasanth/rebase", "main").as_deref(),
+            github_pr_head_filter("0xvasanth/gespan", "main").as_deref(),
             Some("0xvasanth:main")
         );
     }
@@ -8545,27 +8545,27 @@ mod tests {
     #[test]
     fn parse_github_repositories_includes_a_forks_parent() {
         let json = r#"{
-            "nameWithOwner": "EricRasputin/rebase-eric",
+            "nameWithOwner": "EricRasputin/gespan-eric",
             "parent": {
-                "name": "rebase",
+                "name": "gespan",
                 "owner": { "login": "0xvasanth" }
             }
         }"#;
         assert_eq!(
             parse_github_repositories(json).unwrap(),
-            vec!["EricRasputin/rebase-eric", "0xvasanth/rebase"]
+            vec!["EricRasputin/gespan-eric", "0xvasanth/gespan"]
         );
     }
 
     #[test]
     fn parse_github_repositories_keeps_a_normal_repo_single() {
         let json = r#"{
-            "nameWithOwner": "0xvasanth/rebase",
+            "nameWithOwner": "0xvasanth/gespan",
             "parent": null
         }"#;
         assert_eq!(
             parse_github_repositories(json).unwrap(),
-            vec!["0xvasanth/rebase"]
+            vec!["0xvasanth/gespan"]
         );
     }
 
@@ -8706,10 +8706,10 @@ mod tests {
     #[test]
     fn split_github_repo_reads_owner_and_name() {
         assert_eq!(
-            split_github_repo(" 0xvasanth/rebase ").unwrap(),
-            ("0xvasanth".into(), "rebase".into())
+            split_github_repo(" 0xvasanth/gespan ").unwrap(),
+            ("0xvasanth".into(), "gespan".into())
         );
-        assert!(split_github_repo("rebase").is_err());
+        assert!(split_github_repo("gespan").is_err());
         assert!(split_github_repo("acme/web extra").is_err());
     }
 
@@ -9508,7 +9508,7 @@ mod tests {
         for args in [
             ["config", "commit.gpgsign", "true"],
             ["config", "gpg.format", "openpgp"],
-            ["config", "gpg.program", "/nonexistent/rebase-gpg"],
+            ["config", "gpg.program", "/nonexistent/gespan-gpg"],
         ] {
             assert!(git(&dir.0, &args));
         }

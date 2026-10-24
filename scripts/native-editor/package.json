@@ -1,5 +1,5 @@
 {
-  "name": "rebase-native-editor-analysis",
+  "name": "gespan-native-editor-analysis",
   "private": true,
   "type": "module",
   "scripts": {

@@ -137,7 +137,7 @@ describe("sessionLinkTarget", () => {
   const session = {
     id: "s1",
     title: "Fix login",
-    cwd: "/work/rebase",
+    cwd: "/work/gespan",
     archived: false,
     draft: false,
   };
@@ -147,7 +147,7 @@ describe("sessionLinkTarget", () => {
       kind: "session",
       id: "s1",
       label: "Fix login",
-      detail: "rebase",
+      detail: "gespan",
       status: "running",
     });
     expect(sessionLinkTarget({ ...session, cwd: "" }).detail).toBeUndefined();

@@ -67,7 +67,7 @@ beforeEach(() => {
     },
   );
   mockLocalStorage();
-  localStorage.setItem("rebase.tabAnimationsEnabled", "1");
+  localStorage.setItem("gespan.tabAnimationsEnabled", "1");
   vi.useFakeTimers();
   document.documentElement.style.setProperty(
     "--motion-tab-close-duration",
@@ -221,7 +221,7 @@ describe.each(["workspace", "file"] as const)("%s tab close motion", (kind) => {
   });
 
   it("skips the collapse when tab animations are disabled", () => {
-    localStorage.setItem("rebase.tabAnimationsEnabled", "0");
+    localStorage.setItem("gespan.tabAnimationsEnabled", "0");
     closeTab(kind, "second", ["first", "second", "third"]);
     expect(container.querySelector("[data-closing-tab]")).toBeNull();
     expect(container.querySelector('[aria-label="Close second"]')).toBeNull();
@@ -324,7 +324,7 @@ describe.each(["workspace", "file"] as const)("%s tab open motion", (kind) => {
   });
 
   it("skips the expand when tab animations are disabled", () => {
-    localStorage.setItem("rebase.tabAnimationsEnabled", "0");
+    localStorage.setItem("gespan.tabAnimationsEnabled", "0");
     addThird(kind);
     expect(container.querySelector("[data-opening-tab]")).toBeNull();
     expect(

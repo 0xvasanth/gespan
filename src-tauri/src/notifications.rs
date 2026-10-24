@@ -14,7 +14,7 @@ use tauri::AppHandle;
 /// Emitted to every window when the user clicks a notification. Payload is
 /// the session id; the window that owns that session handles it.
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-pub const CLICK_EVENT: &str = "rebase:notification-click";
+pub const CLICK_EVENT: &str = "gespan:notification-click";
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 fn handle_click(app: &AppHandle, identifier: &str) {
@@ -120,8 +120,8 @@ mod platform {
 
     /// Category with a single "Show" button, so the banner offers the jump
     /// explicitly instead of relying on a click on the body.
-    const CATEGORY: &str = "rebase.session";
-    const SHOW_ACTION: &str = "rebase.session.show";
+    const CATEGORY: &str = "gespan.session";
+    const SHOW_ACTION: &str = "gespan.session.show";
 
     fn options() -> UNAuthorizationOptions {
         UNAuthorizationOptions::Alert
@@ -289,7 +289,7 @@ mod platform {
 
     define_class!(
         #[unsafe(super(NSObject))]
-        #[name = "RebaseNotificationDelegate"]
+        #[name = "GespanNotificationDelegate"]
         #[ivars = DelegateIvars]
         struct Delegate;
 
@@ -446,11 +446,11 @@ mod platform {
     ) -> Result<(), String> {
         let mut notification = notify_rust::Notification::new();
         notification
-            .appname("Rebase")
+            .appname("Gespan")
             .summary(&format!("{title}: {subtitle}"))
             // The body is agent output; servers render it as markup.
             .body(&escape_markup(body))
-            .icon("rebase")
+            .icon("gespan")
             // Servers only report the click when a "default" action exists.
             .action("default", "Show");
         if sound {

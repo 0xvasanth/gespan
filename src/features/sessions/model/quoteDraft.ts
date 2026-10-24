@@ -1,4 +1,4 @@
-export const ADD_TO_CHAT_EVENT = "rebase:add-to-chat";
+export const ADD_TO_CHAT_EVENT = "gespan:add-to-chat";
 
 export type AddToChatMode = "quote" | "plain";
 

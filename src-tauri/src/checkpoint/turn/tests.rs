@@ -8,7 +8,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!("rebase-turn-test-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("gespan-turn-test-{}", uuid::Uuid::new_v4()));
         let repo = dir.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         run_git(&repo, &["init"]).unwrap();
@@ -372,7 +372,7 @@ fn undo_restores_only_recorded_files_and_keep_retains_history() {
     f.store.forget("session").unwrap();
     assert!(run_git(
         &f.repo,
-        &["for-each-ref", "refs/rebase/checkpoints/session/"]
+        &["for-each-ref", "refs/gespan/checkpoints/session/"]
     )
     .unwrap()
     .is_empty());

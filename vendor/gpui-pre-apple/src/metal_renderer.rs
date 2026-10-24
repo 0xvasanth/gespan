@@ -1,6 +1,6 @@
 // Copyright 2022 - 2025 Zed Industries, Inc.
 // SPDX-License-Identifier: Apache-2.0
-// Modified by Monocode for alpha blending, backdrop blur, edge fades, text
+// Modified by Gespan for alpha blending, backdrop blur, edge fades, text
 // reveal, rounded clipping and project-background compositing. See NOTICE.
 use crate::metal_atlas::MetalAtlas;
 use anyhow::{Context as _, Result};
@@ -268,7 +268,7 @@ impl MetalRenderer {
         // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
         layer.set_opaque(!transparent);
         layer.set_maximum_drawable_count(3);
-        // Monocode: backdrop blur copies already drawn pixels out of the
+        // Gespan: backdrop blur copies already drawn pixels out of the
         // drawable, so it must stay readable in every build, not only for
         // visual tests and UI automation screenshots.
         layer.set_framebuffer_only(false);
@@ -2026,7 +2026,7 @@ fn build_pipeline_state(
         .expect("could not create render pipeline state")
 }
 
-// Monocode: frosted popovers. A quad marked with this border colour (and no
+// Gespan: frosted popovers. A quad marked with this border colour (and no
 // border width) asks the renderer to blur the backdrop beneath it first.
 const BACKDROP_MARKER_HUE: f32 = 0.707_106_77;
 const BACKDROP_MARKER_SATURATION: f32 = 0.577_215_7;

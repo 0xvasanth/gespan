@@ -2,7 +2,7 @@ import type { Element, Root } from "hast";
 
 /*
  * A Markdown document's images are paths in its project, which MarkdownImage
- * resolves and keeps inside the project itself. rehype-harden would rebase
+ * resolves and keeps inside the project itself. rehype-harden would gespan
  * them as URLs first, turning `../a.png` into `/a.png` and dropping a bare
  * `a.png`, so a document holds each image's path aside while harden runs and
  * puts it back afterwards. Links are still hardened as usual.

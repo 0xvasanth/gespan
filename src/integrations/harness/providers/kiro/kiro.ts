@@ -259,7 +259,7 @@ async function ensureLive(input: HarnessSessionInput): Promise<Live> {
         emit({ type: "session.ended", code });
       },
       onStderr: (line) => {
-        console.debug("[rebase] kiro stderr", line);
+        console.debug("[gespan] kiro stderr", line);
         const message = kiroStderrAuthError(line);
         if (message) emit({ type: "session.error", message });
       },

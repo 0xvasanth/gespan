@@ -161,7 +161,7 @@ export function useMobileWorkspace(options: Options) {
     savedFor.current = (conversationId) =>
       [...watches.values()].find((watch) => watch.conversationId === conversationId)?.saved;
     const listening = listen<WatchEvent>(
-      "rebase-mobile-watch",
+      "gespan-mobile-watch",
       ({ payload }) => {
         if (payload.action === "start") {
           watches.set(payload.id, {
@@ -225,7 +225,7 @@ export function useMobileWorkspace(options: Options) {
       if (!disposed) timer = setTimeout(() => void publish(), 3000);
     };
     const listening = listen<Request>(
-      "rebase-mobile-request",
+      "gespan-mobile-request",
       ({ payload }) => {
         void (async () => {
           let response: unknown;

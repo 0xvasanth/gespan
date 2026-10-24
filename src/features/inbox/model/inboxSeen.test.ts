@@ -11,7 +11,7 @@ import {
   seedInboxSeenIfNeeded,
 } from "./inboxSeen";
 
-const KEY = "rebase.inboxSeen";
+const KEY = "gespan.inboxSeen";
 
 function mockLocalStorage() {
   const data = new Map<string, string>();

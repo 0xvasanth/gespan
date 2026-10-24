@@ -23,16 +23,16 @@ export function tabGroupColor(project: string): string {
   return TAB_GROUP_COLORS[(hash % (TAB_GROUP_COLORS.length - 1)) + 1];
 }
 
-const COLOR_KEY = "rebase:tab-group:colors";
-const CUSTOM_COLOR_KEY = "rebase:tab-group:custom-colors";
-const LABEL_KEY = "rebase:tab-group:labels";
-const LABELS_CHANGED = "rebase:tab-group-labels-changed";
-const LOGO_KEY = "rebase:tab-group:logos";
-const MASCOT_KEY = "rebase:tab-group:mascots";
+const COLOR_KEY = "gespan:tab-group:colors";
+const CUSTOM_COLOR_KEY = "gespan:tab-group:custom-colors";
+const LABEL_KEY = "gespan:tab-group:labels";
+const LABELS_CHANGED = "gespan:tab-group-labels-changed";
+const LOGO_KEY = "gespan:tab-group:logos";
+const MASCOT_KEY = "gespan:tab-group:mascots";
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
-export const TAB_GROUP_LOGOS_CHANGED = "rebase:tab-group-logos-changed";
+export const TAB_GROUP_LOGOS_CHANGED = "gespan:tab-group-logos-changed";
 
 let logoDisplayRevision = 0;
 
@@ -75,7 +75,7 @@ const APPEARANCE_KEYS = [
   MASCOT_KEY,
 ] as const;
 
-const KEY_VERSION_KEY = "rebase:tab-group:key-version";
+const KEY_VERSION_KEY = "gespan:tab-group:key-version";
 const KEY_VERSION = "2";
 /** Guards the reads the migration itself makes. */
 let migrating = false;
@@ -720,7 +720,7 @@ export function insertTabInGroup<T extends GroupedTab>(
   return addTabToGroup([...without, tab], tab.id, groupId);
 }
 
-const COLLAPSED_KEY = "rebase:tab-groups:collapsed";
+const COLLAPSED_KEY = "gespan:tab-groups:collapsed";
 
 export function loadCollapsedTabGroups(): Set<string> {
   try {

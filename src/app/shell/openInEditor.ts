@@ -9,7 +9,7 @@ export const REVEAL_LABEL = IS_MAC
     ? "Reveal in File Explorer"
     : "Open Containing Folder";
 
-export const LAST_EXTERNAL_EDITOR_KEY = "rebase.lastExternalEditor";
+export const LAST_EXTERNAL_EDITOR_KEY = "gespan.lastExternalEditor";
 
 export const EDITOR_ITEM_PREFIX = "editor:";
 

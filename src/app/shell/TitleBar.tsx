@@ -916,12 +916,12 @@ function TitleBarComponent({
       : "";
     const project = cwd ? basename(cwd) : "";
     if (activeName && project && activeName !== project) {
-      return `${activeName} — ${project} — Rebase`;
+      return `${activeName} — ${project} — Gespan`;
     }
     if (project) {
-      return `${project} — Rebase`;
+      return `${project} — Gespan`;
     }
-    return "Rebase";
+    return "Gespan";
   }, [activeTab, cwd]);
 
   useEffect(() => {

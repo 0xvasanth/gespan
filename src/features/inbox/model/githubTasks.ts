@@ -276,14 +276,14 @@ export function githubStatus(): Promise<GithubStatus> {
   return invoke<GithubStatus>("git_github_status");
 }
 
-/** Whether the active GitHub CLI account has starred Rebase. */
-export function githubRebaseStarStatus(): Promise<GithubStarStatus> {
-  return invoke<GithubStarStatus>("github_rebase_star_status");
+/** Whether the active GitHub CLI account has starred Gespan. */
+export function githubGespanStarStatus(): Promise<GithubStarStatus> {
+  return invoke<GithubStarStatus>("github_gespan_star_status");
 }
 
-/** Star Rebase for the active GitHub CLI account. */
-export function starRebaseOnGithub(): Promise<void> {
-  return invoke<void>("github_star_rebase");
+/** Star Gespan for the active GitHub CLI account. */
+export function starGespanOnGithub(): Promise<void> {
+  return invoke<void>("github_star_gespan");
 }
 
 export async function githubRepo(cwd: string): Promise<string> {

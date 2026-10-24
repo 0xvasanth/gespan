@@ -503,7 +503,7 @@ describe("session folder persistence", () => {
   it("drops a project key when the last folder is gone", () => {
     saveSessionFolders("/tmp/project", [folder("g", ["a"])]);
     saveSessionFolders("/tmp/project", []);
-    expect(localStorage.getItem("rebase.sessionFolders")).toBe("{}");
+    expect(localStorage.getItem("gespan.sessionFolders")).toBe("{}");
   });
 
   it("round-trips the pinned group collapsed state per project", () => {
@@ -513,6 +513,6 @@ describe("session folder persistence", () => {
 
     savePinnedSessionsCollapsed("/tmp/project", false);
     expect(loadPinnedSessionsCollapsed("/tmp/project")).toBe(false);
-    expect(localStorage.getItem("rebase.pinnedSessionsCollapsed")).toBe("{}");
+    expect(localStorage.getItem("gespan.pinnedSessionsCollapsed")).toBe("{}");
   });
 });

@@ -158,7 +158,7 @@ pub fn git_worktrees(cwd: String, store: State<'_, SessionStore>) -> Result<Work
 
 /// Legacy branch prefixes, still recognised so existing worktrees keep working.
 const LEGACY_BRANCH_PREFIXES: [&str; 1] = ["mc/"];
-const APP_BRANCH_PREFIX: &str = "rebase/";
+const APP_BRANCH_PREFIX: &str = "gespan/";
 
 fn has_app_prefix(name: &str, suffix: &str) -> bool {
     std::iter::once(APP_BRANCH_PREFIX)
@@ -169,12 +169,12 @@ fn has_app_prefix(name: &str, suffix: &str) -> bool {
         })
 }
 
-/// Branches Rebase created itself (current `rebase/` or legacy `mc/`).
+/// Branches Gespan created itself (current `gespan/` or legacy `mc/`).
 pub fn is_app_branch(name: &str) -> bool {
     has_app_prefix(name, "")
 }
 
-/// Temporary orchestration worker branches (`rebase/orch-…` or legacy `mc/orch-…`).
+/// Temporary orchestration worker branches (`gespan/orch-…` or legacy `mc/orch-…`).
 pub fn is_orchestration_branch(name: &str) -> bool {
     has_app_prefix(name, "orch-")
 }
@@ -454,7 +454,7 @@ fn rename_branch(
     if current == branch {
         return Ok(tree);
     }
-    // Another worktree already took this name: number it, as Rebase Native's
+    // Another worktree already took this name: number it, as Gespan Native's
     // rename_app_branch does, instead of keeping the placeholder.
     let taken = |name: &str| {
         git(
@@ -863,7 +863,7 @@ mod tests {
     }
     fn repo() -> Repo {
         let dir =
-            std::env::temp_dir().join(format!("rebase-worktree-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("gespan-worktree-test-{}", uuid::Uuid::new_v4()));
         let root = dir.join("repo");
         std::fs::create_dir_all(&root).unwrap();
         git_checked(&root, &["init", "-b", "main"]).unwrap();
@@ -965,7 +965,7 @@ mod tests {
         std::fs::write(root.join("untracked.txt"), "lead new\n").unwrap();
         std::fs::remove_file(root.join("deleted.txt")).unwrap();
 
-        let tree = create_seeded(&root, "rebase/orch-testworker").unwrap();
+        let tree = create_seeded(&root, "gespan/orch-testworker").unwrap();
         let worker = Path::new(&tree.path);
         assert_eq!(
             std::fs::read_to_string(worker.join("tracked.txt")).unwrap(),
@@ -977,12 +977,12 @@ mod tests {
         );
         assert!(!worker.join("deleted.txt").exists());
         assert_eq!(
-            create_seeded(&root, "rebase/orch-testworker").unwrap().path,
+            create_seeded(&root, "gespan/orch-testworker").unwrap().path,
             tree.path
         );
 
         std::fs::write(root.join("tracked.txt"), "later lead edit\n").unwrap();
-        assert!(create_seeded(&root, "rebase/orch-testworker").is_err());
+        assert!(create_seeded(&root, "gespan/orch-testworker").is_err());
         assert_eq!(
             std::fs::read_to_string(worker.join("tracked.txt")).unwrap(),
             "lead dirty\n"
@@ -1006,20 +1006,20 @@ mod tests {
     }
 
     #[test]
-    fn new_worktree_names_use_rebase_prefix_and_legacy_is_still_owned() {
+    fn new_worktree_names_use_gespan_prefix_and_legacy_is_still_owned() {
         let repo = repo();
         let root = repo.0.join("repo");
-        let tree = create(&root, "rebase/12345678", "main", false).unwrap();
-        assert!(tree.path.ends_with("/rebase-12345678"));
-        let renamed = rename_branch(&root, Path::new(&tree.path), "rebase/faster", None).unwrap();
-        assert_eq!(renamed.branch.as_deref(), Some("rebase/faster"));
+        let tree = create(&root, "gespan/12345678", "main", false).unwrap();
+        assert!(tree.path.ends_with("/gespan-12345678"));
+        let renamed = rename_branch(&root, Path::new(&tree.path), "gespan/faster", None).unwrap();
+        assert_eq!(renamed.branch.as_deref(), Some("gespan/faster"));
 
-        assert!(is_app_branch("rebase/x") && is_app_branch("mc/x"));
+        assert!(is_app_branch("gespan/x") && is_app_branch("mc/x"));
         assert!(!is_app_branch("feature/x") && !is_app_branch("mcx/x"));
         assert!(is_orchestration_branch("mc/orch-x"));
-        assert!(is_orchestration_branch("rebase/orch-x"));
+        assert!(is_orchestration_branch("gespan/orch-x"));
         assert!(!is_orchestration_branch("feature/x"));
-        assert!(!is_orchestration_branch("rebase/other"));
+        assert!(!is_orchestration_branch("gespan/other"));
     }
 
     #[test]
@@ -1051,36 +1051,36 @@ mod tests {
     fn a_taken_generated_name_gets_the_next_number() {
         let repo = repo();
         let root = repo.0.join("repo");
-        let first = create(&root, "rebase/aaaaaaaa", "main", false).unwrap();
-        let second = create(&root, "rebase/bbbbbbbb", "main", false).unwrap();
-        let third = create(&root, "rebase/cccccccc", "main", false).unwrap();
+        let first = create(&root, "gespan/aaaaaaaa", "main", false).unwrap();
+        let second = create(&root, "gespan/bbbbbbbb", "main", false).unwrap();
+        let third = create(&root, "gespan/cccccccc", "main", false).unwrap();
         let rename = |tree: &Worktree| {
-            rename_branch(&root, Path::new(&tree.path), "rebase/fix-login", None)
+            rename_branch(&root, Path::new(&tree.path), "gespan/fix-login", None)
                 .unwrap()
                 .branch
         };
-        assert_eq!(rename(&first).as_deref(), Some("rebase/fix-login"));
-        assert_eq!(rename(&second).as_deref(), Some("rebase/fix-login-2"));
-        assert_eq!(rename(&third).as_deref(), Some("rebase/fix-login-3"));
+        assert_eq!(rename(&first).as_deref(), Some("gespan/fix-login"));
+        assert_eq!(rename(&second).as_deref(), Some("gespan/fix-login-2"));
+        assert_eq!(rename(&third).as_deref(), Some("gespan/fix-login-3"));
         // Renaming to its own name again changes nothing.
-        assert_eq!(rename(&second).as_deref(), Some("rebase/fix-login-2"));
+        assert_eq!(rename(&second).as_deref(), Some("gespan/fix-login-2"));
     }
 
     #[test]
     fn a_branch_renamed_while_its_name_was_generated_is_kept() {
         let repo = repo();
         let root = repo.0.join("repo");
-        let tree = create(&root, "rebase/aaaaaaaa", "main", false).unwrap();
+        let tree = create(&root, "gespan/aaaaaaaa", "main", false).unwrap();
         git_checked(
             Path::new(&tree.path),
-            &["branch", "-m", "rebase/my-own-name"],
+            &["branch", "-m", "gespan/my-own-name"],
         )
         .unwrap();
         assert!(rename_branch(
             &root,
             Path::new(&tree.path),
-            "rebase/generated",
-            Some("rebase/aaaaaaaa")
+            "gespan/generated",
+            Some("gespan/aaaaaaaa")
         )
         .is_err());
         let still = list(&root)
@@ -1088,17 +1088,17 @@ mod tests {
             .into_iter()
             .find(|t| same_path(Path::new(&t.path), Path::new(&tree.path)))
             .unwrap();
-        assert_eq!(still.branch.as_deref(), Some("rebase/my-own-name"));
+        assert_eq!(still.branch.as_deref(), Some("gespan/my-own-name"));
         // From the right placeholder, it renames.
-        let tree = create(&root, "rebase/bbbbbbbb", "main", false).unwrap();
+        let tree = create(&root, "gespan/bbbbbbbb", "main", false).unwrap();
         let renamed = rename_branch(
             &root,
             Path::new(&tree.path),
-            "rebase/generated",
-            Some("rebase/bbbbbbbb"),
+            "gespan/generated",
+            Some("gespan/bbbbbbbb"),
         )
         .unwrap();
-        assert_eq!(renamed.branch.as_deref(), Some("rebase/generated"));
+        assert_eq!(renamed.branch.as_deref(), Some("gespan/generated"));
     }
 
     #[test]

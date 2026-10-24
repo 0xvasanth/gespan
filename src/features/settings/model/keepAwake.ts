@@ -2,11 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
 import type { Session } from "../../sessions/model/session";
 
-/** Shared with the native app, which mirrors `rebase.keepAwake` into its preferences. */
-export const KEEP_AWAKE_KEY = "rebase.keepAwake";
-export const KEEP_AWAKE_CHANGE_EVENT = "rebase:keepawakechange";
+/** Shared with the native app, which mirrors `gespan.keepAwake` into its preferences. */
+export const KEEP_AWAKE_KEY = "gespan.keepAwake";
+export const KEEP_AWAKE_CHANGE_EVENT = "gespan:keepawakechange";
 
-/** When Rebase stops the idle timer from dimming and locking the screen. */
+/** When Gespan stops the idle timer from dimming and locking the screen. */
 export type KeepAwakeMode = "off" | "agents_running" | "app_open";
 export const KEEP_AWAKE_DEFAULT: KeepAwakeMode = "off";
 export const KEEP_AWAKE_MODES: readonly KeepAwakeMode[] = [

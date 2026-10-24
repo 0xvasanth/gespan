@@ -37,7 +37,7 @@ it("propagates an asynchronous deferred rejection instead of treating its promis
 });
 
 it("rejects acceptance if applying a moved project fails", async () => {
-  const error = new Error("failed to rebase project state");
+  const error = new Error("failed to gespan project state");
   const submit = vi.fn(() => true);
   const onError = vi.fn();
   const accepted = submitAfterProjectSync({

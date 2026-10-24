@@ -1,8 +1,8 @@
 import {
   acquireHarnessBridge,
-  copyRebasexThreads,
+  copyGespanxThreads,
   killChild,
-  prepareRebasexStore,
+  prepareGespanxStore,
   spawnChild,
   unwatchChild,
   watchChild,
@@ -74,7 +74,7 @@ export function prepareCodexPilotContext(input: {
 async function prepare(
   input: Parameters<typeof prepareCodexPilotContext>[0],
 ): Promise<PreparedContext> {
-  const store = await prepareRebasexStore(
+  const store = await prepareGespanxStore(
     input.providerAccountId,
     input.threadId,
   );
@@ -116,7 +116,7 @@ async function prepare(
       "codex",
     );
     await request("initialize", {
-      clientInfo: { name: "rebase", title: "Rebase", version: "0.1.0" },
+      clientInfo: { name: "gespan", title: "Gespan", version: "0.1.0" },
       capabilities: { experimentalApi: true },
     });
     await rpc.notify("initialized", undefined);
@@ -189,7 +189,7 @@ async function prepare(
           throw new Error("Codex did not retain a Pilot thread file");
         paths.push(retained.thread.path);
       }
-      await copyRebasexThreads(
+      await copyGespanxThreads(
         input.providerAccountId,
         root.id,
         paths,

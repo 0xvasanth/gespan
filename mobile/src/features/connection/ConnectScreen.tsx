@@ -19,7 +19,7 @@ import Animated, {
   useSharedValue,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { REBASE_MARK } from "@/ui/brand";
+import { GESPAN_MARK } from "@/ui/brand";
 import { LiquidView } from "@/ui/LiquidView";
 import { themedStyles, useColors, withAlpha, type Palette } from "@/ui/theme";
 import { AsciiField } from "@/features/background/AsciiField";
@@ -81,12 +81,12 @@ export function ConnectScreen() {
           entering={FadeIn.duration(700).delay(150).easing(EASE)}
         >
           <Image
-            source={REBASE_MARK}
+            source={GESPAN_MARK}
             style={styles.mark}
             tintColor={colors.content}
             accessibilityIgnoresInvertColors
           />
-          <Text style={styles.wordmark}>Rebase</Text>
+          <Text style={styles.wordmark}>Gespan</Text>
         </Animated.View>
         <Animated.View
           style={styles.intro}
@@ -105,7 +105,7 @@ export function ConnectScreen() {
             onLayout={colliders.layout("subtitle")}
             onTextLayout={colliders.lines("subtitle")}
           >
-            Pair this phone with Rebase on your desktop to pick up your
+            Pair this phone with Gespan on your desktop to pick up your
             sessions on the go.
           </Text>
         </Animated.View>

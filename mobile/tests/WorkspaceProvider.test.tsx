@@ -231,13 +231,13 @@ describe("starting mobile sessions", () => {
     render();
     await act(async () => { await workspace.startSession("project", "Hello"); });
     await act(async () => { render("session"); });
-    await frame([{ error: "Update Rebase on both devices" }]);
-    expect(conversation.error).toBe("Update Rebase on both devices");
+    await frame([{ error: "Update Gespan on both devices" }]);
+    expect(conversation.error).toBe("Update Gespan on both devices");
   });
 
   it("shows a conversation's cached turns at once and keeps the latest for next time", async () => {
     const cached: Turn = { id: "old", items: [{ type: "user", id: "old", text: "Before" }] };
-    link.storage.set("rebase.mobile.desktop.turns.existing", JSON.stringify([cached]));
+    link.storage.set("gespan.mobile.desktop.turns.existing", JSON.stringify([cached]));
     await act(async () => { render("existing"); });
     expect(conversation.turns).toEqual([cached]);
     // Possibly long out of date, so the watch opens on the latest turns.
@@ -249,7 +249,7 @@ describe("starting mobile sessions", () => {
     await frame([{ order: [latest.id], turns: [latest], busy: false }]);
     expect(conversation.turns).toEqual([latest]);
     await act(async () => { render(null); });
-    expect(JSON.parse(link.storage.get("rebase.mobile.desktop.turns.existing")!)).toEqual([latest]);
-    expect(JSON.parse(link.storage.get("rebase.mobile.desktop.turns")!)).toEqual(["existing"]);
+    expect(JSON.parse(link.storage.get("gespan.mobile.desktop.turns.existing")!)).toEqual([latest]);
+    expect(JSON.parse(link.storage.get("gespan.mobile.desktop.turns")!)).toEqual(["existing"]);
   });
 });

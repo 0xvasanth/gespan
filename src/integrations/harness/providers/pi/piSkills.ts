@@ -47,7 +47,7 @@ async function discoverCommands(
 ): Promise<unknown> {
   const { path } = await flavor.resolveBinary();
   const releaseBridge = await acquireHarnessBridge();
-  const childId = `rebase-${flavor.id}-skills-${crypto.randomUUID()}`;
+  const childId = `gespan-${flavor.id}-skills-${crypto.randomUUID()}`;
   const replyToUi = (record: Record<string, unknown>) => {
     const request = parseExtensionUiRequest(record);
     if (!request || !needsExtensionUiReply(request)) return;

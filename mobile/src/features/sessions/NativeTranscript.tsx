@@ -67,7 +67,7 @@ type Props = ViewProps & {
   onScrollState: (event: NativeSyntheticEvent<{ away: boolean }>) => void;
 };
 const NativeView = hasNativeTranscript
-  ? requireNativeView<Props>("RebaseLink")
+  ? requireNativeView<Props>("GespanLink")
   : null;
 
 /** React owns chrome and occasional interactions. Native owns all transcript data. */
@@ -164,8 +164,8 @@ export function NativeTranscript({
           .then(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light))
           .catch(() => {});
       } else if (action.type === "link" && action.url) {
-        if (action.url.startsWith("rebase-file:"))
-          openFile?.(action.url.slice("rebase-file:".length));
+        if (action.url.startsWith("gespan-file:"))
+          openFile?.(action.url.slice("gespan-file:".length));
         else if (/^https?:\/\/|^mailto:/i.test(action.url))
           void Linking.openURL(action.url).catch(() => {});
       }

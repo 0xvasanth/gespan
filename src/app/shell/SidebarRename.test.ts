@@ -254,7 +254,7 @@ describe("inset session previews", () => {
       title: "Review hover previews",
       harness: "claude",
       model: "claude:sonnet-4.6",
-      repo: "rebase",
+      repo: "gespan",
       branch: "feature/session-preview",
       worktreeCwd: "/workspace/worktrees/session-preview",
       additions: 42,
@@ -885,27 +885,27 @@ describe("sidebar session IDs", () => {
     await act(async () => copyHarnessId.click());
     expect(copyText).toHaveBeenNthCalledWith(1, "harness-session-2");
 
-    const rebaseMenu = openCopyIdMenu("session-2");
-    const copyRebaseId = Array.from(
-      rebaseMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-    ).find((item) => item.textContent === "Rebase session ID")!;
-    expect(copyRebaseId.disabled).toBe(false);
-    await act(async () => copyRebaseId.click());
+    const gespanMenu = openCopyIdMenu("session-2");
+    const copyGespanId = Array.from(
+      gespanMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ).find((item) => item.textContent === "Gespan session ID")!;
+    expect(copyGespanId.disabled).toBe(false);
+    await act(async () => copyGespanId.click());
     expect(copyText).toHaveBeenNthCalledWith(2, "session-2");
   });
 
-  it("keeps the Rebase ID available before the harness supplies an ID", async () => {
+  it("keeps the Gespan ID available before the harness supplies an ID", async () => {
     act(() => render());
     const copyMenu = openCopyIdMenu("session-1");
     const copyHarnessId = Array.from(
       copyMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
     ).find((item) => item.textContent === "Harness session ID")!;
-    const copyRebaseId = Array.from(
+    const copyGespanId = Array.from(
       copyMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-    ).find((item) => item.textContent === "Rebase session ID")!;
+    ).find((item) => item.textContent === "Gespan session ID")!;
     expect(copyHarnessId.disabled).toBe(true);
-    expect(copyRebaseId.disabled).toBe(false);
-    await act(async () => copyRebaseId.click());
+    expect(copyGespanId.disabled).toBe(false);
+    await act(async () => copyGespanId.click());
     expect(copyText).toHaveBeenCalledExactlyOnceWith("session-1");
   });
 });
@@ -1080,7 +1080,7 @@ describe("sidebar reorder affordances", () => {
       },
     ];
     localStorage.setItem(
-      "rebase.sessionFolders",
+      "gespan.sessionFolders",
       JSON.stringify({
         "/workspace/project": [
           {
@@ -1206,7 +1206,7 @@ describe("sidebar pinned sessions", () => {
     expect(group.querySelector('[data-session-card="session-1"]')).toBeNull();
     expect(
       JSON.parse(
-        localStorage.getItem("rebase.pinnedSessionsCollapsed") ?? "{}",
+        localStorage.getItem("gespan.pinnedSessionsCollapsed") ?? "{}",
       ),
     ).toEqual({ "/workspace/project": true });
   });

@@ -63,7 +63,7 @@ export async function generateCodexPrContent(
     });
     parsed = parsePrContent(output);
   } catch (error) {
-    console.debug("[rebase] pr content", error);
+    console.debug("[gespan] pr content", error);
   }
   const title =
     parsed?.title ||
@@ -89,7 +89,7 @@ export async function generateCodexBranchName(
     });
     return parseBranchName(output);
   } catch (error) {
-    console.debug("[rebase] branch name", error);
+    console.debug("[gespan] branch name", error);
     return null;
   }
 }

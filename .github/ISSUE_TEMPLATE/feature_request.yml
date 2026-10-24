@@ -1,12 +1,12 @@
 name: Feature request
-description: Suggest an idea or improvement for Rebase
+description: Suggest an idea or improvement for Gespan
 title: "[Feature]: "
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Rebase.
+        Thanks for helping improve Gespan.
 
   - type: textarea
     id: problem
@@ -21,7 +21,7 @@ body:
     id: solution
     attributes:
       label: Proposed solution
-      description: What would you like Rebase to do?
+      description: What would you like Gespan to do?
     validations:
       required: true
 

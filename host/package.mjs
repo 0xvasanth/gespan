@@ -123,24 +123,24 @@ for (const target of targets) {
       `${stem}/bin/node`,
       `${stem}/LICENSE`,
     ]);
-  await copyFile("build/host/rebase-host.mjs", join(folder, "host.mjs"));
+  await copyFile("build/host/gespan-host.mjs", join(folder, "host.mjs"));
   await copyFile("host/provider-guard.mjs", join(folder, "provider-guard.mjs"));
-  await copyFile("LICENSE", join(folder, "REBASE-LICENSE"));
+  await copyFile("LICENSE", join(folder, "GESPAN-LICENSE"));
   await writeFile(
     join(folder, "version.json"),
     JSON.stringify({ version, nodeVersion, target }),
   );
   if (windows) {
     await writeFile(
-      join(folder, "rebase-host.cmd"),
+      join(folder, "gespan-host.cmd"),
       '@echo off\r\nsetlocal DisableDelayedExpansion\r\n"%~dp0node.exe" "%~dp0host.mjs" %*\r\nexit /b %errorlevel%\r\n',
     );
   } else {
     await writeFile(
-      join(folder, "rebase-host"),
+      join(folder, "gespan-host"),
       '#!/bin/sh\nset -eu\nDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$DIR/bin/node" "$DIR/host.mjs" "$@"\n',
     );
-    await chmod(join(folder, "rebase-host"), 0o755);
+    await chmod(join(folder, "gespan-host"), 0o755);
   }
   if (target === `${process.platform}-${process.arch}`) {
     const executable = windows
@@ -156,7 +156,7 @@ for (const target of targets) {
     if (actual !== version)
       throw new Error("Packaged host failed its executable smoke test");
   }
-  const filename = `rebase-host-${target}.${extension}`;
+  const filename = `gespan-host-${target}.${extension}`;
   await rm(join(output, filename), { force: true });
   if (windows) {
     if (process.platform === "win32")

@@ -136,12 +136,12 @@ it("paints matching words and clears them when find closes", () => {
   });
   expect(
     registry
-      .get("rebase-transcript-search-current")
+      .get("gespan-transcript-search-current")
       ?.ranges.map((range) => range.toString()),
   ).toEqual(["can you"]);
   expect(
     registry
-      .get("rebase-transcript-search-match")
+      .get("gespan-transcript-search-match")
       ?.ranges.map((range) => range.toString()),
   ).toEqual(["can you"]);
 

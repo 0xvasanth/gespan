@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The project is now called **Gespan**. The app, its crates, the mobile module and every in-app string use the new name. Bundle identifiers are now `dev.gespan.desktop` and `dev.gespan.mobile`, the URL scheme is `gespan://`, and environment variables use the `GESPAN_` prefix.
+- App data, storage keys and keychain entries moved with the new identifier. Settings and sessions saved by earlier builds are not carried over.
+
 ## [0.16.0] - 2026-10-19
 
 ### Added
@@ -55,7 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent tool calls no longer rebuild every open composer's @-mention index when nothing on disk changed. In #1029 by @zcy22606.
 - Keystrokes no longer search the whole page for an active shortcut recorder. In #1028 by @zcy22606.
 - Revisiting a tab no longer replays its transcript animations.
-- Closing tabs around Mono and app view tabs keeps the right workspace visible, and switching between them no longer flickers.
+- Closing tabs around Pilot and app view tabs keeps the right workspace visible, and switching between them no longer flickers.
 - Title bars and the project rail leave room for the window controls in macOS full screen.
 - Model pickers and popovers fit short or zoomed windows without clipping rows.
 - Empty sessions lay out correctly in narrow or short panes.
@@ -66,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The Mono overview has an **Activity** tab showing its current work and completed activity. Reports from habit runs also list the sessions they started.
+- The Pilot overview has an **Activity** tab showing its current work and completed activity. Reports from habit runs also list the sessions they started.
 - Project groups in the rail support **drag to reorder**. In #787 by @nwoolls.
 - The compact rail has instant hover tooltips and an unseen-reply dot on its Sessions tab.
 - Remote hosts can run on **Linux without systemd**, including containers and Firecracker microVMs. Setup uses a detached background process there and reconnecting starts it again if needed; machines with systemd keep their user service and lingering. In #990 by @pdparchitect.
@@ -79,7 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Mono chats use a more compact composer and model controls in narrow panes. Replies no longer have bubble tails, the Mono introduction appears as an inline rail card, unread badges use the accent color, and document readers have tighter spacing.
+- Pilot chats use a more compact composer and model controls in narrow panes. Replies no longer have bubble tails, the Pilot introduction appears as an inline rail card, unread badges use the accent color, and document readers have tighter spacing.
 - Model pickers group **omp, Pi, and Hermes** models by provider. In #765 by @nwoolls.
 - Claude model labels make their versions easier to distinguish. In #937 by @oskar-albers.
 - Pi and Codex turn token totals include every request in the turn. In #884 by @zcy22606.
@@ -99,11 +104,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refused fast mode is not reported as a session usage limit. In #958 by @zcy22606.
 - Punctuation-only assistant text does not create a transcript reply. In #763 by @Erickzao.
 - Sending a message during a running turn preserves its existing clock. In #1021 by @zcy22606.
-- Title-bar and Mono overview buttons keep consistent sizing, and branch and commit menus remain anchored to their controls.
+- Title-bar and Pilot overview buttons keep consistent sizing, and branch and commit menus remain anchored to their controls.
 - A session whose worktree was deleted outside the app can select another checkout. In #883 by @zcy22606.
 - Remote session diffs use their linked worktree. In #887 by @santhiprakash.
 - Quoted Git diff paths are read literally. In #815 by @Slowper.
-- Git LFS works when Rebase is launched from Finder: Git commands include Homebrew and other common install locations on their PATH, plus the terminal's PATH once available. In #1004 by @pdparchitect.
+- Git LFS works when Gespan is launched from Finder: Git commands include Homebrew and other common install locations on their PATH, plus the terminal's PATH once available. In #1004 by @pdparchitect.
 - Selecting the **whole last paragraph** of a reply opens the Add to chat and Add to notes menu. In #1001 by @pdparchitect.
 - Wrapped diff lines place scrollbar change markers at their rendered positions. In #1002 by @pdparchitect.
 - **Markdown file previews** display local Markdown and HTML images, including centered headers, tables, and picture elements, while preserving dimensions and alignment. Paths resolve within the project; missing, invalid, remote, or out-of-project images fall back to their alt text. In #1027 by @pdparchitect.
@@ -116,39 +121,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Monos and habit runs can create **HTML visual artifacts** with `app artifacts.write` using `kind: "html"`, alongside Markdown documents. Visuals run in a sandboxed frame, follow the app's theme, fit their content height, and refresh when revised. Scripts and public HTTPS assets are supported; access to the app, network requests through fetch, nested frames, and form submissions are blocked. Clicked web links open in the user's browser.
-- Mono replies display linked **local images and videos inline**, including workspace-relative media references. Images open in the file viewer when clicked, and videos have playback controls. Previews load as they approach the visible chat, reserve their space to avoid layout shifts, and fall back to the original link when a linked file cannot be displayed. Local videos stream without reading the whole file into memory; only the requested video file is added to the asset scope.
-- The Mono composer has an **emoji picker** with search, categories, recent picks, and a saved skin-tone preference. Picks replace the selected text or insert at the caret and return focus to the composer. Its bundled catalog works offline across platforms and filters out emoji versions and country flags the system's font cannot draw.
-- **Model and effort controls** sit beneath the Mono composer, alongside its context usage meter. Compact plan-usage chips show Claude Code, Codex, OpenCode, and Devin usage beside the attachment and emoji buttons when available.
-- Sessions a Mono starts appear as **status cards beneath its replies**, showing their title, provider, project, and whether they are working, need input, are drafts, failed, stopped, or finished. Cards open the session inside the overview and remain visible when a later completion report continues the turn.
-- The Mono overview's Sessions tab has **search and filters** for provider, status, time, archived sessions, and unavailable sessions. Search also matches project names. Sessions appear newest first and load another page as the list nears its end; changing the search or filters resets paging. Empty tabs and searches show guidance for the current state.
-- Rebase **reopens the last open Mono on launch** when it still exists and Monos are enabled. Closing the Mono clears that choice, and windows transferred from another window retain their own view.
+- Pilots and habit runs can create **HTML visual artifacts** with `app artifacts.write` using `kind: "html"`, alongside Markdown documents. Visuals run in a sandboxed frame, follow the app's theme, fit their content height, and refresh when revised. Scripts and public HTTPS assets are supported; access to the app, network requests through fetch, nested frames, and form submissions are blocked. Clicked web links open in the user's browser.
+- Pilot replies display linked **local images and videos inline**, including workspace-relative media references. Images open in the file viewer when clicked, and videos have playback controls. Previews load as they approach the visible chat, reserve their space to avoid layout shifts, and fall back to the original link when a linked file cannot be displayed. Local videos stream without reading the whole file into memory; only the requested video file is added to the asset scope.
+- The Pilot composer has an **emoji picker** with search, categories, recent picks, and a saved skin-tone preference. Picks replace the selected text or insert at the caret and return focus to the composer. Its bundled catalog works offline across platforms and filters out emoji versions and country flags the system's font cannot draw.
+- **Model and effort controls** sit beneath the Pilot composer, alongside its context usage meter. Compact plan-usage chips show Claude Code, Codex, OpenCode, and Devin usage beside the attachment and emoji buttons when available.
+- Sessions a Pilot starts appear as **status cards beneath its replies**, showing their title, provider, project, and whether they are working, need input, are drafts, failed, stopped, or finished. Cards open the session inside the overview and remain visible when a later completion report continues the turn.
+- The Pilot overview's Sessions tab has **search and filters** for provider, status, time, archived sessions, and unavailable sessions. Search also matches project names. Sessions appear newest first and load another page as the list nears its end; changing the search or filters resets paging. Empty tabs and searches show guidance for the current state.
+- Gespan **reopens the last open Pilot on launch** when it still exists and Pilots are enabled. Closing the Pilot clears that choice, and windows transferred from another window retain their own view.
 
 ### Changed
 
-- A unified **Mono overview** replaces the separate details, sessions, artifacts, and changes sidebars, with Sessions, Documents, Habits, and Changes tabs. It opens beside the chat by default and can be toggled from the title bar. The default width is 400 pixels, and resizing allows up to 960 pixels or 62% of the window. Tabs show item counts; the folded Changes icon has an accent dot when changes are present.
-- Mono settings open in a **dialog** from the title bar, with General, Soul, and Memory sections. General brings together model settings, permissions, projects, sidebar preferences, and conversation reset. Clicking the mascot opens the mascot and color popover, and the name field sits directly beneath it.
-- Mono-started sessions launch without creating workspace tabs by default and open over the overview's session list, with **Back**, **Open in workspace**, and **Hide overview** controls. New launches stay out of the project sidebar unless **Show sessions in sidebar** is enabled in that Mono's settings; optional folder grouping remains available.
+- A unified **Pilot overview** replaces the separate details, sessions, artifacts, and changes sidebars, with Sessions, Documents, Habits, and Changes tabs. It opens beside the chat by default and can be toggled from the title bar. The default width is 400 pixels, and resizing allows up to 960 pixels or 62% of the window. Tabs show item counts; the folded Changes icon has an accent dot when changes are present.
+- Pilot settings open in a **dialog** from the title bar, with General, Soul, and Memory sections. General brings together model settings, permissions, projects, sidebar preferences, and conversation reset. Clicking the mascot opens the mascot and color popover, and the name field sits directly beneath it.
+- Pilot-started sessions launch without creating workspace tabs by default and open over the overview's session list, with **Back**, **Open in workspace**, and **Hide overview** controls. New launches stay out of the project sidebar unless **Show sessions in sidebar** is enabled in that Pilot's settings; optional folder grouping remains available.
 - The overview's **Changes** tab groups repositories into project tabs with their logo or mascot and changed-file count. Worktrees share their project's tab and have a checkout picker. Attached Git projects appear even before they have changes, and repositories remain available after committing so their work can still be pushed. Each checkout retains its commit draft when switching projects or overview tabs.
-- Mono commits now use the repository's **real Git staging area**, shared with the project's Changes panel. The view lists staged and unstaged files, supports staging or unstaging files, folders, or all changes, and offers discard, list/tree views, commit, push, sync, and pull request actions. Generated messages and commits use all staged changes in the active checkout. Fully committed Mono files leave its session review; partially staged files retain their remaining review.
+- Pilot commits now use the repository's **real Git staging area**, shared with the project's Changes panel. The view lists staged and unstaged files, supports staging or unstaging files, folders, or all changes, and offers discard, list/tree views, commit, push, sync, and pull request actions. Generated messages and commits use all staged changes in the active checkout. Fully committed Pilot files leave its session review; partially staged files retain their remaining review.
 - Clicking a changed file opens its **inline diff editor** over the Changes list, with Back navigation. Changed images and videos open in the media preview instead.
 - Documents and visuals open inside the overview's **Documents** tab. Reply cards use compact title chips with document or chart icons, and the reader keeps its title in the navigation header without repeating the title and update timestamp above the content. Copy and delete controls remain available.
-- Mono session cards show their project and place the model's provider mark beside the branch in the footer, revealing the model name on hover or focus so titles have more room.
+- Pilot session cards show their project and place the model's provider mark beside the branch in the footer, revealing the model name on hover or focus so titles have more room.
 - Habits in the overview are grouped into **Up next today**, **Done today**, and **Later**, with group counts and paused habits last. When nothing is scheduled today, the remaining group is labeled Scheduled.
-- Streamed replies show text **as it arrives**, with word fades adapting to the stream's cadence between 120 and 400 milliseconds. The earlier paced reveal remains available through `localStorage["rebase.pacedReveal"] = "1"`. Transcript following glides with incoming content, bounds the speed of Mono reply reveals, and respects entrance-animation settings.
-- Mono turn actions appear on hover or keyboard focus in a reserved gap and stay visible while their panel is open. Reaction badges use translucent chips at the message corner, and the next user message stacks with a message answered only by a reaction. Handoff and second-opinion controls are hidden in the Mono view.
+- Streamed replies show text **as it arrives**, with word fades adapting to the stream's cadence between 120 and 400 milliseconds. The earlier paced reveal remains available through `localStorage["gespan.pacedReveal"] = "1"`. Transcript following glides with incoming content, bounds the speed of Pilot reply reveals, and respects entrance-animation settings.
+- Pilot turn actions appear on hover or keyboard focus in a reserved gap and stay visible while their panel is open. Reaction badges use translucent chips at the message corner, and the next user message stacks with a message answered only by a reaction. Handoff and second-opinion controls are hidden in the Pilot view.
 - New conversations show an **empty context ring** before usage is reported. A zero-usage ring no longer draws a progress dot.
-- Regression coverage now includes Mono overview navigation, settings and popovers, memory editing, session search and paging, habit grouping, multi-repository staging and commits, HTML artifact persistence, local media references, session-state synchronization, Cursor catalog fallbacks, emoji data, and reply pacing. Chromium and WebKit tests cover the emoji picker, tab drags, Mono completion layout, and interrupted scroll glides; Linux drag fixtures mock native window controls, and wheel-interruption checks wait for scrolling to settle.
+- Regression coverage now includes Pilot overview navigation, settings and popovers, memory editing, session search and paging, habit grouping, multi-repository staging and commits, HTML artifact persistence, local media references, session-state synchronization, Cursor catalog fallbacks, emoji data, and reply pacing. Chromium and WebKit tests cover the emoji picker, tab drags, Pilot completion layout, and interrupted scroll glides; Linux drag fixtures mock native window controls, and wheel-interruption checks wait for scrolling to settle.
 
 ### Fixed
 
 - Cursor model discovery uses existing CLI credentials without starting the **browser login flow**. Missing credentials or ACP failures fall back to CLI discovery and then the bundled model catalog.
 - Background agent updates preserve pending **account changes, session titles, newly opened sessions, and streamed output** when several updates arrive before React renders, including under Strict Mode.
-- Switching Monos clears the previous Mono's open session, document, focus, search, and filters so its overview does not leak into another conversation.
-- Saved Mono session summaries and habits are cached so returning to their lists avoids a blank reload. Session lookup also finds saved sessions moved to another project; loading cards reserve their space, and unavailable sessions can be inspected through the filter.
+- Switching Pilots clears the previous Pilot's open session, document, focus, search, and filters so its overview does not leak into another conversation.
+- Saved Pilot session summaries and habits are cached so returning to their lists avoids a blank reload. Session lookup also finds saved sessions moved to another project; loading cards reserve their space, and unavailable sessions can be inspected through the filter.
 - Reused sessions are recovered from successful **follow-up receipts** as well as launch receipts, using saved metadata or session listings. Merely listing or reading a session does not create a chat card.
-- Completion reports and session cards attach without shifting Mono transcript spacing or interrupting reply fades. Ready completion prompts stay hidden while being delivered; waiting or failed prompts remain visible, including failures that need a retry.
-- Manual scrolling interrupts Mono reply glides, ambiguous wheel gestures pause following, and scrolling a nested code block keeps its own scroll behavior. Following offsets no longer enlarge the transcript's scroll range, and focusing a session during the overview's slide animation no longer scrolls the surrounding panel out of place.
+- Completion reports and session cards attach without shifting Pilot transcript spacing or interrupting reply fades. Ready completion prompts stay hidden while being delivered; waiting or failed prompts remain visible, including failures that need a retry.
+- Manual scrolling interrupts Pilot reply glides, ambiguous wheel gestures pause following, and scrolling a nested code block keeps its own scroll behavior. Following offsets no longer enlarge the transcript's scroll range, and focusing a session during the overview's slide animation no longer scrolls the surrounding panel out of place.
 - Session and artifact cards fit narrow panes, truncating long titles and project labels instead of overflowing their container. Popovers opened from dialogs stay above them, and Escape closes the popover before the dialog.
 - Video previews defer releasing their source until the element is actually gone, preventing Linux WebKit from stalling without metadata when React replays effects during an in-progress load.
 - Opening a particular file in a multi-file diff expands that file even when the other files start folded.
@@ -160,15 +165,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Video previews** open common video containers, including MP4, MOV, WebM, and MKV, in the file pane with playback controls, dimensions, duration, file size, and format. Playback depends on the platform's supported codecs; unreadable or unsupported local videos offer retry and external playback.
 - Settings → Providers → Advanced → **Keep idle agents ready** controls how many finished conversations keep their agent CLI running for quick follow-ups. Choose None, 1, 2, 3, or 5; the default is 3. Excess agents stop in order of longest idle time, preserving resume state and favoring the conversation on screen. Running turns are excluded, lowering the limit takes effect immediately, and idle agents otherwise stop after three minutes instead of five.
-- Monos can answer with an **emoji reaction** attached to the user message. Reaction-only replies hide their redundant reply bubble, thinking, and tool activity while retaining errors. New reactions animate with reduced-motion support, and notifications describe the reaction.
-- Mono rail badges show **unread reply counts**, including habit posts, instead of a single dot. Counts clear when the Mono is opened, display up to `99+`, and are included in accessible labels.
+- Pilots can answer with an **emoji reaction** attached to the user message. Reaction-only replies hide their redundant reply bubble, thinking, and tool activity while retaining errors. New reactions animate with reduced-motion support, and notifications describe the reaction.
+- Pilot rail badges show **unread reply counts**, including habit posts, instead of a single dot. Counts clear when the Pilot is opened, display up to `99+`, and are included in accessible labels.
 
 ### Changed
 
-- A Mono's latest turn that edited files has a compact **changes button** showing added and removed line counts and opening the diff. Ordinary sessions retain the full review card; older transcript pages, drafts, and pending inbox questions do not show an unrelated review.
-- Floating macOS Mono chats use a more compact **440-point width and up to 560-point height**, including the Mono rail, while fitting smaller screen work areas.
+- A Pilot's latest turn that edited files has a compact **changes button** showing added and removed line counts and opening the diff. Ordinary sessions retain the full review card; older transcript pages, drafts, and pending inbox questions do not show an unrelated review.
+- Floating macOS Pilot chats use a more compact **440-point width and up to 560-point height**, including the Pilot rail, while fitting smaller screen work areas.
 - Native browser scrollbars are hidden throughout the app while preserving horizontal and vertical scrolling. Custom editor and terminal scrollbar controls remain available.
-- Streamed agent output batches stdout lines and server events about once per 16-millisecond window, and foreground chat updates are limited to about 30 per second. Unchanged sidebar, live-agent, and Mono rail data reuse their existing values, and output in other tabs avoids rerendering the visible pane tree.
+- Streamed agent output batches stdout lines and server events about once per 16-millisecond window, and foreground chat updates are limited to about 30 per second. Unchanged sidebar, live-agent, and Pilot rail data reuse their existing values, and output in other tabs avoids rerendering the visible pane tree.
 - Terminal title polling reads foreground commands directly from `/proc` on Linux and skips process lookups while the shell owns the foreground. The animated terminal background caches static outlines, pauses while hidden, draws only the visible board during transitions, and pulses its cursor only on hover. The resident Quick Composer is prepared only when its shortcut is enabled.
 - The README and contributing guide have shorter quick starts with focused guides for provider setup, platform installation, source builds, and agent access.
 - Regression coverage now includes video playback and hidden-tab pauses in Chromium and WebKit, returning to streamed transcripts, reaction rendering, unread counts, idle-agent limits, shared-turn edit attribution, checkpoint recovery, review caching, and theme synchronization. Checkpoint filename fixtures account for Windows removing trailing spaces, browser tests use more stable playback and animation checks, and CI uploads traces when browser tests fail.
@@ -177,11 +182,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Theme changes synchronize across open windows, including the color scheme, accent, tint, and dark-theme lightness, without requiring a reload. In #909 by @ognjeeen; fixes #894.
 - **New Window** opens a working window on Windows instead of a blank gray frame caused by creating WebView2 on the main thread. In #908 by @ognjeeen; fixes #907.
-- Launching Rebase again on Windows restores the running instance and its hidden windows instead of starting another process with a duplicate tray icon. In #905 by @ognjeeen; fixes #860.
+- Launching Gespan again on Windows restores the running instance and its hidden windows instead of starting another process with a duplicate tray icon. In #905 by @ognjeeen; fixes #860.
 - **Reveal in file manager** runs off the main thread, preventing Linux from becoming unresponsive while `xdg-open` waits for the file manager to close. In #902 by @spuder; fixes #901.
 - Manual wheel, pointer, keyboard, and touch scrolling consistently pause transcript following. Scrolling within nested content stays independent, and layout changes or browser-clamped offsets do not incorrectly stop following.
 - Session reviews retain the original checkpoint boundary across interrupted turns and continuations. Older interrupted checkpoints can recover transcript-confirmed changes for review without enabling unsafe undo. Reviews shared by overlapping sessions display only files supported by that session's successful structured edit tools.
-- Committed changes disappear from the current review and stay dismissed if those files are edited again. Review cards and Mono changes buttons share cached status, refresh after workspace changes, and ignore stale responses from an earlier turn.
+- Committed changes disappear from the current review and stay dismissed if those files are edited again. Review cards and Pilot changes buttons share cached status, refresh after workspace changes, and ignore stale responses from an earlier turn.
 - Returning to a hidden transcript tab does not replay the fade animation for words already shown.
 - Video previews pause when their workspace tab or window is hidden, prevent hidden playback from restarting, and release their source when closed. Restoring a source after React replays effects also restarts loading, preventing a blank preview.
 - Subagent mascots render at the same visual scale as neighboring line icons while keeping a fixed icon slot and stable row alignment.
@@ -193,26 +198,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Devin CLI** is available as a provider for local and remote sessions on macOS, Windows, and Linux through ACP. It uses the CLI's existing sign-in on the machine running the session and supports model selection, per-model effort and fast controls, planning, resuming, cancellation, compaction, slash commands, and Devin skills. In #748 by @noursh26.
 - Devin **subagents** appear in the existing agent cards and activity hierarchy, including nested work and child replies. Devin can generate session titles and answer `/btw` side questions; temporary side-question sessions are cleaned up after completion, failure, or cancellation. In #748.
 - Devin account details show the signed-in identity, plan, daily and weekly usage limits and reset times, and extra usage balance. Usage requests keep credentials in the backend and use HTTPS. In #748.
-- Mono chats have a **Changes** panel beside the conversation for reviewing edited files with the existing diff viewer. The **Commit** tab supports selecting files, editing or generating a commit message, committing, pushing, and creating a pull request.
-- Mono reviews group files by their own **Git repository or worktree**, including nested repositories. Each checkout has its own file selection and commit draft, so work across multiple repositories can be reviewed and committed separately. Files outside Git remain available for review.
+- Pilot chats have a **Changes** panel beside the conversation for reviewing edited files with the existing diff viewer. The **Commit** tab supports selecting files, editing or generating a commit message, committing, pushing, and creating a pull request.
+- Pilot reviews group files by their own **Git repository or worktree**, including nested repositories. Each checkout has its own file selection and commit draft, so work across multiple repositories can be reviewed and committed separately. Files outside Git remain available for review.
 - **Turn checkpoints** capture changes before and after a turn in Git workspaces, including edits made through shell commands. Settled turns show their actual diff with keep and undo controls, while preserving changes that were present before the turn.
-- A Mono's **Details → Settings** page controls whether its launched sessions appear in the sidebar and whether they are grouped in a color-coded folder named after the Mono. Resetting the conversation keeps its soul, memory, and habits.
-- Settings → Monos → **Pin monos to the icon rail** places Mono icons above the project picker when the rail is collapsed. The floating Mono rail also shows whether each Mono is working, idle, or waiting for input.
+- A Pilot's **Details → Settings** page controls whether its launched sessions appear in the sidebar and whether they are grouped in a color-coded folder named after the Pilot. Resetting the conversation keeps its soul, memory, and habits.
+- Settings → Pilots → **Pin pilots to the icon rail** places Pilot icons above the project picker when the rail is collapsed. The floating Pilot rail also shows whether each Pilot is working, idle, or waiting for input.
 - Image previews and the image lightbox support **cursor-centered zoom**, modifier-wheel gestures, zoom keyboard shortcuts, and native macOS trackpad pinch gestures. The lightbox also supports dragging to pan and double-clicking to zoom or reset.
-- Settings → Chat → **Autocorrect** controls native spelling and correction behavior in both regular session and Mono composers. The preference persists across restarts and is enabled by default.
+- Settings → Chat → **Autocorrect** controls native spelling and correction behavior in both regular session and Pilot composers. The preference persists across restarts and is enabled by default.
 
 ### Changed
 
-- Mono commits include only the selected files' current working-copy contents and preserve unrelated staged work, including partial staging. Other existing repository changes are excluded by default, even when already staged. Generated commit context uses a temporary Git index without changing the real staging area or including unselected changes.
-- Mono artifact and changes panels use a wider reader layout. Switching repositories preserves each checkout's selection and draft, and a completed commit clears only its selected files from the Mono review.
+- Pilot commits include only the selected files' current working-copy contents and preserve unrelated staged work, including partial staging. Other existing repository changes are excluded by default, even when already staged. Generated commit context uses a temporary Git index without changing the real staging area or including unselected changes.
+- Pilot artifact and changes panels use a wider reader layout. Switching repositories preserves each checkout's selection and draft, and a completed commit clears only its selected files from the Pilot review.
 - Large streamed Markdown code blocks reuse highlighted lines and rendered content, reducing rendering work and stalls as output grows. Regression coverage checks correctness and layout in Chromium and WebKit. In #863 by @nwoolls.
-- Regression coverage now includes Devin transport, permissions, model catalogs, usage and subagents; Mono checkpoints and multi-repository commits; literal Git paths and staging preservation; sidebar preferences; image zoom; source-navigation cancellation; and composer autocorrect on the supported platforms. File-navigation fixtures keep mocked file contents stable across watcher IPC calls on slower runners.
+- Regression coverage now includes Devin transport, permissions, model catalogs, usage and subagents; Pilot checkpoints and multi-repository commits; literal Git paths and staging preservation; sidebar preferences; image zoom; source-navigation cancellation; and composer autocorrect on the supported platforms. File-navigation fixtures keep mocked file contents stable across watcher IPC calls on slower runners.
 
 ### Fixed
 
 - Opening a new session from a full-screen file preview keeps the visible project selected instead of falling back to another project's session. The plus button and new-session shortcut preserve the project's provider defaults and selected worktree. In #896 by @404khai.
 - macOS Finder file-reference URLs resolve to the file's current path, fixing Explorer paste and composer attachments for copied files and images, including files renamed after copying. Both URL parsers reject non-local hosts before resolving a reference. In #635 by @404khai.
-- Mono undo refuses to overwrite later edits, restore across a changed Git `HEAD`, or interfere with an overlapping active session. Checkpoint failures show an error instead of a stale review, and live changes are presented after the turn settles. Windows overlap checks normalize separators and canonical path prefixes while keeping sibling checkouts independent.
+- Pilot undo refuses to overwrite later edits, restore across a changed Git `HEAD`, or interfere with an overlapping active session. Checkpoint failures show an error instead of a stale review, and live changes are presented after the turn settles. Windows overlap checks normalize separators and canonical path prefixes while keeping sibling checkouts independent.
 - Selected-file Git actions validate paths against the chosen checkout, reject directory and symlink escapes, and treat filenames literally, including wildcard, colon, and option-like names. Native and remote-host commands use the same selection rules, and repository-discovery failures remain visible.
 - Commit messages remain editable before files are selected or staged.
 - Devin approval responses preserve the selected permission mode instead of escalating a one-time approval to unrestricted access. **Devin's supervised mode accepts file edits automatically and requests command approval**, following the CLI's native behavior; planning denies writes. Cancellation and timeout cleanup reject leftover permission requests, and supervised configuration preserves existing comments and settings. In #748.
@@ -228,22 +233,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Floating Mono chats have a **Mono rail** for switching conversations and creating a new Mono without closing the window. The wider window keeps the rail beside the chat, and its selection stays in sync with the macOS menu bar.
-- Document artifacts open in an animated sheet inside a floating Mono chat, with the same formatted reader and file links as the main window.
-- Settings → Monos → **Menu bar icon** can hide or restore the macOS Mono menu bar icon. The choice survives app restarts.
+- Floating Pilot chats have a **Pilot rail** for switching conversations and creating a new Pilot without closing the window. The wider window keeps the rail beside the chat, and its selection stays in sync with the macOS menu bar.
+- Document artifacts open in an animated sheet inside a floating Pilot chat, with the same formatted reader and file links as the main window.
+- Settings → Pilots → **Menu bar icon** can hide or restore the macOS Pilot menu bar icon. The choice survives app restarts.
 - The Explorer file tree supports **keyboard navigation**: arrow keys, Home/End, and PageUp/PageDown move the selection; Right/Left enter, expand, or collapse folders; Enter opens files or toggles folders; and Space activates the selected row. Typing a filename prefix jumps to a match, repeating a letter cycles matches, and focused rows have a visible outline.
-- The Mono's live activity ticker can expand or collapse the current turn's activity directly from the reply header, with keyboard access and an expanded-state indicator.
+- The Pilot's live activity ticker can expand or collapse the current turn's activity directly from the reply header, with keyboard access and an expanded-state indicator.
 - **OpenCode 2.x** servers are supported for local and remote sessions alongside OpenCode 1.x. Version detection selects the matching server, catalog, and event protocol, including approvals, questions, multi-select answers, compaction, cancellation, and resuming a session in its current project folder. In #434 by @puri-adityakumar.
 - The Linux **AppImage updates itself** from Settings → General using signed release downloads. Keep it in a writable directory so it can replace itself and relaunch. `.deb` and `.rpm` installations instead show instructions for updating through apt or dnf; a feed without an AppImage update reports that no update is available. In #825 by @sambhavthakkar.
 - The chat composer enables native **macOS spell checking**, including spelling suggestions in its context menu. Existing macOS spell-checking preferences are preserved. In #829 by @nwoolls.
 
 ### Changed
 
-- Mono Codex conversations retain their native context in **isolated Rebase storage** for the selected account, sharing its provider configuration and credentials. Existing Mono threads migrate with their rollout files, fork dependencies, and delegated-agent state, preserving context across restarts while keeping Mono conversation storage separate from the ordinary Codex session list.
-- Mono provider sessions rotate when reported context reaches **80%** of the model's window. Idle time and app restarts no longer trigger a rotation. A fresh session receives recent exchanges and a bounded brief of earlier work, while the full transcript remains available in the chat.
+- Pilot Codex conversations retain their native context in **isolated Gespan storage** for the selected account, sharing its provider configuration and credentials. Existing Pilot threads migrate with their rollout files, fork dependencies, and delegated-agent state, preserving context across restarts while keeping Pilot conversation storage separate from the ordinary Codex session list.
+- Pilot provider sessions rotate when reported context reaches **80%** of the model's window. Idle time and app restarts no longer trigger a rotation. A fresh session receives recent exchanges and a bounded brief of earlier work, while the full transcript remains available in the chat.
 - Habits can work for **up to one hour** per run, increased from 15 minutes. Time spent waiting for an approval does not count toward that limit, and overdue runs still stop and record a failure.
-- Active Mono names use compact signature pills beside the work ticker; settled replies use lighter, muted name styling. The floating Mono rail dims when its window loses focus.
-- The macOS Mono menu uses system-style rows, hover feedback, SF Symbols, and red styling for destructive actions.
+- Active Pilot names use compact signature pills beside the work ticker; settled replies use lighter, muted name styling. The floating Pilot rail dims when its window loses focus.
+- The macOS Pilot menu uses system-style rows, hover feedback, SF Symbols, and red styling for destructive actions.
 - Zen phase live content hides scrollbars while retaining scrolling.
 - Prerelease tags publish to a separate **beta updater feed**, and beta builds use that feed without changing the stable updater feed or macOS download links. AppImage releases are signed after repacking so signatures cover the distributed file. Linux dependency installation bounds APT retries. In #825.
 - Regression coverage now includes real-browser transcript scrolling in Chromium and WebKit, floating-chat navigation and artifacts, file-tree keyboard navigation, long-running habits, remote-tab restoration, Codex storage and temporary-session cleanup, OpenCode 2.x transport, and release-channel isolation. CI checks AppImage packaging for bundled libraries and GTK hooks. Temporary transcript scroll diagnostics and an accidental document-preview mockup were removed. In #818 and #824.
@@ -255,35 +260,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Files in the Changes list respond across the full row height and open their exact diff path without an unnecessary path-resolution request, reducing selection latency. In #830 by @nwoolls.
 - Opening a provider's model dropdown in Settings explicitly refreshes its catalog even when a live catalog is already cached, so newly available models can appear without restarting.
 - Linux AppImages use the host's **WebKitGTK 4.1 and system libraries**, avoiding EGL display failures caused by bundled Ubuntu libraries on current Mesa systems. Install `libwebkit2gtk-4.1-0` on Debian/Ubuntu, `webkit2gtk4.1` on Fedora, or `webkit2gtk-4.1` on Arch. Native Wayland is supported, and `GDK_BACKEND=x11` remains available when needed. In #824 by @sambhavthakkar.
-- Windows Codex Mono storage creates directory junctions against canonical source paths and opens copied rollout files with write access before flushing, fixing configuration-link creation and file-sync failures.
+- Windows Codex Pilot storage creates directory junctions against canonical source paths and opens copied rollout files with write access before flushing, fixing configuration-link creation and file-sync failures.
 - Temporary Grok and OpenCode text-generation sessions are deleted after completion, failure, or cancellation. Generated Codex text uses unsaved threads by default, while side questions retain resumable context. Grok cleanup accepts only valid session UUIDs.
 
 ## [0.9.0] - 2026-10-07
 
 ### Added
 
-- Monos can create persistent **document artifacts** for reports, plans, and other Markdown deliverables. Document cards appear beneath the originating reply and open a reader with formatting, file links, copy, and delete controls. Documents survive app restarts and the reader refreshes when a document is revised.
-- Monos and habit runs can use `app artifacts.list`, `artifacts.read`, and `artifacts.write` to find, read, create, or revise documents and attach them to the chat or habit report. Retrying a creation request reuses the saved document instead of creating a duplicate. Deleting a document removes its cards from saved conversations, and later saves from another window cannot restore them.
-- On macOS, the **Monos menu bar** lists each Mono with its mascot and opens a resizable floating chat that stays above other windows and follows across Spaces. Floating chats share the main conversation, accept messages and attachments, handle approvals and questions, and offer controls to stop a reply or open the conversation in Rebase.
-- A Mono's **Details → Permissions** picker saves its permission mode alongside its model settings. New Mono conversations start with **Auto** permissions.
-- Mono replies have a **Sessions** control for work launched during that turn. Its panel shows each session's provider, model, project, and current status, including requests for input, drafts, and archived sessions. Launch records survive chat restoration, so saved sessions remain accessible after their tabs close.
-- Settings → Monos adds a separate sidebar visibility preference for sessions started by each Mono. Hidden sessions remain saved and can be opened from the Mono's chat; the preference applies to newly started sessions.
+- Pilots can create persistent **document artifacts** for reports, plans, and other Markdown deliverables. Document cards appear beneath the originating reply and open a reader with formatting, file links, copy, and delete controls. Documents survive app restarts and the reader refreshes when a document is revised.
+- Pilots and habit runs can use `app artifacts.list`, `artifacts.read`, and `artifacts.write` to find, read, create, or revise documents and attach them to the chat or habit report. Retrying a creation request reuses the saved document instead of creating a duplicate. Deleting a document removes its cards from saved conversations, and later saves from another window cannot restore them.
+- On macOS, the **Pilots menu bar** lists each Pilot with its mascot and opens a resizable floating chat that stays above other windows and follows across Spaces. Floating chats share the main conversation, accept messages and attachments, handle approvals and questions, and offer controls to stop a reply or open the conversation in Gespan.
+- A Pilot's **Details → Permissions** picker saves its permission mode alongside its model settings. New Pilot conversations start with **Auto** permissions.
+- Pilot replies have a **Sessions** control for work launched during that turn. Its panel shows each session's provider, model, project, and current status, including requests for input, drafts, and archived sessions. Launch records survive chat restoration, so saved sessions remain accessible after their tabs close.
+- Settings → Pilots adds a separate sidebar visibility preference for sessions started by each Pilot. Hidden sessions remain saved and can be opened from the Pilot's chat; the preference applies to newly started sessions.
 - The opt-in `app` CLI adds `sessions.stop`, `sessions.archive`, and `sessions.delete` to manage another regular session in the chosen project. Stop cancels the active turn and pauses queued messages; archive saves the conversation for later restoration; delete permanently removes it. Open files, terminals, and worktrees are kept. `sessions.list` also reports archived status.
 
 ### Changed
 
 - Account emails are **masked by default** when no display preference has been saved. Existing choices are preserved, and Settings → Providers → Usage and privacy → **Mask account emails** controls the display.
-- Mono chats keep opening narration and intermediate progress in the activity trail, show live status beneath the Mono's name, and reveal the final answer when work finishes. The activity control sits beside the reply actions, and copying or saving a reply uses its final answer.
-- Automatic Mono replies after delegated sessions finish continue the preceding answer with one header and one set of reply actions. A new day or a break of more than an hour starts a separate message with its own timestamp.
+- Pilot chats keep opening narration and intermediate progress in the activity trail, show live status beneath the Pilot's name, and reveal the final answer when work finishes. The activity control sits beside the reply actions, and copying or saving a reply uses its final answer.
+- Automatic Pilot replies after delegated sessions finish continue the preceding answer with one header and one set of reply actions. A new day or a break of more than an hour starts a separate message with its own timestamp.
 - Max and Ultra effort animations now apply to every provider whose effort or variant controls expose those options, including keyboard highlighting. In #672 by @shxntanu.
-- Regression coverage now includes document persistence and deletion, floating-chat delivery and motion, Mono permission settings, launched-session history and visibility, session lifecycle actions, and completion-report ordering.
+- Regression coverage now includes document persistence and deletion, floating-chat delivery and motion, Pilot permission settings, launched-session history and visibility, session lifecycle actions, and completion-report ordering.
 - Host integration test suites run serially with longer timeouts on every platform, reducing failures and teardown races under load. In #683 by @shxntanu.
 
 ### Fixed
 
-- Replies to delivered mid-turn Mono follow-ups appear immediately and stay visible when more tool work arrives. Queued or failed messages are not treated as delivered follow-ups, and replies already shown remain available when background work resumes.
-- Mono completion reports wait for launch acceptance, including sessions that finish before their launch is acknowledged. Rejected launches and follow-ups do not produce a second report. When a Mono stops, archives, or deletes a monitored session, its pending or queued report is dismissed while reports for other sessions and other Monos are retained.
-- Selecting an IME candidate with Enter no longer sends a Mono message or submits the memory fact, Mono name, or new habit name fields prematurely on WebKit. In #790 by @king20300.
+- Replies to delivered mid-turn Pilot follow-ups appear immediately and stay visible when more tool work arrives. Queued or failed messages are not treated as delivered follow-ups, and replies already shown remain available when background work resumes.
+- Pilot completion reports wait for launch acceptance, including sessions that finish before their launch is acknowledged. Rejected launches and follow-ups do not produce a second report. When a Pilot stops, archives, or deletes a monitored session, its pending or queued report is dismissed while reports for other sessions and other Pilots are retained.
+- Selecting an IME candidate with Enter no longer sends a Pilot message or submits the memory fact, Pilot name, or new habit name fields prematurely on WebKit. In #790 by @king20300.
 - Codex turns can start before a model has been explicitly selected. The adapter omits the collaboration-mode override until a model is known, allowing Codex to use the thread's selected model without rejecting a null model setting. In #771 by @Slowper.
 - Notes created without a title receive a title-based filename slug when title editing finishes or the editor closes, instead of retaining an `untitled` slug. Later title edits discard stale finalization requests, and existing or user-chosen slugs stay stable. In #788 by @nwoolls.
 - **⌘W / Ctrl+W** closes the active project-dock terminal and **⌘T / Ctrl+T** adds a dock terminal while that dock has keyboard focus. Elsewhere the shortcuts retain their workspace behavior, and macOS New Tab and Close Tab menu actions affect only the focused window. In #774 by @50BytesOfJohn.
@@ -293,18 +298,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Monos** are persistent agents on the project rail, each with its own conversation and assigned projects. Create and reorder them, choose a name, animated pixel mascot, color, and chat background, and return to the same conversation across app restarts. Monos also appear in the project picker; Settings → Monos can hide them or reset a Mono's name and standing instructions. In #773.
-- A Mono's **Details** panel brings together its provider, model, model settings, and assigned projects, with separate **Soul**, **Memory**, and **Habits** pages. Soul holds editable Markdown standing instructions in `SOUL.md`; the Mono can update them when asked. Resetting a conversation clears its messages while keeping its soul, memory, and habits. In #773.
-- Mono memory carries dated facts and preferences across conversations and provider changes. Add, edit, and forget facts in the Memory page or ask the Mono to manage them; topic notes and an archive keep older detail searchable without loading everything into each turn. Soul and memory files live in the app's data folder, and concurrent edits preserve unsaved drafts and retry against the latest contents instead of overwriting another writer's changes. Common credential formats are redacted from facts saved through the app CLI. In #773.
-- **Habits** run recurring tasks hourly, daily, on weekdays, or weekly in local time while Rebase is open. Create them in Details or through the Mono, pause or resume them, run them immediately, and inspect their latest 20 outcomes, reports, errors, and durations. Suggested habit cards wait for the user to start them. In #773.
-- Habit runs work in separate background sessions with full tool access, post useful findings to the Mono's chat, and stay quiet when there is nothing to report. Provider approval requests appear in the chat. Runs execute one at a time, are claimed across windows to prevent duplicates, and skip schedules missed by more than two hours; working-time and unanswered-approval limits stop stalled runs. In #773.
-- Monos can use the local `app` CLI to read, start, draft, and message sessions, manage worktrees and folders, and read or write notes across their assigned projects. Delegated sessions start in the background and notify the Mono when they finish; work launched in the same turn returns as one batch, including failures and cancellations, for a consolidated report once the Mono is idle. In #773.
+- **Pilots** are persistent agents on the project rail, each with its own conversation and assigned projects. Create and reorder them, choose a name, animated pixel mascot, color, and chat background, and return to the same conversation across app restarts. Pilots also appear in the project picker; Settings → Pilots can hide them or reset a Pilot's name and standing instructions. In #773.
+- A Pilot's **Details** panel brings together its provider, model, model settings, and assigned projects, with separate **Soul**, **Memory**, and **Habits** pages. Soul holds editable Markdown standing instructions in `SOUL.md`; the Pilot can update them when asked. Resetting a conversation clears its messages while keeping its soul, memory, and habits. In #773.
+- Pilot memory carries dated facts and preferences across conversations and provider changes. Add, edit, and forget facts in the Memory page or ask the Pilot to manage them; topic notes and an archive keep older detail searchable without loading everything into each turn. Soul and memory files live in the app's data folder, and concurrent edits preserve unsaved drafts and retry against the latest contents instead of overwriting another writer's changes. Common credential formats are redacted from facts saved through the app CLI. In #773.
+- **Habits** run recurring tasks hourly, daily, on weekdays, or weekly in local time while Gespan is open. Create them in Details or through the Pilot, pause or resume them, run them immediately, and inspect their latest 20 outcomes, reports, errors, and durations. Suggested habit cards wait for the user to start them. In #773.
+- Habit runs work in separate background sessions with full tool access, post useful findings to the Pilot's chat, and stay quiet when there is nothing to report. Provider approval requests appear in the chat. Runs execute one at a time, are claimed across windows to prevent duplicates, and skip schedules missed by more than two hours; working-time and unanswered-approval limits stop stalled runs. In #773.
+- Pilots can use the local `app` CLI to read, start, draft, and message sessions, manage worktrees and folders, and read or write notes across their assigned projects. Delegated sessions start in the background and notify the Pilot when they finish; work launched in the same turn returns as one batch, including failures and cancellations, for a consolidated report once the Pilot is idle. In #773.
 - The opt-in `app` CLI adds `notes.write` to create notes or update their title, Markdown body, and tags. Created notes retain their source session, and retrying a creation request does not duplicate the note. In #773.
-- Mono chats support live pull request and session cards, clickable reply choices, and habit suggestions through `app chat.card`. Pull request and session cards reflect their current state and open the associated work. Habit reports can include the same cards. In #773.
-- Mono chats accept follow-up messages while an answer is streaming, show them immediately as stable bubbles, and deliver them in order once the provider is ready. Failed sends remain available for retry, saved outboxes retain attachments, quotes populate the draft, and files can be dropped anywhere on the chat. Questions keep the input, draft, and attachments in place. In #773.
-- Mono tool activity folds into a compact work summary with a live status and a separate chronological activity panel. Pending approvals remain actionable, completed reports have response controls, images appear above message bubbles, and emoji-only messages appear enlarged. New messages and chat growth animate with reduced-motion support. In #773.
-- Mono usage-limit notices can resume work manually or at the reset time, switch to another model or provider, or choose another saved account. Recovery preserves the conversation and continues pending work without adding a duplicate continuation. In #773.
-- Long Mono conversations retain their full transcript in storage, load older pages on demand, and support search across archived and live messages while output streams. The provider session refreshes when context grows too large or after a sufficiently long break, carrying recent exchanges and a bounded brief of earlier work without an extra model summarization call. In #773.
+- Pilot chats support live pull request and session cards, clickable reply choices, and habit suggestions through `app chat.card`. Pull request and session cards reflect their current state and open the associated work. Habit reports can include the same cards. In #773.
+- Pilot chats accept follow-up messages while an answer is streaming, show them immediately as stable bubbles, and deliver them in order once the provider is ready. Failed sends remain available for retry, saved outboxes retain attachments, quotes populate the draft, and files can be dropped anywhere on the chat. Questions keep the input, draft, and attachments in place. In #773.
+- Pilot tool activity folds into a compact work summary with a live status and a separate chronological activity panel. Pending approvals remain actionable, completed reports have response controls, images appear above message bubbles, and emoji-only messages appear enlarged. New messages and chat growth animate with reduced-motion support. In #773.
+- Pilot usage-limit notices can resume work manually or at the reset time, switch to another model or provider, or choose another saved account. Recovery preserves the conversation and continues pending work without adding a duplicate continuation. In #773.
+- Long Pilot conversations retain their full transcript in storage, load older pages on demand, and support search across archived and live messages while output streams. The provider session refreshes when context grows too large or after a sufficiently long break, carrying recent exchanges and a bounded brief of earlier work without an extra model summarization call. In #773.
 - Codex asynchronous agent questions appear in the shared question panel alongside server requests. Answers steer the active turn, with retry handling if the turn changes during delivery and cleanup when it ends or is canceled.
 
 ### Changed
@@ -314,8 +319,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Transcript rendering reuses unchanged turns and panes, reducing repeated processing during streaming. Jump-to-latest visibility updates without rerendering the entire session pane.
 - GitHub Inbox background refreshes run every two minutes while visible and every five minutes while hidden or in the tray, and cached Inbox lists remain fresh for two minutes. Linked session badges reuse those results instead of fetching each historical work item separately, and repeated focus changes respect the polling interval.
 - Pull request checks load when a GitHub PR opens, but ongoing checks polling runs only while its **Checks** tab is visible.
-- Notes and Mono soul editing share the Markdown source editor with syntax highlighting and line numbers.
-- Regression coverage now includes Mono persistence, memory conflicts, transcript paging and search, habit scheduling across windows, message delivery and completion batches, usage recovery, asynchronous questions, native glass, background flushing, file-index reuse, and GitHub polling and backoff.
+- Notes and Pilot soul editing share the Markdown source editor with syntax highlighting and line numbers.
+- Regression coverage now includes Pilot persistence, memory conflicts, transcript paging and search, habit scheduling across windows, message delivery and completion batches, usage recovery, asynchronous questions, native glass, background flushing, file-index reuse, and GitHub polling and backoff.
 
 ### Fixed
 
@@ -323,7 +328,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Notes autosave keeps empty or spaced title drafts intact while the title field is focused, while continuing to save body edits and non-empty titles. Title normalization waits until blur or editor teardown. In #769; fixes #768.
 - Remote-session polling no longer interrupts IME composition in the composer or causes Enter intended to select a candidate to send the message. In #741 by @king20300.
 - **New Terminal**, **New Terminal Tab**, and the first project-dock terminal open in the active session's worktree even when a pane from another checkout has focus. Removed worktrees are excluded, and sessions without a worktree keep the focused pane's directory behavior. In #732 by @zaesho; fixes #697.
-- Terminal font selection prefers JetBrainsMono Nerd Font Mono and includes common Nerd Font fallbacks, allowing installed prompt icon glyphs to render on WebKit. The terminal font stack survives production CSS generation. In #767.
+- Terminal font selection prefers JetBrainsMono Nerd Font Pilot and includes common Nerd Font fallbacks, allowing installed prompt icon glyphs to render on WebKit. The terminal font stack survives production CSS generation. In #767.
 - Skill discovery accepts up to 5,000 skills across its roots instead of stopping at 300, making larger personal catalogs available in Settings, filtering, and the composer slash picker. In #750 by @Erickzao; fixes #168.
 - Pi extension status updates replace one row per status key within the current turn instead of appending a row on every update. Empty status text removes the row, and the next turn starts a new one. In #760 by @Erickzao.
 - Pi and omp GitHub Copilot model catalogs exclude internal agent models and legacy GPT-3.5/4 snapshots that Copilot omits from its own picker. In #766.
@@ -419,11 +424,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Settings → MCP discovers connections for Claude Code, Claude Desktop, Codex, Cursor, and OpenCode. Filter by provider, select a project, inspect server configuration and status, and add or remove servers in the scopes each provider supports. In #458.
 - `/mcp` opens a server picker in the composer. Selected servers appear as inline tags, tell the agent which configured servers to use, and stay with saved drafts when switching sessions. In #458.
-- Rebase checks for Claude Code, Codex, OpenCode, and Pi CLI updates once per app launch and offers in-app updates. An update is confirmed against the installed version, and model catalogs refresh across open windows after it succeeds.
+- Gespan checks for Claude Code, Codex, OpenCode, and Pi CLI updates once per app launch and offers in-app updates. An update is confirmed against the installed version, and model catalogs refresh across open windows after it succeeds.
 - File → Autosave saves editor changes after one second without typing. It is off by default, respects Format on save, and pauses when an external file change needs a decision. In #475.
 - `/plan` and `/orchestrator` select the turn's mode, while `/draft` saves the message without starting an agent. Mode commands have autocomplete and completion in the main and Quick composers, with inline command styling and removable mode pills in the main composer.
 - Linux supports transparent glass in dark mode through the Body glass preference. It is off by default; turning it off restores an opaque window that follows the selected theme. In #561.
-- A session's sidebar context menu can copy its harness session ID or Rebase session ID. Harness IDs are retained in session summaries, including repaired summaries from older caches.
+- A session's sidebar context menu can copy its harness session ID or Gespan session ID. Harness IDs are retained in session summaries, including repaired summaries from older caches.
 
 ### Changed
 
@@ -436,7 +441,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Settings → Appearance → Interface scale uses a menu instead of a slider, so adjusting it no longer rescales the UI mid-gesture. In #559.
-- Rebase no longer crashes at launch on macOS 12 when registering an empty Window menu; the menu now includes Minimize and Zoom. In #509.
+- Gespan no longer crashes at launch on macOS 12 when registering an empty Window menu; the menu now includes Minimize and Zoom. In #509.
 - Triple-clicking a paragraph or code line in an agent reply selects that block instead of extending the selection to the end of the reply. In #535.
 - Plaintext and untagged code fences receive JavaScript syntax highlighting while keeping their original language labels. In #471.
 - Claude background subagents appear once instead of showing both a placeholder and an Agent tool row for the same task. In #536.
@@ -459,7 +464,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remote sessions support Claude Code, Codex, Cursor, Grok Build, OpenCode, Pi, OMP, fx, Hermes Agent, and Antigravity when installed on the host. The host provides its own model catalog and runs each provider under the remote user's account. In #432 and #539.
 - Remote projects use the normal Explorer, file editor, Go to File, project search, Changes, Git history, branch, and worktree views. File creation and editing, diffs, staging, commits, pushes, and pull request creation operate on the host checkout. In #432.
 - Remote conversations support file and image attachments, saved drafts, Plan mode, and Build from a plan. The release now includes verified host packages for Windows, macOS, and Linux on x64 and arm64. In #432.
-- The Help menu links to the Rebase website, repository, bug report, and feature request pages.
+- The Help menu links to the Gespan website, repository, bug report, and feature request pages.
 
 ### Changed
 
@@ -540,7 +545,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Source-control file lists report paths relative to the workspace when the workspace is a subfolder of its Git repository, so nested workspaces no longer mix repository-relative and workspace-relative entries. In #465.
 - Opening a file with CRLF line endings no longer doubles every line in the editor, preview, and diff view. Saving and staging keep the file's original line endings, and staged-only changes under `core.autocrlf` are shown instead of an empty diff. Fixes #411.
-- Rebase now prefers the Claude binary found by the user's shell, then the inherited PATH, before checking fixed install locations. A transient busy-binary error on Linux is retried. In #448.
+- Gespan now prefers the Claude binary found by the user's shell, then the inherited PATH, before checking fixed install locations. A transient busy-binary error on Linux is retried. In #448.
 - Claude shell commands are restored in session transcripts, including long command labels.
 - Completed GitHub issues show the correct status icon in the Inbox. In #455.
 - BTW submissions report failures, saved conversations survive edge cases, and OpenCode replies no longer duplicate or reorder streamed text. In #476.
@@ -553,7 +558,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **BTW** opens a read-only side conversation on a completed agent response without changing the main thread. Use the response's BTW control or `/btw` in the composer. Side conversations support Claude, Codex, Cursor, Grok, OpenCode, Pi, and omp, retain their threads and model settings, and use the provider that produced the original turn even after a handoff. In #353.
-- `/operator` gives an agent opt-in access to Rebase in that thread through a local `app` CLI. It can inspect models, start or draft sessions, read and message project sessions, organize folders, and read notes. App access lasts for that thread; `/mono` and `/rebase` remain supported aliases. See [Agent access to Rebase](README.md#agent-access-to-rebase). In #423.
+- `/operator` gives an agent opt-in access to Gespan in that thread through a local `app` CLI. It can inspect models, start or draft sessions, read and message project sessions, organize folders, and read notes. App access lasts for that thread; `/gespan` remains a supported alias. See [Agent access to Gespan](README.md#agent-access-to-gespan). In #423.
 - Claude and Codex account controls show the cached account's plan, email, and organization in Settings, the account picker, and the usage popover. Identity refreshes after reconnecting. In #372.
 - A usage-limit notice shows the provider's reset time and countdown, pauses queued messages, and offers manual resume or automatic resume after the limit resets.
 - The macOS Quick composer global shortcut can be changed in Settings → Keybindings. The default remains Command+Shift+Space.
@@ -601,7 +606,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Jira Cloud joins the Inbox with site, email, and API-token connection settings; issue browsing; descriptions and comment threads; comment posting; and shared project filters. **Ask** and **Start work** include the ticket's description and Jira identifier, and Start work lets you choose a local project. This integration uses API tokens without scopes; scoped tokens and Jira Data Center are not supported. See [Jira setup](https://github.com/0xvasanth/rebase/blob/v0.1.55/docs/jira.md).
+- Jira Cloud joins the Inbox with site, email, and API-token connection settings; issue browsing; descriptions and comment threads; comment posting; and shared project filters. **Ask** and **Start work** include the ticket's description and Jira identifier, and Start work lets you choose a local project. This integration uses API tokens without scopes; scoped tokens and Jira Data Center are not supported. See [Jira setup](https://github.com/0xvasanth/gespan/blob/v0.1.55/docs/jira.md).
 - Jira issues support background activity notifications, project-level mute controls scoped to each Jira site, and **Issue appeared** automation triggers that run in the automation's selected workspace. Project lists follow pagination, connection failures remain isolated from other Inbox providers, and disconnecting clears saved credentials and cached Jira content.
 - Conversations have in-transcript Find with match highlighting, previous/next navigation, and Command/Ctrl+F, F3, and Command/Ctrl+G shortcuts. Global conversation-search results now jump to the matching transcript block.
 - Command/Ctrl+Up and Command/Ctrl+Down switch to the previous or next session inside the focused tab. Sessions already visible elsewhere swap panes instead of mounting twice.
@@ -669,7 +674,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Composer messages can be saved as persistent session drafts instead of being sent immediately. Drafts survive restarts, appear in session status, can be sent later, and can be removed without changing conversation history.
 - New sessions can choose the current checkout, an existing worktree, or a draft workspace that creates its worktree and a descriptive branch on the first turn. Draft workspaces support branch renaming and expose their checkout identity in the Explorer.
 - The Changes panel can amend the latest local commit when `HEAD` has not been pushed, and resets amend mode when the branch or commit changes. In #324 by @kartava.
-- GitHub issue and pull-request URLs render as interactive work-item chips with hover and keyboard-focus previews for metadata, state, labels, and assignees. An optional authenticated prompt can also star Rebase through the GitHub CLI.
+- GitHub issue and pull-request URLs render as interactive work-item chips with hover and keyboard-focus previews for metadata, state, labels, and assignees. An optional authenticated prompt can also star Gespan through the GitHub CLI.
 - The file editor has a draggable CodeMirror scrollbar with change and diagnostic markers, plus a full-width sticky search toolbar.
 - Files can open as standalone top-bar workspace tabs through a persistent setting, and tab opening and closing can use reduced-motion-aware animations through a separate opt-in setting.
 - The project rail has a persistent compact mode that gives workspace content more room while retaining project navigation and status.
@@ -696,7 +701,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Git worktrees provide independent working copies for parallel sessions. The working-copy picker can create a worktree from a new or existing branch, open another working copy in a new session, and recover sessions whose worktree was removed. Settings → Worktrees lists branch, status, unpublished commits, and associated sessions, with guarded deletion that preserves branches and sessions by default. In #319.
 - Settings → Providers can rename and remove named Claude Code and Codex accounts. Removing an account deletes its stored credentials, stops its running turns, and retains existing conversations with a clear prompt to switch accounts before continuing.
-- The Go to File dialog now doubles as a fuzzy command palette when opened with Command/Ctrl+Shift+P or a leading `>`. Its first action reloads Rebase, also available with Command/Ctrl+Shift+R, with confirmation before discarding unsaved files. In #296 by @MichaelOgunjimi.
+- The Go to File dialog now doubles as a fuzzy command palette when opened with Command/Ctrl+Shift+P or a leading `>`. Its first action reloads Gespan, also available with Command/Ctrl+Shift+R, with confirmation before discarding unsaved files. In #296 by @MichaelOgunjimi.
 - User messages can be copied with their attachments or saved directly to Notes, and selected transcript text offers the same Notes action with success and error feedback. Message timestamps remain visible even for prompts that contain only a note, handoff, or second-opinion card. In #291 and #320 by @ognjeeen.
 - Agent question options support full keyboard navigation with Arrow keys, Home, End, number shortcuts, Enter, and Space for both single- and multi-select prompts.
 
@@ -715,9 +720,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Hermes Agent is available as an ACP harness with live model discovery, image and file attachments, permission prompts, in-flight redirects, and persisted session resume. Install Hermes, configure a provider with `hermes model`, and Rebase will add it to the model picker. In #282.
+- Hermes Agent is available as an ACP harness with live model discovery, image and file attachments, permission prompts, in-flight redirects, and persisted session resume. Install Hermes, configure a provider with `hermes model`, and Gespan will add it to the model picker. In #282.
 - Projects can be organized into persistent, collapsible groups in the project rail, with custom names, colors, and mascots. Projects can be assigned or returned to the ungrouped section from their context menu.
-- On Windows, closing a window can hide it to the system tray so running agents continue; the behavior is enabled by default, configurable in Settings, and paired with tray actions to reopen or fully quit Rebase. Full quits coordinate every window, count all running turns, ask once, wait for workspace saves, recover from stale confirmations, and abort safely if required persistence fails. In #224 by @goujandev.
+- On Windows, closing a window can hide it to the system tray so running agents continue; the behavior is enabled by default, configurable in Settings, and paired with tray actions to reopen or fully quit Gespan. Full quits coordinate every window, count all running turns, ask once, wait for workspace saves, recover from stale confirmations, and abort safely if required persistence fails. In #224 by @goujandev.
 - Claude Code and Codex support multiple named accounts. Add or switch accounts from the usage footer; each project remembers its selection, and existing conversations remain pinned to the account that started them. In #280.
 - OpenCode Go usage appears in the status-bar footer with five-hour, weekly, and monthly limits and reset countdowns. Credential discovery supports environment overrides, JSON and JSONC configuration, and XDG data directories. In #263 by @D3nnis72.
 - The branch picker can create a branch through a dedicated name dialog, with the new branch immediately available for selection.
@@ -725,7 +730,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project menus can open a project in a detected external editor on macOS, Windows, and Linux.
 - Binary and image viewers can copy the original file to the macOS clipboard from their toolbar or context menu, with temporary success feedback.
 - GitHub pull-request headers include an action to copy the head branch name. Closes #248 in #273 by @bluzername.
-- Contributors can set `REBASE_DEV_APP_NAME` to run a separately named macOS development app without changing the default bundle identity. Invalid names and path traversal are rejected. In #284 by @MichaelOgunjimi.
+- Contributors can set `GESPAN_DEV_APP_NAME` to run a separately named macOS development app without changing the default bundle identity. Invalid names and path traversal are rejected. In #284 by @MichaelOgunjimi.
 
 ### Changed
 
@@ -736,7 +741,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Pasting or dropping files from Finder into the file tree works reliably on macOS, including safe handling of symlink aliases; drop targeting also accounts for Windows display scaling. In #264 by @kartava.
-- The Composer regains focus after answering a question, finishing an agent turn, or returning to the Rebase window without stealing focus from another Composer or an open picker. In #292 by @MichaelOgunjimi.
+- The Composer regains focus after answering a question, finishing an agent turn, or returning to the Gespan window without stealing focus from another Composer or an open picker. In #292 by @MichaelOgunjimi.
 - Context menus can use their intrinsic height, tab-group menus open on the correct side, light-theme popovers remain opaque, and reorderable tabs use the default cursor.
 - Unix orchestration scratch directories retain restrictive `0700` permissions when their ownership is transferred to the worker.
 
@@ -871,13 +876,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Computer Use access confirmations are accepted automatically when Codex is already running in Full Access mode; other MCP confirmations still require an explicit decision.
 - GitLab Inbox repository detection no longer flashes console windows when it invokes Git on Windows. In #200.
 - Claude Sonnet 5 appears only with Claude Code 2.1.197 or newer, preventing older CLI versions from receiving an unsupported model argument. In #199 by @nulljosh.
-- Claude model choices resolve consistently between the CLI's short live aliases and Rebase's full startup model IDs, so relaunching no longer switches a saved session to a different model family.
+- Claude model choices resolve consistently between the CLI's short live aliases and Gespan's full startup model IDs, so relaunching no longer switches a saved session to a different model family.
 
 ## [0.1.44] - 2026-09-12
 
 ### Added
 
-- Set a reminder from a session's menu using a preset or custom date and time. Rebase persists scheduled reminders, delivers a notification when one is due, keeps reminder notices available in the session, and shows the scheduled time when cancelling one.
+- Set a reminder from a session's menu using a preset or custom date and time. Gespan persists scheduled reminders, delivers a notification when one is due, keeps reminder notices available in the session, and shows the scheduled time when cancelling one.
 - The model picker remembers the six most recently used models. Right-click the current model or press Command/Ctrl+Period to switch among them quickly.
 - Notes support normalized tags that can be edited and searched, and selected text from an agent transcript can be saved directly as a note.
 - File and terminal tab menus include **Close Others**, with confirmation before closing unsaved files or running terminals.
@@ -907,7 +912,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use `/add-to-folder` in the composer to place the current session in an existing sidebar folder or create a new folder without interrupting the prompt.
 - Ungrouped pinned sessions now appear in a dedicated **Pinned** sidebar section that can be collapsed independently for each project and expands automatically while searching.
 - Click an image attachment in the composer to inspect it in a full-screen preview; close it with Escape, the close button, or the backdrop, and focus returns to the attachment.
-- Right-click file links, inline file paths, and code-block paths in agent messages to open them in Rebase or the default app, reveal them in the system file manager, or copy their absolute or project-relative path.
+- Right-click file links, inline file paths, and code-block paths in agent messages to open them in Gespan or the default app, reveal them in the system file manager, or copy their absolute or project-relative path.
 - macOS releases now include separate signed packages for Apple Silicon and Intel Macs.
 
 ### Changed
@@ -929,9 +934,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- GitLab joins the Inbox alongside GitHub and Linear. Connect GitLab.com or a self-managed instance from Settings, then browse and filter issues and merge requests, inspect details, comments, assignees, labels, and diffs, post comments, and start or discuss work without leaving Rebase.
+- GitLab joins the Inbox alongside GitHub and Linear. Connect GitLab.com or a self-managed instance from Settings, then browse and filter issues and merge requests, inspect details, comments, assignees, labels, and diffs, post comments, and start or discuss work without leaving Gespan.
 - Sessions started from a GitHub Inbox item, or whose first prompt references a GitHub issue or pull request, remember that work item. Session cards link back to it, Inbox rows show related thread counts, and issue or pull request details link to every matching current or archived thread.
-- Settings → Skills lists file-based skills from Rebase, the current project, personal folders, and supported harnesses. Filter or refresh the catalog, enable and disable individual skills, create a starter project or personal `SKILL.md`, and copy or reveal a skill's path. In #137 by @imnakul.
+- Settings → Skills lists file-based skills from Gespan, the current project, personal folders, and supported harnesses. Filter or refresh the catalog, enable and disable individual skills, create a starter project or personal `SKILL.md`, and copy or reveal a skill's path. In #137 by @imnakul.
 - Edit and Write activity in agent transcripts shows the tool's exact diff or written content in an accessible hover and keyboard-focus preview; click through to open the full file or diff.
 - Right-click file tabs to open a file in its default app, reveal it in the system file manager, copy its name or absolute or project-relative path, or close the tab.
 - Selecting code in the editor opens an **Add to chat** action that inserts the file and selected line range into the composer without copying the code itself.
@@ -939,7 +944,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The Settings model picker now uses Rebase's theme-aware popover, with keyboard navigation, active-option announcements, and reliable focus restoration instead of the operating system's native select menu. In #149 by @ardevdevts.
+- The Settings model picker now uses Gespan's theme-aware popover, with keyboard navigation, active-option announcements, and reliable focus restoration instead of the operating system's native select menu. In #149 by @ardevdevts.
 - Skill names, sources, paths, and creation controls use the same sans-serif interface typography as the rest of Settings.
 
 ### Fixed
@@ -972,7 +977,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Code block syntax highlighting follows Rebase's appearance preference instead of the system color scheme. In #117 by @kartava.
+- Code block syntax highlighting follows Gespan's appearance preference instead of the system color scheme. In #117 by @kartava.
 - Split conversation panes share one continuous chat background instead of repeating the image in every pane.
 - Project search safely treats include filters beginning with `-` as path patterns instead of Git options. In #125 by @Karajelly.
 - Release publishing validates and uploads the expected versioned artifacts for every supported platform.
@@ -997,7 +1002,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shift-click conversations in the sidebar to select several at once, then pin, unpin, archive, unarchive, move into or out of folders, or delete them together.
 - Settings → Appearance → Chat background adds an on-device image behind empty sessions or every conversation, with adjustable visibility. Each project can override the global image from its project-rail menu.
 - Long transcripts have a vertical prompt outline for jumping between turns. Hover or keyboard-focus a marker to preview its prompt and reply. In #90 by @kartava.
-- Drag image files into a note to copy them into Rebase's local note storage and insert them into the note at the cursor.
+- Drag image files into a note to copy them into Gespan's local note storage and insert them into the note at the cursor.
 - Archive the focused conversation with Shift+Command/Ctrl+A. The shortcut stays out of editors, terminals, diffs, and open overlays. In #89 by @kualta.
 
 ### Changed
@@ -1032,7 +1037,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal focus stays in place after changing directories with `cd`. In #94.
 - Wrapped inline code grows to fit its content, and list markers stay beside it. In #93.
 - GitHub pull request lookups qualify the head branch with its repository owner.
-- The Windows installer uses the Rebase icon.
+- The Windows installer uses the Gespan icon.
 
 ## [0.1.35] - 2026-09-06
 
@@ -1040,7 +1045,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Inbox items have an **Ask** panel for discussing and analyzing GitHub and Linear issues and pull requests without leaving the Inbox. Discussions remain available while switching items, can be restarted, and stay out of project history, recovery, and notifications.
 - Settings → Appearance → Interface scale zooms the full UI from 50–200% and persists the choice. Use Command/Ctrl with `+`, `-`, or `0`, the View menu, or the settings slider. In #86 by @xaccefy.
-- Settings: Notifications, off by default. With it on, a system notification appears when a turn finishes or an agent waits on an approval or question in a session that is not on screen, whether Rebase is in the background or another session is open; clicking it jumps to that session. Turning it on asks macOS for permission, and a blocked state links to System Settings. The Sounds setting decides whether the notification plays a sound, and the in-app cue is skipped when the banner fires. In #62 by @emircan-sahin.
+- Settings: Notifications, off by default. With it on, a system notification appears when a turn finishes or an agent waits on an approval or question in a session that is not on screen, whether Gespan is in the background or another session is open; clicking it jumps to that session. Turning it on asks macOS for permission, and a blocked state links to System Settings. The Sounds setting decides whether the notification plays a sound, and the in-app cue is skipped when the banner fires. In #62 by @emircan-sahin.
 - Windows is a supported desktop target. Terminals, agent CLIs, and the rest of the macOS/Linux feature set run there, the window uses Tauri Acrylic in place of macOS vibrancy, and releases include an x86_64 NSIS installer. In #46.
 
 ### Changed
@@ -1060,8 +1065,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Navigate sessions with Shift+Command/Ctrl+Up or Down and projects with Shift+Command/Ctrl+Left or Right. The shortcuts follow the visible sidebar order and also work from an empty composer. In #47 by @MisterWanted.
 - Session cards show an Archive or Unarchive action on hover and keyboard focus.
-- OMP's native commands and custom workflows appear in the `/` picker, with descriptions and argument hints. Commands run through OMP with their arguments intact, and workflow dialogs support choosing options and entering text. Rebase keeps `/plan` and `/compact`; use `/omp:plan` and `/omp:compact` for OMP's versions.
-- The `@` file picker supports files and folders whose paths contain spaces and refreshes when the workspace changes, so newly created paths appear without restarting Rebase. Unsafe control and bidirectional formatting characters are excluded from mention tokens. In #67 by @elanchezhiyanr.
+- OMP's native commands and custom workflows appear in the `/` picker, with descriptions and argument hints. Commands run through OMP with their arguments intact, and workflow dialogs support choosing options and entering text. Gespan keeps `/plan` and `/compact`; use `/omp:plan` and `/omp:compact` for OMP's versions.
+- The `@` file picker supports files and folders whose paths contain spaces and refreshes when the workspace changes, so newly created paths appear without restarting Gespan. Unsafe control and bidirectional formatting characters are excluded from mention tokens. In #67 by @elanchezhiyanr.
 
 ### Fixed
 
@@ -1230,16 +1235,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- After an in-app update, Rebase shows a notification with a **What's new** action. It opens the bundled notes in a read-only tab only when requested. The notes remain available under Settings → General → About.
+- After an in-app update, Gespan shows a notification with a **What's new** action. It opens the bundled notes in a read-only tab only when requested. The notes remain available under Settings → General → About.
 - Inbox pull request and issue details load the conversation (comments, reviews, and review threads) in the background, so the description still appears first.
-- Grok Build joins the provider list. Install it with `curl -fsSL https://x.ai/cli/install.sh | bash` and run `grok login` (or set `XAI_API_KEY`). Rebase runs `grok agent stdio` like the other ACP harnesses: live turns, supervised approvals, model catalog, reasoning effort, context usage, skills from `.grok/skills`, and titles / commit / PR text.
+- Grok Build joins the provider list. Install it with `curl -fsSL https://x.ai/cli/install.sh | bash` and run `grok login` (or set `XAI_API_KEY`). Gespan runs `grok agent stdio` like the other ACP harnesses: live turns, supervised approvals, model catalog, reasoning effort, context usage, skills from `.grok/skills`, and titles / commit / PR text.
 - Search sits next to Inbox and Notes in the sidebar project picker, with the same ⌘K / Ctrl+K hint.
 
 ## [0.1.22] - 2026-08-31
 
 ### Added
 
-- Settings → Appearance: System theme. The picker was Dark and Light only, so the app never followed the OS. System tracks the appearance while Rebase is open; Dark stays the default, so existing installs do not flip. In #36 by @emircan-sahin.
+- Settings → Appearance: System theme. The picker was Dark and Light only, so the app never followed the OS. System tracks the appearance while Gespan is open; Dark stays the default, so existing installs do not flip. In #36 by @emircan-sahin.
 - Search, Inbox, and Notes show Back and a sidebar toggle in the title bar when the project rail is closed, so you can get the rail back without leaving the overlay.
 
 ### Changed
@@ -1279,7 +1284,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Notes: a markdown notebook on the project rail. Save a finished turn from the transcript, write your own, then mention it later with `@note` or add it to chat — the note shows as a card, the same way Inbox issues do. Settings → General has a Notes toggle (on by default) to hide it from the UI.
-- Claude Code hooks now run. Rebase used to launch the CLI with `disableAllHooks`, so every hook in your `settings.json` — command rewrites, blocks, notifications — was silently skipped. Settings → General has a "Claude Code hooks" toggle (on by default) to turn them back off if one misbehaves. Rebase's own helper spawns, like title generation, stay hook-free. In #25.
+- Claude Code hooks now run. Gespan used to launch the CLI with `disableAllHooks`, so every hook in your `settings.json` — command rewrites, blocks, notifications — was silently skipped. Settings → General has a "Claude Code hooks" toggle (on by default) to turn them back off if one misbehaves. Gespan's own helper spawns, like title generation, stay hook-free. In #25.
 
 ### Changed
 
@@ -1385,7 +1390,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Claude usage in the footer refreshes OAuth tokens before they expire and retries on 401, so the chip stays signed in. Failed sign-in shows expired instead of a generic error.
-- GitHub inbox and `gh` subprocesses work when Rebase is launched from Finder, by resolving the CLI through the login-shell PATH the same way harnesses do.
+- GitHub inbox and `gh` subprocesses work when Gespan is launched from Finder, by resolving the CLI through the login-shell PATH the same way harnesses do.
 
 ## [0.1.12] - 2026-08-27
 
@@ -1403,7 +1408,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Linear personal API keys stay on this Mac: written to the app data folder (`~/Library/Application Support/com.rebase.desktop/linear-token`) with owner-only permissions (`0600`). They are sent only to Linear's API to list and read issues, never to Rebase servers, and never placed in the agent prompt. Disconnect deletes the file. GitHub uses the `gh` login already on the machine; Rebase does not store a GitHub token.
+- Linear personal API keys stay on this Mac: written to the app data folder (`~/Library/Application Support/dev.gespan.desktop/linear-token`) with owner-only permissions (`0600`). They are sent only to Linear's API to list and read issues, never to Gespan servers, and never placed in the agent prompt. Disconnect deletes the file. GitHub uses the `gh` login already on the machine; Gespan does not store a GitHub token.
 
 ## [0.1.11] - 2026-08-27
 
@@ -1427,7 +1432,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- omp ([oh-my-pi](https://omp.sh)) joins the provider list. Install it with `curl -fsSL https://omp.sh/install | sh` and log in, and Rebase runs it like any other harness: live turns, steering, approvals, model catalog, and skills from `.omp/skills`.
+- omp ([oh-my-pi](https://omp.sh)) joins the provider list. Install it with `curl -fsSL https://omp.sh/install | sh` and log in, and Gespan runs it like any other harness: live turns, steering, approvals, model catalog, and skills from `.omp/skills`.
 - Check for updates in the classic sidebar footer.
 
 ### Changed
@@ -1490,8 +1495,8 @@ Thanks [@Queaxtra](https://github.com/Queaxtra) for the filter and archive ideas
 ### Fixed
 
 - Read and Find rows show the file or search query next to the verb, instead of a bare Read/Find. Every provider uses the same nested-arg extraction; Cursor also recovers Glob/Grep from its session store when ACP sends empty input.
-- Provider CLIs installed through a Node version manager (nvm, fnm, mise, Volta) no longer show as unavailable when Rebase is launched from Finder. Detection reads PATH from an interactive login shell, so anything set up in `.zshrc` is found, and a disabled provider now says its CLI was not found instead of implying it needs to be authenticated.
-- Codex works when only the Codex desktop app is installed. Rebase falls back to the CLI bundled inside `Codex.app` when no standalone `codex` is on PATH, preferring a real install whenever one exists.
+- Provider CLIs installed through a Node version manager (nvm, fnm, mise, Volta) no longer show as unavailable when Gespan is launched from Finder. Detection reads PATH from an interactive login shell, so anything set up in `.zshrc` is found, and a disabled provider now says its CLI was not found instead of implying it needs to be authenticated.
+- Codex works when only the Codex desktop app is installed. Gespan falls back to the CLI bundled inside `Codex.app` when no standalone `codex` is on PATH, preferring a real install whenever one exists.
 
 ## [0.1.5] - 2026-08-23
 
@@ -1532,8 +1537,8 @@ Thanks [@Queaxtra](https://github.com/Queaxtra) for the filter and archive ideas
 ### Added
 
 - Editor diff hunks show a centered gutter pill with revert and stage. Plus stages that hunk (or the selected lines) so you can commit some changes and leave the rest unstaged.
-- Pi Coding Agent as a harness: if `pi` is installed, it shows up next to Claude Code, Codex, Cursor, and OpenCode. Live sessions spawn `pi --mode rpc` with the user's existing config and extensions loaded, so globally installed Pi packages (todos, subagents, custom tools) still run. Project-local `.pi` resources follow Pi's saved trust file. TUI-only widgets do not appear in Rebase; extension confirm/select dialogs use the existing approval UI. Rebase's runtime-mode control does not gate Pi tools - Pi has no native permission prompts.
-- Closing the window no longer kills a running chat: Rebase hides instead, and reopening the app brings the same window back mid-turn.
+- Pi Coding Agent as a harness: if `pi` is installed, it shows up next to Claude Code, Codex, Cursor, and OpenCode. Live sessions spawn `pi --mode rpc` with the user's existing config and extensions loaded, so globally installed Pi packages (todos, subagents, custom tools) still run. Project-local `.pi` resources follow Pi's saved trust file. TUI-only widgets do not appear in Gespan; extension confirm/select dialogs use the existing approval UI. Gespan's runtime-mode control does not gate Pi tools - Pi has no native permission prompts.
+- Closing the window no longer kills a running chat: Gespan hides instead, and reopening the app brings the same window back mid-turn.
 - Quit (⌘Q) asks first if chats are still running, then restores those sessions the next time you open the app and continues the turn.
 - Reopening the app restores the last window: tabs, splits, and open file or terminal panes, instead of always starting on a blank homepage.
 
@@ -1581,79 +1586,79 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/rebase/compare/v0.16.0...HEAD
-[0.16.0]: https://github.com/0xvasanth/rebase/compare/v0.15.0...v0.16.0
-[0.15.0]: https://github.com/0xvasanth/rebase/compare/v0.14.0...v0.15.0
-[0.14.0]: https://github.com/0xvasanth/rebase/compare/v0.13.0...v0.14.0
-[0.13.0]: https://github.com/0xvasanth/rebase/compare/v0.12.0...v0.13.0
-[0.12.0]: https://github.com/0xvasanth/rebase/compare/v0.11.0...v0.12.0
-[0.11.0]: https://github.com/0xvasanth/rebase/compare/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/0xvasanth/rebase/compare/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/0xvasanth/rebase/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/0xvasanth/rebase/compare/v0.7.1...v0.8.0
-[0.7.1]: https://github.com/0xvasanth/rebase/compare/v0.7.0...v0.7.1
-[0.7.0]: https://github.com/0xvasanth/rebase/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/0xvasanth/rebase/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/0xvasanth/rebase/compare/v0.4.3...v0.5.0
-[0.4.3]: https://github.com/0xvasanth/rebase/compare/v0.4.2...v0.4.3
-[0.4.1]: https://github.com/0xvasanth/rebase/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/0xvasanth/rebase/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/0xvasanth/rebase/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/0xvasanth/rebase/compare/v0.1.56...v0.2.0
-[0.1.56]: https://github.com/0xvasanth/rebase/compare/v0.1.55...v0.1.56
-[0.1.55]: https://github.com/0xvasanth/rebase/compare/v0.1.54...v0.1.55
-[0.1.54]: https://github.com/0xvasanth/rebase/compare/v0.1.53...v0.1.54
-[0.1.53]: https://github.com/0xvasanth/rebase/compare/v0.1.52...v0.1.53
-[0.1.52]: https://github.com/0xvasanth/rebase/compare/v0.1.51...v0.1.52
-[0.1.51]: https://github.com/0xvasanth/rebase/compare/v0.1.50...v0.1.51
-[0.1.50]: https://github.com/0xvasanth/rebase/compare/v0.1.49...v0.1.50
-[0.1.49]: https://github.com/0xvasanth/rebase/compare/v0.1.48...v0.1.49
-[0.1.48]: https://github.com/0xvasanth/rebase/compare/v0.1.47...v0.1.48
-[0.1.47]: https://github.com/0xvasanth/rebase/compare/v0.1.46...v0.1.47
-[0.1.46]: https://github.com/0xvasanth/rebase/compare/v0.1.45...v0.1.46
-[0.1.45]: https://github.com/0xvasanth/rebase/compare/v0.1.44...v0.1.45
-[0.1.44]: https://github.com/0xvasanth/rebase/compare/v0.1.43...v0.1.44
-[0.1.43]: https://github.com/0xvasanth/rebase/compare/v0.1.42...v0.1.43
-[0.1.42]: https://github.com/0xvasanth/rebase/compare/v0.1.41...v0.1.42
-[0.1.41]: https://github.com/0xvasanth/rebase/compare/v0.1.40...v0.1.41
-[0.1.40]: https://github.com/0xvasanth/rebase/compare/v0.1.39...v0.1.40
-[0.1.39]: https://github.com/0xvasanth/rebase/compare/v0.1.38...v0.1.39
-[0.1.38]: https://github.com/0xvasanth/rebase/compare/v0.1.37...v0.1.38
-[0.1.37]: https://github.com/0xvasanth/rebase/compare/v0.1.36...v0.1.37
-[0.1.36]: https://github.com/0xvasanth/rebase/compare/v0.1.35...v0.1.36
-[0.1.35]: https://github.com/0xvasanth/rebase/compare/v0.1.34...v0.1.35
-[0.1.34]: https://github.com/0xvasanth/rebase/compare/v0.1.33...v0.1.34
-[0.1.33]: https://github.com/0xvasanth/rebase/compare/v0.1.32...v0.1.33
-[0.1.32]: https://github.com/0xvasanth/rebase/compare/v0.1.31...v0.1.32
-[0.1.31]: https://github.com/0xvasanth/rebase/compare/v0.1.30...v0.1.31
-[0.1.30]: https://github.com/0xvasanth/rebase/compare/v0.1.29...v0.1.30
-[0.1.29]: https://github.com/0xvasanth/rebase/compare/v0.1.28...v0.1.29
-[0.1.28]: https://github.com/0xvasanth/rebase/compare/v0.1.27...v0.1.28
-[0.1.27]: https://github.com/0xvasanth/rebase/compare/v0.1.26...v0.1.27
-[0.1.26]: https://github.com/0xvasanth/rebase/compare/v0.1.25...v0.1.26
-[0.1.25]: https://github.com/0xvasanth/rebase/compare/v0.1.24...v0.1.25
-[0.1.24]: https://github.com/0xvasanth/rebase/compare/v0.1.23...v0.1.24
-[0.1.23]: https://github.com/0xvasanth/rebase/compare/v0.1.22...v0.1.23
-[0.1.22]: https://github.com/0xvasanth/rebase/compare/v0.1.21...v0.1.22
-[0.1.21]: https://github.com/0xvasanth/rebase/compare/v0.1.20...v0.1.21
-[0.1.20]: https://github.com/0xvasanth/rebase/compare/v0.1.19...v0.1.20
-[0.1.19]: https://github.com/0xvasanth/rebase/compare/v0.1.18...v0.1.19
-[0.1.18]: https://github.com/0xvasanth/rebase/compare/v0.1.17...v0.1.18
-[0.1.17]: https://github.com/0xvasanth/rebase/compare/v0.1.16...v0.1.17
-[0.1.16]: https://github.com/0xvasanth/rebase/compare/v0.1.15...v0.1.16
-[0.1.15]: https://github.com/0xvasanth/rebase/compare/v0.1.14...v0.1.15
-[0.1.14]: https://github.com/0xvasanth/rebase/compare/v0.1.13...v0.1.14
-[0.1.13]: https://github.com/0xvasanth/rebase/compare/v0.1.12...v0.1.13
-[0.1.12]: https://github.com/0xvasanth/rebase/compare/v0.1.11...v0.1.12
-[0.1.11]: https://github.com/0xvasanth/rebase/compare/v0.1.10...v0.1.11
-[0.1.10]: https://github.com/0xvasanth/rebase/compare/v0.1.9...v0.1.10
-[0.1.9]: https://github.com/0xvasanth/rebase/compare/v0.1.8...v0.1.9
-[0.1.8]: https://github.com/0xvasanth/rebase/compare/v0.1.7...v0.1.8
-[0.1.7]: https://github.com/0xvasanth/rebase/compare/v0.1.6...v0.1.7
-[0.1.6]: https://github.com/0xvasanth/rebase/compare/v0.1.5...v0.1.6
-[0.1.5]: https://github.com/0xvasanth/rebase/compare/v0.1.4...v0.1.5
-[0.1.4]: https://github.com/0xvasanth/rebase/compare/v0.1.3...v0.1.4
-[0.1.3]: https://github.com/0xvasanth/rebase/compare/v0.1.2...v0.1.3
-[0.1.2]: https://github.com/0xvasanth/rebase/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/0xvasanth/rebase/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/0xvasanth/rebase/releases/tag/v0.1.0
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/0xvasanth/gespan/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/0xvasanth/gespan/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/0xvasanth/gespan/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/0xvasanth/gespan/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/0xvasanth/gespan/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/0xvasanth/gespan/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/0xvasanth/gespan/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/0xvasanth/gespan/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/0xvasanth/gespan/compare/v0.7.1...v0.8.0
+[0.7.1]: https://github.com/0xvasanth/gespan/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/0xvasanth/gespan/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/0xvasanth/gespan/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/0xvasanth/gespan/compare/v0.4.3...v0.5.0
+[0.4.3]: https://github.com/0xvasanth/gespan/compare/v0.4.2...v0.4.3
+[0.4.1]: https://github.com/0xvasanth/gespan/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/0xvasanth/gespan/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/0xvasanth/gespan/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/0xvasanth/gespan/compare/v0.1.56...v0.2.0
+[0.1.56]: https://github.com/0xvasanth/gespan/compare/v0.1.55...v0.1.56
+[0.1.55]: https://github.com/0xvasanth/gespan/compare/v0.1.54...v0.1.55
+[0.1.54]: https://github.com/0xvasanth/gespan/compare/v0.1.53...v0.1.54
+[0.1.53]: https://github.com/0xvasanth/gespan/compare/v0.1.52...v0.1.53
+[0.1.52]: https://github.com/0xvasanth/gespan/compare/v0.1.51...v0.1.52
+[0.1.51]: https://github.com/0xvasanth/gespan/compare/v0.1.50...v0.1.51
+[0.1.50]: https://github.com/0xvasanth/gespan/compare/v0.1.49...v0.1.50
+[0.1.49]: https://github.com/0xvasanth/gespan/compare/v0.1.48...v0.1.49
+[0.1.48]: https://github.com/0xvasanth/gespan/compare/v0.1.47...v0.1.48
+[0.1.47]: https://github.com/0xvasanth/gespan/compare/v0.1.46...v0.1.47
+[0.1.46]: https://github.com/0xvasanth/gespan/compare/v0.1.45...v0.1.46
+[0.1.45]: https://github.com/0xvasanth/gespan/compare/v0.1.44...v0.1.45
+[0.1.44]: https://github.com/0xvasanth/gespan/compare/v0.1.43...v0.1.44
+[0.1.43]: https://github.com/0xvasanth/gespan/compare/v0.1.42...v0.1.43
+[0.1.42]: https://github.com/0xvasanth/gespan/compare/v0.1.41...v0.1.42
+[0.1.41]: https://github.com/0xvasanth/gespan/compare/v0.1.40...v0.1.41
+[0.1.40]: https://github.com/0xvasanth/gespan/compare/v0.1.39...v0.1.40
+[0.1.39]: https://github.com/0xvasanth/gespan/compare/v0.1.38...v0.1.39
+[0.1.38]: https://github.com/0xvasanth/gespan/compare/v0.1.37...v0.1.38
+[0.1.37]: https://github.com/0xvasanth/gespan/compare/v0.1.36...v0.1.37
+[0.1.36]: https://github.com/0xvasanth/gespan/compare/v0.1.35...v0.1.36
+[0.1.35]: https://github.com/0xvasanth/gespan/compare/v0.1.34...v0.1.35
+[0.1.34]: https://github.com/0xvasanth/gespan/compare/v0.1.33...v0.1.34
+[0.1.33]: https://github.com/0xvasanth/gespan/compare/v0.1.32...v0.1.33
+[0.1.32]: https://github.com/0xvasanth/gespan/compare/v0.1.31...v0.1.32
+[0.1.31]: https://github.com/0xvasanth/gespan/compare/v0.1.30...v0.1.31
+[0.1.30]: https://github.com/0xvasanth/gespan/compare/v0.1.29...v0.1.30
+[0.1.29]: https://github.com/0xvasanth/gespan/compare/v0.1.28...v0.1.29
+[0.1.28]: https://github.com/0xvasanth/gespan/compare/v0.1.27...v0.1.28
+[0.1.27]: https://github.com/0xvasanth/gespan/compare/v0.1.26...v0.1.27
+[0.1.26]: https://github.com/0xvasanth/gespan/compare/v0.1.25...v0.1.26
+[0.1.25]: https://github.com/0xvasanth/gespan/compare/v0.1.24...v0.1.25
+[0.1.24]: https://github.com/0xvasanth/gespan/compare/v0.1.23...v0.1.24
+[0.1.23]: https://github.com/0xvasanth/gespan/compare/v0.1.22...v0.1.23
+[0.1.22]: https://github.com/0xvasanth/gespan/compare/v0.1.21...v0.1.22
+[0.1.21]: https://github.com/0xvasanth/gespan/compare/v0.1.20...v0.1.21
+[0.1.20]: https://github.com/0xvasanth/gespan/compare/v0.1.19...v0.1.20
+[0.1.19]: https://github.com/0xvasanth/gespan/compare/v0.1.18...v0.1.19
+[0.1.18]: https://github.com/0xvasanth/gespan/compare/v0.1.17...v0.1.18
+[0.1.17]: https://github.com/0xvasanth/gespan/compare/v0.1.16...v0.1.17
+[0.1.16]: https://github.com/0xvasanth/gespan/compare/v0.1.15...v0.1.16
+[0.1.15]: https://github.com/0xvasanth/gespan/compare/v0.1.14...v0.1.15
+[0.1.14]: https://github.com/0xvasanth/gespan/compare/v0.1.13...v0.1.14
+[0.1.13]: https://github.com/0xvasanth/gespan/compare/v0.1.12...v0.1.13
+[0.1.12]: https://github.com/0xvasanth/gespan/compare/v0.1.11...v0.1.12
+[0.1.11]: https://github.com/0xvasanth/gespan/compare/v0.1.10...v0.1.11
+[0.1.10]: https://github.com/0xvasanth/gespan/compare/v0.1.9...v0.1.10
+[0.1.9]: https://github.com/0xvasanth/gespan/compare/v0.1.8...v0.1.9
+[0.1.8]: https://github.com/0xvasanth/gespan/compare/v0.1.7...v0.1.8
+[0.1.7]: https://github.com/0xvasanth/gespan/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/0xvasanth/gespan/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/0xvasanth/gespan/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/0xvasanth/gespan/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/0xvasanth/gespan/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/0xvasanth/gespan/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/0xvasanth/gespan/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/0xvasanth/gespan/releases/tag/v0.1.0

@@ -1,11 +1,11 @@
 import { useSyncExternalStore } from "react";
 import { readFlag, writeFlag } from "./storageFlags";
 
-const SHOW_REMAINING_USAGE_KEY = "rebase.showRemainingUsage";
-const MASK_EMAILS_KEY = "rebase.maskEmails";
-const COMPOSER_AUTOCORRECT_KEY = "rebase.composerAutocorrect";
-const RAIL_PILOTS_PINNED_KEY = "rebase.railPilotsPinned";
-export const PACED_REVEAL_KEY = "rebase.pacedReveal";
+const SHOW_REMAINING_USAGE_KEY = "gespan.showRemainingUsage";
+const MASK_EMAILS_KEY = "gespan.maskEmails";
+const COMPOSER_AUTOCORRECT_KEY = "gespan.composerAutocorrect";
+const RAIL_PILOTS_PINNED_KEY = "gespan.railPilotsPinned";
+export const PACED_REVEAL_KEY = "gespan.pacedReveal";
 
 export const SHOW_REMAINING_USAGE_DEFAULT = false;
 export const MASK_EMAILS_DEFAULT = true;
@@ -14,14 +14,14 @@ export const RAIL_PILOTS_PINNED_DEFAULT = false;
 
 /** Fired on `window` whenever the usage meter direction flips (detail: boolean). */
 export const SHOW_REMAINING_USAGE_CHANGE_EVENT =
-  "rebase:showremainingusagechange";
+  "gespan:showremainingusagechange";
 /** Fired on `window` whenever email masking flips (detail: boolean). */
-export const MASK_EMAILS_CHANGE_EVENT = "rebase:maskemailschange";
+export const MASK_EMAILS_CHANGE_EVENT = "gespan:maskemailschange";
 /** Fired on `window` whenever composer autocorrect flips (detail: boolean). */
 export const COMPOSER_AUTOCORRECT_CHANGE_EVENT =
-  "rebase:composerautocorrectchange";
+  "gespan:composerautocorrectchange";
 /** Fired on `window` whenever Pilots are pinned to or unpinned from the icon rail (detail: boolean). */
-export const RAIL_PILOTS_PINNED_CHANGE_EVENT = "rebase:railpilotspinnedchange";
+export const RAIL_PILOTS_PINNED_CHANGE_EVENT = "gespan:railpilotspinnedchange";
 
 function flagStore(key: string, fallback: boolean, event: string) {
   // Holds a saved value only while storage failed to keep it, so the switch
@@ -76,16 +76,16 @@ const railPilotsPinned = flagStore(
 const pacedReveal = flagStore(
   PACED_REVEAL_KEY,
   true,
-  "rebase:pacedrevealchange",
+  "gespan:pacedrevealchange",
 );
 export const loadPacedReveal = pacedReveal.load;
 export const savePacedReveal = pacedReveal.save;
 export const usePacedReveal = pacedReveal.useFlag;
 
 const newLayoutPromptDismissed = flagStore(
-  "rebase.newLayoutPromptDismissed",
+  "gespan.newLayoutPromptDismissed",
   false,
-  "rebase:newlayoutpromptdismissedchange",
+  "gespan:newlayoutpromptdismissedchange",
 );
 export const saveNewLayoutPromptDismissed = newLayoutPromptDismissed.save;
 export const useNewLayoutPromptDismissed = newLayoutPromptDismissed.useFlag;

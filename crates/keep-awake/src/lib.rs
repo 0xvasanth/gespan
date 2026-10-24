@@ -4,13 +4,13 @@
 //! This only defers the *idle* lock and sleep. A closed lid, a manual lock or a
 //! low battery still win; the OS drops the assertion when the process exits.
 
-/// When Rebase holds the keep-awake assertion.
+/// When Gespan holds the keep-awake assertion.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
     /// Never: the OS idle timer applies as usual.
     #[default]
     Off,
-    /// For as long as Rebase is open.
+    /// For as long as Gespan is open.
     AppOpen,
     /// Only while at least one agent is working.
     AgentsRunning,
@@ -124,7 +124,7 @@ impl<I: Inhibitor> Drop for KeepAwake<I> {
     }
 }
 
-const REASON: &str = "Rebase is keeping the screen awake so running agents are not paused";
+const REASON: &str = "Gespan is keeping the screen awake so running agents are not paused";
 
 #[cfg(target_os = "macos")]
 pub use macos::SystemInhibitor;
@@ -272,7 +272,7 @@ mod linux {
             let child = Command::new("systemd-inhibit")
                 .args([
                     "--what=idle:sleep",
-                    "--who=Rebase",
+                    "--who=Gespan",
                     &format!("--why={}", super::REASON),
                     "--mode=block",
                     "tail",

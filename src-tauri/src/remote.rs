@@ -238,7 +238,7 @@ pub fn remote_connect(
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
     {
-        return Err("Enter the device token issued by rebase-host pair".into());
+        return Err("Enter the device token issued by gespan-host pair".into());
     }
     let descriptor = rpc(&endpoint, &token, None, "environment.describe", json!({}))?;
     if descriptor.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
@@ -424,7 +424,7 @@ fn start_ssh_job(
             let mut machine = if let Some(mut existing) = existing {
                 if upgrade {
                     let platform = remote_ssh::detect_platform(&target, &job, &askpass)?;
-                    job.message("Updating Rebase Host on the machine…");
+                    job.message("Updating Gespan Host on the machine…");
                     let output = remote_ssh::run_script(
                         &target,
                         platform,
@@ -447,7 +447,7 @@ fn start_ssh_job(
                 existing
             } else {
                 let platform = remote_ssh::detect_platform(&target, &job, &askpass)?;
-                job.message("Installing or starting Rebase Host…");
+                job.message("Installing or starting Gespan Host…");
                 let output = remote_ssh::run_script(
                     &target,
                     platform,
@@ -530,7 +530,7 @@ fn start_ssh_job(
                     || !supports("files.create")
                     || !supports("files.searchContent")
                 {
-                    return Err("The installed host package still lacks Explorer and Changes. Install a newer Rebase release with updated host packages.".into());
+                    return Err("The installed host package still lacks Explorer and Changes. Install a newer Gespan release with updated host packages.".into());
                 }
             }
             if machine.name.trim().is_empty() {

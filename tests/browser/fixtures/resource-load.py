@@ -21,7 +21,7 @@ def child(mode, deadline):
             hashlib.sha256(data).digest()
     elif mode == "disk":
         data = os.urandom(4 * 1024 * 1024)
-        with tempfile.TemporaryFile(prefix="rebase-load-") as output:
+        with tempfile.TemporaryFile(prefix="gespan-load-") as output:
             while time.monotonic() < deadline:
                 output.seek(0)
                 for _ in range(16):

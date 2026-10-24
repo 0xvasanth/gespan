@@ -21,7 +21,7 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   invoke,
 }));
 
-const BODY_GLASS_KEY = "rebase.bodyGlass";
+const BODY_GLASS_KEY = "gespan.bodyGlass";
 
 function hasGlass() {
   return document.documentElement.classList.contains("has-native-glass");
@@ -63,8 +63,8 @@ describe("macOS native tint", () => {
         applyThemePreference,
         loadInsetGlass,
       } = await import("./appearance");
-      localStorage.setItem("rebase.insetLayout", "1");
-      localStorage.setItem("rebase.insetGlass", "0");
+      localStorage.setItem("gespan.insetLayout", "1");
+      localStorage.setItem("gespan.insetGlass", "0");
       document.documentElement.classList.toggle("layout-inset", mounted);
       activateWindowAppearance();
 

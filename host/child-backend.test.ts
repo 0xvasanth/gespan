@@ -9,7 +9,7 @@ import { HostChildBackend } from "./child-backend";
 import { REMOTE_PROVIDERS } from "../src/features/connections/model/protocol";
 
 it("resolves every provider and runs only allowed provider commands", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "rebase-catalog-test-"));
+  const directory = mkdtempSync(join(tmpdir(), "gespan-catalog-test-"));
   const file = join(directory, "provider.cjs");
   writeFileSync(file, "console.log(JSON.stringify(process.argv.slice(2)))");
   const backend = new HostChildBackend(
@@ -172,7 +172,7 @@ it("runs the resolved Claude version fallback in headless mode", async () => {
 });
 
 it.each([false, true])("stops a provider tree (ignores SIGTERM: %s)", async (stubborn) => {
-  const directory = mkdtempSync(join(tmpdir(), "rebase-provider-tree-"));
+  const directory = mkdtempSync(join(tmpdir(), "gespan-provider-tree-"));
   const file = join(directory, "provider.cjs");
   writeFileSync(
     file,
@@ -218,7 +218,7 @@ setInterval(() => {}, 1000);
 }, 15_000);
 
 it("stops a provider tree when its host pipe closes unexpectedly", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "rebase-provider-crash-"));
+  const directory = mkdtempSync(join(tmpdir(), "gespan-provider-crash-"));
   const treeFile = join(directory, "tree.json");
   const providerFile = join(directory, "provider.cjs");
   writeFileSync(

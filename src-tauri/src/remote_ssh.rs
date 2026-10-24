@@ -70,7 +70,7 @@ impl Job {
             inner: Mutex::new(JobData {
                 view: JobView {
                     id: uuid::Uuid::new_v4().to_string(),
-                    message: "Connecting to SSH and setting up Rebase Host…".into(),
+                    message: "Connecting to SSH and setting up Gespan Host…".into(),
                     prompt: None,
                     done: false,
                     error: None,
@@ -239,11 +239,11 @@ pub enum HostPlatform {
     Windows,
 }
 
-const PLATFORM_PROBE: &[&str] = &["echo", "REBASE_PLATFORM", "$env:OS", "%OS%", "$OS"];
+const PLATFORM_PROBE: &[&str] = &["echo", "GESPAN_PLATFORM", "$env:OS", "%OS%", "$OS"];
 
 fn parse_platform(output: &str) -> Result<HostPlatform, String> {
     let marker = output
-        .rsplit_once("REBASE_PLATFORM")
+        .rsplit_once("GESPAN_PLATFORM")
         .ok_or("Could not identify the remote shell. Use cmd.exe, PowerShell, or a Unix shell.")?
         .1;
     Ok(
@@ -398,7 +398,7 @@ pub fn bootstrap_script(platform: HostPlatform) -> String {
 
 fn bootstrap_script_from_template(platform: HostPlatform, template: &str) -> String {
     let version = env!("CARGO_PKG_VERSION");
-    let url = format!("https://github.com/0xvasanth/rebase/releases/download/v{version}");
+    let url = format!("https://github.com/0xvasanth/gespan/releases/download/v{version}");
     match platform {
         // include_str! preserves checkout line endings, including Windows CRLF.
         HostPlatform::Unix => template
@@ -416,18 +416,18 @@ pub fn upgrade_script(platform: HostPlatform, port: u16) -> String {
     let script = bootstrap_script(platform);
     match platform {
         HostPlatform::Unix => {
-            format!("REBASE_HOST_FORCE_UPGRADE=1\nREBASE_HOST_PORT={port}\n{script}")
+            format!("GESPAN_HOST_FORCE_UPGRADE=1\nGESPAN_HOST_PORT={port}\n{script}")
         }
         HostPlatform::Windows => format!(
-            "$env:REBASE_HOST_FORCE_UPGRADE = '1'\n$env:REBASE_HOST_PORT = '{port}'\n{script}"
+            "$env:GESPAN_HOST_FORCE_UPGRADE = '1'\n$env:GESPAN_HOST_PORT = '{port}'\n{script}"
         ),
     }
 }
 
 pub fn pairing_script(platform: HostPlatform, name: &str) -> String {
     match platform {
-        HostPlatform::Unix => format!("set -eu\n\"$HOME/.rebase-host/bin/rebase-host\" pair --name {} --json\n", shell_quote(name)),
-        HostPlatform::Windows => format!("$ErrorActionPreference = 'Stop'\n$base = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.rebase-host'\n$runtime = [IO.File]::ReadAllText((Join-Path $base 'runtime-path')).Trim()\n& (Join-Path $runtime 'node.exe') (Join-Path $runtime 'host.mjs') pair --name {} --json\nif ($LASTEXITCODE -ne 0) {{ throw 'Host pairing failed.' }}\n", powershell_quote(name)),
+        HostPlatform::Unix => format!("set -eu\n\"$HOME/.gespan-host/bin/gespan-host\" pair --name {} --json\n", shell_quote(name)),
+        HostPlatform::Windows => format!("$ErrorActionPreference = 'Stop'\n$base = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.gespan-host'\n$runtime = [IO.File]::ReadAllText((Join-Path $base 'runtime-path')).Trim()\n& (Join-Path $runtime 'node.exe') (Join-Path $runtime 'host.mjs') pair --name {} --json\nif ($LASTEXITCODE -ne 0) {{ throw 'Host pairing failed.' }}\n", powershell_quote(name)),
     }
 }
 
@@ -649,9 +649,9 @@ pub fn device_name() -> String {
         .take(80)
         .collect();
     if name.is_empty() {
-        "Rebase desktop".into()
+        "Gespan desktop".into()
     } else {
-        format!("Rebase on {name}")
+        format!("Gespan on {name}")
     }
 }
 
@@ -703,9 +703,9 @@ mod tests {
     fn loopback_transport_preserves_host_and_reconnects() {
         let required = |key| std::env::var(key).expect("Run scripts/test-remote-ssh.py");
         let target = SshTarget {
-            target: required("REBASE_TEST_SSH_TARGET"),
-            port: Some(required("REBASE_TEST_SSH_PORT").parse().unwrap()),
-            remote_port: required("REBASE_TEST_HOST_PORT").parse().unwrap(),
+            target: required("GESPAN_TEST_SSH_TARGET"),
+            port: Some(required("GESPAN_TEST_SSH_PORT").parse().unwrap()),
+            remote_port: required("GESPAN_TEST_HOST_PORT").parse().unwrap(),
         };
         let make_command = || {
             let mut command = command(&target, false);
@@ -713,11 +713,11 @@ mod tests {
                 "-F",
                 "/dev/null",
                 "-i",
-                &required("REBASE_TEST_SSH_KEY"),
+                &required("GESPAN_TEST_SSH_KEY"),
                 "-o",
                 "IdentitiesOnly=yes",
                 "-o",
-                &format!("UserKnownHostsFile={}", required("REBASE_TEST_KNOWN_HOSTS")),
+                &format!("UserKnownHostsFile={}", required("GESPAN_TEST_KNOWN_HOSTS")),
             ]);
             command
         };
@@ -742,13 +742,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(output.trim(), "remote-script-ok");
-        let environment = required("REBASE_TEST_ENVIRONMENT");
+        let environment = required("GESPAN_TEST_ENVIRONMENT");
         for _ in 0..2 {
             let tunnel = Tunnel::start_with_command(&target, None, None, make_command()).unwrap();
             let response = ureq::post(&format!("http://127.0.0.1:{}/rpc", tunnel.port))
                 .set(
                     "Authorization",
-                    &format!("Bearer {}", required("REBASE_TEST_TOKEN")),
+                    &format!("Bearer {}", required("GESPAN_TEST_TOKEN")),
                 )
                 .send_string(r#"{"version":1,"method":"environment.describe"}"#)
                 .unwrap();
@@ -806,23 +806,23 @@ mod tests {
         assert!(script.contains("checksum mismatch"));
         assert!(script.contains("\"$FORCE_UPGRADE\" = 1"));
         assert!(script.contains("service uninstall"));
-        assert!(upgrade_script(HostPlatform::Unix, 3774).starts_with("REBASE_HOST_FORCE_UPGRADE=1"));
+        assert!(upgrade_script(HostPlatform::Unix, 3774).starts_with("GESPAN_HOST_FORCE_UPGRADE=1"));
         assert!(!upgrade_script(HostPlatform::Unix, 3774).contains('\r'));
         assert!(upgrade_script(HostPlatform::Windows, 3774)
-            .starts_with("$env:REBASE_HOST_FORCE_UPGRADE = '1'"));
+            .starts_with("$env:GESPAN_HOST_FORCE_UPGRADE = '1'"));
     }
     #[test]
     fn remote_platform_probe_handles_cmd_powershell_and_unix() {
         assert_eq!(
-            parse_platform("REBASE_PLATFORM $env:OS Windows_NT $OS\r\n").unwrap(),
+            parse_platform("GESPAN_PLATFORM $env:OS Windows_NT $OS\r\n").unwrap(),
             HostPlatform::Windows
         );
         assert_eq!(
-            parse_platform("REBASE_PLATFORM\r\nWindows_NT\r\n%OS%\r\n").unwrap(),
+            parse_platform("GESPAN_PLATFORM\r\nWindows_NT\r\n%OS%\r\n").unwrap(),
             HostPlatform::Windows
         );
         assert_eq!(
-            parse_platform("REBASE_PLATFORM :OS %OS%\n").unwrap(),
+            parse_platform("GESPAN_PLATFORM :OS %OS%\n").unwrap(),
             HostPlatform::Unix
         );
         assert!(parse_platform("unrecognized shell").is_err());
@@ -830,7 +830,7 @@ mod tests {
         let script = bootstrap_script(HostPlatform::Windows);
         assert!(!script.contains("@@"));
         assert!(script.contains("checksum mismatch"));
-        assert!(script.contains("Protect-RebaseDirectory"));
+        assert!(script.contains("Protect-GespanDirectory"));
         assert!(pairing_script(HostPlatform::Windows, "Nick's $PC").contains("'Nick''s $PC'"));
     }
     #[cfg(windows)]
@@ -884,7 +884,7 @@ mod tests {
     #[test]
     fn device_names_are_bounded_single_lines() {
         let name = device_name();
-        assert!(name.starts_with("Rebase"));
+        assert!(name.starts_with("Gespan"));
         assert!(name.chars().count() <= 100);
         assert!(!name.chars().any(char::is_control));
     }

@@ -20,7 +20,7 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SYSTEM = {"Darwin": "darwin", "Linux": "linux"}[platform.system()]
 ARCH = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64"}[platform.machine()]
-LAUNCHER = ROOT / "build" / "host-packages" / f"{SYSTEM}-{ARCH}" / "rebase-host"
+LAUNCHER = ROOT / "build" / "host-packages" / f"{SYSTEM}-{ARCH}" / "gespan-host"
 
 
 def free_port():
@@ -39,28 +39,28 @@ def main():
     profile_directory = "debug" if profile == "dev" else profile
     if args.native:
         metadata = json.loads(subprocess.check_output([
-            "cargo", "metadata", "--manifest-path", str(ROOT / "crates/rebase-gpui/Cargo.toml"),
+            "cargo", "metadata", "--manifest-path", str(ROOT / "crates/gespan-gpui/Cargo.toml"),
             "--no-deps", "--format-version", "1",
         ], cwd=ROOT, text=True))
         target = pathlib.Path(metadata["target_directory"])
         if os.environ.get("CARGO_BUILD_TARGET"):
             target /= os.environ["CARGO_BUILD_TARGET"]
-        desktop = args.desktop or target / profile_directory / "rebase-gpui"
-        transport_test = ["cargo", "test", "--manifest-path", "crates/rebase-gpui/Cargo.toml", "--locked", "--offline", "-j", "1", "-p", "rebase-core", "--profile", profile, "--lib", "remote::ssh::tests::loopback_transport_preserves_host_and_reconnects"]
-        build_hint = f"cargo build --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-gpui --profile {profile}"
+        desktop = args.desktop or target / profile_directory / "gespan-gpui"
+        transport_test = ["cargo", "test", "--manifest-path", "crates/gespan-gpui/Cargo.toml", "--locked", "--offline", "-j", "1", "-p", "gespan-core", "--profile", profile, "--lib", "remote::ssh::tests::loopback_transport_preserves_host_and_reconnects"]
+        build_hint = f"cargo build --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-gpui --profile {profile}"
     else:
-        desktop = args.desktop or ROOT / "target" / profile_directory / "rebase"
+        desktop = args.desktop or ROOT / "target" / profile_directory / "gespan"
         transport_test = ["cargo", "test", "--lib", "remote_ssh::tests::loopback_transport_preserves_host_and_reconnects"]
         if args.profile:
             transport_test.extend(["--profile", profile])
-        build_hint = "cargo build --bin rebase" + (f" --profile {profile}" if args.profile else "")
+        build_hint = "cargo build --bin gespan" + (f" --profile {profile}" if args.profile else "")
     desktop = desktop.resolve()
     if not desktop.is_file():
         raise RuntimeError(f"Run {build_hint} first, or pass --desktop with an existing build")
     if not LAUNCHER.is_file():
         raise RuntimeError("Run npm run host:package first")
     sshd = shutil.which("sshd") or "/usr/sbin/sshd"
-    with tempfile.TemporaryDirectory(prefix="rebase-ssh-integration-") as directory:
+    with tempfile.TemporaryDirectory(prefix="gespan-ssh-integration-") as directory:
         folder = pathlib.Path(directory)
         for key in ("host", "client"):
             subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(folder / key)], check=True)
@@ -98,14 +98,14 @@ def main():
                 worker = threading.Thread(target=answer_prompt, daemon=True)
                 worker.start()
                 result = subprocess.run(["ssh", "-F", "/dev/null", "-i", str(folder / "client"), "-p", str(ssh_port), "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=ask", "-o", f"UserKnownHostsFile={folder}/prompt_known_hosts", f"{pwd.getpwuid(os.getuid()).pw_name}@127.0.0.1", "printf", "askpass-ok"],
-                    env={**os.environ, "SSH_ASKPASS": str(desktop), "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": "rebase:0", "REBASE_SSH_ASKPASS_ADDRESS": f"127.0.0.1:{prompts.getsockname()[1]}", "REBASE_SSH_ASKPASS_SECRET": secret}, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=25)
+                    env={**os.environ, "SSH_ASKPASS": str(desktop), "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": "gespan:0", "GESPAN_SSH_ASKPASS_ADDRESS": f"127.0.0.1:{prompts.getsockname()[1]}", "GESPAN_SSH_ASKPASS_SECRET": secret}, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=25)
                 worker.join(timeout=1)
                 assert prompt_results == [True], prompt_results
                 assert result.returncode == 0 and result.stdout == "askpass-ok", result.stderr
                 print("Native askpass verified the disposable SSH host fingerprint.")
             host("start")
             device = json.loads(host("pair", "--name", "Loopback test", "--json"))
-            test_env = {"REBASE_TEST_SSH_TARGET": f"{pwd.getpwuid(os.getuid()).pw_name}@127.0.0.1", "REBASE_TEST_SSH_PORT": str(ssh_port), "REBASE_TEST_HOST_PORT": str(host_port), "REBASE_TEST_SSH_KEY": str(folder / "client"), "REBASE_TEST_KNOWN_HOSTS": str(folder / "known_hosts"), "REBASE_TEST_TOKEN": device["token"], "REBASE_TEST_ENVIRONMENT": device["environmentId"]}
+            test_env = {"GESPAN_TEST_SSH_TARGET": f"{pwd.getpwuid(os.getuid()).pw_name}@127.0.0.1", "GESPAN_TEST_SSH_PORT": str(ssh_port), "GESPAN_TEST_HOST_PORT": str(host_port), "GESPAN_TEST_SSH_KEY": str(folder / "client"), "GESPAN_TEST_KNOWN_HOSTS": str(folder / "known_hosts"), "GESPAN_TEST_TOKEN": device["token"], "GESPAN_TEST_ENVIRONMENT": device["environmentId"]}
             env = {**os.environ, **test_env}
             subprocess.run([*transport_test, "--", "--ignored"], cwd=ROOT, env=env, check=True)
             assert json.loads(host("connection-info"))["port"] == host_port

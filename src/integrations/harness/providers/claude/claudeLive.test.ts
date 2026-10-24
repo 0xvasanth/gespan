@@ -99,7 +99,7 @@ async function startTurn(
   emit({ type: "system", subtype: "init", session_id: "sess_1" });
   emit({
     type: "control_response",
-    response: { subtype: "success", request_id: "rebase_1" },
+    response: { subtype: "success", request_id: "gespan_1" },
   });
   await waitFor(() => parse().some((m) => m.type === "user"), "user prompt");
   return { events, turn };
@@ -1387,7 +1387,7 @@ describe("claude subagents", () => {
       summary: "Found the tokens",
     });
     // The notification wakes Claude for a follow-up turn; that turn's result
-    // is what ends the Rebase turn.
+    // is what ends the Gespan turn.
     await new Promise((r) => setTimeout(r, 30));
     expect(settled).toBe(false);
     emitFollowUpTurn("The explorer found the tokens.");

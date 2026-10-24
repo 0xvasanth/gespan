@@ -1,16 +1,16 @@
 {
-  "name": "rebase-desktop",
+  "name": "gespan-desktop",
   "description": "A desktop GUI for your coding agents",
   "license": "MIT",
   "author": "vasanth",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xvasanth/rebase.git"
+    "url": "git+https://github.com/0xvasanth/gespan.git"
   },
   "bugs": {
-    "url": "https://github.com/0xvasanth/rebase/issues"
+    "url": "https://github.com/0xvasanth/gespan/issues"
   },
-  "homepage": "https://github.com/0xvasanth/rebase#readme",
+  "homepage": "https://gespan.dev",
   "private": true,
   "packageManager": "bun@1.3.14",
   "version": "0.16.0",
@@ -25,7 +25,7 @@
     "test:browser": "playwright test",
     "host:build": "tsc --noEmit -p host/tsconfig.json && node host/build.mjs",
     "host:package": "bun run host:build && node host/package.mjs",
-    "host": "node build/host/rebase-host.mjs",
+    "host": "node build/host/gespan-host.mjs",
     "pretest:host": "bun run host:build",
     "test:host": "vitest run --config host/vitest.config.ts",
     "check": "bun run check:web && bun run check:rust",
@@ -42,8 +42,8 @@
     "native:dev": "node scripts/dev-native.mjs",
     "native:test:dev": "node --test scripts/dev-native.test.mjs scripts/bundle-native-macos.test.mjs scripts/native-dependencies.test.mjs scripts/native-release.test.mjs scripts/package-native.test.mjs",
     "native:build": "node scripts/build-native.mjs",
-    "native:test": "cargo test --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core --profile native-dev && cargo test --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-gpui --profile native-dev -- --test-threads=1",
-    "native:check": "bun run native:test:dev && cargo fmt --manifest-path crates/rebase-gpui/Cargo.toml --all --check && cargo clippy --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core -p rebase-gpui --all-targets --profile native-dev -- -D warnings && bun run native:test"
+    "native:test": "cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev && cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-gpui --profile native-dev -- --test-threads=1",
+    "native:check": "bun run native:test:dev && cargo fmt --manifest-path crates/gespan-gpui/Cargo.toml --all --check && cargo clippy --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core -p gespan-gpui --all-targets --profile native-dev -- -D warnings && bun run native:test"
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.3",

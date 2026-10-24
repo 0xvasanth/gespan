@@ -64,25 +64,25 @@ describe("AgentTranscript collapsed work", () => {
 
   it("shows a /operator request without the command in its amber bubble", () => {
     const markup = render([
-      { id: "user", role: "user", text: "list my notes", rebase: true },
+      { id: "user", role: "user", text: "list my notes", gespan: true },
     ]);
-    expect(markup).toContain('data-rebase="true"');
+    expect(markup).toContain('data-gespan="true"');
     expect(markup).toContain("list my notes");
     expect(markup).not.toContain("/operator");
 
     const legacy = render([
-      { id: "old", role: "user", text: "/rebase list my notes" },
+      { id: "old", role: "user", text: "/gespan list my notes" },
     ]);
-    expect(legacy).toContain('data-rebase="true"');
-    expect(legacy).not.toContain("/rebase");
+    expect(legacy).toContain('data-gespan="true"');
+    expect(legacy).not.toContain("/gespan");
   });
 
-  it("shows Rebase CLI actions instead of their long shell commands", () => {
+  it("shows Gespan CLI actions instead of their long shell commands", () => {
     const command =
-      "/repo/target/debug/Rebase.app/Contents/MacOS/rebase";
+      "/repo/target/debug/Gespan.app/Contents/MacOS/gespan";
     const markup = render(
       [
-        { id: "user", role: "user", text: "/rebase list my notes" },
+        { id: "user", role: "user", text: "/gespan list my notes" },
         {
           id: "help",
           role: "tool",
@@ -98,19 +98,19 @@ describe("AgentTranscript collapsed work", () => {
       ],
       true,
     );
-    expect(markup).toContain("Using Rebase");
-    expect(markup).toContain('data-rebase-tool-call="--help"');
-    expect(markup).toContain('data-rebase-tool-call="notes.list"');
-    expect(markup).toContain("rebase app --help");
-    expect(markup).toContain("rebase app notes.list");
+    expect(markup).toContain("Using Gespan");
+    expect(markup).toContain('data-gespan-tool-call="--help"');
+    expect(markup).toContain('data-gespan-tool-call="notes.list"');
+    expect(markup).toContain("gespan app --help");
+    expect(markup).toContain("gespan app notes.list");
     expect(markup).toContain("Ran");
     expect(markup).toContain("Running");
-    expect(markup).not.toContain("Contents/MacOS/rebase");
-    expect(markup).not.toContain("Show error details for Rebase");
+    expect(markup).not.toContain("Contents/MacOS/gespan");
+    expect(markup).not.toContain("Show error details for Gespan");
   });
 
-  it("shows the full command before approving a Rebase CLI call", () => {
-    const command = "rebase app sessions.send --json '{\"prompt\":\"private-marker\"}'";
+  it("shows the full command before approving a Gespan CLI call", () => {
+    const command = "gespan app sessions.send --json '{\"prompt\":\"private-marker\"}'";
     const markup = renderToStaticMarkup(
       createElement(AgentTranscript, {
         blocks: [
@@ -127,7 +127,7 @@ describe("AgentTranscript collapsed work", () => {
         onApproval: () => {},
       }),
     );
-    expect(markup).toContain('data-rebase-tool-call="sessions.send"');
+    expect(markup).toContain('data-gespan-tool-call="sessions.send"');
     expect(markup).toContain("private-marker");
     expect(markup).toContain("Allow</button>");
 
@@ -138,7 +138,7 @@ describe("AgentTranscript collapsed work", () => {
           {
             id: "call",
             role: "tool",
-            text: "rebase app notes.list && echo extra",
+            text: "gespan app notes.list && echo extra",
             tool: { kind: "shell", status: "pending" },
             approval: { requestId: 2 },
           },
@@ -147,25 +147,25 @@ describe("AgentTranscript collapsed work", () => {
         onApproval: () => {},
       }),
     );
-    expect(compound).not.toContain("data-rebase-tool-call");
+    expect(compound).not.toContain("data-gespan-tool-call");
     expect(compound).toContain("echo extra");
     expect(compound).toContain("Allow</button>");
   });
 
-  it("keeps a failed Rebase call compact until its error is opened", () => {
+  it("keeps a failed Gespan call compact until its error is opened", () => {
     const markup = render([
-      { id: "user", role: "user", text: "/rebase list notes" },
+      { id: "user", role: "user", text: "/gespan list notes" },
       {
         id: "notes",
         role: "tool",
-        text: "rebase app notes.list",
+        text: "gespan app notes.list",
         tool: { kind: "shell", status: "failed", detail: "Connection refused" },
       },
     ]);
-    expect(markup).toContain('data-rebase-tool-call="notes.list"');
+    expect(markup).toContain('data-gespan-tool-call="notes.list"');
     expect(markup).toContain("Ran");
-    expect(markup).toContain("rebase app notes.list");
-    expect(markup).toContain("Show error details for Rebase: List notes");
+    expect(markup).toContain("gespan app notes.list");
+    expect(markup).toContain("Show error details for Gespan: List notes");
     expect(markup).not.toContain("Connection refused");
   });
 
@@ -1006,7 +1006,7 @@ describe("worker assignment prompts", () => {
             id: "u1",
             role: "user",
             internal: true,
-            text: "Review the current branch against main.\n\n<rebase_assignment>\nYou are a worker managed by a Rebase lead. Your assigned write scope is: src/App.tsx.\n</rebase_assignment>",
+            text: "Review the current branch against main.\n\n<gespan_assignment>\nYou are a worker managed by a Gespan lead. Your assigned write scope is: src/App.tsx.\n</gespan_assignment>",
           },
           { id: "a1", role: "assistant", text: "Looking now" },
         ],
@@ -1014,7 +1014,7 @@ describe("worker assignment prompts", () => {
     );
     expect(markup).toContain("Review the current branch against main.");
     expect(markup).toContain("Looking now");
-    expect(markup).not.toContain("rebase_assignment");
-    expect(markup).not.toContain("You are a worker managed by a Rebase lead");
+    expect(markup).not.toContain("gespan_assignment");
+    expect(markup).not.toContain("You are a worker managed by a Gespan lead");
   });
 });

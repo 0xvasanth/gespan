@@ -219,12 +219,12 @@ describe("UsageProviderChip", () => {
             saveShowRemainingUsage(remaining);
           } else {
             localStorage.setItem(
-              "rebase.showRemainingUsage",
+              "gespan.showRemainingUsage",
               remaining ? "1" : "0",
             );
             window.dispatchEvent(
               new StorageEvent("storage", {
-                key: "rebase.showRemainingUsage",
+                key: "gespan.showRemainingUsage",
               }),
             );
           }

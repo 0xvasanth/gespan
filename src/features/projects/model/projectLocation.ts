@@ -9,7 +9,7 @@ import {
   sameProjectPath,
 } from "./recents";
 
-const KEY = "rebase.projectLocations";
+const KEY = "gespan.projectLocations";
 
 type StoredProjectLocation = {
   path: string;

@@ -1,4 +1,4 @@
-# Rebase — project rules
+# Gespan — project rules
 
 ## UI tooling: use Bun
 

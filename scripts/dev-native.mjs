@@ -70,19 +70,19 @@ export async function startDev({
         builtRevision = revision;
         const started = Date.now();
         log("Building… (the current app stays open)");
-        const metadataResult = await run("cargo", ["metadata", "--manifest-path", "crates/rebase-gpui/Cargo.toml", "--locked", "--no-deps", "--format-version", "1"], true);
+        const metadataResult = await run("cargo", ["metadata", "--manifest-path", "crates/gespan-gpui/Cargo.toml", "--locked", "--no-deps", "--format-version", "1"], true);
         if (closing) return;
         if (metadataResult.code !== 0) {
           log("Cargo metadata failed. Fix the error, then type r to retry.");
           continue;
         }
         const metadata = JSON.parse(metadataResult.stdout);
-        const pkg = metadata.packages.find((pkg) => pkg.name === "rebase-gpui");
-        if (!pkg) throw new Error("The rebase-gpui package was not found.");
+        const pkg = metadata.packages.find((pkg) => pkg.name === "gespan-gpui");
+        if (!pkg) throw new Error("The gespan-gpui package was not found.");
         const target = buildEnv.CARGO_BUILD_TARGET
           ? join(metadata.target_directory, buildEnv.CARGO_BUILD_TARGET)
           : metadata.target_directory;
-        const result = await run("cargo", ["build", "--manifest-path", "crates/rebase-gpui/Cargo.toml", "--locked", "-p", pkg.name, "--bin", pkg.name, "--profile", "native-dev"]);
+        const result = await run("cargo", ["build", "--manifest-path", "crates/gespan-gpui/Cargo.toml", "--locked", "-p", pkg.name, "--bin", pkg.name, "--profile", "native-dev"]);
         if (closing) return;
         if (result.code !== 0) {
           log("Build failed. Keeping the current app; type r to retry after fixing the error.");
@@ -90,12 +90,12 @@ export async function startDev({
         }
         // Another restart request during compilation gets a fresh build first.
         if (builtRevision !== revision) continue;
-        let executable = join(target, "native-dev", platform === "win32" ? "rebase-gpui.exe" : "rebase-gpui");
+        let executable = join(target, "native-dev", platform === "win32" ? "gespan-gpui.exe" : "gespan-gpui");
         if (bundle) {
           const dataMode = args.reduce((mode, arg, index) => {
-            if (["--cwd", "--rebase-db"].includes(args[index - 1])) return mode;
+            if (["--cwd", "--gespan-db"].includes(args[index - 1])) return mode;
             if (arg === "--dev-data") return "dev-data";
-            if (arg === "--rebase-data") return "rebase-data";
+            if (arg === "--gespan-data") return "gespan-data";
             return mode;
           }, "dev-data");
           const packaged = await run("bash", ["scripts/bundle-native-macos.sh", "native-dev", target, pkg.version, dataMode]);
@@ -105,15 +105,15 @@ export async function startDev({
             continue;
           }
           // Matches bundle-native-macos.sh: development data runs as its own app.
-          const appName = dataMode === "dev-data" ? "Rebase Native Dev.app" : "Rebase Native.app";
-          executable = join(target, "native-dev", appName, "Contents", "MacOS", "rebase-gpui");
+          const appName = dataMode === "dev-data" ? "Gespan Native Dev.app" : "Gespan Native.app";
+          executable = join(target, "native-dev", appName, "Contents", "MacOS", "gespan-gpui");
         }
         if (builtRevision !== revision) continue;
         await stopApp();
         if (closing) return;
         if (builtRevision !== revision) continue;
         const next = launch(executable, args, {
-          env: { ...buildEnv, REBASE_DEV_RELOAD: "1" },
+          env: { ...buildEnv, GESPAN_DEV_RELOAD: "1" },
           stdio: ["pipe", "inherit", "inherit"],
           // Ctrl+C reaches the runner, which lets the app run its quit hooks.
           detached: platform !== "win32",
@@ -180,7 +180,7 @@ export function parseDevArgs(argv) {
     } else {
       options.args.push(arg);
       // Preserve values even when an app path happens to match a runner flag.
-      if (["--cwd", "--rebase-db"].includes(arg) && index + 1 < argv.length) {
+      if (["--cwd", "--gespan-db"].includes(arg) && index + 1 < argv.length) {
         options.args.push(argv[++index]);
       }
     }

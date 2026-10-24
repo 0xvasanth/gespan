@@ -2,7 +2,7 @@
  * Claude's keep-alive for a running tool call:
  * `{"type":"tool_progress","tool_use_id":"<P>-heartbeat-<n>",
  *   "parent_tool_use_id":"<P>","heartbeat":true,"elapsed_time_seconds":…}`.
- * Same definition as Rebase Native (`rebase-core/src/tool/tasks.rs`).
+ * Same definition as Gespan Native (`gespan-core/src/tool/tasks.rs`).
  */
 const HEARTBEAT_SUFFIX = /-heartbeat-(\d+)$/;
 

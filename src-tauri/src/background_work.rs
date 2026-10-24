@@ -127,7 +127,7 @@ mod tests {
                 "background_work::tests::child_policy_probe",
                 "--nocapture",
             ])
-            .env("REBASE_PRIORITY_PROBE", "1");
+            .env("GESPAN_PRIORITY_PROBE", "1");
         configure_child(&mut child);
         let output = child.output().unwrap();
         assert!(
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn child_policy_probe() {
-        if std::env::var("REBASE_PRIORITY_PROBE").as_deref() != Ok("1") {
+        if std::env::var("GESPAN_PRIORITY_PROBE").as_deref() != Ok("1") {
             return;
         }
         assert!(unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) } >= 10);

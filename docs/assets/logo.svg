@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="104 104 816 816" width="512" height="512">
-  <title>Rebase</title>
+  <title>Gespan</title>
   <desc>Eight rounded blocks run clockwise from near-white to deep purple around a terminal prompt. Transparent background; each block has a thin outline in its own darker shade so the light blocks stay visible on white.</desc>
   <rect id="left-top" x="146.5" y="314.5" width="163" height="163" rx="21.5" fill="#ede9fe" stroke="#92909d" stroke-width="5"/>
   <rect id="top-left" x="314.5" y="146.5" width="163" height="163" rx="21.5" fill="#c0affc" stroke="#776c9c" stroke-width="5"/>

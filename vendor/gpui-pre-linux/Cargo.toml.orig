@@ -1,4 +1,4 @@
-# Modified by Monocode to remove the unused screen-capture dependency. See NOTICE.
+# Modified by Gespan to remove the unused screen-capture dependency. See NOTICE.
 [package]
 name = "gpui-pre-linux"
 version = "0.3.9"

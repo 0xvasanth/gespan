@@ -1,15 +1,15 @@
 Unicode True
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
-Name "Rebase Native"
+Name "Gespan Native"
 OutFile "@OUTFILE@"
-InstallDir "$LOCALAPPDATA\Programs\Rebase Native"
-InstallDirRegKey HKCU "Software\Rebase Native" "InstallDir"
+InstallDir "$LOCALAPPDATA\Programs\Gespan Native"
+InstallDirRegKey HKCU "Software\Gespan Native" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 VIProductVersion "@WINDOWS_VERSION@"
-VIAddVersionKey "ProductName" "Rebase Native"
-VIAddVersionKey "FileDescription" "Rebase Native preview installer"
+VIAddVersionKey "ProductName" "Gespan Native"
+VIAddVersionKey "FileDescription" "Gespan Native preview installer"
 VIAddVersionKey "FileVersion" "@VERSION@"
 !define MUI_ICON "@ICON@"
 !insertmacro MUI_PAGE_DIRECTORY
@@ -29,64 +29,64 @@ Function .onInit
   System::Call 'kernel32::WaitForSingleObject(p r1, i 120000) i .r2'
   System::Call 'kernel32::CloseHandle(p r1)'
   StrCmp $2 0 ready
-  Abort "Rebase Native did not close. Please try updating again."
+  Abort "Gespan Native did not close. Please try updating again."
   ready:
 FunctionEnd
-Section "Rebase Native"
+Section "Gespan Native"
   SetOutPath "$INSTDIR"
   ClearErrors
-  File /oname=rebase-gpui.next.exe "@STAGE@\rebase-gpui.exe"
+  File /oname=gespan-gpui.next.exe "@STAGE@\gespan-gpui.exe"
   IfErrors install_failed
   StrCpy $HadPrevious 0
-  IfFileExists "$INSTDIR\rebase-gpui.exe" 0 replace_binary
-  Delete "$INSTDIR\rebase-gpui.previous.exe"
+  IfFileExists "$INSTDIR\gespan-gpui.exe" 0 replace_binary
+  Delete "$INSTDIR\gespan-gpui.previous.exe"
   ClearErrors
-  Rename "$INSTDIR\rebase-gpui.exe" "$INSTDIR\rebase-gpui.previous.exe"
+  Rename "$INSTDIR\gespan-gpui.exe" "$INSTDIR\gespan-gpui.previous.exe"
   IfErrors install_failed
   StrCpy $HadPrevious 1
   replace_binary:
   ClearErrors
-  Rename "$INSTDIR\rebase-gpui.next.exe" "$INSTDIR\rebase-gpui.exe"
+  Rename "$INSTDIR\gespan-gpui.next.exe" "$INSTDIR\gespan-gpui.exe"
   IfErrors rollback_binary
   File "@STAGE@\native-install.json"
   File /r "@STAGE@\licenses"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "Software\Rebase Native" "InstallDir" "$INSTDIR"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RebaseNative" "DisplayName" "Rebase Native"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RebaseNative" "DisplayVersion" "@VERSION@"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RebaseNative" "UninstallString" '$"$INSTDIR\Uninstall.exe$"'
-  CreateShortcut "$SMPROGRAMS\Rebase Native.lnk" "$INSTDIR\rebase-gpui.exe"
-  CreateShortcut "$DESKTOP\Rebase Native.lnk" "$INSTDIR\rebase-gpui.exe"
-  Delete "$INSTDIR\rebase-gpui.previous.exe"
+  WriteRegStr HKCU "Software\Gespan Native" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "DisplayName" "Gespan Native"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "DisplayVersion" "@VERSION@"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative" "UninstallString" '$"$INSTDIR\Uninstall.exe$"'
+  CreateShortcut "$SMPROGRAMS\Gespan Native.lnk" "$INSTDIR\gespan-gpui.exe"
+  CreateShortcut "$DESKTOP\Gespan Native.lnk" "$INSTDIR\gespan-gpui.exe"
+  Delete "$INSTDIR\gespan-gpui.previous.exe"
   Goto install_done
   rollback_binary:
   StrCmp $HadPrevious 1 0 install_failed
-  Rename "$INSTDIR\rebase-gpui.previous.exe" "$INSTDIR\rebase-gpui.exe"
+  Rename "$INSTDIR\gespan-gpui.previous.exe" "$INSTDIR\gespan-gpui.exe"
   install_failed:
-  Delete "$INSTDIR\rebase-gpui.next.exe"
-  MessageBox MB_ICONSTOP "Rebase Native could not be updated. The previous executable was retained. Close other Rebase Native processes and try again."
+  Delete "$INSTDIR\gespan-gpui.next.exe"
+  MessageBox MB_ICONSTOP "Gespan Native could not be updated. The previous executable was retained. Close other Gespan Native processes and try again."
   Abort
   install_done:
 SectionEnd
 Function .onInstFailed
   StrCmp $UpdatePID "" failed_done
-  IfFileExists "$INSTDIR\rebase-gpui.exe" 0 failed_done
-  Exec '$"$INSTDIR\rebase-gpui.exe$"'
+  IfFileExists "$INSTDIR\gespan-gpui.exe" 0 failed_done
+  Exec '$"$INSTDIR\gespan-gpui.exe$"'
   failed_done:
 FunctionEnd
 Function .onInstSuccess
   StrCmp $UpdatePID "" done
-  Exec '$"$INSTDIR\rebase-gpui.exe$"'
+  Exec '$"$INSTDIR\gespan-gpui.exe$"'
   done:
 FunctionEnd
 Section "Uninstall"
-  Delete "$SMPROGRAMS\Rebase Native.lnk"
-  Delete "$DESKTOP\Rebase Native.lnk"
-  Delete "$INSTDIR\rebase-gpui.exe"
+  Delete "$SMPROGRAMS\Gespan Native.lnk"
+  Delete "$DESKTOP\Gespan Native.lnk"
+  Delete "$INSTDIR\gespan-gpui.exe"
   Delete "$INSTDIR\native-install.json"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir /r "$INSTDIR\licenses"
   RMDir "$INSTDIR"
-  DeleteRegKey HKCU "Software\Rebase Native"
-  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RebaseNative"
+  DeleteRegKey HKCU "Software\Gespan Native"
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GespanNative"
 SectionEnd

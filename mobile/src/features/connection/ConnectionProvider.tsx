@@ -36,10 +36,10 @@ export type Catalog = {
   addresses?: Desktop["addresses"];
 };
 const EMPTY: Catalog = { projects: [], pilots: [], sessions: [] };
-const PAIRING = "rebase.mobile.pairing";
-const IDENTITY = "rebase.mobile.identity";
+const PAIRING = "gespan.mobile.pairing";
+const IDENTITY = "gespan.mobile.identity";
 const key = (fingerprint: string, kind: string) =>
-  `rebase.mobile.${fingerprint}.${kind}`;
+  `gespan.mobile.${fingerprint}.${kind}`;
 type Connection = {
   restoring: boolean;
   pairing: Pairing | null;

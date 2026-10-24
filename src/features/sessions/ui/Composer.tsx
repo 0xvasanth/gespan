@@ -572,7 +572,7 @@ export function Composer({
             ...(supportsBtwHarness(harness) ? [BTW_COMMAND] : []),
             ...skills.filter(
               (skill) =>
-                ![OPERATOR_COMMAND.name, "pilot", "rebase"].includes(
+                ![OPERATOR_COMMAND.name, "pilot", "gespan"].includes(
                   skill.name,
                 ) &&
                 (skill.kind === "native" ||
@@ -1920,7 +1920,7 @@ export function Composer({
               onManage={() => {
                 mcpInsertAt.current = null;
                 setMcpPickerOpen(false);
-                window.dispatchEvent(new Event("rebase:open-mcp-settings"));
+                window.dispatchEvent(new Event("gespan:open-mcp-settings"));
               }}
               onDismiss={(reason) => {
                 mcpInsertAt.current = null;
@@ -2266,7 +2266,7 @@ export function Composer({
                       <span className="min-w-0 flex-1">
                         <span className="block text-[13px]">Operator</span>
                         <span className="block truncate whitespace-nowrap text-[11px] leading-4 text-content/45">
-                          Give this thread access to Rebase
+                          Give this thread access to Gespan
                         </span>
                       </span>
                       {operatorActive ? (

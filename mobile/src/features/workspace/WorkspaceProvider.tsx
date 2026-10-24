@@ -124,8 +124,8 @@ const StatusContext = createContext<Status | null>(null);
  *  again after a restart shows at once while its watch reopens. */
 const CACHED_CONVERSATIONS = 12;
 const cacheKey = (desktop: string, id: string) =>
-  `rebase.mobile.${desktop}.turns.${id}`;
-const cacheIndexKey = (desktop: string) => `rebase.mobile.${desktop}.turns`;
+  `gespan.mobile.${desktop}.turns.${id}`;
+const cacheIndexKey = (desktop: string) => `gespan.mobile.${desktop}.turns`;
 
 async function readCachedTurns(desktop: string, id: string): Promise<Turn[] | null> {
   try {

@@ -19,7 +19,7 @@ function manifest(changes = {}) {
 
 test("all native architectures and installation types have isolated versioned URLs", () => {
   const result = manifest();
-  assert.equal(result.app_id, "com.rebase.native");
+  assert.equal(result.app_id, "dev.gespan.native");
   assert.equal(result.channel, "native-preview");
   assert.deepEqual(
     Object.keys(result.platforms).sort(),

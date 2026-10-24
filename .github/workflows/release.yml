@@ -144,8 +144,8 @@ jobs:
             fi
             codesign --verify --deep --strict --verbose=2 "$app"
           }
-          verify_app "target/aarch64-apple-darwin/release/bundle/macos/Rebase.app" arm64
-          verify_app "target/x86_64-apple-darwin/release/bundle/macos/Rebase.app" x86_64
+          verify_app "target/aarch64-apple-darwin/release/bundle/macos/Gespan.app" arm64
+          verify_app "target/x86_64-apple-darwin/release/bundle/macos/Gespan.app" x86_64
 
       - name: Download Linux packages
         uses: actions/download-artifact@v8
@@ -228,15 +228,15 @@ jobs:
           done
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           RELEASE_PREFIX="releases/${VERSION}"
-          ARM_TAR_KEY="${RELEASE_PREFIX}/Rebase.app.tar.gz"
+          ARM_TAR_KEY="${RELEASE_PREFIX}/Gespan.app.tar.gz"
           ARM_SIG_KEY="${ARM_TAR_KEY}.sig"
-          ARM_DMG_KEY="${RELEASE_PREFIX}/Rebase_${VERSION}_aarch64.dmg"
-          INTEL_TAR_KEY="${RELEASE_PREFIX}/Rebase_x64.app.tar.gz"
+          ARM_DMG_KEY="${RELEASE_PREFIX}/Gespan_${VERSION}_aarch64.dmg"
+          INTEL_TAR_KEY="${RELEASE_PREFIX}/Gespan_x64.app.tar.gz"
           INTEL_SIG_KEY="${INTEL_TAR_KEY}.sig"
-          INTEL_DMG_KEY="${RELEASE_PREFIX}/Rebase_${VERSION}_x64.dmg"
-          WINDOWS_INSTALLER_KEY="${RELEASE_PREFIX}/Rebase_${VERSION}_x64-setup.exe"
+          INTEL_DMG_KEY="${RELEASE_PREFIX}/Gespan_${VERSION}_x64.dmg"
+          WINDOWS_INSTALLER_KEY="${RELEASE_PREFIX}/Gespan_${VERSION}_x64-setup.exe"
           WINDOWS_SIGNATURE_KEY="${WINDOWS_INSTALLER_KEY}.sig"
-          LINUX_APPIMAGE_KEY="${RELEASE_PREFIX}/Rebase_${VERSION}_amd64.AppImage"
+          LINUX_APPIMAGE_KEY="${RELEASE_PREFIX}/Gespan_${VERSION}_amd64.AppImage"
           LINUX_APPIMAGE_SIGNATURE_KEY="${LINUX_APPIMAGE_KEY}.sig"
           # The feed always points at the GitHub Release assets (their names
           # match the basenames of the R2 keys), independent of R2.
@@ -258,7 +258,7 @@ jobs:
             JSON.stringify(
               {
                 version: process.env.VERSION,
-                notes: `Rebase ${process.env.VERSION}`,
+                notes: `Gespan ${process.env.VERSION}`,
                 pub_date: new Date().toISOString(),
                 platforms: {
                   "darwin-aarch64": {
@@ -316,8 +316,8 @@ jobs:
           # Keep stable links for both architectures, but never let the CDN
           # retain an older release under these mutable names.
           if [[ "$RELEASE_PRERELEASE" != true ]]; then
-            aws s3 cp "$ARM_DMG" "s3://${R2_BUCKET_NAME}/Rebase.dmg" --cache-control "$NO_CACHE" --endpoint-url "$ENDPOINT"
-            aws s3 cp "$INTEL_DMG" "s3://${R2_BUCKET_NAME}/Rebase_x64.dmg" --cache-control "$NO_CACHE" --endpoint-url "$ENDPOINT"
+            aws s3 cp "$ARM_DMG" "s3://${R2_BUCKET_NAME}/Gespan.dmg" --cache-control "$NO_CACHE" --endpoint-url "$ENDPOINT"
+            aws s3 cp "$INTEL_DMG" "s3://${R2_BUCKET_NAME}/Gespan_x64.dmg" --cache-control "$NO_CACHE" --endpoint-url "$ENDPOINT"
           fi
 
       - name: GitHub Release
@@ -329,14 +329,14 @@ jobs:
           BUNDLE="target/release/bundle"
           ARM_BUNDLE="target/aarch64-apple-darwin/release/bundle"
           INTEL_BUNDLE="target/x86_64-apple-darwin/release/bundle"
-          ARM_TAR="$ARM_BUNDLE/macos/Rebase.app.tar.gz"
+          ARM_TAR="$ARM_BUNDLE/macos/Gespan.app.tar.gz"
           ARM_SIG="${ARM_TAR}.sig"
-          ARM_DMG="$ARM_BUNDLE/dmg/Rebase_${VERSION}_aarch64.dmg"
-          INTEL_TAR="$INTEL_BUNDLE/macos/Rebase.app.tar.gz"
+          ARM_DMG="$ARM_BUNDLE/dmg/Gespan_${VERSION}_aarch64.dmg"
+          INTEL_TAR="$INTEL_BUNDLE/macos/Gespan.app.tar.gz"
           INTEL_SIG="${INTEL_TAR}.sig"
-          INTEL_DMG="$INTEL_BUNDLE/dmg/Rebase_${VERSION}_x64.dmg"
-          DEB="$BUNDLE/linux/Rebase_${VERSION}_amd64.deb"
-          APPIMAGE="$BUNDLE/linux/Rebase_${VERSION}_amd64.AppImage"
+          INTEL_DMG="$INTEL_BUNDLE/dmg/Gespan_${VERSION}_x64.dmg"
+          DEB="$BUNDLE/linux/Gespan_${VERSION}_amd64.deb"
+          APPIMAGE="$BUNDLE/linux/Gespan_${VERSION}_amd64.AppImage"
           APPIMAGE_SIG="${APPIMAGE}.sig"
           shopt -s nullglob
           RPMS=("$BUNDLE"/rpm/*.rpm)
@@ -345,7 +345,7 @@ jobs:
             exit 1
           fi
           RPM="${RPMS[0]}"
-          NSIS="$BUNDLE/nsis/Rebase_${VERSION}_x64-setup.exe"
+          NSIS="$BUNDLE/nsis/Gespan_${VERSION}_x64-setup.exe"
           NSIS_SIG="${NSIS}.sig"
           for artifact in "$ARM_DMG" "$ARM_TAR" "$ARM_SIG" "$INTEL_DMG" "$INTEL_TAR" "$INTEL_SIG" "$DEB" "$APPIMAGE" "$APPIMAGE_SIG" "$RPM" "$NSIS" "$NSIS_SIG"; do
             if [[ ! -f "$artifact" ]]; then
@@ -355,10 +355,10 @@ jobs:
           done
           RELEASE_ASSETS="$RUNNER_TEMP/github-release-assets"
           mkdir -p "$RELEASE_ASSETS"
-          cp "$ARM_TAR" "$RELEASE_ASSETS/Rebase.app.tar.gz"
-          cp "$ARM_SIG" "$RELEASE_ASSETS/Rebase.app.tar.gz.sig"
-          cp "$INTEL_TAR" "$RELEASE_ASSETS/Rebase_x64.app.tar.gz"
-          cp "$INTEL_SIG" "$RELEASE_ASSETS/Rebase_x64.app.tar.gz.sig"
+          cp "$ARM_TAR" "$RELEASE_ASSETS/Gespan.app.tar.gz"
+          cp "$ARM_SIG" "$RELEASE_ASSETS/Gespan.app.tar.gz.sig"
+          cp "$INTEL_TAR" "$RELEASE_ASSETS/Gespan_x64.app.tar.gz"
+          cp "$INTEL_SIG" "$RELEASE_ASSETS/Gespan_x64.app.tar.gz.sig"
           HOST_ARCHIVES=(build/host-packages/*.tar.gz build/host-packages/*.zip)
           if (( ${#HOST_ARCHIVES[@]} != 6 )); then
             echo "Expected six host archives" >&2
@@ -373,8 +373,8 @@ jobs:
             HOST_FILES+=("$archive.sha256")
           done
           RELEASE_FILES=(
-            "$ARM_DMG" "$RELEASE_ASSETS/Rebase.app.tar.gz" "$RELEASE_ASSETS/Rebase.app.tar.gz.sig"
-            "$INTEL_DMG" "$RELEASE_ASSETS/Rebase_x64.app.tar.gz" "$RELEASE_ASSETS/Rebase_x64.app.tar.gz.sig"
+            "$ARM_DMG" "$RELEASE_ASSETS/Gespan.app.tar.gz" "$RELEASE_ASSETS/Gespan.app.tar.gz.sig"
+            "$INTEL_DMG" "$RELEASE_ASSETS/Gespan_x64.app.tar.gz" "$RELEASE_ASSETS/Gespan_x64.app.tar.gz.sig"
             "$DEB" "$APPIMAGE" "$APPIMAGE_SIG" "$RPM" "$NSIS" "$NSIS_SIG" "${HOST_FILES[@]}"
           )
           # Stable updater feed, served at releases/latest/download/latest.json.
@@ -385,7 +385,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --draft \
               --prerelease="$RELEASE_PRERELEASE" \
-              --title "Rebase $VERSION" \
+              --title "Gespan $VERSION" \
               --notes "See CHANGELOG.md for details."
           fi
           verify_release() {

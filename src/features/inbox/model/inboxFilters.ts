@@ -109,9 +109,9 @@ export function resolveInboxSource(
   return visible.includes(source) ? source : (visible[0] ?? "github");
 }
 
-const FILTERS_KEY = "rebase.inboxFilters";
-const SOURCE_KEY = "rebase.inboxSource";
-const CONNECTIONS_KEY = "rebase.inboxConnections";
+const FILTERS_KEY = "gespan.inboxFilters";
+const SOURCE_KEY = "gespan.inboxSource";
+const CONNECTIONS_KEY = "gespan.inboxConnections";
 
 const UNKNOWN_CONNECTIONS: InboxSourceConnections = {
   github: null,

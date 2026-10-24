@@ -130,7 +130,7 @@ it("updates subscribers when a repair finishes in another window", async () => {
     finish("completed");
     window.dispatchEvent(
       new StorageEvent("storage", {
-        key: `rebase.ciRepairs.v1.${first.getCiRepairs()[0].id}`,
+        key: `gespan.ciRepairs.v1.${first.getCiRepairs()[0].id}`,
       }),
     );
     expect(second.getCiRepairs()[0].phase).toBe("completed");

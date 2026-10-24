@@ -3433,7 +3433,7 @@ impl From<String> for ClipboardString {
     }
 }
 
-// Modified by Monocode to retain the image fixture outside the omitted examples.
+// Modified by Gespan to retain the image fixture outside the omitted examples.
 #[cfg(test)]
 mod image_tests {
     use super::*;

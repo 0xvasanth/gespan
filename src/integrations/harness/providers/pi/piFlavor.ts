@@ -31,8 +31,8 @@ export const PI_FLAVOR: PiFlavor = {
   resumeFlag: "--session",
   isolateFlags: ["--no-tools", "--no-skills", "--no-context-files"],
   planTools: ["read", "grep", "find", "ls"],
-  probeChildId: "rebase-pi-probe",
-  textChildId: "rebase-pi-text",
+  probeChildId: "gespan-pi-probe",
+  textChildId: "gespan-pi-text",
 };
 
 /**
@@ -47,6 +47,6 @@ export const OMP_FLAVOR: PiFlavor = {
   resumeFlag: "--resume",
   isolateFlags: ["--no-tools", "--no-skills", "--no-rules"],
   planTools: ["read", "grep", "glob", "lsp"],
-  probeChildId: "rebase-omp-probe",
-  textChildId: "rebase-omp-text",
+  probeChildId: "gespan-omp-probe",
+  textChildId: "gespan-omp-text",
 };

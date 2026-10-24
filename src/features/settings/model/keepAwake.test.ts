@@ -47,7 +47,7 @@ describe("keep awake setting", () => {
   it("persists each mode under the key the native app mirrors", () => {
     for (const mode of ["agents_running", "app_open", "off"] as const) {
       saveKeepAwake(mode);
-      expect(localStorage.getItem("rebase.keepAwake")).toBe(mode);
+      expect(localStorage.getItem("gespan.keepAwake")).toBe(mode);
       expect(loadKeepAwake()).toBe(mode);
     }
   });
@@ -60,7 +60,7 @@ describe("keep awake setting", () => {
       new StorageEvent("storage", { key: KEEP_AWAKE_KEY }),
     );
     window.dispatchEvent(
-      new StorageEvent("storage", { key: "rebase.followUpBehavior" }),
+      new StorageEvent("storage", { key: "gespan.followUpBehavior" }),
     );
     expect(onChange).toHaveBeenCalledTimes(2);
     unsubscribe();

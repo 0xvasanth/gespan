@@ -1536,8 +1536,8 @@ function SidebarComponent({
               },
               {
                 kind: "item" as const,
-                id: "copy-rebase-session-id",
-                label: "Rebase session ID",
+                id: "copy-gespan-session-id",
+                label: "Gespan session ID",
               },
             ],
           },
@@ -1682,7 +1682,7 @@ function SidebarComponent({
       setRenamingSessionId(sessionId);
       return;
     }
-    if (id === "copy-harness-session-id" || id === "copy-rebase-session-id") {
+    if (id === "copy-harness-session-id" || id === "copy-gespan-session-id") {
       const value =
         id === "copy-harness-session-id" ? providerSessionId : sessionId;
       if (value) {

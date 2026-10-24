@@ -6,9 +6,9 @@ export const OPERATOR_COMMAND: BuiltinSkill = {
   name: "operator",
   invocation: "operator",
   description:
-    "Give this thread access to Rebase sessions, folders, and notes.",
+    "Give this thread access to Gespan sessions, folders, and notes.",
   scope: "builtin",
-  source: "rebase",
+  source: "gespan",
 };
 
 /** Activate app access with a leading composer command. */
@@ -16,15 +16,15 @@ export function consumeOperatorCommand(text: string): {
   text: string;
   matched: boolean;
 } {
-  // /pilot and /rebase are unlisted aliases of /operator, kept so existing
+  // /pilot and /gespan are unlisted aliases of /operator, kept so existing
   // drafts and threads that use them still activate app access.
-  const match = text.match(/^\s*\/(?:operator|pilot|rebase)(?=\s|$)\s*/i);
+  const match = text.match(/^\s*\/(?:operator|pilot|gespan)(?=\s|$)\s*/i);
   if (!match) return { text, matched: false };
   return { text: text.slice(match[0].length), matched: true };
 }
 
 /** The unlisted alias spellings of /operator, found in earlier user turns. */
-const ALIAS_COMMAND = /^\s*\/(?:pilot|rebase)(?=\s|$)\s*/i;
+const ALIAS_COMMAND = /^\s*\/(?:pilot|gespan)(?=\s|$)\s*/i;
 
 /** A submitted /operator turn keeps CLI access available in later turns. */
 export function isOperatorUserTurn(block: Block): boolean {
@@ -33,7 +33,7 @@ export function isOperatorUserTurn(block: Block): boolean {
     !block.draft &&
     !block.internal &&
     // This persisted field keeps its original name for saved session compatibility.
-    (block.rebase === true || ALIAS_COMMAND.test(block.text))
+    (block.gespan === true || ALIAS_COMMAND.test(block.text))
   );
 }
 
@@ -43,7 +43,7 @@ export function operatorUserPrompt(block: Block): string {
   if (!legacy) return block.text;
   return (
     block.text.slice(legacy[0].length).trim() ||
-    "Explain what you can do in Rebase with the app CLI."
+    "Explain what you can do in Gespan with the app CLI."
   );
 }
 

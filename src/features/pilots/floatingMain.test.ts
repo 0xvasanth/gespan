@@ -37,10 +37,10 @@ it("uses the main app's native glass settings and follows changes from other win
     "--motion-feedback-duration",
     "120ms",
   );
-  localStorage.setItem("rebase.colorScheme", "dark");
-  localStorage.setItem("rebase.sidebarOpacity", "0.5");
-  localStorage.setItem("rebase.sidebarBlur", "32");
-  localStorage.setItem("rebase.bodyGlass", "1");
+  localStorage.setItem("gespan.colorScheme", "dark");
+  localStorage.setItem("gespan.sidebarOpacity", "0.5");
+  localStorage.setItem("gespan.sidebarBlur", "32");
+  localStorage.setItem("gespan.bodyGlass", "1");
   native.invoke.mockResolvedValue(true);
   native.setTheme.mockResolvedValue(undefined);
   const listen = vi.spyOn(window, "addEventListener");
@@ -60,9 +60,9 @@ it("uses the main app's native glass settings and follows changes from other win
   );
   expect(document.documentElement.classList.contains("glass-body")).toBe(true);
 
-  localStorage.setItem("rebase.sidebarOpacity", "0.6");
+  localStorage.setItem("gespan.sidebarOpacity", "0.6");
   window.dispatchEvent(
-    new StorageEvent("storage", { key: "rebase.sidebarOpacity" }),
+    new StorageEvent("storage", { key: "gespan.sidebarOpacity" }),
   );
   expect(native.invoke).toHaveBeenLastCalledWith("set_window_glass_enabled", {
     enabled: true,
@@ -70,9 +70,9 @@ it("uses the main app's native glass settings and follows changes from other win
     opacity: 0.76,
   });
 
-  localStorage.setItem("rebase.colorScheme", "light");
+  localStorage.setItem("gespan.colorScheme", "light");
   window.dispatchEvent(
-    new StorageEvent("storage", { key: "rebase.colorScheme" }),
+    new StorageEvent("storage", { key: "gespan.colorScheme" }),
   );
   expect(
     document.documentElement.classList.contains("has-native-glass-tint"),

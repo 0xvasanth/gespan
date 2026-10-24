@@ -18,7 +18,7 @@ import {
   modelsFromSessionNew,
 } from "./grokProtocol";
 
-const PROBE_ID = "rebase-grok-probe";
+const PROBE_ID = "gespan-grok-probe";
 const DISCOVERY_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 12_000;
 
@@ -36,7 +36,7 @@ export function refreshGrokCatalog(): Promise<void> {
       if (models.length > 0) setHarnessModels("grok", models);
     })
     .catch((error: unknown) => {
-      console.debug("[rebase] grok catalog", error);
+      console.debug("[gespan] grok catalog", error);
     })
     .finally(() => {
       inflight = null;
@@ -46,12 +46,12 @@ export function refreshGrokCatalog(): Promise<void> {
 
 export async function discoverGrokModels(workingDirectory?: string) {
   const fromAcp = await discoverViaAcp(workingDirectory).catch((error: unknown) => {
-    console.debug("[rebase] grok ACP catalog failed", error);
+    console.debug("[gespan] grok ACP catalog failed", error);
     return [];
   });
   if (fromAcp.length > 0) return fromAcp;
   const fromCli = await discoverViaCli(workingDirectory).catch((error: unknown) => {
-    console.debug("[rebase] grok CLI catalog failed", error);
+    console.debug("[gespan] grok CLI catalog failed", error);
     return [];
   });
   if (fromCli.length > 0) return fromCli;
@@ -95,7 +95,7 @@ async function discoverViaAcp(workingDirectory?: string) {
         {
           protocolVersion: 1,
           clientCapabilities: CLIENT_CAPABILITIES,
-          clientInfo: { name: "rebase", version: "0.1.0" },
+          clientInfo: { name: "gespan", version: "0.1.0" },
         },
         REQUEST_TIMEOUT_MS,
       );

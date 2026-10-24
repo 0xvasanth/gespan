@@ -9,7 +9,7 @@ import { SESSION_FOLDER_COMMAND } from "../../sessions/model/sessionFolderComman
 import type { Skill } from "../model/skills";
 
 describe("native command picker", () => {
-  it("renders native commands and argument hints alongside Rebase shortcuts", () => {
+  it("renders native commands and argument hints alongside Gespan shortcuts", () => {
     const native: Skill[] = ompCommandsFromRpcData({
       commands: [
         { name: "plan", source: "builtin", description: "OMP planning" },

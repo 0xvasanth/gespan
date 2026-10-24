@@ -226,7 +226,7 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let dir = std::env::temp_dir()
-                .join(format!("rebase-session-transfer-{}", uuid::Uuid::new_v4()));
+                .join(format!("gespan-session-transfer-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)
         }

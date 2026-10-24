@@ -203,9 +203,9 @@ export const CLAUDE_MODEL_CATALOG: AgentModel[] = [
   },
 ];
 
-const PROBE_ID = "rebase-claude-probe";
-const LIST_MODELS_REQUEST_ID = "rebase_list_models";
-const INIT_REQUEST_ID = "rebase_init";
+const PROBE_ID = "gespan-claude-probe";
+const LIST_MODELS_REQUEST_ID = "gespan_list_models";
+const INIT_REQUEST_ID = "gespan_init";
 const DISCOVERY_TIMEOUT_MS = 15_000;
 
 const EFFORT_LABELS: Record<string, string> = {
@@ -225,7 +225,7 @@ export function refreshClaudeCatalog(): Promise<void> {
       if (models.length > 0) setHarnessModels("claude", models);
     })
     .catch((error: unknown) => {
-      console.debug("[rebase] claude catalog", error);
+      console.debug("[gespan] claude catalog", error);
     })
     .finally(() => {
       inflight = null;
@@ -238,7 +238,7 @@ export async function discoverClaudeModels(
 ): Promise<AgentModel[]> {
   const listed = await discoverViaListModels(workingDirectory).catch(
     (error: unknown) => {
-      console.debug("[rebase] claude list_models catalog failed", error);
+      console.debug("[gespan] claude list_models catalog failed", error);
       return [];
     },
   );

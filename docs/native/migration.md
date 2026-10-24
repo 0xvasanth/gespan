@@ -8,15 +8,15 @@ reference. Production builds, CI, releases and updater feeds continue to use Tau
 
 | Location | Responsibility |
 | --- | --- |
-| `crates/rebase-core/` | Provider transports, persistence, accounts, Git/files, remote connections and shared services |
-| `crates/rebase-gpui/` | Native shell, composer, transcript, editor, settings and platform UI |
-| `crates/rebase-gpui/Cargo.toml` | Independent native Cargo workspace, profiles and dependency patches |
+| `crates/gespan-core/` | Provider transports, persistence, accounts, Git/files, remote connections and shared services |
+| `crates/gespan-gpui/` | Native shell, composer, transcript, editor, settings and platform UI |
+| `crates/gespan-gpui/Cargo.toml` | Independent native Cargo workspace, profiles and dependency patches |
 | `scripts/dev-native.mjs` | Development build and manual restart runner |
 | `scripts/build-native.mjs` | Optimized build and macOS packaging |
 | `scripts/native-editor/`, `scripts/native-settings/` | Generators for embedded JavaScript assets |
 | `vendor/gpui-pre*/` | Pinned framework and platform patches |
 
-`rebase-core` has no Tauri or GPUI dependency. Keep provider and storage
+`gespan-core` has no Tauri or GPUI dependency. Keep provider and storage
 behavior in core services, with UI work in GPUI views. Development uses isolated
 data; release builds use the installed desktop database. See the
 [native guide](README.md#data-and-configuration) for paths and commands.

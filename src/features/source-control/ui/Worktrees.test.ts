@@ -132,16 +132,16 @@ const result = (branch = "feature"): Worktrees => ({
 it("builds temporary and generated worktree branch names", () => {
   expect(
     temporaryWorktreeBranchName("12345678-90ab-cdef-1234-567890abcdef"),
-  ).toBe("rebase/12345678");
-  expect(orchestrationWorktreeBranchName("task-1234")).toBe("rebase/orch-task1234");
+  ).toBe("gespan/12345678");
+  expect(orchestrationWorktreeBranchName("task-1234")).toBe("gespan/orch-task1234");
   expect(namedWorktreeBranch("feature/faster-worktrees")).toBe(
-    "rebase/feature/faster-worktrees",
+    "gespan/feature/faster-worktrees",
   );
-  expect(namedWorktreeBranch("rebase/already-prefixed")).toBe(
-    "rebase/already-prefixed",
+  expect(namedWorktreeBranch("gespan/already-prefixed")).toBe(
+    "gespan/already-prefixed",
   );
-  // Legacy mc/ prefix is stripped, then re-prefixed with rebase/.
-  expect(namedWorktreeBranch("mc/already-short")).toBe("rebase/already-short");
+  // Legacy mc/ prefix is stripped, then re-prefixed with gespan/.
+  expect(namedWorktreeBranch("mc/already-short")).toBe("gespan/already-short");
   expect(namedWorktreeBranch("  ")).toBeNull();
 });
 
@@ -154,8 +154,8 @@ describe("nameWorktreeAfterMessage", () => {
       generate: async () => "open-in-editor-button",
       rename,
     });
-    expect(rename).toHaveBeenCalledWith("rebase/open-in-editor-button");
-    expect(renamed?.branch).toBe("rebase/open-in-editor-button");
+    expect(rename).toHaveBeenCalledWith("gespan/open-in-editor-button");
+    expect(renamed?.branch).toBe("gespan/open-in-editor-button");
   });
 
   it("keeps the placeholder when the provider has no name", async () => {

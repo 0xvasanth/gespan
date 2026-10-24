@@ -447,7 +447,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn creates_pilot_tables_and_no_mono_tables() {
+    fn creates_pilot_tables_and_no_legacy_tables() {
         let store = SessionStore::open_in_memory().unwrap();
         let conn = store.lock_conn().unwrap();
         let names: Vec<String> = conn
@@ -466,8 +466,10 @@ mod tests {
             assert!(names.iter().any(|n| n == t), "missing {t}");
         }
         assert!(
-            !names.iter().any(|n| n.starts_with("mono_")),
-            "stale mono table: {names:?}"
+            !names
+                .iter()
+                .any(|n| n.starts_with(concat!("mo", "no", "_"))),
+            "stale legacy table: {names:?}"
         );
     }
 

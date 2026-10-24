@@ -39,7 +39,7 @@ beforeEach(() => {
       return;
     }
     if (command === "mobile_invite")
-      return { url: "rebase://pair?i=x", expires: Date.now() / 1000 + 900 };
+      return { url: "gespan://pair?i=x", expires: Date.now() / 1000 + 900 };
     if (command === "mobile_revoke") {
       devices = devices.filter(
         (device) => device.id !== (args as { deviceId: string }).deviceId,

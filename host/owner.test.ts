@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { acquireHostOwner } from "./owner";
 
 it("rejects simultaneous owners and recovers a stale modern PID lock", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "rebase-owner-"));
+  const directory = mkdtempSync(join(tmpdir(), "gespan-owner-"));
   let release: (() => void) | undefined;
   try {
     release = await acquireHostOwner(directory);

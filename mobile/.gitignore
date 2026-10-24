@@ -39,5 +39,5 @@ yarn-error.*
 # generated native folders
 /ios
 /android
-modules/rebase-link/ios/*.xcframework/
-modules/rebase-link/android/src/main/jniLibs/
+modules/gespan-link/ios/*.xcframework/
+modules/gespan-link/android/src/main/jniLibs/

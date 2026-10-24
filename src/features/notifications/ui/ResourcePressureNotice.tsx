@@ -278,7 +278,7 @@ export function ResourcePressureNotice({
               </p>
             ) : !processes.length && !error ? (
               <p className="py-6 text-center text-[12px] leading-relaxed text-content/50">
-                No running work found in Rebase.
+                No running work found in Gespan.
                 {pressure.active
                   ? " Other apps may be using these resources."
                   : ""}
