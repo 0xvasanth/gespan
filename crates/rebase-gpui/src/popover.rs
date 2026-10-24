@@ -1029,6 +1029,28 @@ impl Menu {
         }
         cx.emit(event);
     }
+    /// Each action's label and note's text, for tests to read what is shown.
+    #[cfg(test)]
+    pub(crate) fn item_texts(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Action(action) => Some(action.label.to_string()),
+                MenuItem::Note(text) => Some(text.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+    /// Activates the row labelled `label`, as a click on it would.
+    #[cfg(test)]
+    pub(crate) fn pick_label(&mut self, label: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let ix = self
+            .items
+            .iter()
+            .position(|item| matches!(item, MenuItem::Action(a) if a.label.as_ref() == label))
+            .unwrap_or_else(|| panic!("no {label} row"));
+        self.pick(ix, window, cx);
+    }
     pub(crate) fn replace_items(&mut self, items: Vec<MenuItem>, cx: &mut Context<Self>) {
         self.rows.resize_with(items.len(), AnchorSlot::default);
         self.items = items;

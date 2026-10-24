@@ -107,6 +107,7 @@ import { ApprovalToasts } from "../features/sessions/ui/ApprovalToasts";
 import { ResourcePressureNotice } from "../features/notifications/ui/ResourcePressureNotice";
 import { HarnessUpdateNotice } from "../features/providers/ui/HarnessUpdateNotice";
 import { NewLayoutNotice } from "./shell/NewLayoutNotice";
+import { openInEditorFolder } from "./shell/openInEditor";
 import { WhatsNewDialog } from "./shell/WhatsNewDialog";
 import { ProviderSignInDialog } from "../features/sessions/ui/ProviderSignInDialog";
 import {
@@ -14176,6 +14177,13 @@ function Workspace({
       sessionSidebarOpen={sessionSidebarOpen}
       compactRail={!insetLayout && compactTitleNavigation}
       inset={insetLayout}
+      // The focused session's worktree or folder, as a new terminal would
+      // open; Pilots, app views and Settings have none of their own.
+      openInEditorCwd={
+        pilotCovers || activeAppView || settingsOpen
+          ? undefined
+          : openInEditorFolder(terminalCwd)
+      }
       rightPanelOpen={rightPanelOpen}
       onToggleRightPanel={
         showRightPanelToggle ? onToggleRightPanel : undefined
