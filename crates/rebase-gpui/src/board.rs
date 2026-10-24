@@ -168,8 +168,23 @@ impl BoardView {
         self.reload(cx);
     }
 
+    /// A drag that ended where the board never heard the release (over the
+    /// sidebar, outside the window) still ends: GPUI's own drag state decides.
+    /// True when it cleared one.
+    fn forget_finished_drag(&mut self, cx: &App) -> bool {
+        if !self.dragging || cx.has_active_drag() {
+            return false;
+        }
+        self.dragging = false;
+        self.dragged_card = None;
+        self.drop_target = None;
+        self.column_drop = None;
+        true
+    }
+
     /// The view left the screen: stop polling and drop transient editors.
     pub(crate) fn hidden(&mut self, cx: &mut Context<Self>) {
+        self.forget_finished_drag(cx);
         self.visible = false;
         self.composer = None;
         self.menu = None;
@@ -187,6 +202,7 @@ impl BoardView {
     /// Re-read the boards, the open board and its links. Deferred while a drag
     /// is in progress so a reload never yanks a card out from under the pointer.
     pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
+        self.forget_finished_drag(cx);
         if self.dragging {
             self.pending_reload = true;
             return;
@@ -200,6 +216,10 @@ impl BoardView {
 
     fn poll(&mut self, cx: &mut Context<Self>) {
         if !self.visible {
+            return;
+        }
+        if self.forget_finished_drag(cx) && self.pending_reload {
+            self.reload(cx);
             return;
         }
         let Ok(service) = self.service() else {
@@ -964,6 +984,7 @@ use gpui::AnyElement;
 
 impl gpui::Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.forget_finished_drag(cx);
         let root = div()
             .id("board-view")
             .debug_selector(|| "board-view".into())

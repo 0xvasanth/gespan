@@ -231,28 +231,33 @@ fn a_write_from_another_connection_appears_after_the_poll_tick(cx: &mut TestAppC
 
 #[gpui::test]
 fn a_poll_during_a_drag_waits_until_the_drag_ends(cx: &mut TestAppContext) {
-    let f = with_board(cx);
+    let f = seeded(cx, &["Held"]);
     let review = detail(&f, cx).columns[2].id.clone();
-    f.window
-        .update(cx, |view, _, cx| view.set_dragging(true, cx))
-        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let from = center(visual, "board-card-1");
+    visual.simulate_mouse_down(from, gpui::MouseButton::Left, Default::default());
+    for step in 1..=3 {
+        let at = gpui::point(from.x + px(4. * step as f32), from.y + px(4. * step as f32));
+        visual.simulate_mouse_move(at, Some(gpui::MouseButton::Left), Default::default());
+        visual.run_until_parked();
+    }
     Service::open(&f.db)
         .unwrap()
         .card_create(&review, "Mid-drag", "")
         .unwrap();
-    cx.executor().advance_clock(Duration::from_secs(2));
-    cx.run_until_parked();
-    assert!(detail(&f, cx).cards.is_empty());
+    visual.executor().advance_clock(Duration::from_secs(2));
+    visual.run_until_parked();
+    assert_eq!(detail(&f, visual).cards.len(), 1, "no reload mid-drag");
     f.window
-        .read_with(cx, |view, _| assert!(view.pending_reload))
+        .read_with(visual, |view, _| {
+            assert!(view.dragging && view.pending_reload)
+        })
         .unwrap();
+    visual.simulate_mouse_up(from, gpui::MouseButton::Left, Default::default());
+    visual.run_until_parked();
+    assert_eq!(detail(&f, visual).cards.len(), 2);
     f.window
-        .update(cx, |view, _, cx| view.set_dragging(false, cx))
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(detail(&f, cx).cards.len(), 1);
-    f.window
-        .read_with(cx, |view, _| assert!(!view.pending_reload))
+        .read_with(visual, |view, _| assert!(!view.pending_reload))
         .unwrap();
 }
 
@@ -565,4 +570,40 @@ fn a_move_reads_from_and_to_with_actor() {
         activity_text(&row),
         "Moved from In Progress to Review · system"
     );
+}
+
+#[gpui::test]
+fn a_drag_released_off_the_board_does_not_freeze_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Loose"]);
+    let backlog = detail(&f, cx).columns[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let from = center(visual, "board-card-1");
+    visual.simulate_mouse_down(from, gpui::MouseButton::Left, Default::default());
+    for step in 1..=4 {
+        let at = gpui::point(
+            from.x + px(15. * step as f32),
+            from.y + px(15. * step as f32),
+        );
+        visual.simulate_mouse_move(at, Some(gpui::MouseButton::Left), Default::default());
+        visual.run_until_parked();
+    }
+    visual.simulate_mouse_up(
+        gpui::point(px(-50.), px(-50.)),
+        gpui::MouseButton::Left,
+        Default::default(),
+    );
+    visual.run_until_parked();
+    Service::open(&f.db)
+        .unwrap()
+        .card_create(&backlog, "Made elsewhere", "")
+        .unwrap();
+    visual.executor().advance_clock(Duration::from_secs(2));
+    visual.run_until_parked();
+    assert_eq!(detail(&f, visual).cards.len(), 2);
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(!view.dragging);
+            assert!(view.dragged_card.is_none());
+        })
+        .unwrap();
 }
