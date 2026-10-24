@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/mobile-link"]
+members = ["src-tauri", "crates/mobile-link", "crates/keep-awake"]
 exclude = ["vendor/portable-pty", "vendor/gpui-pre", "vendor/gpui-pre-apple", "vendor/gpui-pre-linux", "vendor/gpui-pre-windows", "crates/rebase-core", "crates/rebase-gpui"]
 
 [workspace.package]

@@ -960,13 +960,13 @@ fn write_dev_bundle_icons(
     Ok(())
 }
 
-/// Must match `CFBundleIdentifier` in the generated dev bundle plist and tauri.conf.json.
+/// The dev bundle runs under the development identity, never the installed app's.
 #[cfg(debug_assertions)]
-const DEV_BUNDLE_DEFAULT_NAME: &str = "Rebase";
+const DEV_BUNDLE_DEFAULT_NAME: &str = crate::dev_identity::PRODUCT_NAME;
 #[cfg(debug_assertions)]
 const DEV_BUNDLE_NAME_ENV: &str = "REBASE_DEV_APP_NAME";
 #[cfg(debug_assertions)]
-const DEV_BUNDLE_ID: &str = "com.rebase.desktop";
+const DEV_BUNDLE_ID: &str = crate::dev_identity::IDENTIFIER;
 #[cfg(debug_assertions)]
 const DEV_ICNS: &[u8] = include_bytes!("../icons/icon.icns");
 #[cfg(debug_assertions)]
@@ -1031,7 +1031,7 @@ fn dev_bundle_plist(app_name: &str, version: &str, bundle_version: &str) -> Vec<
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.rebase.desktop</string>
+	<string>{DEV_BUNDLE_ID}</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -1173,5 +1173,13 @@ mod tests {
         let plist = String::from_utf8(dev_bundle_plist("Rebase Dev", "1.2.3", "1.2.3")).unwrap();
         assert!(plist.contains("<string>Rebase Dev</string>"));
         assert!(!plist.contains("<string>Rebase</string>"));
+    }
+
+    #[test]
+    fn dev_bundle_never_claims_the_installed_app_identifier() {
+        let plist = String::from_utf8(dev_bundle_plist("Rebase Dev", "1.2.3", "1.2.3")).unwrap();
+        assert!(plist.contains("<string>com.rebase.desktop.dev</string>"));
+        assert!(!plist.contains("<string>com.rebase.desktop</string>"));
+        assert_eq!(DEV_BUNDLE_DEFAULT_NAME, "Rebase Dev");
     }
 }

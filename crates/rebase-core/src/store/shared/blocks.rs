@@ -108,6 +108,7 @@ fn tool(block: &Value) -> ToolCall {
             Some("in_progress" | "running" | "pending") => ToolState::Running,
             _ => ToolState::Completed,
         },
+        live_elapsed_secs: None,
     }
 }
 fn project_content(block: &Value) -> Result<Vec<Row>, String> {

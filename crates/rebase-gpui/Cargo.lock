@@ -5336,6 +5336,7 @@ dependencies = [
  "qrcode",
  "raw-window-handle",
  "rebase-core",
+ "rebase-keep-awake",
  "rquickjs",
  "serde",
  "serde_json",
@@ -5360,6 +5361,13 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "rebase-keep-awake"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

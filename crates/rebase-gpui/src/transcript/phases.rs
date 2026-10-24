@@ -67,8 +67,15 @@ pub(crate) fn collect(rows: &[Row], from: usize, streaming: bool) -> Phases {
         } else if role == "reasoning" {
             members.push(at);
         } else if role == "tool"
-            && let Ok(mut call) = serde_json::from_str::<ToolCall>(&rows[at].text)
+            && let Ok(saved) = serde_json::from_str::<ToolCall>(&rows[at].text)
         {
+            // Heartbeats saved by earlier builds are hidden here, and only here:
+            // the stored rows keep them.
+            let Some(mut call) = saved.without_legacy_heartbeats() else {
+                result.hidden.insert(at);
+                at = end;
+                continue;
+            };
             let standalone = match call.panel() {
                 Some(Panel::Agent(_))
                     if live_turn.is_some_and(|turn| at >= turn)

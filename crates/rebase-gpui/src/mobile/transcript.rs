@@ -323,7 +323,10 @@ fn phase(
         }
         let text = joined(&rows[at..end]);
         let step = if rows[at].role == "tool" {
-            let Ok(call) = serde_json::from_str::<ToolCall>(&text) else {
+            let Some(call) = serde_json::from_str::<ToolCall>(&text)
+                .ok()
+                .and_then(ToolCall::without_legacy_heartbeats)
+            else {
                 continue;
             };
             let mut step =
@@ -488,7 +491,10 @@ fn agent_turn(source: &Source, turn: &Turn, live: bool) -> Value {
             continue;
         }
         if role == "tool" {
-            let Ok(call) = serde_json::from_str::<ToolCall>(&joined(&rows[at..end])) else {
+            let Some(call) = serde_json::from_str::<ToolCall>(&joined(&rows[at..end]))
+                .ok()
+                .and_then(ToolCall::without_legacy_heartbeats)
+            else {
                 continue;
             };
             if let Some(list) = task_list(at, &call) {
@@ -887,6 +893,46 @@ mod tests {
                 json!({"id":"r0","role":"user","text":"Hi 👋"}),
                 json!({"id":"r1","role":"assistant","text":"Hello!"})
             ]
+        );
+    }
+
+    #[test]
+    fn saved_heartbeat_blocks_do_not_become_steps() {
+        use rebase_core::tool::tasks::{AgentRun, AgentStep, Panel};
+        let mut ghost = rebase_core::tool::ToolCall::new("background:toolu_b:1-1", "Agent");
+        ghost.state = ToolState::Completed;
+        ghost.panel = Some(Panel::Agent(AgentRun {
+            name: Some("Background agent".into()),
+            steps: vec![AgentStep {
+                id: "toolu_b-heartbeat-0".into(),
+                kind: "tool".into(),
+                text: "Bash".into(),
+                state: Some(ToolState::Running),
+                tool_kind: Some("Bash".into()),
+                ..AgentStep::default()
+            }],
+            ..AgentRun::default()
+        }));
+        let rows = [
+            row("user", "Fix it"),
+            row("assistant", "Let me look."),
+            tool(
+                "Read",
+                json!({"file_path": "/repo/src/a.rs"}),
+                ToolState::Completed,
+            ),
+            row("tool", &serde_json::to_string(&ghost).unwrap()),
+            tool("Bash", json!({"command": "cargo test"}), ToolState::Failed),
+            row("assistant", "Fixed."),
+        ];
+        let infos = HashMap::new();
+        let turn = &all(&source(&rows, &infos, false))[0];
+        let steps = turn["items"][1]["entries"][1]["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 2, "{steps:?}");
+        assert!(
+            steps
+                .iter()
+                .all(|step| { !step["label"].as_str().unwrap_or("").contains("Background") })
         );
     }
 

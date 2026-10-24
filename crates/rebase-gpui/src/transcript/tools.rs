@@ -416,6 +416,16 @@ impl TranscriptView {
             .when(failed, |d| {
                 d.child(icon("close", 14.).text_color(rgb(0xff6467)).flex_shrink_0())
             })
+            .when_some(tool.elapsed_label(), |d, label| {
+                d.child(
+                    div()
+                        .debug_selector(move || format!("tool-elapsed-{start}"))
+                        .flex_shrink_0()
+                        .text_size(px(12.))
+                        .text_color(content(0.4))
+                        .child(label),
+                )
+            })
             .when(has_detail, |d| {
                 let toggle_key = error_key.clone();
                 d.cursor_pointer()

@@ -255,6 +255,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "live running sessions rail card",
     ),
     (
+        "keep-awake",
+        Section::General,
+        "Keep screen awake",
+        "keep awake sleep lock idle caffeinate display power battery prevent pause",
+    ),
+    (
         "action-opens-terminal",
         Section::General,
         "Show terminal for actions",
@@ -559,6 +565,14 @@ pub(crate) fn search(query: &str) -> Vec<SearchResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn keep_awake_is_found_by_the_words_people_use_for_a_locking_laptop() {
+        for query in ["keep awake", "sleep", "lock", "caffeinate"] {
+            let results = search(query);
+            let hit = results.iter().find(|r| r.setting == Some("keep-awake"));
+            assert_eq!(hit.map(|r| r.section), Some(Section::General), "{query}");
+        }
+    }
     #[test]
     fn rows_win_their_own_name_and_shared_appearance_rows_are_searchable() {
         let results = search("theme");

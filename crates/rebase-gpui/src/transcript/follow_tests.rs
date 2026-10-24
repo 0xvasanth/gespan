@@ -1574,6 +1574,7 @@ fn tool(ix: usize, done: bool) -> Row {
             },
             panel: None,
             display: None,
+            live_elapsed_secs: None,
         })
         .unwrap(),
     )

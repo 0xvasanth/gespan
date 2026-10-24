@@ -104,7 +104,9 @@ export async function startDev({
             log("App packaging failed. Fix the error, then type r to retry.");
             continue;
           }
-          executable = join(target, "native-dev", "Rebase Native.app", "Contents", "MacOS", "rebase-gpui");
+          // Matches bundle-native-macos.sh: development data runs as its own app.
+          const appName = dataMode === "dev-data" ? "Rebase Native Dev.app" : "Rebase Native.app";
+          executable = join(target, "native-dev", appName, "Contents", "MacOS", "rebase-gpui");
         }
         if (builtRevision !== revision) continue;
         await stopApp();

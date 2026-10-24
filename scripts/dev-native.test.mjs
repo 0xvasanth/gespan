@@ -164,7 +164,8 @@ test("macOS bundles automatically and preserves the selected data mode for Finde
       const packaged = f.calls.find((call) => call.command === "bash");
       assert.deepEqual(packaged.args, ["scripts/bundle-native-macos.sh", "native-dev", join(f.root, "custom-target"), "0.15.0", mode]);
       const app = f.calls.find((call) => !["cargo", "bash"].includes(call.command));
-      assert.equal(app.command, join(f.root, "custom-target/native-dev/Rebase Native.app/Contents/MacOS/rebase-gpui"));
+      const appName = mode === "dev-data" ? "Rebase Native Dev.app" : "Rebase Native.app";
+      assert.equal(app.command, join(f.root, `custom-target/native-dev/${appName}/Contents/MacOS/rebase-gpui`));
       assert.deepEqual(app.args, args);
       const events = await f.events();
       assert.ok(events.indexOf("built") < events.indexOf("package"));

@@ -393,7 +393,14 @@ fn agent(
     }
     let rotation = view.agent_panels.progress(&key, open).2;
     let toggle_key = key.clone();
-    let status = run.status_line(&call.state);
+    let status = [
+        run.status_line(&call.state),
+        call.elapsed_label().unwrap_or_default(),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" · ");
     let model = run.model_name(
         rebase_core::provider::Kind::parse(&view.provider)
             .unwrap_or(rebase_core::provider::Kind::Codex),
@@ -1398,5 +1405,293 @@ mod tests {
             ..wake("x")
         };
         assert_eq!(finished_marker(&other), None);
+    }
+
+    // Builds saved by earlier versions stored Claude's keep-alive heartbeats as
+    // never-ending steps. They are hidden when shown, never edited in the store.
+    fn step(id: &str, text: &str, state: ToolState) -> AgentStep {
+        AgentStep {
+            id: id.into(),
+            kind: "tool".into(),
+            text: text.into(),
+            state: Some(state),
+            tool_kind: Some(text.into()),
+            ..AgentStep::default()
+        }
+    }
+    fn legacy_block(id: &str, steps: Vec<AgentStep>) -> Row {
+        agent_row(
+            id,
+            AgentRun {
+                name: Some("Background agent".into()),
+                steps,
+                ..AgentRun::default()
+            },
+            ToolState::Completed,
+            "",
+        )
+    }
+    fn bash(id: &str, command: &str) -> Row {
+        let mut call = ToolCall::new(id, "Bash");
+        call.input = serde_json::json!({ "command": command }).to_string();
+        call.state = ToolState::Completed;
+        row("tool", &serde_json::to_string(&call).unwrap())
+    }
+    /// Open work fold, then every tool call and phase title the view builds.
+    fn shown(cx: &mut TestAppContext, rows: Vec<Row>) -> (Vec<ToolCall>, Vec<String>) {
+        let window = open_view(cx, rows);
+        window
+            .update(cx, |view, _, cx| {
+                view.work_folds.insert(1, true);
+                view.phases.insert(2, true);
+                view.rebuild(0, cx);
+                let calls = view
+                    .rows
+                    .iter()
+                    .filter_map(|row| match &row.body {
+                        Body::Tool { call, .. } => Some((**call).clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let titles = view
+                    .rows
+                    .iter()
+                    .filter_map(|row| match &row.body {
+                        Body::Phase { title, .. } => Some(title.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                (calls, titles)
+            })
+            .unwrap()
+    }
+    fn real_ids(call: &ToolCall) -> Vec<String> {
+        match call.panel() {
+            Some(Panel::Agent(run)) => run.steps.iter().map(|s| s.id.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[gpui::test]
+    fn legacy_heartbeat_steps_leave_a_saved_run_and_its_step_count(cx: &mut TestAppContext) {
+        let run = legacy_block(
+            "toolu_agent",
+            vec![
+                step("toolu_a", "Bash", ToolState::Completed),
+                step("toolu_agent-heartbeat-0", "Agent", ToolState::Running),
+                step("toolu_b", "Read", ToolState::Completed),
+                step("toolu_agent-heartbeat-1", "Agent", ToolState::Running),
+            ],
+        );
+        let (calls, _) = shown(
+            cx,
+            vec![
+                row("user", "Go"),
+                row("assistant", "Delegating."),
+                run,
+                row("assistant", "Done"),
+            ],
+        );
+        let call = calls
+            .iter()
+            .find(|c| c.id == "toolu_agent")
+            .expect("the run still shows");
+        assert_eq!(real_ids(call), ["toolu_a", "toolu_b"]);
+        let Some(Panel::Agent(run)) = call.panel() else {
+            panic!("agent run")
+        };
+        assert_eq!(run.status_line(&ToolState::Completed), "2 steps");
+        assert_eq!(run.tool_step_count(), 2);
+    }
+
+    #[gpui::test]
+    fn a_saved_background_block_of_only_heartbeats_is_not_shown(cx: &mut TestAppContext) {
+        let ghost = legacy_block(
+            "background:toolu_bash:1-1",
+            vec![
+                step("toolu_bash-heartbeat-0", "Bash", ToolState::Running),
+                step("toolu_bash-heartbeat-1", "Bash", ToolState::Running),
+            ],
+        );
+        let (calls, titles) = shown(
+            cx,
+            vec![
+                row("user", "Go"),
+                row("assistant", "Running it."),
+                bash("toolu_bash", "sleep 70"),
+                ghost,
+                row("assistant", "Done"),
+            ],
+        );
+        assert_eq!(
+            calls.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["toolu_bash"]
+        );
+        assert!(
+            titles.iter().all(|t| !t.to_lowercase().contains("agent")),
+            "{titles:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn a_mixed_background_block_keeps_only_its_real_steps(cx: &mut TestAppContext) {
+        let mixed = legacy_block(
+            "background:toolu_x:1-1",
+            vec![
+                step("toolu_real", "Bash", ToolState::Completed),
+                step("toolu_x-heartbeat-0", "Bash", ToolState::Running),
+            ],
+        );
+        let (calls, _) = shown(
+            cx,
+            vec![
+                row("user", "Go"),
+                row("assistant", "Working."),
+                mixed,
+                row("assistant", "Done"),
+            ],
+        );
+        let call = calls
+            .iter()
+            .find(|c| c.id == "background:toolu_x:1-1")
+            .expect("a block with a real step stays");
+        assert_eq!(real_ids(call), ["toolu_real"]);
+    }
+
+    #[gpui::test]
+    fn ran_n_commands_counts_only_real_commands(cx: &mut TestAppContext) {
+        let ghost = legacy_block(
+            "background:toolu_b:1-1",
+            vec![step("toolu_b-heartbeat-0", "Bash", ToolState::Running)],
+        );
+        let (_, with_ghost) = shown(
+            cx,
+            vec![
+                row("user", "Go"),
+                row("assistant", "Checking."),
+                bash("run1", "pwd"),
+                ghost,
+                bash("run2", "cargo test"),
+                row("assistant", "Done"),
+            ],
+        );
+        let (_, clean) = shown(
+            cx,
+            vec![
+                row("user", "Go"),
+                row("assistant", "Checking."),
+                bash("run1", "pwd"),
+                bash("run2", "cargo test"),
+                row("assistant", "Done"),
+            ],
+        );
+        assert_eq!(clean, ["Ran 2 commands"]);
+        assert_eq!(with_ghost, clean);
+    }
+
+    #[gpui::test]
+    fn legacy_hiding_leaves_the_saved_rows_untouched(cx: &mut TestAppContext) {
+        let ghost = legacy_block(
+            "background:toolu_b:1-1",
+            vec![step("toolu_b-heartbeat-0", "Bash", ToolState::Running)],
+        );
+        let saved = ghost.text.clone();
+        let window = open_view(
+            cx,
+            vec![
+                row("user", "Go"),
+                row("assistant", "Running it."),
+                ghost,
+                row("assistant", "Done"),
+            ],
+        );
+        window
+            .update(cx, |view, _, cx| {
+                view.work_folds.insert(1, true);
+                view.phases.insert(2, true);
+                view.rebuild(0, cx);
+                assert_eq!(view.source[2].text, saved);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_running_call_with_live_elapsed_reads_as_minutes_and_seconds() {
+        let mut call = ToolCall::new("toolu_1", "Bash");
+        assert_eq!(call.elapsed_label(), None);
+        call.live_elapsed_secs = Some(150);
+        assert_eq!(call.elapsed_label().as_deref(), Some("running · 2m 30s"));
+        call.live_elapsed_secs = Some(45);
+        assert_eq!(call.elapsed_label().as_deref(), Some("running · 45s"));
+        // Once the call settles, the leftover value is not shown.
+        call.state = ToolState::Completed;
+        assert_eq!(call.elapsed_label(), None);
+    }
+
+    #[gpui::test]
+    fn stopping_a_turn_forgets_live_elapsed_of_its_running_calls(cx: &mut TestAppContext) {
+        let call = |id: &str, state: ToolState| {
+            let mut call = ToolCall::new(id, "Bash");
+            call.state = state;
+            serde_json::to_string(&call).unwrap()
+        };
+        let window = open_view(
+            cx,
+            vec![
+                row("tool", &call("toolu_stop_old", ToolState::Running)),
+                row("user", "Go"),
+                row("tool", &call("toolu_stop_running", ToolState::Running)),
+                row("tool", &call("toolu_stop_done", ToolState::Completed)),
+            ],
+        );
+        for id in ["toolu_stop_old", "toolu_stop_running", "toolu_stop_done"] {
+            rebase_core::tool::live::set_elapsed(id, 60);
+        }
+        window
+            .update(cx, |view, _, cx| view.stop_streaming(cx))
+            .unwrap();
+        assert_eq!(rebase_core::tool::live::elapsed("toolu_stop_running"), None);
+        // Only the current turn's running calls are settled here.
+        assert_eq!(rebase_core::tool::live::elapsed("toolu_stop_old"), Some(60));
+        assert_eq!(
+            rebase_core::tool::live::elapsed("toolu_stop_done"),
+            Some(60)
+        );
+        for id in ["toolu_stop_old", "toolu_stop_done"] {
+            rebase_core::tool::live::remove(id);
+        }
+    }
+
+    #[gpui::test]
+    fn a_running_bash_row_with_live_elapsed_shows_2m_30s(cx: &mut TestAppContext) {
+        let window = open_view(cx, vec![row("user", "Go")]);
+        window
+            .update(cx, |view, _, cx| {
+                let mut call = ToolCall::new("toolu_long", "Bash");
+                call.input = serde_json::json!({ "command": "sleep 170" }).to_string();
+                view.patch(
+                    1,
+                    vec![row("tool", &serde_json::to_string(&call).unwrap())],
+                    cx,
+                );
+                // The runtime records it as heartbeats arrive; rows hold saved JSON.
+                rebase_core::tool::live::set_elapsed("toolu_long", 150);
+                view.rebuild(0, cx);
+                let shown = view
+                    .rows
+                    .iter()
+                    .find_map(|row| match &row.body {
+                        Body::Tool { call, .. } => Some(call.elapsed_label()),
+                        _ => None,
+                    })
+                    .expect("tool row");
+                assert_eq!(shown.as_deref(), Some("running · 2m 30s"));
+            })
+            .unwrap();
+        cx.refresh().unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        assert!(visual.debug_bounds("tool-elapsed-1").is_some());
+        // The map is global; leave nothing behind for other tests.
+        rebase_core::tool::live::remove("toolu_long");
     }
 }

@@ -26,6 +26,44 @@ pub struct ToolCall {
     /// Descriptive provider/desktop metadata, separate from actual arguments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<serde_json::Value>,
+    /// Seconds Claude reports this call has been running, from its heartbeat
+    /// frames. Live only: never saved, so the stored format is unchanged.
+    #[serde(skip)]
+    pub live_elapsed_secs: Option<u64>,
+}
+/// Elapsed seconds of running calls, kept in memory only. Saved rows are the
+/// serialized `ToolCall`, which deliberately leaves the value out.
+pub mod live {
+    use super::{ToolCall, ToolState};
+    use std::{
+        collections::HashMap,
+        sync::{Mutex, MutexGuard, OnceLock},
+    };
+    fn map() -> MutexGuard<'static, HashMap<String, u64>> {
+        static MAP: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+        MAP.get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+    pub fn set_elapsed(id: &str, secs: u64) {
+        map().insert(id.into(), secs);
+    }
+    pub fn elapsed(id: &str) -> Option<u64> {
+        map().get(id).copied()
+    }
+    /// Forget a call's elapsed, for a call that left Running without a result.
+    pub fn remove(id: &str) {
+        map().remove(id);
+    }
+    /// Follow a call's latest state: keep its elapsed while it runs, drop it after.
+    pub fn record(call: &ToolCall) {
+        match call.live_elapsed_secs {
+            Some(secs) if call.state == ToolState::Running => set_elapsed(&call.id, secs),
+            _ => {
+                map().remove(&call.id);
+            }
+        }
+    }
 }
 impl ToolCall {
     pub fn new(id: &str, name: &str) -> Self {
@@ -37,6 +75,7 @@ impl ToolCall {
             state: ToolState::Running,
             panel: None,
             display: None,
+            live_elapsed_secs: None,
         }
     }
     pub fn is_compaction(&self) -> bool {

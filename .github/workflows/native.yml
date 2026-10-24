@@ -42,6 +42,8 @@ on:
       - 'docs/native/**'
       - 'src-tauri/macos/AppIcon.icon/Assets/icon.png'
       - 'tests/fixtures/claude/resumed-background-agent.jsonl'
+      - 'tests/fixtures/claude/heartbeat-agent.jsonl'
+      - 'tests/fixtures/claude/heartbeat-bash.jsonl'
 
 permissions:
   contents: read

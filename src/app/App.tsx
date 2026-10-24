@@ -577,6 +577,10 @@ import {
   TranscriptPoolOutlet,
 } from "../features/sessions/ui/TranscriptPool";
 import { syncDockBadge } from "../features/notifications/model/dockBadge";
+import {
+  syncKeepAwake,
+  useKeepAwake,
+} from "../features/settings/model/keepAwake";
 import { liveAgentsFromSessions } from "../features/sessions/model/liveAgents";
 import { hiddenApprovalNotices } from "../features/notifications/model/approvalToast";
 import { useSessionReminders } from "../features/notifications/hooks/useSessionReminders";
@@ -2424,6 +2428,11 @@ function Workspace({
   useEffect(() => {
     syncDockBadge(sessions);
   }, [sessions]);
+
+  const keepAwake = useKeepAwake();
+  useEffect(() => {
+    syncKeepAwake(sessions, keepAwake);
+  }, [sessions, keepAwake]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;

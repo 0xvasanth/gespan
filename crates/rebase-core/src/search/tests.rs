@@ -124,6 +124,7 @@ fn live_search_finds_split_phrases_tools_and_skips_reasoning() {
             state: crate::tool::ToolState::Completed,
             panel: None,
             display: None,
+            live_elapsed_secs: None,
         })
         .unwrap(),
     );

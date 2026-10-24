@@ -690,6 +690,14 @@ describe("settings search", () => {
       settingId: "format-on-save",
       label: "Format on save",
     });
+
+    for (const word of ["keep awake", "caffeinate", "screen saver", "sleep"]) {
+      expect(searchSettings(word)[0]).toMatchObject({
+        section: "general",
+        settingId: "keep-awake",
+        label: "Keep screen awake",
+      });
+    }
   });
 
   it("returns a whole page with no setting id", () => {

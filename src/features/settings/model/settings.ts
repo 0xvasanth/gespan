@@ -259,6 +259,13 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     keywords: "live running sessions rail card",
   },
   {
+    id: "keep-awake",
+    section: "general",
+    label: "Keep screen awake",
+    keywords:
+      "keep awake sleep lock screen saver idle display caffeinate prevent laptop power running agents",
+  },
+  {
     id: "file-tabs",
     section: "general",
     label: "File tabs",
