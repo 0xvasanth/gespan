@@ -6,7 +6,7 @@ use super::{
     clean_text, db, get_card, log_activity, new_id, now_millis, validate_id, write_tx, Board,
     NewActivity, Service,
 };
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::{BTreeSet, HashMap};
 
 const MAX_LABEL: usize = 40;
@@ -115,6 +115,50 @@ fn log_edit(
             detail: Some(detail),
         },
     )
+}
+
+/// A card's stored priority and due date; a card without a meta row has neither.
+fn meta(tx: &rusqlite::Transaction<'_>, card_id: &str) -> Result<(u8, Option<i64>), String> {
+    let row: Option<(i64, Option<i64>)> = tx
+        .query_row(
+            "SELECT priority, due_at FROM board_native_meta WHERE card_id = ?1",
+            [card_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(db)?;
+    Ok(row.map_or((0, None), |(priority, due)| {
+        (priority.clamp(0, 4) as u8, due)
+    }))
+}
+
+/// The values one card holds in a native set table, such as its projects.
+fn card_set(
+    tx: &rusqlite::Transaction<'_>,
+    sql: &str,
+    card_id: &str,
+) -> Result<BTreeSet<String>, String> {
+    let mut statement = tx.prepare(sql).map_err(db)?;
+    let rows = statement
+        .query_map([card_id], |r| r.get::<_, String>(0))
+        .map_err(db)?
+        .collect::<rusqlite::Result<BTreeSet<_>>>()
+        .map_err(db);
+    rows
+}
+
+/// The card a subtask belongs to, if the subtask still exists.
+fn subtask_card(
+    tx: &rusqlite::Transaction<'_>,
+    subtask_id: &str,
+) -> Result<Option<String>, String> {
+    tx.query_row(
+        "SELECT card_id FROM board_native_subtasks WHERE id = ?1",
+        [subtask_id],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(db)
 }
 
 fn touch(tx: &rusqlite::Transaction<'_>, card_id: &str) -> Result<(), String> {
@@ -247,6 +291,9 @@ impl Service {
         };
         let tx = write_tx(&self.conn)?;
         let card = get_card(&tx, card_id)?;
+        if meta(&tx, card_id)?.0 == priority {
+            return Ok(());
+        }
         tx.execute(
             "INSERT INTO board_native_meta (card_id, priority) VALUES (?1, ?2)
              ON CONFLICT(card_id) DO UPDATE SET priority = excluded.priority",
@@ -262,6 +309,9 @@ impl Service {
         validate_id(card_id, "card")?;
         let tx = write_tx(&self.conn)?;
         let card = get_card(&tx, card_id)?;
+        if meta(&tx, card_id)?.1 == due_at {
+            return Ok(());
+        }
         tx.execute(
             "INSERT INTO board_native_meta (card_id, due_at) VALUES (?1, ?2)
              ON CONFLICT(card_id) DO UPDATE SET due_at = excluded.due_at",
@@ -286,6 +336,18 @@ impl Service {
             .collect();
         let tx = write_tx(&self.conn)?;
         let card = get_card(&tx, card_id)?;
+        let current = card_set(
+            &tx,
+            "SELECT project FROM board_native_projects WHERE card_id = ?1",
+            card_id,
+        )?;
+        if current
+            .iter()
+            .map(String::as_str)
+            .eq(projects.iter().copied())
+        {
+            return Ok(());
+        }
         tx.execute(
             "DELETE FROM board_native_projects WHERE card_id = ?1",
             [card_id],
@@ -372,6 +434,14 @@ impl Service {
         let ids: BTreeSet<&str> = label_ids.iter().map(String::as_str).collect();
         let tx = write_tx(&self.conn)?;
         let card = get_card(&tx, card_id)?;
+        let current = card_set(
+            &tx,
+            "SELECT label_id FROM board_native_card_labels WHERE card_id = ?1",
+            card_id,
+        )?;
+        if current.iter().map(String::as_str).eq(ids.iter().copied()) {
+            return Ok(());
+        }
         tx.execute(
             "DELETE FROM board_native_card_labels WHERE card_id = ?1",
             [card_id],
@@ -385,7 +455,8 @@ impl Service {
                     params![id, card.board_id],
                     |r| r.get(0),
                 )
-                .ok();
+                .optional()
+                .map_err(db)?;
             let Some(name) = name else {
                 return Err("Label not on this board".into());
             };
@@ -464,28 +535,32 @@ impl Service {
 
     pub fn toggle_subtask(&mut self, subtask_id: &str, done: bool) -> Result<(), String> {
         validate_id(subtask_id, "subtask")?;
-        let changed = self
-            .conn
-            .execute(
-                "UPDATE board_native_subtasks SET done = ?1 WHERE id = ?2",
-                params![i64::from(done), subtask_id],
-            )
-            .map_err(db)?;
-        if changed == 0 {
+        let tx = write_tx(&self.conn)?;
+        let Some(card_id) = subtask_card(&tx, subtask_id)? else {
             return Err("Subtask not found".into());
-        }
-        Ok(())
+        };
+        tx.execute(
+            "UPDATE board_native_subtasks SET done = ?1 WHERE id = ?2",
+            params![i64::from(done), subtask_id],
+        )
+        .map_err(db)?;
+        touch(&tx, &card_id)?;
+        tx.commit().map_err(db)
     }
 
     pub fn delete_subtask(&mut self, subtask_id: &str) -> Result<(), String> {
         validate_id(subtask_id, "subtask")?;
-        self.conn
-            .execute(
-                "DELETE FROM board_native_subtasks WHERE id = ?1",
-                [subtask_id],
-            )
-            .map(drop)
-            .map_err(db)
+        let tx = write_tx(&self.conn)?;
+        let Some(card_id) = subtask_card(&tx, subtask_id)? else {
+            return Ok(());
+        };
+        tx.execute(
+            "DELETE FROM board_native_subtasks WHERE id = ?1",
+            [subtask_id],
+        )
+        .map_err(db)?;
+        touch(&tx, &card_id)?;
+        tx.commit().map_err(db)
     }
 
     pub fn comments(&mut self, card_id: &str) -> Result<Vec<Comment>, String> {
@@ -672,6 +747,113 @@ mod tests {
         service.delete_subtask(&one.id).unwrap();
         let extras = &service.extras(&board).unwrap()[&card];
         assert_eq!((extras.subtasks_done, extras.subtasks_total), (0, 2));
+    }
+
+    fn set_updated_at(path: &std::path::Path, card: &str, at: i64) {
+        rusqlite::Connection::open(path)
+            .unwrap()
+            .execute(
+                "UPDATE board_cards SET updated_at = ?1 WHERE id = ?2",
+                rusqlite::params![at, card],
+            )
+            .unwrap();
+    }
+
+    fn updated_at(service: &mut Service, board: &str, card: &str) -> i64 {
+        let detail = service.get(board).unwrap();
+        detail
+            .cards
+            .iter()
+            .find(|c| c.id == card)
+            .unwrap()
+            .updated_at
+    }
+
+    #[test]
+    fn toggling_or_deleting_a_subtask_counts_as_a_change_to_its_card() {
+        let (_dir, mut service, path) = service();
+        let (board, card) = card(&mut service);
+        let one = service.add_subtask(&card, "One").unwrap();
+        set_updated_at(&path, &card, 1);
+        service.toggle_subtask(&one.id, true).unwrap();
+        assert!(updated_at(&mut service, &board, &card) > 1);
+        set_updated_at(&path, &card, 1);
+        service.delete_subtask(&one.id).unwrap();
+        assert!(updated_at(&mut service, &board, &card) > 1);
+        // A subtask already gone is still not found for a toggle, and a
+        // repeated delete stays a quiet no-op that touches nothing.
+        set_updated_at(&path, &card, 1);
+        assert_eq!(
+            service.toggle_subtask(&one.id, false).unwrap_err(),
+            "Subtask not found"
+        );
+        service.delete_subtask(&one.id).unwrap();
+        assert_eq!(updated_at(&mut service, &board, &card), 1);
+    }
+
+    #[test]
+    fn setting_a_field_to_the_value_it_already_has_writes_nothing() {
+        let (_dir, mut service, path) = service();
+        let (board, card) = card(&mut service);
+        let bug = service.create_label(&board, "Bug", "e5534b").unwrap();
+        // A fresh card already has no priority, due date, projects or labels.
+        let before = service.activity(&board, Some(&card), 100).unwrap().len();
+        set_updated_at(&path, &card, 1);
+        service.set_priority(&card, 0).unwrap();
+        service.set_due(&card, None).unwrap();
+        service.set_projects(&card, &[]).unwrap();
+        service.set_labels(&card, &[]).unwrap();
+        assert_eq!(updated_at(&mut service, &board, &card), 1);
+        assert_eq!(
+            service.activity(&board, Some(&card), 100).unwrap().len(),
+            before
+        );
+        service.set_priority(&card, 2).unwrap();
+        service.set_due(&card, Some(1_793_404_800_000)).unwrap();
+        service
+            .set_projects(&card, &["/b".into(), "/a".into()])
+            .unwrap();
+        service.set_labels(&card, &[bug.id.clone()]).unwrap();
+        let after = service.activity(&board, Some(&card), 100).unwrap().len();
+        assert_eq!(after, before + 4);
+        set_updated_at(&path, &card, 1);
+        service.set_priority(&card, 2).unwrap();
+        service.set_due(&card, Some(1_793_404_800_000)).unwrap();
+        service
+            .set_projects(&card, &["/a".into(), " /b ".into(), "/a".into()])
+            .unwrap();
+        service.set_labels(&card, &[bug.id]).unwrap();
+        assert_eq!(updated_at(&mut service, &board, &card), 1);
+        assert_eq!(
+            service.activity(&board, Some(&card), 100).unwrap().len(),
+            after
+        );
+        // A real change after the no-ops still writes.
+        service.set_priority(&card, 3).unwrap();
+        assert_eq!(
+            last_detail(&mut service, &board, &card).as_deref(),
+            Some("priority: High")
+        );
+    }
+
+    #[test]
+    fn a_database_error_while_attaching_a_label_is_not_reported_as_a_missing_label() {
+        let (_dir, mut service, path) = service();
+        let (board, card) = card(&mut service);
+        let bug = service.create_label(&board, "Bug", "e5534b").unwrap();
+        assert_eq!(
+            service
+                .set_labels(&card, &["not-a-label".into()])
+                .unwrap_err(),
+            "Label not on this board"
+        );
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE board_native_labels RENAME COLUMN name TO title;")
+            .unwrap();
+        let error = service.set_labels(&card, &[bug.id]).unwrap_err();
+        assert_ne!(error, "Label not on this board");
+        assert!(error.contains("no such column"), "{error}");
     }
 
     #[test]
