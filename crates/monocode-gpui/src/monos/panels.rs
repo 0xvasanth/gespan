@@ -168,8 +168,26 @@ fn card() -> Div {
         .flex()
         .flex_col()
 }
+/// MonoOverview's search row above the Sessions, Habits and Documents lists.
+pub(super) fn search_bar(field: Entity<Input>) -> Div {
+    div()
+        .h(px(36.))
+        .flex_shrink_0()
+        .px_2()
+        .border_b_1()
+        .border_color(crate::right_panel::stroke())
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(icon("search", 12.))
+        .child(div().flex_1().min_w_0().child(field))
+}
+/// Whether `haystack` contains `query`, ignoring case and surrounding spaces.
+pub(super) fn matches_query(query: &str, haystack: &str) -> bool {
+    haystack.to_lowercase().contains(&query.trim().to_lowercase())
+}
 /// monoPanelParts' EmptyState: an icon over a short, centred note.
-fn empty_state(glyph: &'static str, message: &str) -> AnyElement {
+pub(super) fn empty_state(glyph: &'static str, message: &str) -> AnyElement {
     div()
         .size_full()
         .flex()
@@ -993,17 +1011,7 @@ impl Monos {
             })
             .cloned()
             .collect();
-        let search_bar = div()
-            .h(px(36.))
-            .px_2()
-            .border_b_1()
-            .border_color(crate::right_panel::stroke())
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(icon("search", 12.))
-            .child(div().flex_1().min_w_0().child(filter))
-            .child(
+        let search_bar = search_bar(filter).child(
                 icon_button("mono-session-filter", "Filter Mono sessions", "filter")
                     .relative()
                     .child(self.session_filter_anchor.probe())
@@ -1050,10 +1058,25 @@ impl Monos {
                         .on_click(cx.listener(move|this,_,_,cx|{this.route=Some(Route::Session(id));cx.notify();}))
 }))).into_any_element()
     }
-    fn document_list(&self, mono: &Mono, cx: &mut Context<Self>) -> AnyElement {
-        div()
+    fn document_list(&mut self, mono: &Mono, cx: &mut Context<Self>) -> AnyElement {
+        let filter = self.field(
+            "mono-document-search",
+            "Search documents…",
+            String::new(),
+            false,
+            cx,
+        );
+        let query = filter.read(cx).content.to_string();
+        let documents: Vec<_> = mono
+            .documents
+            .iter()
+            .rev()
+            .filter(|d| matches_query(&query, &format!("{} {}", d.title, d.summary)))
+            .collect();
+        let list = div()
             .id("mono-document-list")
-            .size_full()
+            .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
             .p_2()
             .flex()
@@ -1068,7 +1091,10 @@ impl Monos {
                     ),
                 ))
             })
-            .children(mono.documents.iter().rev().map(|document| {
+            .when(documents.is_empty() && !mono.documents.is_empty(), |d| {
+                d.child(empty_state("search-01", "No documents match this search."))
+            })
+            .children(documents.into_iter().map(|document| {
                 // MonoOverview's DocumentRow: laid out like a habit.
                 let id = document.id.clone();
                 let label = if document.kind == "html" {
@@ -1146,7 +1172,13 @@ impl Monos {
                         this.route = Some(Route::Document(id.clone()));
                         cx.notify();
                     }))
-            }))
+            }));
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .when(!mono.documents.is_empty(), |d| d.child(search_bar(filter)))
+            .child(list)
             .into_any_element()
     }
     pub(super) fn page_header(&self, title: &str, cx: &mut Context<Self>) -> Div {

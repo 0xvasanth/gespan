@@ -1553,3 +1553,61 @@ fn sidebar_right_click_opens_mono_menu_outside_the_mono_and_edits_its_look(
         .unwrap();
     assert!(visual.debug_bounds("mono-mascot-0").is_none());
 }
+
+#[gpui::test]
+fn habits_and_documents_search_like_sessions(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let habit = |id: &str, name: &str| {
+        let mut h = Habit::new(
+            name.into(),
+            "Do the work.".into(),
+            habits::Schedule::default(),
+            monocode_core::time::now_ms(),
+        )
+        .unwrap();
+        h.id = id.into();
+        h
+    };
+    let document = |id: &str, title: &str| mono::Document {
+        id: id.into(),
+        kind: "markdown".into(),
+        title: title.into(),
+        summary: String::new(),
+        body: String::new(),
+        created_at: 1,
+        updated_at: 1,
+    };
+    s.window
+        .update(cx, |_, _, cx| {
+            s.manager.update(cx, |m, cx| {
+                m.settings = None;
+                m.overview_tab = OverviewTab::Habits;
+                m.habits = vec![habit("digest", "Morning digest"), habit("report", "Weekly report")];
+                let documents = &mut m.roster.get_mut(&s.id).unwrap().documents;
+                documents.push(document("plan", "Launch plan"));
+                documents.push(document("summary", "Release summary"));
+                cx.notify();
+            });
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    visual.run_until_parked();
+    let search = |visual: &mut gpui::VisualTestContext, key: &str, text: &str| {
+        s.manager.update(visual, |m, cx| {
+            m.fields[key].update(cx, |f, cx| f.set_text(text.into(), cx));
+        });
+        visual.run_until_parked();
+    };
+    assert!(visual.debug_bounds("mono-habit-report").is_some());
+    search(visual, "mono-habit-search", "DIGEST");
+    assert!(visual.debug_bounds("mono-habit-digest").is_some());
+    assert!(visual.debug_bounds("mono-habit-report").is_none());
+
+    s.manager.update(visual, |m, cx| m.select_overview(OverviewTab::Documents, cx));
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("mono-document-plan").is_some());
+    search(visual, "mono-document-search", "release");
+    assert!(visual.debug_bounds("mono-document-plan").is_none());
+    assert!(visual.debug_bounds("mono-document-summary").is_some());
+}
