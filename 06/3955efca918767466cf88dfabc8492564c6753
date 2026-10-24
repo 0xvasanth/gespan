@@ -1,0 +1,24 @@
+src-tauri/src/external_editor.rs
+  s_3e9d1be838c67b::t_ffa866b1382585 1,6,125-273,308-330,332-340,342,344,357-367,385,480-563
+  s_3e9d1be838c67b::t_3109f05dad34ed 341,343,345-356
+crates/rebase-core/src/external_editor.rs
+  s_3e9d1be838c67b::t_3109f05dad34ed 340,342-355
+  s_3e9d1be838c67b::t_ffa866b1382585 6,124-126,128-136,141-176,181,186-272,307-329,331-339,341,356-366,384,468-487,489-522,527-551
+  s_3e9d1be838c67b::t_2a36e48abb0c6d 127,137-140,177-180,182-185,488,523-526
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "063955efca918767466cf88dfabc8492564c6753",
+  "prompts": {},
+  "sessions": {
+    "s_3e9d1be838c67b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5ba030e-7698-48b9-b0c4-3dfc53ffe6b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
