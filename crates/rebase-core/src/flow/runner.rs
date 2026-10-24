@@ -6,7 +6,7 @@ use super::definition::{
 };
 use super::run::{FlowRun, FlowVisit, RunStatus, VisitStatus};
 use super::template::{render_template, resolve_inputs, BindingContext};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const MAX_RUN_STEPS: u32 = 50;
 const INTERRUPTED: &str = "Interrupted by app restart";
@@ -111,10 +111,18 @@ impl ActiveRun {
 
 /// Owns every state transition of every active run. The host only applies
 /// the returned effects and reports session events back.
+///
+/// Host contract: call `on_session` before `on_agent_settled` for a visit;
+/// call `on_worktree` before `on_agent_settled` for the visit that created
+/// the worktree; and deliver exactly one `on_agent_settled` per agent turn
+/// (the initial turn, and the contract-retry turn if there is one).
 pub struct Runner {
     clock: Box<dyn Fn() -> i64>,
     ids: Box<dyn FnMut() -> String>,
     runs: HashMap<String, ActiveRun>,
+    /// `(run_id, visit_id)` of visits cancelled before their session was
+    /// reported; a late `on_session` for one stops that session.
+    cancelled_unreported: HashSet<(String, String)>,
 }
 
 impl Runner {
@@ -123,6 +131,7 @@ impl Runner {
             clock: Box::new(clock),
             ids: Box::new(ids),
             runs: HashMap::new(),
+            cancelled_unreported: HashSet::new(),
         }
     }
 
@@ -163,6 +172,12 @@ impl Runner {
 
     /// The host launched the session for `visit_id`.
     pub fn on_session(&mut self, run_id: &str, visit_id: &str, session_id: &str) -> Vec<Effect> {
+        let key = (run_id.to_owned(), visit_id.to_owned());
+        if self.cancelled_unreported.remove(&key) {
+            return vec![Effect::Cancel {
+                session_id: session_id.to_owned(),
+            }];
+        }
         self.with_run(run_id, |_, active| {
             let Some(visit) = active.current_mut(visit_id, VisitStatus::Running) else {
                 return vec![];
@@ -213,7 +228,12 @@ impl Runner {
                 }
                 AgentStatus::Completed => {
                     let Some(state) = active.state(&state_id) else {
-                        return vec![];
+                        let error = format!("Unknown state {state_id}");
+                        let visit = active.visits.last_mut().expect("current visit");
+                        visit.status = VisitStatus::Failed;
+                        visit.error = Some(error.clone());
+                        visit.finished_at = Some(now);
+                        return runner.finish(active, RunStatus::Failed, Some(error), true);
                     };
                     let declared = outputs_of(&state);
                     let parsed = if declared.is_empty() {
@@ -297,6 +317,10 @@ impl Runner {
             ) {
                 if visit.status == VisitStatus::Running {
                     session = visit.session_id.clone();
+                    if session.is_none() {
+                        self.cancelled_unreported
+                            .insert((active.run.id.clone(), visit.id.clone()));
+                    }
                 }
                 visit.status = VisitStatus::Cancelled;
                 visit.finished_at = Some(now);
@@ -342,7 +366,8 @@ impl Runner {
     }
 
     /// Loads the active runs found at startup. Running visits were cut off by
-    /// the restart, so they and their runs fail; pending approvals resume.
+    /// the restart, so they and their runs fail (Persist, then Finished);
+    /// pending approvals resume.
     pub fn recover(&mut self, active: Vec<(FlowRun, Vec<FlowVisit>)>) -> Vec<Effect> {
         let mut effects = Vec::new();
         for (run, mut visits) in active {
@@ -386,6 +411,10 @@ impl Runner {
                     visit: Some(visit),
                 });
             }
+            effects.push(Effect::Finished {
+                run_id: active.run.id.clone(),
+                status: RunStatus::Failed,
+            });
         }
         effects
     }

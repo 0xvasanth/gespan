@@ -807,7 +807,8 @@ fn recover_fails_running_visits_and_keeps_waiting_approvals() {
     let effects = host
         .runner
         .recover(vec![running_snapshot, waiting_snapshot]);
-    assert_eq!(kinds(&effects), ["persist"]);
+    // Only the interrupted run changes; the waiting run emits nothing.
+    assert_eq!(kinds(&effects), ["persist", "finished"]);
     host.apply(effects);
     let last = host.last_run();
     assert_eq!(last.id, running.id);
@@ -926,4 +927,105 @@ fn persist_precedes_launch_and_ids_come_from_the_injected_source() {
     assert_eq!(visit.prompt.as_deref(), Some(launch.prompt.as_str()));
     // The reported session id is persisted on the visit.
     assert_eq!(host.visits()[0].session_id.as_deref(), Some("sess-id2"));
+}
+
+// ---- fix round 1 -------------------------------------------------------
+
+#[test]
+fn cancel_before_the_session_is_reported_stops_the_late_session() {
+    let mut host = Host::new();
+    let flow = fix_an_issue();
+    // Start without the fake host's automatic session reports.
+    let given = HashMap::from([("issue".to_string(), "Bug".to_string())]);
+    let (run, effects) = host.runner.start(&flow, &given).unwrap();
+    let Some(Effect::Launch(launch)) = effects.last() else {
+        panic!("expected a launch");
+    };
+    let effects = host.runner.cancel(&run.id);
+    assert_eq!(kinds(&effects), ["persist", "finished"], "no session yet");
+
+    let late = host
+        .runner
+        .on_session(&run.id, &launch.visit_id, "sess-late");
+    assert_eq!(
+        late,
+        [Effect::Cancel {
+            session_id: "sess-late".into()
+        }]
+    );
+    // The tombstone is cleared: a duplicate report does nothing.
+    assert!(host
+        .runner
+        .on_session(&run.id, &launch.visit_id, "sess-late")
+        .is_empty());
+}
+
+#[test]
+fn cancel_during_a_contract_retry_stops_its_session() {
+    let mut host = Host::new();
+    let (run, _) = host.start(&fix_an_issue(), &[("issue", "Bug")]);
+    let launch = host.last_launch();
+    host.reply(&run.id, "no json");
+    let visit = host.visits().pop().unwrap();
+    assert!(visit.retried);
+    assert_eq!(visit.status, VisitStatus::Running);
+
+    let effects = host.runner.cancel(&run.id);
+    assert_eq!(kinds(&effects), ["persist", "cancel", "finished"]);
+    assert_eq!(
+        effects[1],
+        Effect::Cancel {
+            session_id: format!("sess-{}", launch.visit_id)
+        }
+    );
+}
+
+#[test]
+fn recover_emits_finished_after_persist_for_each_failed_run() {
+    let mut first = Host::new();
+    let (a, _) = first.start(&fix_an_issue(), &[("issue", "Bug")]);
+    let snap_a = (first.last_run(), first.visits());
+    let mut second = Host::new();
+    let (b, _) = second.start(&research(), &[("topic", "t")]);
+    let snap_b = (second.last_run(), second.visits());
+
+    let mut host = Host::new();
+    let effects = host.runner.recover(vec![snap_a, snap_b]);
+    assert_eq!(
+        kinds(&effects),
+        ["persist", "finished", "persist", "finished"]
+    );
+    assert_eq!(
+        effects[1],
+        Effect::Finished {
+            run_id: a.id,
+            status: RunStatus::Failed
+        }
+    );
+    assert_eq!(
+        effects[3],
+        Effect::Finished {
+            run_id: b.id,
+            status: RunStatus::Failed
+        }
+    );
+}
+
+#[test]
+fn settling_a_visit_whose_state_left_the_snapshot_fails_the_run() {
+    let mut host = Host::new();
+    let (run, _) = host.start(&fix_an_issue(), &[("issue", "Bug")]);
+    // Corrupt the in-memory snapshot: the running visit's state disappears.
+    let active = host.runner.runs.get_mut(&run.id).unwrap();
+    active.run.flow.states.retain(|s| s.id() != "triage");
+
+    let effects = host.outputs(&run.id, triage_out());
+    assert_eq!(kinds(&effects), ["persist", "finished"]);
+    let visit = host.visits().pop().unwrap();
+    assert_eq!(visit.status, VisitStatus::Failed);
+    assert_eq!(visit.error.as_deref(), Some("Unknown state triage"));
+    let last = host.last_run();
+    assert_eq!(last.status, RunStatus::Failed);
+    assert_eq!(last.error.as_deref(), Some("Unknown state triage"));
+    assert_eq!(host.finished(), [RunStatus::Failed]);
 }
