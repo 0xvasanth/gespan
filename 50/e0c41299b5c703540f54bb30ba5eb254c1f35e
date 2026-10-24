@@ -1,0 +1,23 @@
+src/app/shell/OpenInEditorButton.tsx
+  s_3e9d1be838c67b::t_0a17a9cf450e46 34-37,66,97,104,107-110,113
+  s_3e9d1be838c67b::t_473ad62416da1b 99-101
+src/app/shell/OpenInEditor.test.ts
+  s_3e9d1be838c67b::t_11c723d1156d33 385-400
+  s_3e9d1be838c67b::t_0a17a9cf450e46 348-384,401-402
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50e0c41299b5c703540f54bb30ba5eb254c1f35e",
+  "prompts": {},
+  "sessions": {
+    "s_3e9d1be838c67b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5ba030e-7698-48b9-b0c4-3dfc53ffe6b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
