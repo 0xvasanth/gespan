@@ -118,6 +118,11 @@ pub fn branch_name_prompt(message: &str) -> String {
 /// safe to put after the app's branch prefix.
 pub fn parse_branch_name(raw: &str) -> Option<String> {
     let rec = parse_json_object(raw);
+    // JSON that does not parse would otherwise name the branch after its
+    // braces and key (`branch-fix-login`); keep the placeholder instead.
+    if rec.is_none() && raw.contains('{') {
+        return None;
+    }
     let fragment =
         sanitize_branch_fragment(rec.as_ref().map_or(raw, |rec| string_field(rec, "branch")));
     (!fragment.is_empty()).then_some(fragment)
@@ -389,6 +394,11 @@ mod tests {
             Some("add-jetbrains-ide-support")
         );
         assert_eq!(parse_branch_name("{\"branch\": \"...\"}"), None);
+        assert_eq!(parse_branch_name("{\"branch\": \"fix login\",}"), None);
+        assert_eq!(
+            parse_branch_name("```json\n{\"branch\": fix login}\n```"),
+            None
+        );
         assert_eq!(parse_branch_name("   "), None);
     }
 

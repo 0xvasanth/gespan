@@ -5343,6 +5343,7 @@ dependencies = [
  "similar",
  "streaming-iterator",
  "syntect",
+ "tempfile",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",

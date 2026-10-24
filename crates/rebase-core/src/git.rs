@@ -211,11 +211,26 @@ fn same_tree(a: &Path, b: &Path) -> bool {
             .is_some_and(|(a, b)| a == b)
 }
 
-/// Renames the branch of the app-created worktree at `worktree` to
-/// `rebase/<fragment>`, as Tauri's renameWorktreeBranch does once the first
-/// message names the work. A name already taken gets `-2`, `-3`… Branches the
-/// user created or renamed are never touched. Returns the new branch.
-pub fn rename_app_branch(root: &Path, worktree: &Path, fragment: &str) -> Result<String, String> {
+/// The branch the worktree at `worktree` is on, if it is one of `root`'s.
+pub fn worktree_branch(root: &Path, worktree: &Path) -> Option<String> {
+    worktrees(root)
+        .ok()?
+        .into_iter()
+        .find(|tree| same_tree(Path::new(&tree.path), worktree))
+        .and_then(|tree| tree.branch)
+}
+
+/// Renames the branch of the app-created worktree at `worktree` from the
+/// placeholder `from` to `rebase/<fragment>`, as Tauri's renameWorktreeBranch
+/// does once the first message names the work. A name already taken gets
+/// `-2`, `-3`… Branches the user created, or renamed since `from` was read,
+/// are never touched. Returns the new branch.
+pub fn rename_app_branch(
+    root: &Path,
+    worktree: &Path,
+    from: &str,
+    fragment: &str,
+) -> Result<String, String> {
     let fragment = crate::scm::text::sanitize_branch_fragment(
         fragment
             .trim()
@@ -237,6 +252,9 @@ pub fn rename_app_branch(root: &Path, worktree: &Path, fragment: &str) -> Result
     if !is_app_branch(current) {
         return Err("Only automatically created worktree branches can be renamed".into());
     }
+    if current != from {
+        return Err("The branch was renamed while its name was being generated".into());
+    }
     let taken = |name: &str| {
         git(
             root,
@@ -253,15 +271,22 @@ pub fn rename_app_branch(root: &Path, worktree: &Path, fragment: &str) -> Result
     if current == wanted {
         return Ok(wanted);
     }
-    let name = std::iter::once(wanted.clone())
-        .chain((2..=20).map(|n| format!("{wanted}-{n}")))
-        .find(|name| name == current || !taken(name))
-        .ok_or_else(|| format!("{wanted} and its numbered variants are taken"))?;
-    if name != current {
+    for name in std::iter::once(wanted.clone()).chain((2..=20).map(|n| format!("{wanted}-{n}"))) {
+        if name == current {
+            return Ok(name);
+        }
+        if taken(&name) {
+            continue;
+        }
         valid_branch(root, &name)?;
-        git(Path::new(&tree.path), &["branch", "-m", current, &name])?;
+        match git(Path::new(&tree.path), &["branch", "-m", current, &name]) {
+            Ok(_) => return Ok(name),
+            // Another session took it between the check and the rename.
+            Err(_) if taken(&name) => continue,
+            Err(error) => return Err(error),
+        }
     }
-    Ok(name)
+    Err(format!("{wanted} and its numbered variants are taken"))
 }
 
 pub fn create_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, String> {
@@ -498,12 +523,32 @@ mod tests {
         assert_eq!(base36(36), "10");
     }
 
+    /// Renames from whatever the worktree is on now, as naming reads first.
+    fn rename(cwd: &Path, tree: &Path, fragment: &str) -> Result<String, String> {
+        let from = branch_of(cwd, tree).unwrap_or_default();
+        rename_app_branch(cwd, tree, &from, fragment)
+    }
+
+    #[test]
+    fn a_branch_renamed_while_naming_ran_is_left_alone() {
+        let (_temp, cwd) = repo();
+        let tree = create_worktree(&cwd, "main", 7).unwrap();
+        let placeholder = branch_of(&cwd, &tree).unwrap();
+        // The user renames it, still under the app's prefix, before the name arrives.
+        git(&tree, &["branch", "-m", "rebase/my-own-name"]).unwrap();
+        assert!(rename_app_branch(&cwd, &tree, &placeholder, "generated name").is_err());
+        assert_eq!(
+            branch_of(&cwd, &tree).as_deref(),
+            Some("rebase/my-own-name")
+        );
+    }
+
     #[test]
     fn an_app_worktree_takes_the_name_of_its_work() {
         let (_temp, cwd) = repo();
         let tree = create_worktree(&cwd, "main", 7).unwrap();
         assert_eq!(
-            rename_app_branch(&cwd, &tree, "Open in Editor button").unwrap(),
+            rename(&cwd, &tree, "Open in Editor button").unwrap(),
             "rebase/open-in-editor-button"
         );
         assert_eq!(
@@ -512,7 +557,7 @@ mod tests {
         );
         // Already named: a repeat is a no-op, and a model's own prefix is not doubled.
         assert_eq!(
-            rename_app_branch(&cwd, &tree, "rebase/open-in-editor-button").unwrap(),
+            rename(&cwd, &tree, "rebase/open-in-editor-button").unwrap(),
             "rebase/open-in-editor-button"
         );
     }
@@ -522,9 +567,9 @@ mod tests {
         let (_temp, cwd) = repo();
         let first = create_worktree(&cwd, "main", 7).unwrap();
         let second = create_worktree(&cwd, "main", 8).unwrap();
-        rename_app_branch(&cwd, &first, "fix login").unwrap();
+        rename(&cwd, &first, "fix login").unwrap();
         assert_eq!(
-            rename_app_branch(&cwd, &second, "fix login").unwrap(),
+            rename(&cwd, &second, "fix login").unwrap(),
             "rebase/fix-login-2"
         );
         assert_eq!(branch_of(&cwd, &first).as_deref(), Some("rebase/fix-login"));
@@ -535,6 +580,7 @@ mod tests {
     fn a_live_provider_names_a_new_worktree_after_its_message() {
         let (_temp, cwd) = repo();
         let tree = create_worktree(&cwd, "main", 7).unwrap();
+        let placeholder = branch_of(&cwd, &tree).unwrap();
         let fragment = crate::session_title::generate_branch_name(
             crate::provider::Kind::Claude,
             &tree,
@@ -543,7 +589,7 @@ mod tests {
             Default::default(),
         )
         .expect("Claude suggested a branch name");
-        let branch = rename_app_branch(&cwd, &tree, &fragment).unwrap();
+        let branch = rename_app_branch(&cwd, &tree, &placeholder, &fragment).unwrap();
         eprintln!("named: {branch}");
         assert!(branch.starts_with("rebase/") && branch.len() > "rebase/".len());
         assert!(branch.contains("editor"), "{branch}");
@@ -555,17 +601,11 @@ mod tests {
         let (_temp, cwd) = repo();
         let tree = create_named_worktree(&cwd, "my-feature").unwrap();
         let path = PathBuf::from(&tree.path);
-        assert!(rename_app_branch(&cwd, &path, "something else").is_err());
+        assert!(rename(&cwd, &path, "something else").is_err());
         assert_eq!(branch_of(&cwd, &path).as_deref(), Some("my-feature"));
-        assert!(
-            rename_app_branch(&cwd, &cwd, "main work").is_err(),
-            "main copy"
-        );
+        assert!(rename(&cwd, &cwd, "main work").is_err(), "main copy");
         let app = create_worktree(&cwd, "main", 9).unwrap();
-        assert!(
-            rename_app_branch(&cwd, &app, " ... ").is_err(),
-            "nothing usable"
-        );
+        assert!(rename(&cwd, &app, " ... ").is_err(), "nothing usable");
     }
     #[test]
     fn app_and_orchestration_branches_accept_legacy_prefix() {

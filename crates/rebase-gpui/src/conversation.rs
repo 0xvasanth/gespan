@@ -217,6 +217,10 @@ pub(crate) struct Conversation {
     title_cancel: Option<Arc<AtomicBool>>,
     /// The message a worktree being created is named after, once it exists.
     branch_seed: Option<String>,
+    branch_cancel: Option<Arc<AtomicBool>>,
+    /// Stands in for the provider's branch name suggestion in tests.
+    #[cfg(test)]
+    test_branch_name: Option<String>,
     _submission: Subscription,
     response_events: Option<Subscription>,
     response_menu: Option<ResponseMenu>,
@@ -228,6 +232,9 @@ impl Drop for Conversation {
             self.cancel.store(true, Ordering::Relaxed);
         }
         self.cancel_title_generation();
+        if let Some(cancel) = self.branch_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
     }
 }
 impl Conversation {
@@ -631,6 +638,9 @@ impl Conversation {
             cancel: Arc::new(AtomicBool::new(false)),
             title_cancel: None,
             branch_seed: None,
+            branch_cancel: None,
+            #[cfg(test)]
+            test_branch_name: None,
             _submission: submission,
             response_events: None,
             response_menu: None,
@@ -1042,7 +1052,8 @@ impl Conversation {
         }
         self.preparing_worktree = settings.new_worktree && settings.worktree_cwd.is_none();
         if self.preparing_worktree {
-            self.branch_seed.get_or_insert_with(|| prompt.clone());
+            // This prompt, not one from an earlier attempt that failed.
+            self.branch_seed = Some(prompt.clone());
             settings.worktree_base = settings.worktree_base.or(self.branch.clone());
             self.status = "Creating worktree…".into();
         }
@@ -1663,14 +1674,13 @@ impl Conversation {
         .detach();
     }
     fn prepare_worktree(&mut self, cx: &mut Context<Self>) {
-        if self.branch_seed.is_none() {
-            self.branch_seed = self
-                .follow_ups
-                .state
-                .messages
-                .first()
-                .map(|message| message.text.clone());
-        }
+        // The queued message this worktree is being made for.
+        self.branch_seed = self
+            .follow_ups
+            .state
+            .messages
+            .first()
+            .map(|message| message.text.clone());
         self.preparing_worktree = true;
         self.status = "Creating worktree…".into();
         let cwd = self.summary.cwd.clone();
@@ -1703,6 +1713,7 @@ impl Conversation {
                         }
                     }
                     Err(error) => {
+                        this.branch_seed = None;
                         this.status = error.clone();
                         if let Some(message) = this.follow_ups.state.messages.first() {
                             let id = message.id.clone();

@@ -51,6 +51,7 @@ qrcode = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false, features = ["test-support"] }
+tempfile = "3"
 
 # The vendored renderer's backdrop-blur marker for frosted popovers.
 [target.'cfg(target_os = "macos")'.dependencies]

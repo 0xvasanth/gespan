@@ -306,10 +306,9 @@ fn stopping_before_the_worker_runs_keeps_the_optimistic_message(cx: &mut TestApp
 
 #[gpui::test]
 fn a_created_worktree_hands_its_first_message_to_branch_naming(cx: &mut TestAppContext) {
-    let root = std::env::temp_dir().join(format!("rebase-worktree-seed-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    let repo = root.join("project");
-    std::fs::create_dir_all(&repo).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("project");
+    std::fs::create_dir(&repo).unwrap();
     let git = |args: &[&str]| {
         let out = std::process::Command::new("git")
             .current_dir(&repo)
@@ -362,5 +361,29 @@ fn a_created_worktree_hands_its_first_message_to_branch_naming(cx: &mut TestAppC
             assert_eq!(view.branch_seed, None, "and handed its message to naming");
         })
         .unwrap();
-    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[gpui::test]
+fn a_retry_after_a_failed_worktree_is_named_after_the_retry(cx: &mut TestAppContext) {
+    // The project folder is missing, so the first worktree cannot be created.
+    let window = conversation(cx);
+    window
+        .update(cx, |view, _, cx| {
+            view.settings.new_worktree = true;
+            view.input
+                .update(cx, |input, cx| input.set_text("First attempt".into(), cx));
+            view.send(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |view, _, cx| {
+            assert!(view.settings.worktree_cwd.is_none(), "creation failed");
+            view.settings.new_worktree = true;
+            view.input
+                .update(cx, |input, cx| input.set_text("Second attempt".into(), cx));
+            view.send(cx);
+            assert_eq!(view.branch_seed.as_deref(), Some("Second attempt"));
+        })
+        .unwrap();
 }
