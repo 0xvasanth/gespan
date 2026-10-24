@@ -40,11 +40,18 @@ pub(super) fn check(text: &str) -> Check {
                 warnings: validation.warnings,
             }
         }
-        Err(error) => Check {
-            flow: None,
-            errors: vec![format!("Invalid Flow JSON: {error}")],
-            warnings: Vec::new(),
-        },
+        Err(error) => {
+            // Valid JSON of the wrong shape: still name the misspelled keys.
+            let mut errors = serde_json::from_str::<serde_json::Value>(text)
+                .map(|value| unknown_fields(&value))
+                .unwrap_or_default();
+            errors.push(format!("Invalid Flow JSON: {error}"));
+            Check {
+                flow: None,
+                errors,
+                warnings: Vec::new(),
+            }
+        }
     }
 }
 
@@ -425,6 +432,48 @@ mod tests {
         let expected = format!("Unknown field \"maxVisit\" in state {id}");
         assert!(checked.errors.contains(&expected), "{:?}", checked.errors);
         assert!(!checked.can_save());
+    }
+
+    #[test]
+    fn a_renamed_required_key_reports_both_the_typo_and_the_missing_field() {
+        let text = pretty(&flow()).replacen("\"maxVisits\"", "\"maxVisit\"", 1);
+        let checked = check(&text);
+        let id = flow().states[0].id().to_owned();
+        assert_eq!(checked.flow, None);
+        assert_eq!(checked.errors.len(), 2, "{:?}", checked.errors);
+        assert_eq!(
+            checked.errors[0],
+            format!("Unknown field \"maxVisit\" in state {id}")
+        );
+        assert!(
+            checked.errors[1].starts_with("Invalid Flow JSON: missing field `maxVisits`"),
+            "{:?}",
+            checked.errors
+        );
+    }
+
+    #[test]
+    fn a_wrongly_shaped_flow_does_not_panic_and_keeps_serdes_error() {
+        let checked = check(r#"{"nmae": 1, "states": "oops", "inputs": [3]}"#);
+        assert_eq!(checked.flow, None);
+        assert_eq!(checked.errors[0], "Unknown field \"nmae\" in the Flow");
+        assert!(
+            checked
+                .errors
+                .last()
+                .unwrap()
+                .starts_with("Invalid Flow JSON:")
+        );
+        // Items without an id are named by position.
+        let checked =
+            check(r#"{"states": [{"kind": "agent", "id": "a"}, {"kind": "approval", "idd": 1}]}"#);
+        assert!(
+            checked
+                .errors
+                .contains(&"Unknown field \"idd\" in state 2".to_string()),
+            "{:?}",
+            checked.errors
+        );
     }
 
     #[test]

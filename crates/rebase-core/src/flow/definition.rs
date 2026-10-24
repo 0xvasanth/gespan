@@ -496,12 +496,17 @@ pub const STATUS_GUARD_KEYS: &[&str] = &["kind", "is"];
 pub const OUTPUT_GUARD_KEYS: &[&str] = &["kind", "field", "op", "value"];
 
 /// One error per key in `flow_json` that the Flow format doesn't define, such
-/// as a misspelled `maxVisit`. Expects text that already parsed as a `Flow`;
-/// anything of an unexpected shape is skipped.
+/// as a misspelled `maxVisit`. Any shape is accepted: parts
+/// of an unexpected shape are skipped, and items without an id or name are
+/// named by their 1-based position.
 pub fn unknown_fields(flow_json: &serde_json::Value) -> Vec<String> {
     use serde_json::Value;
-    fn name_of(value: &Value, key: &str) -> String {
-        value.get(key).and_then(Value::as_str).unwrap_or("").into()
+    /// The item's `key` text, or its 1-based position when it has none.
+    fn name_of(value: &Value, key: &str, index: usize) -> String {
+        match value.get(key).and_then(Value::as_str) {
+            Some(name) if !name.is_empty() => name.into(),
+            _ => (index + 1).to_string(),
+        }
     }
     fn scan(value: &Value, known: &[&str], place: &str, errors: &mut Vec<String>) {
         if let Some(object) = value.as_object() {
@@ -519,24 +524,24 @@ pub fn unknown_fields(flow_json: &serde_json::Value) -> Vec<String> {
             .cloned()
             .unwrap_or_default()
     };
-    for input in list(flow_json, "inputs") {
-        let place = format!("input {}", name_of(&input, "name"));
-        scan(&input, INPUT_KEYS, &place, &mut errors);
+    for (index, input) in list(flow_json, "inputs").iter().enumerate() {
+        let place = format!("input {}", name_of(input, "name", index));
+        scan(input, INPUT_KEYS, &place, &mut errors);
     }
-    for state in list(flow_json, "states") {
-        let id = name_of(&state, "id");
+    for (position, state) in list(flow_json, "states").iter().enumerate() {
+        let id = name_of(state, "id", position);
         let place = format!("state {id}");
         let known = if state.get("kind").and_then(Value::as_str) == Some("approval") {
             APPROVAL_STATE_KEYS
         } else {
             AGENT_STATE_KEYS
         };
-        scan(&state, known, &place, &mut errors);
-        for output in list(&state, "outputs") {
-            let place = format!("state {id} output {}", name_of(&output, "name"));
-            scan(&output, OUTPUT_FIELD_KEYS, &place, &mut errors);
+        scan(state, known, &place, &mut errors);
+        for (index, output) in list(state, "outputs").iter().enumerate() {
+            let place = format!("state {id} output {}", name_of(output, "name", index));
+            scan(output, OUTPUT_FIELD_KEYS, &place, &mut errors);
         }
-        for (index, transition) in list(&state, "transitions").iter().enumerate() {
+        for (index, transition) in list(state, "transitions").iter().enumerate() {
             let place = format!("state {id} transition {}", index + 1);
             scan(transition, TRANSITION_KEYS, &place, &mut errors);
             if let Some(guard) = transition.get("when") {
