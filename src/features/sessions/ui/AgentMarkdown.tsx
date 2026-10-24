@@ -188,15 +188,15 @@ const REVEAL_LABEL = IS_MAC
     : "Open Containing Folder";
 
 function fileLinkMenuItems(
-  canOpenInRebase: boolean,
+  canOpenInGespan: boolean,
   canCopyRelativePath: boolean,
 ): ExplorerMenuItem[] {
   return [
     {
       kind: "item",
-      id: "open-rebase",
-      label: "Open in Rebase",
-      disabled: !canOpenInRebase,
+      id: "open-gespan",
+      label: "Open in Gespan",
+      disabled: !canOpenInGespan,
     },
     { kind: "item", id: "open-default", label: "Open in Default App" },
     { kind: "item", id: "reveal", label: REVEAL_LABEL },
@@ -770,7 +770,7 @@ export const AgentMarkdown = memo(function AgentMarkdown({
     setFileMenu(null);
     setFileActionError(null);
 
-    if (id === "open-rebase") {
+    if (id === "open-gespan") {
       if (fileMenu.navigation) onOpenFile?.(path, fileMenu.navigation);
       else onOpenFile?.(path);
       return;

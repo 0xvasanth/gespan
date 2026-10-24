@@ -49,17 +49,17 @@ import {
   loadSidebarTabOrder,
 } from "./appearance";
 
-const KEY = "rebase.transcriptLayout";
-const ACCENT_COLOR_KEY = "rebase.accentColor";
-const SCHEME_KEY = "rebase.colorScheme";
-const ANCHOR_KEY = "rebase.transcriptAnchor";
-const SHOW_EXCLUDED_FILES_KEY = "rebase.showExcludedFiles";
-const CHAT_BACKGROUND_PATH_KEY = "rebase.chatBackgroundPath";
-const CHAT_BACKGROUND_OPACITY_KEY = "rebase.chatBackgroundOpacity";
-const CHAT_BACKGROUND_SCOPE_KEY = "rebase.chatBackgroundScope";
-const NEW_THREAD_BACKGROUND_EFFECT_KEY = "rebase.newThreadBackgroundEffect";
-const THEME_DARK_LIGHTNESS_KEY = "rebase.themeDarkLightness";
-const DIFF_PALETTE_KEY = "rebase.diffPalette";
+const KEY = "gespan.transcriptLayout";
+const ACCENT_COLOR_KEY = "gespan.accentColor";
+const SCHEME_KEY = "gespan.colorScheme";
+const ANCHOR_KEY = "gespan.transcriptAnchor";
+const SHOW_EXCLUDED_FILES_KEY = "gespan.showExcludedFiles";
+const CHAT_BACKGROUND_PATH_KEY = "gespan.chatBackgroundPath";
+const CHAT_BACKGROUND_OPACITY_KEY = "gespan.chatBackgroundOpacity";
+const CHAT_BACKGROUND_SCOPE_KEY = "gespan.chatBackgroundScope";
+const NEW_THREAD_BACKGROUND_EFFECT_KEY = "gespan.newThreadBackgroundEffect";
+const THEME_DARK_LIGHTNESS_KEY = "gespan.themeDarkLightness";
+const DIFF_PALETTE_KEY = "gespan.diffPalette";
 
 function mockLocalStorage() {
   const data = new Map<string, string>();
@@ -92,13 +92,13 @@ describe("right panel tabs", () => {
     expect(loadRightPanelTab()).toBe("files");
     saveRightPanelTab("graph");
     expect(loadRightPanelTab()).toBe("graph");
-    localStorage.setItem("rebase.rightPanelTab", "unknown");
+    localStorage.setItem("gespan.rightPanelTab", "unknown");
     expect(loadRightPanelTab()).toBe("files");
   });
 
   it("adds Graph after the existing Explorer/Changes order", () => {
     localStorage.setItem(
-      "rebase.sidebarTabOrder",
+      "gespan.sidebarTabOrder",
       JSON.stringify(["sessions", "changes", "inbox", "files"]),
     );
     expect(loadRightPanelTabOrder()).toEqual(["changes", "files", "graph"]);
@@ -113,11 +113,11 @@ describe("right panel tabs", () => {
 
   it("repairs partial, duplicate and invalid saved orders", () => {
     localStorage.setItem(
-      "rebase.rightPanelTabOrder",
+      "gespan.rightPanelTabOrder",
       JSON.stringify(["graph", "unknown", "graph"]),
     );
     expect(loadRightPanelTabOrder()).toEqual(["graph", "files", "changes"]);
-    localStorage.setItem("rebase.rightPanelTabOrder", "invalid JSON");
+    localStorage.setItem("gespan.rightPanelTabOrder", "invalid JSON");
     expect(loadRightPanelTabOrder()).toEqual(["files", "changes", "graph"]);
   });
 });

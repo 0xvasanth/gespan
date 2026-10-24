@@ -1,5 +1,5 @@
 /**
- * Both apps read and write `sessions.blocks_json`. Rebase Native adds optional
+ * Both apps read and write `sessions.blocks_json`. Gespan Native adds optional
  * fields to `agentRun`; Tauri must load them and keep them when it rewrites the
  * block.
  */
@@ -48,7 +48,7 @@ async function load(agentRun: Record<string, unknown>) {
   return session;
 }
 
-describe("agentRun fields shared with Rebase Native", () => {
+describe("agentRun fields shared with Gespan Native", () => {
   beforeEach(() => invoke.mockReset());
 
   it("keeps Native's new fields when Tauri appends a step and saves", async () => {

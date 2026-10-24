@@ -1,5 +1,5 @@
-const MATCH_HIGHLIGHT = "rebase-transcript-search-match";
-const CURRENT_HIGHLIGHT = "rebase-transcript-search-current";
+const MATCH_HIGHLIGHT = "gespan-transcript-search-match";
+const CURRENT_HIGHLIGHT = "gespan-transcript-search-current";
 const MATCH_CAP = 1000;
 const BLOCK_ELEMENTS = new Set([
   "blockquote",

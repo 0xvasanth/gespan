@@ -35,7 +35,7 @@ function originalState(state: EditorState, source: string, original: string) {
   return parsedState(state.update({ changes: { from, to, insert: original.slice(from, end) } }).state, true);
 }
 
-globalThis.rebaseAnalyze = async (path: string, source: string, original: string | null) => {
+globalThis.gespanAnalyze = async (path: string, source: string, original: string | null) => {
   const state = await stateFor(path, source, 0, true);
   const tokensFor = state => {
     const tokens = [];
@@ -63,7 +63,7 @@ globalThis.rebaseAnalyze = async (path: string, source: string, original: string
   return JSON.stringify({ diagnostics: isLintable(path) ? syntaxDiagnostics(state) : [], changes, folds, tokens });
 };
 
-globalThis.rebaseComplete = async (path: string, source: string, pos: number, explicit: boolean) => {
+globalThis.gespanComplete = async (path: string, source: string, pos: number, explicit: boolean) => {
   const state = await stateFor(path, source, pos);
   const context = new CompletionContext(state, pos, explicit);
   const results = await Promise.all(state.languageDataAt<any>("autocomplete", pos).map(data => (Array.isArray(data) ? completeFromList(data) : data)(context)));
@@ -91,7 +91,7 @@ globalThis.rebaseComplete = async (path: string, source: string, pos: number, ex
   return JSON.stringify(options.sort((a, b) => a.label.localeCompare(b.label)).slice(0, 100));
 };
 
-globalThis.rebaseEmmet = async (path: string, source: string, pos: number) => {
+globalThis.gespanEmmet = async (path: string, source: string, pos: number) => {
   const state = await stateFor(path, source, pos);
   let result = null;
   tryExpandEmmet({ state, dispatch: spec => {
@@ -101,7 +101,7 @@ globalThis.rebaseEmmet = async (path: string, source: string, pos: number) => {
   return JSON.stringify(result);
 };
 
-globalThis.rebaseSearch = (source: string, query: string, replacement: string, caseSensitive: boolean, wholeWord: boolean, regexp: boolean) => {
+globalThis.gespanSearch = (source: string, query: string, replacement: string, caseSensitive: boolean, wholeWord: boolean, regexp: boolean) => {
   const state = EditorState.create({ doc: source });
   const search = new SearchQuery({ search: query, replace: replacement, caseSensitive, wholeWord, regexp, literal: true });
   if (!search.valid) return JSON.stringify({ matches: [], invalid: !!query });
@@ -114,6 +114,6 @@ globalThis.rebaseSearch = (source: string, query: string, replacement: string, c
   return JSON.stringify({ matches, invalid: false });
 };
 
-globalThis.rebaseChunkAction = (original: string, current: string, pos: number, start: number, end: number, stage: boolean) => JSON.stringify(
+globalThis.gespanChunkAction = (original: string, current: string, pos: number, start: number, end: number, stage: boolean) => JSON.stringify(
   (stage ? stageChunkText : revertChunkText)(original, current, pos, start === end ? null : { from: start, to: end })
 );

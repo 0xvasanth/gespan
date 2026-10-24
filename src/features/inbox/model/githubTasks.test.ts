@@ -223,23 +223,23 @@ describe("dedupeInboxItems", () => {
         number: 10,
         updatedAt: "2026-08-27T10:00:00Z",
         projectPath: "/tmp/agent-terminal",
-        repo: "0xvasanth/rebase",
+        repo: "0xvasanth/gespan",
       }),
       item({
         number: 10,
         updatedAt: "2026-08-27T10:00:00Z",
-        projectPath: "/tmp/rebase",
-        repo: "0xVasanth/rebase",
+        projectPath: "/tmp/gespan",
+        repo: "0xVasanth/gespan",
       }),
     ];
     const deduped = dedupeInboxItems(rows, [
-      "/tmp/rebase",
+      "/tmp/gespan",
       "/tmp/agent-terminal",
     ]);
     expect(deduped).toHaveLength(1);
-    expect(deduped[0]?.projectPath).toBe("/tmp/rebase");
+    expect(deduped[0]?.projectPath).toBe("/tmp/gespan");
     expect(inboxItemKey(deduped[0]!)).toBe(
-      "github:0xvasanth/rebase:issue:10",
+      "github:0xvasanth/gespan:issue:10",
     );
   });
 
@@ -297,11 +297,11 @@ describe("groupProjectsByRepo", () => {
   it("fetches each GitHub remote once", () => {
     expect(
       groupProjectsByRepo([
-        { path: "/tmp/rebase", repo: "0xvasanth/rebase" },
-        { path: "/tmp/agent-terminal", repo: "0xVasanth/rebase" },
+        { path: "/tmp/gespan", repo: "0xvasanth/gespan" },
+        { path: "/tmp/agent-terminal", repo: "0xVasanth/gespan" },
         { path: "/tmp/docs", repo: "acme/docs" },
       ]).map((project) => project.path),
-    ).toEqual(["/tmp/rebase", "/tmp/docs"]);
+    ).toEqual(["/tmp/gespan", "/tmp/docs"]);
   });
 
   it("fetches a shared upstream once while preserving its preferred checkout", () => {

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { sameProjectPath } from "../../projects/model/recents";
 
-const KEY = "rebase.inboxSeen";
-const LEGACY_KEY = "rebase.inboxSeenAt";
+const KEY = "gespan.inboxSeen";
+const LEGACY_KEY = "gespan.inboxSeenAt";
 
 export type InboxSeenEntry = {
   key: string;

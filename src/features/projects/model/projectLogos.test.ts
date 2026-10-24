@@ -33,7 +33,7 @@ function mockLocalStorage() {
     },
     configurable: true,
   });
-  data.set("rebase:tab-group:key-version", "2");
+  data.set("gespan:tab-group:key-version", "2");
 }
 
 /** The logo store announces changes on the window; nothing here listens. */

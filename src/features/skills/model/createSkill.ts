@@ -1,15 +1,15 @@
-/** Bundled Rebase skill: teach the agent how to write portable SKILL.md files. */
+/** Bundled Gespan skill: teach the agent how to write portable SKILL.md files. */
 export const CREATE_SKILL_NAME = "create-skill";
 
 export const CREATE_SKILL_DESCRIPTION =
-  "Create a Rebase skill as a SKILL.md in .agents/skills. Use when the user wants to author, write, save, or scaffold a skill, or asks about skill format.";
+  "Create a Gespan skill as a SKILL.md in .agents/skills. Use when the user wants to author, write, save, or scaffold a skill, or asks about skill format.";
 
 export const CREATE_SKILL_BODY = `---
 name: create-skill
-description: Create a Rebase skill as a SKILL.md in .agents/skills. Use when the user wants to author, write, save, or scaffold a skill, or asks about skill format.
+description: Create a Gespan skill as a SKILL.md in .agents/skills. Use when the user wants to author, write, save, or scaffold a skill, or asks about skill format.
 ---
 
-# Create a Rebase skill
+# Create a Gespan skill
 
 Write a portable Agent Skill so every harness (Claude, Cursor, Codex, Grok Build, OpenCode, Pi, omp, fx, Hermes Agent, Devin) can load it.
 

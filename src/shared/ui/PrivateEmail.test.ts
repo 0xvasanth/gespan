@@ -54,9 +54,9 @@ it("masks an email when another window turns masking on", async () => {
   expect(revealButton()).toBeNull();
 
   await act(async () => {
-    localStorage.setItem("rebase.maskEmails", "1");
+    localStorage.setItem("gespan.maskEmails", "1");
     window.dispatchEvent(
-      new StorageEvent("storage", { key: "rebase.maskEmails" }),
+      new StorageEvent("storage", { key: "gespan.maskEmails" }),
     );
   });
 

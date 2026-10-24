@@ -543,7 +543,7 @@ export function ModelPicker({
   useEffect(() => {
     const inBlockingUi = (target: EventTarget | null) => {
       if (!(target instanceof Element)) return false;
-      if (target.closest(".rebase-terminal")) return true;
+      if (target.closest(".gespan-terminal")) return true;
       return Boolean(
         target.closest(
           "[data-file-picker], [data-branch-picker], [data-skill-picker], [data-mention-picker], [data-access-picker], [data-model-control]",

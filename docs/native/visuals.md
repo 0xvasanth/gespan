@@ -23,12 +23,12 @@ The check executes the program and validates its native component tree and repre
 The equivalent commands work with a source file:
 
 ```sh
-rebase-gpui visual docs
-rebase-gpui visual check --input /path/to/explanation.js
-rebase-gpui visual show --input /path/to/explanation.js --title "Explanation"
+gespan-gpui visual docs
+gespan-gpui visual check --input /path/to/explanation.js
+gespan-gpui visual show --input /path/to/explanation.js --title "Explanation"
 ```
 
-Reading the reference and checking also work outside a running app. Showing requires the capability inherited by the agent of a live session. CLI discovery supplies the executable path; it is also available to the agent through `REBASE_VISUAL_EXECUTABLE`.
+Reading the reference and checking also work outside a running app. Showing requires the capability inherited by the agent of a live session. CLI discovery supplies the executable path; it is also available to the agent through `GESPAN_VISUAL_EXECUTABLE`.
 
 ## Programs and native controls
 
@@ -101,7 +101,7 @@ The [dashboard example](examples/visual-dashboard.js) exercises charts, tabs, st
 To seed them into an isolated development conversation:
 
 ```sh
-cargo run --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-gpui --profile native-dev -- --dev-data --visual-fixture
+cargo run --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --profile native-dev -- --dev-data --visual-fixture
 ```
 
 The fixture cannot be written into the production database.

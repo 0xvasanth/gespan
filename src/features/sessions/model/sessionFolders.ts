@@ -5,10 +5,10 @@ import { normalizeProjectPath } from "../../projects/model/recents";
 import { orderByIds } from "../../../shared/lib/reorder";
 import { TAB_GROUP_COLORS } from "../../workspace/model/tabGroups";
 
-const KEY = "rebase.sessionFolders";
-const CHANGE_EVENT = "rebase:session-folders-change";
-const PINNED_COLLAPSED_KEY = "rebase.pinnedSessionsCollapsed";
-const REMINDERS_COLLAPSED_KEY = "rebase.reminderSessionsCollapsed";
+const KEY = "gespan.sessionFolders";
+const CHANGE_EVENT = "gespan:session-folders-change";
+const PINNED_COLLAPSED_KEY = "gespan.pinnedSessionsCollapsed";
+const REMINDERS_COLLAPSED_KEY = "gespan.reminderSessionsCollapsed";
 
 export type SessionFolder = {
   id: string;

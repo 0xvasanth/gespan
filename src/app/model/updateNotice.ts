@@ -1,4 +1,4 @@
-const INSTALLED_UPDATE_KEY = "rebase.installedUpdate";
+const INSTALLED_UPDATE_KEY = "gespan.installedUpdate";
 
 export type UpdateNoticeStore = Pick<
   Storage,

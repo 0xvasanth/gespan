@@ -6,7 +6,7 @@ export const PLAN_COMMAND: BuiltinSkill = {
   invocation: "plan",
   description: "Create a reviewable implementation plan before changing files.",
   scope: "builtin",
-  source: "rebase",
+  source: "gespan",
 };
 
 /** Consume `/plan` when it is used as the leading composer command. */

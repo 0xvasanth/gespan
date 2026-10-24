@@ -10,7 +10,7 @@ const LOGIN_ARGS: Partial<Record<HarnessId, readonly string[]>> = {
   codex: ["login"],
   cursor: ["login"],
   grok: ["login", "--oauth"],
-  // Rebase uses fx through Vercel AI Gateway. Choosing it explicitly avoids
+  // Gespan uses fx through Vercel AI Gateway. Choosing it explicitly avoids
   // leaving `fx login` waiting on a TTY-only provider picker.
   fx: ["login", "vercel"],
   devin: ["auth", "login"],

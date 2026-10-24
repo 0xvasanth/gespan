@@ -210,8 +210,8 @@ export function FloatingPilotChat({ onShown }: { onShown: () => void }) {
           ) : null}
           <button
             type="button"
-            aria-label="Open in Rebase"
-            title="Open in Rebase"
+            aria-label="Open in Gespan"
+            title="Open in Gespan"
             disabled={loading}
             className={BUTTON}
             onClick={() => void action({ kind: "reveal" })}
@@ -242,7 +242,7 @@ export function FloatingPilotChat({ onShown }: { onShown: () => void }) {
               />
             ) : (
               <img
-                src="/rebase.png"
+                src="/gespan.png"
                 alt=""
                 className="size-18 object-contain"
               />
@@ -479,7 +479,7 @@ function FloatingConversation({
             className="text-accent hover:underline"
             onClick={() => void action({ kind: "reveal" })}
           >
-            Change model in Rebase
+            Change model in Gespan
           </button>
         </div>
       ) : null}
@@ -597,8 +597,8 @@ function ArtifactSheet({
           ) : null}
           <button
             type="button"
-            aria-label="Open in Rebase"
-            title="Open in Rebase"
+            aria-label="Open in Gespan"
+            title="Open in Gespan"
             className={BUTTON}
             onClick={() => void action({ kind: "openArtifact", id })}
           >

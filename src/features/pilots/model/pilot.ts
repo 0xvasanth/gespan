@@ -54,18 +54,18 @@ export type Pilot = {
   legacyProject?: string;
 };
 
-const ROSTER_KEY = "rebase:pilot-roster";
-const PILOTS_CHANGED = "rebase:pilots-changed";
-export const HANDED_KEY = "rebase:pilot-handed";
+const ROSTER_KEY = "gespan:pilot-roster";
+const PILOTS_CHANGED = "gespan:pilots-changed";
+export const HANDED_KEY = "gespan:pilot-handed";
 
 /** Storage from when each project had one Pilot, keyed by project. */
-const LEGACY_AGENTS_KEY = "rebase:pilots";
-const LEGACY_PROFILES_KEY = "rebase:pilot-profiles";
+const LEGACY_AGENTS_KEY = "gespan:pilots";
+const LEGACY_PROFILES_KEY = "gespan:pilot-profiles";
 /** And from before Pilots had their name. */
 const LEGACY_KEYS: [string, string][] = [
-  ["rebase:project-agents", LEGACY_AGENTS_KEY],
-  ["rebase:project-agent-profiles", LEGACY_PROFILES_KEY],
-  ["rebase:project-agent-handed", HANDED_KEY],
+  ["gespan:project-agents", LEGACY_AGENTS_KEY],
+  ["gespan:project-agent-profiles", LEGACY_PROFILES_KEY],
+  ["gespan:project-agent-handed", HANDED_KEY],
 ];
 
 function readJson(key: string): unknown {
@@ -253,7 +253,7 @@ export function pilotIdFromConversation(conversationId: string): string | null {
     : null;
 }
 
-const OPEN_PILOT_KEY = "rebase:open-pilot";
+const OPEN_PILOT_KEY = "gespan:open-pilot";
 
 /** The Pilot whose conversation was open, so the next launch reopens it. */
 export function loadOpenPilot(): string | undefined {

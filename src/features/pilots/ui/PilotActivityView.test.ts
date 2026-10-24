@@ -54,7 +54,7 @@ it("shows the complete chronological trail", () => {
     {
       id: "read",
       role: "tool",
-      text: "rebase app soul.read",
+      text: "gespan app soul.read",
       tool: {
         kind: "shell",
         status: "completed",
@@ -65,7 +65,7 @@ it("shows the complete chronological trail", () => {
     {
       id: "write",
       role: "tool",
-      text: "rebase app soul.update",
+      text: "gespan app soul.update",
       tool: { kind: "shell", status: "completed", detail: "Saved soul" },
     },
     { id: "reply", role: "assistant", text: "Your instructions are updated." },
@@ -99,7 +99,7 @@ it("updates a live trail and keeps approval controls actionable", () => {
       {
         id: "approval",
         role: "tool",
-        text: "rebase app soul.update",
+        text: "gespan app soul.update",
         tool: { kind: "shell", status: "pending" },
         approval: { requestId: 42 },
       },

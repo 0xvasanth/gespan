@@ -166,7 +166,7 @@ type Live = {
   /**
    * Every task Claude still runs for this session, by id: subagents, shells it
    * backgrounded, monitors. Each one ends in a notification that wakes Claude
-   * for another turn, so the Rebase turn stays open until they are done.
+   * for another turn, so the Gespan turn stays open until they are done.
    */
   backgroundTasks: Map<string, BackgroundTask>;
   /** Rows shown for tasks still running when Claude yielded, by task id. */
@@ -1662,7 +1662,7 @@ function placedChild(
 }
 
 /**
- * Where a sub-agent frame whose parent is `parentId` goes, in the order Rebase
+ * Where a sub-agent frame whose parent is `parentId` goes, in the order Gespan
  * Native uses:
  * 1. `parentId` is a running agent call in this turn;
  * 2. the active resumption of the agent `parentId` dispatched;
@@ -1764,7 +1764,7 @@ function noteStep(
   steps.add(stepId);
 }
 
-/** Rebase Native bounds a child result to 16 KiB before storing it. */
+/** Gespan Native bounds a child result to 16 KiB before storing it. */
 const MAX_CHILD_DETAIL_BYTES = 16 * 1024;
 
 function boundDetail(text: string): string {
@@ -1777,7 +1777,7 @@ function boundDetail(text: string): string {
 }
 
 /**
- * Rebase Native's terminal set: any status it can read other than running.
+ * Gespan Native's terminal set: any status it can read other than running.
  * Unknown statuses are not terminal.
  */
 function isEndedStatus(status: string | undefined): boolean {
@@ -2055,7 +2055,7 @@ function noteResumedNotification(
 
 /**
  * Persisted as an interjection row (`customType: "task-notification"`), the
- * same row Rebase Native writes, so Claude's self-started follow-up is not
+ * same row Gespan Native writes, so Claude's self-started follow-up is not
  * read as a reply to the user.
  */
 function emitWakeMarker(live: Live, text: string): void {
@@ -2170,7 +2170,7 @@ function completeAgentTask(
 
 /**
  * A task is done. If Claude had already yielded, the notification about it
- * starts a follow-up turn, so hold the Rebase turn open for that too rather
+ * starts a follow-up turn, so hold the Gespan turn open for that too rather
  * than settling in the gap between the two.
  */
 function finishBackgroundTask(live: Live, taskId: string): void {
@@ -2181,9 +2181,9 @@ function finishBackgroundTask(live: Live, taskId: string): void {
 }
 
 /**
- * Claude began another turn inside this Rebase turn: woken by a finished
+ * Claude began another turn inside this Gespan turn: woken by a finished
  * task, or by a follow-up written in while it waited. Its own result, not the
- * earlier one, decides when the Rebase turn ends.
+ * earlier one, decides when the Gespan turn ends.
  */
 function noteClaudeTurnStarted(live: Live): void {
   if (!live.activeTurn || !live.turnResultSeen) return;
@@ -2389,7 +2389,7 @@ function waitForInit(live: Live, timeoutMs: number): Promise<void> {
 
 function nextControlId(live: Live): string {
   live.nextControlId += 1;
-  return `rebase_${live.nextControlId}`;
+  return `gespan_${live.nextControlId}`;
 }
 
 function writeJson(

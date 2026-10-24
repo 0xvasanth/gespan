@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Rebase",
-    "slug": "rebase-mobile",
+    "name": "Gespan",
+    "slug": "gespan-mobile",
     "owner": "hardbeat920",
     "version": "1.0.0",
     "runtimeVersion": {
@@ -9,14 +9,14 @@
     },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "rebase",
+    "scheme": "gespan",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/app.icon",
-      "bundleIdentifier": "com.rebase.mobile",
+      "bundleIdentifier": "dev.gespan.mobile",
       "infoPlist": {
-        "CFBundleDisplayName": "Rebase",
-        "NSLocalNetworkUsageDescription": "Connect securely to your paired Rebase desktop."
+        "CFBundleDisplayName": "Gespan",
+        "NSLocalNetworkUsageDescription": "Connect securely to your paired Gespan desktop."
       }
     },
     "android": {
@@ -62,7 +62,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Scan the pairing code from your Rebase desktop.",
+          "cameraPermission": "Scan the pairing code from your Gespan desktop.",
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": true
         }
@@ -71,13 +71,13 @@
         "expo-image-picker",
         {
           "photosPermission": "Choose photos to attach to messages, or as the background of new sessions.",
-          "cameraPermission": "Scan the pairing code from your Rebase desktop."
+          "cameraPermission": "Scan the pairing code from your Gespan desktop."
         }
       ],
       [
         "expo-audio",
         {
-          "microphonePermission": "Dictate messages to your Rebase sessions.",
+          "microphonePermission": "Dictate messages to your Gespan sessions.",
           "recordAudioAndroid": false,
           "enableBackgroundRecording": false,
           "enableBackgroundPlayback": false

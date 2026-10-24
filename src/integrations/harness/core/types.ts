@@ -38,7 +38,7 @@ export type HarnessEvent =
   | ({
       type: "interjection";
       text: string;
-      /** When the row was written (epoch ms); Rebase Native stamps its rows. */
+      /** When the row was written (epoch ms); Gespan Native stamps its rows. */
       sentAt?: number;
     } & InterjectionMeta)
   | { type: "message.delta"; text: string }
@@ -201,18 +201,18 @@ export type HarnessSessionInput = {
   modelSettings?: Record<string, string>;
   providerAccountId?: string;
   runtimeMode: RuntimeMode;
-  /** Keep provider context in memory; Rebase owns the saved transcript. */
+  /** Keep provider context in memory; Gespan owns the saved transcript. */
   ephemeral?: boolean;
-  /** Persist Codex context in Rebase's private Pilot store. */
+  /** Persist Codex context in Gespan's private Pilot store. */
   codexStore?: "pilot";
   intent?: TurnIntent;
   /**
-   * This session drives Rebase's control CLI, which reaches the app over
+   * This session drives Gespan's control CLI, which reaches the app over
    * loopback. Sandboxes deny network by default, so a lead that cannot open
    * that socket cannot supervise its agents at all.
    */
   controlsAgents?: boolean;
-  /** Grants this normal turn access to Rebase's scoped app CLI. */
+  /** Grants this normal turn access to Gespan's scoped app CLI. */
   appAccess?: boolean;
   onEvent: (event: HarnessEvent) => void;
 };

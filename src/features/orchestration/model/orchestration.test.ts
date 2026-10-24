@@ -23,7 +23,7 @@ function setup() {
     }),
     load: vi.fn(async (id: string) => saved.get(id) ?? null),
     enable: vi.fn(
-      async () => "/Applications/Rebase.app/Contents/MacOS/rebase",
+      async () => "/Applications/Gespan.app/Contents/MacOS/gespan",
     ),
     disable: vi.fn(async () => {}),
     scopes: vi.fn(async (cwd: string, files: string[]) =>
@@ -48,13 +48,13 @@ function setup() {
         busy: false,
       });
       return {
-        scratchDir: `/private/var/folders/test/T/rebase-worker-${task.sessionId}`,
+        scratchDir: `/private/var/folders/test/T/gespan-worker-${task.sessionId}`,
         workspace: {
           id: `checkout:/worktrees/${task.id}`,
           projectCwd: run.cwd,
           checkoutCwd: `/worktrees/${task.id}`,
           kind: "worktree" as const,
-          branch: `rebase/orch-${task.id}`,
+          branch: `gespan/orch-${task.id}`,
         },
       };
     }),
@@ -120,7 +120,7 @@ describe("worker assignment prompts", () => {
   it("keeps the task text and wraps it in the assignment envelope", () => {
     const sent = workerTurnPrompt("Review the branch.", ["src/App.tsx"]);
     expect(sent.startsWith("Review the branch.")).toBe(true);
-    expect(sent).toContain("<rebase_assignment>");
+    expect(sent).toContain("<gespan_assignment>");
     expect(sent).toContain("src/App.tsx");
     expect(sent).toContain("override any contradictory wording");
     expect(sent).toContain("stage, commit, push");
@@ -243,10 +243,10 @@ describe("local orchestration", () => {
       .mocked(f.host.submit)
       .mock.calls.find(
         ([id, prompt]) =>
-          id !== "lead" && String(prompt).includes("<rebase_assignment>"),
+          id !== "lead" && String(prompt).includes("<gespan_assignment>"),
       )?.[1];
     expect(workerPrompt).toContain("Define the types");
-    expect(workerPrompt).toContain("<rebase_assignment>");
+    expect(workerPrompt).toContain("<gespan_assignment>");
     expect(
       vi.mocked(f.host.submit).mock.calls.find(([id]) => id === "lead")?.[1],
     ).toContain("do not delegate duplicates");
@@ -1215,19 +1215,19 @@ describe("local orchestration", () => {
   });
   it("quotes the control path only when the shell needs it", () => {
     expect(
-      shellPath("/Applications/Rebase.app/Contents/MacOS/rebase"),
-    ).toBe("/Applications/Rebase.app/Contents/MacOS/rebase");
-    expect(shellPath("/Users/a b/Rebase")).toBe("'/Users/a b/Rebase'");
-    expect(shellPath("C:/Program Files/Rebase/rebase.exe")).toBe(
-      '"C:/Program Files/Rebase/rebase.exe"',
+      shellPath("/Applications/Gespan.app/Contents/MacOS/gespan"),
+    ).toBe("/Applications/Gespan.app/Contents/MacOS/gespan");
+    expect(shellPath("/Users/a b/Gespan")).toBe("'/Users/a b/Gespan'");
+    expect(shellPath("C:/Program Files/Gespan/gespan.exe")).toBe(
+      '"C:/Program Files/Gespan/gespan.exe"',
     );
-    expect(shellPath("C:\\Tools\\rebase.exe")).toBe(
-      "C:\\Tools\\rebase.exe",
+    expect(shellPath("C:\\Tools\\gespan.exe")).toBe(
+      "C:\\Tools\\gespan.exe",
     );
     // A backslash escapes in a POSIX shell, so bare would rewrite the path.
-    expect(shellPath("/Users/a\\b/Rebase")).toBe("'/Users/a\\b/Rebase'");
-    expect(shellPath("/Users/it's/Rebase")).toBe(
-      "'/Users/it'\\''s/Rebase'",
+    expect(shellPath("/Users/a\\b/Gespan")).toBe("'/Users/a\\b/Gespan'");
+    expect(shellPath("/Users/it's/Gespan")).toBe(
+      "'/Users/it'\\''s/Gespan'",
     );
   });
   it("treats an action named after an Object member as unknown", async () => {

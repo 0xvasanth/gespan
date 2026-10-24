@@ -21,7 +21,7 @@ const STATE_NAMES: &[&str] = &[
     "backups",
 ];
 
-pub(crate) struct RebasexStore {
+pub(crate) struct GespanxStore {
     pub home: PathBuf,
     auth: Mutex<Vec<KeyringMirror>>,
 }
@@ -34,7 +34,7 @@ struct KeyringMirror {
     source_value: Option<String>,
 }
 
-impl RebasexStore {
+impl GespanxStore {
     /// Refreshes written by the private server must also reach the ordinary CLI.
     /// Do not overwrite a login changed independently while this server ran.
     pub(crate) fn sync_auth(&self) {
@@ -108,7 +108,7 @@ pub fn codex_pilot_store_prepare(
     let has_thread = match thread_id {
         Some(id) => {
             validate_thread_id(&id)?;
-            !home.join(".rebase-migrations").join(&id).exists()
+            !home.join(".gespan-migrations").join(&id).exists()
                 && contains_thread(&home.join("sessions"), &id)?
         }
         None => false,
@@ -157,11 +157,11 @@ pub fn codex_pilot_store_restore_agent_state(
     restore_agent_edges(&home, &thread_id)
 }
 
-pub(crate) fn prepare(app: &AppHandle, account_id: Option<&str>) -> Result<RebasexStore, String> {
+pub(crate) fn prepare(app: &AppHandle, account_id: Option<&str>) -> Result<GespanxStore, String> {
     let (source, home) = locations(app, account_id)?;
     prepare_files(&source, &home)?;
     let auth = prepare_keyring(&source, &home)?;
-    Ok(RebasexStore {
+    Ok(GespanxStore {
         home,
         auth: Mutex::new(auth),
     })
@@ -173,7 +173,7 @@ fn private_entry(name: &str) -> bool {
         || name.ends_with(".db")
         || name.ends_with(".db-wal")
         || name.ends_with(".db-shm")
-        || name.starts_with(".rebase-")
+        || name.starts_with(".gespan-")
 }
 
 fn prepare_files(source: &Path, home: &Path) -> Result<(), String> {
@@ -503,7 +503,7 @@ fn copy_rollouts_with_edges(
     {
         return Err("The saved Pilot root does not match its thread id".into());
     }
-    let pending_dir = home.join(".rebase-migrations");
+    let pending_dir = home.join(".gespan-migrations");
     std::fs::create_dir_all(&pending_dir).map_err(|e| e.to_string())?;
     let pending = pending_dir.join(thread_id);
     std::fs::write(&pending, b"pending").map_err(|e| e.to_string())?;
@@ -596,7 +596,7 @@ pub(crate) struct AgentEdge {
 }
 
 fn edge_snapshot_path(home: &Path, thread_id: &str) -> PathBuf {
-    home.join(".rebase-agent-state")
+    home.join(".gespan-agent-state")
         .join(format!("{thread_id}.json"))
 }
 
@@ -736,7 +736,7 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let dir =
-                std::env::temp_dir().join(format!("rebase-codex-store-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("gespan-codex-store-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)
         }
@@ -902,7 +902,7 @@ mod tests {
             assert_eq!(std::fs::read(path).unwrap(), std::fs::read(target).unwrap());
         }
         assert!(contains_thread(&fixture.home().join("sessions"), "root-id").unwrap());
-        assert!(!fixture.home().join(".rebase-migrations/root-id").exists());
+        assert!(!fixture.home().join(".gespan-migrations/root-id").exists());
         // A retry is safe and leaves source files intact.
         copy_rollouts(
             &fixture.source(),

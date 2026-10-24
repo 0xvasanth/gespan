@@ -53,7 +53,7 @@ export function refreshOpenCodeCatalog(): Promise<void> {
       if (models.length > 0) setHarnessModels("opencode", models);
     })
     .catch((error: unknown) => {
-      console.debug("[rebase] opencode catalog", error);
+      console.debug("[gespan] opencode catalog", error);
     })
     .finally(() => {
       inflight = null;
@@ -85,7 +85,7 @@ export async function discoverOpenCodeModels(
     const agentsOut = await execChild(path, ["agent", "list"], cwd, "opencode");
     agents = parseAgentListCliOutput(agentsOut);
   } catch (error) {
-    console.debug("[rebase] opencode agents", error);
+    console.debug("[gespan] opencode agents", error);
   }
   return flattenOpenCodeModels(parsed, agents);
 }

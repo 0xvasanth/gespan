@@ -246,7 +246,7 @@ describe("InboxDetail layout", () => {
             harness: "codex",
             model: "gpt-5",
             runtimeMode: "supervised",
-            title: "Review Rebase Pull Request",
+            title: "Review Gespan Pull Request",
             createdAt: 1,
             updatedAt: 1,
           },
@@ -282,7 +282,7 @@ describe("InboxDetail layout", () => {
     expect(fixedHeader).not.toContain("A long inbox issue");
     expect(markup).toContain("text-[18px]");
     expect(markup).not.toContain("Related thread");
-    expect(markup).not.toContain("Review Rebase Pull Request");
+    expect(markup).not.toContain("Review Gespan Pull Request");
     expect(reviewButton).toContain("h-6.5");
     expect(reviewButton).toContain("hover:bg-content/10");
     expect(reviewButton).not.toContain("h-6.5 bg-content/10");
@@ -350,7 +350,7 @@ describe("InboxDetail layout", () => {
         harness: "codex",
         model: "gpt-5",
         runtimeMode: "supervised",
-        title: "Review Rebase Pull Request",
+        title: "Review Gespan Pull Request",
         createdAt: 1,
         updatedAt: 1,
       },
@@ -361,8 +361,8 @@ describe("InboxDetail layout", () => {
     const body = markup.slice(scrollIndex);
 
     expect(header).toContain("Related thread");
-    expect(header).toContain("Review Rebase Pull Request");
-    expect(body).not.toContain("Review Rebase Pull Request");
+    expect(header).toContain("Review Gespan Pull Request");
+    expect(body).not.toContain("Review Gespan Pull Request");
   });
 });
 

@@ -76,7 +76,7 @@ async function devinAskEditsArgs(): Promise<string[]> {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const config = devinAskEditsConfig(user);
-  const dir = join(homedir(), ".rebase-host", "devin");
+  const dir = join(homedir(), ".gespan-host", "devin");
   const hash = createHash("sha256").update(config).digest("hex").slice(0, 16);
   const file = join(dir, `supervised-${hash}.json`);
   await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -355,7 +355,7 @@ export class HostChildBackend implements ChildBackend {
         stdio: ["pipe", "pipe", "pipe", "pipe"],
         detached: process.platform !== "win32",
         windowsHide: true,
-        env: { ...process.env, REBASE_HOST: "1" },
+        env: { ...process.env, GESPAN_HOST: "1" },
       },
     );
     this.children.set(id, child);

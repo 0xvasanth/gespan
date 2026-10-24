@@ -59,7 +59,7 @@ import {
 
 export type { BoardLinkTarget, LinkRef } from "./boardFormat";
 
-const OPEN_BOARD_KEY = "rebase:open-board";
+const OPEN_BOARD_KEY = "gespan:open-board";
 
 function loadOpenBoardId(): string | null {
   try {

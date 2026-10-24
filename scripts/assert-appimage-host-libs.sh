@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Fail if a Rebase AppImage still ships bundled shared libraries or the
+# Fail if a Gespan AppImage still ships bundled shared libraries or the
 # linuxdeploy GTK hook. Used by CI and the release linux job after
 # scripts/repack-appimage.sh has rewritten the Tauri bundle.
 #
-# Usage: scripts/assert-appimage-host-libs.sh [path/to/Rebase_x.y.z_amd64.AppImage]
+# Usage: scripts/assert-appimage-host-libs.sh [path/to/Gespan_x.y.z_amd64.AppImage]
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

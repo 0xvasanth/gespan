@@ -491,7 +491,7 @@ describe("orchestration composer and card", () => {
       allowedHarnesses: ["codex", "cursor"],
       proposalId: "card",
       maxWorkers: 2,
-      cli: "rebase",
+      cli: "gespan",
       tasks: [
         task,
         {
@@ -619,7 +619,7 @@ describe("orchestration composer and card", () => {
       status: "active",
       allowedHarnesses: ["codex"],
       maxWorkers: 2,
-      cli: "rebase",
+      cli: "gespan",
       tasks: [
         task,
         {
@@ -877,7 +877,7 @@ describe("orchestration composer and card", () => {
       status: "paused",
       allowedHarnesses: ["codex"],
       maxWorkers: 2,
-      cli: "rebase",
+      cli: "gespan",
       tasks: [task],
       continuations: 0,
       requests: {},

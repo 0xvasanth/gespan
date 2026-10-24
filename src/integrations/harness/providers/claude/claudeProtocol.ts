@@ -272,7 +272,7 @@ export function buildClaudeSpawnArgs(input: {
   if (input.includePartialMessages !== false) {
     args.push("--include-partial-messages");
   }
-  // Isolated spawns are Rebase's own helper calls (titles, summaries); the
+  // Isolated spawns are Gespan's own helper calls (titles, summaries); the
   // user's hooks have no business firing there. Interactive sessions inherit
   // whatever the caller decided so `~/.claude` hooks keep working.
   const settings: ClaudeCliSettings = {
@@ -617,7 +617,7 @@ export function isSubagentMessage(rec: Record<string, unknown>): boolean {
  * On resume, the CLI re-reports every background task the session started
  * that it considers unfinished — even ones already stopped and reported —
  * and answers each with an empty, zero-turn result. That result belongs to
- * no turn, so it must not end the one Rebase is waiting on.
+ * no turn, so it must not end the one Gespan is waiting on.
  */
 export function isReplayedTaskNotificationResult(
   rec: Record<string, unknown>,

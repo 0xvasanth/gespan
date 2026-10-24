@@ -353,7 +353,7 @@ export class WorkspaceCommands {
     if (await stat(path).then((info) => info.isDirectory(), () => false))
       throw new Error("Cannot save text to a directory.");
     // Replace atomically, as the local command does.
-    const temporary = `${path}.rebase-${process.pid}-${Date.now()}`;
+    const temporary = `${path}.gespan-${process.pid}-${Date.now()}`;
     await writeFile(temporary, content, "utf8");
     await rename(temporary, path).catch(async (reason) => {
       await rm(temporary, { force: true });
@@ -760,7 +760,7 @@ export class WorkspaceCommands {
     if (paths != null) {
       const root = await this.gitRoot(cwd);
       const selected = await this.gitSelectedPaths(root, paths);
-      const directory = await mkdtemp(join(tmpdir(), "rebase-git-selection-"));
+      const directory = await mkdtemp(join(tmpdir(), "gespan-git-selection-"));
       const env = { GIT_INDEX_FILE: join(directory, "index") };
       const run = (args: string[]) => this.gitCommand(root, ["--literal-pathspecs", ...args], env);
       try {

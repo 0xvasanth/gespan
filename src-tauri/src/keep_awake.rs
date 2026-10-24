@@ -1,7 +1,7 @@
 //! Settings → Advanced → Keep screen awake. Each workspace window reports the
 //! shared mode and whether its own agents are working; one assertion covers
 //! every window, so a busy agent in any window keeps the screen unlocked.
-use rebase_keep_awake::{Inhibitor, KeepAwake, Mode, SystemInhibitor};
+use gespan_keep_awake::{Inhibitor, KeepAwake, Mode, SystemInhibitor};
 use std::collections::HashSet;
 use std::sync::Mutex;
 
@@ -46,7 +46,7 @@ impl<I: Inhibitor> Windows<I> {
 
     fn apply(&mut self) {
         if let Err(error) = self.awake.update(self.mode, !self.running.is_empty()) {
-            eprintln!("[rebase] keep awake: {error}");
+            eprintln!("[gespan] keep awake: {error}");
         }
     }
 }

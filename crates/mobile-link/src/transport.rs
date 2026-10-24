@@ -272,7 +272,7 @@ async fn connect(
                     quinn::Endpoint::client(bind.parse().unwrap()).map_err(|e| e.to_string())?;
                 endpoint.set_default_client_config(config.clone());
                 let connecting = endpoint
-                    .connect(remote, "rebase.local")
+                    .connect(remote, "gespan.local")
                     .map_err(|e| e.to_string())?;
                 if let Ok(Ok(connection)) = timeout(Duration::from_secs(4), connecting).await {
                     return Ok::<_, String>((endpoint, connection));
@@ -293,7 +293,7 @@ async fn connect(
     .ok()
     .flatten();
     attempts.abort_all();
-    winner.ok_or_else(|| "Cannot reach your desktop. Check that Rebase is running and its remote address is reachable.".into())
+    winner.ok_or_else(|| "Cannot reach your desktop. Check that Gespan is running and its remote address is reachable.".into())
 }
 
 /// A connection to the desktop held open between requests, so the next one
@@ -910,7 +910,7 @@ mod tests {
             tls::client(&phone, &desktop.fingerprint().unwrap()).unwrap(),
         );
         let connection = client
-            .connect(server.local_addr().unwrap(), "rebase.local")
+            .connect(server.local_addr().unwrap(), "gespan.local")
             .unwrap()
             .await
             .unwrap();

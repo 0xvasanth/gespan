@@ -22,7 +22,7 @@ export function UpdateRailCard({ update, onOpen, onDismiss }: Props) {
       >
         <span className="mt-0.5 grid size-[18px] shrink-0 place-items-center">
           <img
-            src="/rebase.png"
+            src="/gespan.png"
             alt=""
             aria-hidden
             className="size-4 object-contain"

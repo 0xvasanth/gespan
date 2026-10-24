@@ -59,7 +59,7 @@ function cast(width: number) {
 }
 
 /**
- * Rebase's mascots raining down from the top of the screen, piling on
+ * Gespan's mascots raining down from the top of the screen, piling on
  * `colliders` and on the screen's foot, and sliding about as the phone tilts.
  * Fills its parent, which should be the whole screen; touches pass through.
  * Nothing shows with Reduce Motion on.

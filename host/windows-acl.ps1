@@ -1,4 +1,4 @@
-function Protect-RebaseDirectory([string] $Path) {
+function Protect-GespanDirectory([string] $Path) {
   $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
   if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
     throw 'The host data directory must not be a link or junction.'

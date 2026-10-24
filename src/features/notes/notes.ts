@@ -56,8 +56,8 @@ export function noteCardMeta(card: NoteComposerCard): NoteCardMeta {
   };
 }
 
-export const ADD_NOTE_TO_CHAT_EVENT = "rebase:add-note-to-chat";
-export const NOTES_CHANGED_EVENT = "rebase:notes-changed";
+export const ADD_NOTE_TO_CHAT_EVENT = "gespan:add-note-to-chat";
+export const NOTES_CHANGED_EVENT = "gespan:notes-changed";
 
 const MAX_TITLE = 200;
 export const MAX_NOTE_TAGS = 20;

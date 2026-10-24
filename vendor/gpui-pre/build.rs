@@ -1,9 +1,9 @@
-// Modified by Monocode to disable screen capture. See NOTICE.
+// Modified by Gespan to disable screen capture. See NOTICE.
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 
 #[cfg(feature = "screen-capture")]
 compile_error!(
-    "Screen capture is disabled in Monocode: zed-scap is excluded pending license review."
+    "Screen capture is disabled in Gespan: zed-scap is excluded pending license review."
 );
 
 fn main() {

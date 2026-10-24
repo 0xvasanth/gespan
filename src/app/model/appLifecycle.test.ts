@@ -397,9 +397,9 @@ describe("confirming reload", () => {
   it("allows reload after unsaved changes are confirmed", async () => {
     await expect(confirmReload(true)).resolves.toBe(true);
     expect(ask).toHaveBeenCalledWith(
-      "Reload Rebase and discard unsaved changes?",
+      "Reload Gespan and discard unsaved changes?",
       {
-        title: "Rebase",
+        title: "Gespan",
         kind: "warning",
         okLabel: "Reload",
       },

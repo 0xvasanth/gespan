@@ -1,6 +1,6 @@
-# Rebase Native preview
+# Gespan Native preview
 
-Rebase Native is the experimental Rust + GPUI app. The production app still
+Gespan Native is the experimental Rust + GPUI app. The production app still
 uses React/Tauri. Native builds have their own Cargo workspace and lockfile.
 
 ## Requirements
@@ -33,7 +33,7 @@ Type `r` then Enter in the terminal to rebuild and restart. The current app stay
 open until the new build succeeds. Ctrl+C stops the app and runner. There is no
 hot reload or automatic rebuild on save.
 
-On macOS, the command packages and launches `Rebase Native.app`. Other
+On macOS, the command packages and launches `Gespan Native.app`. Other
 platforms launch the executable directly.
 
 ## Build
@@ -43,22 +43,22 @@ bun run native:build
 ```
 
 This creates an optimized build without launching it. **The release app uses the
-installed Rebase database, and changes save there.** No extra flags are needed.
+installed Gespan database, and changes save there.** No extra flags are needed.
 
 On macOS, open:
 
 ```sh
-open "crates/rebase-gpui/target/release/Rebase Native.app"
+open "crates/gespan-gpui/target/release/Gespan Native.app"
 ```
 
-The app has a separate name and application ID (`com.rebase.native`) so it can be
-installed alongside Rebase. Local source builds are signed locally, without
+The app has a separate name and application ID (`dev.gespan.native`) so it can be
+installed alongside Gespan. Local source builds are signed locally, without
 Apple notarization or configured automatic updates. Linux and Windows builds
 produce a standalone executable
-under `crates/rebase-gpui/target/release/`. `CARGO_TARGET_DIR` and
+under `crates/gespan-gpui/target/release/`. `CARGO_TARGET_DIR` and
 `CARGO_BUILD_TARGET` can change these output paths.
 
-The **Rebase Native Preview** GitHub Actions workflow runs checks and build
+The **Gespan Native Preview** GitHub Actions workflow runs checks and build
 verification.
 
 ## Releases and the update feed
@@ -98,13 +98,13 @@ job in `native-release.yml`, and to the `build` and `rpm` jobs, which read
 release breaks silently.
 
 The app's default endpoint is therefore
-`https://github.com/0xvasanth/rebase/releases/download/native-latest/latest.json`.
+`https://github.com/0xvasanth/gespan/releases/download/native-latest/latest.json`.
 GitHub's `releases/latest` serves the Tauri app's stable `v*` releases, so the
 native feed deliberately uses its own tag and never competes with it. To
 override the default (HTTPS only), set the `NATIVE_UPDATER_ENDPOINT` repository
 variable (Settings, Secrets and variables, Actions, Variables) for CI releases,
 which the workflow passes to `scripts/release-channel.cjs native-config`. For a
-local build, set `REBASE_NATIVE_UPDATER_ENDPOINT` yourself instead.
+local build, set `GESPAN_NATIVE_UPDATER_ENDPOINT` yourself instead.
 
 Required repository secrets: `TAURI_UPDATER_PUBKEY` (embedded in the app),
 `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, plus the
@@ -116,36 +116,36 @@ otherwise that step is skipped. The channel logic lives in
 
 The macOS app icon is `src-tauri/icons/icon.icns`, shared with the Tauri app.
 
-## Running alongside Rebase
+## Running alongside Gespan
 
-Rebase Native and the Tauri Rebase app share one database,
-`~/Library/Application Support/com.rebase.desktop/rebase.db` on macOS. Before
-you use Rebase Native with your real data:
+Gespan Native and the Tauri Gespan app share one database,
+`~/Library/Application Support/dev.gespan.desktop/gespan.db` on macOS. Before
+you use Gespan Native with your real data:
 
-- Back up `rebase.db` with both apps closed.
+- Back up `gespan.db` with both apps closed.
 - Do not have the same conversation open in both apps at the same time. Tauri
-  Rebase saves whole conversations, so it can overwrite turns that were added in
-  Rebase Native.
+  Gespan saves whole conversations, so it can overwrite turns that were added in
+  Gespan Native.
 
 Opening different conversations in each app is fine. A code safeguard for this is
 planned but not built yet.
 
 ## Data and configuration
 
-Development stores `rebase.db` under:
+Development stores `gespan.db` under:
 
 | Platform | Development directory |
 | --- | --- |
-| macOS | `~/Library/Application Support/Rebase Development/` |
-| Linux | `$XDG_DATA_HOME/Rebase Development/`, or `~/.local/share/Rebase Development/` |
-| Windows | `%LOCALAPPDATA%\Rebase Development\` |
+| macOS | `~/Library/Application Support/Gespan Development/` |
+| Linux | `$XDG_DATA_HOME/Gespan Development/`, or `~/.local/share/Gespan Development/` |
+| Windows | `%LOCALAPPDATA%\Gespan Development\` |
 
-`REBASE_NATIVE_DATA_DIR` overrides this development directory.
+`GESPAN_NATIVE_DATA_DIR` overrides this development directory.
 
-Release builds open `com.rebase.desktop/rebase.db` under macOS Application
+Release builds open `dev.gespan.desktop/gespan.db` under macOS Application
 Support, Linux's XDG data directory, or Windows' `%APPDATA%`. The app uses the
 existing desktop schema and session IDs. GPUI preferences are saved beside the
-database in `rebase.db.gpui.json`.
+database in `gespan.db.gpui.json`.
 
 Supported desktop preferences and workspace state are read from the installed
 app's webview localStorage on macOS and Linux. The Windows WebView2 reader is
@@ -164,7 +164,7 @@ To inspect the installed database without opening a window or changing it, use
 the executable from a release build:
 
 ```sh
-crates/rebase-gpui/target/release/rebase-gpui --check-data
+crates/gespan-gpui/target/release/gespan-gpui --check-data
 ```
 
 Provider CLI paths can be changed in Settings → Providers. CLI authentication
@@ -184,7 +184,7 @@ A synthetic long-history fixture uses development data and makes no provider
 request:
 
 ```sh
-REBASE_NATIVE_DATA_DIR=/tmp/rebase-native-lab bun run native:dev --fixture
+GESPAN_NATIVE_DATA_DIR=/tmp/gespan-native-lab bun run native:dev --fixture
 ```
 
 Fixtures are refused with production data. Use a fresh temporary directory when

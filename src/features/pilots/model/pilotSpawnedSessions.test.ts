@@ -37,7 +37,7 @@ it("attaches accepted launches to their originating turn without mutating or dup
   expect(recordPilotSpawnedSession(pilot, "reply", launch)).toBe(pilot);
 });
 
-function receipt(command = "rebase app sessions.start", ok = true): Block {
+function receipt(command = "gespan app sessions.start", ok = true): Block {
   return {
     id: "call",
     role: "tool",
@@ -56,7 +56,7 @@ it("recovers confirmed launches from older chats, including shell wrappers, and 
   expect(pilotSpawnedSessions([receipt()])).toEqual([launch]);
   expect(
     pilotSpawnedSessions([
-      receipt("/bin/zsh -lc 'rebase app sessions.start'"),
+      receipt("/bin/zsh -lc 'gespan app sessions.start'"),
     ]),
   ).toEqual([launch]);
   expect(
@@ -78,8 +78,8 @@ it("does not turn failed, pending, unrelated or truncated output into session li
   expect(
     pilotSpawnedSessions([
       receipt(undefined, false),
-      receipt("rebase app sessions.read"),
-      receipt("echo rebase app sessions.start"),
+      receipt("gespan app sessions.read"),
+      receipt("echo gespan app sessions.start"),
       { ...call, role: "assistant" },
       { ...call, tool: { ...call.tool, status: "in_progress" } },
       { ...call, tool: { ...call.tool, detail: '{"ok":true,"result":' } },
@@ -96,7 +96,7 @@ function appReceipt(action: string, result: unknown): Block {
       status: "completed",
       preview: {
         kind: "shell",
-        title: `/bin/zsh -lc 'rebase app ${action}'`,
+        title: `/bin/zsh -lc 'gespan app ${action}'`,
       },
       detail: JSON.stringify({ ok: true, result }),
     },

@@ -43,9 +43,9 @@ it("flips the meter when another window turns on remaining usage", async () => {
   );
 
   await act(async () => {
-    localStorage.setItem("rebase.showRemainingUsage", "1");
+    localStorage.setItem("gespan.showRemainingUsage", "1");
     window.dispatchEvent(
-      new StorageEvent("storage", { key: "rebase.showRemainingUsage" }),
+      new StorageEvent("storage", { key: "gespan.showRemainingUsage" }),
     );
   });
 

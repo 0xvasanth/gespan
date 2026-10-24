@@ -117,6 +117,6 @@ export function applyTerminalChrome(
   outer: HTMLElement,
   tui: boolean,
 ): void {
-  outer.classList.toggle("rebase-terminal--alt-screen", tui);
+  outer.classList.toggle("gespan-terminal--alt-screen", tui);
   term.options.overviewRuler = tui ? { width: MIN_TUI_SCROLLBAR_WIDTH } : {};
 }

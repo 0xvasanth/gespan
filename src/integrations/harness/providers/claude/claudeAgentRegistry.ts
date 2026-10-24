@@ -4,7 +4,7 @@
  * the session must remember which call dispatched which agent, and which block
  * is currently showing that agent's resumed work.
  *
- * Port of Rebase Native's `crates/rebase-core/src/provider/agent_registry.rs`;
+ * Port of Gespan Native's `crates/gespan-core/src/provider/agent_registry.rs`;
  * both apps must route the same frames to the same blocks.
  */
 import type { Block } from "../../../../features/sessions/model/session";

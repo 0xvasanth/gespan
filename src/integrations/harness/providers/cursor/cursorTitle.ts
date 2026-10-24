@@ -25,7 +25,7 @@ export async function generateCursorSessionTitle(input: {
     });
     return parseGeneratedSessionTitle(output, input.message);
   } catch (error) {
-    console.debug("[rebase] session title", error);
+    console.debug("[gespan] session title", error);
     return null;
   }
 }

@@ -1,5 +1,5 @@
 [package]
-name = "rebase-keep-awake"
+name = "gespan-keep-awake"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"

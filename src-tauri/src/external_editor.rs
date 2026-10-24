@@ -523,7 +523,7 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("rebase-editor-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("gespan-editor-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -632,9 +632,9 @@ mod tests {
     const TOOLBOX_ONLY: EditorDefinition = EditorDefinition {
         id: "toolbox-only",
         name: "Toolbox Only",
-        commands: &["rebase-toolbox-only-test-ide"],
+        commands: &["gespan-toolbox-only-test-ide"],
         #[cfg(target_os = "macos")]
-        mac_apps: &["Rebase Toolbox Only Test IDE.app"],
+        mac_apps: &["Gespan Toolbox Only Test IDE.app"],
         #[cfg(windows)]
         windows_paths: &[],
     };
@@ -645,7 +645,7 @@ mod tests {
         assert!(resolve_editor_in(&TOOLBOX_ONLY, Some(&dir)).is_none());
         assert!(resolve_editor_in(&TOOLBOX_ONLY, None).is_none());
 
-        let script = dir.join(script_name("rebase-toolbox-only-test-ide"));
+        let script = dir.join(script_name("gespan-toolbox-only-test-ide"));
         touch_executable(&script);
         assert!(matches!(
             resolve_editor_in(&TOOLBOX_ONLY, Some(&dir)),
@@ -658,7 +658,7 @@ mod tests {
     #[test]
     fn a_toolbox_script_without_an_execute_bit_is_not_offered() {
         let dir = scratch("toolbox-noexec");
-        touch(&dir.join("rebase-toolbox-only-test-ide"));
+        touch(&dir.join("gespan-toolbox-only-test-ide"));
         assert!(resolve_editor_in(&TOOLBOX_ONLY, Some(&dir)).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }

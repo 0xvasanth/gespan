@@ -1,13 +1,13 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useSyncExternalStore } from "react";
 import {
-  githubRebaseStarStatus,
-  starRebaseOnGithub,
+  githubGespanStarStatus,
+  starGespanOnGithub,
 } from "../../features/inbox/model/githubTasks";
 import { Loader, Star, X } from "../../shared/ui/icons";
 
-const REBASE_GITHUB_URL = "https://github.com/0xvasanth/rebase";
-const DISMISSED_STORAGE_KEY = "rebase.githubStarPrompt.dismissed.v1";
+const GESPAN_GITHUB_URL = "https://github.com/0xvasanth/gespan";
+const DISMISSED_STORAGE_KEY = "gespan.githubStarPrompt.dismissed.v1";
 
 type PromptSnapshot = "loading" | "visible" | "starring" | "hidden";
 
@@ -58,7 +58,7 @@ function checkStarStatus(force = false): Promise<void> {
   if (!force && promptSnapshot !== "loading") return Promise.resolve();
 
   const initial = promptSnapshot === "loading";
-  checkRequest = githubRebaseStarStatus()
+  checkRequest = githubGespanStarStatus()
     .then((status) => {
       if (status === "starred") setPromptSnapshot("hidden");
       else if (status === "notStarred") setPromptSnapshot("visible");
@@ -76,11 +76,11 @@ function checkStarStatus(force = false): Promise<void> {
 function starFromPrompt(): Promise<void> {
   if (starRequest) return starRequest;
   setPromptSnapshot("starring");
-  starRequest = starRebaseOnGithub()
+  starRequest = starGespanOnGithub()
     .then(() => setPromptSnapshot("hidden"))
     .catch(async () => {
       setPromptSnapshot("visible");
-      await openUrl(REBASE_GITHUB_URL).catch(() => undefined);
+      await openUrl(GESPAN_GITHUB_URL).catch(() => undefined);
     })
     .finally(() => {
       starRequest = null;
@@ -121,7 +121,7 @@ export function GithubStarPrompt() {
     <div data-github-star-prompt className="relative mb-1 h-8 w-full">
       <button
         type="button"
-        aria-label="Star Rebase on GitHub"
+        aria-label="Star Gespan on GitHub"
         aria-busy={busy}
         disabled={busy}
         onClick={() => void starFromPrompt()}

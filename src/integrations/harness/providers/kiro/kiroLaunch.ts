@@ -9,7 +9,7 @@ export const KIRO_INIT_PARAMS = {
     fs: { readTextFile: false, writeTextFile: false },
     terminal: false,
   },
-  clientInfo: { name: "rebase", version: "0.1.0" },
+  clientInfo: { name: "gespan", version: "0.1.0" },
 } as const;
 
 export type KiroLaunchInput = {

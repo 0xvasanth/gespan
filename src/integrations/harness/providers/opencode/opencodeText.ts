@@ -29,7 +29,7 @@ import {
 } from "./opencodeProtocol";
 import { resolveOpenCodeV2Service } from "./opencodeService";
 
-const TEXT_CHILD_ID = "rebase-opencode-text";
+const TEXT_CHILD_ID = "gespan-opencode-text";
 const SERVER_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 45_000;
 

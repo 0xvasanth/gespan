@@ -6,8 +6,8 @@ import {
 } from "../../workspace/model/tabGroups";
 import { notifyProjectPathsChanged } from "./projectPathsChanged";
 
-const GROUPS_KEY = "rebase.projectGroups";
-const ASSIGNMENTS_KEY = "rebase.projectGroupAssignments";
+const GROUPS_KEY = "gespan.projectGroups";
+const ASSIGNMENTS_KEY = "gespan.projectGroupAssignments";
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 export type ProjectGroup = {

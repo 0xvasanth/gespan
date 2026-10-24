@@ -2,33 +2,33 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** When Claude resumes a sub-agent with `SendMessage` and it keeps working in the background, both Rebase apps capture and show that work. The background card links to the work. Sub-agent reports render cleanly, not as Claude's raw hand-back text.
+**Goal:** When Claude resumes a sub-agent with `SendMessage` and it keeps working in the background, both Gespan apps capture and show that work. The background card links to the work. Sub-agent reports render cleanly, not as Claude's raw hand-back text.
 
 **Architecture:** Claude's live stream already carries everything (verified by capture, see Evidence). The losses all happen in our parsers, so the fix lives in the parser and display layers:
 
 1. A per-session **agent-run registry** that outlives a single turn. It is seeded from persisted blocks when a process restarts or resumes. It maps the original Agent `tool_use_id` and the Claude `agentId` to the block that should receive steps right now.
 2. A `SendMessage` whose result carries `resumedAgentId` becomes a **resumption agent run** (its own block). The resumed agent's steps and task events attach to it, and history stays append-only.
 3. The background card row carries the block id. It shows live progress and opens that block.
-4. Hand-back text is parsed at **display time** into report plus metadata. Stored data stays raw, so the shared `rebase.db` stays compatible between apps.
+4. Hand-back text is parsed at **display time** into report plus metadata. Stored data stays raw, so the shared `gespan.db` stays compatible between apps.
 
 Wake is the reference for the model. It links a sub-agent run to its dispatching call through the agentId and `meta.json` `toolUseId`, so resumed runs stay attached to the original dispatch. It also classifies task notifications as injected system content, not user or assistant words.
 
-**Tech Stack:** Rust (`crates/rebase-core`, `crates/rebase-gpui`), TypeScript/React (`src/`), Vitest, cargo test, Bun.
+**Tech Stack:** Rust (`crates/gespan-core`, `crates/gespan-gpui`), TypeScript/React (`src/`), Vitest, cargo test, Bun.
 
 **Spec:** Root-cause analysis and capture test from 2026-10-24 (summarized under Evidence). User request: "fix all these issues … in a cleaner way … take Wake as a reference".
 
-## Evidence (from the capture, Claude Code 2.1.309, Rebase Native's exact flags)
+## Evidence (from the capture, Claude Code 2.1.309, Gespan Native's exact flags)
 
 - Turn 1 (foreground Agent `A`): child frames carry `parent_tool_use_id = A`.
 - Turn 2 (`SendMessage` `S` resumes agent `X`): the `S` tool_result is `{"success":true,…,"resumedAgentId":"X"}`. The resumed agent's tool frames arrive on stdout **after** turn 2's `result`, with `parent_tool_use_id = A` (turn 1's Agent id) and no sidechain flag.
 - `system` events `task_started` (with `is_backgrounded:true`, `task_type:local_agent`), `task_progress` ×N and `task_notification` (with `summary`, `output_file`) carry `task_id = X` and `tool_use_id = S`. `task_updated {status:completed}` carries only `task_id = X`.
 - Completion arrives as `system/task_notification`, followed by a Claude-initiated turn whose `result.origin.kind = "task-notification"`.
 - Agent `tool_result` text begins `[Subagent hand-back] … The report follows:` and ends with a trailer: `agentId: X (use SendMessage with to: 'X', …) subagent_tokens: N tool_uses: N duration_ms: N`.
-- Rebase Native drops these at:
-  - `crates/rebase-core/src/provider/tasks.rs:51-53` and `:462`: there's no parent in this turn's `tools`, so the frame is swallowed.
-  - `crates/rebase-core/src/tool/tasks.rs:486`: `SendMessage` isn't an agent tool, so task events attach to nothing.
+- Gespan Native drops these at:
+  - `crates/gespan-core/src/provider/tasks.rs:51-53` and `:462`: there's no parent in this turn's `tools`, so the frame is swallowed.
+  - `crates/gespan-core/src/tool/tasks.rs:486`: `SendMessage` isn't an agent tool, so task events attach to nothing.
   - `parked.rs:292`: `tools` is cleared between turns.
-- The card (`crates/rebase-gpui/src/conversation/background_tasks.rs:155-230`) holds only a description and a start time.
+- The card (`crates/gespan-gpui/src/conversation/background_tasks.rs:155-230`) holds only a description and a start time.
 - Reports render verbatim (`tool/tasks.rs:545-549`, Tauri `transcriptActivity.ts:826`).
 - The run title is overwritten by progress text (`provider/tasks.rs:534-538`).
 
@@ -45,7 +45,7 @@ Wake is the reference for the model. It links a sub-agent run to its dispatching
   - `agentRun.activity?: string`
 
   Both apps must load blocks written by the other with or without these fields. No existing field changes meaning. Stored tool output stays raw.
-- **Fixture.** The capture becomes the shared test fixture `tests/fixtures/claude/resumed-background-agent.jsonl`, the 238 stdout frames. Machine-specific absolute paths are replaced with `/tmp/rebase-fixture`. Both parsers' tests replay it.
+- **Fixture.** The capture becomes the shared test fixture `tests/fixtures/claude/resumed-background-agent.jsonl`, the 238 stdout frames. Machine-specific absolute paths are replaced with `/tmp/gespan-fixture`. Both parsers' tests replay it.
 - Commits carry no Co-Authored-By trailer and no AI attribution. No local Cubic review. Never stage the user's uncommitted `README.md` edit.
 - Branch: `fix/claude-background-agents`, created from `main`. #29 was merged as 0fb387c7, so this branch sits directly on `main`.
 
@@ -83,8 +83,8 @@ Wake is the reference for the model. It links a sub-agent run to its dispatching
 ### Task 1: Fixture, and the hand-back parser in Rust and TS
 
 **Files:**
-- Create: `tests/fixtures/claude/resumed-background-agent.jsonl`, from `/private/tmp/claude-501/capture-test/stdout.jsonl` with absolute machine paths replaced by `/tmp/rebase-fixture`.
-- Create: `crates/rebase-core/src/tool/handback.rs` (plus `mod` declaration and tests), `src/features/sessions/model/subagentHandback.ts`, `src/features/sessions/model/subagentHandback.test.ts`.
+- Create: `tests/fixtures/claude/resumed-background-agent.jsonl`, from `/private/tmp/claude-501/capture-test/stdout.jsonl` with absolute machine paths replaced by `/tmp/gespan-fixture`.
+- Create: `crates/gespan-core/src/tool/handback.rs` (plus `mod` declaration and tests), `src/features/sessions/model/subagentHandback.ts`, `src/features/sessions/model/subagentHandback.test.ts`.
 - Modify: none yet. The UI wiring is in Tasks 4 and 5.
 
 **Interfaces:**
@@ -105,16 +105,16 @@ export function parseHandback(text: string): Handback;
   - **A report body containing a line `agentId: fake` mid-text plus the real trailer** extracts only the trailer's id, and keeps the mid-text line in `report`.
   - **A trailer-only variant without the preamble** still extracts the fields.
   - **Empty string** returns an empty report.
-- [ ] **Step 2: Run** `cargo test --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core handback` (with the native-script profile flags) and `bunx vitest run src/features/sessions/model/subagentHandback.test.ts`. Expect **FAIL**.
+- [ ] **Step 2: Run** `cargo test --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core handback` (with the native-script profile flags) and `bunx vitest run src/features/sessions/model/subagentHandback.test.ts`. Expect **FAIL**.
 - [ ] **Step 3: Implement.** Anchor the trailer regex to the end of the text: `agentId:\s*(\S+)[\s\S]*?subagent_tokens:\s*(\d+)\s*tool_uses:\s*(\d+)\s*duration_ms:\s*(\d+)\s*$`. Make the preamble strip match the exact `[Subagent hand-back]` lead paragraph up to and including `The report follows:`, then remove the common leading indentation from the rest.
 - [ ] **Step 4: Run** the same tests. Expect **PASS**.
 - [ ] **Step 5: Commit:** `Add the Claude resume capture fixture and a hand-back report parser`
 
-### Task 2: Rebase Native core, an agent-run registry across turns, and resume routing
+### Task 2: Gespan Native core, an agent-run registry across turns, and resume routing
 
 **Files:**
-- Modify: `crates/rebase-core/src/provider/tasks.rs` (`agent_step` :51-53, `claude_activity` :376-462, task events :504-560, `track_claude_task` :575-614, the `description` patch :534-538), `crates/rebase-core/src/tool/tasks.rs` (`is_agent_tool` :486, `agent_mut`, `AgentRun` fields), `crates/rebase-core/src/provider.rs` (the SendMessage tool_result handling, and seeding on process start and `--resume`), `crates/rebase-core/src/provider/parked.rs:292`.
-- Test: a new `crates/rebase-core/src/provider/tasks/resume_tests.rs` (or the existing test module) that replays the fixture through the real parser entry point that `provider.rs` uses for stdout lines.
+- Modify: `crates/gespan-core/src/provider/tasks.rs` (`agent_step` :51-53, `claude_activity` :376-462, task events :504-560, `track_claude_task` :575-614, the `description` patch :534-538), `crates/gespan-core/src/tool/tasks.rs` (`is_agent_tool` :486, `agent_mut`, `AgentRun` fields), `crates/gespan-core/src/provider.rs` (the SendMessage tool_result handling, and seeding on process start and `--resume`), `crates/gespan-core/src/provider/parked.rs:292`.
+- Test: a new `crates/gespan-core/src/provider/tasks/resume_tests.rs` (or the existing test module) that replays the fixture through the real parser entry point that `provider.rs` uses for stdout lines.
 
 **Interfaces:**
 - **Produces** `AgentRegistry` on the session provider state:
@@ -139,7 +139,7 @@ export function parseHandback(text: string): Handback;
     - Old blocks without the new fields still deserialize.
     - New fields round-trip.
     - A block without `agentRun.activity` renders its title from `name`.
-- [ ] **Step 2: Run** `cargo test … -p rebase-core resume` (native profile flags). Expect **FAIL**.
+- [ ] **Step 2: Run** `cargo test … -p gespan-core resume` (native profile flags). Expect **FAIL**.
 - [ ] **Step 3: Implement** the routing order and registry exactly as in Design Decisions:
   - Never return `true` from `claude_activity` for a frame that wasn't attached.
   - The registry must not be cleared at `parked.rs:292`. Only the per-turn `tools` map is cleared.
@@ -147,12 +147,12 @@ export function parseHandback(text: string): Handback;
 - [ ] **Step 4: Run** the focused tests, then `env ZDOTDIR=$(mktemp -d) bun run native:check`. Expect **PASS**.
 - [ ] **Step 5: Commit:** `Keep Claude agent runs across turns and route resumed background work to its run`
 
-### Task 3: Rebase Native UI, resumed runs, clean reports, linked card rows, and the finished marker
+### Task 3: Gespan Native UI, resumed runs, clean reports, linked card rows, and the finished marker
 
 **Files:**
 - Modify:
-  - `crates/rebase-gpui/src/transcript/tasks.rs`. Run title: "Resumed · <name>" for `resume_of`, "Continued · <name>" for continuation, and `activity` as a subtitle while running. The report goes through `parse_handback` (`:370`, `:518-529`), with a metadata line "N tool uses · N tokens · Ns".
-  - `crates/rebase-gpui/src/conversation/background_tasks.rs`. Rows show description, `latest`, `steps` and elapsed time. A click scrolls to the block with `tool_id` and expands it. Rows without a `tool_id` stay non-interactive.
+  - `crates/gespan-gpui/src/transcript/tasks.rs`. Run title: "Resumed · <name>" for `resume_of`, "Continued · <name>" for continuation, and `activity` as a subtitle while running. The report goes through `parse_handback` (`:370`, `:518-529`), with a metadata line "N tool uses · N tokens · Ns".
+  - `crates/gespan-gpui/src/conversation/background_tasks.rs`. Rows show description, `latest`, `steps` and elapsed time. A click scrolls to the block with `tool_id` and expands it. Rows without a `tool_id` stay non-interactive.
   - The conversation/turn renderer. When a turn's result has `origin.kind == "task-notification"`, render a leading muted marker "Background agent finished · <summary>".
 - Test: GPUI view tests in the existing style for these modules (e.g. the `transcript/tasks.rs` tests and the `background_tasks.rs` tests).
 
@@ -165,7 +165,7 @@ export function parseHandback(text: string): Handback;
 - [ ] **Step 2: Run** the focused GPUI tests. Expect **FAIL**.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Verify** `env ZDOTDIR=$(mktemp -d) bun run native:check` passes and `bun run native:build` succeeds.
-- [ ] **Step 5: Commit:** `Show resumed background agents, clean reports and linked background rows in Rebase Native`
+- [ ] **Step 5: Commit:** `Show resumed background agents, clean reports and linked background rows in Gespan Native`
 
 ### Task 4: Tauri parity, parser
 
@@ -181,7 +181,7 @@ export function parseHandback(text: string): Handback;
 - [ ] **Step 2: Run** `bunx vitest run src/integrations/harness/providers/claude/claudeResume.test.ts`. Expect **FAIL**.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the tests, then `bun run check`. Expect **PASS**.
-- [ ] **Step 5: Commit:** `Keep Claude agent runs across turns in Tauri Rebase and route resumed background work`
+- [ ] **Step 5: Commit:** `Keep Claude agent runs across turns in Tauri Gespan and route resumed background work`
 
 ### Task 5: Tauri parity, UI, and the cross-app block contract
 
@@ -189,7 +189,7 @@ export function parseHandback(text: string): Handback;
 - Modify:
   - `src/features/sessions/model/transcriptActivity.ts`: `subagentReport` (:826) uses `parseHandback`. "Running in background" (:1076) gains the latest activity.
   - `src/features/sessions/ui/AgentTranscript.tsx`: the report render (:4054) shows the metadata line, the "Resumed ·" / "Continued ·" titles, the activity subtitle, and the "Background agent finished · <summary>" marker.
-  - `src/test/sharedContracts.test.ts` and `crates/rebase-core/tests/shared_contracts.rs`: assert both sides use the same JSON field names (`agentId`, `resumeOf`, `activity`) for `agentRun`.
+  - `src/test/sharedContracts.test.ts` and `crates/gespan-core/tests/shared_contracts.rs`: assert both sides use the same JSON field names (`agentId`, `resumeOf`, `activity`) for `agentRun`.
 - Test: `src/features/sessions/ui/AgentTranscript.*.test.ts` (existing style), and `transcriptActivity` tests.
 
 - [ ] **Step 1: Write failing tests:**
@@ -200,12 +200,12 @@ export function parseHandback(text: string): Handback;
 - [ ] **Step 2: Run** the focused vitest files. Expect **FAIL**.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Verify** `bun run check` and `env ZDOTDIR=$(mktemp -d) bun run native:check` both pass.
-- [ ] **Step 5: Commit:** `Render resumed agents and clean sub-agent reports in Tauri Rebase`
+- [ ] **Step 5: Commit:** `Render resumed agents and clean sub-agent reports in Tauri Gespan`
 
 ### Task 6: End-to-end verification (controller)
 
 - [ ] Run the full gates.
-- [ ] Build both apps and install them into `/Applications`. Back up `rebase.db` first.
+- [ ] Build both apps and install them into `/Applications`. Back up `gespan.db` first.
 - [ ] **Live check.** In each app, run a session that dispatches an agent, then resumes it with `SendMessage` in the background, using the capture scenario prompts. Confirm all of these:
   - The resumed steps appear under a "Resumed ·" run.
   - The background row shows the latest activity and step count, and clicking it opens the run.

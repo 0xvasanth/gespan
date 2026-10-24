@@ -161,7 +161,7 @@ describe("Codex plugin file skills", () => {
 });
 
 describe("provider-aware skill catalog", () => {
-  it("uses Pi discovery without adding Rebase's built-in row", async () => {
+  it("uses Pi discovery without adding Gespan's built-in row", async () => {
     const catalog = await loadSkills({ harness: "pi", cwd: "/repo/" });
 
     expect(mocks.discoverPiSkills).toHaveBeenCalledWith("/repo");
@@ -423,10 +423,10 @@ describe("file skill visibility preferences", () => {
   });
 
   it("tolerates malformed and mixed stored preferences", (): void => {
-    storage.set("rebase.disabledSkillPaths", "invalid json");
+    storage.set("gespan.disabledSkillPaths", "invalid json");
     expect(loadDisabledSkillPaths()).toEqual([]);
     storage.set(
-      "rebase.disabledSkillPaths",
+      "gespan.disabledSkillPaths",
       JSON.stringify([path, null, 42]),
     );
     expect(loadDisabledSkillPaths()).toEqual([path]);

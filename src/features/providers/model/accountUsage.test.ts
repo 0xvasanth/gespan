@@ -182,7 +182,7 @@ describe("useProviderAccountUsage", () => {
     });
     clearCachedRateLimits();
     localStorage.setItem(
-      "rebase.providerAccounts.v1",
+      "gespan.providerAccounts.v1",
       JSON.stringify({
         claude: [{ id: "account-work", provider: "claude", label: "Work" }],
       }),

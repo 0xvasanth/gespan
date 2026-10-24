@@ -1,6 +1,6 @@
 # Build from source
 
-Rebase supports macOS, Linux, and Windows. You need Node.js 20+ and a current stable Rust toolchain. Install and sign in to at least one agent CLI using [provider setup](providers.md).
+Gespan supports macOS, Linux, and Windows. You need Node.js 20+ and a current stable Rust toolchain. Install and sign in to at least one agent CLI using [provider setup](providers.md).
 
 ## Platform prerequisites
 
@@ -17,12 +17,12 @@ bun install
 bun run tauri dev
 ```
 
-Development builds run as **Rebase Dev** (`com.rebase.desktop.dev`), so they
-keep their own `rebase.db`, settings and notification permissions in
-`~/Library/Application Support/com.rebase.desktop.dev/` and never touch an
-installed Rebase you are using at the same time. `bun run native:dev` likewise
-runs as **Rebase Native Dev** (`com.rebase.native.dev`) with its database in
-`~/Library/Application Support/Rebase Development/`.
+Development builds run as **Gespan Dev** (`dev.gespan.desktop.dev`), so they
+keep their own `gespan.db`, settings and notification permissions in
+`~/Library/Application Support/dev.gespan.desktop.dev/` and never touch an
+installed Gespan you are using at the same time. `bun run native:dev` likewise
+runs as **Gespan Native Dev** (`dev.gespan.native.dev`) with its database in
+`~/Library/Application Support/Gespan Development/`.
 
 ## Ubuntu / Debian packages
 
@@ -51,7 +51,7 @@ On EL 10, the setup helper enables EPEL 10 and CRB automatically, since the deve
 The build emits a `.rpm` under `target/release/bundle/rpm/`, installable with:
 
 ```bash
-sudo dnf install ./target/release/bundle/rpm/Rebase-*.rpm
+sudo dnf install ./target/release/bundle/rpm/Gespan-*.rpm
 ```
 
 EL 9 and older are unsupported (`webkit2gtk4.1-devel` only exists in EPEL 10). The published release `.rpm` is built on Enterprise Linux 10 so it loads on Fedora and EL 10. See [Linux installation](install.md#fedora--enterprise-linux-packages) for release package installation and runtime repository setup.
@@ -79,7 +79,7 @@ To trial AppImage updates, install a beta AppImage in a writable directory, publ
 
 ### Updater feed and signing secrets
 
-- Stable releases attach `latest.json` to the GitHub Release. Builds default to `https://github.com/0xvasanth/rebase/releases/latest/download/latest.json`; set the `TAURI_UPDATER_ENDPOINT` secret to override it. The feed always points at the GitHub Release assets.
+- Stable releases attach `latest.json` to the GitHub Release. Builds default to `https://github.com/0xvasanth/gespan/releases/latest/download/latest.json`; set the `TAURI_UPDATER_ENDPOINT` secret to override it. The feed always points at the GitHub Release assets.
 - R2 is optional for stable releases. When all R2 secrets (`R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) are set, packages and the feed are also mirrored to R2; otherwise that step is skipped.
 - Beta releases require all of the R2 secrets and fail early if any is missing, because GitHub's `/releases/latest` skips prereleases and `beta/latest.json` is served from R2 only.
 - `TAURI_UPDATER_PUBKEY` is always required, along with `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Generate the key pair with `bunx tauri signer generate`.
@@ -105,7 +105,7 @@ The release workflow runs only when started by hand, so pushing a tag never publ
 
 Read [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines and checks. The experimental remote host has its own [build and packaging instructions](remote-access.md#release-packaging).
 
-## Rebase Native preview
+## Gespan Native preview
 
 The experimental GPUI app uses a separate Cargo workspace. The production
 commands above continue to build React/Tauri.
@@ -115,7 +115,7 @@ Native commands do not need JavaScript dependencies installed.
 
 ```sh
 bun run native:dev     # launch with a separate development database
-bun run native:build   # create an optimized app using installed Rebase data
+bun run native:build   # create an optimized app using installed Gespan data
 bun run native:check   # run native checks
 ```
 
@@ -125,10 +125,10 @@ no hot reload or automatic rebuild on save. Ctrl+C stops the runner and app.
 The build command does not launch the app. On macOS, open the result with:
 
 ```sh
-open "crates/rebase-gpui/target/release/Rebase Native.app"
+open "crates/gespan-gpui/target/release/Gespan Native.app"
 ```
 
-The release app reads and writes your installed Rebase data. It is locally
+The release app reads and writes your installed Gespan data. It is locally
 signed, without notarization or automatic updates. Linux/Windows GUI builds
 remain unverified.
 

@@ -64,8 +64,8 @@ export type JiraStatus = {
   email: string;
 };
 
-const PROJECT_IDS_KEY = "rebase.jiraHiddenProjects";
-export const JIRA_CHANGE_EVENT = "rebase:jira-change";
+const PROJECT_IDS_KEY = "gespan.jiraHiddenProjects";
+export const JIRA_CHANGE_EVENT = "gespan:jira-change";
 
 // Keyed by issue key (ENG-42): the REST paths and browse URLs both take it.
 const detailsByKey = new Map<string, JiraIssueDetails>();

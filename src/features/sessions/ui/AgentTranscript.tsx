@@ -40,7 +40,7 @@ import {
 } from "../../../integrations/harness/core/toolElapsed";
 import { AttachmentChip } from "./AttachmentChip";
 import { GeneratedImage } from "./GeneratedImage";
-import { RebaseSparkles } from "./RebaseSparkles";
+import { GespanSparkles } from "./GespanSparkles";
 import { OrchestratorConstellation } from "./OrchestratorConstellation";
 import { PlanStepsBurst } from "./PlanStepsBurst";
 import { settleCatchUpFades } from "./wordFade";
@@ -173,10 +173,10 @@ import {
 } from "../model/transcriptActivity";
 import { lastUserTurnBlock } from "../model/editLastTurn";
 import {
-  rebaseToolCall,
-  rebaseWorkSummary,
-  type RebaseToolCall,
-} from "../model/rebaseToolCall";
+  gespanToolCall,
+  gespanWorkSummary,
+  type GespanToolCall,
+} from "../model/gespanToolCall";
 import {
   isOperatorUserTurn,
   operatorUserPrompt,
@@ -2581,11 +2581,11 @@ function UserMessageBlock({
   const textRef = useRef<HTMLElement>(null);
   const card = block.secondOpinion;
   const note = block.noteCard;
-  const rebase = isOperatorUserTurn(block);
+  const gespan = isOperatorUserTurn(block);
   const text =
     card && card.kind !== "handoff"
       ? ""
-      : visibleUserPrompt(rebase ? operatorUserPrompt(block) : block.text);
+      : visibleUserPrompt(gespan ? operatorUserPrompt(block) : block.text);
   const messageLink = text ? parseUserMessageLink(text) : null;
   const displayText = messageLink
     ? `${messageLink.beforeText}${messageLink.afterText}`
@@ -2713,7 +2713,7 @@ function UserMessageBlock({
     bubbleTail &&
     chat &&
     textOnly &&
-    !rebase &&
+    !gespan &&
     !messageLink &&
     isEmojiOnlyMessage(displayText)
   ) {
@@ -2777,7 +2777,7 @@ function UserMessageBlock({
           {bubbleEmpty ? null : (
             <div
               data-draft={block.draft ? "true" : undefined}
-              data-rebase={rebase ? "true" : undefined}
+              data-gespan={gespan ? "true" : undefined}
               data-chat-message={photos.length ? undefined : block.id}
               data-chat-message-role={photos.length ? undefined : "user"}
               className={`user-message-bubble relative min-w-0 px-3 py-2 font-sans text-content transition-[background-color] duration-200 ${
@@ -2891,8 +2891,8 @@ function UserMessageBlock({
                   </span>
                 </div>
               ) : null}
-              {rebase ? (
-                <RebaseSparkles
+              {gespan ? (
+                <GespanSparkles
                   blockId={block.id}
                   startedAt={block.startedAt}
                 />
@@ -3720,7 +3720,7 @@ function ActivityPhaseGroup({
   }, [phase.steps]);
   const turnFor = useStepQueue();
   const title = activityPhaseTitle(phase, active);
-  const rebasePhase = !!rebaseWorkSummary(phase.steps, active);
+  const gespanPhase = !!gespanWorkSummary(phase.steps, active);
   // Opening a group on purpose is also how you read the line that titled it,
   // whole. The auto-open while it runs is a live view, not a reading one, and
   // a one-line note the header already shows in full has nothing to add.
@@ -3735,7 +3735,7 @@ function ActivityPhaseGroup({
   if (!phase.headline && phase.steps.length === 1) {
     return (
       <div className="flex min-w-0 items-start gap-1.5">
-        {rebasePhase ? null : (
+        {gespanPhase ? null : (
           <ActivityPhaseIcon kind={phase.kind} className="mt-[7px]" />
         )}
         <div className="min-w-0 flex-1">
@@ -3790,8 +3790,8 @@ function ActivityPhaseGroup({
          * between them leaves both half-drawn on top of each other.
          */}
         <span className="relative flex size-3.5 shrink-0 items-center justify-center">
-          {rebasePhase ? (
-            <RebaseMark className="size-3.5 group-hover:opacity-0" />
+          {gespanPhase ? (
+            <GespanMark className="size-3.5 group-hover:opacity-0" />
           ) : (
             <ActivityPhaseIcon
               kind={phase.kind}
@@ -4625,10 +4625,10 @@ function ActivityToolRow({
 }) {
   const [errorOpen, setErrorOpen] = useState(false);
   const output = useToolDetail(block, errorOpen);
-  const appCall = rebaseToolCall(block);
+  const appCall = gespanToolCall(block);
   if (appCall) {
     return (
-      <RebaseCallRow block={block} call={appCall} onApproval={onApproval} />
+      <GespanCallRow block={block} call={appCall} onApproval={onApproval} />
     );
   }
   const label = toolCallLabel(block, cwd);
@@ -4708,18 +4708,18 @@ function ActivityToolRow({
   );
 }
 
-function RebaseMark({ className = "size-4" }: { className?: string }) {
-  return <img src="/rebase.png" alt="" className={`shrink-0 ${className}`} />;
+function GespanMark({ className = "size-4" }: { className?: string }) {
+  return <img src="/gespan.png" alt="" className={`shrink-0 ${className}`} />;
 }
 
-/** Rebase commands read like the other activity rows; failures expose their output. */
-function RebaseCallRow({
+/** Gespan commands read like the other activity rows; failures expose their output. */
+function GespanCallRow({
   block,
   call,
   onApproval,
 }: {
   block: Block;
-  call: RebaseToolCall;
+  call: GespanToolCall;
   onApproval?: (requestId: number, decision: ApprovalDecision) => void;
 }) {
   const state = toolCallState(block);
@@ -4731,7 +4731,7 @@ function RebaseCallRow({
     block.tool?.preview?.output?.trim();
   const hasError = state === "rejected" && (!!output || stored.omitted);
   const pendingApproval = needsApproval(block);
-  const command = `rebase app ${call.action}`;
+  const command = `gespan app ${call.action}`;
   const verb = pendingApproval
     ? "Run"
     : state === "pending"
@@ -4748,7 +4748,7 @@ function RebaseCallRow({
         className={`flex min-w-0 max-w-full items-center gap-1 rounded bg-content/6 px-1 font-mono text-[13px] ${state === "rejected" ? "text-red-400" : "text-content/70"}`}
         title={command}
       >
-        <RebaseMark className="size-3.5" />
+        <GespanMark className="size-3.5" />
         <span className="min-w-0 truncate">{command}</span>
       </span>
       <ToolCallStatusIcon state={state} />
@@ -4761,12 +4761,12 @@ function RebaseCallRow({
     </>
   );
   return (
-    <div data-rebase-tool-call={call.action} className="min-w-0">
+    <div data-gespan-tool-call={call.action} className="min-w-0">
       {hasError ? (
         <button
           type="button"
           aria-expanded={errorOpen}
-          aria-label={`${errorOpen ? "Hide" : "Show"} error details for Rebase: ${call.label}`}
+          aria-label={`${errorOpen ? "Hide" : "Show"} error details for Gespan: ${call.label}`}
           onClick={() => setErrorOpen((value) => !value)}
           className="flex w-full min-w-0 items-center gap-1.5 py-1 text-left"
         >
@@ -4953,11 +4953,11 @@ function ToolCall({
 
   const frame = embedded ? "py-0.5" : "px-4 py-1";
 
-  const appCall = rebaseToolCall(block);
+  const appCall = gespanToolCall(block);
   if (appCall) {
     return (
       <div className={frame}>
-        <RebaseCallRow block={block} call={appCall} onApproval={onApproval} />
+        <GespanCallRow block={block} call={appCall} onApproval={onApproval} />
       </div>
     );
   }
@@ -5245,7 +5245,7 @@ const TASK_NOTIFICATION = "task-notification";
 
 /**
  * Claude woke itself because a background agent finished. A muted line keeps
- * its follow-up from reading as a reply to the user; the wording is Rebase
+ * its follow-up from reading as a reply to the user; the wording is Gespan
  * Native's `finished_marker`.
  */
 function BackgroundFinishedMarker({

@@ -1,6 +1,6 @@
 // Copyright 2022 - 2025 Zed Industries, Inc.
 // SPDX-License-Identifier: Apache-2.0
-// Modified by Monocode to normalize font weights for face matching. See NOTICE.
+// Modified by Gespan to normalize font weights for face matching. See NOTICE.
 use anyhow::anyhow;
 use collections::{HashMap, HashSet};
 use core_foundation::{
@@ -162,7 +162,7 @@ impl PlatformTextSystem for AppleTextSystem {
                 lock.font_ids_by_font_key[&font_key].as_ref()
             };
 
-            // Monocode: CoreText reports continuous weights, and SF's Medium
+            // Gespan: CoreText reports continuous weights, and SF's Medium
             // lands just above 500, so CSS matching sent a 500 request to
             // Regular. Snap faces to the hundreds browsers resolve them to.
             let candidate_properties = candidates

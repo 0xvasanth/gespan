@@ -86,7 +86,7 @@ fn fetch_sync(app_version: &str, cli_version: &str) -> Result<DevinUsageFetch, S
     let body = json!({
         "metadata": {
             "apiKey": credentials.api_key,
-            "ideName": "rebase",
+            "ideName": "gespan",
             "ideVersion": app_version,
             "extensionName": "devin-cli",
             "extensionVersion": cli_version,

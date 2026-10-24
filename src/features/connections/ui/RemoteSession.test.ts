@@ -126,7 +126,7 @@ let deletedSessions: string[];
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   localStorage.clear();
-  localStorage.setItem("rebase.modelControls", "beside");
+  localStorage.setItem("gespan.modelControls", "beside");
   commands = [];
   host = undefined;
   syncDelay = undefined;
@@ -846,7 +846,7 @@ it("creates a host worktree through the composer and selects it", async () => {
       params: expect.objectContaining({
         projectId: "project",
         cwd: "/home/me/repo",
-        branch: expect.stringMatching(/^rebase\/[a-z0-9]+$/),
+        branch: expect.stringMatching(/^gespan\/[a-z0-9]+$/),
         base: "dev",
         existing: false,
       }),

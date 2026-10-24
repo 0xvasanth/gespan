@@ -16,18 +16,18 @@ describe("worktree branch naming", () => {
   it("renames only from the placeholder the worktree was created on", async () => {
     await renameWorktreeBranch(
       "/repo",
-      "/repo-worktrees/rebase-k3j9x2a1",
-      "rebase/fix-login",
-      "rebase/k3j9x2a1",
+      "/repo-worktrees/gespan-k3j9x2a1",
+      "gespan/fix-login",
+      "gespan/k3j9x2a1",
     );
     expect(vi.mocked(invoke)).toHaveBeenLastCalledWith("git_worktree_rename_branch", {
       cwd: "/repo",
-      path: "/repo-worktrees/rebase-k3j9x2a1",
-      branch: "rebase/fix-login",
-      from: "rebase/k3j9x2a1",
+      path: "/repo-worktrees/gespan-k3j9x2a1",
+      branch: "gespan/fix-login",
+      from: "gespan/k3j9x2a1",
     });
     // Other callers rename unconditionally, as before.
-    await renameWorktreeBranch("/repo", "/repo-worktrees/x", "rebase/x");
+    await renameWorktreeBranch("/repo", "/repo-worktrees/x", "gespan/x");
     expect(vi.mocked(invoke)).toHaveBeenLastCalledWith(
       "git_worktree_rename_branch",
       expect.objectContaining({ from: null }),
@@ -44,6 +44,6 @@ describe("worktree branch naming", () => {
       },
     });
     expect(renamed).toBeNull();
-    expect(debug).toHaveBeenCalledWith("[rebase] worktree branch name", failure);
+    expect(debug).toHaveBeenCalledWith("[gespan] worktree branch name", failure);
   });
 });

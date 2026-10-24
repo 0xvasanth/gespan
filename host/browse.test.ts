@@ -6,7 +6,7 @@ import { browseHostDirectories } from "./browse";
 
 describe("host directory browser", () => {
   it("lists folders without exposing files and rejects relative paths", async () => {
-    const root = mkdtempSync(join(tmpdir(), "rebase-browse-"));
+    const root = mkdtempSync(join(tmpdir(), "gespan-browse-"));
     try {
       mkdirSync(join(root, "repo"));
       writeFileSync(join(root, "secret.txt"), "private data");

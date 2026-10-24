@@ -10,7 +10,7 @@ export type ReleaseNotesDocument = {
 };
 
 export function releaseNotesTitle(version: string): string {
-  return `What's new in Rebase ${version}`;
+  return `What's new in Gespan ${version}`;
 }
 
 export function releaseNotesForVersion(

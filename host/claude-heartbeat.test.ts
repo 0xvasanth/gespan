@@ -1,7 +1,7 @@
 /**
  * The host parses Claude frames with the same adapter as the app, so a
  * heartbeat must leave its saved session free of phantom steps and ghost runs
- * there too. Fixtures are shared with the app and Rebase Native tests.
+ * there too. Fixtures are shared with the app and Gespan Native tests.
  */
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -44,7 +44,7 @@ function frames(name: string): string[] {
 }
 
 async function hostSession(name: string) {
-  const directory = mkdtempSync(join(tmpdir(), "rebase-claude-heartbeat-"));
+  const directory = mkdtempSync(join(tmpdir(), "gespan-claude-heartbeat-"));
   const store = new HostStore(join(directory, "host.db"));
   const project = store.addProject(directory, "Test");
   const engine = new HostEngine(store, { claude: hostProviders.claude });

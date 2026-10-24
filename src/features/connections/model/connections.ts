@@ -13,19 +13,19 @@ import {
 import { remoteProjectFor } from "./remoteProjects";
 import { withRemoteAttachmentPreviews } from "./remoteAttachmentPreviews";
 
-const CHANGE = "rebase:remote-machines";
-export const REMOTE_HISTORY_CHANGE = "rebase:remote-history";
-export const REMOTE_HISTORY_UPDATED = "rebase:remote-history-updated";
+const CHANGE = "gespan:remote-machines";
+export const REMOTE_HISTORY_CHANGE = "gespan:remote-history";
+export const REMOTE_HISTORY_UPDATED = "gespan:remote-history-updated";
 export const refreshRemoteProjectSessions = () =>
   window.dispatchEvent(new Event(REMOTE_HISTORY_CHANGE));
 let cachedMachines: RemoteMachine[] = [];
 let machinesLoaded = false;
-export const OPEN_CONNECTIONS_EVENT = "rebase:open-connections";
-export const OPEN_REMOTE_PROJECT_EVENT = "rebase:open-remote-project";
+export const OPEN_CONNECTIONS_EVENT = "gespan:open-connections";
+export const OPEN_REMOTE_PROJECT_EVENT = "gespan:open-remote-project";
 export const refreshRemoteMachines = () =>
   window.dispatchEvent(new Event(CHANGE));
-const TAB_KEY = "rebase.remote-tabs.v2";
-const WORKTREE_KEY = "rebase.remote-pending-worktrees.v1";
+const TAB_KEY = "gespan.remote-tabs.v2";
+const WORKTREE_KEY = "gespan.remote-pending-worktrees.v1";
 
 export function remotePendingWorktree(shellId: string): string | undefined {
   try {
@@ -81,7 +81,7 @@ export function rememberRemoteSession(shellId: string, sessionId?: string) {
 }
 
 const pendingPrefix = (project: string, environment: string) =>
-  `rebase.remote-command.v1:${JSON.stringify([project, environment])}:`;
+  `gespan.remote-command.v1:${JSON.stringify([project, environment])}:`;
 
 type PendingEntry = { command: HostCommand; shellId?: string; followup?: HostCommand };
 const readPendingEntry = (value: string): PendingEntry => {
@@ -289,7 +289,7 @@ export function useRemoteMachines(enabled = true): {
   return state;
 }
 
-const STATUS = "rebase:remote-machine-status";
+const STATUS = "gespan:remote-machine-status";
 const machineOnline = new Map<string, boolean>();
 const statusWatchers = new Map<
   string,
@@ -360,7 +360,7 @@ export function useRemoteMachineOnline(machineId?: string): boolean | undefined 
   return online;
 }
 
-const historyKey = (project: string) => `rebase.remote-history.v2:${project}`;
+const historyKey = (project: string) => `gespan.remote-history.v2:${project}`;
 
 function cachedSessions(project: string): HostSessionSummary[] {
   try {

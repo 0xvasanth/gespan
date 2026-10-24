@@ -239,7 +239,7 @@ export type AgentRunMeta = {
   steps: AgentStep[];
   /**
    * The provider's id for the sub-agent (Claude's agentId), so a later turn
-   * that resumes it can find this run. Shared with Rebase Native.
+   * that resumes it can find this run. Shared with Gespan Native.
    */
   agentId?: string;
   /** On a resumption or continuation: the original Agent call's tool id. */
@@ -345,8 +345,8 @@ export type Block = {
   providerTurnId?: string;
   /** User turn saved to the session but not submitted to the harness yet. */
   draft?: boolean;
-  /** This user turn activated Rebase app access for its thread. */
-  rebase?: boolean;
+  /** This user turn activated Gespan app access for its thread. */
+  gespan?: boolean;
   /** The Plan or Orchestrator mode this user turn was sent in. */
   intent?: Extract<TurnIntent, "plan" | "orchestrate">;
   /** Stable CLI request that submitted this turn, for safe retries. */

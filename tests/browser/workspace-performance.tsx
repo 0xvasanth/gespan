@@ -245,10 +245,10 @@ if (nativeInvoke) {
   );
 }
 
-localStorage.setItem("rebase.pacedReveal", "0");
-localStorage.setItem("rebase.diffViewer", "unified");
-localStorage.setItem("rebase.measureNavigation", "1");
-localStorage.setItem("rebase.measureStreaming", "1");
+localStorage.setItem("gespan.pacedReveal", "0");
+localStorage.setItem("gespan.diffViewer", "unified");
+localStorage.setItem("gespan.measureNavigation", "1");
+localStorage.setItem("gespan.measureStreaming", "1");
 const sessions = Array.from({ length: 6 }, (_, index) => {
   const blocks: Block[] = Array.from({ length: 100 }, (_, turn) => [
     {
@@ -429,13 +429,13 @@ const resetMetrics = () => {
 };
 const metrics = () => ({
   navigation: performance
-    .getEntriesByName("rebase:tab-switch")
+    .getEntriesByName("gespan:tab-switch")
     .map((entry) => ({
       duration: entry.duration,
       detail: (entry as PerformanceMeasure).detail,
     })),
   streaming: performance
-    .getEntriesByName("rebase:stream-visible")
+    .getEntriesByName("gespan:stream-visible")
     .map((entry) => ({
       duration: entry.duration,
       detail: (entry as PerformanceMeasure).detail,
@@ -444,7 +444,7 @@ const metrics = () => ({
 });
 const saveMetrics = () =>
   nativeInvoke?.("write_text_file", {
-    path: "/private/tmp/rebase-native-metrics.json",
+    path: "/private/tmp/gespan-native-metrics.json",
     content: JSON.stringify(metrics()),
   });
 const startLoad = async () => {

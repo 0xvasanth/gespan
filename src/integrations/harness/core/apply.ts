@@ -451,7 +451,7 @@ type UserTurnExtra = {
   noteCard?: Block["noteCard"];
   ciContext?: string;
   internal?: boolean;
-  rebase?: boolean;
+  gespan?: boolean;
   intent?: Block["intent"];
   appRequestId?: string;
   pilotSessionCompletion?: Block["pilotSessionCompletion"];
@@ -463,7 +463,7 @@ function userTurnFields(extra?: UserTurnExtra) {
     ...(extra?.noteCard ? { noteCard: extra.noteCard } : {}),
     ...(extra?.ciContext ? { ciContext: extra.ciContext } : {}),
     ...(extra?.internal ? { internal: true } : {}),
-    ...(extra?.rebase ? { rebase: true } : {}),
+    ...(extra?.gespan ? { gespan: true } : {}),
     ...(extra?.intent ? { intent: extra.intent } : {}),
     ...(extra?.appRequestId ? { appRequestId: extra.appRequestId } : {}),
     ...(extra?.pilotSessionCompletion
@@ -1225,7 +1225,7 @@ function recordAgentStep(
   }
 
   const next: AgentRunMeta = {
-    // Keep what this app does not touch here, including fields Rebase Native
+    // Keep what this app does not touch here, including fields Gespan Native
     // wrote into the shared block.
     ...run,
     ...(run?.model ? { model: run.model } : {}),

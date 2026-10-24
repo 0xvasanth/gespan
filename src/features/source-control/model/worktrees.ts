@@ -91,7 +91,7 @@ export function orchestrationWorktreeBranchName(id: string): string {
 export function namedWorktreeBranch(fragment: string): string | null {
   const clean = fragment
     .trim()
-    .replace(/^(?:rebase|mc)\/+/, "")
+    .replace(/^(?:gespan|mc)\/+/, "")
     .replace(/^\/+|\/+$/g, "");
   return clean ? `${APP_BRANCH_PREFIX}${clean}` : null;
 }
@@ -114,7 +114,7 @@ export async function nameWorktreeAfterMessage({
     const branch = fragment ? namedWorktreeBranch(fragment) : null;
     return branch ? await rename(branch) : null;
   } catch (error) {
-    console.debug("[rebase] worktree branch name", error);
+    console.debug("[gespan] worktree branch name", error);
     return null;
   }
 }

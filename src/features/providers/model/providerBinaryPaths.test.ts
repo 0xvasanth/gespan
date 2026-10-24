@@ -11,7 +11,7 @@ import {
   saveProviderBinaryPath,
 } from "./providerBinaryPaths";
 
-const key = "rebase.providerBinaryPaths.v1";
+const key = "gespan.providerBinaryPaths.v1";
 
 beforeEach(() => {
   mocks.invoke.mockReset();

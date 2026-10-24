@@ -6,7 +6,7 @@ export const SESSION_FOLDER_COMMAND: BuiltinSkill = {
   invocation: "add-to-folder",
   description: "Place this session in an existing or new sidebar folder.",
   scope: "builtin",
-  source: "rebase",
+  source: "gespan",
 };
 
 /** Match the standalone composer command without consuming ordinary prompt text. */

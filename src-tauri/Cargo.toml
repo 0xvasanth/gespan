@@ -1,23 +1,23 @@
 [package]
-name = "rebase"
+name = "gespan"
 version.workspace = true
 edition.workspace = true
-description = "Rebase — one UI for every agent harness"
+description = "Gespan — one UI for every agent harness"
 authors = ["vasanth"]
-repository = "https://github.com/0xvasanth/rebase"
-homepage = "https://github.com/0xvasanth/rebase"
+repository = "https://github.com/0xvasanth/gespan"
+homepage = "https://gespan.dev"
 license.workspace = true
 
 [lib]
-name = "rebase_lib"
+name = "gespan_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-rebase-mobile-link = { path = "../crates/mobile-link" }
-rebase-keep-awake = { path = "../crates/keep-awake" }
+gespan-mobile-link = { path = "../crates/mobile-link" }
+gespan-keep-awake = { path = "../crates/keep-awake" }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = ["sync", "time"] }
 if-addrs = "0.15"

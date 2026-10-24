@@ -229,13 +229,13 @@ export const DEFAULT_MODEL_ID: Record<HarnessId, string> = {
   devin: "devin:adaptive",
 };
 
-const FAVORITES_KEY = "rebase.favoriteModels";
-const MODEL_PICKER_TAB_KEY = "rebase.modelPickerTab";
-const HIDDEN_PICKER_PROVIDERS_KEY = "rebase.hiddenPickerProviders";
-const LAST_MODEL_KEY = "rebase.lastModel";
-const LAST_MODEL_SETTINGS_KEY = "rebase.lastModelSettings";
-const DEFAULT_MODELS_KEY = "rebase.defaultModels";
-const RECENT_MODELS_KEY = "rebase.recentModels";
+const FAVORITES_KEY = "gespan.favoriteModels";
+const MODEL_PICKER_TAB_KEY = "gespan.modelPickerTab";
+const HIDDEN_PICKER_PROVIDERS_KEY = "gespan.hiddenPickerProviders";
+const LAST_MODEL_KEY = "gespan.lastModel";
+const LAST_MODEL_SETTINGS_KEY = "gespan.lastModelSettings";
+const DEFAULT_MODELS_KEY = "gespan.defaultModels";
+const RECENT_MODELS_KEY = "gespan.recentModels";
 const RECENT_MODEL_LIMIT = 6;
 
 export type ModelPickerTab = "favorites" | HarnessId;

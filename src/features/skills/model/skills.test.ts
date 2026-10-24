@@ -244,7 +244,7 @@ describe("injectSkillPrompt", () => {
 });
 
 describe("mergeCatalog", () => {
-  it("lets .agents win, then Rebase create-skill, then provider skills", () => {
+  it("lets .agents win, then Gespan create-skill, then provider skills", () => {
     const catalog = mergeCatalog([
       {
         name: "review-pr",

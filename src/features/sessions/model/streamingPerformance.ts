@@ -4,7 +4,7 @@ import type { Block } from "./session";
 
 const enabled =
   typeof localStorage !== "undefined" &&
-  localStorage.getItem("rebase.measureStreaming") === "1";
+  localStorage.getItem("gespan.measureStreaming") === "1";
 const arrivals = new WeakMap<HarnessEvent, number>();
 type Sample = {
   received: number;
@@ -103,12 +103,12 @@ export function useStreamPresentation(
           if (!showing.current || document.hidden) return;
           const presented = performance.now();
           if (
-            performance.getEntriesByName("rebase:stream-visible").length >=
+            performance.getEntriesByName("gespan:stream-visible").length >=
             300
           )
-            performance.clearMeasures("rebase:stream-visible");
+            performance.clearMeasures("gespan:stream-visible");
           for (const sample of shown)
-            performance.measure("rebase:stream-visible", {
+            performance.measure("gespan:stream-visible", {
               start: sample.received,
               end: presented,
               detail: {

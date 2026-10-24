@@ -14,7 +14,7 @@ import {
   type SessionWorkspaceRemoval,
 } from "./sessionWorkspaceLifecycle";
 
-function session(id: string, cwd = "/projects/rebase"): Session {
+function session(id: string, cwd = "/projects/gespan"): Session {
   return { ...newSession("cursor", cwd), id };
 }
 
@@ -39,8 +39,8 @@ function remove(input: {
 describe("removeSessionFromWorkspace", () => {
   it("closes the sole-session tab with its files instead of promoting them", () => {
     const file = newFileTab(
-      "/projects/rebase/README.md",
-      "/projects/rebase",
+      "/projects/gespan/README.md",
+      "/projects/gespan",
     );
     const closing = {
       ...tab("closing", "s1"),
@@ -69,8 +69,8 @@ describe("removeSessionFromWorkspace", () => {
 
   it("retains file panes and another conversation in a shared workspace", () => {
     const file = newFileTab(
-      "/projects/rebase/README.md",
-      "/projects/rebase",
+      "/projects/gespan/README.md",
+      "/projects/gespan",
     );
     const shared: WorkspaceTab = {
       ...tab("shared", "s1"),
@@ -116,14 +116,14 @@ describe("removeSessionFromWorkspace", () => {
   it("closes session-scoped changes with the session while preserving other files", () => {
     const sessionChanges = {
       id: "changes",
-      path: "/projects/rebase",
-      cwd: "/projects/rebase",
+      path: "/projects/gespan",
+      cwd: "/projects/gespan",
       review: true,
       sessionChanges: { sessionId: "s1" },
     };
     const readme = newFileTab(
-      "/projects/rebase/README.md",
-      "/projects/rebase",
+      "/projects/gespan/README.md",
+      "/projects/gespan",
     );
     const shared: WorkspaceTab = {
       ...tab("shared", "s1"),
@@ -171,23 +171,23 @@ describe("removeSessionFromWorkspace", () => {
 
   it("does not leave the project when closing its final tab in project scope", () => {
     const result = remove({
-      tabs: [tab("ruler", "r1"), tab("rebase", "s1")],
+      tabs: [tab("ruler", "r1"), tab("gespan", "s1")],
       sessions: [session("r1", "/projects/ruler"), session("s1")],
       sessionId: "s1",
-      activeTabId: "rebase",
+      activeTabId: "gespan",
       scope: "project",
     });
 
-    expect(result.tabs.map((entry) => entry.id)).toEqual(["ruler", "rebase"]);
-    expect(result.activeTabId).toBe("rebase");
+    expect(result.tabs.map((entry) => entry.id)).toEqual(["ruler", "gespan"]);
+    expect(result.activeTabId).toBe("gespan");
     expect(result.tabs[1]?.focusedId).toBe("replacement");
   });
   it("removes only the archived session's plans in a shared workspace", () => {
-    const own = newPlanTab("s1", "p1", "Own plan", "/projects/rebase");
-    const other = newPlanTab("s2", "p2", "Other plan", "/projects/rebase");
+    const own = newPlanTab("s1", "p1", "Own plan", "/projects/gespan");
+    const other = newPlanTab("s2", "p2", "Other plan", "/projects/gespan");
     const readme = newFileTab(
-      "/projects/rebase/README.md",
-      "/projects/rebase",
+      "/projects/gespan/README.md",
+      "/projects/gespan",
     );
     const shared: WorkspaceTab = {
       ...tab("shared", "s1"),
@@ -214,7 +214,7 @@ describe("removeSessionFromWorkspace", () => {
   });
 
   it("removes plan panes even after their conversation moved to another tab", () => {
-    const plan = newPlanTab("s1", "p1", "Plan", "/projects/rebase");
+    const plan = newPlanTab("s1", "p1", "Plan", "/projects/gespan");
     const other = openEditorTab(tab("other", "s2"), plan);
     const result = remove({
       tabs: [tab("own", "s1"), other],
@@ -229,7 +229,7 @@ describe("removeSessionFromWorkspace", () => {
   });
 
   it("replaces a standalone plan pane without leaving a dangling layout leaf", () => {
-    const plan = newPlanTab("s1", "p1", "Plan", "/projects/rebase");
+    const plan = newPlanTab("s1", "p1", "Plan", "/projects/gespan");
     const only: WorkspaceTab = {
       ...tab("only", "editor"),
       editorPanes: [{ id: "editor", files: [plan], activeFileId: plan.id }],

@@ -17,7 +17,7 @@ import { abortTextPromptRace } from "../../core/abortTextPrompt";
 import { mergeStream } from "../../core/streamText";
 import type { HarnessEvent } from "../../core/types";
 
-const TEXT_CHILD_ID = "rebase-grok-text";
+const TEXT_CHILD_ID = "gespan-grok-text";
 const INIT_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 
@@ -208,7 +208,7 @@ async function startLive(
       {
         protocolVersion: 1,
         clientCapabilities: CLIENT_CAPABILITIES,
-        clientInfo: { name: "rebase-text", version: "0.1.0" },
+        clientInfo: { name: "gespan-text", version: "0.1.0" },
       },
       INIT_TIMEOUT_MS,
     );
@@ -297,7 +297,7 @@ async function deleteTextSession(session: LiveText): Promise<void> {
     session.cwd,
     "grok",
   ).catch((error) =>
-    console.debug("[rebase] Grok text session cleanup", error),
+    console.debug("[gespan] Grok text session cleanup", error),
   );
 }
 

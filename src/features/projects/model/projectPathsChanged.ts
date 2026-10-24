@@ -1,4 +1,4 @@
-const PROJECT_PATHS_CHANGED = "rebase:project-paths-changed";
+const PROJECT_PATHS_CHANGED = "gespan:project-paths-changed";
 
 /** Rail projects, pins, groups, or their appearance changed in storage. */
 export function notifyProjectPathsChanged(): void {

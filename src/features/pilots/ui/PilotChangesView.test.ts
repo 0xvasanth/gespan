@@ -364,7 +364,7 @@ it("offers the Pilot's projects before the work changes anything", async () => {
   vi.mocked(sessionCheckpointStatus).mockResolvedValue({ files: [] });
   locateAs(
     [],
-    [{ root: "/home/a", relative: ".rebase-probe" }, null],
+    [{ root: "/home/a", relative: ".gespan-probe" }, null],
   );
   await render(["/home/a", "/home/not-git"]);
   expect(

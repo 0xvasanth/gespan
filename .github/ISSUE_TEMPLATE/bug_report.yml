@@ -1,16 +1,16 @@
 name: Bug report
-description: Report a problem in Rebase
+description: Report a problem in Gespan
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Rebase supports macOS, Linux, and Windows.
+        Gespan supports macOS, Linux, and Windows.
 
   - type: input
     id: version
     attributes:
-      label: Rebase version
+      label: Gespan version
       placeholder: "0.1.0"
     validations:
       required: true

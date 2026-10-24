@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::session_store::{now_millis, validate_id, SessionStore};
 
-pub(crate) const CHANGED: &str = "rebase:automations-changed";
+pub(crate) const CHANGED: &str = "gespan:automations-changed";
 
 const MAX_NAME: usize = 200;
 const MAX_PROMPT: usize = 1_000_000;
@@ -771,7 +771,7 @@ pub fn automation_runs_recover(
         if run.status == "running" {
             run.status = "cancelled".into();
             run.completed_at = Some(now);
-            run.error = Some("Interrupted when Rebase last stopped.".into());
+            run.error = Some("Interrupted when Gespan last stopped.".into());
             apply_run_summary(&mut automation, &run);
             write_run(&tx, &run)?;
             write_automation(&tx, &automation)?;

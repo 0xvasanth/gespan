@@ -13,7 +13,7 @@ import {
 } from "../../core/child";
 import { modelsFromHermesSession } from "./hermesProtocol";
 
-const PROBE_ID = "rebase-hermes-probe";
+const PROBE_ID = "gespan-hermes-probe";
 const DISCOVERY_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 
@@ -26,7 +26,7 @@ export function refreshHermesCatalog(): Promise<void> {
       if (models.length > 0) setHarnessModels("hermes", models);
     })
     .catch((error: unknown) => {
-      console.debug("[rebase] hermes catalog", error);
+      console.debug("[gespan] hermes catalog", error);
     })
     .finally(() => {
       inflight = null;
@@ -76,7 +76,7 @@ export async function discoverHermesModels(
               fs: { readTextFile: false, writeTextFile: false },
               terminal: false,
             },
-            clientInfo: { name: "rebase", version: "0.1.0" },
+            clientInfo: { name: "gespan", version: "0.1.0" },
           },
           REQUEST_TIMEOUT_MS,
         );

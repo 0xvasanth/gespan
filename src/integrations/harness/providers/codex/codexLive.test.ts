@@ -16,7 +16,7 @@ const deleteGeneratedImages = vi.hoisted(() => vi.fn(async () => undefined));
 const spawnChild = vi.hoisted(() =>
   vi.fn(async (..._args: unknown[]) => undefined),
 );
-const restoreRebasexAgentState = vi.hoisted(() =>
+const restoreGespanxAgentState = vi.hoisted(() =>
   vi.fn(async (..._args: unknown[]) => undefined),
 );
 const prepareCodexPilotContext = vi.hoisted(() =>
@@ -33,7 +33,7 @@ vi.mock("./codexStore", () => ({ prepareCodexPilotContext }));
 vi.mock("../../core/child", () => ({
   resolveCodexBinary: async () => ({ path: "/fake/codex" }),
   spawnChild,
-  restoreRebasexAgentState,
+  restoreGespanxAgentState,
   killChild: async () => undefined,
   unwatchChild: () => undefined,
   watchChild: (_id: string, line: (l: string) => void) => {
@@ -183,7 +183,7 @@ describe("codex live turn sequence", () => {
     saveGeneratedImage.mockClear();
     deleteGeneratedImages.mockClear();
     spawnChild.mockClear();
-    restoreRebasexAgentState.mockClear();
+    restoreGespanxAgentState.mockClear();
     prepareCodexPilotContext.mockClear();
   });
 
@@ -318,7 +318,7 @@ describe("codex live turn sequence", () => {
     expect(hasLiveCodexSession("codex-live", true)).toBe(false);
     expect(prepareCodexPilotContext).not.toHaveBeenCalled();
     expect(spawnChild.mock.calls[0][6]).toBeUndefined();
-    expect(restoreRebasexAgentState).not.toHaveBeenCalled();
+    expect(restoreGespanxAgentState).not.toHaveBeenCalled();
     notify("turn/completed", { turn: { id: "turn_1", status: "completed" } });
     await turn;
   });
@@ -352,7 +352,7 @@ describe("codex live turn sequence", () => {
     expect(prepareCodexPilotContext).toHaveBeenLastCalledWith(
       expect.objectContaining({ threadId: "thr_1" }),
     );
-    expect(restoreRebasexAgentState).toHaveBeenCalledWith(undefined, "thr_1");
+    expect(restoreGespanxAgentState).toHaveBeenCalledWith(undefined, "thr_1");
     notify("turn/completed", { turn: { id: "turn_1", status: "completed" } });
     await next.turn;
   });
@@ -371,7 +371,7 @@ describe("codex live turn sequence", () => {
       config: { sqlite_home: "/private/pilot" },
     });
     expect(parse().some((m) => m.method === "thread/start")).toBe(false);
-    expect(restoreRebasexAgentState).toHaveBeenCalledWith("work", "thr_1");
+    expect(restoreGespanxAgentState).toHaveBeenCalledWith("work", "thr_1");
     expect(prepareCodexPilotContext).toHaveBeenCalledWith(
       expect.objectContaining({ providerAccountId: "work", threadId: "thr_1" }),
     );

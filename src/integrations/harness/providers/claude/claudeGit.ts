@@ -66,7 +66,7 @@ export async function generateClaudePrContent(
     });
     parsed = parsePrContent(output);
   } catch (error) {
-    console.debug("[rebase] pr content", error);
+    console.debug("[gespan] pr content", error);
   }
   const title =
     parsed?.title ||
@@ -93,7 +93,7 @@ export async function generateClaudeBranchName(
     });
     return parseBranchName(output);
   } catch (error) {
-    console.debug("[rebase] branch name", error);
+    console.debug("[gespan] branch name", error);
     return null;
   }
 }

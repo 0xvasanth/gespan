@@ -63,8 +63,8 @@ export type LinearStatus = {
   connected: boolean;
 };
 
-const TEAM_IDS_KEY = "rebase.linearHiddenTeams";
-export const LINEAR_CHANGE_EVENT = "rebase:linear-change";
+const TEAM_IDS_KEY = "gespan.linearHiddenTeams";
+export const LINEAR_CHANGE_EVENT = "gespan:linear-change";
 
 const detailsById = new Map<string, LinearIssueDetails>();
 const threadById = new Map<string, LinearIssueThread>();

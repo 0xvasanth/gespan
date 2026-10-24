@@ -23,8 +23,8 @@ export type ProjectNotificationPreference = {
   enabledAfter?: Partial<Record<NotificationCategory, number>>;
 };
 type Preferences = Record<string, ProjectNotificationPreference>;
-const KEY = "rebase.projectNotifications.v1";
-const CHANGE = "rebase:project-notifications-change";
+const KEY = "gespan.projectNotifications.v1";
+const CHANGE = "gespan:project-notifications-change";
 
 /** `after` is the last suppressed millisecond, shared with native delivery. */
 export type ProjectNotificationRule = { enabled: boolean; after: number };

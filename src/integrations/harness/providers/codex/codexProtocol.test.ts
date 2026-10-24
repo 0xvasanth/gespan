@@ -58,7 +58,7 @@ describe("runtimeModeToCodexConfig", () => {
 
   it("opens the sandbox network only for a lead, which needs the control socket", () => {
     // Both sandboxed policies default networkAccess to false, which denies
-    // loopback too, so the control CLI cannot reach Rebase without this.
+    // loopback too, so the control CLI cannot reach Gespan without this.
     for (const mode of ["supervised", "auto-accept-edits", "auto"] as const) {
       expect(runtimeModeToCodexConfig(mode).sandboxPolicy).not.toHaveProperty(
         "networkAccess",

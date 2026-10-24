@@ -116,7 +116,7 @@ export function TranscriptFind({
       const target = event.target instanceof Element ? event.target : null;
       if (
         target?.closest(
-          ".cm-editor, .rebase-terminal, [role='dialog'], [data-app-search]",
+          ".cm-editor, .gespan-terminal, [role='dialog'], [data-app-search]",
         )
       )
         return;

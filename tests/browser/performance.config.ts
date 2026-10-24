@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 import base from "../../playwright.config";
 import { fileURLToPath } from "node:url";
 
-process.env.REBASE_PERFORMANCE = "1";
+process.env.GESPAN_PERFORMANCE = "1";
 
 export default defineConfig({
   ...base,

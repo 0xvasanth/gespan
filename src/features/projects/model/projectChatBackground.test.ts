@@ -8,7 +8,7 @@ import {
   saveProjectChatBackgroundSettings,
 } from "./projectChatBackground";
 
-const KEY = "rebase:project-chat-backgrounds";
+const KEY = "gespan:project-chat-backgrounds";
 
 function mockBrowserStorage() {
   const data = new Map<string, string>();
@@ -114,7 +114,7 @@ describe("project chat background settings", () => {
   });
 
   it("stores effects independently and preserves older project images", () => {
-    localStorage.setItem("rebase.newThreadBackgroundEffect", "ascii");
+    localStorage.setItem("gespan.newThreadBackgroundEffect", "ascii");
     saveProjectChatBackgroundSettings("/work/alpha", {
       path: "/backgrounds/alpha.webp",
       emptyOpacity: 0.2,

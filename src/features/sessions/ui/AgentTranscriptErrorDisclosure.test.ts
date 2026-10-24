@@ -73,12 +73,12 @@ describe("tool error disclosure", () => {
   });
 });
 
-describe("Rebase CLI disclosure", () => {
+describe("Gespan CLI disclosure", () => {
   it("shows a compact row without a disclosure for a successful call", () => {
     const command =
-      "/repo/target/debug/Rebase.app/Contents/MacOS/rebase app notes.list";
+      "/repo/target/debug/Gespan.app/Contents/MacOS/gespan app notes.list";
     const blocks: Block[] = [
-      { id: "user", role: "user", text: "/rebase list notes" },
+      { id: "user", role: "user", text: "/gespan list notes" },
       {
         id: "notes",
         role: "tool",
@@ -95,24 +95,24 @@ describe("Rebase CLI disclosure", () => {
     );
 
     const row = container.querySelector<HTMLElement>(
-      '[data-rebase-tool-call="notes.list"]',
+      '[data-gespan-tool-call="notes.list"]',
     );
     expect(row?.querySelector("button")).toBeNull();
     expect(row?.querySelector("pre")).toBeNull();
-    expect(row?.textContent).toContain("Ranrebase app notes.list");
-    expect(row?.querySelector('img[src="/rebase.png"]')).not.toBeNull();
+    expect(row?.textContent).toContain("Rangespan app notes.list");
+    expect(row?.querySelector('img[src="/gespan.png"]')).not.toBeNull();
     expect(row?.querySelector(".bg-content\\/6")).not.toBeNull();
-    expect(container.textContent).not.toContain("Contents/MacOS/rebase");
+    expect(container.textContent).not.toContain("Contents/MacOS/gespan");
     expect(container.textContent).not.toContain('"title":"Ideas"');
   });
 
   it("reveals a failed call's error when clicked", () => {
     const blocks: Block[] = [
-      { id: "user", role: "user", text: "/rebase list notes" },
+      { id: "user", role: "user", text: "/gespan list notes" },
       {
         id: "notes",
         role: "tool",
-        text: "rebase app notes.list",
+        text: "gespan app notes.list",
         tool: { kind: "shell", status: "failed", detail: "Connection refused" },
       },
     ];
@@ -121,7 +121,7 @@ describe("Rebase CLI disclosure", () => {
     );
 
     const trigger = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Show error details for Rebase: List notes"]',
+      'button[aria-label="Show error details for Gespan: List notes"]',
     );
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(container.textContent).not.toContain("Connection refused");

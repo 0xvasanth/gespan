@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-const USAGE: &str = r#"Rebase local control — supervise this orchestration run from the lead agent.
+const USAGE: &str = r#"Gespan local control — supervise this orchestration run from the lead agent.
 
 Usage: {exe} control ACTION [--json JSON | --input FILE|-] [--request-id ID]
 
@@ -56,7 +56,7 @@ for corrections -> review each task -> finish.
 
 When paused, list, get and wait still return the reason and recovery steps.
 Do not keep polling or retry mutations. Explain the pause and ask the user to
-click Resume in Rebase. Resume continues interrupted workers in their
+click Resume in Gespan. Resume continues interrupted workers in their
 retained checkouts. A policy-blocked worker remains stopped until message,
 retry or cancel explicitly resolves it.
 
@@ -71,10 +71,10 @@ failed response reports the ID it used whenever the outcome is unknown — a
 timeout, say. Retry that exact call with --request-id ID; retrying a delegate
 under a fresh ID instead would queue a second worker.
 
-Tasks run inside the Rebase app, not in this process. Exiting this CLI, or a
+Tasks run inside the Gespan app, not in this process. Exiting this CLI, or a
 failure here, never cancels a task that was already accepted.
 
-Rebase sets REBASE_CONTROL_ENDPOINT and REBASE_CONTROL_TOKEN for the lead
+Gespan sets GESPAN_CONTROL_ENDPOINT and GESPAN_CONTROL_TOKEN for the lead
 agent's process only. They are already in your environment; never print them.
 "#;
 
@@ -116,7 +116,7 @@ const APP_ACTIONS: [&str; 32] = [
     "habits.remove",
     "chat.card",
 ];
-const APP_USAGE: &str = r#"Rebase app access — use in a thread enabled by /operator.
+const APP_USAGE: &str = r#"Gespan app access — use in a thread enabled by /operator.
 
 Usage: {exe} app ACTION [--json JSON | --input FILE|-] [--request-id ID]
 
@@ -139,7 +139,7 @@ Actions:
                   in the calling Pilot's chat. It waits until that Pilot is idle.
   sessions.draft {"sessionId":"...","prompt":"..."}
                   Save an unsent draft in an idle project session. Existing
-                  drafts are preserved; send or remove one in Rebase first.
+                  drafts are preserved; send or remove one in Gespan first.
                   Reuse --request-id on retries.
   sessions.start {"prompt":"...","harness":"codex","model":"codex:...",
                   "effort":"high","reveal":false,
@@ -184,7 +184,7 @@ Actions:
                   unchanged. Reuse --request-id on retries.
   sessions.archive {"sessionId":"..."}
                   Stop the session if running, save its conversation, and
-                  archive it. It can be restored from Rebase's archive.
+                  archive it. It can be restored from Gespan's archive.
                   Open files, terminals and worktrees are kept.
                   Reuse --request-id on retries.
   sessions.delete {"sessionId":"..."}
@@ -264,7 +264,7 @@ Actions:
                   the user must start it before it is scheduled.
 
 The output is one JSON line: {"ok":true,"result":...} or {"ok":false,"error":"..."}.
-Use --input - to pass JSON on stdin. Never print Rebase credentials.
+Use --input - to pass JSON on stdin. Never print Gespan credentials.
 Keep the same --request-id when retrying a call after an uncertain result.
 "#;
 
@@ -293,14 +293,14 @@ fn quoted(value: &str) -> String {
 pub fn help() -> String {
     let exe = std::env::current_exe()
         .map(|path| quoted(&path.to_string_lossy()))
-        .unwrap_or_else(|_| "rebase".into());
+        .unwrap_or_else(|_| "gespan".into());
     USAGE.replace("{exe}", &exe)
 }
 
 pub fn app_help() -> String {
     let exe = std::env::current_exe()
         .map(|path| quoted(&path.to_string_lossy()))
-        .unwrap_or_else(|_| "rebase".into());
+        .unwrap_or_else(|_| "gespan".into());
     APP_USAGE.replace("{exe}", &exe)
 }
 
@@ -393,39 +393,39 @@ fn sent(error: impl Into<String>) -> Failure {
 
 fn send(action: &str, input: &Value, request_id: &str, app_mode: bool) -> Result<Value, Failure> {
     let endpoint_key = if app_mode {
-        "REBASE_APP_ENDPOINT"
+        "GESPAN_APP_ENDPOINT"
     } else {
-        "REBASE_CONTROL_ENDPOINT"
+        "GESPAN_CONTROL_ENDPOINT"
     };
     let token_key = if app_mode {
-        "REBASE_APP_TOKEN"
+        "GESPAN_APP_TOKEN"
     } else {
-        "REBASE_CONTROL_TOKEN"
+        "GESPAN_CONTROL_TOKEN"
     };
     let endpoint = std::env::var(endpoint_key).map_err(|_| {
         unsent(if app_mode {
-            "Rebase app connection is unavailable: this environment has no app connection variables. Run this command from a Rebase-spawned agent turn; external harnesses must be launched by Rebase to receive app access."
+            "Gespan app connection is unavailable: this environment has no app connection variables. Run this command from a Gespan-spawned agent turn; external harnesses must be launched by Gespan to receive app access."
         } else {
-            "No Rebase connection. Confirm the Orchestrator proposal in Rebase first."
+            "No Gespan connection. Confirm the Orchestrator proposal in Gespan first."
         })
     })?;
     let token = std::env::var(token_key).map_err(|_| {
         unsent(if app_mode {
-            "Rebase app connection is unavailable: no app token was injected into this environment. Run this command from a Rebase-spawned agent turn."
+            "Gespan app connection is unavailable: no app token was injected into this environment. Run this command from a Gespan-spawned agent turn."
         } else {
-            "No Rebase session credential. Start the agent from Rebase."
+            "No Gespan session credential. Start the agent from Gespan."
         })
     })?;
     let address: SocketAddr = endpoint
         .parse()
-        .map_err(|_| unsent("Invalid Rebase endpoint"))?;
+        .map_err(|_| unsent("Invalid Gespan endpoint"))?;
     if !address.ip().is_loopback() {
-        return Err(unsent("Rebase control only connects to localhost"));
+        return Err(unsent("Gespan control only connects to localhost"));
     }
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))
         .map_err(|error| {
             unsent(format!(
-                "Cannot connect to Rebase at {address}: {error}. The app may have restarted, or this agent's sandbox may be blocking localhost."
+                "Cannot connect to Gespan at {address}: {error}. The app may have restarted, or this agent's sandbox may be blocking localhost."
             ))
         })?;
     stream
@@ -445,11 +445,11 @@ fn send(action: &str, input: &Value, request_id: &str, app_mode: bool) -> Result
     BufReader::new(stream)
         .take(max_response + 1)
         .read_line(&mut line)
-        .map_err(|e| sent(format!("No reply from Rebase: {e}")))?;
+        .map_err(|e| sent(format!("No reply from Gespan: {e}")))?;
     if line.len() > max_response as usize {
-        return Err(sent("Rebase response is too large"));
+        return Err(sent("Gespan response is too large"));
     }
-    serde_json::from_str(&line).map_err(|_| sent("Rebase returned an invalid response"))
+    serde_json::from_str(&line).map_err(|_| sent("Gespan returned an invalid response"))
 }
 
 fn read_capped(mut source: impl Read) -> Result<String, String> {
@@ -620,18 +620,18 @@ mod tests {
     #[test]
     fn quotes_the_control_path_only_when_the_shell_needs_it() {
         assert_eq!(
-            quoted("/Applications/Rebase.app/Contents/MacOS/rebase"),
-            "/Applications/Rebase.app/Contents/MacOS/rebase"
+            quoted("/Applications/Gespan.app/Contents/MacOS/gespan"),
+            "/Applications/Gespan.app/Contents/MacOS/gespan"
         );
-        assert_eq!(quoted("/Users/a b/Rebase"), "'/Users/a b/Rebase'");
-        assert_eq!(quoted("C:\\Tools\\rebase.exe"), "C:\\Tools\\rebase.exe");
+        assert_eq!(quoted("/Users/a b/Gespan"), "'/Users/a b/Gespan'");
+        assert_eq!(quoted("C:\\Tools\\gespan.exe"), "C:\\Tools\\gespan.exe");
         assert_eq!(
-            quoted("C:\\Program Files\\Rebase\\rebase.exe"),
-            "\"C:\\Program Files\\Rebase\\rebase.exe\""
+            quoted("C:\\Program Files\\Gespan\\gespan.exe"),
+            "\"C:\\Program Files\\Gespan\\gespan.exe\""
         );
         // A backslash escapes in a POSIX shell, so bare would rewrite the path.
-        assert_eq!(quoted("/Users/a\\b/Rebase"), "'/Users/a\\b/Rebase'");
-        assert_eq!(quoted("/Users/it's/Rebase"), r"'/Users/it'\''s/Rebase'");
+        assert_eq!(quoted("/Users/a\\b/Gespan"), "'/Users/a\\b/Gespan'");
+        assert_eq!(quoted("/Users/it's/Gespan"), r"'/Users/it'\''s/Gespan'");
     }
     #[test]
     fn app_mode_exposes_only_app_actions_and_safe_request_ids() {

@@ -11,10 +11,10 @@ import {
   type NewThreadBackgroundEffect,
 } from "../../settings/model/appearance";
 
-const KEY = "rebase:project-chat-backgrounds";
+const KEY = "gespan:project-chat-backgrounds";
 
 export const PROJECT_CHAT_BACKGROUND_CHANGED =
-  "rebase:project-chat-background-changed";
+  "gespan:project-chat-background-changed";
 
 export type ProjectChatBackground = {
   path: string;

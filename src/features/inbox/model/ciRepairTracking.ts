@@ -11,7 +11,7 @@ export type TrackedCiRepair = CiRepairRequest["target"] & {
   phase: "running" | CiRepairOutcome | "interrupted";
 };
 
-const KEY = "rebase.ciRepairs.v1";
+const KEY = "gespan.ciRepairs.v1";
 const ENTRY_PREFIX = `${KEY}.`;
 const listeners = new Set<() => void>();
 let repairs: readonly TrackedCiRepair[] | undefined;
