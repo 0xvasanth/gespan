@@ -69,6 +69,7 @@ impl Shell {
                 TitleTab::App(view) => {
                     !self.workspace.classic_layout
                         && (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
+                        && (*view != app_views::AppView::Board || self.workspace.preferences.board)
                 }
                 TitleTab::Session(tab) => {
                     self.workspace.tabs.contains(tab) && {
@@ -173,6 +174,7 @@ impl Shell {
                 app_views::AppView::Inbox => self.open_inbox(window, cx),
                 app_views::AppView::Notes => self.open_notes(window, cx),
                 app_views::AppView::Automations => self.open_automations(window, cx),
+                app_views::AppView::Board => self.open_board(window, cx),
             },
             TitleTab::Session(id) => {
                 let focus = self.workspace.tab_focus(*id);

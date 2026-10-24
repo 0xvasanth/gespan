@@ -602,6 +602,16 @@ mod tests {
     }
 
     #[test]
+    fn desktop_board_setting_imports_as_the_native_board_preference() {
+        let mut on = json!({});
+        prefs(&[("rebase.boardEnabled", json!(true))]).apply_workspace(&mut on);
+        assert_eq!(on["preferences"]["board"], true);
+        let mut unset = json!({});
+        prefs(&[]).apply_workspace(&mut unset);
+        assert_eq!(unset["preferences"]["board"], false);
+    }
+
+    #[test]
     fn native_edits_survive_until_the_corresponding_desktop_setting_changes() {
         let initial = prefs(&[
             (

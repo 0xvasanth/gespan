@@ -74,6 +74,7 @@ impl AssetSource for Assets {
 
    "note"=>include_bytes!("../assets/note.svg"),
    "zap"=>include_bytes!("../assets/zap.svg"),
+   "kanban"=>include_bytes!("../assets/hugeicons/kanban.svg"),
    "filter"=>include_bytes!("../assets/filter.svg"),
    "settings"=>include_bytes!("../assets/settings.svg"),
    // Hugeicons as the React app draws them: their own caps and joins,

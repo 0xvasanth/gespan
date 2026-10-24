@@ -421,3 +421,14 @@ fn opening_the_rebase_store_then_the_board_service_creates_the_four_board_tables
         ["board_activity", "board_cards", "board_columns", "boards"]
     );
 }
+
+#[test]
+fn board_setting_key_matches_tauri() {
+    assert!(tauri("src/features/settings/model/settings.ts").contains("\"rebase.boardEnabled\""));
+    let native = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/desktop_preferences/workspace_preferences.rs"),
+    )
+    .unwrap();
+    assert!(native.contains("(\"board\", \"boardEnabled\", false)"));
+}

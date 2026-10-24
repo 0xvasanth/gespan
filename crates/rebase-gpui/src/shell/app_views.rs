@@ -1,6 +1,6 @@
 //! The three application destinations share one navigation and focus boundary.
 use super::*;
-use crate::{automations, inbox, notes};
+use crate::{automations, board, inbox, notes};
 
 pub(super) use crate::workspace::AppView;
 
@@ -14,6 +14,7 @@ impl Shell {
             AppView::Inbox => "Inbox",
             AppView::Notes => "Notes",
             AppView::Automations => "Automations",
+            AppView::Board => "Board",
         })
     }
 
@@ -194,6 +195,7 @@ impl Shell {
             AppView::Notes => self.notes.clone().map(IntoElement::into_any_element),
             AppView::Inbox => self.inbox.clone().map(IntoElement::into_any_element),
             AppView::Automations => self.automations.clone().map(IntoElement::into_any_element),
+            AppView::Board => self.board.clone().map(IntoElement::into_any_element),
         }
     }
 
@@ -204,6 +206,7 @@ impl Shell {
             Some(AppView::Automations) => {
                 self.automations.as_ref().map(|view| view.focus_handle(cx))
             }
+            Some(AppView::Board) => self.board.as_ref().map(|view| view.focus_handle(cx)),
             None => return false,
         };
         if let Some(focus) = focus {
@@ -237,6 +240,31 @@ impl Shell {
             });
         }
         self.show_app_view(AppView::Notes, window, cx);
+    }
+
+    pub(super) fn open_board(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.workspace.preferences.board {
+            return;
+        }
+        self.prepare_app_view(window, cx);
+        if self.board.is_none() {
+            let Some(path) = locked(&self.store)
+                .ok()
+                .map(|store| store.database_path().to_path_buf())
+            else {
+                return;
+            };
+            let view = cx.new(|cx| board::BoardView::new(path, cx));
+            self.app_view_events.push(cx.subscribe_in(
+                &view,
+                window,
+                |this, _, event: &board::Event, window, cx| match event {
+                    board::Event::Close => this.close_app_view(window, cx),
+                },
+            ));
+            self.board = Some(view);
+        }
+        self.show_app_view(AppView::Board, window, cx);
     }
 
     pub(super) fn open_inbox(&mut self, window: &mut Window, cx: &mut Context<Self>) {
