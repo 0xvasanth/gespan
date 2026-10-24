@@ -1,4 +1,5 @@
 //! Flows: multi-step agent workflows defined as a state machine.
+pub mod contract;
 pub mod definition;
 pub mod starter;
 pub mod template;

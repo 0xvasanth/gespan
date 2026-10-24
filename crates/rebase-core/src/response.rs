@@ -74,6 +74,14 @@ pub fn prose(rows: &[Row]) -> String {
         .collect::<Vec<_>>()
         .join("\n\n")
 }
+/// Full assistant text after the last user row, joined like `prose`, never truncated.
+pub fn last_assistant_text(rows: &[Row]) -> String {
+    let start = rows
+        .iter()
+        .rposition(|r| r.role == "user")
+        .map_or(0, |ix| ix + 1);
+    prose(&rows[start..])
+}
 pub fn request(rows: &[Row]) -> String {
     rows.iter()
         .take_while(|r| r.role == "user")
@@ -234,6 +242,52 @@ pub fn strip_goal_sections(markdown: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn row(role: &str, text: &str, first: bool) -> Row {
+        Row {
+            role: role.into(),
+            text: text.into(),
+            first,
+            sent_at: None,
+        }
+    }
+    #[test]
+    fn last_assistant_text_returns_the_whole_final_reply() {
+        let long = "x".repeat(30_000);
+        let rows = vec![row("user", "go", true), row("assistant", &long, true)];
+        assert_eq!(last_assistant_text(&rows), long);
+    }
+    #[test]
+    fn last_assistant_text_ignores_earlier_turns_and_tool_rows() {
+        let rows = vec![
+            row("user", "one", true),
+            row("assistant", "old answer", true),
+            row("user", "two", true),
+            row("tool", "{\"name\":\"Read\"}", true),
+            row("assistant", "first part", true),
+            row("tool", "{\"name\":\"Edit\"}", true),
+            row("assistant", "final ```json\n{}\n```\r\n", true),
+        ];
+        assert_eq!(
+            last_assistant_text(&rows),
+            "first part\n\nfinal ```json\n{}\n```"
+        );
+    }
+    #[test]
+    fn last_assistant_text_is_empty_without_a_reply_after_the_last_user_row() {
+        assert_eq!(last_assistant_text(&[]), "");
+        let rows = vec![
+            row("user", "one", true),
+            row("assistant", "old", true),
+            row("user", "two", true),
+            row("tool", "{}", true),
+        ];
+        assert_eq!(last_assistant_text(&rows), "");
+    }
+    #[test]
+    fn last_assistant_text_without_any_user_row_uses_all_assistant_text() {
+        let rows = vec![row("assistant", "hello", true)];
+        assert_eq!(last_assistant_text(&rows), "hello");
+    }
     #[test]
     fn copied_prose_and_transfer_recaps_keep_message_boundaries() {
         let rows = vec![
