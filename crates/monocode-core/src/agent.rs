@@ -128,6 +128,8 @@ pub struct Settings {
     pub model_settings: std::collections::HashMap<String, String>,
     pub plan: bool,
     pub operator: bool,
+    /// A submitted /operator grants this thread access independently of its next draft.
+    pub operator_enabled: bool,
     pub orchestrator: bool,
     pub new_worktree: bool,
     pub worktree_base: Option<String>,

@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn desktop_operator_access_restores_only_from_submitted_user_messages() {
+    for (block, enabled) in [
+        (
+            json!({"role":"user", "text":"Start a session", "monocode":true}),
+            true,
+        ),
+        (json!({"role":"user", "text":"/mono Start a session"}), true),
+        (
+            json!({"role":"user", "text":"/monocode Start a session"}),
+            true,
+        ),
+        (
+            json!({"role":"user", "text":"Start a session", "monocode":true, "draft":true}),
+            false,
+        ),
+        (
+            json!({"role":"user", "text":"Start a session", "monocode":true, "internal":true}),
+            false,
+        ),
+        (
+            json!({"role":"assistant", "text":"/mono Start a session", "monocode":true}),
+            false,
+        ),
+        (json!({"role":"user", "text":"Start a session"}), false),
+    ] {
+        let store = Store::open_monocode(Path::new(":memory:")).unwrap();
+        let (id, _) = saved(&store, json!([block]));
+        assert_eq!(
+            store.agent_settings(id).unwrap().unwrap().operator_enabled,
+            enabled
+        );
+    }
+}
+
+#[test]
 fn streamed_indexed_mono_load_preserves_projection_and_revision_guards() {
     let mut store = Store::open_monocode(Path::new(":memory:")).unwrap();
     let legacy = include_str!("../../../../../src-tauri/src/mono_transcript.rs");

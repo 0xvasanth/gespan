@@ -148,7 +148,7 @@ impl Shell {
             .sessions
             .get(&call.session)
             .map(|v| v.read(cx))
-            .filter(|v| v.settings.operator)
+            .filter(|v| v.settings.operator_enabled)
             .ok_or("Operator is not enabled for this thread.")?;
         if caller.summary.cwd.starts_with("remote://") {
             return Err("Operator is not available on remote projects".into());
@@ -164,7 +164,8 @@ impl Shell {
         {
             return Err("Operator can only access this thread's project.".into());
         }
-        if (caller.settings.plan
+        if (caller.app_read_only
+            || caller.settings.plan
             || caller.settings.access == monocode_core::agent::AccessMode::ReadOnly)
             && !matches!(
                 call.action.as_str(),

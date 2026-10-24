@@ -8,8 +8,14 @@ fn setup(cx: &mut TestAppContext) -> (WindowHandle<Shell>, i64, i64) {
     window
         .update(cx, |shell, _, cx| {
             shell.sessions[&caller].update(cx, |v, cx| {
-                v.install_transfer(Settings::default(), None, cx);
-                v.enable_mode("operator", cx);
+                v.install_transfer(
+                    Settings {
+                        operator_enabled: true,
+                        ..Default::default()
+                    },
+                    None,
+                    cx,
+                );
             });
         })
         .unwrap();
@@ -58,6 +64,119 @@ fn launch(
     call(window, caller, request, "sessions.start", input, cx).unwrap()["sessionId"]
         .as_i64()
         .unwrap()
+}
+
+#[gpui::test]
+fn submitted_operator_access_survives_the_composer_reset(cx: &mut TestAppContext) {
+    let (window, _, caller) = crate::shell::tests::window(cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.sessions[&caller].update(cx, |view, cx| {
+                // Save the turn, then fail without starting a real provider.
+                view.summary.provider = "fixture".into();
+                view.quick_submit(
+                    "/operator Start a test session".into(),
+                    Settings::default(),
+                    cx,
+                );
+                assert!(view.busy);
+                assert!(!view.settings.operator);
+                assert!(view.settings.operator_enabled);
+            });
+            let (reply, _) = mpsc::channel();
+            shell
+                .authorize_app_call(
+                    &Call {
+                        session: caller,
+                        request_id: "after-submit".into(),
+                        action: "sessions.list".into(),
+                        input: json!({}),
+                        reply,
+                    },
+                    cx,
+                )
+                .unwrap();
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(call(window, caller, "later", "sessions.list", json!({}), cx).is_ok());
+    window
+        .update(cx, |shell, _, cx| {
+            let saved = locked(&shell.store)
+                .unwrap()
+                .agent_settings(caller)
+                .unwrap()
+                .unwrap();
+            assert!(!saved.operator);
+            assert!(saved.operator_enabled);
+            shell.sessions[&caller].update(cx, |view, cx| {
+                view.quick_submit("List my sessions".into(), saved, cx);
+                assert!(!view.settings.operator);
+                assert!(view.settings.operator_enabled);
+            });
+        })
+        .unwrap();
+    assert!(call(window, caller, "next-turn", "sessions.list", json!({}), cx).is_ok());
+    let child = launch(
+        window,
+        caller,
+        "after-reset",
+        json!({"harness":"codex"}),
+        cx,
+    );
+    window
+        .update(cx, |shell, _, cx| {
+            assert!(!shell.sessions[&child].read(cx).settings.operator_enabled);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn unsent_operator_selection_does_not_grant_app_access(cx: &mut TestAppContext) {
+    let (window, _, caller) = crate::shell::tests::window(cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.sessions[&caller].update(cx, |view, cx| view.enable_mode("operator", cx));
+        })
+        .unwrap();
+    assert_eq!(
+        call(window, caller, "unsent", "sessions.list", json!({}), cx).unwrap_err(),
+        "Operator is not enabled for this thread."
+    );
+}
+
+#[gpui::test]
+fn operator_planning_turns_keep_read_only_app_access_after_submission(cx: &mut TestAppContext) {
+    for mode in ["plan", "orchestrator"] {
+        let (window, _, caller) = setup(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&caller].update(cx, |view, cx| {
+                    view.summary.provider = "fixture".into();
+                    view.quick_submit(
+                        format!("/{mode} Inspect my sessions"),
+                        view.settings.clone(),
+                        cx,
+                    );
+                    assert!(view.busy);
+                    assert!(!view.settings.plan && !view.settings.orchestrator);
+                });
+            })
+            .unwrap();
+        assert!(call(window, caller, "plan-read", "sessions.list", json!({}), cx).is_ok());
+        assert!(
+            call(
+                window,
+                caller,
+                "plan-write",
+                "notes.write",
+                json!({"title":"Do not save", "body":"Plan only"}),
+                cx,
+            )
+            .unwrap_err()
+            .contains("read-only")
+        );
+    }
 }
 
 #[gpui::test]
@@ -421,8 +540,14 @@ fn operator_creates_selects_and_validates_real_worktrees(cx: &mut TestAppContext
     window
         .update(cx, |shell, _, cx| {
             shell.ensure_session(id, cx).unwrap().update(cx, |v, cx| {
-                v.install_transfer(Settings::default(), None, cx);
-                v.enable_mode("operator", cx);
+                v.install_transfer(
+                    Settings {
+                        operator_enabled: true,
+                        ..Default::default()
+                    },
+                    None,
+                    cx,
+                );
             })
         })
         .unwrap();

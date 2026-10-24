@@ -733,7 +733,21 @@ impl Store {
         settings.account.id = account.unwrap_or_else(|| crate::accounts::DEFAULT.into());
         // Desktop blocks are authoritative. Native-only legacy metadata remains
         // available, but cannot override a saved desktop turn's identity/time.
-        for (turn, source) in project_turns(&self.shared_blocks(id)?)? {
+        let blocks = self.shared_blocks(id)?;
+        settings.operator_enabled |= blocks.iter().any(|block| {
+            block["role"] == "user"
+                && block["draft"] != true
+                && block["internal"] != true
+                && (block["monocode"] == true
+                    || ["mono", "monocode"].into_iter().any(|command| {
+                        crate::composer::consume_command(
+                            block["text"].as_str().unwrap_or_default(),
+                            command,
+                        )
+                        .is_some()
+                    }))
+        });
+        for (turn, source) in project_turns(&blocks)? {
             let info = settings.turns.entry(turn).or_default();
             if !source.provider.is_empty() {
                 info.provider = source.provider;

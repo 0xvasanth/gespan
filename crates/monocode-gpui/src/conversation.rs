@@ -154,6 +154,8 @@ pub(crate) struct Conversation {
     file_drag: bool,
     attachment_error: Option<String>,
     app_environment: std::collections::HashMap<String, String>,
+    /// The running turn's policy, independent of the next composer's mode.
+    pub(crate) app_read_only: bool,
     planning_orchestration: bool,
     pub(crate) orchestration_plan: Option<monocode_core::orchestration::Plan>,
     orchestration_error: Option<String>,
@@ -579,6 +581,7 @@ impl Conversation {
             file_drag: false,
             attachment_error: None,
             app_environment: Default::default(),
+            app_read_only: false,
             planning_orchestration: false,
             orchestration_plan: None,
             orchestration_error: None,
@@ -998,6 +1001,12 @@ impl Conversation {
         let summary = self.summary.clone();
         let store = self.store.clone();
         let cancel = self.cancel.clone();
+        // Composer modes reset after Send; the thread grant and running turn's
+        // access policy must outlive that reset and edits to the next draft.
+        self.settings.operator_enabled |= self.settings.operator;
+        self.app_read_only = self.settings.plan
+            || self.settings.orchestrator
+            || self.settings.access == AccessMode::ReadOnly;
         let mut settings = self.settings.clone();
         if let Some(model) = self.model_info() {
             for control in &model.controls {

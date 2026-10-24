@@ -243,6 +243,7 @@ pub fn launch_settings(
     settings.mono_message_id = None;
     settings.mono_sent_at = None;
     settings.operator = false;
+    settings.operator_enabled = false;
     settings.orchestrator = false;
     settings.plan = false;
     settings.environment.clear();

@@ -28,6 +28,7 @@ fn operator_launch_applies_validated_overrides_without_transferring_app_access()
         model: Some("test-model".into()),
         effort: Some("low".into()),
         operator: true,
+        operator_enabled: true,
         orchestrator: true,
         plan: true,
         worktree_cwd: Some("/existing".into()),
@@ -45,6 +46,7 @@ fn operator_launch_applies_validated_overrides_without_transferring_app_access()
     assert_eq!(settings.model_settings["custom"], "b");
     assert_eq!(settings.worktree_cwd.as_deref(), Some("/existing"));
     assert!(!settings.operator && !settings.orchestrator && !settings.plan);
+    assert!(!settings.operator_enabled);
     assert!(settings.environment.is_empty());
     for bad in [
         json!({"model":"unknown"}),
@@ -63,6 +65,47 @@ fn operator_launch_applies_validated_overrides_without_transferring_app_access()
         .unwrap()
         .iter()
         .any(|s| s["id"] == "reasoningEffort"));
+}
+
+#[test]
+fn operator_thread_access_survives_reopen_without_enabling_other_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    for shared in [false, true] {
+        let path = dir
+            .path()
+            .join(if shared { "shared.db" } else { "native.db" });
+        let open = || {
+            if shared {
+                Store::open_monocode(&path).unwrap()
+            } else {
+                Store::open(&path).unwrap()
+            }
+        };
+        let store = open();
+        let caller = store.create("codex", "/project").unwrap();
+        let other = store.create("codex", "/project").unwrap();
+        store
+            .save_agent_settings(
+                caller.id,
+                &Settings {
+                    operator_enabled: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        drop(store);
+        let store = open();
+        let restored = store.agent_settings(caller.id).unwrap().unwrap();
+        assert!(restored.operator_enabled);
+        assert!(!restored.operator);
+        assert!(
+            !store
+                .agent_settings(other.id)
+                .unwrap()
+                .unwrap_or_default()
+                .operator_enabled
+        );
+    }
 }
 
 #[test]
