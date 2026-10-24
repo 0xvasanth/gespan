@@ -858,7 +858,6 @@ impl Shell {
         let git_observation = cx.observe(&git, |this, _, cx| {
             // The title bar's dot and the panel's tab label follow its stats.
             this.sync_project_rail_git_stats(cx);
-            this.sync_uncommitted(cx);
             if this.workspace.classic_layout {
                 this.sidebar_frame.update(cx, |_, cx| cx.notify());
             }
@@ -1514,29 +1513,11 @@ impl Shell {
             None => (self.working_copy().to_owned(), None),
         };
         self.git.update(cx, |git, cx| git.set_project(project, cx));
-        self.sync_uncommitted(cx);
         if let (Some(panel), Some(kind)) = (&self.right_panel, provider) {
             let changes = panel.read(cx).changes.clone();
             changes.update(cx, |c, _| c.text_provider = kind);
         }
         self.sync_right_panel(cx);
-    }
-    /// The commit pill shows on the active session while the Git watcher
-    /// sees uncommitted changes in its working copy; it only watches that one.
-    fn sync_uncommitted(&mut self, cx: &mut Context<Self>) {
-        let active = self
-            .workspace
-            .active
-            .map(|id| self.workspace.session_for_pane(id));
-        let git = self.git.read(cx);
-        let dirty = git.available() && git.has_changes();
-        let watched = git.project().to_owned();
-        for (id, view) in &self.sessions {
-            let uncommitted = dirty
-                && Some(*id) == active
-                && view.read(cx).execution_cwd() == watched;
-            view.update(cx, |view, cx| view.set_uncommitted(uncommitted, cx));
-        }
     }
     /// App.tsx's `insetRightPanelShown`: open (or sliding shut), over a
     /// project, and not covered by an app view.

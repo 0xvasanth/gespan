@@ -8,7 +8,7 @@ pub(crate) mod composer_features;
 mod composer_shelf;
 mod edit_last_turn;
 mod follow_up;
-mod git_actions;
+pub(crate) mod git_actions;
 mod history;
 mod mobile;
 mod mono;
@@ -209,8 +209,6 @@ pub(crate) struct Conversation {
     account_anchor: AnchorSlot,
     workspace_anchor: AnchorSlot,
     git_action_anchor: AnchorSlot,
-    /// The working copy has uncommitted changes, from the Shell's Git watcher.
-    uncommitted: bool,
     branch_anchor: AnchorSlot,
     context_anchor: AnchorSlot,
     composer_anchor: AnchorSlot,
@@ -525,6 +523,8 @@ impl Conversation {
             let shown = review.read(cx).shown();
             this.transcript
                 .update(cx, |view, cx| view.set_review_shown(shown, cx));
+            // The commit pill follows the card.
+            cx.notify();
         });
         let transcript = cx.new(|_| {
             let mut view = TranscriptView::new();
@@ -640,7 +640,6 @@ impl Conversation {
             account_anchor: AnchorSlot::default(),
             workspace_anchor: AnchorSlot::default(),
             git_action_anchor: AnchorSlot::default(),
-            uncommitted: false,
             branch_anchor: AnchorSlot::default(),
             context_anchor: AnchorSlot::default(),
             composer_anchor: AnchorSlot::default(),
@@ -1630,7 +1629,7 @@ impl Conversation {
         cx.emit(SessionChanged);
         cx.notify();
     }
-    pub(crate) fn execution_cwd(&self) -> &str {
+    fn execution_cwd(&self) -> &str {
         if self.settings.worktree_removed {
             return &self.summary.cwd;
         }

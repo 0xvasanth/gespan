@@ -4842,7 +4842,19 @@ impl TranscriptView {
                             .map(|body| div().when(!text.is_empty(), |d| d.mb_2()).child(body)),
                     )
                     .when(!text.is_empty(), |d| {
-                        d.child(
+                        // A commit pill's message leads with that action's icon.
+                        let action_icon = (user && first && last)
+                            .then(|| {
+                                crate::conversation::git_actions::GitAction::message_icon(&text)
+                            })
+                            .flatten();
+                        d.when_some(action_icon, |d, path| {
+                            d.flex_row()
+                                .items_center()
+                                .gap(px(6.))
+                                .child(icon(path, 14.).flex_shrink_0().text_color(content(0.6)))
+                        })
+                        .child(
                             div()
                                 .when(clamp, |d| d.line_clamp(4).text_ellipsis())
                                 .child({

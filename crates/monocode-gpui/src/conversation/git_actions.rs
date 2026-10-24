@@ -1,6 +1,5 @@
-//! The commit pill above the composer. Like the changed-files card, it shows
-//! once the session is idle and its working copy has uncommitted changes; one
-//! click asks the session's own agent to stage or
+//! The commit pill above the composer. It shows beside the changed-files card,
+//! once the session is idle after a turn that changed files; one click asks the session's own agent to stage or
 //! commit exactly what it changed, leaving other agents' and the user's work
 //! alone. The agent, not MonoCode's edit log, decides which changes are its.
 use super::*;
@@ -49,6 +48,13 @@ impl GitAction {
             Self::Commit => "git-commit",
             Self::CommitPush => "cloud-upload",
         }
+    }
+    /// The icon a sent action's message carries in the transcript.
+    pub(crate) fn message_icon(text: &str) -> Option<&'static str> {
+        Self::ALL
+            .into_iter()
+            .find(|action| action.message() == text.trim())
+            .map(Self::icon)
     }
     /// What the transcript shows for the turn.
     pub(crate) fn message(self) -> &'static str {
@@ -105,24 +111,19 @@ impl GitAction {
 }
 
 impl Conversation {
-    /// The Shell's Git watcher: whether this session's working copy is dirty.
-    pub(crate) fn set_uncommitted(&mut self, uncommitted: bool, cx: &mut Context<Self>) {
-        if self.uncommitted != uncommitted {
-            self.uncommitted = uncommitted;
-            cx.notify();
-        }
-    }
     fn last_git_action(cx: &gpui::App) -> GitAction {
         cx.try_global::<LastGitAction>()
             .map_or(GitAction::Commit, |last| last.0)
     }
-    /// Idle with uncommitted changes: no turn running and nothing queued, so
-    /// a click starts at once and the pill hides until the turn is over.
-    fn git_actions_shown(&self) -> bool {
-        self.uncommitted
+    /// Idle beside the changed-files card, with nothing queued, so a click
+    /// starts at once. Its own turn changes no files, so the pill then stays
+    /// away until the agent edits again.
+    fn git_actions_shown(&self, cx: &gpui::App) -> bool {
+        self.review.read(cx).has_files()
             && self.loaded
             && !self.busy
             && !self.stopping
+            && !self.preparing_worktree
             && self.follow_ups.state.messages.is_empty()
             && !self.is_remote()
             && self.settings.mono.is_none()
@@ -152,28 +153,23 @@ impl Conversation {
         self.run_git_action(action, cx);
         true
     }
-    /// Sends the action through the follow-up queue, which starts it straight
-    /// away on an idle session without the composer's modes or attachments.
+    /// Starts the turn straight away, without the composer's modes or
+    /// attachments; the transcript shows the short message, the agent gets
+    /// the full prompt.
     pub(crate) fn run_git_action(&mut self, action: GitAction, cx: &mut Context<Self>) {
-        if !self.git_actions_shown() {
+        if !self.git_actions_shown(cx) {
             return;
         }
         cx.set_global(LastGitAction(action));
         let mut message = self.message(action.message().to_owned(), Vec::new(), None, cx);
         message.prepared_prompt = Some(action.prompt());
-        self.follow_ups.motion.insert(
-            &message.id,
-            self.follow_ups.state.messages.is_empty(),
-            !cx.reduce_motion(),
-        );
-        self.follow_ups.state.messages.push(message);
-        self.save_follow_ups(cx);
+        self.launch_message(message, cx);
         cx.notify();
     }
     /// The split pill: run the current action, or pick another from the
     /// chevron, like the footer's Actions button.
     pub(super) fn git_action_pill(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.git_actions_shown() {
+        if !self.git_actions_shown(cx) {
             return None;
         }
         let current = Self::last_git_action(cx);
@@ -253,11 +249,13 @@ mod tests {
     use std::sync::Mutex;
 
     #[gpui::test]
-    fn the_pill_shows_only_while_idle_with_changes_and_sends_the_hidden_prompt(
+    fn the_pill_follows_the_changed_files_card_and_sends_straight_away(
         cx: &mut TestAppContext,
     ) {
         let store = Store::open(Path::new(":memory:")).unwrap();
-        let summary = store.create("claude", "/work/monocode").unwrap();
+        // Fails after saving the turn, without launching a real provider.
+        let mut summary = store.create("codex", "/missing/git-action-project").unwrap();
+        summary.provider = "fixture".into();
         let window = cx.update(|cx| {
             input::bind(cx);
             crate::popover::bind(cx);
@@ -276,11 +274,20 @@ mod tests {
             visual.run_until_parked();
             visual.debug_bounds("git-actions").is_some()
         };
-        assert!(!shown(visual), "no changes");
+        assert!(!shown(visual), "this session changed nothing");
 
+        let file = monocode_core::checkpoint::CheckpointFile {
+            path: "/missing/git-action-project/a.rs".into(),
+            relative: "a.rs".into(),
+            status: "modified".into(),
+            additions: 1,
+            deletions: 0,
+            exact: true,
+            undoable: true,
+        };
         window
             .update(visual, |view, _, cx| {
-                view.set_uncommitted(true, cx);
+                view.review.update(cx, |r, cx| r.set_files(vec![file], cx));
                 view.busy = true;
                 cx.notify();
             })
@@ -293,22 +300,38 @@ mod tests {
                 cx.notify();
             })
             .unwrap();
-        assert!(shown(visual), "idle with changes");
+        assert!(shown(visual), "idle after a turn that changed files");
 
         window
             .update(visual, |view, _, cx| {
-                view.run_git_action(GitAction::Commit, cx);
-                // The pill is gone, so a second click cannot send it twice.
+                view.settings.plan = true;
                 view.run_git_action(GitAction::Stage, cx);
-                let [message] = view.follow_ups.state.messages.as_slice() else {
-                    panic!("exactly one action sent");
-                };
-                assert_eq!(message.text, "Commit your changes");
-                assert_eq!(message.prepared_prompt, Some(GitAction::Commit.prompt()));
-                assert!(!message.steer);
+                // Sent at once, not parked in the queue above the composer.
+                assert!(view.follow_ups.state.messages.is_empty());
+                assert!(view.busy);
+                let rows = view.transcript.read(cx).source_rows();
+                assert_eq!(
+                    rows.iter()
+                        .filter(|row| row.is_prompt())
+                        .map(|row| row.text.as_str())
+                        .collect::<String>(),
+                    "Stage your changes"
+                );
+                // The composer keeps its own selections for the next message.
+                assert!(view.settings.plan);
+                assert!(view.settings.prepared_prompt.is_none());
             })
             .unwrap();
-        assert!(visual.debug_bounds("git-actions").is_none());
+        assert!(!shown(visual), "hidden while its turn runs");
+    }
+
+    #[test]
+    fn sent_actions_carry_their_icon() {
+        assert_eq!(
+            GitAction::message_icon("Commit and push your changes"),
+            Some("cloud-upload")
+        );
+        assert_eq!(GitAction::message_icon("Commit your changes please"), None);
     }
 
     #[test]
