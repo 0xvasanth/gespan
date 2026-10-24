@@ -1,0 +1,24 @@
+crates/rebase-gpui/src/board/tests.rs
+  s_0de52fe47ecaaa::t_e560089b55f711 610-646
+crates/rebase-gpui/src/board/detail.rs
+  s_0de52fe47ecaaa::t_1a3dacf89f74aa 20-22,92-93,127,132-136,138-150,153,155-161,163-171
+  s_0de52fe47ecaaa::t_9cd0280fe7a1a2 172-174
+crates/rebase-gpui/src/board.rs
+  s_0de52fe47ecaaa::t_1a3dacf89f74aa 214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8eea4e0cabf79257baa95950552c3bde5f08f106",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
