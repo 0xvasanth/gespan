@@ -3,6 +3,55 @@ use super::{ToolCall, ToolState};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Synthetic blocks for work whose parent a session could not place.
+pub const SYNTHETIC_BLOCK_PREFIX: &str = "background:";
+
+/// `<parent>-heartbeat-<n>` with a non-empty parent and a numeric suffix.
+fn heartbeat_split(id: &str) -> Option<(&str, u64)> {
+    let at = id.rfind("-heartbeat-")?;
+    let digits = &id[at + "-heartbeat-".len()..];
+    if at == 0 || digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((&id[..at], digits.parse().unwrap_or(u64::MAX)))
+}
+/// A saved step or call that Claude's keep-alive created, not real work.
+pub fn is_heartbeat_id(id: &str) -> bool {
+    heartbeat_split(id).is_some()
+}
+/// Claude's ~30 s keep-alive for a running tool call: a `tool_progress` frame
+/// flagged `heartbeat`, or one whose id is `<parent>-heartbeat-<n>`.
+pub fn is_heartbeat_frame(frame: &Value) -> bool {
+    frame["type"] == "tool_progress"
+        && (frame["heartbeat"] == true
+            || frame["tool_use_id"].as_str().is_some_and(|id| {
+                heartbeat_split(id)
+                    .is_some_and(|(parent, _)| frame["parent_tool_use_id"].as_str() == Some(parent))
+            }))
+}
+/// The running call a heartbeat frame is about, and how long it has run:
+/// `elapsed_time_seconds`, or `30 * (n + 1)` when the frame omits it.
+pub fn heartbeat_progress(frame: &Value) -> Option<(&str, u64)> {
+    let split = frame["tool_use_id"].as_str().and_then(heartbeat_split);
+    let parent = frame["parent_tool_use_id"]
+        .as_str()
+        .or_else(|| split.map(|(parent, _)| parent))?;
+    let elapsed = frame["elapsed_time_seconds"]
+        .as_f64()
+        .filter(|secs| *secs >= 0.)
+        .map(|secs| secs as u64)
+        .or_else(|| split.map(|(_, n)| 30u64.saturating_mul(n.saturating_add(1))))?;
+    Some((parent, elapsed))
+}
+/// `Ns` under a minute, `Mm Ss` after.
+pub fn format_elapsed(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        format!("{}m {}s", secs / 60, secs % 60)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Panel {
@@ -334,11 +383,21 @@ impl AgentRun {
             .trim_end_matches(|ch: char| ch.is_whitespace() || matches!(ch, ',' | ';' | ':'));
         format!("{trimmed}…")
     }
+    /// Tool steps that are real work, not saved keep-alive heartbeats.
+    pub fn tool_step_count(&self) -> usize {
+        self.steps
+            .iter()
+            .filter(|step| step.kind == "tool" && !is_heartbeat_id(&step.id))
+            .count()
+    }
     pub fn status_line(&self, state: &ToolState) -> String {
         if matches!(state, ToolState::Failed | ToolState::Cancelled) {
             return "failed".into();
         }
-        let tools = self.steps.iter().filter(|step| step.kind == "tool");
+        let tools = self
+            .steps
+            .iter()
+            .filter(|step| step.kind == "tool" && !is_heartbeat_id(&step.id));
         let count = tools.clone().count();
         if count == 0 {
             return String::new();
@@ -566,6 +625,29 @@ pub(crate) fn desktop_detail(meta: &Value) -> String {
 }
 
 impl ToolCall {
+    /// This call as the transcript should show it, or `None` when it is only
+    /// heartbeats that earlier builds saved as steps.
+    ///
+    /// Only the displayed copy changes; the saved block is never rewritten.
+    pub fn without_legacy_heartbeats(mut self) -> Option<ToolCall> {
+        let synthetic = self.id.starts_with(SYNTHETIC_BLOCK_PREFIX);
+        if let Some(Panel::Agent(run)) = &mut self.panel {
+            let saved = run.steps.len();
+            run.steps.retain(|step| !is_heartbeat_id(&step.id));
+            // A synthetic block that held nothing else was only ever a ghost.
+            if synthetic && saved > 0 && run.steps.is_empty() {
+                return None;
+            }
+        }
+        Some(self)
+    }
+    /// "running · 2m 30s" for a call that Claude's heartbeats say is running.
+    pub fn elapsed_label(&self) -> Option<String> {
+        let secs = self
+            .live_elapsed_secs
+            .filter(|_| self.state == ToolState::Running)?;
+        Some(format!("running · {}", format_elapsed(secs)))
+    }
     pub fn agent_report(&self) -> Option<&str> {
         (self.state != ToolState::Running)
             .then(|| self.output.trim())

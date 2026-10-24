@@ -757,6 +757,47 @@ export function activityStillRunning(blocks: Block[]): boolean {
   );
 }
 
+/** Claude's keep-alive ids: `<call>-heartbeat-<n>`. */
+export function isHeartbeatId(id: string | undefined): boolean {
+  return !!id && /.-heartbeat-\d+$/.test(id);
+}
+
+/** Synthetic runs for work no live call owned; see the Claude adapter. */
+const SYNTHETIC_RUN_PREFIX = "background:";
+
+/**
+ * Earlier builds saved Claude's heartbeat frames as never-ending steps, and as
+ * whole "Background agent" runs of nothing else. Hide them when displaying:
+ * their steps go, and a synthetic run that held only heartbeats goes with them.
+ * A run with any real step keeps it. Display only: the saved blocks are never
+ * rewritten, and untouched blocks keep their identity.
+ */
+export function withoutLegacyHeartbeats(blocks: Block[]): Block[] {
+  let changed = false;
+  const next: Block[] = [];
+  for (const block of blocks) {
+    if (isHeartbeatId(block.tool?.callId)) {
+      changed = true;
+      continue;
+    }
+    const steps = block.agentRun?.steps;
+    if (!steps?.some((step) => isHeartbeatId(step.id))) {
+      next.push(block);
+      continue;
+    }
+    changed = true;
+    const real = steps.filter((step) => !isHeartbeatId(step.id));
+    if (
+      real.length === 0 &&
+      block.tool?.callId?.startsWith(SYNTHETIC_RUN_PREFIX)
+    ) {
+      continue;
+    }
+    next.push({ ...block, agentRun: { ...block.agentRun!, steps: real } });
+  }
+  return changed ? next : blocks;
+}
+
 export function hasRunningSubagent(blocks: Block[]): boolean {
   return blocks.some(
     (block) => isSubagentBlock(block) && toolCallState(block) === "pending",

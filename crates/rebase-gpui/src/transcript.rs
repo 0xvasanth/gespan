@@ -393,7 +393,9 @@ pub(crate) fn pilot_work_label(source: &[Row], group: usize) -> String {
             .find(|&i| source[i].first)
             .unwrap_or(source.len());
         let text: String = source[at..end].iter().map(|r| r.text.as_str()).collect();
-        serde_json::from_str::<ToolCall>(&text).ok()
+        serde_json::from_str::<ToolCall>(&text)
+            .ok()
+            .and_then(ToolCall::without_legacy_heartbeats)
     }) else {
         return THINKING[thought.saturating_sub(1) % THINKING.len()].into();
     };
@@ -766,7 +768,9 @@ impl TranscriptView {
                     .iter()
                     .map(|r| r.text.as_str())
                     .collect();
-                serde_json::from_str::<ToolCall>(&text).ok()
+                serde_json::from_str::<ToolCall>(&text)
+                    .ok()
+                    .and_then(ToolCall::without_legacy_heartbeats)
             })
             .map(|tool| {
                 let shown = tool.presentation_in(Some(cwd));
@@ -2469,6 +2473,7 @@ impl TranscriptView {
                 && tool.state == ToolState::Running
             {
                 tool.state = ToolState::Cancelled;
+                rebase_core::tool::live::remove(&tool.id);
                 if tool.output.is_empty() {
                     tool.output = "Cancelled".into();
                 }
@@ -3279,20 +3284,27 @@ impl TranscriptView {
             } else if role == "tool"
                 && let Ok(tool) = serde_json::from_str::<ToolCall>(&text)
             {
-                self.rows.push(UiRow {
-                    key: (0, 0),
-                    body: Body::Tool {
-                        call: Box::new(tool),
-                        group: phase.filter(|_| grouped).map(|group| group.start),
-                        tail: phase.is_none_or(|group| group.last == at),
-                    },
-                    message,
-                    first: false,
-                    last: false,
-                    work: false,
-                    work_tail: false,
-                    thought_phase: None,
-                });
+                // Saved heartbeats stay out of the display copy; a block that
+                // was only heartbeats has no row at all.
+                if let Some(mut tool) = tool.without_legacy_heartbeats() {
+                    if tool.state == ToolState::Running {
+                        tool.live_elapsed_secs = rebase_core::tool::live::elapsed(&tool.id);
+                    }
+                    self.rows.push(UiRow {
+                        key: (0, 0),
+                        body: Body::Tool {
+                            call: Box::new(tool),
+                            group: phase.filter(|_| grouped).map(|group| group.start),
+                            tail: phase.is_none_or(|group| group.last == at),
+                        },
+                        message,
+                        first: false,
+                        last: false,
+                        work: false,
+                        work_tail: false,
+                        thought_phase: None,
+                    });
+                }
             } else if matches!(role.as_str(), "assistant" | "reasoning") {
                 if role == "reasoning" {
                     self.rows.push(UiRow {
@@ -5605,6 +5617,7 @@ mod scroll_tests {
                             state: ToolState::Completed,
                             panel: None,
                             display: None,
+                            live_elapsed_secs: None,
                         })
                         .unwrap(),
                     )
@@ -5707,6 +5720,7 @@ mod scroll_tests {
                                 state: ToolState::Completed,
                                 panel: None,
                                 display: None,
+                                live_elapsed_secs: None,
                             })
                             .unwrap(),
                         )
@@ -5838,6 +5852,7 @@ mod scroll_tests {
                             state: ToolState::Completed,
                             panel: None,
                             display: None,
+                            live_elapsed_secs: None,
                         })
                         .unwrap(),
                     )
@@ -6012,6 +6027,7 @@ mod scroll_tests {
             state: ToolState::Completed,
             panel: None,
             display: None,
+            live_elapsed_secs: None,
         })
         .unwrap();
         view.update(cx, |view, cx| {
@@ -6128,6 +6144,7 @@ mod scroll_tests {
             state: ToolState::Completed,
             panel: None,
             display: None,
+            live_elapsed_secs: None,
         })
         .unwrap();
         let window = cx.update(|cx| {

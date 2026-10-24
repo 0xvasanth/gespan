@@ -27,11 +27,17 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react";
 import { flushSync } from "react-dom";
+import {
+  formatElapsed as formatToolElapsed,
+  subscribeToolElapsed,
+  toolElapsed,
+} from "../../../integrations/harness/core/toolElapsed";
 import { AttachmentChip } from "./AttachmentChip";
 import { GeneratedImage } from "./GeneratedImage";
 import { RebaseSparkles } from "./RebaseSparkles";
@@ -152,6 +158,7 @@ import {
   subagentReportMeta,
   toolCallLabel,
   toolCallState,
+  withoutLegacyHeartbeats,
   turnCopyText,
   workKind,
   workSummaryLine,
@@ -348,9 +355,9 @@ function AgentTranscriptComponent({
   const isPilotChat = !!agentMascot;
   const blocks = useMemo(() => {
     // A Pilot's reaction sits on the message it answers, not in a bubble.
-    const chatBlocks = isPilotChat
-      ? pilotReactionBlocks(sourceBlocks)
-      : sourceBlocks;
+    const chatBlocks = withoutLegacyHeartbeats(
+      isPilotChat ? pilotReactionBlocks(sourceBlocks) : sourceBlocks,
+    );
     if (!harness || !supportsHarnessLogin(harness)) return chatBlocks;
     const visibleBlocks = chatBlocks.filter(
       (block) =>
@@ -4093,7 +4100,12 @@ function SubagentPanel({
               </span>
             ) : null}
             {status ? <span className="shrink-0">{status}</span> : null}
+            {state === "pending" ? (
+              <ToolElapsed callId={block.tool?.callId} bare />
+            ) : null}
           </span>
+        ) : state === "pending" ? (
+          <ToolElapsed callId={block.tool?.callId} />
         ) : null}
       </span>
       {activity ? (
@@ -4676,6 +4688,9 @@ function ActivityToolRow({
         >
           {bare ? null : <ActivityToolIcon state={state} live={live} />}
           {summary}
+          {state === "pending" ? (
+            <ToolElapsed callId={block.tool?.callId} />
+          ) : null}
           {pending ? null : <ToolCallStatusIcon state={state} />}
         </div>
       )}
@@ -4772,6 +4787,30 @@ function RebaseCallRow({
       ) : null}
       <ApprovalControls block={block} onApproval={onApproval} />
     </div>
+  );
+}
+
+/** "running · 2m 30s" while Claude's heartbeats report the call still going. */
+function ToolElapsed({
+  callId,
+  bare = false,
+}: {
+  callId: string | undefined;
+  bare?: boolean;
+}) {
+  const seconds = useSyncExternalStore(
+    subscribeToolElapsed,
+    () => toolElapsed(callId),
+    () => undefined,
+  );
+  if (seconds === undefined) return null;
+  return (
+    <span
+      data-testid="tool-elapsed"
+      className={`shrink-0 font-sans text-[12px] text-content/40 ${bare ? "" : "ml-auto"}`}
+    >
+      running · {formatToolElapsed(seconds)}
+    </span>
   );
 }
 
