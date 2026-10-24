@@ -28,7 +28,11 @@ export function OpenInEditorButton({ cwd }: { cwd: string }) {
   const [editors, setEditors] = useState<ExternalEditor[] | null>(null);
   const [lastEditorId, setLastEditorId] = useState(loadLastExternalEditor);
   const [error, setError] = useState<string | null>(null);
+  const [scanFailed, setScanFailed] = useState(false);
   const scan = useRef(0);
+  // The menu stays open while an editor starts; a second pick meanwhile
+  // would launch it twice.
+  const launching = useRef(false);
 
   // Scan again on every open: an editor installed since launch shows up
   // without a restart. The previous list stays up while the scan runs.
@@ -36,11 +40,14 @@ export function OpenInEditorButton({ cwd }: { cwd: string }) {
     const id = ++scan.current;
     void listExternalEditors()
       .then((installed) => {
-        if (scan.current === id)
-          setEditors(Array.isArray(installed) ? installed : []);
+        if (scan.current !== id) return;
+        setEditors(Array.isArray(installed) ? installed : []);
+        setScanFailed(false);
       })
       .catch(() => {
-        if (scan.current === id) setEditors((current) => current ?? []);
+        if (scan.current !== id) return;
+        setEditors((current) => current ?? []);
+        setScanFailed(true);
       });
   }, []);
 
@@ -84,14 +91,19 @@ export function OpenInEditorButton({ cwd }: { cwd: string }) {
   const onPick = (id: string) => {
     if (id.startsWith(EDITOR_ITEM_PREFIX)) {
       const editorId = id.slice(EDITOR_ITEM_PREFIX.length);
+      if (launching.current) return;
       if (!editors?.some((editor) => editor.id === editorId)) return;
+      launching.current = true;
       void openInExternalEditor(editorId, cwd)
         .then(() => {
           saveLastExternalEditor(editorId);
           setLastEditorId(editorId);
           close();
         })
-        .catch(fail);
+        .catch(fail)
+        .finally(() => {
+          launching.current = false;
+        });
       return;
     }
     if (id === "reveal") {
@@ -152,7 +164,7 @@ export function OpenInEditorButton({ cwd }: { cwd: string }) {
               ) : null}
             </div>
           }
-          items={openInEditorMenuItems(editors, lastEditorId)}
+          items={openInEditorMenuItems(editors, lastEditorId, scanFailed)}
           onPick={onPick}
           onClose={close}
         />

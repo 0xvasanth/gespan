@@ -18,13 +18,21 @@ const EDITORS = [
 ];
 
 let editors = EDITORS;
+let scanError: string | null = null;
 let openError: string | null = null;
+// Holds a launch open until the test settles it.
+let launchGate: Promise<void> | null = null;
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (command: string) => {
-    if (command === "list_external_editors") return editors;
-    if (command === "open_in_external_editor" && openError)
-      throw new Error(openError);
+    if (command === "list_external_editors") {
+      if (scanError) throw new Error(scanError);
+      return editors;
+    }
+    if (command === "open_in_external_editor") {
+      if (launchGate) await launchGate;
+      if (openError) throw new Error(openError);
+    }
   }),
   convertFileSrc: (path: string) => path,
 }));
@@ -39,7 +47,9 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   localStorage.clear();
   editors = EDITORS;
+  scanError = null;
   openError = null;
+  launchGate = null;
   vi.mocked(invoke).mockClear();
   container = document.createElement("div");
   document.body.append(container);
@@ -142,7 +152,9 @@ describe("openInEditorMenuItems", () => {
       "Copy path",
     ]);
     expect(items[0]).toMatchObject({ id: "editor:webstorm", checked: true });
-    expect(items[1]).toMatchObject({ id: "editor:vscode", checked: undefined });
+    // Every editor row is a checkbox item, so the others read as unchecked.
+    expect(items[1]).toMatchObject({ id: "editor:vscode", checked: false });
+    expect(items[2]).toMatchObject({ id: "editor:zed", checked: false });
   });
 
   it("keeps the scan's order when the last editor was uninstalled", () => {
@@ -170,6 +182,17 @@ describe("openInEditorMenuItems", () => {
       "Copy path",
     ]);
     expect(none[0]).toMatchObject({ disabled: true });
+  });
+
+  it("tells a failed scan apart from finding no editors", () => {
+    expect(openInEditorMenuItems([], null, true)[0]).toMatchObject({
+      label: "Couldn't look for editors",
+      disabled: true,
+    });
+    // A list from an earlier scan is still worth offering.
+    expect(labels(openInEditorMenuItems(EDITORS, null, true))[0]).toBe(
+      "Visual Studio Code",
+    );
   });
 });
 
@@ -252,6 +275,74 @@ describe("title bar Open in editor", () => {
     editors = EDITORS;
     await openMenu();
     expect(menuLabels()).toContain("WebStorm");
+  });
+
+  it("reports a failed editor scan instead of claiming none are installed", async () => {
+    scanError = "login shell timed out";
+    await renderTitleBar({ openInEditorCwd: WORKTREE });
+    await openMenu();
+    expect(menuLabels()).toContain("Couldn't look for editorsOpen this menu again to retry.");
+    expect(menu()!.textContent).not.toContain("No supported editors found");
+
+    // The next open retries, and a good scan clears the failure.
+    scanError = null;
+    await act(async () => cornerButton()!.click());
+    await openMenu();
+    expect(menuLabels().slice(0, 3)).toEqual([
+      "Visual Studio Code",
+      "Zed",
+      "WebStorm",
+    ]);
+  });
+
+  it("keeps the previous editors when a rescan fails", async () => {
+    await renderTitleBar({ openInEditorCwd: WORKTREE });
+    scanError = "login shell timed out";
+    await openMenu();
+    expect(menuLabels()).toContain("Zed");
+  });
+
+  it("marks every editor row with its checked state", async () => {
+    localStorage.setItem(LAST_EXTERNAL_EDITOR_KEY, "zed");
+    await renderTitleBar({ openInEditorCwd: WORKTREE });
+    await openMenu();
+    const rows = ["Zed", "Visual Studio Code", "WebStorm"].map(menuItem);
+    expect(rows.map((row) => row.getAttribute("role"))).toEqual([
+      "menuitemcheckbox",
+      "menuitemcheckbox",
+      "menuitemcheckbox",
+    ]);
+    expect(rows.map((row) => row.getAttribute("aria-checked"))).toEqual([
+      "true",
+      "false",
+      "false",
+    ]);
+  });
+
+  it("launches once when an editor is picked twice while it starts", async () => {
+    let release!: () => void;
+    launchGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    await renderTitleBar({ openInEditorCwd: WORKTREE });
+    await openMenu();
+    await act(async () => {
+      menuItem("Zed").click();
+      menuItem("Zed").click();
+    });
+    const launches = () =>
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === "open_in_external_editor");
+    expect(launches()).toHaveLength(1);
+    await act(async () => release());
+    expect(menu()).toBeNull();
+
+    // Settled, the next pick launches again.
+    launchGate = null;
+    await openMenu();
+    await act(async () => menuItem("Zed").click());
+    expect(launches()).toHaveLength(2);
   });
 
   it("reveals or copies the folder", async () => {

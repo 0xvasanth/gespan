@@ -36,11 +36,13 @@ export function openInEditorFolder(
 
 /**
  * The editors to offer, the last one used first and checked; the rest keep
- * the scan's order. `null` while the scan is still running.
+ * the scan's order. `null` while the scan is still running. A failed scan
+ * with nothing found earlier says so rather than claiming there are none.
  */
 export function openInEditorMenuItems(
   editors: ExternalEditor[] | null,
   lastEditorId: string | null,
+  scanFailed = false,
 ): ExplorerMenuItem[] {
   const tail: ExplorerMenuItem[] = [
     { kind: "sep" },
@@ -60,12 +62,20 @@ export function openInEditorMenuItems(
   }
   if (editors.length === 0) {
     return [
-      {
-        kind: "item",
-        id: "editor-none",
-        label: "No supported editors found",
-        disabled: true,
-      },
+      scanFailed
+        ? {
+            kind: "item",
+            id: "editor-scan-failed",
+            label: "Couldn't look for editors",
+            description: "Open this menu again to retry.",
+            disabled: true,
+          }
+        : {
+            kind: "item",
+            id: "editor-none",
+            label: "No supported editors found",
+            disabled: true,
+          },
       ...tail,
     ];
   }
@@ -78,7 +88,7 @@ export function openInEditorMenuItems(
       kind: "item" as const,
       id: `${EDITOR_ITEM_PREFIX}${editor.id}`,
       label: editor.name,
-      checked: editor === last ? true : undefined,
+      checked: editor === last,
     })),
     ...tail,
   ];
