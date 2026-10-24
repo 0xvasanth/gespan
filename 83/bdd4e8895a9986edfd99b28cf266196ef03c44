@@ -1,0 +1,25 @@
+crates/rebase-core/src/flow/runner.rs
+  s_ccb41beff89445::t_c95d08c7223c01 9,114-118,123-125,134,175-180,231,233-236,320-323,369-370,414-417
+  s_ccb41beff89445::t_84372f1077051c 232
+crates/rebase-core/src/flow/runner/tests.rs
+  s_ccb41beff89445::t_c95d08c7223c01 947-949,994-997
+  s_ccb41beff89445::t_d8ca3b2c02a15c 810-811
+  s_ccb41beff89445::t_86f8a72aaf5f4f 931-946,950-993,998-1016,1031
+  s_ccb41beff89445::t_e6a99c9d8903b0 1017-1030
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "83bdd4e8895a9986edfd99b28cf266196ef03c44",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
