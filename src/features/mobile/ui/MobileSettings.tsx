@@ -154,7 +154,7 @@ export function MobileSettings() {
             </span>
           </div>
           <p className="mt-1 text-[12px] leading-relaxed text-content/45">
-            Check on projects and conversations from the Rebase mobile
+            Check on projects and conversations from the Gespan mobile
             app. Your phone connects straight to this desktop.
           </p>
           <p className="mt-1 text-[12px] leading-relaxed text-content/45">

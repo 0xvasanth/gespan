@@ -1,5 +1,5 @@
 use crate::mobile_access::{self, MobileHost};
-use rebase_mobile_link::{Address, PORT};
+use gespan_mobile_link::{Address, PORT};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     time::{Duration, Instant},
@@ -44,7 +44,7 @@ impl Mapping {
                     *port,
                     *local,
                     3600,
-                    "Rebase mobile",
+                    "Gespan mobile",
                 )
                 .map_err(|e| e.to_string()),
         }
@@ -132,7 +132,7 @@ fn map() -> Result<Mapping, String> {
             igd_next::PortMappingProtocol::UDP,
             local,
             3600,
-            "Rebase mobile",
+            "Gespan mobile",
         )
         .map_err(|e| e.to_string())?;
     Ok(Mapping::Upnp {

@@ -97,7 +97,7 @@ export function HtmlArtifactFrame({
   const [contentHeight, setContentHeight] = useState<number | null>(null);
   const postTheme = () =>
     frameRef.current?.contentWindow?.postMessage(
-      { type: "rebase:theme", ...themeRef.current },
+      { type: "gespan:theme", ...themeRef.current },
       "*",
     );
   useEffect(postTheme, [theme]);
@@ -113,14 +113,14 @@ export function HtmlArtifactFrame({
       if (!frame || event.source !== frame.contentWindow) return;
       const data = event.data as { type?: unknown } | null;
       if (!data || typeof data !== "object") return;
-      if (data.type === "rebase:ready") {
+      if (data.type === "gespan:ready") {
         postTheme();
         setReady(true);
-      } else if (data.type === "rebase:height") {
+      } else if (data.type === "gespan:height") {
         const height = (data as { height?: unknown }).height;
         if (typeof height === "number" && Number.isFinite(height))
           setContentHeight(Math.max(MIN_HEIGHT, Math.ceil(height)));
-      } else if (data.type === "rebase:open-link") {
+      } else if (data.type === "gespan:open-link") {
         const url = (data as { url?: unknown }).url;
         // Only a link the reader just clicked: the frame holds focus then.
         if (

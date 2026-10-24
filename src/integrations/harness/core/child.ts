@@ -34,14 +34,14 @@ export function readHarnessTextFile(path: string): Promise<string> {
   });
 }
 
-export function prepareRebasexStore(
+export function prepareGespanxStore(
   providerAccountId?: string,
   threadId?: string,
 ): Promise<{ home: string; hasThread: boolean }> {
   return invoke("codex_pilot_store_prepare", { providerAccountId, threadId });
 }
 
-export function copyRebasexThreads(
+export function copyGespanxThreads(
   providerAccountId: string | undefined,
   threadId: string,
   paths: string[],
@@ -71,7 +71,7 @@ export function transferProviderSession(
   });
 }
 
-export function restoreRebasexAgentState(
+export function restoreGespanxAgentState(
   providerAccountId: string | undefined,
   threadId: string,
 ): Promise<void> {
@@ -583,7 +583,7 @@ export function inspectHarnessBinary(
   });
 }
 
-/** Runs the CLI's own self-update against the binary Rebase uses. */
+/** Runs the CLI's own self-update against the binary Gespan uses. */
 export async function updateHarnessCli(
   provider: ConfigurableBinaryProvider,
 ): Promise<void> {

@@ -14,8 +14,8 @@ export type RemoteProject = {
   cwd: string;
 };
 
-const KEY = "rebase.remote-projects.v2";
-export const REMOTE_PROJECTS_CHANGED = "rebase:remote-projects-changed";
+const KEY = "gespan.remote-projects.v2";
+export const REMOTE_PROJECTS_CHANGED = "gespan:remote-projects-changed";
 
 const slashed = (path: string) => path.replace(/\\/g, "/");
 

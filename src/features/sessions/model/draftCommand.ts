@@ -6,7 +6,7 @@ export const DRAFT_COMMAND: BuiltinSkill = {
   invocation: "draft",
   description: "Save this message without starting the agent.",
   scope: "builtin",
-  source: "rebase",
+  source: "gespan",
 };
 
 /** Consume `/draft` when it is used as the leading composer command. */

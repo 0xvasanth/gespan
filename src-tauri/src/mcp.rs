@@ -778,7 +778,7 @@ mod tests {
     #[test]
     fn writes_opencode_one_config_with_environment() {
         let root =
-            std::env::temp_dir().join(format!("rebase-opencode-one-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("gespan-opencode-one-{}", uuid::Uuid::new_v4()));
         let path = root.join("opencode.jsonc");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(&path, "{\n // keep this setting\n \"theme\": \"dark\", \"mcp\": {\"existing\": {\"type\": \"remote\", \"url\": \"https://example.com\"},},\n}").unwrap();
@@ -809,7 +809,7 @@ mod tests {
     #[test]
     fn writes_opencode_two_config_and_normalizes_standard_env() {
         let root =
-            std::env::temp_dir().join(format!("rebase-opencode-two-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("gespan-opencode-two-{}", uuid::Uuid::new_v4()));
         let path = root.join("opencode.json");
         let (_, server) = server_from_json(
             "opencode",
@@ -834,7 +834,7 @@ mod tests {
     #[test]
     fn adds_opencode_two_server_without_changing_existing_timeouts_or_servers() {
         let root =
-            std::env::temp_dir().join(format!("rebase-opencode-timeout-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("gespan-opencode-timeout-{}", uuid::Uuid::new_v4()));
         let path = root.join("opencode.json");
         std::fs::create_dir_all(&root).unwrap();
         let original = serde_json::json!({
@@ -875,7 +875,7 @@ mod tests {
             serde_json::json!({"type": "local", "command": ["node", "server.js"]}),
         ] {
             let root = std::env::temp_dir().join(format!(
-                "rebase-opencode-legacy-timeout-{}",
+                "gespan-opencode-legacy-timeout-{}",
                 uuid::Uuid::new_v4()
             ));
             let path = root.join("opencode.json");
@@ -911,7 +911,7 @@ mod tests {
             serde_json::json!({}),
         ] {
             let root = std::env::temp_dir().join(format!(
-                "rebase-opencode-timeout-only-{}",
+                "gespan-opencode-timeout-only-{}",
                 uuid::Uuid::new_v4()
             ));
             let path = root.join("opencode.json");
@@ -943,7 +943,7 @@ mod tests {
     #[test]
     fn chooses_existing_opencode_jsonc_and_custom_user_config() {
         let root =
-            std::env::temp_dir().join(format!("rebase-opencode-path-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("gespan-opencode-path-{}", uuid::Uuid::new_v4()));
         let home = root.join("home");
         let project = root.join("project");
         std::fs::create_dir_all(&project).unwrap();
@@ -969,7 +969,7 @@ mod tests {
 
     #[test]
     fn concurrent_additions_keep_every_server() {
-        let root = std::env::temp_dir().join(format!("rebase-mcp-lock-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("gespan-mcp-lock-{}", uuid::Uuid::new_v4()));
         let path = root.join(".cursor/mcp.json");
         std::thread::scope(|scope| {
             for index in 0..8 {
@@ -994,7 +994,7 @@ mod tests {
     fn replacing_config_restricts_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        let root = std::env::temp_dir().join(format!("rebase-mcp-mode-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("gespan-mcp-mode-{}", uuid::Uuid::new_v4()));
         let path = root.join("mcp.json");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(&path, r#"{"mcpServers":{}}"#).unwrap();
@@ -1009,7 +1009,7 @@ mod tests {
 
     #[test]
     fn writes_server_without_discarding_other_configuration() {
-        let root = std::env::temp_dir().join(format!("rebase-mcp-write-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("gespan-mcp-write-{}", uuid::Uuid::new_v4()));
         let path = root.join(".cursor/mcp.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
@@ -1028,7 +1028,7 @@ mod tests {
 
     #[test]
     fn adds_to_existing_cursor_jsonc() {
-        let root = std::env::temp_dir().join(format!("rebase-mcp-jsonc-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("gespan-mcp-jsonc-{}", uuid::Uuid::new_v4()));
         let path = root.join(".cursor/mcp.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
@@ -1056,7 +1056,7 @@ mod tests {
 
     #[test]
     fn discovers_provider_configs_without_exposing_credentials() {
-        let root = std::env::temp_dir().join(format!("rebase-mcp-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("gespan-mcp-{}", uuid::Uuid::new_v4()));
         let home = root.join("home");
         let project = root.join("project");
         std::fs::create_dir_all(home.join(".cursor")).unwrap();
@@ -1173,7 +1173,7 @@ mod tests {
     #[test]
     fn discovery_preserves_codex_enablement() {
         let root =
-            std::env::temp_dir().join(format!("rebase-mcp-enabled-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("gespan-mcp-enabled-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("config.toml");
         std::fs::write(
@@ -1202,7 +1202,7 @@ mod tests {
 
     #[test]
     fn does_not_duplicate_home_configs_or_hide_a_server_named_servers() {
-        let root = std::env::temp_dir().join(format!("rebase-mcp-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("gespan-mcp-{}", uuid::Uuid::new_v4()));
         let project = root.join("work/notes");
         std::fs::create_dir_all(root.join(".cursor")).unwrap();
         std::fs::create_dir_all(&project).unwrap();

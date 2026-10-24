@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 it.each([false, true])("applies generated worktree names only to retained sessions (deleted: %s)", async (deleted) => {
-  const cwd = mkdtempSync(join(tmpdir(), "rebase-host-names-"));
+  const cwd = mkdtempSync(join(tmpdir(), "gespan-host-names-"));
   const git = (...args: string[]) => execFileSync("git", args, { cwd });
   git("init", "-q");
   git("checkout", "-q", "-b", "main");
@@ -85,7 +85,7 @@ it.each([false, true])("applies generated worktree names only to retained sessio
     const logged = vi.spyOn(console, "debug").mockImplementation(() => {});
     try {
       finishBranch("remote-naming");
-      await vi.waitFor(() => expect(logged).toHaveBeenCalledWith("[rebase] remote worktree branch", expect.any(Error)));
+      await vi.waitFor(() => expect(logged).toHaveBeenCalledWith("[gespan] remote worktree branch", expect.any(Error)));
       expect((await hostWorktrees(cwd)).worktrees.find((item) => item.path === tree.path)?.branch).toBe("mc/12345678");
     } finally { logged.mockRestore(); }
     return;
@@ -94,14 +94,14 @@ it.each([false, true])("applies generated worktree names only to retained sessio
   await vi.waitFor(() => {
     expect(store.session(sessionId).session).toMatchObject({
       title: "codex · Fix remote naming",
-      branch: "rebase/remote-naming",
+      branch: "gespan/remote-naming",
       worktreeCwd: tree.path,
     });
   });
   expect(
     (await hostWorktrees(cwd)).worktrees.find((item) => item.path === tree.path)
       ?.branch,
-  ).toBe("rebase/remote-naming");
+  ).toBe("gespan/remote-naming");
   expect(title).toHaveBeenCalledTimes(1);
   expect(branch).toHaveBeenCalledTimes(1);
   engine.command({
@@ -119,7 +119,7 @@ it.each([false, true])("applies generated worktree names only to retained sessio
 });
 
 it("creates registered host worktrees and binds new sessions to the selected checkout", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "rebase-host-worktrees-"));
+  const cwd = mkdtempSync(join(tmpdir(), "gespan-host-worktrees-"));
   const git = (...args: string[]) => execFileSync("git", args, { cwd });
   git("init", "-q");
   git("checkout", "-q", "-b", "main");
@@ -197,10 +197,10 @@ it("creates registered host worktrees and binds new sessions to the selected che
 });
 
 it.each([
-  ["rebase/12345678", "wt-rebase-12345678"],
+  ["gespan/12345678", "wt-gespan-12345678"],
   ["mc/12345678", "wt-mc-12345678"],
 ])("renames automatically created %s branches and names the folder after them", async (temporary, folder) => {
-  const cwd = mkdtempSync(join(tmpdir(), "rebase-host-prefix-"));
+  const cwd = mkdtempSync(join(tmpdir(), "gespan-host-prefix-"));
   const git = (...args: string[]) => execFileSync("git", args, { cwd });
   git("init", "-q");
   git("checkout", "-q", "-b", "main");
@@ -214,10 +214,10 @@ it.each([
   });
   const tree = await createHostWorktree(cwd, temporary, "HEAD", false);
   expect(basename(tree.path)).toBe(folder);
-  const renamed = await renameHostWorktreeBranch(cwd, tree.path, temporary, "rebase/renamed");
-  expect(renamed.branch).toBe("rebase/renamed");
+  const renamed = await renameHostWorktreeBranch(cwd, tree.path, temporary, "gespan/renamed");
+  expect(renamed.branch).toBe("gespan/renamed");
   const plain = await createHostWorktree(cwd, "feature/12345678", "HEAD", false);
   await expect(
-    renameHostWorktreeBranch(cwd, plain.path, "feature/12345678", "rebase/nope"),
+    renameHostWorktreeBranch(cwd, plain.path, "feature/12345678", "gespan/nope"),
   ).rejects.toThrow("not an automatically created");
 });

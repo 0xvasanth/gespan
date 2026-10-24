@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::session_store::{now_millis, validate_id, SessionStore};
 
-pub(crate) const CHANGED: &str = "rebase:board-changed";
+pub(crate) const CHANGED: &str = "gespan:board-changed";
 
 const MAX_NAME: usize = 200;
 const MAX_TITLE: usize = 500;

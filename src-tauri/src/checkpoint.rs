@@ -1482,7 +1482,7 @@ mod tests {
                 .as_nanos();
             let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
             let dir = std::env::temp_dir().join(format!(
-                "rebase-checkpoint-{label}-{}-{stamp}-{seq}",
+                "gespan-checkpoint-{label}-{}-{stamp}-{seq}",
                 std::process::id()
             ));
             match std::fs::create_dir(&dir) {
@@ -1497,10 +1497,10 @@ mod tests {
         Command::new("git")
             .args(args)
             .current_dir(dir)
-            .env("GIT_AUTHOR_NAME", "rebase")
-            .env("GIT_AUTHOR_EMAIL", "rebase@test")
-            .env("GIT_COMMITTER_NAME", "rebase")
-            .env("GIT_COMMITTER_EMAIL", "rebase@test")
+            .env("GIT_AUTHOR_NAME", "gespan")
+            .env("GIT_AUTHOR_EMAIL", "gespan@test")
+            .env("GIT_COMMITTER_NAME", "gespan")
+            .env("GIT_COMMITTER_EMAIL", "gespan@test")
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
@@ -1510,8 +1510,8 @@ mod tests {
         if !git(dir, &["init", "-b", "main"]) && !git(dir, &["init"]) {
             return false;
         }
-        let _ = git(dir, &["config", "user.email", "rebase@test"]);
-        let _ = git(dir, &["config", "user.name", "rebase"]);
+        let _ = git(dir, &["config", "user.email", "gespan@test"]);
+        let _ = git(dir, &["config", "user.name", "gespan"]);
         let _ = git(dir, &["config", "core.autocrlf", "false"]);
         for (name, contents) in files {
             let path = dir.join(name);

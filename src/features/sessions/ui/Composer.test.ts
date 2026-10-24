@@ -23,10 +23,10 @@ vi.mock("@tauri-apps/api/webview", () => ({
 vi.mock("../../source-control/hooks/useProjectBranches", () => ({
   useProjectBranchesState: () => ({
     branches: {
-      current: "rebase/greeting",
+      current: "gespan/greeting",
       detached: false,
       branches: [
-        { name: "rebase/greeting", remote: null, current: true },
+        { name: "gespan/greeting", remote: null, current: true },
         { name: "main", remote: null, current: false },
       ],
     },
@@ -242,7 +242,7 @@ describe("Composer question focus", () => {
   it("opens a searchable MCP picker and sends selected context", async () => {
     const onSubmit = vi.fn();
     const onOpen = vi.fn();
-    window.addEventListener("rebase:open-mcp-settings", onOpen);
+    window.addEventListener("gespan:open-mcp-settings", onOpen);
     try {
       await renderComposer(
         undefined,
@@ -317,7 +317,7 @@ describe("Composer question focus", () => {
       expect(onOpen).not.toHaveBeenCalled();
       expect(textarea.value).toBe("");
     } finally {
-      window.removeEventListener("rebase:open-mcp-settings", onOpen);
+      window.removeEventListener("gespan:open-mcp-settings", onOpen);
     }
   });
 
@@ -1434,7 +1434,7 @@ describe("Composer question focus", () => {
           model: "claude-sonnet",
           runtimeMode: "supervised",
           cwd: "/repo",
-          executionCwd: "/repo-worktrees/rebase-greeting",
+          executionCwd: "/repo-worktrees/gespan-greeting",
           hideProjectPicker: true,
           onFocus: vi.fn(),
           onCwdChange: vi.fn(),
@@ -1454,7 +1454,7 @@ describe("Composer question focus", () => {
       container.querySelector('[aria-label="Choose working copy"]'),
     ).toBeNull();
     expect(
-      container.querySelector('[aria-label="Branch rebase/greeting"]'),
+      container.querySelector('[aria-label="Branch gespan/greeting"]'),
     ).not.toBeNull();
   });
 
@@ -1556,7 +1556,7 @@ describe("Composer question focus", () => {
     );
     expect(onWorkspaceModeChange).toHaveBeenLastCalledWith(
       "worktree",
-      "rebase/greeting",
+      "gespan/greeting",
     );
 
     await act(async () =>
@@ -1569,7 +1569,7 @@ describe("Composer question focus", () => {
         }),
       ),
     );
-    expect(onWorktreeBaseChange).toHaveBeenLastCalledWith("rebase/greeting");
+    expect(onWorktreeBaseChange).toHaveBeenLastCalledWith("gespan/greeting");
   });
 
   it("returns focus to the composer textarea once a question is answered", async () => {
@@ -1690,7 +1690,7 @@ describe("Composer question focus", () => {
   it("opens the MCP picker in Save draft mode and offers Manage", async () => {
     const onSaveDraft = vi.fn();
     const onOpen = vi.fn();
-    window.addEventListener("rebase:open-mcp-settings", onOpen);
+    window.addEventListener("gespan:open-mcp-settings", onOpen);
     try {
       await act(async () =>
         root.render(
@@ -1745,7 +1745,7 @@ describe("Composer question focus", () => {
       await act(async () => manage.click());
       expect(onOpen).toHaveBeenCalledOnce();
     } finally {
-      window.removeEventListener("rebase:open-mcp-settings", onOpen);
+      window.removeEventListener("gespan:open-mcp-settings", onOpen);
     }
   });
 });

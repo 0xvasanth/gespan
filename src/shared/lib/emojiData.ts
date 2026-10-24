@@ -137,8 +137,8 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-const RECENT_KEY = "rebase.recentEmoji";
-const SKIN_TONE_KEY = "rebase.emojiSkinTone";
+const RECENT_KEY = "gespan.recentEmoji";
+const SKIN_TONE_KEY = "gespan.emojiSkinTone";
 const RECENT_MAX = 16;
 
 /** Emoji picked lately, newest first. */

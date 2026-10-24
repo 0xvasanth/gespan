@@ -1,13 +1,13 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$base = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.rebase-host'
+$base = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.gespan-host'
 $version = @@VERSION@@
 $release = @@RELEASE@@
-$forceUpgrade = $env:REBASE_HOST_FORCE_UPGRADE -eq '1'
-$hostPort = if ($env:REBASE_HOST_PORT) { [int] $env:REBASE_HOST_PORT } else { 3774 }
+$forceUpgrade = $env:GESPAN_HOST_FORCE_UPGRADE -eq '1'
+$hostPort = if ($env:GESPAN_HOST_PORT) { [int] $env:GESPAN_HOST_PORT } else { 3774 }
 @@ACL@@
 
-function Download-Rebase([string] $Url, [string] $Destination) {
+function Download-Gespan([string] $Url, [string] $Destination) {
   Add-Type -AssemblyName System.Net.Http
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
   $handler = New-Object Net.Http.HttpClientHandler
@@ -35,7 +35,7 @@ function Download-Rebase([string] $Url, [string] $Destination) {
 }
 
 New-Item -ItemType Directory -Force -Path $base | Out-Null
-Protect-RebaseDirectory $base
+Protect-GespanDirectory $base
 $lock = $null
 $temporary = $null
 try {
@@ -55,9 +55,9 @@ try {
     switch ($arch.ToUpperInvariant()) {
       'AMD64' { $target = 'win32-x64' }
       'ARM64' { $target = 'win32-arm64' }
-      default { throw 'Rebase Host requires x64 or ARM64 Windows.' }
+      default { throw 'Gespan Host requires x64 or ARM64 Windows.' }
     }
-    $filename = "rebase-host-$target.zip"
+    $filename = "gespan-host-$target.zip"
     $runtimeRoot = Join-Path $base 'runtime'
     New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
     $temporary = Join-Path $runtimeRoot ('.install-' + [Guid]::NewGuid().ToString('N'))
@@ -65,16 +65,16 @@ try {
     $archive = Join-Path $temporary $filename
     $checksum = Join-Path $temporary 'checksum'
     try {
-      Download-Rebase "$release/$filename" $archive
-      Download-Rebase "$release/$filename.sha256" $checksum
+      Download-Gespan "$release/$filename" $archive
+      Download-Gespan "$release/$filename.sha256" $checksum
     } catch { throw "The Windows host package for version $version could not be downloaded. Install a release with host packages. $($_.Exception.Message)" }
     $expected = ((Get-Content -LiteralPath $checksum -Raw).Trim() -split '\s+')[0]
     if ($expected -notmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid host package checksum.' }
-    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) { throw 'Rebase Host package checksum mismatch.' }
+    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) { throw 'Gespan Host package checksum mismatch.' }
     $unpacked = Join-Path $temporary 'unpacked'
     Expand-Archive -LiteralPath $archive -DestinationPath $unpacked
     $actual = & (Join-Path $unpacked 'node.exe') (Join-Path $unpacked 'host.mjs') --version
-    if ($LASTEXITCODE -ne 0 -or $actual -ne $version) { throw 'Rebase Host version mismatch.' }
+    if ($LASTEXITCODE -ne 0 -or $actual -ne $version) { throw 'Gespan Host version mismatch.' }
     $runtime = Join-Path $runtimeRoot ("$version-$target-" + [Guid]::NewGuid().ToString('N'))
     Move-Item -LiteralPath $unpacked -Destination $runtime
     $bin = Join-Path $base 'bin'
@@ -82,7 +82,7 @@ try {
     $runtimeName = Split-Path -Leaf $runtime
     # Keep the batch file ASCII; cmd's set /p would misread a UTF-8 profile path.
     $launcher = "@echo off`r`nsetlocal DisableDelayedExpansion`r`n`"%~dp0..\runtime\$runtimeName\node.exe`" `"%~dp0..\runtime\$runtimeName\host.mjs`" %*`r`nexit /b %errorlevel%`r`n"
-    [IO.File]::WriteAllText((Join-Path $bin 'rebase-host.cmd'), $launcher, [Text.Encoding]::ASCII)
+    [IO.File]::WriteAllText((Join-Path $bin 'gespan-host.cmd'), $launcher, [Text.Encoding]::ASCII)
     $nextPointer = Join-Path $temporary 'runtime-path'
     [IO.File]::WriteAllText($nextPointer, $runtime, (New-Object Text.UTF8Encoding($false)))
     if (Test-Path -LiteralPath $pointer) {

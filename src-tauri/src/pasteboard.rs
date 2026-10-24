@@ -379,7 +379,7 @@ mod path_tests {
     /// return trimmed this resolves to nothing.
     #[test]
     fn a_uri_list_line_resolves_to_the_file_it_names() {
-        let dir = std::env::temp_dir().join(format!("rebase-uri-list-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("gespan-uri-list-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("All_BTech_Affiliated_2022_23.pdf");
         std::fs::write(&file, b"%PDF-1.7").unwrap();
@@ -469,7 +469,7 @@ mod tests {
             }
         }
         let temp = TempDir(
-            std::env::temp_dir().join(format!("rebase-file-reference-{}", uuid::Uuid::new_v4())),
+            std::env::temp_dir().join(format!("gespan-file-reference-{}", uuid::Uuid::new_v4())),
         );
         std::fs::create_dir_all(&temp.0).unwrap();
         let dir = std::fs::canonicalize(&temp.0).unwrap();

@@ -76,7 +76,7 @@ async function hostTurn(
   onLine(
     JSON.stringify({
       type: "control_response",
-      response: { subtype: "success", request_id: "rebase_2" },
+      response: { subtype: "success", request_id: "gespan_2" },
     }),
   );
   await vi.waitFor(() => expect(prompts(sessionId)).toBeGreaterThan(users));
@@ -84,7 +84,7 @@ async function hostTurn(
 }
 
 it("routes a resumed sub-agent to its resumption block after the host forgot the process", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "rebase-claude-resume-"));
+  const directory = mkdtempSync(join(tmpdir(), "gespan-claude-resume-"));
   const store = new HostStore(join(directory, "host.db"));
   const project = store.addProject(directory, "Test");
   const engine = new HostEngine(store, { claude: hostProviders.claude });

@@ -14,17 +14,17 @@ it("finds a saved UNC project through its corrected remote path", () => {
     projectId: "project",
     cwd: "\\\\server\\share\\repo",
   };
-  localStorage.setItem("rebase.remote-projects.v2", JSON.stringify({ [legacyKey]: project }));
+  localStorage.setItem("gespan.remote-projects.v2", JSON.stringify({ [legacyKey]: project }));
   expect(remoteProjectFor(remotePath("env", project.cwd))).toEqual(project);
-  localStorage.removeItem("rebase.remote-projects.v2");
+  localStorage.removeItem("gespan.remote-projects.v2");
 });
 
 const gitProject = { environmentId: "env", cwd: "/home/dev/repo" };
 
 it("diffs a linked worktree in the worktree, not the project root", () => {
   expect(
-    remoteSessionGitCwd(gitProject, "/home/dev/repo/.rebase/worktrees/fix", "/home/dev/repo"),
-  ).toBe(remotePath("env", "/home/dev/repo/.rebase/worktrees/fix"));
+    remoteSessionGitCwd(gitProject, "/home/dev/repo/.gespan/worktrees/fix", "/home/dev/repo"),
+  ).toBe(remotePath("env", "/home/dev/repo/.gespan/worktrees/fix"));
 });
 
 it("keeps the project root when the session has no separate work path", () => {
@@ -37,7 +37,7 @@ it("keeps the project root when the session has no separate work path", () => {
 });
 
 it("passes an already-remote session work path through untouched", () => {
-  const wrapped = remotePath("env", "/home/dev/repo/.rebase/worktrees/fix");
+  const wrapped = remotePath("env", "/home/dev/repo/.gespan/worktrees/fix");
   expect(remoteSessionGitCwd(gitProject, wrapped, "/home/dev/repo")).toBe(wrapped);
 });
 
@@ -51,9 +51,9 @@ it("diffs the worktree a remote tab picked before its session starts", () => {
       gitProject,
       root,
       root,
-      "/home/dev/repo/.rebase/worktrees/fix",
+      "/home/dev/repo/.gespan/worktrees/fix",
     ),
-  ).toBe(remotePath("env", "/home/dev/repo/.rebase/worktrees/fix"));
+  ).toBe(remotePath("env", "/home/dev/repo/.gespan/worktrees/fix"));
 });
 
 it("keeps the tab's session checkout ahead of a stray remote git cwd", () => {
@@ -68,7 +68,7 @@ it("keeps the tab's session checkout ahead of a stray remote git cwd", () => {
 });
 
 it("passes an already-remote tab checkout through untouched", () => {
-  const wrapped = remotePath("env", "/home/dev/repo/.rebase/worktrees/fix");
+  const wrapped = remotePath("env", "/home/dev/repo/.gespan/worktrees/fix");
   expect(
     remoteSessionGitCwd(
       gitProject,

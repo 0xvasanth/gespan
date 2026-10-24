@@ -12,9 +12,9 @@ import { ChevronDown, ChevronUp, X } from "../../../shared/ui/icons";
 import { keybindingPressed } from "../../settings/model/settings";
 
 const MATCH_CAP = 999;
-const MATCH_HIGHLIGHT = "rebase-file-preview-search-match";
-const CURRENT_HIGHLIGHT = "rebase-file-preview-search-current";
-const HIGHLIGHT_STYLE_ID = "rebase-file-preview-search-styles";
+const MATCH_HIGHLIGHT = "gespan-file-preview-search-match";
+const CURRENT_HIGHLIGHT = "gespan-file-preview-search-current";
+const HIGHLIGHT_STYLE_ID = "gespan-file-preview-search-styles";
 const BLOCK_ELEMENTS = new Set([
   "address",
   "article",

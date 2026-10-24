@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-export const BOARD_CHANGED = "rebase:board-changed";
+export const BOARD_CHANGED = "gespan:board-changed";
 
 export type ColumnRole = "todo" | "doing" | "review" | "done";
 export type CardLinkKind = "session" | "pilot" | "flow-run";

@@ -33,7 +33,7 @@ export {
   forgetCodexSession,
   bindCodexSession,
   hasLiveCodexSession,
-  migrateRebasexSession,
+  migrateGespanxSession,
 } from "./providers/codex/codex";
 export {
   sendOpenCodeTurn,

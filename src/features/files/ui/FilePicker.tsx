@@ -38,7 +38,7 @@ export function reloadActionHint(mod = MOD, shift = SHIFT) {
 }
 
 const ACTIONS: Action[] = [
-  { id: "reload", label: "Reload Rebase", hint: reloadActionHint() },
+  { id: "reload", label: "Reload Gespan", hint: reloadActionHint() },
 ];
 
 type Props = {

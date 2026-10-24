@@ -407,7 +407,7 @@ function startLaunch(
     throw new Error("Unknown harness; run models.list for available providers");
   const chosenHarness = harness as HarnessId;
   if (!isHarnessAvailable(chosenHarness))
-    throw new Error(`${chosenHarness} is not available in Rebase`);
+    throw new Error(`${chosenHarness} is not available in Gespan`);
   const requestedModel = optionalString(input.model, "model");
   const model = requestedModel
     ? modelsFor(chosenHarness).find((entry) => entry.id === requestedModel)

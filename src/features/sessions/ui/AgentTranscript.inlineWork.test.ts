@@ -348,7 +348,7 @@ it("shows reused sessions in the requesting Pilot after its handoff reply, befor
   ];
   const receipt = (id: string, action: string, result: unknown): Block => ({
     ...tool(id),
-    text: `rebase app ${action}`,
+    text: `gespan app ${action}`,
     tool: { status: "completed", detail: JSON.stringify({ ok: true, result }) },
   });
   const blocks: Block[] = [

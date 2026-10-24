@@ -38,7 +38,7 @@ replaceFirst(
 );
 replaceFirst(
   join(root, "Cargo.lock"),
-  /(name = "rebase"\nversion = ")[^"]+(")/,
+  /(name = "gespan"\nversion = ")[^"]+(")/,
   `$1${version}$2`,
 );
 

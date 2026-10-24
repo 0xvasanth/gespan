@@ -174,20 +174,20 @@ describe("replaceProjectPath", () => {
 
   it("keeps rail order and pin state under the renamed path", () => {
     rememberProject("/work/other");
-    rememberProject("/work/rebase");
-    saveProjectRailOrder(["/work/other", "/work/rebase"]);
-    savePinnedProjects(["/work/rebase"]);
+    rememberProject("/work/gespan");
+    saveProjectRailOrder(["/work/other", "/work/gespan"]);
+    savePinnedProjects(["/work/gespan"]);
 
     expect(
-      replaceProjectPath("/work/rebase", "/work/rebase-personal").map(
+      replaceProjectPath("/work/gespan", "/work/gespan-personal").map(
         (item) => item.path,
       ),
-    ).toEqual(["/work/rebase-personal", "/work/other"]);
+    ).toEqual(["/work/gespan-personal", "/work/other"]);
     expect(loadProjectRailOrder()).toEqual([
       "/work/other",
-      "/work/rebase-personal",
+      "/work/gespan-personal",
     ]);
-    expect(loadPinnedProjects()).toEqual(["/work/rebase-personal"]);
+    expect(loadPinnedProjects()).toEqual(["/work/gespan-personal"]);
   });
 });
 

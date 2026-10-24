@@ -3,18 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" href="/rebase.png" />
-    <title>Rebase</title>
+    <link rel="icon" href="/gespan.png" />
+    <title>Gespan</title>
     <script>
       (function () {
         try {
           var root = document.documentElement;
-          var hue = localStorage.getItem("rebase.themeHue");
-          var sat = localStorage.getItem("rebase.themeSaturation");
+          var hue = localStorage.getItem("gespan.themeHue");
+          var sat = localStorage.getItem("gespan.themeSaturation");
           var darkLightness = localStorage.getItem(
-            "rebase.themeDarkLightness",
+            "gespan.themeDarkLightness",
           );
-          var opacity = localStorage.getItem("rebase.sidebarOpacity");
+          var opacity = localStorage.getItem("gespan.sidebarOpacity");
           if (hue != null) {
             var h = Math.max(0, Math.min(360, Number(hue) || 0));
             root.style.setProperty("--theme-hue", String(h));
@@ -31,7 +31,7 @@
             var o = Math.max(0.15, Math.min(1, Number(opacity) || 0.85));
             root.style.setProperty("--sidebar-opacity", String(o));
           }
-          var scheme = localStorage.getItem("rebase.colorScheme");
+          var scheme = localStorage.getItem("gespan.colorScheme");
           if (scheme === "system") {
             scheme = window.matchMedia("(prefers-color-scheme: light)").matches
               ? "light"
@@ -40,7 +40,7 @@
           if (scheme === "light") {
             root.classList.add("theme-light");
           }
-          var bodyGlass = localStorage.getItem("rebase.bodyGlass");
+          var bodyGlass = localStorage.getItem("gespan.bodyGlass");
           if (bodyGlass == null || bodyGlass === "1" || bodyGlass === "true") {
             root.classList.add("glass-body");
           }
@@ -103,7 +103,7 @@
   </head>
   <body>
     <div id="boot-splash" aria-hidden="true">
-      <img src="/rebase.png" alt="" />
+      <img src="/gespan.png" alt="" />
     </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

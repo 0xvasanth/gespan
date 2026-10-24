@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
 	<key>NSDesktopFolderUsageDescription</key>
-	<string>Rebase opens project folders you choose, including Desktop.</string>
+	<string>Gespan opens project folders you choose, including Desktop.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
-	<string>Rebase opens project folders you choose, including Documents.</string>
+	<string>Gespan opens project folders you choose, including Documents.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
-	<string>Rebase opens project folders you choose, including Downloads.</string>
+	<string>Gespan opens project folders you choose, including Downloads.</string>
 </dict>
 </plist>

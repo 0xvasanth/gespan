@@ -210,7 +210,7 @@ export function planRotation(
   return { rotation, brief };
 }
 
-const ROTATIONS_KEY = "rebase:pilot-rotations";
+const ROTATIONS_KEY = "gespan:pilot-rotations";
 
 function readRotations(): Record<string, PilotRotation> {
   try {

@@ -16,7 +16,7 @@ import {
 import { asRecord, stringField } from "./codexProtocol";
 import { JsonRpcClient } from "../../core/jsonRpc";
 
-const PROBE_ID = "rebase-codex-probe";
+const PROBE_ID = "gespan-codex-probe";
 const DISCOVERY_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 12_000;
 
@@ -40,7 +40,7 @@ export function refreshCodexCatalog(): Promise<void> {
       if (models.length > 0) setHarnessModels("codex", models);
     })
     .catch((error: unknown) => {
-      console.debug("[rebase] codex catalog", error);
+      console.debug("[gespan] codex catalog", error);
     })
     .finally(() => {
       inflight = null;
@@ -161,8 +161,8 @@ async function runCodexProbe<T>(
           "initialize",
           {
             clientInfo: {
-              name: "rebase",
-              title: "Rebase",
+              name: "gespan",
+              title: "Gespan",
               version: "0.1.0",
             },
             capabilities: { experimentalApi: true },

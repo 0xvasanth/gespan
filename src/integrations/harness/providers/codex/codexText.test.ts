@@ -30,7 +30,7 @@ function receive(message: unknown) {
 vi.mock("../../core/child", () => ({
   resolveCodexBinary: async () => ({ path: "/fake/codex" }),
   spawnChild,
-  restoreRebasexAgentState: async () => undefined,
+  restoreGespanxAgentState: async () => undefined,
   killChild: async () => undefined,
   unwatchChild: () => undefined,
   watchChild: (_id: string, line: (value: string) => void) => {

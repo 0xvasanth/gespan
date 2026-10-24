@@ -150,7 +150,7 @@ describe("parseHandback", () => {
 });
 
 describe("handbackMeta", () => {
-  it("joins the fields with the Rebase Native wording", () => {
+  it("joins the fields with the Gespan Native wording", () => {
     expect(
       handbackMeta({
         report: "",

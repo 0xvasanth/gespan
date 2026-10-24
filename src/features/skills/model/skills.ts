@@ -27,10 +27,10 @@ export {
   type SlashToken,
 } from "./slashCommands";
 
-const DISABLED_SKILL_PATHS_KEY = "rebase.disabledSkillPaths";
+const DISABLED_SKILL_PATHS_KEY = "gespan.disabledSkillPaths";
 
 /** Fired on `window` when a skill is enabled or disabled in Settings. */
-export const SKILLS_CHANGE_EVENT = "rebase:skills-change";
+export const SKILLS_CHANGE_EVENT = "gespan:skills-change";
 
 export function loadDisabledSkillPaths(): string[] {
   try {
@@ -76,7 +76,7 @@ export type SkillSource =
   | "hermes"
   | "antigravity"
   | "devin"
-  | "rebase";
+  | "gespan";
 
 type SkillCommon = {
   name: string;
@@ -94,7 +94,7 @@ export type FileSkill = SkillCommon & {
 export type BuiltinSkill = SkillCommon & {
   kind: "builtin";
   scope: "builtin";
-  source: "rebase";
+  source: "gespan";
 };
 
 export type NativeSkill = NativeCommand & {
@@ -109,7 +109,7 @@ export const BUILTIN_CREATE_SKILL: BuiltinSkill = {
   description: CREATE_SKILL_DESCRIPTION,
   invocation: CREATE_SKILL_NAME,
   scope: "builtin",
-  source: "rebase",
+  source: "gespan",
 };
 
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -327,7 +327,7 @@ export async function discoverFileSkills(
   const [files, plugins] = await Promise.all([
     listSkills(cwd, disabledPaths),
     discoverCodexPluginSkills(cwd).catch((error: unknown) => {
-      console.debug("[rebase] codex plugin skills", error);
+      console.debug("[gespan] codex plugin skills", error);
       return [];
     }),
   ]);
@@ -371,7 +371,7 @@ function asSkill(skill: DiscoveredSkill): FileSkill {
     invocation: skill.name,
     path: skill.path,
     scope: skill.scope === "user" ? "user" : "project",
-    source: skill.source === "rebase" ? "rebase" : skill.source,
+    source: skill.source === "gespan" ? "gespan" : skill.source,
   };
 }
 

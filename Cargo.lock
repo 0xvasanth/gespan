@@ -1688,6 +1688,85 @@ dependencies = [
 ]
 
 [[package]]
+name = "gespan"
+version = "0.16.0"
+dependencies = [
+ "arboard",
+ "base64 0.23.1",
+ "block2",
+ "gespan-keep-awake",
+ "gespan-mobile-link",
+ "hostname",
+ "if-addrs",
+ "igd-next",
+ "junction",
+ "keyring",
+ "libc",
+ "natpmp",
+ "notify-rust",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-quartz-core",
+ "objc2-user-notifications",
+ "open",
+ "png",
+ "portable-pty",
+ "quinn",
+ "raw-window-handle",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tauri-plugin-window-state",
+ "tauri-winrt-notification",
+ "time",
+ "tokio",
+ "toml 1.1.8+spec-1.1.0",
+ "unicode-normalization",
+ "ureq",
+ "url",
+ "uuid",
+ "windows",
+ "windows-sys 0.61.2",
+ "zstd",
+]
+
+[[package]]
+name = "gespan-keep-awake"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "gespan-mobile-link"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "jni 0.22.4",
+ "p256",
+ "pulldown-cmark",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "socket2",
+ "tokio",
+ "x509-parser",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4015,85 +4094,6 @@ dependencies = [
  "time",
  "x509-parser",
  "yasna",
-]
-
-[[package]]
-name = "rebase"
-version = "0.16.0"
-dependencies = [
- "arboard",
- "base64 0.23.1",
- "block2",
- "hostname",
- "if-addrs",
- "igd-next",
- "junction",
- "keyring",
- "libc",
- "natpmp",
- "notify-rust",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "objc2-quartz-core",
- "objc2-user-notifications",
- "open",
- "png",
- "portable-pty",
- "quinn",
- "raw-window-handle",
- "rebase-keep-awake",
- "rebase-mobile-link",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tauri-plugin-window-state",
- "tauri-winrt-notification",
- "time",
- "tokio",
- "toml 1.1.8+spec-1.1.0",
- "unicode-normalization",
- "ureq",
- "url",
- "uuid",
- "windows",
- "windows-sys 0.61.2",
- "zstd",
-]
-
-[[package]]
-name = "rebase-keep-awake"
-version = "0.1.0"
-dependencies = [
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "rebase-mobile-link"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "jni 0.22.4",
- "p256",
- "pulldown-cmark",
- "quinn",
- "rcgen",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "socket2",
- "tokio",
- "x509-parser",
 ]
 
 [[package]]

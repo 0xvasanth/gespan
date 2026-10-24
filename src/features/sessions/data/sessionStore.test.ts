@@ -379,13 +379,13 @@ describe("sanitizeSessionForPersist", () => {
       "list notes",
       [],
       {
-        rebase: true,
+        gespan: true,
       },
     );
     expect(sanitizeSessionForPersist(submitted).blocks[0]).toMatchObject({
       role: "user",
       text: "list notes",
-      rebase: true,
+      gespan: true,
     });
   });
 
@@ -721,7 +721,7 @@ describe("sanitizeSessionForPersist", () => {
       {
         id: "i1",
         role: "system",
-        text: "Turn interrupted when Rebase quit.",
+        text: "Turn interrupted when Gespan quit.",
         notice: "interrupt",
       },
       {

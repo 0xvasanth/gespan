@@ -7,7 +7,7 @@ import { killChild, resolveKiroBinary, unwatchChild } from "../../core/child";
 import { KIRO_INIT_PARAMS, launchKiro } from "./kiroLaunch";
 import { modelsFromKiroSession } from "./kiroProtocol";
 
-const PROBE_ID = "rebase-kiro-probe";
+const PROBE_ID = "gespan-kiro-probe";
 const DISCOVERY_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 
@@ -20,7 +20,7 @@ export function refreshKiroCatalog(): Promise<void> {
       if (models.length > 0) setHarnessModels("kiro", models);
     })
     .catch((error: unknown) => {
-      console.debug("[rebase] kiro catalog", error);
+      console.debug("[gespan] kiro catalog", error);
     })
     .finally(() => {
       inflight = null;

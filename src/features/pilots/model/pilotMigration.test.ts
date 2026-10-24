@@ -18,16 +18,16 @@ function stubStorage(entries: [string, string][]) {
 
 it("turns each project's Pilot into one of its own that works on that project", async () => {
   const stored = stubStorage([
-    ["rebase:project-agents", JSON.stringify({ "/code/app": "chat-1" })],
+    ["gespan:project-agents", JSON.stringify({ "/code/app": "chat-1" })],
     [
-      "rebase:project-agent-profiles",
+      "gespan:project-agent-profiles",
       JSON.stringify({
         "/code/app": { name: "Skull", claim: "claimed" },
         "/code/site": { claim: "claimed" },
         "/code/off": { claim: "declined" },
       }),
     ],
-    ["rebase:tab-group:mascots", JSON.stringify({ "/code/app": "skull" })],
+    ["gespan:tab-group:mascots", JSON.stringify({ "/code/app": "skull" })],
   ]);
   const { isPilotSession, listPilots, pilotForSession } = await import("./pilot");
 
@@ -50,7 +50,7 @@ it("turns each project's Pilot into one of its own that works on that project", 
 });
 
 it("migrates only once, so a deleted Pilot stays deleted", async () => {
-  stubStorage([["rebase:pilots", JSON.stringify({ "/code/app": "chat-1" })]]);
+  stubStorage([["gespan:pilots", JSON.stringify({ "/code/app": "chat-1" })]]);
   const pilot = await import("./pilot");
   const [only] = pilot.listPilots();
   pilot.removePilot(only.id);

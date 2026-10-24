@@ -61,7 +61,7 @@ let backend: HostChildBackend;
 let release: () => void;
 
 beforeAll(async () => {
-  directory = mkdtempSync(join(tmpdir(), "rebase-opencode-transport-"));
+  directory = mkdtempSync(join(tmpdir(), "gespan-opencode-transport-"));
   const binary = join(directory, "opencode.cjs");
   writeFileSync(binary, fixture);
   backend = new HostChildBackend({ opencode: binary });

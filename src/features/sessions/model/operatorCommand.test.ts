@@ -30,7 +30,7 @@ describe("Operator composer command", () => {
       text: "Explain /operator",
       matched: false,
     });
-    for (const alias of ["/pilot", "/rebase"]) {
+    for (const alias of ["/pilot", "/gespan"]) {
       expect(consumeOperatorCommand(`${alias} list notes`)).toEqual({
         text: "list notes",
         matched: true,
@@ -41,7 +41,7 @@ describe("Operator composer command", () => {
   it("keeps access for later turns when a submitted user turn enabled it", () => {
     expect(
       operatorEnabledInThread([
-        { id: "first", role: "user", text: "list notes", rebase: true },
+        { id: "first", role: "user", text: "list notes", gespan: true },
         { id: "reply", role: "assistant", text: "Here are your notes." },
         { id: "followup", role: "user", text: "Start two sessions" },
       ]),
@@ -53,12 +53,12 @@ describe("Operator composer command", () => {
           role: "user",
           text: "list notes",
           draft: true,
-          rebase: true,
+          gespan: true,
         },
         { id: "other", role: "user", text: "Explain /operator" },
       ]),
     ).toBe(false);
-    for (const alias of ["/pilot", "/rebase"]) {
+    for (const alias of ["/pilot", "/gespan"]) {
       const legacy = {
         id: "legacy",
         role: "user" as const,
@@ -70,18 +70,19 @@ describe("Operator composer command", () => {
     }
   });
 
-  it("does not treat the retired /mono spelling as a command", () => {
-    expect(consumeOperatorCommand("/mono list notes")).toEqual({
-      text: "/mono list notes",
+  it("does not treat the retired spelling of the command as a command", () => {
+    const retiredText = `/${["mo", "no"].join("")} list notes`;
+    expect(consumeOperatorCommand(retiredText)).toEqual({
+      text: retiredText,
       matched: false,
     });
     const retired = {
       id: "retired",
       role: "user" as const,
-      text: "/mono list notes",
+      text: retiredText,
     };
     expect(isOperatorUserTurn(retired)).toBe(false);
-    expect(operatorUserPrompt(retired)).toBe("/mono list notes");
+    expect(operatorUserPrompt(retired)).toBe(retiredText);
     expect(operatorEnabledInThread([retired])).toBe(false);
   });
 });

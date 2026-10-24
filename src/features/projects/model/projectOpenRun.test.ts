@@ -135,10 +135,10 @@ describe("planning a run of folders", () => {
     expect(creates(steps).map((step) => step.session.cwd)).toEqual(["/two"]);
   });
 
-  it.each(["rebase", "rebase-local"])(
+  it.each(["gespan", "gespan-local"])(
     "preserves a restored remote conversation when opening local %s",
     (name) => {
-      const remote = "remote://host/Users/me/code/rebase";
+      const remote = "remote://host/Users/me/code/gespan";
       const local = `/Users/me/code/${name}`;
       const original = workspace([chat("remote-shell", remote)]);
       const snapshot = collectWorkspaceSnapshot(

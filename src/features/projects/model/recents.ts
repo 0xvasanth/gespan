@@ -3,11 +3,11 @@ import { REMOTE_PATH_PREFIX } from "../../../shared/lib/remotePaths";
 import { loadProjectGroupAssignments } from "./projectGroups";
 import { notifyProjectPathsChanged } from "./projectPathsChanged";
 
-const KEY = "rebase.recentProjects";
-const RAIL_ORDER_KEY = "rebase.projectRailOrder";
-const RAIL_PINNED_KEY = "rebase.projectRailPinned";
-const ARCHIVED_KEY = "rebase.archivedProjects";
-const ARCHIVED_CHANGED = "rebase:archived-projects-changed";
+const KEY = "gespan.recentProjects";
+const RAIL_ORDER_KEY = "gespan.projectRailOrder";
+const RAIL_PINNED_KEY = "gespan.projectRailPinned";
+const ARCHIVED_KEY = "gespan.archivedProjects";
+const ARCHIVED_CHANGED = "gespan:archived-projects-changed";
 const MAX = 20;
 
 export type RecentProject = {

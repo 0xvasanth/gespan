@@ -24,18 +24,18 @@ function run(command, args, capture = false) {
 }
 
 const metadata = JSON.parse(
-  run("cargo", ["metadata", "--manifest-path", "crates/rebase-gpui/Cargo.toml", "--locked", "--no-deps", "--format-version", "1"], true),
+  run("cargo", ["metadata", "--manifest-path", "crates/gespan-gpui/Cargo.toml", "--locked", "--no-deps", "--format-version", "1"], true),
 );
-const app = metadata.packages.find((pkg) => pkg.name === "rebase-gpui");
-if (!app) throw new Error("The rebase-gpui package was not found.");
+const app = metadata.packages.find((pkg) => pkg.name === "gespan-gpui");
+if (!app) throw new Error("The gespan-gpui package was not found.");
 
-run("cargo", ["build", "--manifest-path", "crates/rebase-gpui/Cargo.toml", "--locked", "-p", app.name, "--release"]);
+run("cargo", ["build", "--manifest-path", "crates/gespan-gpui/Cargo.toml", "--locked", "-p", app.name, "--release"]);
 const target = process.env.CARGO_BUILD_TARGET
   ? join(metadata.target_directory, process.env.CARGO_BUILD_TARGET)
   : metadata.target_directory;
 if (process.platform === "darwin") {
-  run("bash", ["scripts/bundle-native-macos.sh", "release", target, app.version, "rebase-data"]);
+  run("bash", ["scripts/bundle-native-macos.sh", "release", target, app.version, "gespan-data"]);
 } else {
-  const executable = process.platform === "win32" ? "rebase-gpui.exe" : "rebase-gpui";
+  const executable = process.platform === "win32" ? "gespan-gpui.exe" : "gespan-gpui";
   console.log(`Executable: ${join(target, "release", executable)}`);
 }

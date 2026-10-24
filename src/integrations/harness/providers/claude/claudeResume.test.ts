@@ -1,8 +1,8 @@
 /**
  * Replays the captured resumed-background-agent stream through the Claude
  * adapter's own stdout handler (the `watchChild` line callback), the same
- * entry point every Claude stdout line takes. Mirrors Rebase Native's
- * `crates/rebase-core/src/provider/tasks/resume_tests.rs`.
+ * entry point every Claude stdout line takes. Mirrors Gespan Native's
+ * `crates/gespan-core/src/provider/tasks/resume_tests.rs`.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -143,7 +143,7 @@ async function openTurn(
       onLine!(
         JSON.stringify({
           type: "control_response",
-          response: { subtype: "success", request_id: "rebase_2" },
+          response: { subtype: "success", request_id: "gespan_2" },
         }),
       );
   }
@@ -485,7 +485,7 @@ describe("Claude resumed background agents", () => {
     // The marker leads the follow-up: it comes with the wake turn's init.
     expect(markers(perLine[197 - TURN_ONE - 1])).toEqual([summary(SEND)]);
     expect(markers(events)).toHaveLength(1);
-    // Stored exactly as Rebase Native stores it: an interjection row.
+    // Stored exactly as Gespan Native stores it: an interjection row.
     const row = sessionFrom(events).blocks.find(
       (b) => b.interjection?.customType === "task-notification",
     );

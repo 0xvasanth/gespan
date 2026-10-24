@@ -52,21 +52,21 @@ import {
 } from "./settings";
 import { IS_MAC, MOD, SHIFT } from "../../../platform/tauri/platform";
 
-const KEY = "rebase.composerRunner";
-const MODEL_CONTROLS_KEY = "rebase.modelControls";
-const LEGACY_EFFORT_VISIBLE_KEY = "rebase.composerEffortVisible";
-const NOTES_KEY = "rebase.notesEnabled";
-const KEYBINDING_OVERRIDES_KEY = "rebase.keybindingOverrides";
-const QUICK_COMPOSER_SHORTCUT_KEY = "rebase.quickComposerShortcut";
-const LIVE_AGENTS_KEY = "rebase.liveAgentsEnabled";
-const GRID_ARCADE_KEY = "rebase.gridArcadeEnabled";
-const DIFF_VIEWER_KEY = "rebase.diffViewer";
-const FORMAT_ON_SAVE_KEY = "rebase.formatOnSave";
-const AUTOSAVE_KEY = "rebase.autosave";
-const FILE_TAB_MODE_KEY = "rebase.fileTabMode";
-const FOLLOW_UP_BEHAVIOR_KEY = "rebase.followUpBehavior";
-const TAB_ANIMATIONS_KEY = "rebase.tabAnimationsEnabled";
-const COLLAPSED_PROJECT_RAIL_MODE_KEY = "rebase.collapsedProjectRailMode";
+const KEY = "gespan.composerRunner";
+const MODEL_CONTROLS_KEY = "gespan.modelControls";
+const LEGACY_EFFORT_VISIBLE_KEY = "gespan.composerEffortVisible";
+const NOTES_KEY = "gespan.notesEnabled";
+const KEYBINDING_OVERRIDES_KEY = "gespan.keybindingOverrides";
+const QUICK_COMPOSER_SHORTCUT_KEY = "gespan.quickComposerShortcut";
+const LIVE_AGENTS_KEY = "gespan.liveAgentsEnabled";
+const GRID_ARCADE_KEY = "gespan.gridArcadeEnabled";
+const DIFF_VIEWER_KEY = "gespan.diffViewer";
+const FORMAT_ON_SAVE_KEY = "gespan.formatOnSave";
+const AUTOSAVE_KEY = "gespan.autosave";
+const FILE_TAB_MODE_KEY = "gespan.fileTabMode";
+const FOLLOW_UP_BEHAVIOR_KEY = "gespan.followUpBehavior";
+const TAB_ANIMATIONS_KEY = "gespan.tabAnimationsEnabled";
+const COLLAPSED_PROJECT_RAIL_MODE_KEY = "gespan.collapsedProjectRailMode";
 
 describe("follow-up behavior setting", () => {
   beforeEach(mockLocalStorage);

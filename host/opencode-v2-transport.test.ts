@@ -43,7 +43,7 @@ function emit(type: string, data: Record<string, unknown>) {
 }
 
 beforeAll(async () => {
-  directory = mkdtempSync(join(tmpdir(), "rebase-opencode-v2-transport-"));
+  directory = mkdtempSync(join(tmpdir(), "gespan-opencode-v2-transport-"));
   server = createServer((request, response) => {
     const expected = `Basic ${Buffer.from(`opencode:${PASSWORD}`).toString("base64")}`;
     if (request.headers.authorization !== expected) {

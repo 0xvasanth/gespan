@@ -33,7 +33,7 @@ test("stable builds preserve the configured endpoint", () => {
 });
 
 test("stable builds default to the GitHub Releases feed, even when R2 is configured", () => {
-  assert.equal(GITHUB_STABLE_FEED, "https://github.com/0xvasanth/rebase/releases/latest/download/latest.json");
+  assert.equal(GITHUB_STABLE_FEED, "https://github.com/0xvasanth/gespan/releases/latest/download/latest.json");
   assert.equal(updaterEndpoint({ GITHUB_REF_NAME: "v0.9.1" }), GITHUB_STABLE_FEED);
   assert.equal(updaterEndpoint({ GITHUB_REF_NAME: "v0.9.1", TAURI_UPDATER_ENDPOINT: "  " }), GITHUB_STABLE_FEED);
   assert.equal(updaterEndpoint({
@@ -76,7 +76,7 @@ test("beta builds require an isolated R2 endpoint and HTTPS", () => {
 });
 
 test("the CLI exports the same channel used for feed publication", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rebase-release-channel-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gespan-release-channel-"));
   try {
     const envFile = path.join(dir, "github-env");
     execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs")], {
@@ -117,7 +117,7 @@ test("beta releases fail fast naming every missing R2 secret", () => {
 });
 
 test("the r2 CLI exports R2_ENABLED and fails for an incomplete beta", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rebase-r2-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gespan-r2-"));
   try {
     const envFile = path.join(dir, "github-env");
     const run = (env) => execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "r2"], {
@@ -133,7 +133,7 @@ test("the r2 CLI exports R2_ENABLED and fails for an incomplete beta", () => {
 });
 
 test("the native feed is the fixed native-latest release, separate from Tauri's releases/latest", () => {
-  assert.equal(GITHUB_NATIVE_FEED, "https://github.com/0xvasanth/rebase/releases/download/native-latest/latest.json");
+  assert.equal(GITHUB_NATIVE_FEED, "https://github.com/0xvasanth/gespan/releases/download/native-latest/latest.json");
   assert.notEqual(GITHUB_NATIVE_FEED, GITHUB_STABLE_FEED);
   // R2 and the Tauri override never leak into the native endpoint.
   assert.equal(nativeUpdaterEndpoint({}), GITHUB_NATIVE_FEED);
@@ -159,7 +159,7 @@ test("the native endpoint can be overridden, but only with HTTPS", () => {
 test("native packages are referenced from the versioned native-v release, not the feed release", () => {
   assert.equal(
     nativeAssetBase({ GITHUB_REF_NAME: "native-v0.16.0-preview.2" }),
-    "https://github.com/0xvasanth/rebase/releases/download/native-v0.16.0-preview.2",
+    "https://github.com/0xvasanth/gespan/releases/download/native-v0.16.0-preview.2",
   );
   for (const ref of ["v0.9.1", "native-latest", "native-v", "", undefined]) {
     assert.throws(() => nativeAssetBase({ GITHUB_REF_NAME: ref }), /native-v/);
@@ -188,8 +188,8 @@ test("the native-config CLI exports the endpoint and fails without a pubkey", ()
   assert.throws(() => run({}), (error) => /TAURI_UPDATER_PUBKEY/.test(error.stderr));
   run({ TAURI_UPDATER_PUBKEY: "pub" });
   const written = fs.readFileSync(envFile, "utf8");
-  assert.match(written, new RegExp(`REBASE_NATIVE_UPDATER_ENDPOINT=${GITHUB_NATIVE_FEED}\n`));
-  assert.match(written, /REBASE_NATIVE_UPDATER_PUBKEY=pub\n/);
+  assert.match(written, new RegExp(`GESPAN_NATIVE_UPDATER_ENDPOINT=${GITHUB_NATIVE_FEED}\n`));
+  assert.match(written, /GESPAN_NATIVE_UPDATER_PUBKEY=pub\n/);
 });
 
 test("the native-r2 CLI exports R2_ENABLED=false when secrets are absent", () => {
@@ -244,16 +244,16 @@ const feedFor = (platforms) => JSON.stringify({
   payload: Buffer.from(JSON.stringify({ platforms })).toString("base64"),
   signature: "manifest-signature",
 });
-const url = (name, tag = TAG) => `https://github.com/0xvasanth/rebase/releases/download/${tag}/${encodeURIComponent(name)}`;
+const url = (name, tag = TAG) => `https://github.com/0xvasanth/gespan/releases/download/${tag}/${encodeURIComponent(name)}`;
 
 test("recovery reuses the original signatures and signs nothing", () => {
-  const latestJson = feedFor({ "darwin-aarch64-app": { url: url("Rebase Native.app.tar.gz"), signature: "sig-original" } });
+  const latestJson = feedFor({ "darwin-aarch64-app": { url: url("Gespan Native.app.tar.gz"), signature: "sig-original" } });
   const before = latestJson;
   const manifest = verifyRecoveredFeed({
     latestJson,
-    sigs: { "Rebase Native.app.tar.gz": "sig-original\n" },
+    sigs: { "Gespan Native.app.tar.gz": "sig-original\n" },
     tag: TAG,
-    expected: ["Rebase Native.app.tar.gz"],
+    expected: ["Gespan Native.app.tar.gz"],
   });
   assert.equal(manifest.platforms["darwin-aarch64-app"].signature, "sig-original");
   assert.equal(latestJson, before);

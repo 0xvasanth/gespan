@@ -1005,7 +1005,7 @@ function sanitizeBlock(
   const turnModel = sanitizeTurnModel(block.turnModel);
   if (block.role === "user" && turnModel) next.turnModel = turnModel;
   if (block.role === "user" && block.draft) next.draft = true;
-  if (block.role === "user" && block.rebase) next.rebase = true;
+  if (block.role === "user" && block.gespan) next.gespan = true;
   if (
     block.role === "user" &&
     (block.intent === "plan" || block.intent === "orchestrate")
@@ -1420,7 +1420,7 @@ function sanitizeAgentRun(value: unknown): AgentRunMeta | null {
   });
   const name = typeof record.name === "string" ? record.name.trim() : "";
   if (!name && steps.length === 0) return null;
-  // Rebase Native shares this block. Keep what it wrote that this app does not
+  // Gespan Native shares this block. Keep what it wrote that this app does not
   // model (e.g. nativeIds), so a save here never erases it.
   const known = new Set([
     "name",

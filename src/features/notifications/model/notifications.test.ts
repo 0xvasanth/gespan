@@ -9,7 +9,7 @@ import {
 } from "./notifications";
 import { newSession, type Session } from "../../sessions/model/session";
 
-const KEY = "rebase.notifications";
+const KEY = "gespan.notifications";
 
 describe("pendingInputNotifications", () => {
   it("detects a second approval without an intervening idle render", () => {
@@ -173,7 +173,7 @@ describe("notificationText", () => {
       ],
     });
     expect(notificationText(session, "finished")).toEqual({
-      title: "Rebase",
+      title: "Gespan",
       subtitle: "Fix the sidebar",
       body: "Done. Sidebar fixed.",
     });
@@ -207,7 +207,7 @@ describe("notificationText", () => {
       ],
     });
     expect(notificationText(session, { kind: "approval", requestId: 1 })).toEqual({
-      title: "Rebase",
+      title: "Gespan",
       subtitle: "Fix the sidebar",
       body: "Approve: Run npm test",
     });
@@ -229,7 +229,7 @@ describe("notificationText", () => {
       },
     });
     expect(notificationText(session, { kind: "question", requestId: 2 })).toEqual({
-      title: "Rebase",
+      title: "Gespan",
       subtitle: "Fix the sidebar",
       body: "Which database?",
     });

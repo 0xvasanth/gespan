@@ -7,10 +7,10 @@ test("gives History a persistent tab and working toolbar while classic keeps its
 }, testInfo) => {
   test.setTimeout(60_000);
   await page.addInitScript(() => {
-    localStorage.setItem("rebase.insetLayout", "1");
-    localStorage.setItem("rebase.rightPanelOpen", "1");
-    if (localStorage.getItem("rebase.rightPanelTab") == null)
-      localStorage.setItem("rebase.rightPanelTab", "changes");
+    localStorage.setItem("gespan.insetLayout", "1");
+    localStorage.setItem("gespan.rightPanelOpen", "1");
+    if (localStorage.getItem("gespan.rightPanelTab") == null)
+      localStorage.setItem("gespan.rightPanelTab", "changes");
     const sha = (index: number) => index.toString(16).padStart(40, "0");
     const commits = Array.from({ length: 80 }, (_, index) => ({
       sha: sha(index + 1),

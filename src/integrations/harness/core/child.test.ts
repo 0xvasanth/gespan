@@ -150,7 +150,7 @@ describe("child bridge", () => {
   it("passes stored overrides through resolution and command validation", async () => {
     vi.stubGlobal("localStorage", {
       getItem: (key: string) =>
-        key === "rebase.providerBinaryPaths.v1"
+        key === "gespan.providerBinaryPaths.v1"
           ? JSON.stringify({
               claude: "/opt/claude/bin/claude",
               codex: "/opt/codex/bin/codex",

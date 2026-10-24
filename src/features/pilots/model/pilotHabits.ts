@@ -300,7 +300,7 @@ export function afterRun(
 
 /** Habits running right now, by id, with when each started. */
 const active = new Map<string, number>();
-const ACTIVE_CHANGED = "rebase:pilot-habits-active";
+const ACTIVE_CHANGED = "gespan:pilot-habits-active";
 
 export function setHabitRunning(habitId: string, startedAt?: number): void {
   if (startedAt == null) active.delete(habitId);
@@ -312,7 +312,7 @@ export function habitRunningSince(habitId: string): number | undefined {
   return active.get(habitId);
 }
 
-const CHECK_NOW = "rebase:pilot-habits-check-now";
+const CHECK_NOW = "gespan:pilot-habits-check-now";
 
 /** Ask the scheduler to look for due habits now rather than at its next minute. */
 export function checkHabitsNow(): void {

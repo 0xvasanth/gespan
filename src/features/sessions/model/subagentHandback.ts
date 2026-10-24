@@ -79,7 +79,7 @@ function dedent(text: string): string {
 
 /**
  * "5 tool uses · 12,345 tokens · 4.2s", from whatever the trailer carried.
- * The wording and rounding match Rebase Native's `meta_line`.
+ * The wording and rounding match Gespan Native's `meta_line`.
  */
 export function handbackMeta(handback: Handback): string | undefined {
   const parts: string[] = [];

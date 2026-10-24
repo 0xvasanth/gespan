@@ -26,7 +26,7 @@ import {
 } from "../../settings/model/settings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-// Delivers `rebase:board-changed` the way the backend emits it.
+// Delivers `gespan:board-changed` the way the backend emits it.
 const events = vi.hoisted(() => ({
   listeners: new Set<(event: { payload: unknown }) => void>(),
 }));
@@ -260,7 +260,7 @@ describe("BoardView", () => {
     expect(first.textContent).toContain("#1");
     expect(first.textContent).toContain("Fix login");
     // The board that opened is remembered for next time.
-    expect(localStorage.getItem("rebase:open-board")).toBe("b1");
+    expect(localStorage.getItem("gespan:open-board")).toBe("b1");
   });
 
   it("adds a card with Enter, ignores an empty title and closes on Esc", async () => {
@@ -504,7 +504,7 @@ describe("BoardView board delete", () => {
         el.getAttribute("data-kanban-column"),
       ),
     ).toEqual(["todo2"]);
-    expect(localStorage.getItem("rebase:open-board")).toBe("b2");
+    expect(localStorage.getItem("gespan:open-board")).toBe("b2");
   });
 
   it("shows the empty state without an error when the last board is deleted", async () => {
@@ -513,7 +513,7 @@ describe("BoardView board delete", () => {
     await deleteOpenBoard();
     expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(container.textContent).toContain("No boards yet");
-    expect(localStorage.getItem("rebase:open-board")).toBeNull();
+    expect(localStorage.getItem("gespan:open-board")).toBeNull();
   });
 
   it("still reports a failed reload of a board that exists", async () => {

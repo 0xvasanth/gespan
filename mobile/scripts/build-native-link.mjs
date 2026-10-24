@@ -32,7 +32,7 @@ const build = (target, env = {}) => {
       "--locked",
       "--release",
       "-p",
-      "rebase-mobile-link",
+      "gespan-mobile-link",
       "--target",
       target,
     ],
@@ -54,26 +54,26 @@ if (platform === "ios") {
     build(target, { IPHONEOS_DEPLOYMENT_TARGET: "16.4" });
   const artifacts = join(root, "target/mobile-link-frameworks");
   const framework = (variant, simulator) => {
-    const directory = join(artifacts, variant, "RebaseLinkCore.framework");
+    const directory = join(artifacts, variant, "GespanLinkCore.framework");
     rmSync(directory, { recursive: true, force: true });
     mkdirSync(join(directory, "Headers"), { recursive: true });
     mkdirSync(join(directory, "Modules"), { recursive: true });
     copyFileSync(
-      join(mobile, "modules/rebase-link/ios/RebaseLink.h"),
-      join(directory, "Headers/RebaseLink.h"),
+      join(mobile, "modules/gespan-link/ios/GespanLink.h"),
+      join(directory, "Headers/GespanLink.h"),
     );
     writeFileSync(
       join(directory, "Modules/module.modulemap"),
-      'framework module RebaseLinkCore { umbrella header "RebaseLink.h" export * }\n',
+      'framework module GespanLinkCore { umbrella header "GespanLink.h" export * }\n',
     );
     writeFileSync(
       join(directory, "Info.plist"),
       `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>com.rebase.link.core</string>
-<key>CFBundleName</key><string>RebaseLinkCore</string>
-<key>CFBundleExecutable</key><string>RebaseLinkCore</string>
+<key>CFBundleIdentifier</key><string>dev.gespan.link.core</string>
+<key>CFBundleName</key><string>GespanLinkCore</string>
+<key>CFBundleExecutable</key><string>GespanLinkCore</string>
 <key>CFBundlePackageType</key><string>FMWK</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
@@ -85,8 +85,8 @@ if (platform === "ios") {
   };
   const device = framework("device", false);
   copyFileSync(
-    join(root, "target", targets[0], "release/librebase_mobile_link.a"),
-    join(device, "RebaseLinkCore"),
+    join(root, "target", targets[0], "release/libgespan_mobile_link.a"),
+    join(device, "GespanLinkCore"),
   );
   const frameworks = ["-framework", device];
   if (targets.length > 1) {
@@ -97,16 +97,16 @@ if (platform === "ios") {
       ...targets
         .slice(1)
         .map((target) =>
-          join(root, "target", target, "release/librebase_mobile_link.a"),
+          join(root, "target", target, "release/libgespan_mobile_link.a"),
         ),
       "-output",
-      join(simulator, "RebaseLinkCore"),
+      join(simulator, "GespanLinkCore"),
     ]);
     frameworks.push("-framework", simulator);
   }
   const output = join(
     mobile,
-    "modules/rebase-link/ios/RebaseLinkCore.xcframework",
+    "modules/gespan-link/ios/GespanLinkCore.xcframework",
   );
   rmSync(output, { recursive: true, force: true });
   run("xcodebuild", ["-create-xcframework", ...frameworks, "-output", output]);
@@ -134,13 +134,13 @@ if (platform === "ios") {
     });
     const destination = join(
       mobile,
-      "modules/rebase-link/android/src/main/jniLibs",
+      "modules/gespan-link/android/src/main/jniLibs",
       abi,
     );
     mkdirSync(destination, { recursive: true });
     copyFileSync(
-      join(root, "target", target, "release/librebase_mobile_link.so"),
-      join(destination, "librebase_mobile_link.so"),
+      join(root, "target", target, "release/libgespan_mobile_link.so"),
+      join(destination, "libgespan_mobile_link.so"),
     );
   }
 } else throw new Error("Choose ios or android.");

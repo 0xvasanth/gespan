@@ -25,7 +25,7 @@ import { initializeProviderBinaryPaths } from "./features/providers/model/provid
 import "./features/connections/model/remoteCommands";
 import "./styles/index.css";
 
-performance.mark("rebase:bootstrap");
+performance.mark("gespan:bootstrap");
 // Let local boot IPC overlap loading/evaluating the workspace UI.
 const appLoaded = import("./app/App");
 
@@ -51,10 +51,10 @@ function dismissBootSplash() {
     splash.classList.add("boot-splash-out");
     window.setTimeout(() => {
       splash.remove();
-      performance.mark("rebase:ui-ready");
-      performance.measure("rebase:navigation-to-ui", {
+      performance.mark("gespan:ui-ready");
+      performance.measure("gespan:navigation-to-ui", {
         start: 0,
-        end: "rebase:ui-ready",
+        end: "gespan:ui-ready",
       });
     }, 180);
   };
@@ -103,7 +103,7 @@ void Promise.all([
     { windowTransfer, resumed, history, historyCwd },
     { default: App },
   ]) => {
-    performance.mark("rebase:workspace-ready");
+    performance.mark("gespan:workspace-ready");
     const installedUpdate = windowTransfer ? null : consumeInstalledUpdate();
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>

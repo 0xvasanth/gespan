@@ -1,5 +1,5 @@
 /**
- * Where Rebase draws no menu of its own, the webview's context menu only
+ * Where Gespan draws no menu of its own, the webview's context menu only
  * offers page commands: Reload, Back, Forward, and Inspect Element in
  * development builds. Reload lives in the View menu, so that menu is hidden.
  * Menus with real content stay native: text editing and selection (Cut, Copy,
@@ -29,7 +29,7 @@ const NATIVE_MENU_TARGETS = [
   "textarea",
   '[contenteditable]:not([contenteditable="false"])',
   ".cm-editor",
-  ".rebase-terminal",
+  ".gespan-terminal",
   ".xterm",
   "a[href]",
   "img",

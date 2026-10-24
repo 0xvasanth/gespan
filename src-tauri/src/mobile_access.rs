@@ -1,7 +1,7 @@
 //! A paired phone controls the workspace through its owning app window.
 //! No arbitrary Tauri commands or direct session database writes are exposed.
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rebase_mobile_link::{now, Address, Gate, Identity, PORT, VERSION};
+use gespan_mobile_link::{now, Address, Gate, Identity, PORT, VERSION};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -53,7 +53,7 @@ struct Pending {
 struct Watcher {
     window: String,
     peer: String,
-    sink: rebase_mobile_link::WatchSink,
+    sink: gespan_mobile_link::WatchSink,
 }
 struct Inner {
     watches: HashMap<String, Watcher>,
@@ -137,7 +137,7 @@ fn identity(host: &MobileHost) -> Result<Identity, String> {
         return Ok(identity.clone());
     }
     let account = format!("desktop:{}", host.path.display());
-    let entry = keyring::Entry::new("com.rebase.mobile", &account).map_err(|e| e.to_string())?;
+    let entry = keyring::Entry::new("dev.gespan.mobile", &account).map_err(|e| e.to_string())?;
     let identity = match entry.get_password() {
         Ok(value) => {
             serde_json::from_str(&value).map_err(|_| "Saved desktop mobile identity is invalid")?
@@ -211,7 +211,7 @@ async fn start(app: &AppHandle, host: &MobileHost) -> Result<(), String> {
     if inner.endpoint.is_some() {
         return Ok(());
     }
-    let endpoint = rebase_mobile_link::server_endpoint(
+    let endpoint = gespan_mobile_link::server_endpoint(
         &identity,
         host.gate.clone(),
         format!("[::]:{PORT}").parse().unwrap(),
@@ -222,7 +222,7 @@ async fn start(app: &AppHandle, host: &MobileHost) -> Result<(), String> {
     let watching = host.clone();
     let app = app.clone();
     let watch_app = app.clone();
-    tauri::async_runtime::spawn(rebase_mobile_link::serve(
+    tauri::async_runtime::spawn(gespan_mobile_link::serve(
         endpoint,
         host.gate.clone(),
         move |peer, request| {
@@ -303,7 +303,7 @@ pub fn mobile_invite(host: State<'_, MobileHost>) -> Result<Value, String> {
     inner.invitations.insert(key, Invitation { expires });
     let invitation = json!({"version":VERSION,"name":name(),"fingerprint":identity.fingerprint()?,"addresses":addresses(&inner),"identity":join,"expires":expires});
     let code = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&invitation).map_err(|e| e.to_string())?);
-    Ok(json!({"url":format!("rebase://pair?i={code}"),"expires":expires}))
+    Ok(json!({"url":format!("gespan://pair?i={code}"),"expires":expires}))
 }
 #[tauri::command]
 pub fn mobile_cancel_invite(host: State<'_, MobileHost>) {
@@ -404,10 +404,10 @@ fn watch(
     host: &MobileHost,
     peer: &str,
     request: Value,
-    sink: rebase_mobile_link::WatchSink,
+    sink: gespan_mobile_link::WatchSink,
 ) -> Result<(), String> {
     if request["version"] != VERSION {
-        return Err("Update Rebase on both devices".into());
+        return Err("Update Gespan on both devices".into());
     }
     if request["method"] != "conversation.watch" {
         return Err("Unsupported mobile operation".into());
@@ -448,7 +448,7 @@ fn watch(
     let id = uuid::Uuid::new_v4().to_string();
     app.emit_to(
         window.as_str(),
-        "rebase-mobile-watch",
+        "gespan-mobile-watch",
         json!({
             "id": id,
             "conversationId": conversation,
@@ -491,7 +491,7 @@ fn watch(
         }
         let _ = app.emit_to(
             window.as_str(),
-            "rebase-mobile-watch",
+            "gespan-mobile-watch",
             json!({"id":id,"action":"stop"}),
         );
     });
@@ -633,7 +633,7 @@ fn pick_owner(catalogs: &HashMap<String, Value>, method: &str, entity: &str) -> 
         .map(|(window, _)| window.clone())
 }
 fn session_id(command_id: &str) -> String {
-    let digest = Sha256::digest(format!("rebase-mobile/session:{command_id}"));
+    let digest = Sha256::digest(format!("gespan-mobile/session:{command_id}"));
     let mut bytes = [0; 16];
     bytes.copy_from_slice(&digest[..16]);
     // UUID version 8 reserves the custom data format used here.
@@ -658,7 +658,7 @@ fn enroll(
         .as_str()
         .ok_or("Missing device identity")?;
     let proof = params["proof"].as_str().ok_or("Missing device proof")?;
-    let fingerprint = rebase_mobile_link::verify_proof(certificate, peer, proof)?;
+    let fingerprint = gespan_mobile_link::verify_proof(certificate, peer, proof)?;
     let name = params["name"]
         .as_str()
         .unwrap_or("Phone")
@@ -692,7 +692,7 @@ async fn handle(
     request: Value,
 ) -> Result<Value, String> {
     if request["version"] != VERSION {
-        return Err("Update Rebase on both devices".into());
+        return Err("Update Gespan on both devices".into());
     }
     let method = request["method"].as_str().ok_or("Invalid mobile method")?;
     let mut params = request["params"].clone();
@@ -809,7 +809,7 @@ async fn handle(
         if app
             .emit_to(
                 owner.as_str(),
-                "rebase-mobile-request",
+                "gespan-mobile-request",
                 json!({"id":id,"commandId":command_id,"method":method,"params":params}),
             )
             .is_err()
@@ -940,7 +940,7 @@ mod tests {
         let gate = Gate::default();
         gate.allow(key.clone(), Some(now() + 900));
         let path = std::env::temp_dir()
-            .join(format!("rebase-mobile-test-{}", uuid::Uuid::new_v4()))
+            .join(format!("gespan-mobile-test-{}", uuid::Uuid::new_v4()))
             .join("settings.json");
         let mut invitations = HashMap::new();
         invitations.insert(

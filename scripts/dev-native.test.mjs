@@ -9,11 +9,11 @@ import { parseDevArgs, startDev } from "./dev-native.mjs";
 
 test("forwards app options and rejects the retired runner flags", () => {
   assert.deepEqual(parseDevArgs([]), { args: [] });
-  assert.deepEqual(parseDevArgs(["--rebase-data", "--cwd", "a project"]), {
-    args: ["--rebase-data", "--cwd", "a project"],
+  assert.deepEqual(parseDevArgs(["--gespan-data", "--cwd", "a project"]), {
+    args: ["--gespan-data", "--cwd", "a project"],
   });
-  assert.deepEqual(parseDevArgs(["--dev-data", "--cwd", "--watch", "--rebase-db", "--bundle"]), {
-    args: ["--dev-data", "--cwd", "--watch", "--rebase-db", "--bundle"],
+  assert.deepEqual(parseDevArgs(["--dev-data", "--cwd", "--watch", "--gespan-db", "--bundle"]), {
+    args: ["--dev-data", "--cwd", "--watch", "--gespan-db", "--bundle"],
   });
   assert.deepEqual(parseDevArgs(["--", "--cwd", "a project"]), {
     args: ["--cwd", "a project"],
@@ -24,7 +24,7 @@ test("forwards app options and rejects the retired runner flags", () => {
 });
 
 async function fixture(t, env = {}, options = {}) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "rebase-dev-test-")));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gespan-dev-test-")));
   const messages = [];
   const children = [];
   const calls = [];
@@ -44,7 +44,7 @@ async function fixture(t, env = {}, options = {}) {
     const root = process.cwd();
     const event = (name) => appendFileSync(join(root, "events"), name + "\\n");
     if (process.argv[2] === "metadata") {
-      console.log(JSON.stringify({ target_directory: join(root, "custom-target"), packages: [{name: "rebase-gpui", version: "0.15.0"}] }));
+      console.log(JSON.stringify({ target_directory: join(root, "custom-target"), packages: [{name: "gespan-gpui", version: "0.15.0"}] }));
     } else if (process.argv[2] === "build") {
       event("build");
       await new Promise((resolve) => setTimeout(resolve, Number(process.env.TEST_BUILD_DELAY || 30)));
@@ -115,10 +115,10 @@ test("file saves never rebuild, including edits during a requested build", { tim
 test("manual restart keeps the app on a failed build and shuts it down after a successful retry", { timeout: 20_000 }, async (t) => {
   const f = await fixture(t);
   await f.until((events) => f.starts(events) === 1);
-  assert.deepEqual(f.calls.find((call) => call.args[0] === "build").args, ["build", "--manifest-path", "crates/rebase-gpui/Cargo.toml", "--locked", "-p", "rebase-gpui", "--bin", "rebase-gpui", "--profile", "native-dev"]);
+  assert.deepEqual(f.calls.find((call) => call.args[0] === "build").args, ["build", "--manifest-path", "crates/gespan-gpui/Cargo.toml", "--locked", "-p", "gespan-gpui", "--bin", "gespan-gpui", "--profile", "native-dev"]);
   const launch = f.calls.find((call) => call.command !== "cargo");
   assert.ok(launch.command.startsWith(join(f.root, "custom-target")));
-  assert.equal(launch.options.env.REBASE_DEV_RELOAD, "1");
+  assert.equal(launch.options.env.GESPAN_DEV_RELOAD, "1");
   assert.deepEqual(launch.args, ["--dev-data", "--cwd", "a project with spaces"]);
 
   await writeFile(join(f.root, "fail-build"), "");
@@ -155,8 +155,8 @@ test("coalesces restart requests during a build without launching stale code or 
 test("macOS bundles automatically and preserves the selected data mode for Finder", async (t) => {
   for (const [args, mode] of [
     [[], "dev-data"],
-    [["--rebase-data"], "rebase-data"],
-    [["--rebase-data", "--dev-data", "--cwd", "--rebase-data"], "dev-data"],
+    [["--gespan-data"], "gespan-data"],
+    [["--gespan-data", "--dev-data", "--cwd", "--gespan-data"], "dev-data"],
   ]) {
     await t.test(`${mode}: ${JSON.stringify(args)}`, async (t) => {
       const f = await fixture(t, {}, { platform: "darwin", args });
@@ -164,8 +164,8 @@ test("macOS bundles automatically and preserves the selected data mode for Finde
       const packaged = f.calls.find((call) => call.command === "bash");
       assert.deepEqual(packaged.args, ["scripts/bundle-native-macos.sh", "native-dev", join(f.root, "custom-target"), "0.15.0", mode]);
       const app = f.calls.find((call) => !["cargo", "bash"].includes(call.command));
-      const appName = mode === "dev-data" ? "Rebase Native Dev.app" : "Rebase Native.app";
-      assert.equal(app.command, join(f.root, `custom-target/native-dev/${appName}/Contents/MacOS/rebase-gpui`));
+      const appName = mode === "dev-data" ? "Gespan Native Dev.app" : "Gespan Native.app";
+      assert.equal(app.command, join(f.root, `custom-target/native-dev/${appName}/Contents/MacOS/gespan-gpui`));
       assert.deepEqual(app.args, args);
       const events = await f.events();
       assert.ok(events.indexOf("built") < events.indexOf("package"));
@@ -189,7 +189,7 @@ test("Windows launches the executable from the configured build target", async (
   await f.until((events) => f.starts(events) === 1);
   assert.equal(f.calls.some((call) => call.command === "bash"), false);
   const app = f.calls.find((call) => call.command !== "cargo");
-  assert.equal(app.command, join(f.root, "custom-target/x86_64-pc-windows-msvc/native-dev/rebase-gpui.exe"));
+  assert.equal(app.command, join(f.root, "custom-target/x86_64-pc-windows-msvc/native-dev/gespan-gpui.exe"));
   assert.equal(app.options.detached, false);
 });
 

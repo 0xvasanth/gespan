@@ -7,7 +7,7 @@ import {
 } from "../../../integrations/harness/providers/opencode/opencodeProtocol";
 
 /**
- * Harnesses with an npm version feed and a self-updater Rebase can run.
+ * Harnesses with an npm version feed and a self-updater Gespan can run.
  */
 export const UPDATABLE_HARNESSES: ReadonlySet<HarnessId> = new Set([
   "claude",

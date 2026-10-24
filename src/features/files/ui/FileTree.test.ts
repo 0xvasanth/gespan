@@ -123,7 +123,7 @@ beforeEach(async () => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
-  localStorage.removeItem("rebase.showExcludedFiles");
+  localStorage.removeItem("gespan.showExcludedFiles");
   vi.clearAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -133,18 +133,18 @@ afterEach(() => {
 
 describe("FileTree render isolation", () => {
   it("uses a worktree branch as the explorer root identity", async () => {
-    props = { ...props, rootLabel: "rebase/update-readme-tests" };
+    props = { ...props, rootLabel: "gespan/update-readme-tests" };
 
     await act(async () => render());
 
     const rootButton = container.querySelector<HTMLButtonElement>(
       `button[title="${cwd}"]`,
     )!;
-    expect(rootButton.textContent).toContain("rebase/update-readme-tests");
+    expect(rootButton.textContent).toContain("gespan/update-readme-tests");
     expect(rootButton.lastElementChild?.className).toContain("uppercase");
     expect(
       container.querySelector('[role="tree"]')?.getAttribute("aria-label"),
-    ).toBe("rebase/update-readme-tests files");
+    ).toBe("gespan/update-readme-tests files");
   });
 
   it("keeps room for descenders in truncated file names", async () => {

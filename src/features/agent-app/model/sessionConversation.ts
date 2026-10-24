@@ -65,8 +65,8 @@ export function sessionConversationPage(
       user: capped(
         user.pilotSessionCompletion
           ? user.pilotSessionCompletion.sessionCount
-            ? `Rebase: results from ${user.pilotSessionCompletion.sessionCount} sessions`
-            : `Rebase: session ${user.pilotSessionCompletion.status}: ${user.pilotSessionCompletion.title}`
+            ? `Gespan: results from ${user.pilotSessionCompletion.sessionCount} sessions`
+            : `Gespan: session ${user.pilotSessionCompletion.status}: ${user.pilotSessionCompletion.title}`
           : operatorUserPrompt(user),
         maxChars,
       ),

@@ -66,7 +66,7 @@ describe("new mobile session publication", () => {
     );
     desktop.listen.mockImplementation(
       async (event: string, handler: typeof request) => {
-        if (event === "rebase-mobile-request") request = handler;
+        if (event === "gespan-mobile-request") request = handler;
         return () => {};
       },
     );

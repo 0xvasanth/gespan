@@ -48,7 +48,7 @@ pub(super) const ACTIONS: [Action; 2] = [
     },
     Action {
         id: "pilot-chat-quit",
-        title: "Quit Rebase",
+        title: "Quit Gespan",
         symbol: "power",
         destructive: true,
     },
@@ -176,7 +176,7 @@ define_class!(
     /// row draws the hover pill and forwards clicks to the item's action.
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
-    #[name = "RebaseMenuRow"]
+    #[name = "GespanMenuRow"]
     struct MenuRow;
 
     impl MenuRow {

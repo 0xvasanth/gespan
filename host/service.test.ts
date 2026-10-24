@@ -38,13 +38,13 @@ it("keeps paths and environment content from injecting service configuration", (
 it.skipIf(process.platform === "win32").each(["darwin", "linux"] as const)(
   "removes the %s service registration but keeps host data",
   async (platform) => {
-    const home = mkdtempSync(join(tmpdir(), "rebase-service-test-"));
+    const home = mkdtempSync(join(tmpdir(), "gespan-service-test-"));
     try {
       const service =
         platform === "darwin"
-          ? join(home, "Library/LaunchAgents/com.rebase.host.plist")
-          : join(home, ".config/systemd/user/rebase-host.service");
-      const data = join(home, ".rebase-host/host.db");
+          ? join(home, "Library/LaunchAgents/dev.gespan.host.plist")
+          : join(home, ".config/systemd/user/gespan-host.service");
+      const data = join(home, ".gespan-host/host.db");
       for (const file of [service, data]) {
         mkdirSync(dirname(file), { recursive: true });
         writeFileSync(file, "existing");
@@ -71,7 +71,7 @@ it.skipIf(process.platform === "win32").each(["darwin", "linux"] as const)(
           "--user",
           "disable",
           "--now",
-          "rebase-host.service",
+          "gespan-host.service",
         ]);
         expect(notes.join("\n")).toContain("loginctl disable-linger");
       }
@@ -82,7 +82,7 @@ it.skipIf(process.platform === "win32").each(["darwin", "linux"] as const)(
 );
 
 it("detects whether systemd is the init system", () => {
-  const root = mkdtempSync(join(tmpdir(), "rebase-systemd-test-"));
+  const root = mkdtempSync(join(tmpdir(), "gespan-systemd-test-"));
   try {
     expect(systemdBooted(root)).toBe(false);
     mkdirSync(join(root, "run/systemd/system"), { recursive: true });
@@ -108,7 +108,7 @@ it("leaves systemd alone when uninstalling from a Linux host without it", async 
 it.runIf(process.platform === "linux")(
   "starts the host in its own session so it outlives the SSH connection",
   async () => {
-    const directory = mkdtempSync(join(tmpdir(), "rebase-detached-test-"));
+    const directory = mkdtempSync(join(tmpdir(), "gespan-detached-test-"));
     try {
       const entry = join(directory, "entry.mjs");
       const report = join(directory, "report.json");
@@ -158,7 +158,7 @@ console.log("started");
 it.skipIf(process.platform === "win32")(
   "records why the host could not be started",
   async () => {
-    const directory = mkdtempSync(join(tmpdir(), "rebase-detached-test-"));
+    const directory = mkdtempSync(join(tmpdir(), "gespan-detached-test-"));
     try {
       startDetached(
         {
@@ -189,7 +189,7 @@ it("unregisters only this user's Windows task", async () => {
     platform: "win32",
     powershell: async (script) => scripts.push(script),
   });
-  expect(scripts[0]).toContain('"Rebase Host-$sid"');
+  expect(scripts[0]).toContain('"Gespan Host-$sid"');
   expect(scripts[0]).toContain("Unregister-ScheduledTask");
-  expect(scripts[0]).not.toMatch(/Remove-Item|\.rebase-host/);
+  expect(scripts[0]).not.toMatch(/Remove-Item|\.gespan-host/);
 });

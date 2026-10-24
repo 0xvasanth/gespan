@@ -1,7 +1,7 @@
 /**
  * Claude's ~30 s `tool_progress` heartbeats, replayed through the adapter's
- * own stdout handler. Mirrors Rebase Native's
- * `crates/rebase-core/src/provider/tasks/heartbeat_tests.rs`.
+ * own stdout handler. Mirrors Gespan Native's
+ * `crates/gespan-core/src/provider/tasks/heartbeat_tests.rs`.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";

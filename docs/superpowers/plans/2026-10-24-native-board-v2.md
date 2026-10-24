@@ -11,7 +11,7 @@
 - **Cards and columns.** Thinner, quieter styling.
 - **Detail drawer.** It docks beside the board, which gets narrower, instead of floating over it.
 
-**Tech Stack:** Rust, rusqlite, GPUI (`vendor/gpui-pre`), `crates/rebase-gpui/Cargo.toml` workspace. The Tauri side changes only one default.
+**Tech Stack:** Rust, rusqlite, GPUI (`vendor/gpui-pre`), `crates/gespan-gpui/Cargo.toml` workspace. The Tauri side changes only one default.
 
 **Spec:** the 2026-10-24 review conversation. The user's screenshots compare the native board with gr8r (https://gr8r-taskmanagement.vercel.app/, a project → Board → open a task). Their answers, binding:
 - native only, except that both apps have Board on by default;
@@ -25,7 +25,7 @@ Earlier plans: `2026-10-23-board.md` (Visual Design) and `2026-10-24-native-boar
 
 ## Global Constraints
 
-- **Shared tables.** Tauri's board tables and their DDL stay unchanged, and `crates/rebase-core/tests/shared_contracts.rs` keeps checking the shared DDL and error strings as before. Its only intended edits are the `boardEnabled` import default, which Task 1 turns on, and setting the `board_native_*` tables apart from the four shared ones. New tables are prefixed `board_native_` and are created by `board::ensure_tables` after the shared DDL.
+- **Shared tables.** Tauri's board tables and their DDL stay unchanged, and `crates/gespan-core/tests/shared_contracts.rs` keeps checking the shared DDL and error strings as before. Its only intended edits are the `boardEnabled` import default, which Task 1 turns on, and setting the `board_native_*` tables apart from the four shared ones. New tables are prefixed `board_native_` and are created by `board::ensure_tables` after the shared DDL.
 - **New tables:**
   - `board_native_meta(card_id PK, priority INTEGER NOT NULL DEFAULT 0, due_at INTEGER)`
   - `board_native_projects(card_id, project TEXT, PK(card_id, project))`
@@ -36,7 +36,7 @@ Earlier plans: `2026-10-23-board.md` (Visual Design) and `2026-10-24-native-boar
 
   Every `card_id` references `board_cards(id) ON DELETE CASCADE`.
 - **Priority** is 0 = None, 1 = Low, 2 = Medium, 3 = High, 4 = Urgent. **Due date** is unix ms at local midnight, or NULL.
-- **Projects** are Rebase workspace project paths (`workspace.projects`). The name shown is the project appearance name, or the folder name if there isn't one.
+- **Projects** are Gespan workspace project paths (`workspace.projects`). The name shown is the project appearance name, or the folder name if there isn't one.
 - **The task description is `board_cards.body`**, the field Tauri calls notes, so both apps show the same text.
 - **One board in native:** `Service::default_board()` returns the oldest board by `created_at`, creating "Board" with the default columns if none exists. Native never shows a board switcher or "New board".
 - **Board on by default:** the Tauri `BOARD_ENABLED_DEFAULT = true`, the native `Preferences.board` default is `true`, and the import default is `("board","boardEnabled",true)`.
@@ -57,7 +57,7 @@ Earlier plans: `2026-10-23-board.md` (Visual Design) and `2026-10-24-native-boar
 
 ### Task 1: Board on by default in both apps
 
-**Files:** `src/features/settings/model/settings.ts` (`BOARD_ENABLED_DEFAULT = true`), `src/features/settings/model/settings.flags.test.ts`, `src/features/settings/ui/SettingsView.test.ts`, `crates/rebase-gpui/src/settings/preferences.rs` (`board: true`), `crates/rebase-gpui/src/settings/model.rs` test, `crates/rebase-core/src/desktop_preferences/workspace_preferences.rs` (import default `true`), `crates/rebase-core/src/desktop_preferences.rs` test, `crates/rebase-core/tests/shared_contracts.rs` (the expected import tuple).
+**Files:** `src/features/settings/model/settings.ts` (`BOARD_ENABLED_DEFAULT = true`), `src/features/settings/model/settings.flags.test.ts`, `src/features/settings/ui/SettingsView.test.ts`, `crates/gespan-gpui/src/settings/preferences.rs` (`board: true`), `crates/gespan-gpui/src/settings/model.rs` test, `crates/gespan-core/src/desktop_preferences/workspace_preferences.rs` (import default `true`), `crates/gespan-core/src/desktop_preferences.rs` test, `crates/gespan-core/tests/shared_contracts.rs` (the expected import tuple).
 
 - [ ] **Step 1: Update the tests first.**
   - Tauri: `BOARD_ENABLED_DEFAULT` is `true`, and `loadBoardEnabled()` with empty storage is `true`. The SettingsView toggle test starts on, so its first click writes `"0"`.
@@ -69,7 +69,7 @@ Earlier plans: `2026-10-23-board.md` (Visual Design) and `2026-10-24-native-boar
 
 ### Task 2: Native task data and the single board (core)
 
-**Files:** `crates/rebase-core/src/board/mod.rs` (`ensure_tables` adds the native DDL; `Service::default_board`), create `crates/rebase-core/src/board/extras.rs`.
+**Files:** `crates/gespan-core/src/board/mod.rs` (`ensure_tables` adds the native DDL; `Service::default_board`), create `crates/gespan-core/src/board/extras.rs`.
 
 **Interfaces:**
 
@@ -112,14 +112,14 @@ Writes use `write_tx` (IMMEDIATE). Priority, due-date, project and label changes
   - comments come back oldest first
   - `deleting_a_card_with_a_raw_delete_removes_its_native_rows`: run `DELETE FROM board_cards` on a second plain connection with `foreign_keys=ON`, then check every `board_native_*` table has no rows for the card
   - `extras_tables_leave_the_shared_ddl_untouched`: the existing contract tests still pass
-- [ ] **Step 2: Run** `cargo test … -p rebase-core board`. Expect FAIL.
+- [ ] **Step 2: Run** `cargo test … -p gespan-core board`. Expect FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the same tests and the contract tests. Expect PASS.
 - [ ] **Step 5: Commit:** "Store native board task fields beside the shared board tables"
 
 ### Task 3: One board, gr8r header, search and filter
 
-**Files:** `crates/rebase-gpui/src/board.rs` (load via `default_board`; remove the board switcher, New board, board rename/delete and `Menu::Switcher`), create `crates/rebase-gpui/src/board/header.rs`, update `board/tests.rs`. `shell/app_views.rs` passes the projects (`set_projects(paths, appearances)`) when opening the view and when they change.
+**Files:** `crates/gespan-gpui/src/board.rs` (load via `default_board`; remove the board switcher, New board, board rename/delete and `Menu::Switcher`), create `crates/gespan-gpui/src/board/header.rs`, update `board/tests.rs`. `shell/app_views.rs` passes the projects (`set_projects(paths, appearances)`) when opening the view and when they change.
 
 **Behaviour:**
 - **Header row** (`PANE_HEADER_HEIGHT`, bottom hairline):
@@ -151,7 +151,7 @@ Writes use `write_tx` (IMMEDIATE). Priority, due-date, project and label changes
   1. Label chips row, only when there are labels: each chip is 11 px text on `color@0.14` fill with a 6 px colour dot, radius 4, padding 1/6.
   2. Title: 13 px, `content(0.92)`, two-line clamp.
   3. Subtask progress row, only when there are subtasks: a checklist glyph, `done/total` in 11 px, and a 3 px bar (accent fill, `content(0.08)` track).
-  4. Meta row (11 px, `content(0.45)`): mono `#N`; the priority glyph (three 2 px bars, filled to the level, `Urgent` = a red `!` box); a calendar glyph with the due date (`Today`, `Tomorrow`, weekday within 6 days, else `Nov 12`, red when overdue); a comment glyph with its count; the link chip; then the relative updated time on the right.
+  4. Meta row (11 px, `content(0.45)`): monospaced `#N`; the priority glyph (three 2 px bars, filled to the level, `Urgent` = a red `!` box); a calendar glyph with the due date (`Today`, `Tomorrow`, weekday within 6 days, else `Nov 12`, red when overdue); a comment glyph with its count; the link chip; then the relative updated time on the right.
 - **Label palette** (8 colours): gray `0x8a867e`, red `0xe5534b`, orange `0xe0823d`, yellow `0xe8c547`, green `0x3fb950`, teal `0x2bb3a8`, blue `0x4da3f5`, purple `0xa371f7`.
 - **Done step:** the title at `content(0.6)` and a green check glyph before it.
 
@@ -169,7 +169,7 @@ Writes use `write_tx` (IMMEDIATE). Priority, due-date, project and label changes
 **Layout:** the board view is a row of `[board column (flex 1, min 0)] [drawer (width 440, left hairline)]`. The header row lives inside the board column only, so the drawer never covers it. The drawer is full height.
 
 **Drawer, top to bottom:**
-1. **Top bar** (36 px): `Board / #12` in 12 px (`#12` mono), then a spacer, then actions:
+1. **Top bar** (36 px): `Board / #12` in 12 px (`#12` monospaced), then a spacer, then actions:
    - "Mark complete": a circle glyph and label; once done it reads "Completed" with a green check, and clicking moves the card to the done-role step. With no done-role step it shows an error and leaves the task where it is;
    - copy reference: writes `#12 Title` to the clipboard;
    - `…`: Delete task, with a confirm;

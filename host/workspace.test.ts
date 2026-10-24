@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 it("reports a broken Git index instead of searching ignored files", async () => {
-  const root = mkdtempSync(join(tmpdir(), "rebase-broken-index-"));
+  const root = mkdtempSync(join(tmpdir(), "gespan-broken-index-"));
   roots.push(root);
   execFileSync("git", ["init", "-q"], { cwd: root });
   writeFileSync(join(root, ".gitignore"), "private.txt\n");
@@ -39,7 +39,7 @@ it("reports a broken Git index instead of searching ignored files", async () => 
 });
 
 it("lists host files and rejects paths escaping the project", async () => {
-  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "rebase-workspace-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "gespan-workspace-")));
   roots.push(root);
   mkdirSync(join(root, "src"));
   writeFileSync(join(root, "src", "app.ts"), "source\n");
@@ -97,7 +97,7 @@ it("lists host files and rejects paths escaping the project", async () => {
 
 it("reports tracked and untracked changes and commits staged files", async () => {
   const root = realpathSync.native(
-    mkdtempSync(join(tmpdir(), "rebase-workspace-git-")),
+    mkdtempSync(join(tmpdir(), "gespan-workspace-git-")),
   );
   roots.push(root);
   const git = (...args: string[]) => execFileSync("git", args, { cwd: root });
@@ -187,7 +187,7 @@ it("reports tracked and untracked changes and commits staged files", async () =>
   await hostGitAction(root, "commit", undefined, "remote commit");
   expect((await hostGitIndex(root)).files).toEqual([]);
   const remote = realpathSync.native(
-    mkdtempSync(join(tmpdir(), "rebase-workspace-remote-")),
+    mkdtempSync(join(tmpdir(), "gespan-workspace-remote-")),
   );
   roots.push(remote);
   execFileSync("git", ["init", "--bare", "-q"], { cwd: remote });
@@ -208,7 +208,7 @@ it("reports tracked and untracked changes and commits staged files", async () =>
 
 it("stages and unstages a folder subtree without affecting other changes", async () => {
   const root = realpathSync.native(
-    mkdtempSync(join(tmpdir(), "rebase-host-folder-")),
+    mkdtempSync(join(tmpdir(), "gespan-host-folder-")),
   );
   roots.push(root);
   const git = (...args: string[]) => execFileSync("git", args, { cwd: root });
@@ -275,7 +275,7 @@ it
   "stages and unstages the literal folder %s without touching siblings",
   async (folder) => {
     const root = realpathSync.native(
-      mkdtempSync(join(tmpdir(), "rebase-host-literal-folder-")),
+      mkdtempSync(join(tmpdir(), "gespan-host-literal-folder-")),
     );
     roots.push(root);
     const git = (...args: string[]) =>
@@ -309,7 +309,7 @@ it
 
 it("stages selected host diff content without replacing the working file", async () => {
   const root = realpathSync.native(
-    mkdtempSync(join(tmpdir(), "rebase-workspace-hunk-")),
+    mkdtempSync(join(tmpdir(), "gespan-workspace-hunk-")),
   );
   roots.push(root);
   const git = (...args: string[]) =>

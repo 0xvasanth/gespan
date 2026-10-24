@@ -31,7 +31,7 @@ export type CheckpointApplyResult = {
   alreadyApplied: number;
 };
 
-const REVIEW_CHANGED = "rebase-review-changed";
+const REVIEW_CHANGED = "gespan-review-changed";
 const checkpointQueues = new Map<string, Promise<void>>();
 const activeTurns = new Map<string, { id: string; cwd: string }>();
 

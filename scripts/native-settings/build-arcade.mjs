@@ -2,7 +2,7 @@
 import {createRequire} from 'node:module';
 import path from 'node:path';
 const root=process.cwd();
-const require=createRequire(path.join(process.env.REBASE_REFERENCE_ROOT||root,'package.json'));
+const require=createRequire(path.join(process.env.GESPAN_REFERENCE_ROOT||root,'package.json'));
 const {build}=require('esbuild');
 await build({stdin:{contents:`import {GRID_GAMES} from './src/features/terminal/arcade/gridGames';
 import {PROJECT_MASCOTS} from './src/features/projects/model/projectMascots';
@@ -37,4 +37,4 @@ export function frame(cols,rows,dt,playing,index,mode,heading){
  const cells=[];for(let i=0;i<stamp.length;i++)if(stamp[i]>.02)cells.push([i,stamp[i]]);
  const sprites=board.sprites().map(s=>({...s,rows:PROJECT_MASCOTS.find(m=>m.name===s.mascot)?.[s.frame||'rest']}));
  return JSON.stringify({cells,sprites,pickup:board.logoPickup(),bubble:board.speechBubble(),score:board.score(),lives:board.lives(),dim:playing?1:game.idleDim,fade:board.fade()});
-}`,resolveDir:root,loader:'ts'},bundle:true,format:'iife',globalName:'NativeArcade',platform:'neutral',target:'es2020',minify:true,outfile:'crates/rebase-gpui/assets/settings-arcade.js',plugins:[{name:'native-provider-ids',setup(build){build.onLoad({filter:/features\/sessions\/model\/session\.ts$/},()=>({contents:'export const HARNESSES=["claude","codex","cursor","grok","opencode","pi","omp","fx","hermes","antigravity","devin"];',loader:'js'}));}}]});
+}`,resolveDir:root,loader:'ts'},bundle:true,format:'iife',globalName:'NativeArcade',platform:'neutral',target:'es2020',minify:true,outfile:'crates/gespan-gpui/assets/settings-arcade.js',plugins:[{name:'native-provider-ids',setup(build){build.onLoad({filter:/features\/sessions\/model\/session\.ts$/},()=>({contents:'export const HARNESSES=["claude","codex","cursor","grok","opencode","pi","omp","fx","hermes","antigravity","devin"];',loader:'js'}));}}]});

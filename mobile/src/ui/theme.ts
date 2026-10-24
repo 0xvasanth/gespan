@@ -38,7 +38,7 @@ const dark = {
   fill: "rgba(255, 255, 255, 0.08)",
   /** A segmented switch's thumb, inside the glass. */
   thumb: "rgba(255, 255, 255, 0.14)",
-  /** Laid over the Rebase mark, which is drawn white. */
+  /** Laid over the Gespan mark, which is drawn white. */
   mark: "#ffffff",
   /** A transcript's fold rails and connectors. */
   rail: "#2e2e2e",
@@ -135,7 +135,7 @@ function tinted(hue: number, accent: Record<Scheme, string>): Record<Scheme, Pal
  * highlight and its body.
  */
 export const THEMES = {
-  mono: {
+  classic: {
     label: "Classic",
     palettes,
     orb: { light: ["#ffffff", "#b9c6f5"], dark: ["#3a3d4f", "#0c0c0c"] },
@@ -177,9 +177,9 @@ const THEME_KEY = "theme";
 function loadTheme(): ThemeName {
   try {
     const stored = Storage.getItemSync(THEME_KEY);
-    return stored && stored in THEMES ? (stored as ThemeName) : "mono";
+    return stored && stored in THEMES ? (stored as ThemeName) : "classic";
   } catch {
-    return "mono";
+    return "classic";
   }
 }
 

@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager, State, WebviewWindow};
 pub struct Captures(pub Mutex<HashSet<PathBuf>>);
 
 fn root() -> PathBuf {
-    std::env::temp_dir().join("rebase-captures")
+    std::env::temp_dir().join("gespan-captures")
 }
 
 pub fn new_path() -> Result<PathBuf, String> {

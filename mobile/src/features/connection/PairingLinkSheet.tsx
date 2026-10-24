@@ -57,7 +57,7 @@ export function PairingLinkSheet({
           <TextInput
             ref={input}
             accessibilityLabel="Pairing link"
-            placeholder="rebase://pair…"
+            placeholder="gespan://pair…"
             placeholderTextColor={colors.muted}
             value={link}
             onChangeText={setLink}

@@ -353,7 +353,7 @@ fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
     }
 }
 
-// Modified by Monocode to omit upstream tests requiring unbundled font fixtures.
+// Modified by Gespan to omit upstream tests requiring unbundled font fixtures.
 #[cfg(test)]
 mod tests {
     use super::*;

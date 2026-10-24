@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 it("lists and switches only clean existing local branches", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "rebase-host-branches-"));
+  const cwd = mkdtempSync(join(tmpdir(), "gespan-host-branches-"));
   dirs.push(cwd);
   const git = (...args: string[]) => execFileSync("git", args, { cwd });
   git("init");

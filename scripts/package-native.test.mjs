@@ -25,10 +25,10 @@ test(
     const release = join(directory, "target/release");
     await mkdir(bin);
     await mkdir(release, { recursive: true });
-    const binary = join(release, "rebase-gpui");
+    const binary = join(release, "gespan-gpui");
     await writeFile(
       binary,
-      "#!/bin/sh\nprintf 'Rebase Native 0.16.0-preview.2\\n'\n",
+      "#!/bin/sh\nprintf 'Gespan Native 0.16.0-preview.2\\n'\n",
     );
     await chmod(binary, 0o755);
     const fakeTool = `#!/usr/bin/env node
@@ -97,7 +97,7 @@ if (name === 'xcrun' && args[0] === 'notarytool') console.log(JSON.stringify({ s
     for (const artifact of artifacts)
       await access(join(out, artifact.filename));
     const plist = await readFile(
-      join(release, "Rebase Native.app/Contents/Info.plist"),
+      join(release, "Gespan Native.app/Contents/Info.plist"),
       "utf8",
     );
     assert.ok(
@@ -108,10 +108,10 @@ if (name === 'xcrun' && args[0] === 'notarytool') console.log(JSON.stringify({ s
     assert.ok(plist.includes("<key>CFBundleVersion</key><string>2</string>"));
     assert.ok(
       plist.includes(
-        "<key>RebaseNativeVersion</key><string>0.16.0-preview.2</string>",
+        "<key>GespanNativeVersion</key><string>0.16.0-preview.2</string>",
       ),
     );
-    assert.ok(plist.includes("<string>com.rebase.native</string>"));
+    assert.ok(plist.includes("<string>dev.gespan.native</string>"));
     process.env.NATIVE_TEST_NOTARY_STATUS = "Invalid";
     await assert.rejects(
       () =>
@@ -126,7 +126,7 @@ if (name === 'xcrun' && args[0] === 'notarytool') console.log(JSON.stringify({ s
     );
     await writeFile(
       binary,
-      "#!/bin/sh\nprintf 'Rebase Native 0.16.0-preview.3\\n'\n",
+      "#!/bin/sh\nprintf 'Gespan Native 0.16.0-preview.3\\n'\n",
     );
     await assert.rejects(
       () =>

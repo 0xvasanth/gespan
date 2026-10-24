@@ -732,7 +732,7 @@ export class HostEngine {
           if (live) live.value = saved;
         })
         .catch((error) =>
-          console.debug("[rebase] remote session title", error),
+          console.debug("[gespan] remote session title", error),
         );
     }
     const temporary = value.autoWorktreeBranch;
@@ -762,7 +762,7 @@ export class HostEngine {
           if (live) live.value = saved;
         })
         .catch((error) =>
-          console.debug("[rebase] remote worktree branch", error),
+          console.debug("[gespan] remote worktree branch", error),
         );
     }
   }

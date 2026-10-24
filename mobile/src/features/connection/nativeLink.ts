@@ -5,7 +5,7 @@ type NativeLink = {
   execute(input: string): Promise<string>;
   nativeTranscriptVersion?: number;
 };
-const module = requireOptionalNativeModule<NativeLink>("RebaseLink");
+const module = requireOptionalNativeModule<NativeLink>("GespanLink");
 // Older development builds and Android retain the existing transcript.
 export const hasNativeTranscript =
   Platform.OS === "ios" && module?.nativeTranscriptVersion === 1;

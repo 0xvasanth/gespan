@@ -6,12 +6,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const buildScript = new URL("../crates/rebase-gpui/build.rs", import.meta.url);
+const buildScript = new URL("../crates/gespan-gpui/build.rs", import.meta.url);
 // The first Cargo build on a fresh Windows runner can exceed one minute.
 const cargoTimeout = process.platform === "win32" ? 180_000 : 60_000;
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "rebase-dependency-guard-"));
+  const root = await mkdtemp(join(tmpdir(), "gespan-dependency-guard-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, "src"));
   await writeFile(join(root, "src/lib.rs"), "");
@@ -84,5 +84,5 @@ test("GPUI refuses to enable screen capture before compiling its implementation"
   ], { encoding: "utf8", timeout: 60_000 });
   assert.ifError(result.error);
   assert.notEqual(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stderr, /Screen capture is disabled in Monocode/);
+  assert.match(result.stderr, /Screen capture is disabled in Gespan/);
 });

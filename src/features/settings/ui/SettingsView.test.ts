@@ -270,7 +270,7 @@ describe("settings pages", () => {
 
   it("shows background effect choices above scope when artwork is available", async () => {
     localStorage.setItem(
-      "rebase.chatBackgroundPath",
+      "gespan.chatBackgroundPath",
       "/app-data/backgrounds/chat-background.png",
     );
     await render("appearance");
@@ -293,7 +293,7 @@ describe("settings pages", () => {
       vi.fn(async () => ({ ok: false })),
     );
     await act(async () => (effect as HTMLButtonElement).click());
-    expect(localStorage.getItem("rebase.newThreadBackgroundEffect")).toBe(
+    expect(localStorage.getItem("gespan.newThreadBackgroundEffect")).toBe(
       "dither",
     );
     expect(effect.getAttribute("aria-checked")).toBe("true");
@@ -303,8 +303,8 @@ describe("settings pages", () => {
   });
 
   it("previews and restores Haze with the existing empty-chat visibility", async () => {
-    localStorage.setItem("rebase.chatBackgroundPath", "/background.png");
-    localStorage.setItem("rebase.chatBackgroundEmptyOpacity", "0.4");
+    localStorage.setItem("gespan.chatBackgroundPath", "/background.png");
+    localStorage.setItem("gespan.chatBackgroundEmptyOpacity", "0.4");
     await render("appearance");
 
     const option = container.querySelector<HTMLButtonElement>(
@@ -319,7 +319,7 @@ describe("settings pages", () => {
     expect(option.getAttribute("aria-checked")).toBe("true");
     expect(preview.style.opacity).toBe("0.4");
     expect(preview.querySelectorAll("span")).toHaveLength(2);
-    expect(localStorage.getItem("rebase.newThreadBackgroundEffect")).toBe(
+    expect(localStorage.getItem("gespan.newThreadBackgroundEffect")).toBe(
       "gradient-blur",
     );
 
@@ -480,7 +480,7 @@ describe("settings pages", () => {
     await save("OpenCode", "/opt/opencode/bin/opencode");
     expect(
       JSON.parse(
-        localStorage.getItem("rebase.providerBinaryPaths.v1") ?? "{}",
+        localStorage.getItem("gespan.providerBinaryPaths.v1") ?? "{}",
       ),
     ).toEqual({
       codex: "/opt/codex/bin/codex",
@@ -506,7 +506,7 @@ describe("settings pages", () => {
     expect(container.textContent).not.toContain("/opt/codex/bin/codex");
     expect(
       JSON.parse(
-        localStorage.getItem("rebase.providerBinaryPaths.v1") ?? "{}",
+        localStorage.getItem("gespan.providerBinaryPaths.v1") ?? "{}",
       ).codex,
     ).toBe("/opt/codex/bin/codex");
     await act(async () =>
@@ -523,7 +523,7 @@ describe("settings pages", () => {
     );
     expect(
       JSON.parse(
-        localStorage.getItem("rebase.providerBinaryPaths.v1") ?? "{}",
+        localStorage.getItem("gespan.providerBinaryPaths.v1") ?? "{}",
       ).codex,
     ).toBe("/opt/codex/bin/codex");
 
@@ -531,7 +531,7 @@ describe("settings pages", () => {
     await save("Codex", "");
     expect(
       JSON.parse(
-        localStorage.getItem("rebase.providerBinaryPaths.v1") ?? "{}",
+        localStorage.getItem("gespan.providerBinaryPaths.v1") ?? "{}",
       ).codex,
     ).toBeUndefined();
     await act(async () => details.click());
@@ -674,7 +674,7 @@ describe("settings pages", () => {
     await act(async () => topBar?.click());
 
     expect(topBar?.getAttribute("aria-checked")).toBe("true");
-    expect(localStorage.getItem("rebase.fileTabMode")).toBe("workspace");
+    expect(localStorage.getItem("gespan.fileTabMode")).toBe("workspace");
   });
 
   it("offers tab animations as an opt-in", async () => {
@@ -686,7 +686,7 @@ describe("settings pages", () => {
     expect(control.getAttribute("aria-checked")).toBe("false");
     await act(async () => control.click());
     expect(control.getAttribute("aria-checked")).toBe("true");
-    expect(localStorage.getItem("rebase.tabAnimationsEnabled")).toBe("1");
+    expect(localStorage.getItem("gespan.tabAnimationsEnabled")).toBe("1");
   });
 
   it("offers the Board on by default, right after Notes", async () => {
@@ -696,13 +696,13 @@ describe("settings pages", () => {
     )!;
 
     expect(control.getAttribute("aria-checked")).toBe("true");
-    expect(localStorage.getItem("rebase.boardEnabled")).toBeNull();
+    expect(localStorage.getItem("gespan.boardEnabled")).toBeNull();
     await act(async () => control.click());
     expect(control.getAttribute("aria-checked")).toBe("false");
-    expect(localStorage.getItem("rebase.boardEnabled")).toBe("0");
+    expect(localStorage.getItem("gespan.boardEnabled")).toBe("0");
     await act(async () => control.click());
     expect(control.getAttribute("aria-checked")).toBe("true");
-    expect(localStorage.getItem("rebase.boardEnabled")).toBe("1");
+    expect(localStorage.getItem("gespan.boardEnabled")).toBe("1");
 
     const ids = renderedSettingIds();
     expect(ids.indexOf("board")).toBe(ids.indexOf("notes") + 1);
@@ -735,7 +735,7 @@ describe("settings pages", () => {
     await act(async () => hidden?.click());
 
     expect(hidden?.getAttribute("aria-checked")).toBe("true");
-    expect(localStorage.getItem("rebase.collapsedProjectRailMode")).toBe(
+    expect(localStorage.getItem("gespan.collapsedProjectRailMode")).toBe(
       "hidden",
     );
 
@@ -769,7 +769,7 @@ describe("settings pages", () => {
     expect(option).toBeTruthy();
     await act(async () => option!.click());
 
-    expect(localStorage.getItem("rebase.uiScale")).toBe("1.5");
+    expect(localStorage.getItem("gespan.uiScale")).toBe("1.5");
     expect(trigger.getAttribute("aria-label")).toBe("Interface scale: 150%");
     document.documentElement.style.removeProperty("zoom");
   });
@@ -1013,7 +1013,7 @@ describe("settings search", () => {
       ),
     );
 
-    expect(localStorage.getItem("rebase.keybindingOverrides")).toBe(
+    expect(localStorage.getItem("gespan.keybindingOverrides")).toBe(
       '{"App: Search":{"shortcut":"Control+Shift+KeyM"}}',
     );
     expect(input.value).toBe("Ctrl+Shift+M");
@@ -1050,7 +1050,7 @@ describe("settings search", () => {
         }),
       ),
     );
-    expect(localStorage.getItem("rebase.keybindingOverrides")).toBe(
+    expect(localStorage.getItem("gespan.keybindingOverrides")).toBe(
       '{"App: Search":{"shortcut":"Command+Delete"}}',
     );
   });
@@ -1102,7 +1102,7 @@ describe("settings search", () => {
       ),
     );
 
-    expect(localStorage.getItem("rebase.keybindingOverrides")).toBe(
+    expect(localStorage.getItem("gespan.keybindingOverrides")).toBe(
       '{"App: Search":{"shortcut":"Option+KeyM"}}',
     );
     expect(input.value).toBe("Alt+M");
@@ -1125,7 +1125,7 @@ describe("settings search", () => {
       ),
     );
 
-    expect(localStorage.getItem("rebase.keybindingOverrides")).toBe(
+    expect(localStorage.getItem("gespan.keybindingOverrides")).toBe(
       '{"App: Search":{"disabled":true}}',
     );
     expect(input.value).toBe("Disabled");
@@ -1137,7 +1137,7 @@ describe("settings search", () => {
         )!
         .click(),
     );
-    expect(localStorage.getItem("rebase.keybindingOverrides")).toBeNull();
+    expect(localStorage.getItem("gespan.keybindingOverrides")).toBeNull();
   });
 
   it("reveals a setting on the current page", async () => {
@@ -1165,11 +1165,11 @@ describe("providers scope inheritance", () => {
 
   it("inherits the global default provider and picker visibility in project scope", async () => {
     localStorage.setItem(
-      "rebase.lastModel",
+      "gespan.lastModel",
       JSON.stringify({ harness: "claude", model: "claude:opus-5" }),
     );
     localStorage.setItem(
-      "rebase.hiddenPickerProviders",
+      "gespan.hiddenPickerProviders",
       JSON.stringify(["cursor"]),
     );
     await render("providers");

@@ -58,10 +58,10 @@ pub const BLUR_MIN: u8 = 1;
 pub const BLUR_MAX: u8 = 64;
 pub const BLUR_DEFAULT: u8 = 24;
 
-const GLASS_BACKING_ID: &str = "rebase.webview-glass-backing";
-const GLASS_TINT_ID: &str = "rebase.webview-glass-tint";
-const FLOATING_GLASS_ID: &str = "rebase.floating-glass";
-const FLOATING_CONTENT_ID: &str = "rebase.floating-content";
+const GLASS_BACKING_ID: &str = "gespan.webview-glass-backing";
+const GLASS_TINT_ID: &str = "gespan.webview-glass-tint";
+const FLOATING_GLASS_ID: &str = "gespan.floating-glass";
+const FLOATING_CONTENT_ID: &str = "gespan.floating-content";
 /// Matches the floating chat's `rounded-2xl` CSS outline.
 const FLOATING_CORNER_RADIUS: f64 = 16.0;
 
@@ -409,7 +409,7 @@ struct WindowBackdropIvars {
 
 define_class!(
     #[unsafe(super(NSVisualEffectView))]
-    #[name = "RebaseWindowBackdrop"]
+    #[name = "GespanWindowBackdrop"]
     #[ivars = WindowBackdropIvars]
     struct WindowBackdrop;
 
@@ -750,7 +750,7 @@ struct DockMenuTargetIvars {
 
 define_class!(
     #[unsafe(super(NSObject))]
-    #[name = "RebaseDockMenuTarget"]
+    #[name = "GespanDockMenuTarget"]
     #[ivars = DockMenuTargetIvars]
     struct DockMenuTarget;
 
@@ -842,7 +842,7 @@ pub(crate) fn install_dock_menu(app: &AppHandle) {
 #[cfg(debug_assertions)]
 pub(crate) fn ensure_dev_bundle(version: &str, bundle_version: &str) {
     if let Err(err) = relaunch_from_dev_bundle(version, bundle_version) {
-        eprintln!("rebase: macos dev bundle: {err}");
+        eprintln!("gespan: macos dev bundle: {err}");
     }
 }
 
@@ -909,7 +909,7 @@ fn relaunch_from_dev_bundle(version: &str, bundle_version: &str) -> Result<(), S
     std::fs::create_dir_all(&macos_dir).map_err(|e| e.to_string())?;
     write_dev_bundle_icons(&app, &app_name, version, bundle_version)?;
 
-    let bundled = macos_dir.join("rebase");
+    let bundled = macos_dir.join("gespan");
     let _ = std::fs::remove_file(&bundled);
     // A copy, not a hard link: re-signing below rewrites the file, and the
     // linked original is the executable running this code.
@@ -920,7 +920,7 @@ fn relaunch_from_dev_bundle(version: &str, bundle_version: &str) -> Result<(), S
     perms.set_mode(0o755);
     std::fs::set_permissions(&bundled, perms).map_err(|e| e.to_string())?;
 
-    // The linker's ad-hoc signature carries a `rebase-<hash>` identifier.
+    // The linker's ad-hoc signature carries a `gespan-<hash>` identifier.
     // UNUserNotificationCenter refuses authorization, without prompting,
     // unless the signing identifier matches CFBundleIdentifier.
     let signed = Command::new("/usr/bin/codesign")
@@ -930,7 +930,7 @@ fn relaunch_from_dev_bundle(version: &str, bundle_version: &str) -> Result<(), S
         .map(|status| status.success())
         .unwrap_or(false);
     if !signed {
-        eprintln!("rebase: macos dev bundle: codesign failed; notifications stay off");
+        eprintln!("gespan: macos dev bundle: codesign failed; notifications stay off");
     }
 
     let err = Command::new(&bundled)
@@ -964,7 +964,7 @@ fn write_dev_bundle_icons(
 #[cfg(debug_assertions)]
 const DEV_BUNDLE_DEFAULT_NAME: &str = crate::dev_identity::PRODUCT_NAME;
 #[cfg(debug_assertions)]
-const DEV_BUNDLE_NAME_ENV: &str = "REBASE_DEV_APP_NAME";
+const DEV_BUNDLE_NAME_ENV: &str = "GESPAN_DEV_APP_NAME";
 #[cfg(debug_assertions)]
 const DEV_BUNDLE_ID: &str = crate::dev_identity::IDENTIFIER;
 #[cfg(debug_assertions)]
@@ -1027,7 +1027,7 @@ fn dev_bundle_plist(app_name: &str, version: &str, bundle_version: &str) -> Vec<
 	<key>CFBundleDisplayName</key>
 	<string>{app_name}</string>
 	<key>CFBundleExecutable</key>
-	<string>rebase</string>
+	<string>gespan</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
@@ -1130,9 +1130,9 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root =
-            std::env::temp_dir().join(format!("rebase-macos-tests-{}-{nonce}", std::process::id()));
+            std::env::temp_dir().join(format!("gespan-macos-tests-{}-{nonce}", std::process::id()));
         let app = root.join(app_name);
-        let exe = app.join("Contents/MacOS/rebase");
+        let exe = app.join("Contents/MacOS/gespan");
         std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
         std::fs::write(app.join("Contents/Info.plist"), b"plist").unwrap();
         (root, exe)
@@ -1141,8 +1141,8 @@ mod tests {
     #[test]
     fn sanitized_dev_bundle_name_accepts_single_component() {
         assert_eq!(
-            sanitized_dev_bundle_name("  Rebase Dev  "),
-            Some("Rebase Dev".into())
+            sanitized_dev_bundle_name("  Gespan Dev  "),
+            Some("Gespan Dev".into())
         );
     }
 
@@ -1156,8 +1156,8 @@ mod tests {
     #[test]
     fn bundle_name_from_app_path_reads_existing_bundle_name() {
         assert_eq!(
-            bundle_name_from_app_path(Path::new("/tmp/Rebase Dev.app")),
-            Some("Rebase Dev".into())
+            bundle_name_from_app_path(Path::new("/tmp/Gespan Dev.app")),
+            Some("Gespan Dev".into())
         );
     }
 
@@ -1170,16 +1170,16 @@ mod tests {
 
     #[test]
     fn dev_bundle_plist_uses_the_provided_app_name() {
-        let plist = String::from_utf8(dev_bundle_plist("Rebase Dev", "1.2.3", "1.2.3")).unwrap();
-        assert!(plist.contains("<string>Rebase Dev</string>"));
-        assert!(!plist.contains("<string>Rebase</string>"));
+        let plist = String::from_utf8(dev_bundle_plist("Gespan Dev", "1.2.3", "1.2.3")).unwrap();
+        assert!(plist.contains("<string>Gespan Dev</string>"));
+        assert!(!plist.contains("<string>Gespan</string>"));
     }
 
     #[test]
     fn dev_bundle_never_claims_the_installed_app_identifier() {
-        let plist = String::from_utf8(dev_bundle_plist("Rebase Dev", "1.2.3", "1.2.3")).unwrap();
-        assert!(plist.contains("<string>com.rebase.desktop.dev</string>"));
-        assert!(!plist.contains("<string>com.rebase.desktop</string>"));
-        assert_eq!(DEV_BUNDLE_DEFAULT_NAME, "Rebase Dev");
+        let plist = String::from_utf8(dev_bundle_plist("Gespan Dev", "1.2.3", "1.2.3")).unwrap();
+        assert!(plist.contains("<string>dev.gespan.desktop.dev</string>"));
+        assert!(!plist.contains("<string>dev.gespan.desktop</string>"));
+        assert_eq!(DEV_BUNDLE_DEFAULT_NAME, "Gespan Dev");
     }
 }

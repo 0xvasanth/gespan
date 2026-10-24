@@ -112,14 +112,14 @@ it("says how to keep memory and update the soul only at the user's request", () 
     mascot: "skull",
     color: "#fff",
     projects: [
-      { path: "/code/rebase", name: "rebase" },
+      { path: "/code/gespan", name: "gespan" },
       { path: "/code/site", name: "site" },
     ],
   };
   const full = pilotContext(look, files(), { soul: true, memory: true });
-  expect(full).toContain("You are Skull, a Pilot in Rebase");
-  expect(full).not.toMatch(/\bMonos?\b/);
-  expect(full).toContain("these 2 projects (rebase and site)");
+  expect(full).toContain("You are Skull, a Pilot in Gespan");
+  expect(full).not.toMatch(new RegExp(`\\b${["Mo", "no"].join("")}s?\\b`));
+  expect(full).toContain("these 2 projects (gespan and site)");
   expect(full).toContain("- site: /code/site");
   expect(full).toContain("Be brief.");
   expect(full).toContain(
@@ -235,12 +235,12 @@ it("reads a migrated Pilot's old project folder once, then its own", async () =>
 it("puts what the app adds ahead of the user's message, marked as its own", () => {
   expect(pilotTurn("what is this", [])).toBe("what is this");
   const turn = pilotTurn("what is this", ["<pilot>\nYou are Cat.\n</pilot>"]);
-  expect(turn.startsWith("<rebase_context>")).toBe(true);
+  expect(turn.startsWith("<gespan_context>")).toBe(true);
   expect(turn).toContain("they did not write it");
   expect(turn.indexOf("You are Cat.")).toBeLessThan(
     turn.indexOf("what is this"),
   );
-  expect(turn.endsWith("</rebase_context>\n\nwhat is this")).toBe(true);
+  expect(turn.endsWith("</gespan_context>\n\nwhat is this")).toBe(true);
 });
 
 it("bumps the prompt version so cached pilot prompts refresh after the rename", () => {

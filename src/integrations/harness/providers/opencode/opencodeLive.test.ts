@@ -304,12 +304,12 @@ it("renders a v2 turn streamed as session step, text, reasoning, and tool events
   send("session.tool.called", {
     assistantMessageID: "msg_a",
     id: "call_1",
-    input: { command: "echo REBASE_TOOL_TEST" },
+    input: { command: "echo GESPAN_TOOL_TEST" },
   });
   send("session.tool.success", {
     assistantMessageID: "msg_a",
     id: "call_1",
-    content: [{ type: "text", text: "REBASE_TOOL_TEST\n" }],
+    content: [{ type: "text", text: "GESPAN_TOOL_TEST\n" }],
     metadata: { status: "completed", exit: 0 },
   });
   send("session.step.ended", {
@@ -340,7 +340,7 @@ it("renders a v2 turn streamed as session step, text, reasoning, and tool events
       type: "tool.updated",
       callId: "call_1",
       status: "completed",
-      detail: "REBASE_TOOL_TEST\n",
+      detail: "GESPAN_TOOL_TEST\n",
     }),
   );
   expect(events).toContainEqual(expect.objectContaining({ type: "context" }));

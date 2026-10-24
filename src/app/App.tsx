@@ -340,7 +340,7 @@ import {
   forgetHarnessSession,
   generateHarnessTitle,
   generateHarnessBranchName,
-  migrateRebasexSession,
+  migrateGespanxSession,
   isLiveHarness,
   latestTurnNeedsHarnessLogin,
   probeHarnessAvailability,
@@ -1086,7 +1086,7 @@ const NO_TITLE_TABS: [] = [];
 
 /** Native sheet. `window.confirm` is swallowed when a macOS menu accelerator fires. */
 function confirmDiscardUnsaved(message: string): Promise<boolean> {
-  return ask(message, { title: "Rebase", kind: "warning" });
+  return ask(message, { title: "Gespan", kind: "warning" });
 }
 
 function titleTabsEqual(a: TitleTab[], b: TitleTab[]): boolean {
@@ -2027,7 +2027,7 @@ function Workspace({
           }
           for (const threadId of threadIds) {
             if (cancelled) return;
-            await migrateRebasexSession({
+            await migrateGespanxSession({
               sessionId: session.id,
               threadId,
               cwd,
@@ -3023,7 +3023,7 @@ function Workspace({
     if (!document) {
       void message(
         "Release notes for this version are not available in this build.",
-        { title: "Rebase" },
+        { title: "Gespan" },
       );
       return;
     }
@@ -5937,7 +5937,7 @@ function Workspace({
           } catch (error) {
             void message(
               `The session was ${mode === "archive" ? "archived" : "deleted"}. Its worktree was kept.\n\n${String(error)}\n\nYou can manage it in Settings → Worktrees.`,
-              { title: "Rebase", kind: "warning" },
+              { title: "Gespan", kind: "warning" },
             );
           }
         }
@@ -5946,7 +5946,7 @@ function Workspace({
         if (origin === "cli") throw error;
         const detail = error instanceof Error ? error.message : String(error);
         void message(`Could not ${mode} this conversation.\n\n${detail}`, {
-          title: "Rebase",
+          title: "Gespan",
           kind: "error",
         });
         return false;
@@ -5982,7 +5982,7 @@ function Workspace({
         void message(
           `Could not unarchive this conversation.\n\n${String(error)}`,
           {
-            title: "Rebase",
+            title: "Gespan",
             kind: "error",
           },
         );
@@ -6113,7 +6113,7 @@ function Workspace({
           void refreshHistory(sidebarCwd);
           void message(
             `Could not update this conversation's GitHub link.\n\n${String(error)}`,
-            { title: "Rebase", kind: "error" },
+            { title: "Gespan", kind: "error" },
           );
         },
       );
@@ -6164,7 +6164,7 @@ function Workspace({
       const { name } = pilotLook(pilot);
       const confirmed = await ask(
         `Delete ${name}? Its conversation will be deleted and its habits stop. This can’t be undone.`,
-        { title: "Rebase", kind: "warning" },
+        { title: "Gespan", kind: "warning" },
       );
       if (!confirmed) return;
       if (pilot.sessionId) {
@@ -7452,7 +7452,7 @@ function Workspace({
         !current.blocks.some((block) => block.role === "user" && !block.draft);
       const promptText = operatorCommand.matched
         ? operatorCommand.text.trim() ||
-          "Explain what you can do in Rebase with the app CLI."
+          "Explain what you can do in Gespan with the app CLI."
         : submittedText;
       const rawCommand =
         !operatorCommand.matched &&
@@ -7832,7 +7832,7 @@ function Workspace({
       const cards = {
         ...(rawCommand ? undefined : userTurnCards(noteCard, card)),
         ...(ciContext ? { ciContext } : {}),
-        ...(operatorCommand.matched ? { rebase: true } : {}),
+        ...(operatorCommand.matched ? { gespan: true } : {}),
         ...(intent === "plan" || intent === "orchestrate" ? { intent } : {}),
         ...(options?.appRequestId
           ? { appRequestId: options.appRequestId }
@@ -8437,7 +8437,7 @@ function Workspace({
           );
           if (pilotRotation) {
             if (current.harness === "codex" && current.providerSessionId) {
-              await migrateRebasexSession({
+              await migrateGespanxSession({
                 sessionId,
                 threadId: current.providerSessionId,
                 cwd: workCwd,
@@ -8504,7 +8504,7 @@ function Workspace({
           if (operatorCommand.matched || handAgent) {
             const cli = `${shellPath(await invoke<string>("app_cli_path"))} app`;
             appContext.push(
-              `<rebase_app>\n${handAgent ? "App access is always enabled in this thread." : "The user's Operator command enables app access in this thread, including later turns without the command."} You can start sessions, list and create project worktrees, choose a new session's checkout, read, continue, stop, archive or delete other project sessions, save unsent drafts, organize session folders, and read or write saved notes through its local CLI. Run \`${cli} --help\` when you need the exact commands and JSON fields. When reading another session, start with its latest two or three user/assistant exchanges. Request older exchanges with nextBefore or a larger excerpt only if needed. The CLI uses a session credential already in your environment; never print it. New sessions inherit this session's permission mode unless runtimeMode is set explicitly. For a new session with a draft, call sessions.start with its prompt and draft:true; do not submit a seed prompt. Sessions you start appear in the user's sidebar under this session without opening; the user opens them when they want. Only set placement right or down, or reveal:true, when the user asks to see a session open or side by side. The returned ID can be used as besideSessionId to split its pane again or moved into a folder immediately. A normal sessions.start submits its prompt but returns after acceptance, so do not wait for that agent to finish before organizing it.\n</rebase_app>`,
+              `<gespan_app>\n${handAgent ? "App access is always enabled in this thread." : "The user's Operator command enables app access in this thread, including later turns without the command."} You can start sessions, list and create project worktrees, choose a new session's checkout, read, continue, stop, archive or delete other project sessions, save unsent drafts, organize session folders, and read or write saved notes through its local CLI. Run \`${cli} --help\` when you need the exact commands and JSON fields. When reading another session, start with its latest two or three user/assistant exchanges. Request older exchanges with nextBefore or a larger excerpt only if needed. The CLI uses a session credential already in your environment; never print it. New sessions inherit this session's permission mode unless runtimeMode is set explicitly. For a new session with a draft, call sessions.start with its prompt and draft:true; do not submit a seed prompt. Sessions you start appear in the user's sidebar under this session without opening; the user opens them when they want. Only set placement right or down, or reveal:true, when the user asks to see a session open or side by side. The returned ID can be used as besideSessionId to split its pane again or moved into a folder immediately. A normal sessions.start submits its prompt but returns after acceptance, so do not wait for that agent to finish before organizing it.\n</gespan_app>`,
             );
           }
           // A Pilot reads who it is ahead of the message, so it never takes it
@@ -10810,7 +10810,7 @@ function Workspace({
         );
       };
       const target = event.target instanceof Element ? event.target : null;
-      const inTerminal = Boolean(target?.closest(".rebase-terminal"));
+      const inTerminal = Boolean(target?.closest(".gespan-terminal"));
       const activeTabId = activeTabIdRef.current;
       const sessionId = focusedBusySessionId();
       if (
@@ -11319,7 +11319,7 @@ function Workspace({
       requestId: string;
       action: string;
       input: Record<string, unknown>;
-    }>("rebase-control-request", ({ payload }) => {
+    }>("gespan-control-request", ({ payload }) => {
       const handle = async () => {
         if (payload.namespace === "control") {
           return orchestrator.handle(
@@ -11340,7 +11340,7 @@ function Workspace({
           source.orchestrationLeadId ||
           orchestrator.run(source.id)
         )
-          throw new Error("This session cannot use the Rebase app CLI");
+          throw new Error("This session cannot use the Gespan app CLI");
         const key = `${source.id}:${payload.requestId}`;
         const signature = JSON.stringify([payload.action, payload.input]);
         const previous = appReceipts.current.get(key);
@@ -12540,9 +12540,9 @@ function Workspace({
 
   useEffect(() => {
     const onOpenMcp = () => openSettings("mcp");
-    window.addEventListener("rebase:open-mcp-settings", onOpenMcp);
+    window.addEventListener("gespan:open-mcp-settings", onOpenMcp);
     return () =>
-      window.removeEventListener("rebase:open-mcp-settings", onOpenMcp);
+      window.removeEventListener("gespan:open-mcp-settings", onOpenMcp);
   }, [openSettings]);
 
   const onOpenNotificationSettings = useCallback(
@@ -13144,7 +13144,7 @@ function Workspace({
         if (listNavigation) {
           const blockedTarget = Boolean(
             target?.closest(
-              'input, textarea, select, [contenteditable="true"], .cm-editor, .rebase-terminal, [role="dialog"], [data-model-picker], [data-file-picker], [data-branch-picker], [data-skill-picker], [data-mention-picker], [data-app-search]',
+              'input, textarea, select, [contenteditable="true"], .cm-editor, .gespan-terminal, [role="dialog"], [data-model-picker], [data-file-picker], [data-branch-picker], [data-skill-picker], [data-mention-picker], [data-app-search]',
             ),
           );
           const emptyComposerTarget = Boolean(
@@ -13170,7 +13170,7 @@ function Workspace({
           }
         }
         if (
-          target?.closest(".rebase-terminal") &&
+          target?.closest(".gespan-terminal") &&
           e.ctrlKey &&
           !e.metaKey &&
           (cmd === "back" ||
@@ -13259,7 +13259,7 @@ function Workspace({
         if (
           shortcut === "App: Search" &&
           e.target instanceof Element &&
-          e.target.closest(".rebase-terminal") &&
+          e.target.closest(".gespan-terminal") &&
           e.ctrlKey &&
           !e.metaKey
         ) {

@@ -44,7 +44,7 @@ export function hermesPromptBlocks(
   return promptBlocks(text, attachments);
 }
 
-/** Map Rebase access levels to Hermes' edit-approval modes. */
+/** Map Gespan access levels to Hermes' edit-approval modes. */
 export function hermesModeId(
   runtimeMode: RuntimeMode,
   planning = false,

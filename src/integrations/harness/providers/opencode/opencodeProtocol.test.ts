@@ -152,7 +152,7 @@ describe("parseOpenCodeVersion / compareSemver", () => {
       "Upgrade to v2.0.15",
     );
     expect(() => assertSupportedOpenCodeVersion("3.0.0")).toThrow(
-      "Rebase supports OpenCode v1 and v2",
+      "Gespan supports OpenCode v1 and v2",
     );
   });
 });

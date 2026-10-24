@@ -3433,7 +3433,7 @@ impl From<String> for ClipboardString {
     }
 }
 
-// Modified by Monocode to reuse GPUI's retained image fixture.
+// Modified by Gespan to reuse GPUI's retained image fixture.
 #[cfg(test)]
 mod image_tests {
     use super::*;

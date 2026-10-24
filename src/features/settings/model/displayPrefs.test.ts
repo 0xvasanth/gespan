@@ -16,7 +16,7 @@ import {
 const prefs = [
   {
     name: "show remaining usage",
-    key: "rebase.showRemainingUsage",
+    key: "gespan.showRemainingUsage",
     defaultValue: false,
     load: loadShowRemainingUsage,
     save: saveShowRemainingUsage,
@@ -24,7 +24,7 @@ const prefs = [
   },
   {
     name: "mask emails",
-    key: "rebase.maskEmails",
+    key: "gespan.maskEmails",
     defaultValue: true,
     load: loadMaskEmails,
     save: saveMaskEmails,
@@ -32,7 +32,7 @@ const prefs = [
   },
   {
     name: "composer autocorrect",
-    key: "rebase.composerAutocorrect",
+    key: "gespan.composerAutocorrect",
     defaultValue: true,
     load: loadComposerAutocorrect,
     save: saveComposerAutocorrect,

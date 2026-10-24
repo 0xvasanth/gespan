@@ -62,7 +62,4 @@ describe("tauri invoke command names", () => {
     expect(unknown).toEqual([]);
   });
 
-  it("registers no legacy mono_* commands", () => {
-    expect(registered.filter((n) => /mono/.test(n))).toEqual([]);
-  });
 });

@@ -1,6 +1,6 @@
 // Copyright 2022 - 2025 Zed Industries, Inc.
 // SPDX-License-Identifier: Apache-2.0
-// Modified by Monocode for shadow clipping, backdrop blur, edge fades, text
+// Modified by Gespan for shadow clipping, backdrop blur, edge fades, text
 // reveal and project-background compositing. See NOTICE.
 #include <metal_stdlib>
 #include <simd/simd.h>
@@ -555,7 +555,7 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
     alpha = 1. - alpha;
     alpha *= saturate(0.5 - element_distance);
   } else {
-    // Monocode: like CSS box-shadow, a drop shadow only paints outside its
+    // Gespan: like CSS box-shadow, a drop shadow only paints outside its
     // element, so it never tints a translucent or unfilled box from below.
     alpha *= saturate(0.5 + element_distance);
   }
@@ -1287,7 +1287,7 @@ float4 fill_color(Background background,
   return color;
 }
 
-// Monocode: backdrop blur for frosted popovers. The renderer copies what is
+// Gespan: backdrop blur for frosted popovers. The renderer copies what is
 // already drawn behind a marked quad, blurs it with MPSImageGaussianBlur, then
 // writes it back inside the quad's rounded bounds before drawing the quad.
 

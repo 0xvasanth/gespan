@@ -408,7 +408,7 @@ type SessionProject = {
 
 /** A path inside `folder`, so locating it finds the checkout `folder` is in. */
 const folderProbe = (folder: string) =>
-  `${folder.replace(/\/+$/, "")}/.rebase-probe`;
+  `${folder.replace(/\/+$/, "")}/.gespan-probe`;
 
 const mainCheckouts = new Map<string, Promise<string>>();
 

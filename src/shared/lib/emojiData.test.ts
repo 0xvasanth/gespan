@@ -58,8 +58,8 @@ it("remembers a skin tone and ignores unknown ones", () => {
   expect(loadEmojiSkinTone()).toBe("none");
   saveEmojiSkinTone("medium-dark");
   expect(loadEmojiSkinTone()).toBe("medium-dark");
-  stored.set("rebase.emojiSkinTone", "purple");
+  stored.set("gespan.emojiSkinTone", "purple");
   expect(loadEmojiSkinTone()).toBe("none");
   saveEmojiSkinTone("none");
-  expect(stored.has("rebase.emojiSkinTone")).toBe(false);
+  expect(stored.has("gespan.emojiSkinTone")).toBe(false);
 });

@@ -1,7 +1,7 @@
 import { pathKey } from "../../../shared/lib/paths";
 import { loadSidebarTabOrder, type SidebarTabId } from "./appearance";
 
-const KEY = "rebase.projectSidebarTabs.v1";
+const KEY = "gespan.projectSidebarTabs.v1";
 
 type ProjectSidebarTab = Exclude<SidebarTabId, "inbox">;
 type StoredTabs = Record<string, ProjectSidebarTab>;
