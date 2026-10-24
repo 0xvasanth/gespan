@@ -5308,7 +5308,7 @@ impl Render for TranscriptView {
             .when(self.show_jump, |d| {
                 // The right end of the composer column; the commit pill takes the left.
                 d.child(div().absolute().bottom(px(8.)).left_0().w_full().flex().justify_center().child(
-                    div().w_full().max_w(px(crate::theme::COLUMN)).px(px(10.)).flex().justify_end().child(
+                    div().w_full().max_w(px(crate::theme::COLUMN)).px(px(20.)).flex().justify_end().child(
                     div().id("jump-to-bottom").child(self.jump_anchor.probe()).role(Role::Button).aria_label("Scroll to bottom")
                         .relative().flex().items_center().justify_center().size(px(30.))
                         .rounded_full().border_1().border_color(content(0.1))

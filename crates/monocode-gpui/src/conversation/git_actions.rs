@@ -206,7 +206,6 @@ impl Conversation {
             .pl(px(6.))
             .pr(px(8.))
             .when(menu_open, |d| d.bg(content(0.06)).text_color(content(1.)))
-            .child(self.git_action_anchor.probe())
             .child(icon("chevron-down", 14.))
             .on_click(cx.listener(|this, _, window, cx| {
                 this.toggle_menu(ComposerMenu::GitActions, window, cx)
@@ -224,9 +223,22 @@ impl Conversation {
                 .rounded_full()
                 .border_1()
                 .border_color(content(0.1))
+                // Hover fills stay clear of the rim.
+                .p(px(3.))
+                .group("git-actions")
                 .child(crate::transcript::floating_surface())
+                // The menu opens from the pill's left end, not the chevron.
+                .child(self.git_action_anchor.probe())
                 .child(main)
-                .child(div().w_px().my(px(7.)).bg(content(0.1)))
+                // Dropped while either half is lit, so the fill reads whole.
+                .child(
+                    div()
+                        .w_px()
+                        .my(px(4.))
+                        .bg(content(0.1))
+                        .group_hover("git-actions", |s| s.bg(gpui::transparent_black()))
+                        .when(menu_open, |d| d.bg(gpui::transparent_black())),
+                )
                 .child(chevron)
                 .into_any_element(),
         )
