@@ -6,6 +6,9 @@ use serde::Serialize;
 use std::path::Path;
 use uuid::Uuid;
 
+pub mod auto_move;
+pub mod linked_turns;
+
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -45,58 +48,58 @@ const DEFAULT_COLUMNS: [(&str, &str); 4] = [
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Board {
-    id: String,
-    name: String,
-    created_at: i64,
-    updated_at: i64,
+    pub id: String,
+    pub name: String,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Column {
-    id: String,
-    board_id: String,
-    name: String,
-    position: i64,
-    role: Option<String>,
+    pub id: String,
+    pub board_id: String,
+    pub name: String,
+    pub position: i64,
+    pub role: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Card {
-    id: String,
-    board_id: String,
-    column_id: String,
-    number: i64,
-    title: String,
-    body: String,
-    position: i64,
-    link_kind: Option<String>,
-    link_id: Option<String>,
-    created_at: i64,
-    updated_at: i64,
+    pub id: String,
+    pub board_id: String,
+    pub column_id: String,
+    pub number: i64,
+    pub title: String,
+    pub body: String,
+    pub position: i64,
+    pub link_kind: Option<String>,
+    pub link_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Activity {
-    id: String,
-    board_id: String,
-    card_id: Option<String>,
-    kind: String,
-    actor: String,
-    from_column: Option<String>,
-    to_column: Option<String>,
-    detail: Option<String>,
-    created_at: i64,
+    pub id: String,
+    pub board_id: String,
+    pub card_id: Option<String>,
+    pub kind: String,
+    pub actor: String,
+    pub from_column: Option<String>,
+    pub to_column: Option<String>,
+    pub detail: Option<String>,
+    pub created_at: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardDetail {
-    board: Board,
-    columns: Vec<Column>,
-    cards: Vec<Card>,
+    pub board: Board,
+    pub columns: Vec<Column>,
+    pub cards: Vec<Card>,
 }
 
 pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
