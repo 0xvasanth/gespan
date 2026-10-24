@@ -71,7 +71,7 @@ cargo test --manifest-path crates/rebase-gpui/Cargo.toml --locked -p rebase-core
 ## Board — October 24, 2026
 
 The native Board shares the Tauri app's `boards`, `board_columns`,
-`board_cards` and `board_activity` tables; `tests/shared_contracts.rs` pins the
+`board_cards` and `board_activity` tables; `crates/rebase-core/tests/shared_contracts.rs` pins the
 DDL, error strings and the `rebase.boardEnabled` key to Tauri, and checks that
 anything else is a `board_native_*` table. Task projects, labels, priority, due
 date, subtasks and comments live only in those native tables and are removed

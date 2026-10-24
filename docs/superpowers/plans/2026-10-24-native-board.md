@@ -1,5 +1,7 @@
 # Native Board Implementation Plan
 
+> **Superseded in part by [`2026-10-24-native-board-v2.md`](2026-10-24-native-board-v2.md).** The Board is now on by default in both apps, and the `boardEnabled` import falls back to on. The `dragging` flag is also cleared whenever GPUI no longer reports an active drag (`BoardView::forget_finished_drag`), which runs any deferred reload. This plan is kept as written when it was carried out.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Bring the Board (already shipped in the Tauri app on this branch) to the native Rust/GPUI app, reading and writing the same `rebase.db` tables, behind a native "Board" setting that is off by default.
@@ -175,7 +177,7 @@ Behaviour:
 - **Drop targets:** each column body takes `on_drag_move` and `on_drop`. While hovering, the column gets the 6 % accent tint and 38 % accent border, and a 2 px accent line marks the insertion index. On drop, resolve the target. When it isn't `None`, apply the move optimistically to `detail` and call `card_move(…, "user")`. On error, reload and toast.
 - **Column reorder** by dragging the header, hand-rolled like `review.rs:781-860` (`start_tab_drag` / `move_tab_drag` / `finish_tab_drag`), calling `column_move`.
 - **"Move to…"** in the card `…` menu lists the other columns. Choosing one moves the card to the end of that column with actor `"user"`. This is the keyboard-accessible path, so the menu must work with the keyboard the same way the other menus do.
-- **The `dragging` flag** from Task 4 is set on drag start and cleared on drop or cancel.
+- **The `dragging` flag** from Task 4 is set on drag start and cleared on drop or cancel. A release outside the board fires neither, so the flag is also cleared whenever GPUI stops reporting an active drag, and any deferred reload runs then.
 
 - [ ] **Step 1: Write the failing tests:**
   - Unit tests for `card_drop_index`: above the first midpoint → 0; between → 1; below all → len; an empty column → 0.

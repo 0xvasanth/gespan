@@ -25,7 +25,7 @@ Earlier plans: `2026-10-23-board.md` (Visual Design) and `2026-10-24-native-boar
 
 ## Global Constraints
 
-- **Shared tables.** Tauri's board tables, their DDL and `tests/shared_contracts.rs` stay unchanged. New tables are prefixed `board_native_` and are created by `board::ensure_tables` after the shared DDL.
+- **Shared tables.** Tauri's board tables and their DDL stay unchanged, and `crates/rebase-core/tests/shared_contracts.rs` keeps checking the shared DDL and error strings as before. Its only intended edits are the `boardEnabled` import default, which Task 1 turns on, and setting the `board_native_*` tables apart from the four shared ones. New tables are prefixed `board_native_` and are created by `board::ensure_tables` after the shared DDL.
 - **New tables:**
   - `board_native_meta(card_id PK, priority INTEGER NOT NULL DEFAULT 0, due_at INTEGER)`
   - `board_native_projects(card_id, project TEXT, PK(card_id, project))`
@@ -51,7 +51,7 @@ Earlier plans: `2026-10-23-board.md` (Visual Design) and `2026-10-24-native-boar
 2. **Tauri has made several boards.** Native shows only the oldest, still offers no switcher, and leaves the others alone. Task 2 covers `default_board` with three boards.
 3. **Search and filter together** narrow the cards, and clearing them restores the board. A card that matches by `#number` shows up. Task 3.
 4. **The drawer is open while a poll reloads.** It keeps any unsaved description, and the step moves if another app moved the card. Task 5.
-5. **A narrow window with the drawer open.** The board scrolls horizontally behind the docked drawer, and the header stays clickable. Task 5 checks the header bounds don't intersect the drawer bounds.
+5. **A narrow window with the drawer open.** The board scrolls horizontally within its narrower column beside the docked drawer, with nothing behind the drawer, and the header stays clickable. Task 5 checks the header bounds don't intersect the drawer bounds.
 
 ---
 
