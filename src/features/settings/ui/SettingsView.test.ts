@@ -793,6 +793,21 @@ describe("settings pages", () => {
     }
   });
 
+  it("lists Kiro CLI under Agent CLIs even when it is not installed", async () => {
+    await render("providers");
+    const group = container.querySelector('[data-setting-id="agent-clis"]')!;
+    expect(group).not.toBeNull();
+    // availability is mocked so that only claude and cursor are installed
+    expect(group.textContent).toContain("Kiro CLI");
+    expect(group.querySelector('[aria-label="Show Kiro CLI CLI details"]')).not.toBeNull();
+    // the dropdown's label carries its current value: "Kiro CLI model: Configured model"
+    expect(group.querySelector('[aria-label^="Kiro CLI model"]')).not.toBeNull();
+    const labels = [...group.querySelectorAll("[aria-label]")].map((e) => e.getAttribute("aria-label") ?? "");
+    const kiro = labels.findIndex((l) => l === "Show Kiro CLI CLI details");
+    expect(labels.findIndex((l) => l === "Show Hermes Agent CLI details")).toBeLessThan(kiro);
+    expect(kiro).toBeLessThan(labels.findIndex((l) => l === "Show Antigravity CLI details"));
+  });
+
   it("returns focus to the CLI trigger when the details popover closes", async () => {
     await render("providers");
     const trigger = container.querySelector<HTMLButtonElement>(
