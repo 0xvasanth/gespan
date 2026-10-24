@@ -15,8 +15,8 @@ function transcriber() {
     try {
       transcription =
         Platform.OS === "ios"
-          ? // eslint-disable-next-line @typescript-eslint/no-require-imports
-            (
+          ? (
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
               require("@react-native-ai/apple") as typeof import("@react-native-ai/apple")
             ).AppleTranscription
           : null;

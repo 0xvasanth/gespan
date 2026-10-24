@@ -30,7 +30,7 @@ const run = (command, args, options = {}) =>
     ...options,
   });
 
-// This hook runs before npm install and CocoaPods, so use only Node built-ins.
+// This hook runs before bun install and CocoaPods, so use only Node built-ins.
 const rustup = spawnSync("rustup", ["--version"], { env, stdio: "ignore" });
 if (rustup.error?.code === "ENOENT") {
   const installer = run(

@@ -15,7 +15,7 @@ import {
   StyleSheet,
   View,
   type LayoutChangeEvent,
-  type ScrollView,
+  type ScrollViewInstance,
   type ScrollViewProps,
 } from "react-native";
 import Animated, {
@@ -259,7 +259,7 @@ export function Transcript({
         pendingScroll.current = null;
         if (!mode) return;
         const scroll = list.current?.getNativeScrollRef() as
-          ScrollView | null | undefined;
+          ScrollViewInstance | null | undefined;
         if (firstUserAnchor.current) {
           // The first row's offset is known exactly and does not depend on the
           // keyboard or composer changing the scroll view's bottom edge.
@@ -320,7 +320,7 @@ export function Transcript({
     if (!jump) return;
     jump.setTarget(() => {
       const scroll = list.current?.getNativeScrollRef() as
-        ScrollView | null | undefined;
+        ScrollViewInstance | null | undefined;
       scroll?.scrollToEnd({ animated: true });
     });
     return () => {
@@ -339,7 +339,7 @@ export function Transcript({
   const follow = () => {
     if (!agent || !atEnd.current || pendingScroll.current) return;
     const scroll = list.current?.getNativeScrollRef() as
-      ScrollView | null | undefined;
+      ScrollViewInstance | null | undefined;
     scroll?.scrollToEnd({ animated: true });
   };
 
@@ -379,7 +379,7 @@ export function Transcript({
           ListHeaderComponent={
             loadingOlder ? (
               <ActivityIndicator style={styles.older} color={colors.muted} />
-            ) : null
+            ) : undefined
           }
           onScroll={(event) => {
             const {

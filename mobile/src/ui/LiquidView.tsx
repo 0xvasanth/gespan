@@ -8,6 +8,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type ComponentRef,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -53,7 +54,7 @@ export const GlassPresence = createContext<{
 
 /** Android surfaces explicitly sample this content, excluding their own UI. */
 export const GlassBlurTarget = createContext<
-  RefObject<View | null> | undefined
+  RefObject<ComponentRef<typeof View> | null> | undefined
 >(undefined);
 
 /** A spring with some bounce, for glass popping up into place. */

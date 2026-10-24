@@ -114,10 +114,11 @@ export function SessionCard({
         friction={1}
         rightThreshold={ACTION_SIZE}
         overshootRight={false}
-        dragOffsetFromRightEdge={10}
+        // Gesture Handler 3 takes the left-swipe offset as a signed distance.
+        dragOffsetFromRight={-10}
         // Its actions are on the right, so only a swipe left is its own; one
         // right goes to whatever is around it, such as the page before.
-        dragOffsetFromLeftEdge={Number.MAX_SAFE_INTEGER}
+        dragOffsetFromLeft={Number.MAX_SAFE_INTEGER}
         onSwipeableWillOpen={() => {
           opened.current = true;
           if (swipeable.current) onSwipeOpen?.(swipeable.current);

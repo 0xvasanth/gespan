@@ -133,10 +133,10 @@ export function SessionsPage({
               <Text style={styles.empty}>
                 {narrowed ? "No matching sessions." : "No sessions yet."}
               </Text>
-            ) : null
+            ) : undefined
           }
           ListFooterComponent={
-            pages?.loadingMore ? <ActivityIndicator style={styles.more} color={colors.muted} /> : null
+            pages?.loadingMore ? <ActivityIndicator style={styles.more} color={colors.muted} /> : undefined
           }
           onScrollBeginDrag={closeOpenRow}
           onEndReached={pages?.loadMore}

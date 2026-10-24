@@ -66,7 +66,7 @@ export async function renderDither(uri: string, key: string) {
   const { width, height, data } = decode(jpeg, { useTArray: true, formatAsRGBA: true });
   const pixels = fadeOut({ width, height, pixels: ditherPixels({ width, height, pixels: data }) });
   output.create({ overwrite: true });
-  output.write(encodePng(width, height, pixels));
+  await output.write(encodePng(width, height, pixels));
   return output.uri;
 }
 

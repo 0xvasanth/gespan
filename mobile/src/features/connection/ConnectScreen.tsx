@@ -10,9 +10,7 @@ import {
   View,
   type LayoutChangeEvent,
   type LayoutRectangle,
-  type NativeSyntheticEvent,
-  type TextLayoutEventData,
-  type TextLayoutLine,
+  type TextLayoutEvent,
 } from "react-native";
 import Animated, {
   Easing,
@@ -29,6 +27,9 @@ import { MascotRain } from "@/features/mascots/MascotRain";
 import type { Collider } from "@/features/mascots/mascotPhysics";
 import { useConnection } from "./ConnectionProvider";
 import { PairingLinkSheet } from "./PairingLinkSheet";
+
+/** React Native 0.87 stopped exporting the line type of a text layout event. */
+type TextLayoutLine = TextLayoutEvent["nativeEvent"]["lines"][number];
 
 const EASE = Easing.out(Easing.cubic);
 
@@ -236,7 +237,7 @@ function useScreenColliders() {
       sync();
     },
     lines:
-      (part: Part) => (event: NativeSyntheticEvent<TextLayoutEventData>) => {
+      (part: Part) => (event: TextLayoutEvent) => {
         texts.current[part] = event.nativeEvent.lines;
         sync();
       },

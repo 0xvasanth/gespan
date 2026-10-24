@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentRef,
   type ReactElement,
 } from "react";
 import {
@@ -142,7 +143,7 @@ function WrappedList({ rows, palette, signs, footer }: ListProps) {
       maxToRenderPerBatch={60}
       windowSize={12}
       contentContainerStyle={styles.content}
-      ListFooterComponent={footer}
+      ListFooterComponent={footer ?? undefined}
     />
   );
 }
@@ -212,7 +213,7 @@ function PannedList({
     },
   });
 
-  const sideways = useRef<ScrollView>(null);
+  const sideways = useRef<ComponentRef<typeof ScrollView>>(null);
   const [height, setHeight] = useState(0);
   useEffect(() => {
     sideways.current?.scrollTo({ x: 0, animated: false });
@@ -257,7 +258,7 @@ function PannedList({
         renderItem={({ item }) => <GutterCell row={item} signs={signs} />}
         // The same height as the code's footer, so both lists end together.
         ListFooterComponent={
-          footer ? <View style={styles.hidden}>{footer}</View> : null
+          footer ? <View style={styles.hidden}>{footer}</View> : undefined
         }
       />
       <ScrollView
@@ -280,7 +281,7 @@ function PannedList({
           onScroll={onCodeScroll}
           scrollEventThrottle={16}
           renderItem={({ item }) => <CodeCell row={item} palette={palette} />}
-          ListFooterComponent={footer}
+          ListFooterComponent={footer ?? undefined}
         />
       </ScrollView>
     </View>

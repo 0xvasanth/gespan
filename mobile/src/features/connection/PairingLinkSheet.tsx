@@ -1,5 +1,5 @@
 import { BottomSheet, RNHostView } from "@expo/ui";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentRef } from "react";
 import { Pressable, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -20,7 +20,7 @@ export function PairingLinkSheet({
   const styles = useStyles();
   const { width } = useWindowDimensions();
   const { bottom } = useSafeAreaInsets();
-  const input = useRef<TextInput>(null);
+  const input = useRef<ComponentRef<typeof TextInput>>(null);
   const [link, setLink] = useState("");
   // Focused once the sheet is up, as focusing during its slide drops the keyboard.
   useEffect(() => {
