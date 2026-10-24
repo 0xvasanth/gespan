@@ -107,6 +107,7 @@ import { ApprovalToasts } from "../features/sessions/ui/ApprovalToasts";
 import { ResourcePressureNotice } from "../features/notifications/ui/ResourcePressureNotice";
 import { HarnessUpdateNotice } from "../features/providers/ui/HarnessUpdateNotice";
 import { NewLayoutNotice } from "./shell/NewLayoutNotice";
+import { openInEditorFolder } from "./shell/openInEditor";
 import { WhatsNewDialog } from "./shell/WhatsNewDialog";
 import { ProviderSignInDialog } from "../features/sessions/ui/ProviderSignInDialog";
 import {
@@ -164,7 +165,7 @@ import {
   detachSessionWorktree,
   checkWorktreeRemoval,
   listWorktrees,
-  namedWorktreeBranch,
+  nameWorktreeAfterMessage,
   orchestrationWorktreeBranchName,
   removeOrchestrationBranch,
   removeOrchestrationWorktree,
@@ -8123,29 +8124,33 @@ function Workspace({
 
           const branchMessage =
             harnessText || attachments.map((file) => file.name).join(", ");
-          void generateHarnessBranchName(
-            pickTextHarness(current.harness),
-            workCwd,
-            branchMessage,
-          )
-            .then(async (fragment) => {
-              const branch = fragment ? namedWorktreeBranch(fragment) : null;
-              if (!branch) return;
-              const renamed = await renameWorktreeBranch(
+          void nameWorktreeAfterMessage({
+            generate: () =>
+              generateHarnessBranchName(
+                pickTextHarness(current.harness),
+                workCwd,
+                branchMessage,
+              ),
+            // Only while it is still the placeholder: a rename the user
+            // makes meanwhile wins.
+            rename: (branch) =>
+              renameWorktreeBranch(
                 current.cwd,
                 tree.path,
                 branch,
-              );
-              setSessions((prev) =>
-                prev.map((session) =>
-                  session.id === sessionId &&
-                  pathKey(sessionWorkCwd(session)) === pathKey(tree.path)
-                    ? { ...session, branch: renamed.branch ?? undefined }
-                    : session,
-                ),
-              );
-            })
-            .catch(() => undefined);
+                tree.branch ?? undefined,
+              ),
+          }).then((renamed) => {
+            if (!renamed) return;
+            setSessions((prev) =>
+              prev.map((session) =>
+                session.id === sessionId &&
+                pathKey(sessionWorkCwd(session)) === pathKey(tree.path)
+                  ? { ...session, branch: renamed.branch ?? undefined }
+                  : session,
+              ),
+            );
+          });
         }
         launchTitleGeneration(workCwd);
         if (turnGen.current.get(sessionId) !== gen) return;
@@ -14176,6 +14181,13 @@ function Workspace({
       sessionSidebarOpen={sessionSidebarOpen}
       compactRail={!insetLayout && compactTitleNavigation}
       inset={insetLayout}
+      // The focused session's worktree or folder, as a new terminal would
+      // open; Pilots, app views and Settings have none of their own.
+      openInEditorCwd={
+        pilotCovers || activeAppView || settingsOpen
+          ? undefined
+          : openInEditorFolder(terminalCwd)
+      }
       rightPanelOpen={rightPanelOpen}
       onToggleRightPanel={
         showRightPanelToggle ? onToggleRightPanel : undefined

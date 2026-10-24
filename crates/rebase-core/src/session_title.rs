@@ -147,6 +147,32 @@ pub fn generate_for(
     account: crate::accounts::Profile,
     cancel: Arc<AtomicBool>,
 ) -> Option<GeneratedTitle> {
+    let output = run_naming_prompt(kind, cwd, prompt(message), account, cancel)?;
+    parse(&output, message)
+}
+
+/// A worktree branch name for the work `message` asks for, as Tauri's
+/// generateBranchName does: a fragment to put after `rebase/`. Same worker,
+/// provider support and small models as titles.
+pub fn generate_branch_name(
+    kind: Kind,
+    cwd: &Path,
+    message: &str,
+    account: crate::accounts::Profile,
+    cancel: Arc<AtomicBool>,
+) -> Option<String> {
+    let prompt = crate::scm::branch_name_prompt(message);
+    let output = run_naming_prompt(kind, cwd, prompt, account, cancel)?;
+    crate::scm::parse_branch_name(&output)
+}
+
+fn run_naming_prompt(
+    kind: Kind,
+    cwd: &Path,
+    prompt: String,
+    account: crate::accounts::Profile,
+    cancel: Arc<AtomicBool>,
+) -> Option<String> {
     if !supports(kind) {
         return None;
     }
@@ -156,12 +182,12 @@ pub fn generate_for(
         Kind::Claude => Some("claude-haiku-4-5".into()),
         _ => None,
     };
-    let output = provider::run_text(
+    provider::run_text(
         Request {
             kind,
             binary,
             cwd: cwd.into(),
-            prompt: prompt(message),
+            prompt,
             provider_id: None,
             model,
             settings: Settings {
@@ -171,8 +197,7 @@ pub fn generate_for(
         },
         cancel,
     )
-    .ok()?;
-    parse(&output, message)
+    .ok()
 }
 
 #[cfg(test)]

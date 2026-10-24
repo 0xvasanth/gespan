@@ -36,6 +36,9 @@ fn update(status: impl Into<String>, finished: bool) -> Update {
         questions_resolved: vec![],
         handoff: None,
         status: status.into(),
+        // Conversations skip Board settlement for remote turns, so this value
+        // never moves a card.
+        succeeded: false,
         finished,
     }
 }

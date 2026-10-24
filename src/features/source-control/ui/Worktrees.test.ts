@@ -2,7 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../model/worktrees", async (original) => ({
   ...(await original<typeof import("../model/worktrees")>()),
@@ -41,6 +41,7 @@ import {
   checkWorktreeRemoval,
   listWorktrees,
   namedWorktreeBranch,
+  nameWorktreeAfterMessage,
   orchestrationWorktreeBranchName,
   temporaryWorktreeBranchName,
   type Worktree,
@@ -142,6 +143,49 @@ it("builds temporary and generated worktree branch names", () => {
   // Legacy mc/ prefix is stripped, then re-prefixed with rebase/.
   expect(namedWorktreeBranch("mc/already-short")).toBe("rebase/already-short");
   expect(namedWorktreeBranch("  ")).toBeNull();
+});
+
+describe("nameWorktreeAfterMessage", () => {
+  const renamedTo = (branch: string): Worktree => ({ ...tree, branch });
+
+  it("renames the placeholder to the provider's name for the work", async () => {
+    const rename = vi.fn(async (branch: string) => renamedTo(branch));
+    const renamed = await nameWorktreeAfterMessage({
+      generate: async () => "open-in-editor-button",
+      rename,
+    });
+    expect(rename).toHaveBeenCalledWith("rebase/open-in-editor-button");
+    expect(renamed?.branch).toBe("rebase/open-in-editor-button");
+  });
+
+  it("keeps the placeholder when the provider has no name", async () => {
+    const rename = vi.fn(async (branch: string) => renamedTo(branch));
+    for (const fragment of [null, "", "  "]) {
+      expect(
+        await nameWorktreeAfterMessage({ generate: async () => fragment, rename }),
+      ).toBeNull();
+    }
+    expect(rename).not.toHaveBeenCalled();
+  });
+
+  it("keeps the placeholder when naming or renaming fails", async () => {
+    expect(
+      await nameWorktreeAfterMessage({
+        generate: async () => {
+          throw new Error("provider offline");
+        },
+        rename: vi.fn(),
+      }),
+    ).toBeNull();
+    expect(
+      await nameWorktreeAfterMessage({
+        generate: async () => "fix-login",
+        rename: async () => {
+          throw new Error("Only automatically created worktree branches can be renamed");
+        },
+      }),
+    ).toBeNull();
+  });
 });
 
 it("selects a draft workspace without opening the creation dialog", async () => {

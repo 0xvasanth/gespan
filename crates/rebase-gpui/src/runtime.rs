@@ -49,6 +49,10 @@ pub(crate) struct Update {
     pub(crate) questions_resolved: Vec<String>,
     pub(crate) handoff: Option<Option<rebase_core::agent::Handoff>>,
     pub(crate) status: String,
+    /// On the final update: the provider finished the turn without an error.
+    /// It stays true when saving the transcript, metadata or handoff fails
+    /// afterwards: the work itself is done, and `status` reports the save.
+    pub(crate) succeeded: bool,
     pub(crate) finished: bool,
 }
 fn publish(
@@ -255,6 +259,7 @@ fn run_turn_using(
                     "Connecting…"
                 }
                 .into(),
+                succeeded: false,
                 finished: false,
             },
         )?;
@@ -302,6 +307,7 @@ fn run_turn_using(
                     questions_resolved: Vec::new(),
                     handoff: None,
                     status: "Connecting…".into(),
+                    succeeded: false,
                     finished: false,
                 },
             )?;
@@ -355,6 +361,7 @@ fn run_turn_using(
                     questions_resolved: Vec::new(),
                     handoff: Some(Some(prepared)),
                     status: "Connecting…".into(),
+                    succeeded: false,
                     finished: false,
                 },
             )?;
@@ -818,6 +825,7 @@ fn run_turn_using(
                             questions_resolved,
                             handoff,
                             status,
+                            succeeded: false,
                             finished: false,
                         },
                     )
@@ -897,6 +905,7 @@ fn run_turn_using(
             store.finish_turn(&session, cwd, id)
         });
     }
+    let succeeded = history_loaded && result.is_ok();
     let (start, rows, mut status) = if !history_loaded {
         // A rejected preflight has no row baseline. Writing an error at row 0
         // would replace a real conversation's first saved message.
@@ -986,6 +995,7 @@ fn run_turn_using(
         questions_resolved: Vec::new(),
         handoff,
         status,
+        succeeded,
         finished: true,
     });
 }

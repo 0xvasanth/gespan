@@ -501,7 +501,7 @@ impl Shell {
             };
         }
         if !self.git.read(cx).available() {
-            return 6. + 24. + 12.;
+            return 6. + 24. + self.open_in_editor_room(cx) + 12.;
         }
         // The toggle and the compact tool tabs, including the open label's padding.
         let tabs = if self.corner_tabs_shown() {
@@ -509,7 +509,7 @@ impl Shell {
         } else {
             0.
         };
-        6. + tabs + self.diff_stat_room(cx) + CORNER_BUTTONS_WIDTH + 12.
+        6. + tabs + self.diff_stat_room(cx) + self.corner_buttons_width(cx) + 12.
     }
     fn corner_tabs_shown(&self) -> bool {
         self.workspace.right_panel_open
@@ -529,6 +529,10 @@ impl Shell {
             return row
                 .pl_1p5()
                 .pr_3()
+                .children(
+                    self.open_in_editor_button(cx)
+                        .map(|b| b.mr(px(CORNER_CONTROL_GAP))),
+                )
                 .child(self.file_search_button(cx))
                 .into_any_element();
         }
@@ -616,6 +620,10 @@ impl Shell {
                     .child(titlebar_drag_area().flex_1().min_w_0())
             })
             .children(self.project_diff_stat(cx))
+            .children(
+                self.open_in_editor_button(cx)
+                    .map(|b| b.ml(px(CORNER_CONTROL_GAP))),
+            )
             .child(self.file_search_button(cx).mx(px(CORNER_CONTROL_GAP)))
             .child(
                 // Closed, the toggle carries the changes dot itself.
@@ -915,7 +923,9 @@ mod tests {
             };
             let label_selector = Box::leak(format!("{}-label", selectors[1]).into_boxed_str());
             let mut full_label_width = None;
-            for width in [420., 312., 280., 260., 220., 420.] {
+            // 340px abbreviates: the corner's Open in editor button takes room
+            // the label had at narrower widths.
+            for width in [420., 340., 280., 260., 220., 420.] {
                 window
                     .update(visual, |shell, _, cx| {
                         shell.workspace.new_layout_boxy = boxy;
@@ -938,9 +948,20 @@ mod tests {
                 assert!(tabs[0].right() <= tabs[1].left());
                 assert!(tabs[1].right() <= tabs[2].left());
                 assert!(tabs[2].right() <= stats.left());
-                assert!(stats.right() <= search.left());
                 assert!(search.right() <= toggle.left());
-                assert_eq!(search.left() - stats.right(), px(CORNER_CONTROL_GAP));
+                // Open in editor sits between the stat and search while the
+                // panel has room for it.
+                match visual.debug_bounds("titlebar-open-in-editor") {
+                    Some(editor) => {
+                        assert!(width >= 340., "{width}px has no room for it");
+                        assert_eq!(editor.left() - stats.right(), px(CORNER_CONTROL_GAP));
+                        assert_eq!(search.left() - editor.right(), px(CORNER_CONTROL_GAP));
+                    }
+                    None => {
+                        assert!(width < 340., "{width}px has room for it");
+                        assert_eq!(search.left() - stats.right(), px(CORNER_CONTROL_GAP));
+                    }
+                }
                 assert_eq!(toggle.left() - search.right(), px(CORNER_CONTROL_GAP));
                 assert_eq!(toggle.size.width, px(24.));
                 if width == 420. {
@@ -949,7 +970,7 @@ mod tests {
                         assert_eq!(label.size.width, full_width);
                     }
                     full_label_width = Some(label.size.width);
-                } else if width == 312. {
+                } else if width == 340. {
                     let label = visual.debug_bounds(label_selector).unwrap();
                     assert!(label.size.width > px(0.));
                     assert!(label.size.width < full_label_width.unwrap());

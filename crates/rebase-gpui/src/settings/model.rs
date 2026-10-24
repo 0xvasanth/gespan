@@ -125,7 +125,7 @@ impl Section {
     }
     fn keywords(self) -> &'static str {
         match self {
-            Section::General => "version update sounds notifications notes rail",
+            Section::General => "version update sounds notifications notes board rail",
             Section::Connections => "ssh remote host machine server environment always on",
             Section::Appearance => {
                 "theme dark light color accent glass blur zoom scale wallpaper rail sidebar"
@@ -241,6 +241,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         Section::General,
         "Notes",
         "notebook markdown rail scratchpad",
+    ),
+    (
+        "board",
+        Section::General,
+        "Board",
+        "kanban cards columns tasks tickets track",
     ),
     (
         "quick-composer",
@@ -573,6 +579,21 @@ mod tests {
             assert_eq!(hit.map(|r| r.section), Some(Section::General), "{query}");
         }
     }
+
+    #[test]
+    fn kanban_finds_the_board_setting_in_general() {
+        assert!(
+            search("kanban")
+                .iter()
+                .any(|r| r.setting == Some("board") && r.section == Section::General)
+        );
+    }
+
+    #[test]
+    fn board_is_on_until_turned_off() {
+        assert!(crate::settings::preferences::Preferences::default().board);
+    }
+
     #[test]
     fn rows_win_their_own_name_and_shared_appearance_rows_are_searchable() {
         let results = search("theme");

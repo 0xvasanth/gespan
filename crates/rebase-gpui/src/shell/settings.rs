@@ -167,13 +167,7 @@ impl Shell {
                         .harness
                         .update(cx, |notice, cx| notice.check_now(hidden, cx));
                 }
-                SettingsEvent::Changed(prefs) => {
-                    this.workspace.preferences = *prefs.clone();
-                    this.apply_preferences(cx);
-                    this.persist(cx);
-                    this.invalidate_chrome(cx);
-                    cx.notify();
-                }
+                SettingsEvent::Changed(prefs) => this.set_preferences(*prefs.clone(), window, cx),
                 SettingsEvent::NewLayout(on) => {
                     if this.workspace.classic_layout == *on {
                         this.toggle_layout(cx);
@@ -344,6 +338,31 @@ impl Shell {
             eprintln!("rebase: keep screen awake failed: {error}");
         }
     }
+    pub(super) fn set_preferences(
+        &mut self,
+        prefs: crate::settings::Preferences,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace.preferences = prefs;
+        self.apply_preferences(cx);
+        if !self.workspace.preferences.board
+            && self.active_app_view == Some(app_views::AppView::Board)
+        {
+            // Closing saves the workspace, including the new preferences.
+            self.close_app_view(window, cx);
+            // Closing the Board moves focus to the chat behind; keep it on
+            // the Settings page the change came from.
+            if let Some(settings) = &self.settings {
+                window.focus(&settings.focus_handle(cx), cx);
+            }
+        } else {
+            self.persist(cx);
+        }
+        self.invalidate_chrome(cx);
+        cx.notify();
+    }
+
     pub(super) fn apply_preferences(&mut self, cx: &mut Context<Self>) {
         self.refresh_notification_permission();
         self.configure_quick_composer(cx);

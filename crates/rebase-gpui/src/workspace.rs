@@ -12,6 +12,7 @@ pub(crate) enum AppView {
     Notes,
     Automations,
     Flows,
+    Board,
 }
 impl AppView {
     pub fn label(self) -> &'static str {
@@ -20,6 +21,7 @@ impl AppView {
             Self::Notes => "Notes",
             Self::Automations => "Automations",
             Self::Flows => "Flows",
+            Self::Board => "Board",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -28,6 +30,7 @@ impl AppView {
             Self::Notes => "note",
             Self::Automations => "zap",
             Self::Flows => "git-merge",
+            Self::Board => "kanban",
         }
     }
 }
@@ -140,6 +143,8 @@ pub(crate) struct Workspace {
     pub actions: HashMap<String, Vec<ProjectAction>>,
     /// The id of the action each project last ran; the footer shows it.
     pub last_actions: HashMap<String, String>,
+    /// The editor the title bar's Open in editor last opened a folder in.
+    pub last_external_editor: Option<String>,
     /// Original layout: separate project and session sidebars.
     pub classic_layout: bool,
     /// The new single-sidebar layout can keep its full-height, square frame.
@@ -341,6 +346,7 @@ impl Default for Workspace {
             docks: Default::default(),
             actions: HashMap::new(),
             last_actions: HashMap::new(),
+            last_external_editor: None,
             classic_layout: false,
             // Fresh installs start on the boxy frame; saved choices are kept.
             new_layout_boxy: true,
@@ -981,6 +987,7 @@ mod tests {
         Inbox,
         Notes,
         Automations,
+        Board,
     }
     #[derive(Deserialize, Debug, PartialEq)]
     enum BeforeFlowsTab {

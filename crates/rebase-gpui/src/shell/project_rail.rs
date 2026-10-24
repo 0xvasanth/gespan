@@ -606,6 +606,7 @@ impl Shell {
                     ("Notes", "file"),
                     ("Automations", "zap"),
                     ("Flows", "git-merge"),
+                    ("Board", "kanban"),
                 ]
                 .into_iter()
                 .filter(|(label, _)| match *label {
@@ -614,6 +615,7 @@ impl Shell {
                         self.workspace.preferences.notes && self.workspace.sidebar_notes_visible
                     }
                     "Automations" => self.workspace.sidebar_automations_visible,
+                    "Board" => self.workspace.preferences.board,
                     _ => true,
                 })
                 .map(|(label, glyph)| {
@@ -655,6 +657,7 @@ impl Shell {
                             "Notes" => this.open_notes(w, cx),
                             "Automations" => this.open_automations(w, cx),
                             "Flows" => this.open_flows(w, cx),
+                            "Board" => this.open_board(w, cx),
                             _ => (),
                         }))
                 }),
@@ -842,6 +845,7 @@ impl Shell {
                         self.workspace.sidebar_automations_visible,
                     ),
                     (workspace::AppView::Flows, true),
+                    (workspace::AppView::Board, self.workspace.preferences.board),
                 ]
                 .into_iter()
                 .filter(|(_, v)| *v)
@@ -858,6 +862,7 @@ impl Shell {
                             workspace::AppView::Notes => "rail-notes",
                             workspace::AppView::Automations => "rail-automations",
                             workspace::AppView::Flows => "rail-flows",
+                            workspace::AppView::Board => "rail-board",
                         },
                         view.label(),
                         glyph,
@@ -885,6 +890,7 @@ impl Shell {
                                 workspace::AppView::Notes => this.open_notes(w, cx),
                                 workspace::AppView::Automations => this.open_automations(w, cx),
                                 workspace::AppView::Flows => this.open_flows(w, cx),
+                                workspace::AppView::Board => this.open_board(w, cx),
                             }
                         }
                     }))

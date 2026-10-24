@@ -8,6 +8,7 @@ mod activity;
 mod arcade;
 mod assets;
 mod automations;
+mod board;
 mod changes;
 mod composer_completion;
 mod composer_motion;

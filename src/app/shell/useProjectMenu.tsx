@@ -18,7 +18,7 @@ import {
   revealPath,
   type ExternalEditor,
 } from "../../platform/tauri/fs";
-import { IS_MAC, IS_WIN } from "../../platform/tauri/platform";
+import { REVEAL_LABEL } from "./openInEditor";
 import { projectKey, projectName } from "../../shared/lib/paths";
 import {
   loadPinnedProjects,
@@ -76,12 +76,6 @@ import { useProjectNotificationPreferences } from "../../features/notifications/
 import { useNotificationProjects } from "../../features/notifications/hooks/useNotificationProjects";
 import { updateNotificationPreferences } from "../../features/notifications/model/notificationPreferences";
 import type { ExplorerMenuItem } from "../../features/files/ui/ExplorerMenu";
-
-const REVEAL_LABEL = IS_MAC
-  ? "Reveal in Finder"
-  : IS_WIN
-    ? "Reveal in File Explorer"
-    : "Open Containing Folder";
 
 function projectMenuExtraItems(
   pinned: boolean,

@@ -689,20 +689,20 @@ describe("settings pages", () => {
     expect(localStorage.getItem("rebase.tabAnimationsEnabled")).toBe("1");
   });
 
-  it("offers the Board as an opt-in, right after Notes", async () => {
+  it("offers the Board on by default, right after Notes", async () => {
     await render("general");
     const control = container.querySelector<HTMLButtonElement>(
       '[role="switch"][aria-label="Board"]',
     )!;
 
-    expect(control.getAttribute("aria-checked")).toBe("false");
-    expect(localStorage.getItem("rebase.boardEnabled")).toBeNull();
-    await act(async () => control.click());
     expect(control.getAttribute("aria-checked")).toBe("true");
-    expect(localStorage.getItem("rebase.boardEnabled")).toBe("1");
+    expect(localStorage.getItem("rebase.boardEnabled")).toBeNull();
     await act(async () => control.click());
     expect(control.getAttribute("aria-checked")).toBe("false");
     expect(localStorage.getItem("rebase.boardEnabled")).toBe("0");
+    await act(async () => control.click());
+    expect(control.getAttribute("aria-checked")).toBe("true");
+    expect(localStorage.getItem("rebase.boardEnabled")).toBe("1");
 
     const ids = renderedSettingIds();
     expect(ids.indexOf("board")).toBe(ids.indexOf("notes") + 1);

@@ -18,6 +18,7 @@ mod layout;
 mod live_agents;
 mod mobile_host;
 mod notifications;
+mod open_in_editor;
 mod orchestration;
 mod picker_preferences;
 pub(crate) mod pilots;
@@ -304,6 +305,8 @@ pub(crate) enum MenuTarget {
     RunningTerminals,
     /// The footer Actions button's list of saved commands.
     Actions,
+    /// The title bar corner's Open in editor menu, for this folder.
+    OpenInEditor(String),
 }
 pub(crate) struct ShellMenu {
     pub(crate) target: MenuTarget,
@@ -581,6 +584,8 @@ pub(crate) struct Shell {
     link_dialog: Option<session_groups::LinkDialog>,
     action_dialog: Option<actions::ActionDialog>,
     actions_anchor: AnchorSlot,
+    editor_anchor: AnchorSlot,
+    editor_menu: open_in_editor::EditorMenu,
     /// The dock terminal each action last ran in, by project and action id.
     action_terminals: HashMap<(String, String), gpui::WeakEntity<Terminal>>,
     deleting: HashSet<i64>,
@@ -602,6 +607,7 @@ pub(crate) struct Shell {
     inbox: Option<Entity<crate::inbox::Inbox>>,
     automations: Option<Entity<crate::automations::Automations>>,
     flows: Option<Entity<crate::flows::FlowsView>>,
+    board: Option<Entity<crate::board::BoardView>>,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -928,6 +934,8 @@ impl Shell {
             link_dialog: None,
             action_dialog: None,
             actions_anchor: AnchorSlot::default(),
+            editor_anchor: AnchorSlot::default(),
+            editor_menu: Default::default(),
             action_terminals: HashMap::new(),
             deleting: HashSet::new(),
             group_writes: None,
@@ -948,6 +956,7 @@ impl Shell {
             inbox: None,
             automations: None,
             flows: None,
+            board: None,
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),
@@ -1072,6 +1081,9 @@ impl Shell {
                 cx,
             )
         });
+        if let Ok(path) = locked(&this.store).map(|store| store.database_path().to_path_buf()) {
+            crate::board::turns::install(path, Some(pilots.downgrade()), cx);
+        }
         this.observations.push(
             cx.subscribe(&pilots, |this, _, _: &crate::pilots::Changed, cx| {
                 this.sync_pilot_search(cx);
@@ -1201,6 +1213,9 @@ impl Shell {
     }
     fn add(&mut self, summary: Session, cx: &mut Context<Self>) {
         self.workspace.add_project(&summary.cwd);
+        // A session started in the background adds its project without a
+        // persist, so tell an open Board here too.
+        self.sync_board_projects(cx);
         self.add_loaded(summary, cx);
     }
     /// Loading history must not turn every session directory into a rail project.
@@ -3619,6 +3634,7 @@ impl Shell {
         self.sync_git(cx);
         self.update_chat_visibility(cx);
         self.update_usage_provider(cx);
+        self.sync_board_projects(cx);
         self.invalidate_chrome(cx);
         let state = serde_json::to_string(&self.workspace).unwrap();
         *self.latest_state.lock().unwrap_or_else(|e| e.into_inner()) = state.clone();
@@ -4464,6 +4480,19 @@ impl Shell {
             } else {
                 self.panel_toggle(window, cx)
             })
+            // The original layout has no corner, so the strip ends with it.
+            .when(self.workspace.classic_layout, |d| {
+                d.children(self.open_in_editor_button(cx).map(|button| {
+                    div()
+                        .h(px(TITLE_BAR_HEIGHT))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .pl_1p5()
+                        .pr_3()
+                        .child(button)
+                }))
+            })
             .into_any()
     }
 
@@ -4513,7 +4542,14 @@ impl Shell {
             .items_center()
             .map(|d| {
                 if !toggle {
-                    return d.pl_1p5().pr_3().child(self.file_search_button(cx));
+                    return d
+                        .pl_1p5()
+                        .pr_3()
+                        .children(
+                            self.open_in_editor_button(cx)
+                                .map(|b| b.mr(px(CORNER_CONTROL_GAP))),
+                        )
+                        .child(self.file_search_button(cx));
                 }
                 let ink = if panel_off {
                     content(0.25)
@@ -4540,6 +4576,10 @@ impl Shell {
                                 .when(!pilot, |d| d.child(titlebar_drag_area().flex_1().min_w_0()))
                         })
                         .children(self.project_diff_stat(cx))
+                        .children(
+                            self.open_in_editor_button(cx)
+                                .map(|b| b.ml(px(CORNER_CONTROL_GAP))),
+                        )
                         .child(self.file_search_button(cx).mx(px(CORNER_CONTROL_GAP)))
                         .child(
                             div()
@@ -4672,7 +4712,8 @@ impl Shell {
         if !self.workspace.right_panel_open || self.app_view_open() {
             return natural;
         }
-        let controls = crate::right_panel::TAB_ICONS_WIDTH + 6. + CORNER_BUTTONS_WIDTH + 12.;
+        let controls =
+            crate::right_panel::TAB_ICONS_WIDTH + 6. + self.corner_buttons_width(cx) + 12.;
         natural.min((self.workspace.right_panel_width - controls).max(48.))
     }
     fn project_tabs_width(&self, cx: &App) -> f32 {
@@ -4683,7 +4724,7 @@ impl Shell {
         };
         (self.workspace.right_panel_width
             - self.diff_stat_room(cx)
-            - CORNER_BUTTONS_WIDTH
+            - self.corner_buttons_width(cx)
             - padding)
             .clamp(
                 crate::right_panel::TAB_ICONS_WIDTH,
@@ -4711,14 +4752,14 @@ impl Shell {
                     CORNER_TABS_LEAD
                         + self.project_tabs_width(cx)
                         + self.diff_stat_room(cx)
-                        + CORNER_BUTTONS_WIDTH
+                        + self.corner_buttons_width(cx)
                         + 12.,
                 )
             } else {
-                6. + self.diff_stat_room(cx) + CORNER_BUTTONS_WIDTH + 12.
+                6. + self.diff_stat_room(cx) + self.corner_buttons_width(cx) + 12.
             }
         } else {
-            6. + 24. + 12.
+            6. + 24. + self.open_in_editor_room(cx) + 12.
         }
     }
     /// Classic: the strip's room after its tabs, wherever the toggle
@@ -4768,6 +4809,16 @@ impl Shell {
                     this.change_sidebar_option(id, cx);
                     let items = this.sidebar_options_menu_items();
                     menu.update(cx, |menu, cx| menu.replace_items(items, cx));
+                    return;
+                }
+                // Editor rows stay open while the editor starts, so a failure
+                // can be shown in the menu itself.
+                if let MenuEvent::Picked(id, _) = event
+                    && let Some(editor) = id.strip_prefix(open_in_editor::EDITOR_ITEM_PREFIX)
+                    && let Some(MenuTarget::OpenInEditor(path)) =
+                        this.menu.as_ref().map(|m| m.target.clone())
+                {
+                    this.pick_external_editor(path, editor.to_owned(), cx);
                     return;
                 }
                 if let MenuEvent::Picked(id, _) = event
@@ -4829,6 +4880,12 @@ impl Shell {
                 "Actions".into(),
                 self.actions_menu(),
                 200.,
+                MenuStyle::Explorer,
+            ),
+            MenuTarget::OpenInEditor(path) => (
+                format!("Open {} in", project_name(path)).into(),
+                self.editor_menu_items(),
+                232.,
                 MenuStyle::Explorer,
             ),
             MenuTarget::Tab(_)
@@ -5206,6 +5263,7 @@ impl Shell {
             MenuTarget::TerminalTab(ix) => self.run_terminal_tab_menu(ix, action, window, cx),
             MenuTarget::RunningTerminals => self.run_running_terminals_menu(action, window, cx),
             MenuTarget::Actions => self.run_actions_menu(action, window, cx),
+            MenuTarget::OpenInEditor(path) => self.run_open_in_editor_menu(path, action, cx),
             MenuTarget::TerminalDock => {
                 let side = match action {
                     "top" => DockSide::Top,
@@ -6997,7 +7055,7 @@ impl Shell {
     /// panel toggle, `pl-1.5 pr-3` clear of the edge.
     fn tabs_width(&self, window: &Window, cx: &App) -> f32 {
         let trailing = if self.workspace.boxy_layout() {
-            self.right_drawn + self.strip_trail(cx)
+            self.right_drawn + self.strip_trail(cx) + self.classic_editor_room(cx)
         } else {
             self.toggle_room(cx)
         };
@@ -8201,6 +8259,9 @@ impl Render for Shell {
                     })
                     .when(open.target == MenuTarget::RunningTerminals, |p| {
                         p.side(Side::Top).align(crate::popover::Align::End)
+                    })
+                    .when(matches!(open.target, MenuTarget::OpenInEditor(_)), |p| {
+                        p.align(Align::End)
                     })
             }))
             .children(self.drag_ghost(cx))

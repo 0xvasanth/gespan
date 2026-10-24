@@ -56,15 +56,18 @@ export async function createOrchestrationWorktree(
   return tree;
 }
 
+/** With `from`, renames only while the worktree is still on that branch. */
 export async function renameWorktreeBranch(
   cwd: string,
   path: string,
   branch: string,
+  from?: string,
 ) {
   const tree = await invoke<Worktree>("git_worktree_rename_branch", {
     cwd,
     path,
     branch,
+    from: from ?? null,
   });
   notifyGitChanged();
   return tree;
@@ -91,6 +94,29 @@ export function namedWorktreeBranch(fragment: string): string | null {
     .replace(/^(?:rebase|mc)\/+/, "")
     .replace(/^\/+|\/+$/g, "");
   return clean ? `${APP_BRANCH_PREFIX}${clean}` : null;
+}
+
+/**
+ * Renames a new session worktree's placeholder branch after the work its
+ * first message asks for. A provider without a suggestion, or a failed
+ * rename, keeps the placeholder: the session works the same either way.
+ */
+export async function nameWorktreeAfterMessage({
+  generate,
+  rename,
+}: {
+  /** The provider's branch name fragment for the first message. */
+  generate: () => Promise<string | null>;
+  rename: (branch: string) => Promise<Worktree>;
+}): Promise<Worktree | null> {
+  try {
+    const fragment = await generate();
+    const branch = fragment ? namedWorktreeBranch(fragment) : null;
+    return branch ? await rename(branch) : null;
+  } catch (error) {
+    console.debug("[rebase] worktree branch name", error);
+    return null;
+  }
 }
 
 export async function removeWorktree(

@@ -44,6 +44,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TerminalSpinner } from "../../features/sessions/ui/TerminalSpinner";
 import { TabLabel } from "../../shared/ui/TabLabel";
 import { WindowControls } from "./WindowControls";
+import { OpenInEditorButton } from "./OpenInEditorButton";
 import { PixelMascot } from "../../features/projects/ui/PixelMascot";
 import { PilotRailMascot } from "../../features/pilots/ui/PilotRailMascot";
 import {
@@ -141,6 +142,9 @@ type Props = {
    * owns the rail toggle and history navigation in both rail states.
    */
   inset?: boolean;
+  /** The focused session's folder, offered to an external editor from the
+   * corner. Absent when nothing local is focused. */
+  openInEditorCwd?: string;
   /** Inset layout: the right sidebar holding the project tools. */
   rightPanelOpen?: boolean;
   onToggleRightPanel?: () => void;
@@ -758,6 +762,7 @@ function TitleBarComponent({
   inset = false,
   rightPanelOpen = false,
   onToggleRightPanel,
+  openInEditorCwd,
   rightPanelDot = false,
   rightPanelUnavailable = false,
   canGoBack = false,
@@ -1051,42 +1056,52 @@ function TitleBarComponent({
     railClosed &&
     Boolean(onOpenInbox || onOpenNotes || onOpenSettings);
   const showRightPanelToggle = inset && Boolean(onToggleRightPanel);
+  const showOpenInEditor = !pilot && Boolean(openInEditorCwd);
   // A Pilot's own overview holds its changes; app views have none beside them.
   const rightPanelOff = !!pilot || rightPanelUnavailable;
   const changesDot = rightPanelDot && !rightPanelOff;
   const trailingControls =
     showTrailingActions ||
     showRightPanelToggle ||
+    showOpenInEditor ||
     (pilot && (onTogglePilotOverview || onOpenPilotSettings)) ||
     (!IS_MAC && !hideWindowControls) ? (
       <div className="flex h-full shrink-0 items-stretch">
-        {showRightPanelToggle ? (
+        {showRightPanelToggle || showOpenInEditor ? (
           // Clear of the window's right edge, like the traffic lights' inset
           // on the left.
-          <div className="flex items-center pl-1.5 pr-3">
-            <IconButton
-              label={
-                changesDot
-                  ? `Toggle right sidebar (${MOD}${SHIFT}B, uncommitted changes)`
-                  : `Toggle right sidebar (${MOD}${SHIFT}B)`
-              }
-              active={rightPanelOpen && !rightPanelOff}
-              disabled={rightPanelOff}
-              onClick={onToggleRightPanel}
-            >
-              <span className="relative grid">
-                <GitBranch
-                  className={`size-3.5 ${changesDot ? "overview-tab-icon-with-dot" : ""}`}
-                  strokeWidth={1.75}
-                />
-                {changesDot ? (
-                  <span
-                    aria-hidden
-                    className="absolute -top-[2px] -right-[2px] size-1.5 rounded-full bg-accent"
+          <div
+            data-title-corner
+            className="flex items-center gap-1 pl-1.5 pr-3"
+          >
+            {showOpenInEditor && openInEditorCwd ? (
+              <OpenInEditorButton cwd={openInEditorCwd} />
+            ) : null}
+            {showRightPanelToggle ? (
+              <IconButton
+                label={
+                  changesDot
+                    ? `Toggle right sidebar (${MOD}${SHIFT}B, uncommitted changes)`
+                    : `Toggle right sidebar (${MOD}${SHIFT}B)`
+                }
+                active={rightPanelOpen && !rightPanelOff}
+                disabled={rightPanelOff}
+                onClick={onToggleRightPanel}
+              >
+                <span className="relative grid">
+                  <GitBranch
+                    className={`size-3.5 ${changesDot ? "overview-tab-icon-with-dot" : ""}`}
+                    strokeWidth={1.75}
                   />
-                ) : null}
-              </span>
-            </IconButton>
+                  {changesDot ? (
+                    <span
+                      aria-hidden
+                      className="absolute -top-[2px] -right-[2px] size-1.5 rounded-full bg-accent"
+                    />
+                  ) : null}
+                </span>
+              </IconButton>
+            ) : null}
           </div>
         ) : null}
         {pilot && (onTogglePilotOverview || onOpenPilotSettings) ? (

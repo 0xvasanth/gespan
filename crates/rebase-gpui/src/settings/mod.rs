@@ -8,6 +8,7 @@ mod layout_tests;
 mod management;
 mod model;
 mod notification_preferences;
+pub(crate) use notification_preferences::looks_like_project;
 mod pages;
 mod palettes;
 mod preferences;

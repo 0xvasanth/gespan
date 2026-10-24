@@ -1,6 +1,7 @@
-//! The three application destinations share one navigation and focus boundary.
+//! The application destinations (Inbox, Notes, Automations and Board) share
+//! one navigation and focus boundary.
 use super::*;
-use crate::{automations, flows, inbox, notes};
+use crate::{automations, board, flows, inbox, notes};
 
 pub(super) use crate::workspace::AppView;
 
@@ -15,6 +16,7 @@ impl Shell {
             AppView::Notes => "Notes",
             AppView::Automations => "Automations",
             AppView::Flows => "Flows",
+            AppView::Board => "Board",
         })
     }
 
@@ -130,6 +132,11 @@ impl Shell {
         {
             notes.update(cx, |notes, cx| notes.flush(cx));
         }
+        if self.active_app_view == Some(AppView::Board)
+            && let Some(board) = &self.board
+        {
+            board.update(cx, |board, cx| board.hidden(cx));
+        }
         self.active_app_view = None;
         self.invalidate_chrome(cx);
     }
@@ -196,6 +203,7 @@ impl Shell {
             AppView::Inbox => self.inbox.clone().map(IntoElement::into_any_element),
             AppView::Automations => self.automations.clone().map(IntoElement::into_any_element),
             AppView::Flows => self.flows.clone().map(IntoElement::into_any_element),
+            AppView::Board => self.board.clone().map(IntoElement::into_any_element),
         }
     }
 
@@ -207,6 +215,7 @@ impl Shell {
                 self.automations.as_ref().map(|view| view.focus_handle(cx))
             }
             Some(AppView::Flows) => self.flows.as_ref().map(|view| view.focus_handle(cx)),
+            Some(AppView::Board) => self.board.as_ref().map(|view| view.focus_handle(cx)),
             None => return false,
         };
         if let Some(focus) = focus {
@@ -240,6 +249,74 @@ impl Shell {
             });
         }
         self.show_app_view(AppView::Notes, window, cx);
+    }
+
+    pub(super) fn open_board(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.workspace.preferences.board {
+            return;
+        }
+        // Find the database before leaving the current view, so a failure
+        // leaves the user where they were.
+        let path = match &self.board {
+            Some(_) => None,
+            None => match locked(&self.store) {
+                Ok(store) => Some(store.database_path().to_path_buf()),
+                Err(_) => return,
+            },
+        };
+        self.prepare_app_view(window, cx);
+        if let Some(path) = path {
+            let store = self.store.clone();
+            let view = cx.new(|cx| board::BoardView::new(store, path, window, cx));
+            self.app_view_events.push(cx.subscribe_in(
+                &view,
+                window,
+                |this, _, event: &board::Event, window, cx| match event {
+                    board::Event::Close => this.close_app_view(window, cx),
+                    board::Event::OpenSession(id) => this.open(*id, window, cx),
+                    board::Event::OpenPilot(id) => {
+                        if let Some(pilots) = this.pilots.clone() {
+                            pilots.update(cx, |pilots, cx| pilots.open(id, window, cx));
+                        }
+                    }
+                },
+            ));
+            self.board = Some(view);
+        }
+        self.show_app_view(AppView::Board, window, cx);
+        self.sync_board_projects(cx);
+        if let Some(board) = &self.board {
+            board.update(cx, |board, cx| board.shown(cx));
+        }
+    }
+
+    /// Give the Board the workspace's projects, as (path, name), so its tag
+    /// and filter lists follow projects added, removed or renamed elsewhere.
+    pub(super) fn sync_board_projects(&mut self, cx: &mut Context<Self>) {
+        let Some(board) = &self.board else {
+            return;
+        };
+        let projects = self
+            .workspace
+            .projects
+            .iter()
+            .map(|path| {
+                let name = self
+                    .workspace
+                    .project_appearance
+                    .get(path)
+                    .map(|appearance| appearance.name.trim().to_string())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| {
+                        std::path::Path::new(path)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.clone())
+                    });
+                (path.clone(), name)
+            })
+            .collect();
+        board.update(cx, |board, cx| board.set_projects(projects, cx));
     }
 
     pub(super) fn open_inbox(&mut self, window: &mut Window, cx: &mut Context<Self>) {

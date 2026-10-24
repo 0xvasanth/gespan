@@ -253,6 +253,7 @@ impl SettingsView {
                     | "notifications"
                     | "tab-animations"
                     | "notes"
+                    | "board"
                     | "quick-composer"
                     | "working-agents"
                     | "action-opens-terminal"

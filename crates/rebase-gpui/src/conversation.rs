@@ -238,6 +238,12 @@ pub(crate) struct Conversation {
     runner: Option<Entity<crate::composer_runner::Runner>>,
     cancel: Arc<AtomicBool>,
     title_cancel: Option<Arc<AtomicBool>>,
+    /// The message a worktree being created is named after, once it exists.
+    branch_seed: Option<String>,
+    branch_cancel: Option<Arc<AtomicBool>>,
+    /// Stands in for the provider's branch name suggestion in tests.
+    #[cfg(test)]
+    test_branch_name: Option<String>,
     _submission: Subscription,
     response_events: Option<Subscription>,
     response_menu: Option<ResponseMenu>,
@@ -249,6 +255,9 @@ impl Drop for Conversation {
             self.cancel.store(true, Ordering::Relaxed);
         }
         self.cancel_title_generation();
+        if let Some(cancel) = self.branch_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
     }
 }
 impl Conversation {
@@ -655,6 +664,10 @@ impl Conversation {
             runner: None,
             cancel: Arc::new(AtomicBool::new(false)),
             title_cancel: None,
+            branch_seed: None,
+            branch_cancel: None,
+            #[cfg(test)]
+            test_branch_name: None,
             _submission: submission,
             response_events: None,
             response_menu: None,
@@ -1005,6 +1018,7 @@ impl Conversation {
             .update(cx, |v, _| v.identity(&self.summary.provider, &model_label));
         self.begin_turn(cx);
         let generation = self.submission_generation;
+        let board_turn = (!self.is_remote()).then(|| (self.store.clone(), self.summary.id));
         let source_provider = self.summary.provider.clone();
         let source_account = self.settings.account.id.clone();
         self.status = if self.settings.pending_provider_switch.is_some() {
@@ -1066,6 +1080,8 @@ impl Conversation {
         }
         self.preparing_worktree = settings.new_worktree && settings.worktree_cwd.is_none();
         if self.preparing_worktree {
+            // This prompt, not one from an earlier attempt that failed.
+            self.branch_seed = Some(prompt.clone());
             settings.worktree_base = settings.worktree_base.or(self.branch.clone());
             self.status = "Creating worktree…".into();
         }
@@ -1112,6 +1128,7 @@ impl Conversation {
             })
             .detach();
         cx.spawn(async move |this, cx| {
+            let mut tracker = crate::board::turns::TurnTracker::default();
             while let Ok(update) = rx.recv().await {
                 let finished = update.finished;
                 if this
@@ -1125,6 +1142,15 @@ impl Conversation {
                         if stopping && !finished {
                             return;
                         }
+                        if let Some((store, session)) = &board_turn {
+                            let turn = crate::board::turns::TurnUpdate {
+                                finished,
+                                stopping,
+                                succeeded: update.succeeded,
+                                has_rows: !update.rows.is_empty(),
+                            };
+                            tracker.observe(store, *session, generation, turn, cx);
+                        }
                         let source_selected = this.summary.provider == source_provider
                             && this.settings.account.id == source_account;
                         if let Some(cwd) = update.worktree_cwd
@@ -1132,10 +1158,11 @@ impl Conversation {
                                 || this.settings.new_worktree)
                         {
                             this.preparing_worktree = false;
-                            this.settings.worktree_cwd = Some(cwd);
+                            this.settings.worktree_cwd = Some(cwd.clone());
                             this.settings.new_worktree = false;
                             this.save_settings(cx);
                             this.refresh_git(cx);
+                            this.name_worktree_branch(cwd, cx);
                         }
                         if let Some(commands) = update.commands.filter(|_| source_selected) {
                             this.completion.update(cx, |completion, cx| {
@@ -1420,6 +1447,11 @@ impl Conversation {
                     break;
                 }
             }
+            // The view closed or a newer turn replaced this one before its
+            // final update: close the Board turn the way a stop does.
+            if let Some((store, session)) = &board_turn {
+                cx.update(|cx| tracker.abandon(store, *session, generation, cx));
+            }
         })
         .detach();
         cx.emit(SessionChanged);
@@ -1685,6 +1717,13 @@ impl Conversation {
         .detach();
     }
     fn prepare_worktree(&mut self, cx: &mut Context<Self>) {
+        // The queued message this worktree is being made for.
+        self.branch_seed = self
+            .follow_ups
+            .state
+            .messages
+            .first()
+            .map(|message| message.text.clone());
         self.preparing_worktree = true;
         self.status = "Creating worktree…".into();
         let cwd = self.summary.cwd.clone();
@@ -1704,10 +1743,12 @@ impl Conversation {
                 this.preparing_worktree = false;
                 match result {
                     Ok(path) => {
-                        this.settings.worktree_cwd = Some(path.to_string_lossy().into_owned());
+                        let path = path.to_string_lossy().into_owned();
+                        this.settings.worktree_cwd = Some(path.clone());
                         this.settings.new_worktree = false;
                         this.save_settings(cx);
                         this.refresh_git(cx);
+                        this.name_worktree_branch(path, cx);
                         if this.follow_ups.state.messages.is_empty() {
                             this.send(cx);
                         } else {
@@ -1715,6 +1756,7 @@ impl Conversation {
                         }
                     }
                     Err(error) => {
+                        this.branch_seed = None;
                         this.status = error.clone();
                         if let Some(message) = this.follow_ups.state.messages.first() {
                             let id = message.id.clone();
