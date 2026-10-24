@@ -104,7 +104,7 @@ impl Default for Preferences {
             file_view_mode: "preview".into(),
             tab_animations: false,
             notes: true,
-            board: false,
+            board: true,
             quick_composer: true,
             working_agents: true,
             close_to_tray: true,

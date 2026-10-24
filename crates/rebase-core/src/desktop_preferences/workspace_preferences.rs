@@ -30,7 +30,7 @@ impl DesktopPreferences {
             ("mask_emails", "maskEmails", true),
             ("claude_hooks", "claudeHooks", true),
             ("pilots", "pilotsEnabled", true),
-            ("board", "boardEnabled", false),
+            ("board", "boardEnabled", true),
             ("rail_pilots_pinned", "railPilotsPinned", false),
             ("pilot_menu_bar_icon", "pilotMenuBarIcon", true),
         ] {

@@ -798,7 +798,7 @@ describe("Board sidebar entry", () => {
       (button) => button.textContent?.trim().startsWith("Board"),
     );
 
-  it("shows the Board entry only while the Board setting is on", async () => {
+  it("shows the Board entry by default and hides it while the setting is off", async () => {
     props = {
       cwd: "/workspace/project",
       open: true,
@@ -818,16 +818,8 @@ describe("Board sidebar entry", () => {
       onOpenBoard: vi.fn(),
     };
     await act(async () => root.render(createElement(Harness)));
-    expect(loadBoardEnabled()).toBe(false);
-    expect(boardEntry()).toBeUndefined();
-    // Its neighbour is there, so the list itself rendered.
-    expect(
-      [...container.querySelectorAll('nav[aria-label="Views"] button')].some(
-        (button) => button.textContent?.includes("Automations"),
-      ),
-    ).toBe(true);
-
-    await act(async () => saveBoardEnabled(true));
+    // On by default: the entry is there without touching Settings.
+    expect(loadBoardEnabled()).toBe(true);
     const entry = boardEntry();
     expect(entry).toBeDefined();
     act(() => (entry as HTMLButtonElement).click());
@@ -835,5 +827,14 @@ describe("Board sidebar entry", () => {
 
     await act(async () => saveBoardEnabled(false));
     expect(boardEntry()).toBeUndefined();
+    // Its neighbour is still there, so the list itself rendered.
+    expect(
+      [...container.querySelectorAll('nav[aria-label="Views"] button')].some(
+        (button) => button.textContent?.includes("Automations"),
+      ),
+    ).toBe(true);
+
+    await act(async () => saveBoardEnabled(true));
+    expect(boardEntry()).toBeDefined();
   });
 });

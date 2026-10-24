@@ -603,12 +603,12 @@ mod tests {
 
     #[test]
     fn desktop_board_setting_imports_as_the_native_board_preference() {
-        let mut on = json!({});
-        prefs(&[("rebase.boardEnabled", json!(true))]).apply_workspace(&mut on);
-        assert_eq!(on["preferences"]["board"], true);
+        let mut off = json!({});
+        prefs(&[("rebase.boardEnabled", json!(false))]).apply_workspace(&mut off);
+        assert_eq!(off["preferences"]["board"], false);
         let mut unset = json!({});
         prefs(&[]).apply_workspace(&mut unset);
-        assert_eq!(unset["preferences"]["board"], false);
+        assert_eq!(unset["preferences"]["board"], true);
     }
 
     #[test]

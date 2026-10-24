@@ -590,8 +590,8 @@ mod tests {
     }
 
     #[test]
-    fn board_is_off_until_turned_on() {
-        assert!(!crate::settings::preferences::Preferences::default().board);
+    fn board_is_on_until_turned_off() {
+        assert!(crate::settings::preferences::Preferences::default().board);
     }
 
     #[test]

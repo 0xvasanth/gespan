@@ -867,7 +867,7 @@ export function subscribeNotesEnabled(onStoreChange: () => void) {
 
 const BOARD_ENABLED_KEY = "rebase.boardEnabled";
 
-export const BOARD_ENABLED_DEFAULT = false;
+export const BOARD_ENABLED_DEFAULT = true;
 
 /** Fired on `window` when the Board setting flips. */
 export const BOARD_ENABLED_CHANGE_EVENT = "rebase:board-enabled-change";

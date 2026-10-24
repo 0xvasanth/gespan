@@ -432,5 +432,5 @@ fn board_setting_key_matches_tauri() {
             .join("src/desktop_preferences/workspace_preferences.rs"),
     )
     .unwrap();
-    assert!(native.contains("(\"board\", \"boardEnabled\", false)"));
+    assert!(native.contains("(\"board\", \"boardEnabled\", true)"));
 }
