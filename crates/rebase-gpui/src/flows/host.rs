@@ -70,6 +70,7 @@ struct Turn {
 
 pub(crate) const NOT_STARTED: &str = "The Flow's session could not start this step.";
 pub(crate) const SESSION_GONE: &str = "The Flow's session is no longer open.";
+pub(crate) const SESSION_CLOSED: &str = "The Flow session was closed";
 
 pub(crate) struct Host {
     runner: Runner,
@@ -254,6 +255,21 @@ impl Host {
             self.apply(driver, effects);
         }
         let effects = self.runner.on_agent_settled(&run_id, &visit_id, outcome);
+        self.apply(driver, effects);
+    }
+
+    /// The user deleted `session`. A visit still running in it fails; a
+    /// later report from its stopped turn is ignored.
+    pub(crate) fn session_closed(&mut self, driver: &mut dyn SessionDriver, session: i64) {
+        if self.awaiting.remove(&session).is_none() {
+            return;
+        }
+        let Some((run_id, visit_id)) = self.sessions.remove(&session) else {
+            return;
+        };
+        let effects =
+            self.runner
+                .on_agent_settled(&run_id, &visit_id, failed(SESSION_CLOSED.into()));
         self.apply(driver, effects);
     }
 

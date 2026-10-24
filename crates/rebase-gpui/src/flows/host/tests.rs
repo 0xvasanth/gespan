@@ -448,3 +448,48 @@ fn a_reply_over_12000_chars_still_parses_its_trailing_json_block() {
         rebase_core::flow::OutputValue::String("patch it".into())
     );
 }
+
+#[test]
+fn closing_a_running_visits_session_fails_the_visit_and_ignores_its_late_settle() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    let run = start(&mut host, &mut driver);
+    launch(&mut host, &mut driver, 100);
+    host.session_closed(&mut driver, 100);
+    let visits = driver.visits();
+    assert_eq!(visits[0].status, VisitStatus::Failed);
+    assert_eq!(visits[0].error.as_deref(), Some(SESSION_CLOSED));
+    assert_eq!(driver.last_run().status, RunStatus::Failed);
+    assert_eq!(driver.changed, vec![run.id]);
+    assert!(!host.awaits(100));
+    // The stopped turn reports in afterwards; the run has already moved on.
+    let persisted = driver.persisted.len();
+    finish(&mut host, &mut driver, 100, reply(PLAN, None));
+    assert_eq!(driver.persisted.len(), persisted);
+    assert_eq!(driver.launches.len(), 1);
+}
+
+#[test]
+fn closing_a_session_while_its_prompt_is_submitting_fails_the_visit() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    start(&mut host, &mut driver);
+    let request = driver.launches[0].clone();
+    assert!(host.launched(&mut driver, &request.run_id, &request.visit_id, 100, 0));
+    host.session_closed(&mut driver, 100);
+    assert_eq!(driver.visits()[0].status, VisitStatus::Failed);
+    assert_eq!(driver.visits()[0].error.as_deref(), Some(SESSION_CLOSED));
+}
+
+#[test]
+fn closing_a_session_that_is_not_a_running_visit_changes_nothing() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    start(&mut host, &mut driver);
+    launch(&mut host, &mut driver, 100);
+    finish(&mut host, &mut driver, 100, reply(PLAN, Some("/wt")));
+    // Visit 1 completed; session 100 no longer has a turn in flight.
+    let persisted = driver.persisted.len();
+    host.session_closed(&mut driver, 100);
+    host.session_closed(&mut driver, 555);
+    assert_eq!(driver.persisted.len(), persisted);
+    assert_eq!(driver.visits()[0].status, VisitStatus::Completed);
+    assert_eq!(driver.visits()[1].status, VisitStatus::Running);
+}

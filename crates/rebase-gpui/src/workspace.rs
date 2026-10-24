@@ -11,6 +11,7 @@ pub(crate) enum AppView {
     Inbox,
     Notes,
     Automations,
+    Flows,
 }
 impl AppView {
     pub fn label(self) -> &'static str {
@@ -18,6 +19,7 @@ impl AppView {
             Self::Inbox => "Inbox",
             Self::Notes => "Notes",
             Self::Automations => "Automations",
+            Self::Flows => "Flows",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -25,6 +27,7 @@ impl AppView {
             Self::Inbox => "inbox",
             Self::Notes => "note",
             Self::Automations => "zap",
+            Self::Flows => "git-merge",
         }
     }
 }
@@ -51,6 +54,25 @@ impl TitleTab {
     }
 }
 
+impl TitleTab {
+    /// Builds from before Flows reject an unknown `AppView` and with it the
+    /// whole saved workspace, so a Flows tab lives only while the app runs.
+    fn saved(&self) -> bool {
+        *self != Self::App(AppView::Flows)
+    }
+}
+
+fn save_title_order<S: serde::Serializer>(tabs: &[TitleTab], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(tabs.iter().filter(|tab| tab.saved()))
+}
+
+fn save_scope_focus<S: serde::Serializer>(
+    focus: &HashMap<String, TitleTab>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    s.collect_map(focus.iter().filter(|(_, tab)| tab.saved()))
+}
+
 /// A named section of projects in the original project navigation.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -67,7 +89,9 @@ pub(crate) struct ProjectRailGroup {
 #[serde(default)]
 pub(crate) struct Workspace {
     pub tabs: Vec<i64>,
+    #[serde(serialize_with = "save_title_order")]
     pub title_order: Vec<TitleTab>,
+    #[serde(serialize_with = "save_scope_focus")]
     pub scope_focus: HashMap<String, TitleTab>,
     /// Sidebar narrowing belongs to this run. Reopen on the full project,
     /// while saved conversations retain their own execution directories.
@@ -941,6 +965,83 @@ mod tests {
     }
 
     use super::*;
+
+    /// The workspace as a build from before Flows reads it: its `AppView`
+    /// has no `Flows`, and one unknown variant fails the whole document.
+    #[derive(Deserialize, Default)]
+    #[serde(default)]
+    struct BeforeFlows {
+        project: String,
+        tabs: Vec<i64>,
+        title_order: Vec<BeforeFlowsTab>,
+        scope_focus: HashMap<String, BeforeFlowsTab>,
+    }
+    #[derive(Deserialize, Debug, PartialEq)]
+    enum BeforeFlowsView {
+        Inbox,
+        Notes,
+        Automations,
+    }
+    #[derive(Deserialize, Debug, PartialEq)]
+    enum BeforeFlowsTab {
+        Session(i64),
+        Search,
+        App(BeforeFlowsView),
+        Pilot {
+            id: String,
+            project: String,
+            worktree: String,
+        },
+    }
+
+    #[test]
+    fn a_saved_flows_tab_does_not_cost_an_older_build_its_workspace() {
+        let mut state = Workspace {
+            project: "/work/rebase".into(),
+            ..Default::default()
+        };
+        state.open(7);
+        state.title_order.push(TitleTab::App(AppView::Automations));
+        state.title_order.push(TitleTab::App(AppView::Flows));
+        state
+            .scope_focus
+            .insert("/work/rebase".into(), TitleTab::App(AppView::Flows));
+        state
+            .scope_focus
+            .insert("/work/other".into(), TitleTab::Session(7));
+        let saved = serde_json::to_string(&state).unwrap();
+
+        let older: BeforeFlows = serde_json::from_str(&saved).expect("older build parses it");
+        assert_eq!(older.project, "/work/rebase");
+        assert_eq!(older.tabs, vec![7]);
+        assert_eq!(
+            older.title_order,
+            vec![
+                BeforeFlowsTab::Session(7),
+                BeforeFlowsTab::App(BeforeFlowsView::Automations)
+            ]
+        );
+        assert_eq!(older.scope_focus.len(), 1);
+        assert_eq!(older.scope_focus["/work/other"], BeforeFlowsTab::Session(7));
+
+        // This build restores everything except the Flows tab.
+        let restored = Workspace::restore(Some(&saved), &[(7, "/work/rebase".into())], "/work");
+        assert_eq!(restored.project, "/work/rebase");
+        assert_eq!(restored.tabs, vec![7]);
+        assert!(
+            restored
+                .title_order
+                .contains(&TitleTab::App(AppView::Automations))
+        );
+        assert!(
+            !restored
+                .title_order
+                .contains(&TitleTab::App(AppView::Flows))
+        );
+        // The in-memory workspace keeps its Flows tab while the app runs.
+        assert!(state.title_order.contains(&TitleTab::App(AppView::Flows)));
+    }
+
     #[test]
     fn navigation_prunes_closed_tabs_and_a_new_visit_discards_forward() {
         let mut h = VisitHistory::default();

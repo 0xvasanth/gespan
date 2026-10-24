@@ -173,6 +173,7 @@ impl Shell {
                 app_views::AppView::Inbox => self.open_inbox(window, cx),
                 app_views::AppView::Notes => self.open_notes(window, cx),
                 app_views::AppView::Automations => self.open_automations(window, cx),
+                app_views::AppView::Flows => self.open_flows(window, cx),
             },
             TitleTab::Session(id) => {
                 let focus = self.workspace.tab_focus(*id);

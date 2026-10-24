@@ -8,6 +8,7 @@ enum Surface {
     Inbox,
     Notes,
     Automations,
+    Flows,
     Search,
     Pilot,
 }
@@ -26,6 +27,7 @@ impl Surface {
                 )));
                 shell.open_automations(window, cx);
             }
+            Self::Flows => shell.open_flows(window, cx),
             Self::Search => shell.open_app_search(window, cx),
             Self::Pilot => {
                 let project = shell.workspace.project.clone();
@@ -43,7 +45,9 @@ impl Surface {
 
     fn close(self, shell: &mut Shell, session: i64, window: &mut Window, cx: &mut Context<Shell>) {
         match self {
-            Self::Inbox | Self::Notes | Self::Automations => shell.close_app_view(window, cx),
+            Self::Inbox | Self::Notes | Self::Automations | Self::Flows => {
+                shell.close_app_view(window, cx)
+            }
             Self::Search => shell.close_app_search(window, cx),
             // Returning to a conversation is the same route used by the
             // original project rail and by opening a Pilot's launched session.
@@ -316,6 +320,11 @@ fn original_app_surfaces_automations_uses_own_header_and_restores_sessions(
     cx: &mut TestAppContext,
 ) {
     assert_original_surface(Surface::Automations, cx);
+}
+
+#[gpui::test]
+fn original_app_surfaces_flows_uses_own_header_and_restores_sessions(cx: &mut TestAppContext) {
+    assert_original_surface(Surface::Flows, cx);
 }
 
 #[gpui::test]
@@ -701,6 +710,7 @@ fn original_app_surfaces_keep_icon_rail_and_remember_closed_sessions(cx: &mut Te
         Surface::Inbox,
         Surface::Notes,
         Surface::Automations,
+        Surface::Flows,
         Surface::Search,
         Surface::Pilot,
     ] {
@@ -825,6 +835,7 @@ fn original_app_surfaces_leave_both_new_layout_styles_tabbed(cx: &mut TestAppCon
             Surface::Inbox,
             Surface::Notes,
             Surface::Automations,
+            Surface::Flows,
             Surface::Search,
             Surface::Pilot,
         ] {
@@ -845,6 +856,7 @@ fn original_app_surfaces_leave_both_new_layout_styles_tabbed(cx: &mut TestAppCon
                 Surface::Inbox => Some(app_views::AppView::Inbox),
                 Surface::Notes => Some(app_views::AppView::Notes),
                 Surface::Automations => Some(app_views::AppView::Automations),
+                Surface::Flows => Some(app_views::AppView::Flows),
                 _ => None,
             };
             if let Some(app) = app {
@@ -886,7 +898,12 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
     for boxy in [false, true] {
         let (window, session) = setup(cx, false, boxy);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        for surface in [Surface::Inbox, Surface::Notes, Surface::Automations] {
+        for surface in [
+            Surface::Inbox,
+            Surface::Notes,
+            Surface::Automations,
+            Surface::Flows,
+        ] {
             window
                 .update(visual, |shell, window, cx| surface.open(shell, window, cx))
                 .unwrap();
@@ -898,6 +915,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
                     app_views::AppView::Inbox,
                     app_views::AppView::Notes,
                     app_views::AppView::Automations,
+                    app_views::AppView::Flows,
                 ] {
                     assert_eq!(
                         shell
@@ -921,6 +939,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
             app_views::AppView::Inbox,
             app_views::AppView::Notes,
             app_views::AppView::Automations,
+            app_views::AppView::Flows,
         ] {
             let selector = Box::leak(format!("app-title-tab-{}", app.label()).into_boxed_str());
             let tab = visual.debug_bounds(selector).unwrap();
@@ -939,7 +958,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
         let close = visual.debug_bounds("close-app-tab-Inbox").unwrap();
         visual.simulate_click(close.center(), Default::default());
         visual.run_until_parked();
-        for _ in 0..2 {
+        for _ in 0..3 {
             visual.simulate_keystrokes("cmd-w");
             visual.run_until_parked();
         }

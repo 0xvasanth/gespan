@@ -9,6 +9,8 @@ mod classic_surface_tests;
 mod classic_surfaces;
 mod file_panes;
 mod flow_runs;
+#[cfg(test)]
+mod flow_view_tests;
 mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
@@ -599,6 +601,7 @@ pub(crate) struct Shell {
     notes: Option<Entity<Notes>>,
     inbox: Option<Entity<crate::inbox::Inbox>>,
     automations: Option<Entity<crate::automations::Automations>>,
+    flows: Option<Entity<crate::flows::FlowsView>>,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -944,6 +947,7 @@ impl Shell {
             notes: None,
             inbox: None,
             automations: None,
+            flows: None,
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),

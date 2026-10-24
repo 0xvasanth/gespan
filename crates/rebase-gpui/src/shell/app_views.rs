@@ -1,6 +1,6 @@
 //! The three application destinations share one navigation and focus boundary.
 use super::*;
-use crate::{automations, inbox, notes};
+use crate::{automations, flows, inbox, notes};
 
 pub(super) use crate::workspace::AppView;
 
@@ -14,6 +14,7 @@ impl Shell {
             AppView::Inbox => "Inbox",
             AppView::Notes => "Notes",
             AppView::Automations => "Automations",
+            AppView::Flows => "Flows",
         })
     }
 
@@ -194,6 +195,7 @@ impl Shell {
             AppView::Notes => self.notes.clone().map(IntoElement::into_any_element),
             AppView::Inbox => self.inbox.clone().map(IntoElement::into_any_element),
             AppView::Automations => self.automations.clone().map(IntoElement::into_any_element),
+            AppView::Flows => self.flows.clone().map(IntoElement::into_any_element),
         }
     }
 
@@ -204,6 +206,7 @@ impl Shell {
             Some(AppView::Automations) => {
                 self.automations.as_ref().map(|view| view.focus_handle(cx))
             }
+            Some(AppView::Flows) => self.flows.as_ref().map(|view| view.focus_handle(cx)),
             None => return false,
         };
         if let Some(focus) = focus {
@@ -346,6 +349,64 @@ impl Shell {
             });
         }
         self.show_app_view(AppView::Automations, window, cx);
+    }
+
+    pub(super) fn open_flows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.prepare_app_view(window, cx);
+        if self.flows.is_none() {
+            let store = self.flows_state.store.clone();
+            let cwd = self.workspace.project.clone();
+            let projects = self.workspace.projects.clone();
+            let view = cx.new(|cx| flows::FlowsView::new(store, cwd, projects, cx));
+            self.app_view_events.push(cx.subscribe_in(
+                &view,
+                window,
+                |this, view, event: &flows::Event, window, cx| {
+                    let result = match event {
+                        flows::Event::Close => {
+                            this.close_app_view(window, cx);
+                            Ok(())
+                        }
+                        flows::Event::Start { flow, inputs } => {
+                            match this.start_flow(flow, inputs, cx) {
+                                Ok(run) => {
+                                    view.update(cx, |view, cx| view.show_run(run, cx));
+                                    Ok(())
+                                }
+                                Err(errors) => Err(errors.join("\n")),
+                            }
+                        }
+                        flows::Event::Approve {
+                            run_id,
+                            approved,
+                            note,
+                        } => this.resolve_flow_approval(run_id, *approved, note, cx),
+                        flows::Event::Cancel(run_id) => this.cancel_flow_run(run_id, cx),
+                        flows::Event::Resume { run_id, state_id } => {
+                            this.resume_flow_run(run_id.clone(), state_id.clone(), cx)
+                        }
+                        flows::Event::OpenSession(id) => {
+                            this.open(*id, window, cx);
+                            Ok(())
+                        }
+                    };
+                    if let Err(error) = result {
+                        view.update(cx, |view, cx| view.set_error(error, cx));
+                    }
+                },
+            ));
+            self.flows = Some(view);
+        }
+        if let Some(view) = &self.flows {
+            let cwd = self.workspace.project.clone();
+            let projects = self.workspace.projects.clone();
+            view.update(cx, |view, cx| {
+                view.set_appearances(self.workspace.project_appearance.clone(), cx);
+                view.set_context(cwd, projects, cx);
+                view.refresh(cx);
+            });
+        }
+        self.show_app_view(AppView::Flows, window, cx);
     }
 
     fn note_to_chat(

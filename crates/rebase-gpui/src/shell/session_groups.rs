@@ -764,6 +764,8 @@ impl Shell {
             return;
         }
         self.close_preview(cx);
+        // A Flow visit in this session fails now, not as a user stop.
+        self.flow_session_closed(id, cx);
         if let Some(view) = self.sessions.get(&id) {
             view.update(cx, |session, cx| session.stop_if_busy(cx));
         }
@@ -819,6 +821,7 @@ impl Shell {
             self.session_preview = None;
             self.preview_close = None;
         }
+        self.flow_session_closed(id, cx);
         self.sessions.remove(&id);
         self.session_summaries.remove(&id);
         self.draft_sessions.remove(&id);

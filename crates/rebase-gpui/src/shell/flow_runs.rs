@@ -7,6 +7,8 @@ use rebase_core::flow::{Flow, FlowRun, FlowStore, FlowVisit, LaunchRequest, Runn
 
 pub(super) type StoreHandle = Arc<Mutex<FlowStore>>;
 
+const STILL_OPENING: &str = "Flows are still opening";
+
 #[derive(Default)]
 pub(super) struct State {
     pub store: Option<StoreHandle>,
@@ -58,7 +60,7 @@ impl SessionDriver for Driver<'_, '_> {
         self.shell.persist_flow_run(run, visit, self.cx);
     }
     fn changed(&mut self, _run_id: &str) {
-        // The Flows view refreshes from here once it exists.
+        self.shell.refresh_flows_view(self.cx);
         self.cx.notify();
     }
 }
@@ -86,6 +88,9 @@ impl Shell {
                 this.flows_state.opening = false;
                 match result {
                     Ok((store, active)) => {
+                        if let Some(view) = &this.flows {
+                            view.update(cx, |view, cx| view.set_store(store.clone(), cx));
+                        }
                         this.flows_state.store = Some(store);
                         this.flows_state.host = Some(Host::new(Runner::new(
                             now,
@@ -103,8 +108,14 @@ impl Shell {
         .detach();
     }
 
+    /// Reloads the Flows view after a run changed or a write landed.
+    pub(super) fn refresh_flows_view(&mut self, cx: &mut Context<Self>) {
+        if let Some(view) = &self.flows {
+            view.update(cx, |view, cx| view.refresh(cx));
+        }
+    }
+
     /// Starts a saved Flow. Errors are the definition's or the inputs'.
-    #[allow(dead_code)] // Called by the Flows view.
     pub(crate) fn start_flow(
         &mut self,
         flow: &Flow,
@@ -112,37 +123,46 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Result<FlowRun, Vec<String>> {
         self.with_flow_host(cx, |host, driver| host.start(driver, flow, inputs))
-            .unwrap_or_else(|| Err(vec!["Flows are still opening".into()]))
+            .unwrap_or_else(|| Err(vec![STILL_OPENING.into()]))
     }
 
-    #[allow(dead_code)] // Called by the Flows view.
     pub(crate) fn resolve_flow_approval(
         &mut self,
         run_id: &str,
         approved: bool,
         note: &str,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<(), String> {
         self.with_flow_host(cx, |host, driver| {
             host.resolve_approval(driver, run_id, approved, note)
-        });
+        })
+        .ok_or_else(|| STILL_OPENING.into())
     }
 
-    #[allow(dead_code)] // Called by the Flows view.
-    pub(crate) fn cancel_flow_run(&mut self, run_id: &str, cx: &mut Context<Self>) {
-        self.with_flow_host(cx, |host, driver| host.cancel(driver, run_id));
+    pub(crate) fn cancel_flow_run(
+        &mut self,
+        run_id: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.with_flow_host(cx, |host, driver| host.cancel(driver, run_id))
+            .ok_or_else(|| STILL_OPENING.into())
     }
 
     /// Re-enters `state_id` of a failed or cancelled run, in its worktree.
-    #[allow(dead_code)] // Called by the Flows view.
+    /// A refusal found after loading the run is reported to the Flows view.
     pub(crate) fn resume_flow_run(
         &mut self,
         run_id: String,
         state_id: String,
         cx: &mut Context<Self>,
-    ) {
-        let Some(store) = self.flows_state.store.clone() else {
-            return;
+    ) -> Result<(), String> {
+        let Some(store) = self
+            .flows_state
+            .store
+            .clone()
+            .filter(|_| self.flows_state.host.is_some())
+        else {
+            return Err(STILL_OPENING.into());
         };
         let work = cx.background_executor().spawn(async move {
             let store = store_lock(&store)?;
@@ -154,19 +174,39 @@ impl Shell {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 let resumed = result.and_then(|(run, visits)| {
-                    this.with_flow_host(cx, |host, driver| {
+                    match this.with_flow_host(cx, |host, driver| {
                         host.resume(driver, run, visits, &state_id)
-                    })
-                    .filter(|resumed| *resumed)
-                    .ok_or_else(|| format!("This run cannot resume from {state_id}"))
+                    }) {
+                        None => Err(STILL_OPENING.to_string()),
+                        Some(false) => Err(format!("This run cannot resume from {state_id}")),
+                        Some(true) => Ok(()),
+                    }
                 });
                 if let Err(error) = resumed {
-                    this.error = Some(format!("Could not resume Flow: {error}"));
-                    cx.notify();
+                    this.flow_error(format!("Could not resume Flow: {error}"), cx);
                 }
             });
         })
         .detach();
+        Ok(())
+    }
+
+    /// Shows a Flow error in the Flows view, or the shell's banner without it.
+    fn flow_error(&mut self, error: String, cx: &mut Context<Self>) {
+        match &self.flows {
+            Some(view) => view.update(cx, |view, cx| view.set_error(error, cx)),
+            None => {
+                self.error = Some(error);
+                cx.notify();
+            }
+        }
+    }
+
+    /// The user deleted session `id`; a Flow visit running in it fails.
+    pub(super) fn flow_session_closed(&mut self, id: i64, cx: &mut Context<Self>) {
+        if self.flows_state.awaits(id) {
+            self.with_flow_host(cx, |host, driver| host.session_closed(driver, id));
+        }
     }
 
     /// The `SessionChanged` hook: settles a Flow visit's finished turn.
@@ -296,12 +336,14 @@ impl Shell {
                 }
                 Ok::<_, String>(())
             });
-            if let Err(error) = work.await {
-                let _ = this.update(cx, |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(()) => this.refresh_flows_view(cx),
+                Err(error) => {
                     this.error = Some(format!("Could not save Flow run: {error}"));
                     cx.notify();
-                });
-            }
+                }
+            });
         }));
     }
 }
@@ -394,6 +436,62 @@ mod tests {
             .unwrap();
         drop(flows);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[gpui::test]
+    fn run_actions_report_that_flows_are_still_opening(cx: &mut TestAppContext) {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let window = shell(store, "/work/rebase", cx);
+        window
+            .update(cx, |shell, _, cx| {
+                let host = shell.flows_state.host.take();
+                assert!(host.is_some());
+                let opening = Err(STILL_OPENING.to_string());
+                assert_eq!(
+                    shell.resolve_flow_approval("r1", false, "redo", cx),
+                    opening
+                );
+                assert_eq!(shell.cancel_flow_run("r1", cx), opening);
+                assert_eq!(shell.resume_flow_run("r1".into(), "s".into(), cx), opening);
+                let flow = fix_an_issue("/repo");
+                assert_eq!(
+                    shell.start_flow(&flow, &inputs(&flow), cx).map(|_| ()),
+                    Err(vec![STILL_OPENING.to_string()])
+                );
+                shell.flows_state.host = host;
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn resuming_an_unknown_state_says_so(cx: &mut TestAppContext) {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let window = shell(store, "/work/rebase", cx);
+        window
+            .update(cx, |shell, _, cx| {
+                let flows = store_lock(shell.flows_state.store.as_ref().unwrap()).unwrap();
+                let flow = flows.upsert(&fix_an_issue("/missing")).unwrap();
+                let mut runner = Runner::new(now, rebase_core::automations::new_id);
+                let (mut run, _) = runner.start(&flow, &inputs(&flow)).unwrap();
+                run.status = RunStatus::Failed;
+                flows.save_run(&run).unwrap();
+                drop(flows);
+                assert_eq!(
+                    shell.resume_flow_run(run.id.clone(), "nowhere".into(), cx),
+                    Ok(())
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                assert!(shell.flows.is_none());
+                assert_eq!(
+                    shell.error.as_deref(),
+                    Some("Could not resume Flow: This run cannot resume from nowhere")
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]
