@@ -387,7 +387,7 @@ fn inline_selected(
     for run in &prepared.runs {
         let style = &run.style;
         let color = if style.link.is_some() {
-            rgb(0x38bdf8).into()
+            accent_color()
         } else if style.bold || style.italic || style.code {
             content(tone.strong())
         } else {
@@ -561,7 +561,7 @@ fn rich_inline(
                     value
                 };
                 let color = if style.link.is_some() {
-                    rgb(0x38bdf8).into()
+                    accent_color()
                 } else if style.bold || style.italic {
                     content(tone.strong())
                 } else {
