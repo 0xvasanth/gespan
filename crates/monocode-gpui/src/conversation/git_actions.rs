@@ -2,6 +2,8 @@
 //! edited files that are still uncommitted; one click asks the session's own agent to stage or
 //! commit exactly what it changed, leaving other agents' and the user's work
 //! alone. The agent, not MonoCode's edit log, decides which changes are its.
+//! Once a step lands the pill moves on: staged work offers Commit, and an
+//! unpushed commit offers Push.
 use super::*;
 
 /// Read older pages without installing their transcript payload in the UI.
@@ -26,6 +28,8 @@ pub(crate) enum GitAction {
     Stage,
     Commit,
     CommitPush,
+    /// The follow-up to Commit, never offered in the menu.
+    Push,
 }
 
 /// The action the pill offers: the last one picked, across sessions.
@@ -35,21 +39,30 @@ impl gpui::Global for LastGitAction {}
 
 impl GitAction {
     pub(crate) const ALL: [Self; 3] = [Self::Stage, Self::Commit, Self::CommitPush];
+    const EVERY: [Self; 4] = [Self::Stage, Self::Commit, Self::CommitPush, Self::Push];
     pub(crate) fn id(self) -> &'static str {
         match self {
             Self::Stage => "stage",
             Self::Commit => "commit",
             Self::CommitPush => "commit-push",
+            Self::Push => "push",
         }
     }
     fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|action| action.id() == id)
+        Self::EVERY.into_iter().find(|action| action.id() == id)
+    }
+    /// The action a sent pill message asked for.
+    pub(crate) fn from_message(text: &str) -> Option<Self> {
+        Self::EVERY
+            .into_iter()
+            .find(|action| action.message() == text.trim())
     }
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Stage => "Stage",
             Self::Commit => "Commit",
             Self::CommitPush => "Commit & push",
+            Self::Push => "Push",
         }
     }
     fn description(self) -> &'static str {
@@ -57,21 +70,19 @@ impl GitAction {
             Self::Stage => "Stage only this session's changes",
             Self::Commit => "Stage and commit with a written message",
             Self::CommitPush => "Commit, then push the branch",
+            Self::Push => "Push this session's commits",
         }
     }
-    fn icon(self) -> &'static str {
+    pub(crate) fn icon(self) -> &'static str {
         match self {
             Self::Stage => "plus",
             Self::Commit => "git-commit",
-            Self::CommitPush => "cloud-upload",
+            Self::CommitPush | Self::Push => "cloud-upload",
         }
     }
     /// The icon a sent action's message carries in the transcript.
     pub(crate) fn message_icon(text: &str) -> Option<&'static str> {
-        Self::ALL
-            .into_iter()
-            .find(|action| action.message() == text.trim())
-            .map(Self::icon)
+        Self::from_message(text).map(Self::icon)
     }
     /// What the transcript shows for the turn.
     pub(crate) fn message(self) -> &'static str {
@@ -79,14 +90,18 @@ impl GitAction {
             Self::Stage => "Stage your changes",
             Self::Commit => "Commit your changes",
             Self::CommitPush => "Commit and push your changes",
+            Self::Push => "Push your commits",
         }
     }
     /// What the agent receives instead.
     pub(crate) fn prompt(self) -> String {
+        if self == Self::Push {
+            return "Push the current branch with git.\n\nDo not stage, commit, amend or change anything else. Use `git push`, or `git push -u origin <branch>` when the branch has no upstream. Never force-push. If the push is rejected, stop and report it; do not pull, rebase or merge.\n\nFinish with a short reply saying where it was pushed.".into();
+        }
         let task = match self {
             Self::Stage => "Stage the changes you made in this session with git. Do not commit.",
             Self::Commit => "Commit the changes you made in this session with git.",
-            Self::CommitPush => {
+            Self::CommitPush | Self::Push => {
                 "Commit the changes you made in this session with git, then push the branch."
             }
         };
@@ -105,14 +120,14 @@ impl GitAction {
         }
         rules.push(match self {
             Self::Stage | Self::Commit => "Do not push.",
-            Self::CommitPush => {
+            Self::CommitPush | Self::Push => {
                 "Then push the current branch (`git push`, or `git push -u origin <branch>` when it has no upstream). Never force-push. If the push is rejected, stop and report it; do not pull, rebase or merge."
             }
         });
         let report = match self {
             Self::Stage => "the output of `git diff --cached --stat`",
             Self::Commit => "the commit's short hash and summary line, and the files it includes",
-            Self::CommitPush => {
+            Self::CommitPush | Self::Push => {
                 "the commit's short hash and summary line, the files it includes, and where it was pushed"
             }
         };
@@ -145,7 +160,8 @@ impl Conversation {
         let paths = crate::runtime::edited_paths(self.transcript.read(cx).source_rows());
         self.remember_session_edits(paths);
         if self.review.read(cx).session().1 != self.execution_cwd() {
-            self.session_uncommitted = false;
+            self.session_git = Default::default();
+            self.session_unpushed = false;
         }
         self.refresh_git_actions(cx);
     }
@@ -158,8 +174,9 @@ impl Conversation {
             return;
         }
         if self.session_edits.is_empty() || self.settings.worktree_removed {
-            if self.session_uncommitted {
-                self.session_uncommitted = false;
+            if self.session_git.uncommitted() || self.session_unpushed {
+                self.session_git = Default::default();
+                self.session_unpushed = false;
                 cx.notify();
             }
             return;
@@ -167,31 +184,59 @@ impl Conversation {
         let cwd = self.execution_cwd().to_owned();
         let work_cwd = cwd.clone();
         let paths = self.session_edits.clone();
-        let work = cx
-            .background_executor()
-            .spawn(async move { monocode_core::git::uncommitted(Path::new(&work_cwd), &paths) });
+        let commit =
+            crate::transcript::git_turns::latest_commit(self.transcript.read(cx).source_rows());
+        let work = cx.background_executor().spawn(async move {
+            let cwd = Path::new(&work_cwd);
+            let changes = monocode_core::git::session_changes(cwd, &paths);
+            let unpushed = commit.is_some_and(|commit| monocode_core::git::unpushed(cwd, &commit));
+            (changes, unpushed)
+        });
         cx.spawn(async move |this, cx| {
-            let uncommitted = work.await;
+            let (changes, unpushed) = work.await;
             let _ = this.update(cx, |this, cx| {
                 if this.session_edits_generation == generation
                     && this.execution_cwd() == cwd
-                    && this.session_uncommitted != uncommitted
+                    && (this.session_git, this.session_unpushed) != (changes, unpushed)
                 {
-                    this.session_uncommitted = uncommitted;
+                    this.session_git = changes;
+                    this.session_unpushed = unpushed;
                     cx.notify();
                 }
             });
         })
         .detach();
     }
-    fn last_git_action(cx: &gpui::App) -> GitAction {
-        cx.try_global::<LastGitAction>()
-            .map_or(GitAction::Commit, |last| last.0)
+    /// The next steps for the session's work, the pill's default first:
+    /// unstaged work offers every action, staged work skips Stage, and a
+    /// committed but unpushed session offers only Push.
+    fn git_offers(&self, cx: &gpui::App) -> Vec<GitAction> {
+        let mut offers = if self.session_git.unstaged {
+            GitAction::ALL.to_vec()
+        } else if self.session_git.staged {
+            vec![GitAction::Commit, GitAction::CommitPush]
+        } else if self.session_unpushed {
+            return vec![GitAction::Push];
+        } else {
+            return Vec::new();
+        };
+        let last = cx
+            .try_global::<LastGitAction>()
+            .map_or(GitAction::Commit, |last| last.0);
+        let current = if offers.contains(&last) {
+            last
+        } else {
+            GitAction::Commit
+        };
+        offers.retain(|action| *action != current);
+        offers.insert(0, current);
+        offers
     }
     /// Idle with nothing queued, so a click starts at once. Keep, Stage and
-    /// turns without edits leave the pill available until the files are clean.
+    /// turns without edits leave the pill available until the work is pushed
+    /// or the files are clean.
     fn git_actions_shown(&self) -> bool {
-        self.session_uncommitted
+        (self.session_git.uncommitted() || self.session_unpushed)
             && self.history_loaded()
             && !self.busy
             && !self.stopping
@@ -202,8 +247,9 @@ impl Conversation {
             && !self.settings.worktree_removed
     }
     pub(super) fn git_action_menu_items(&self, cx: &gpui::App) -> Vec<MenuItem> {
-        let current = Self::last_git_action(cx);
-        GitAction::ALL
+        let offers = self.git_offers(cx);
+        let current = offers.first().copied();
+        offers
             .into_iter()
             .map(|action| {
                 MenuAction::new(
@@ -212,7 +258,7 @@ impl Conversation {
                 )
                 .icon(action.icon())
                 .description(action.description())
-                .checked(action == current)
+                .checked(Some(action) == current)
                 .into()
             })
             .collect()
@@ -222,6 +268,9 @@ impl Conversation {
         let Some(action) = id.strip_prefix("git-action:").and_then(GitAction::from_id) else {
             return false;
         };
+        if !self.git_offers(cx).contains(&action) {
+            return true;
+        }
         self.run_git_action(action, cx);
         true
     }
@@ -232,7 +281,10 @@ impl Conversation {
         if !self.git_actions_shown() {
             return;
         }
-        cx.set_global(LastGitAction(action));
+        // Push is only ever the follow-up, never the pill's habit.
+        if action != GitAction::Push {
+            cx.set_global(LastGitAction(action));
+        }
         let mut message = self.message(action.message().to_owned(), Vec::new(), None, cx);
         message.prepared_prompt = Some(action.prompt());
         self.launch_message(message, cx);
@@ -244,7 +296,9 @@ impl Conversation {
         if !self.git_actions_shown() {
             return None;
         }
-        let current = Self::last_git_action(cx);
+        let offers = self.git_offers(cx);
+        let current = *offers.first()?;
+        let has_menu = offers.len() > 1;
         let menu_open = self.menu_is(ComposerMenu::GitActions);
         let segment = |id: &'static str| {
             div()
@@ -262,7 +316,7 @@ impl Conversation {
         let main = segment("git-action-run")
             .aria_label(SharedString::from(current.message()))
             .pl(px(10.))
-            .pr(px(8.))
+            .pr(px(if has_menu { 8. } else { 10. }))
             .gap(px(6.))
             .child(icon(current.icon(), 14.).text_color(content(0.55)))
             .child(div().text_size(px(12.)).child(current.label()))
@@ -298,16 +352,18 @@ impl Conversation {
                 // The menu opens from the pill's left end, not the chevron.
                 .child(self.git_action_anchor.probe())
                 .child(main)
-                // Dropped while either half is lit, so the fill reads whole.
-                .child(
-                    div()
-                        .w_px()
-                        .my(px(4.))
-                        .bg(content(0.1))
-                        .group_hover("git-actions", |s| s.bg(gpui::transparent_black()))
-                        .when(menu_open, |d| d.bg(gpui::transparent_black())),
-                )
-                .child(chevron)
+                .when(has_menu, |d| {
+                    // Dropped while either half is lit, so the fill reads whole.
+                    d.child(
+                        div()
+                            .w_px()
+                            .my(px(4.))
+                            .bg(content(0.1))
+                            .group_hover("git-actions", |s| s.bg(gpui::transparent_black()))
+                            .when(menu_open, |d| d.bg(gpui::transparent_black())),
+                    )
+                    .child(chevron)
+                })
                 .into_any_element(),
         )
     }
@@ -581,7 +637,7 @@ mod tests {
         window
             .update(visual, |view, _, cx| {
                 view.review.update(cx, |r, cx| r.set_files(vec![file], cx));
-                view.session_uncommitted = true;
+                view.session_git.unstaged = true;
                 view.busy = true;
                 cx.notify();
             })
@@ -617,6 +673,64 @@ mod tests {
             })
             .unwrap();
         assert!(!shown(visual), "hidden while its turn runs");
+    }
+
+    #[gpui::test]
+    fn the_pill_moves_on_to_the_next_step(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let mut summary = store.create("codex", "/missing/git-next-step").unwrap();
+        summary.provider = "fixture".into();
+        let window = cx.update(|cx| {
+            input::bind(cx);
+            crate::popover::bind(cx);
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    let mut view = Conversation::new(summary, Arc::new(Mutex::new(store)), cx);
+                    view.loaded = true;
+                    view.summary.has_messages = true;
+                    view
+                })
+            })
+            .unwrap()
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |view, _, cx| {
+                cx.set_global(LastGitAction(GitAction::Stage));
+                view.session_git = monocode_core::git::SessionChanges {
+                    staged: false,
+                    unstaged: true,
+                };
+                assert_eq!(view.git_offers(cx), GitAction::ALL, "the habit leads");
+
+                view.session_git.staged = true;
+                view.session_git.unstaged = false;
+                assert_eq!(
+                    view.git_offers(cx),
+                    [GitAction::Commit, GitAction::CommitPush],
+                    "staged work skips Stage"
+                );
+                assert!(view.git_action_choice("git-action:stage", cx));
+                assert!(!view.busy, "an action no longer offered does nothing");
+
+                view.session_git = Default::default();
+                assert!(!view.git_actions_shown());
+                view.session_unpushed = true;
+                assert!(view.git_actions_shown());
+                assert_eq!(view.git_offers(cx), [GitAction::Push]);
+                view.run_git_action(GitAction::Push, cx);
+                assert!(view.busy);
+                assert_eq!(
+                    cx.global::<LastGitAction>().0,
+                    GitAction::Stage,
+                    "Push never becomes the habit"
+                );
+                assert_eq!(
+                    GitAction::from_message("Push your commits"),
+                    Some(GitAction::Push)
+                );
+            })
+            .unwrap();
     }
 
     #[test]

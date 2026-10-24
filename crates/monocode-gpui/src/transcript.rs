@@ -4,6 +4,7 @@ pub(crate) mod dates;
 mod drafts;
 #[cfg(test)]
 mod follow_tests;
+pub(crate) mod git_turns;
 mod history;
 pub(crate) use history::{HistoryPager, PreparedHistory};
 mod links;
@@ -132,6 +133,8 @@ enum Body {
     Review {
         turn: usize,
     },
+    /// A commit pill turn's status line, then its card.
+    GitAction(Arc<git_turns::GitCard>),
     Tool {
         call: Box<ToolCall>,
         group: Option<usize>,
@@ -553,6 +556,8 @@ pub(crate) struct TranscriptView {
     prompt_rise_pending: bool,
     introduced_prompt: Option<usize>,
     show_jump: bool,
+    commit_files: git_turns::CommitFiles,
+    copied_commit: Option<(String, Instant)>,
     /// The conversation's git action pill holds the column's left end, so the
     /// jump button moves from the center to the right end.
     jump_beside_pill: bool,
@@ -2356,6 +2361,8 @@ impl TranscriptView {
             burst: None,
             introduced_prompt: None,
             show_jump: false,
+            commit_files: HashMap::new(),
+            copied_commit: None,
             jump_beside_pill: false,
             jump_anchor: Default::default(),
             scroll_bound: false,
@@ -3003,6 +3010,8 @@ impl TranscriptView {
         let mut awaiting_answer = None;
         let mut has_work = false;
         let mut ready = false;
+        let mut git_card: Option<Arc<git_turns::GitCard>> = None;
+        let mut git_live_shown = false;
         while at < self.source.len() {
             let mut end = at + 1;
             while end < self.source.len() && !self.source[end].first {
@@ -3063,6 +3072,8 @@ impl TranscriptView {
                 ready = final_answer.is_some_and(|answer| self.answer_visible(answer));
                 self.fold_targets
                     .insert(turn, final_answer.filter(|_| has_work && ready));
+                git_card = self.git_card(turn, turn_end, final_answer);
+                git_live_shown = false;
             }
             let folded = !is_prompt
                 && !activity.pinned.contains(&at)
@@ -3120,7 +3131,40 @@ impl TranscriptView {
             let phase_open = phase.is_none_or(|group| {
                 !grouped || self.phases.get(&group.start).copied().unwrap_or(active)
             });
-            if !self.mono && !folded && grouped && phase.is_some_and(|group| group.start == at) {
+            // A running pill turn shows one status line in place of its work
+            // and prose; a settled one's card leads its reply.
+            let git_stand_in = git_card.clone().filter(|card| {
+                !is_prompt
+                    && if card.live() {
+                        matches!(role.as_str(), "tool" | "reasoning" | "assistant")
+                    } else {
+                        card.answer == Some(at)
+                    }
+            });
+            if let Some(card) = &git_stand_in
+                && !(card.live() && git_live_shown)
+            {
+                git_live_shown = true;
+                self.rows.push(UiRow {
+                    key: (0, 0),
+                    body: Body::GitAction(card.clone()),
+                    message,
+                    first: false,
+                    last: false,
+                    work: false,
+                    work_tail: false,
+                    thought_phase: None,
+                });
+            }
+            let git_hidden = git_stand_in
+                .as_ref()
+                .is_some_and(|card| card.live());
+            if !self.mono
+                && !folded
+                && !git_hidden
+                && grouped
+                && phase.is_some_and(|group| group.start == at)
+            {
                 let group = phase.unwrap();
                 let (title, icon) = if group.calls.is_empty() {
                     (if active { "Thinking…" } else { "Thought" }.into(), "minus")
@@ -3145,7 +3189,11 @@ impl TranscriptView {
             }
             let reaction =
                 self.mono && role == "assistant" && text.trim().starts_with("<reaction>");
-            if role == "interjection" {
+            if git_hidden {
+                if role == "tool" {
+                    self.seen_steps.insert(at);
+                }
+            } else if role == "interjection" {
                 if let Ok(note) = serde_json::from_str(&text) {
                     self.rows.push(UiRow {
                         key: (0, 0),
@@ -4387,6 +4435,7 @@ impl TranscriptView {
             Body::Tool { .. } | Body::Phase { .. } | Body::Reasoning
         );
         let body = match row.body {
+            Body::GitAction(card) => self.git_card_row(&card, message_start, cx),
             Body::RemotePlan(plan) => self.remote_plan_card(&plan, cx),
             Body::Visual(document) => self.visual_row(message_start, document, cx),
             Body::Interjection(ref note) => {
