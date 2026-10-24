@@ -1074,6 +1074,9 @@ impl Shell {
                 cx,
             )
         });
+        if let Ok(path) = locked(&this.store).map(|store| store.database_path().to_path_buf()) {
+            crate::board::turns::install(path, Some(pilots.downgrade()), cx);
+        }
         this.observations.push(
             cx.subscribe(&pilots, |this, _, _: &crate::pilots::Changed, cx| {
                 this.sync_pilot_search(cx);

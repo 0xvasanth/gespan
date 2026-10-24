@@ -991,6 +991,10 @@ impl Conversation {
             .update(cx, |v, _| v.identity(&self.summary.provider, &model_label));
         self.begin_turn(cx);
         let generation = self.submission_generation;
+        if !self.is_remote() {
+            let pilot = crate::board::turns::pilot_of_session(self.summary.id, cx);
+            crate::board::turns::turn_started(&self.store, self.summary.id, pilot, generation, cx);
+        }
         let source_provider = self.summary.provider.clone();
         let source_account = self.settings.account.id.clone();
         self.status = if self.settings.pending_provider_switch.is_some() {
@@ -1108,6 +1112,7 @@ impl Conversation {
                             return;
                         }
                         let stopping = this.stopping;
+                        let turn_ok = update.status == "Ready";
                         // The final update settles accepted rows and storage.
                         // Ignore streaming notifications after the user stops.
                         if stopping && !finished {
@@ -1328,6 +1333,16 @@ impl Conversation {
                             this.status = "Waiting for your answer".into();
                         }
                         if finished {
+                            if !this.is_remote() {
+                                crate::board::turns::turn_settled(
+                                    &this.store,
+                                    this.summary.id,
+                                    generation,
+                                    stopping,
+                                    turn_ok,
+                                    cx,
+                                );
+                            }
                             if this.is_remote() {
                                 this.settings.remote_action = None;
                                 this.remote_state.refreshing = false;

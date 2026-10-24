@@ -6,6 +6,7 @@ mod column;
 mod drop;
 #[cfg(test)]
 mod tests;
+pub(crate) mod turns;
 
 use crate::{
     input::{self, Input},
