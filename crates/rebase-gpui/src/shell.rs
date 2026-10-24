@@ -564,6 +564,8 @@ pub(crate) struct Shell {
     /// Repaints the live agents card's elapsed times once a second.
     live_tick: Option<gpui::Task<()>>,
     busy_sessions: HashSet<i64>,
+    /// Held per Settings → Keep screen awake; released on drop at quit.
+    keep_awake: rebase_keep_awake::KeepAwake,
     notification_state: notifications::State,
     quick: crate::quick_composer::Controller,
     unseen_finished: HashSet<i64>,
@@ -909,6 +911,7 @@ impl Shell {
             live_agents_expanded: false,
             live_tick: None,
             busy_sessions: HashSet::new(),
+            keep_awake: rebase_keep_awake::KeepAwake::new(),
             notification_state,
             quick: Default::default(),
             unseen_finished: HashSet::new(),
@@ -1236,6 +1239,7 @@ impl Shell {
                 this.automation_session_changed(id, cx);
                 this.sync_review_locks(cx);
                 this.refresh_session_mark(id, cx);
+                this.sync_keep_awake();
                 this.notification_session_changed(id, cx);
                 this.update_usage_provider(cx);
                 this.update_chat_visibility(cx);

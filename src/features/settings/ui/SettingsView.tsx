@@ -398,6 +398,7 @@ import {
   type SettingsSearchResult,
   type SettingsSectionId,
 } from "../model/settings";
+import { saveKeepAwake, useKeepAwake } from "../model/keepAwake";
 import { loadSoundsEnabled, playCue, saveSoundsEnabled } from "../model/sounds";
 import { setQuickComposerShortcut } from "../../quick-composer/model/quickComposer";
 import {
@@ -856,6 +857,7 @@ function GeneralPage({
     loadTabAnimationsEnabled,
   );
   const [closeToTray, setCloseToTray] = useState(loadCloseToTray);
+  const keepAwake = useKeepAwake();
   const [quickComposerEnabled, setQuickComposerEnabled] = useState(
     loadQuickComposerEnabled,
   );
@@ -1025,6 +1027,22 @@ function GeneralPage({
             label="Working agents"
             on={liveAgentsEnabled}
             onChange={onLiveAgentsEnabled}
+          />
+        </Row>
+        <Row
+          id="keep-awake"
+          label="Keep screen awake"
+          description="Stop the idle timer from dimming and locking the screen, so a locked laptop doesn't pause running agents. Closing the lid or locking the screen yourself still does."
+        >
+          <Segmented
+            label="Keep screen awake"
+            value={keepAwake}
+            options={[
+              { value: "off", label: "Off" },
+              { value: "agents_running", label: "While agents run" },
+              { value: "app_open", label: "While Rebase is open" },
+            ]}
+            onChange={saveKeepAwake}
           />
         </Row>
         {IS_WIN && (

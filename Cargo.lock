@@ -3936,6 +3936,7 @@ dependencies = [
  "portable-pty",
  "quinn",
  "raw-window-handle",
+ "rebase-keep-awake",
  "rebase-mobile-link",
  "rusqlite",
  "serde",
@@ -3961,6 +3962,13 @@ dependencies = [
  "windows 0.62.2",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rebase-keep-awake"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
