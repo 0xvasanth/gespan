@@ -3,6 +3,7 @@ pub mod accounts;
 pub mod agent;
 pub mod app_update;
 pub mod automations;
+pub mod board;
 pub mod catalog;
 pub mod checkpoint;
 pub mod context;
