@@ -4660,18 +4660,50 @@ impl TranscriptView {
                     }))
                     .into_any_element()
             }
-            Body::Tool { call, group, tail } => div()
-                .relative()
-                .w_full()
-                .when(group.is_some(), |d| {
-                    d.pl(px(20.)).child(crate::activity::rail(tail))
-                })
-                .child(
-                    div()
-                        .opacity(step_opacity)
-                        .child(self.tool(*call, message_start, cx)),
-                )
-                .into_any_element(),
+            Body::Tool { call, group, tail } => {
+                // A lone running step leads with the spinner its phase header
+                // shows once a second step joins it.
+                let loading = group.is_none()
+                    && call.state == ToolState::Running
+                    && !call.is_compaction()
+                    && call.panel().is_none()
+                    && !cx.reduce_motion();
+                div()
+                    .relative()
+                    .w_full()
+                    .when(group.is_some(), |d| {
+                        d.pl(px(20.)).child(crate::activity::rail(tail))
+                    })
+                    .when(loading, |d| {
+                        d.flex().items_start().gap_1p5().child(
+                            div()
+                                .h(px(28.))
+                                .flex_shrink_0()
+                                .opacity(step_opacity)
+                                .flex()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .size(px(14.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .text_color(content(0.5))
+                                        .child(crate::session_mark::spinner(
+                                            ("tool-loader", message_start),
+                                            crate::pulse::Rate::Half,
+                                        )),
+                                ),
+                        )
+                    })
+                    .child(
+                        div()
+                            .when(loading, |d| d.min_w_0().flex_1())
+                            .opacity(step_opacity)
+                            .child(self.tool(*call, message_start, cx)),
+                    )
+                    .into_any_element()
+            }
             Body::Reasoning => {
                 let summary = self.messages[row.message]
                     .parser
