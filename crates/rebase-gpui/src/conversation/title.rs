@@ -373,4 +373,26 @@ mod tests {
         cx.run_until_parked();
         assert!(cancel.load(Ordering::Relaxed));
     }
+
+    #[gpui::test]
+    fn remote_sessions_keep_their_placeholder_branch(cx: &mut gpui::TestAppContext) {
+        let store = Arc::new(std::sync::Mutex::new(
+            rebase_core::store::Store::open(Path::new(":memory:")).unwrap(),
+        ));
+        let summary = locked(&store).unwrap().create("codex", "/tmp").unwrap();
+        let view = cx.new(|cx| Conversation::new(summary, store.clone(), cx));
+        view.update(cx, |v, cx| {
+            v.summary.cwd = "remote://host-1/srv/app".into();
+            assert!(v.is_remote());
+            v.test_branch_name = Some("fix login".into());
+            v.branch_seed = Some("Fix the login flow".into());
+            v.name_worktree_branch(
+                "remote://host-1/srv/app-worktrees/rebase-k3j9x2a1".into(),
+                cx,
+            );
+            // Nothing was asked of the provider and nothing will be renamed.
+            assert!(v.branch_cancel.is_none(), "no naming request started");
+        });
+        cx.run_until_parked();
+    }
 }
