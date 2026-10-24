@@ -1,0 +1,30 @@
+crates/rebase-gpui/src/conversation.rs
+  s_0de52fe47ecaaa::t_917b71e0271787 1104,1118-1126
+  s_0de52fe47ecaaa::t_de874cc547c675 1423-1427
+  s_0de52fe47ecaaa::t_18b569e122693c 994
+crates/rebase-gpui/src/board/turns.rs
+  s_0de52fe47ecaaa::t_6b8d4d5a11b7cc 373-434,437-438
+  s_0de52fe47ecaaa::t_18b569e122693c 162-232
+  s_0de52fe47ecaaa::t_3688a7b49ebafc 435-436
+  s_0de52fe47ecaaa::t_496d2c98ebc6fe 439-441
+crates/rebase-gpui/src/runtime.rs
+  s_0de52fe47ecaaa::t_bbf79ccf2562ab 53-54
+crates/rebase-gpui/src/runtime/remote.rs
+  s_0de52fe47ecaaa::t_b83d12e1d5eb7a 39-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "018eea82b72201475cd7b01932bfd78b88316f23",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
