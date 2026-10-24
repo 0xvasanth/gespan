@@ -1,0 +1,33 @@
+src/integrations/harness/providers/claude/claude.ts
+  s_ccb41beff89445::t_59c62da69194da 211-213,624-625,709-710,1117-1119,1122,1124-1125,1127,1992-1993,2127,2145-2148,2169-2171,2246-2252
+  s_ccb41beff89445::t_2c5a10cff16afe 2253-2254
+crates/rebase-core/src/provider/tasks.rs
+  s_ccb41beff89445::t_c1f21fd4247d16 29-33,542-546
+src/integrations/harness/providers/claude/claudeResume.test.ts
+  s_ccb41beff89445::t_96f5beaea7d8f1 652-727,731-764
+  s_ccb41beff89445::t_4377b2fa5a0ad5 728-730
+src/integrations/harness/core/apply.test.ts
+  s_ccb41beff89445::t_59c62da69194da 1531-1554
+crates/rebase-core/src/provider.rs
+  s_ccb41beff89445::t_c1f21fd4247d16 429,431-432,438,440-442,960-967,971
+src/integrations/harness/core/apply.ts
+  s_ccb41beff89445::t_83d0f6839a8ddb 1072-1075
+crates/rebase-core/src/provider/tasks/resume_tests.rs
+  s_ccb41beff89445::t_000164bc278c41 588-636
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c73fc04cad3599e64377a31cde691c0b12fb0442",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

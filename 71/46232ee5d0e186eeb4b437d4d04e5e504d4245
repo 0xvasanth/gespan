@@ -1,0 +1,64 @@
+crates/rebase-core/src/tool/handback.rs
+  s_ccb41beff89445::t_cb3790627c7422 1,4-13,23,74,80,101-142,146-199
+  s_ccb41beff89445::t_52cc24a4bafb28 88,94,96
+  s_ccb41beff89445::t_a0fb59ffd8cef1 2-3,14-22,24-73,75-79,81-87,89-93,95,97-100,143-145
+.github/workflows/native.yml
+  s_ccb41beff89445::t_7e08084f9d9570 41
+crates/rebase-core/src/tool.rs
+  s_ccb41beff89445::t_cb3790627c7422 3
+src/features/sessions/model/subagentHandback.test.ts
+  s_ccb41beff89445::t_cb3790627c7422 1-81
+src/features/sessions/model/subagentHandback.ts
+  s_ccb41beff89445::t_cb3790627c7422 1-8,22,64
+  s_ccb41beff89445::t_a0fb59ffd8cef1 9-21,23-63
+tests/fixtures/claude/resumed-background-agent.jsonl
+  s_ccb41beff89445::t_be65f9bf549fcf 1-9,11-13,20-62,64-125,127-196,198-238
+crates/rebase-gpui/src/runtime.rs
+  s_ccb41beff89445::t_f7b06425adb624 502-506
+  s_ccb41beff89445::t_76f728f51613be 501
+crates/rebase-core/src/provider.rs
+  s_ccb41beff89445::t_a73c81b8446622 75-77
+  s_ccb41beff89445::t_2168197e442fd6 19
+  s_ccb41beff89445::t_fb9f97c1e92ccb 129-134
+  s_ccb41beff89445::t_275e1730195e4e 396,424-431,850-852,867-871,951-956,1015-1023,1564,1578-1579
+crates/rebase-core/src/provider/tasks.rs
+  s_ccb41beff89445::t_7b969ab2a06def 652,655-656,691-692,794-795,814,1301-1304
+  s_ccb41beff89445::t_fb9f97c1e92ccb 46,906,965-967
+  s_ccb41beff89445::t_d7ec60d92a2e66 400-402,405,424,426,443,445,470,476-480,496-508,522-525,533-535,538-549,553,572-578,586,614-626,628-629,631-634,638-651,653-654,657-690,693-793,796-813,815-857,861-877,880-887,905,907,910-920
+  s_ccb41beff89445::t_5636acb80f508e 1351-1354
+  s_ccb41beff89445::t_62ee6e67df9ab1 1295,1297-1300
+  s_ccb41beff89445::t_8e9c6df7b5eb71 19-24,26-28,47-53,76-81
+  s_ccb41beff89445::t_d9d49fe3d7bd0b 627,630,635-637,991,993
+crates/rebase-core/src/agent.rs
+  s_ccb41beff89445::t_fb9f97c1e92ccb 120-123
+crates/rebase-gpui/src/conversation/background_tasks.rs
+  s_ccb41beff89445::t_c4933d668788e8 280-282
+crates/rebase-core/src/provider/tasks/resume_tests.rs
+  s_ccb41beff89445::t_7b969ab2a06def 55-58,97-100,106,135-139,165-168,170-173,179-182,234-236,280,343-346,384-387,395-398
+  s_ccb41beff89445::t_a73c81b8446622 154
+  s_ccb41beff89445::t_91bd7bccc66ff5 211,251-263,279
+  s_ccb41beff89445::t_92a79b0067ef3c 1-54,59-96,101-105,107-134,140-153,155-164,169,174-178,183-210,212-233,237-250,264-278,281-342,347-383,388-394,399-455
+crates/rebase-core/src/provider/agent_registry.rs
+  s_ccb41beff89445::t_6ff25fe892fe6c 1-4,6-66,72-125
+  s_ccb41beff89445::t_2168197e442fd6 5
+  s_ccb41beff89445::t_7b969ab2a06def 67-71
+crates/rebase-core/src/tool/tasks.rs
+  s_ccb41beff89445::t_fb9f97c1e92ccb 114-133
+  s_ccb41beff89445::t_6369cdfd6bc373 679-681,743,757-778
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7146232ee5d0e186eeb4b437d4d04e5e504d4245",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

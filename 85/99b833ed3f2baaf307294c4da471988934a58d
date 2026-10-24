@@ -1,0 +1,27 @@
+src/features/sessions/model/subagentHandback.ts
+  s_ccb41beff89445::t_6127af49e2be09 11-13,24-26,28-31,38-44,62-65
+  s_ccb41beff89445::t_13ed0d6b3eada9 33-37,58-60,73-75
+  s_ccb41beff89445::t_38d8ca4faa83a2 32
+crates/rebase-core/src/tool/handback.rs
+  s_ccb41beff89445::t_6127af49e2be09 24-26,28,30,32,34-36,39-56,204-228,230-246
+  s_ccb41beff89445::t_f9d1030c605de4 229,247
+src/features/sessions/model/subagentHandback.test.ts
+  s_ccb41beff89445::t_13ed0d6b3eada9 6-9,24-26,47-49,88-131
+  s_ccb41beff89445::t_a2a688b73db470 132-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8599b833ed3f2baaf307294c4da471988934a58d",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
