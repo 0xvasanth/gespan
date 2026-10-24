@@ -47,8 +47,9 @@ fn open(cx: &mut TestAppContext) -> Fixture {
     cx.update(|cx| cx.set_reduce_motion(true));
     let dir = Scratch::new();
     let db = dir.0.join("rebase.db");
-    let store: crate::runtime::Database =
-        Arc::new(Mutex::new(Store::open(Path::new(":memory:")).unwrap()));
+    let store: crate::runtime::Database = Arc::new(Mutex::new(
+        Store::open_rebase(Path::new(":memory:")).unwrap(),
+    ));
     let (view_store, view_db) = (store.clone(), db.clone());
     let window = cx.update(|cx| {
         cx.open_window(
@@ -467,6 +468,11 @@ fn linked(cx: &mut TestAppContext, target: Option<&str>) -> (Fixture, i64) {
         .unwrap()
         .persisted_session_id(session)
         .unwrap();
+    assert_ne!(
+        persisted,
+        session.to_string(),
+        "links store the Tauri session id"
+    );
     let card = detail(&f, cx).cards[0].id.clone();
     Service::open(&f.db)
         .unwrap()

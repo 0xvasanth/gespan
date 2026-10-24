@@ -204,7 +204,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("rebase.db");
-        let store = Store::open(Path::new(":memory:")).unwrap();
+        let store = Store::open_rebase(Path::new(":memory:")).unwrap();
         let session = store.create("codex", "/work").unwrap().id;
         let persisted = store.persisted_session_id(session).unwrap();
         let store: Database = Arc::new(Mutex::new(store));
