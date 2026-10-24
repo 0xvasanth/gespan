@@ -115,6 +115,69 @@ impl Conversation {
     }
 }
 
+impl Conversation {
+    /// Tauri renames a new worktree's placeholder branch after the work its
+    /// first message asks for. Local sessions only: a remote host's branches
+    /// stay as created, as they do in Tauri.
+    pub(super) fn name_worktree_branch(&mut self, worktree: String, cx: &mut Context<Self>) {
+        let Some(message) = self.branch_seed.take() else {
+            return;
+        };
+        if self.is_remote() || self.settings.pilot.is_some() {
+            return;
+        }
+        let kind = Kind::from_id(&self.summary.provider);
+        let account = self.settings.account.clone();
+        let tree = worktree.clone();
+        let work = cx.background_executor().spawn(async move {
+            // GPUI unit tests have no live provider, as for titles.
+            if cfg!(test) {
+                None
+            } else {
+                rebase_core::session_title::generate_branch_name(
+                    kind,
+                    Path::new(&tree),
+                    &message,
+                    account,
+                    Arc::new(AtomicBool::new(false)),
+                )
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            if let Some(fragment) = work.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.rename_worktree_branch(worktree, fragment, cx)
+                });
+            }
+        })
+        .detach();
+    }
+    /// Gives the session's worktree branch the generated name, then shows it.
+    pub(super) fn rename_worktree_branch(
+        &mut self,
+        worktree: String,
+        fragment: String,
+        cx: &mut Context<Self>,
+    ) {
+        let root = self.summary.cwd.clone();
+        let tree = worktree.clone();
+        let work = cx.background_executor().spawn(async move {
+            rebase_core::git::rename_app_branch(Path::new(&root), Path::new(&tree), &fragment)
+        });
+        cx.spawn(async move |this, cx| {
+            // A failed rename keeps the placeholder; the session works the same.
+            if work.await.is_ok() {
+                let _ = this.update(cx, |this, cx| {
+                    if this.execution_cwd() == worktree {
+                        this.refresh_git(cx);
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +233,72 @@ mod tests {
             assert_eq!(v.summary.title, "My session name");
         });
         assert!(locked(&store).unwrap().load(id).unwrap().rows.is_empty());
+    }
+
+    fn git(cwd: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .current_dir(cwd)
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[gpui::test]
+    fn a_new_worktree_branch_takes_the_name_of_its_work(cx: &mut gpui::TestAppContext) {
+        let root = std::env::temp_dir().join(format!("rebase-branch-name-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = root.join("project");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-b", "main"]);
+        std::fs::write(repo.join("file"), "x\n").unwrap();
+        git(&repo, &["add", "file"]);
+        git(&repo, &["commit", "-m", "init"]);
+        let store = Arc::new(std::sync::Mutex::new(
+            rebase_core::store::Store::open(Path::new(":memory:")).unwrap(),
+        ));
+        let summary = locked(&store)
+            .unwrap()
+            .create("codex", &repo.to_string_lossy())
+            .unwrap();
+        let id = summary.id;
+        let tree = rebase_core::git::create_worktree(&repo, "main", id).unwrap();
+        let tree = tree.to_string_lossy().into_owned();
+        let view = cx.new(|cx| Conversation::new(summary, store.clone(), cx));
+        view.update(cx, |v, cx| {
+            v.settings.worktree_cwd = Some(tree.clone());
+            v.rename_worktree_branch(tree.clone(), "Fix the login flow".into(), cx);
+        });
+        cx.run_until_parked();
+        view.update(cx, |v, _| {
+            assert_eq!(v.branch.as_deref(), Some("rebase/fix-the-login-flow"));
+        });
+        let branches = rebase_core::git::worktrees(&repo).unwrap();
+        assert!(
+            branches
+                .iter()
+                .any(|t| t.branch.as_deref() == Some("rebase/fix-the-login-flow"))
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[gpui::test]
+    fn naming_uses_the_seed_once_and_skips_remote_sessions(cx: &mut gpui::TestAppContext) {
+        let store = Arc::new(std::sync::Mutex::new(
+            rebase_core::store::Store::open(Path::new(":memory:")).unwrap(),
+        ));
+        let summary = locked(&store).unwrap().create("codex", "/tmp").unwrap();
+        let view = cx.new(|cx| Conversation::new(summary, store.clone(), cx));
+        view.update(cx, |v, cx| {
+            v.branch_seed = Some("Fix the login flow".into());
+            v.name_worktree_branch("/tmp/tree".into(), cx);
+            assert_eq!(v.branch_seed, None, "a later worktree is not renamed again");
+        });
+        cx.run_until_parked();
     }
 }

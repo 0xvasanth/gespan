@@ -1,4 +1,5 @@
-//! Commit-message and PR prompts, ported from gitText.ts and jsonText.ts.
+//! Commit-message, PR and branch-name prompts, ported from gitText.ts and
+//! jsonText.ts.
 //! Lengths count UTF-16 code units, like the JavaScript originals.
 use serde_json::{Map, Value};
 
@@ -93,6 +94,60 @@ pub fn parse_pr_content(raw: &str) -> Option<(String, String)> {
         return None;
     }
     Some((title, body))
+}
+
+/// buildBranchNamePrompt: a short branch name for the work a user message
+/// asks for.
+pub fn branch_name_prompt(message: &str) -> String {
+    [
+        "You generate concise git branch names.",
+        "Return a JSON object with key: branch.",
+        "Do not call tools. Reply with JSON only.",
+        "Rules:",
+        "- Branch should describe the requested work from the user message.",
+        "- Keep it short and specific (2-6 words).",
+        "- Use plain words only, no issue prefixes and no punctuation-heavy text.",
+        "",
+        "User message:",
+        &limit_section(message, 8_000),
+    ]
+    .join("\n")
+}
+
+/// parseBranchName: the reply's `branch`, or the whole reply, as a fragment
+/// safe to put after the app's branch prefix.
+pub fn parse_branch_name(raw: &str) -> Option<String> {
+    let rec = parse_json_object(raw);
+    let fragment =
+        sanitize_branch_fragment(rec.as_ref().map_or(raw, |rec| string_field(rec, "branch")));
+    (!fragment.is_empty()).then_some(fragment)
+}
+
+/// sanitizeBranchFragment: lowercase words joined by `-`, at most 64 long.
+pub fn sanitize_branch_fragment(raw: &str) -> String {
+    let edge = |c: char| matches!(c, '.' | '/' | '_' | '-') || js_space(c);
+    let normalized: String = js_trim(raw)
+        .to_lowercase()
+        .chars()
+        .filter(|c| !matches!(c, '\'' | '"' | '`'))
+        .collect();
+    let normalized = normalized.trim_matches(edge);
+    let mut fragment = String::new();
+    for c in normalized.chars() {
+        let c = if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '/' | '_' | '-') {
+            c
+        } else {
+            '-'
+        };
+        // Runs of `-` or `/` collapse to one.
+        if matches!(c, '-' | '/') && fragment.ends_with(c) {
+            continue;
+        }
+        fragment.push(c);
+    }
+    let fragment = fragment.trim_matches(['.', '/', '_', '-']);
+    let fragment: String = fragment.chars().take(64).collect();
+    fragment.trim_end_matches(['.', '/', '_', '-']).to_owned()
 }
 
 fn commit_body(rec: &Record) -> String {
@@ -317,5 +372,46 @@ mod tests {
             Some(("Add X".into(), "## Summary\n- x".into()))
         );
         assert_eq!(parse_pr_content(r#"{"body":"x"}"#), None);
+    }
+
+    #[test]
+    fn branch_names_come_from_json_or_plain_replies() {
+        assert_eq!(
+            parse_branch_name("```json\n{\"branch\": \"Fix Worktree Names\"}\n```").as_deref(),
+            Some("fix-worktree-names")
+        );
+        assert_eq!(
+            parse_branch_name("Sure! {\"branch\":\"open-in-editor\"}").as_deref(),
+            Some("open-in-editor")
+        );
+        assert_eq!(
+            parse_branch_name("add jetbrains ide support").as_deref(),
+            Some("add-jetbrains-ide-support")
+        );
+        assert_eq!(parse_branch_name("{\"branch\": \"...\"}"), None);
+        assert_eq!(parse_branch_name("   "), None);
+    }
+
+    #[test]
+    fn branch_fragments_keep_only_safe_characters() {
+        assert_eq!(
+            sanitize_branch_fragment("  'Fix: login / OAuth!!' "),
+            "fix-login-/-oauth"
+        );
+        assert_eq!(
+            sanitize_branch_fragment("feat//colour  tetris"),
+            "feat/colour-tetris"
+        );
+        assert_eq!(sanitize_branch_fragment("--Ünïcode café__"), "n-code-caf");
+        assert_eq!(sanitize_branch_fragment(".hidden."), "hidden");
+        let long = sanitize_branch_fragment(&"word ".repeat(30));
+        assert!(long.len() <= 64 && !long.ends_with('-'), "{long}");
+    }
+
+    #[test]
+    fn branch_prompt_carries_the_message_and_rules() {
+        let prompt = branch_name_prompt("Open a session in WebStorm");
+        assert!(prompt.starts_with("You generate concise git branch names."));
+        assert!(prompt.ends_with("User message:\nOpen a session in WebStorm"));
     }
 }

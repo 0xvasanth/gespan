@@ -215,6 +215,8 @@ pub(crate) struct Conversation {
     runner: Option<Entity<crate::composer_runner::Runner>>,
     cancel: Arc<AtomicBool>,
     title_cancel: Option<Arc<AtomicBool>>,
+    /// The message a worktree being created is named after, once it exists.
+    branch_seed: Option<String>,
     _submission: Subscription,
     response_events: Option<Subscription>,
     response_menu: Option<ResponseMenu>,
@@ -628,6 +630,7 @@ impl Conversation {
             runner: None,
             cancel: Arc::new(AtomicBool::new(false)),
             title_cancel: None,
+            branch_seed: None,
             _submission: submission,
             response_events: None,
             response_menu: None,
@@ -1039,6 +1042,7 @@ impl Conversation {
         }
         self.preparing_worktree = settings.new_worktree && settings.worktree_cwd.is_none();
         if self.preparing_worktree {
+            self.branch_seed.get_or_insert_with(|| prompt.clone());
             settings.worktree_base = settings.worktree_base.or(self.branch.clone());
             self.status = "Creating worktree…".into();
         }
@@ -1105,10 +1109,11 @@ impl Conversation {
                                 || this.settings.new_worktree)
                         {
                             this.preparing_worktree = false;
-                            this.settings.worktree_cwd = Some(cwd);
+                            this.settings.worktree_cwd = Some(cwd.clone());
                             this.settings.new_worktree = false;
                             this.save_settings(cx);
                             this.refresh_git(cx);
+                            this.name_worktree_branch(cwd, cx);
                         }
                         if let Some(commands) = update.commands.filter(|_| source_selected) {
                             this.completion.update(cx, |completion, cx| {
@@ -1658,6 +1663,14 @@ impl Conversation {
         .detach();
     }
     fn prepare_worktree(&mut self, cx: &mut Context<Self>) {
+        if self.branch_seed.is_none() {
+            self.branch_seed = self
+                .follow_ups
+                .state
+                .messages
+                .first()
+                .map(|message| message.text.clone());
+        }
         self.preparing_worktree = true;
         self.status = "Creating worktree…".into();
         let cwd = self.summary.cwd.clone();
@@ -1677,10 +1690,12 @@ impl Conversation {
                 this.preparing_worktree = false;
                 match result {
                     Ok(path) => {
-                        this.settings.worktree_cwd = Some(path.to_string_lossy().into_owned());
+                        let path = path.to_string_lossy().into_owned();
+                        this.settings.worktree_cwd = Some(path.clone());
                         this.settings.new_worktree = false;
                         this.save_settings(cx);
                         this.refresh_git(cx);
+                        this.name_worktree_branch(path, cx);
                         if this.follow_ups.state.messages.is_empty() {
                             this.send(cx);
                         } else {
