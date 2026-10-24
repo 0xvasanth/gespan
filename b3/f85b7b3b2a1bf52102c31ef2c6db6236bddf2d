@@ -1,0 +1,30 @@
+src/features/source-control/model/worktrees.ts
+  s_3e9d1be838c67b::t_412d5bb43610f8 59,64,70,116-117
+src/features/source-control/model/gitText.test.ts
+  s_3e9d1be838c67b::t_42aaed3575ebd6 1-26
+src/features/source-control/model/worktreeBranchName.test.ts
+  s_3e9d1be838c67b::t_42aaed3575ebd6 1-49
+src/app/App.tsx
+  s_3e9d1be838c67b::t_412d5bb43610f8 8134-8135,8137-8142
+src/features/source-control/model/gitText.ts
+  s_3e9d1be838c67b::t_412d5bb43610f8 129-131
+src-tauri/src/worktrees.rs
+  s_3e9d1be838c67b::t_4a2a82081f1de4 426-434,451-453,471-492,505,508-513,1014,1030-1031,1038,1041-1047,1058,1069-1102
+  s_3e9d1be838c67b::t_3b5ed9ef68c167 1103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3f85b7b3b2a1bf52102c31ef2c6db6236bddf2d",
+  "prompts": {},
+  "sessions": {
+    "s_3e9d1be838c67b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c5ba030e-7698-48b9-b0c4-3dfc53ffe6b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
