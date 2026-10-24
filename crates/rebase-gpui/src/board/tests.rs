@@ -1341,3 +1341,28 @@ fn the_send_hint_names_the_chord_that_sends_a_comment(cx: &mut TestAppContext) {
     visual.run_until_parked();
     assert_eq!(extras_of(&f, &card).comments, 1, "{chord} sends");
 }
+
+#[gpui::test]
+fn label_and_priority_filters_narrow_the_cards_and_combine(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["High one", "Labelled", "Plain"]);
+    let cards: Vec<String> = detail(&f, cx).cards.iter().map(|c| c.id.clone()).collect();
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    service.set_priority(&cards[0], 3).unwrap();
+    let bug = service.create_label(&board.id, "Bug", "e5534b").unwrap();
+    service.set_labels(&cards[1], &[bug.id]).unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-priority-3");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1]);
+    // A card with no priority set counts as None.
+    click(visual, "board-filter-priority-0");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
+    click(visual, "board-filter-clear");
+    click(visual, "board-filter-label-0");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [2]);
+    // Different filters must all match.
+    click(visual, "board-filter-priority-3");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), Vec::<i64>::new());
+}
