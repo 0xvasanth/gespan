@@ -1,0 +1,26 @@
+crates/rebase-core/src/lib.rs
+  s_0de52fe47ecaaa::t_c1239759594e01 6
+crates/rebase-core/src/board/mod.rs
+  s_0de52fe47ecaaa::t_b6813407d81685 1039-1538,1572-1581
+  s_0de52fe47ecaaa::t_bc3d43ad46bebc 1-912,914-921,923-926,928-936,938-946,948-951,953-956,958-960,968-971,973-982,985-993,995-998,1000-1012,1017-1025,1027-1038
+  s_0de52fe47ecaaa::t_82e3f9fd6fb780 1539-1571
+  s_0de52fe47ecaaa::t_e3a0bfe2e85842 913,922,927,937,947,952,957,961-967,972,983-984,994,999,1013-1016,1026
+crates/rebase-core/tests/shared_contracts.rs
+  s_0de52fe47ecaaa::t_e73ecf530a0caa 296,361-423
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d42b3ce2a0c5a19f79c3b927c30e77b8bb5a6ee3",
+  "prompts": {},
+  "sessions": {
+    "s_0de52fe47ecaaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "381d65b7-4e6b-40e9-9d52-97e679fb30ad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
