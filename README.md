@@ -14,6 +14,14 @@
 
 Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity, Pi, omp, fx, Hermes Agent, Kiro CLI, and Devin. If they’re installed and logged in, Rebase can run them. Tabs are sessions. The composer is the input. Rebase does not sell tokens.
 
+## About the name
+
+**Gespan** (say it "guh-SPAHN") is a Dutch word for a *span*: a team of draught animals, horses or oxen, harnessed together to pull the plough and the wagon on the farm before the work was mechanised. One driver, several animals, all pulling in the same direction.
+
+That is what this app does for coding agents. You hold the reins, and a team of agents does the pulling.
+
+This is the reason we are changing the project's name, and Gespan is the name we will use moving forward.
+
 ## Install
 
 Install and sign in to at least one supported agent first. See [provider setup](docs/providers.md) for instructions.
