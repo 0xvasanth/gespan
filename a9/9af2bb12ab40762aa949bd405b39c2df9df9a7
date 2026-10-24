@@ -1,0 +1,25 @@
+crates/rebase-core/src/flow/mod.rs
+  s_ccb41beff89445::t_0b8056bd8c5cfa 2
+crates/rebase-core/src/response.rs
+  s_ccb41beff89445::t_6dd0d20e387a4a 77-78,84,245-255,257-290
+  s_ccb41beff89445::t_7f4c115d5df356 79-83,256
+crates/rebase-core/src/flow/contract.rs
+  s_ccb41beff89445::t_7f4c115d5df356 6,8-16,18-33,37-65,68,73-165,168-169,175-178,283-284,288-295,301-304,346-351,355-360,372-379,382-387,398-403,407-412,416-420,432-435,445-448,450-453,455-458,473-478,480-485,489-492,499-510,512-515,520-527,529,546-551,555-560
+  s_ccb41beff89445::t_6dd0d20e387a4a 1-5,7,17,34-36,66-67,69-72,166-167,170-174,179-282,285-287,296-300,305-345,352-354,361-371,380-381,388-397,404-406,413-415,421-431,436-444,449,454,459-472,479,486-488,493-498,511,516-519,528,530-545,552-554,561-564
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a99af2bb12ab40762aa949bd405b39c2df9df9a7",
+  "prompts": {},
+  "sessions": {
+    "s_ccb41beff89445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec57e4fb-755e-4022-a3b9-125440dcfe0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
