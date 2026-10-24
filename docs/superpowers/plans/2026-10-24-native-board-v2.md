@@ -29,7 +29,7 @@ Earlier plans: `2026-10-23-board.md` (Visual Design) and `2026-10-24-native-boar
 - **New tables:**
   - `board_native_meta(card_id PK, priority INTEGER NOT NULL DEFAULT 0, due_at INTEGER)`
   - `board_native_projects(card_id, project TEXT, PK(card_id, project))`
-  - `board_native_labels(id PK, board_id → boards, name, color)`
+  - `board_native_labels(id PK, board_id → boards ON DELETE CASCADE, name, color)`, so deleting a board removes its labels
   - `board_native_card_labels(card_id, label_id → board_native_labels, PK(card_id, label_id))`
   - `board_native_subtasks(id PK, card_id, title, done INTEGER, position)`
   - `board_native_comments(id PK, card_id, body, created_at)`
@@ -63,7 +63,7 @@ Earlier plans: `2026-10-23-board.md` (Visual Design) and `2026-10-24-native-boar
   - Tauri: `BOARD_ENABLED_DEFAULT` is `true`, and `loadBoardEnabled()` with empty storage is `true`. The SettingsView toggle test starts on, so its first click writes `"0"`.
   - Native: `Preferences::default().board` is `true` (rename the test to `board_is_on_until_turned_off`). An unset desktop key imports as `true`; an explicit `false` imports as `false`. The contract expects `("board", "boardEnabled", true)`.
 - [ ] **Step 2: Run** `bunx vitest run src/features/settings` and the native core and GPUI settings tests. Expect FAIL.
-- [ ] **Step 3: Flip the four defaults.**
+- [ ] **Step 3: Flip the defaults.**
 - [ ] **Step 4: Run** the native gate, `bun run check:web` and `bun run check:rust`. Expect PASS. Any Tauri or native test that assumed Board starts off must set the flag explicitly; fix those tests, not the code.
 - [ ] **Step 5: Commit:** "Turn the Board on by default in both apps"
 
@@ -86,9 +86,12 @@ impl Service {
     pub fn set_projects(&mut self, card_id: &str, projects: &[String]) -> Result<(), String>;
     pub fn labels(&mut self, board_id: &str) -> Result<Vec<Label>, String>;
     pub fn create_label(&mut self, board_id: &str, name: &str, color: &str) -> Result<Label, String>;
+    // Rejects an id that is not a label on the card's own board ("Label not on this board").
     pub fn set_labels(&mut self, card_id: &str, label_ids: &[String]) -> Result<(), String>;
     pub fn subtasks(&mut self, card_id: &str) -> Result<Vec<Subtask>, String>;
     pub fn add_subtask(&mut self, card_id: &str, title: &str) -> Result<Subtask, String>;
+    // Subtask and comment writes touch the parent card's updated_at in the same write_tx;
+    // toggling to the state a subtask already has changes nothing.
     pub fn toggle_subtask(&mut self, subtask_id: &str, done: bool) -> Result<(), String>;
     pub fn delete_subtask(&mut self, subtask_id: &str) -> Result<(), String>;
     pub fn comments(&mut self, card_id: &str) -> Result<Vec<Comment>, String>;            // oldest first
@@ -167,7 +170,7 @@ Writes use `write_tx` (IMMEDIATE). Priority, due-date, project and label changes
 
 **Drawer, top to bottom:**
 1. **Top bar** (36 px): `Board / #12` in 12 px (`#12` mono), then a spacer, then actions:
-   - "Mark complete": a circle glyph and label; once done it reads "Completed" with a green check, and clicking moves the card to the done-role step;
+   - "Mark complete": a circle glyph and label; once done it reads "Completed" with a green check, and clicking moves the card to the done-role step. With no done-role step it shows an error and leaves the task where it is;
    - copy reference: writes `#12 Title` to the clipboard;
    - `…`: Delete task, with a confirm;
    - close `×`.
@@ -187,7 +190,7 @@ Writes use `write_tx` (IMMEDIATE). Priority, due-date, project and label changes
    - Comments: a list (avatar initial, "You", relative time, body), then a composer ("Leave a comment…", ⌘Enter or a Comment button).
    - Activity: the existing timeline.
 
-Escape closes, and saves unsaved edits. Edits made elsewhere refresh fields you haven't changed (keep the `loaded_*` rule).
+Escape closes, and saves unsaved edits; a save that fails keeps the drawer open with its error. Edits made elsewhere refresh fields you haven't changed (keep the `loaded_*` rule). Tests: a poll while the drawer is open keeps an unsaved description and follows a move made elsewhere; a step picked after the steps were reordered is the step it named.
 
 - [ ] **Step 1: Write the failing tests** (GPUI). Rewrite the existing detail tests to the new selectors.
   - Opening a card shows `board-drawer-status`, `-priority`, `-due`, `-projects`, `-labels` and `-linked`.

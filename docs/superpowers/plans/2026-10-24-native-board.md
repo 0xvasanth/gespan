@@ -18,7 +18,7 @@
 - **Error strings** match Tauri exactly: `"Column not on this board"`, `"Column has N cards"`, `"Board not found"`, and role errors containing `"role"`.
 - **Link ids.** A `session` link stores the persisted session id string (`Store::persisted_session_id`), never the native `i64`. A `pilot` link stores `Pilot.id`. Link kinds are `session | pilot | flow-run`. Actors are `user | system`. Record kinds are `started | completed | failed`.
 - **Activity rows** store column **names** in `from_column` / `to_column`, as Tauri does.
-- **Auto-move** is forward-only. It records `started` / `completed` / `failed` after a move and when the card stays. A stopped turn sends no event. Pilot resolution is own chat → habit run → spawning Pilot, decided at turn start.
+- **Auto-move** is forward-only. It records `started` / `completed` / `failed` after a move and when the card stays. A stopped turn sends no terminal event (no `completed` or `failed`); its `started` record still goes out. Pilot resolution is own chat → habit run → spawning Pilot, decided at turn start.
 - **Setting.** The native preference is `board: bool`, default `false`. It is imported once from the Tauri `boardEnabled` key. Its row sits in General, after Notes, with this copy: `"A Kanban board for tracking work. Cards can link to sessions and Pilots, and move on their own as that work starts and finishes."`
 - **No Flow runs** (Flows isn't built), and no keyboard dragging in native v1.
 - **Look.** Use the Visual Design table in the spec, with values mapped to native tokens in `crates/rebase-gpui/src/theme.rs`. Don't invent new colors.
@@ -64,11 +64,11 @@
   - `data_version_changes_after_another_connection_writes`: `a.data_version()`, `b.card_create(...)`, then `a.data_version()` differs.
 
   In `tests/shared_contracts.rs`, add:
-  - `board_tables_match_tauri`: extract every `CREATE TABLE IF NOT EXISTS board…` and `CREATE … INDEX IF NOT EXISTS board…` statement (up to its closing `;`) from `tauri("src-tauri/src/board.rs")` and from the native source, normalize whitespace runs to a single space, and assert the two lists are equal.
+  - `board_tables_match_tauri`: extract every `CREATE TABLE IF NOT EXISTS board…` and `CREATE … INDEX IF NOT EXISTS board…` statement (up to its closing `;`) from `tauri("src-tauri/src/board.rs")` and from the native source, normalize whitespace runs to a single space, and assert the two lists are equal. The two copies sit at different indentation in their Rust sources, so "byte-identical" means identical apart from whitespace.
   - `board_error_strings_match_tauri`: assert each Global Constraints error string appears in both sources.
   - Also assert that `Store::open_rebase` on a fresh temp DB followed by `board::Service::open` creates exactly the four board tables.
 - [ ] **Step 2: Run:** `cargo test --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core --profile native-dev board` → FAIL (module missing).
-- [ ] **Step 3: Implement.** Copy the DDL string from Tauri verbatim. Port the transaction and renumbering logic. `Service::open` follows `automations::Service::open` (`automations.rs:663-676`). `data_version` follows `store/pilots.rs:83`.
+- [ ] **Step 3: Implement.** Copy the DDL string from Tauri verbatim. Port the transaction and renumbering logic; write transactions use `TransactionBehavior::Immediate` so two connections writing at once wait on `busy_timeout` instead of failing with SQLITE_BUSY. `Service::open` follows `automations::Service::open` (`automations.rs:663-676`). `data_version` follows `store/pilots.rs:83`.
 - [ ] **Step 4: Run:** the same command, plus `cargo test … -p rebase-core --test shared_contracts` → PASS.
 - [ ] **Step 5: Commit:** `git commit -m "Add native board storage sharing the Tauri board tables"`
 
@@ -108,7 +108,7 @@
   - `crates/rebase-gpui/src/shell/app_views.rs` (label, render, focus, `open_board`, like `open_notes`), `shell/project_rail.rs` (~:835-882), `shell/title_tabs.rs` (gate at ~:71: `view != Board || preferences.board`), `shell/classic_surfaces.rs`, `shell/classic_sidebar.rs`, `shell/classic_surface_tests.rs` (~:846-923)
   - `crates/rebase-gpui/src/shell.rs` (lazy `board: Option<Entity<BoardView>>`)
 - Create:
-  - `crates/rebase-gpui/assets/hugeicons/kanban.svg`: Hugeicons free `KanbanIcon`, converted to the same SVG format as the neighbouring files. The license is already in `hugeicons.LICENSE`.
+  - `crates/rebase-gpui/assets/hugeicons/kanban.svg`: Hugeicons free `KanbanIcon`, converted to the same SVG format as the neighbouring files. The license is already in `crates/rebase-gpui/assets/hugeicons.LICENSE`, beside the `hugeicons/` folder.
   - `crates/rebase-gpui/src/board.rs`: a stub `BoardView` that renders "No boards yet" and a "Create board" button. Task 4 fills it in.
 
 **Interfaces:**

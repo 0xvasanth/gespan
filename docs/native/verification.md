@@ -74,8 +74,9 @@ The native Board shares the Tauri app's `boards`, `board_columns`,
 `board_cards` and `board_activity` tables; `crates/rebase-core/tests/shared_contracts.rs` pins the
 DDL, error strings and the `rebase.boardEnabled` key to Tauri, and checks that
 anything else is a `board_native_*` table. Task projects, labels, priority, due
-date, subtasks and comments live only in those native tables and are removed
-with their card in either app. The Board setting is on by default in both apps.
+date, subtasks and comments live only in those native tables. Deleting a card
+in either app removes its own rows there, including which labels it carries;
+the board's label definitions stay until the board is deleted. The Board setting is on by default in both apps.
 Automated coverage: storage, ordering, extras and concurrent writes (core);
 auto-move and turn rules (core); the setting and app view; the one-board view
 with search and filters; card and step styling; drag and drop and Move to…;
