@@ -46,6 +46,7 @@ crates/rebase-gpui/src/settings/model.rs
   s_0de52fe47ecaaa::t_a12bb567411102 583-596
   s_0de52fe47ecaaa::t_368e9d7d522f9d 128,245-249
   s_0de52fe47ecaaa::t_eba0b845a92315 250
+  s_0de52fe47ecaaa::t_9f229419ec18a4 582
 crates/rebase-gpui/src/shell/title_tabs.rs
   s_0de52fe47ecaaa::t_a2ede812802a35 177
   s_0de52fe47ecaaa::t_f25ae525a81dca 72
