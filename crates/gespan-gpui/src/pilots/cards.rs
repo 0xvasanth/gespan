@@ -460,6 +460,7 @@ impl Pilots {
     pub(super) fn card_action(&mut self, pilot: &str, value: &Value, cx: &mut Context<Self>) {
         if value["type"] != "choice" {
             self.active = Some(pilot.into());
+            self.reload_roadmap(cx);
             if let Some(handle) = self.parent_window {
                 let app: &mut App = cx;
                 app.defer(move |cx| {
@@ -469,8 +470,11 @@ impl Pilots {
         }
         match value["type"].as_str().unwrap_or_default() {
             "choice" => {
+                // The choice's text is agent-authored, though it goes as
+                // the user's message: it must not forge the Roadmap marker.
                 if let Some(text) = value["text"].as_str() {
-                    self.enqueue(pilot, text.into(), Vec::new(), false, cx);
+                    let text = pilot::neutralize_roadmap_marker(text);
+                    self.enqueue(pilot, text, Vec::new(), false, cx);
                 }
             }
             "session" => {

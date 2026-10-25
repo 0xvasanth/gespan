@@ -112,6 +112,11 @@ impl Pilots {
         if self.roster.get(pilot_id).is_none() {
             return;
         }
+        let run_id = match &event {
+            PilotFlowEvent::Step { run, .. } => run.id.clone(),
+            PilotFlowEvent::Finished { run_id, .. } => run_id.clone(),
+        };
+        self.roadmap_run_moved(pilot_id, &run_id, cx);
         match event {
             PilotFlowEvent::Step { run, visit } => {
                 self.flow_watch.runs.insert(run.id.clone(), run.clone());
@@ -649,5 +654,6 @@ impl Pilots {
         for id in ids {
             self.flush_flow_alerts(&id, cx);
         }
+        self.reload_roadmap(cx);
     }
 }

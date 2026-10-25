@@ -15,6 +15,7 @@ mod notifications;
 mod overview;
 mod panel_stack;
 mod panels;
+mod roadmap;
 mod scheduler;
 mod search;
 #[cfg(all(target_os = "macos", not(test)))]
@@ -98,6 +99,10 @@ pub(crate) struct Pilots {
     overview_tab: OverviewTab,
     overview_previous: OverviewTab,
     overview_reveal: Option<crate::project_tabs::TabReveal<OverviewTab>>,
+    /// Each Pilot's SOP Roadmap tab, made when first shown.
+    roadmaps: HashMap<String, (Entity<roadmap::Roadmap>, [Subscription; 2])>,
+    /// Roadmaps to reload when next drawn.
+    stale_roadmaps: HashSet<String>,
     route: Option<Route>,
     settings: Option<SettingsSection>,
     settings_focus: gpui::FocusHandle,
@@ -164,6 +169,9 @@ pub(crate) struct Pilots {
     /// Every Flow event handed to a Pilot, in order.
     #[cfg(test)]
     pub(crate) flow_events: Vec<(String, crate::shell::pilot_flows::PilotFlowEvent)>,
+    /// Every Pilot a successful mutating `flows.*` call changed, in order.
+    #[cfg(test)]
+    pub(crate) flows_changes: Vec<String>,
 }
 impl EventEmitter<Changed> for Pilots {}
 impl EventEmitter<TabOpened> for Pilots {}
@@ -257,6 +265,7 @@ impl Pilots {
                         }
                     } else if this.roster.get(id).is_some() {
                         this.active = Some(id.into());
+                        this.reload_roadmap(cx);
                         this.ensure_chat(id, cx);
                         this.open_floating(cx);
                         this.changed(cx);
@@ -344,6 +353,8 @@ impl Pilots {
             overview_tab: OverviewTab::Sessions,
             overview_previous: OverviewTab::Sessions,
             overview_reveal: None,
+            roadmaps: HashMap::new(),
+            stale_roadmaps: HashSet::new(),
             route: None,
             settings: None,
             settings_focus: cx.focus_handle(),
@@ -399,6 +410,8 @@ impl Pilots {
             hidden_dispatch_fails: false,
             #[cfg(test)]
             flow_events: Vec::new(),
+            #[cfg(test)]
+            flows_changes: Vec::new(),
         };
         if let Some(rx) = rx {
             this._bridge_task = Some(cx.spawn(async move |this, cx| {
@@ -644,6 +657,8 @@ impl Pilots {
                 )
             })
             .collect::<Vec<_>>();
+        // Every outbox change saves: a message the roadmap sent may be gone.
+        self.sync_roadmap_queues(cx);
         let previous = self.writes.take();
         self.writes = Some(cx.spawn(async move |this, cx| {
             if let Some(previous) = previous {
@@ -1082,6 +1097,7 @@ impl Pilots {
             self.settings = None;
         }
         self.active = Some(id.into());
+        self.reload_roadmap(cx);
         self.ensure_chat(id, cx);
         self.reload_files(id, cx);
         cx.emit(TabOpened(id.into()));
