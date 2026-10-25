@@ -75,6 +75,19 @@ impl StateGroup {
         }
     }
 
+    /// Plane `state.group`.
+    pub fn from_plane_group(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "triage" => Self::Triage,
+            "backlog" => Self::Backlog,
+            "unstarted" => Self::Unstarted,
+            "started" => Self::Started,
+            "completed" => Self::Completed,
+            "cancelled" => Self::Cancelled,
+            _ => Self::Unknown,
+        }
+    }
+
     pub fn is_closed(self) -> bool {
         matches!(self, Self::Completed | Self::Cancelled)
     }
@@ -316,6 +329,24 @@ mod tests {
         ];
         for (raw, group) in cases {
             assert_eq!(StateGroup::from_jira_category(raw), group, "{raw}");
+        }
+    }
+
+    #[test]
+    fn plane_groups_map_to_groups() {
+        let cases = [
+            ("triage", StateGroup::Triage),
+            ("backlog", StateGroup::Backlog),
+            ("unstarted", StateGroup::Unstarted),
+            ("started", StateGroup::Started),
+            ("completed", StateGroup::Completed),
+            ("cancelled", StateGroup::Cancelled),
+            ("Started", StateGroup::Started),
+            ("canceled", StateGroup::Unknown),
+            ("", StateGroup::Unknown),
+        ];
+        for (raw, group) in cases {
+            assert_eq!(StateGroup::from_plane_group(raw), group, "{raw}");
         }
     }
 
