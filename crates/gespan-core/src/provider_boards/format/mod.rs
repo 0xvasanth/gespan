@@ -23,11 +23,20 @@ pub fn markdown_to_adf(markdown: &str) -> Value {
 }
 
 /// A Jira description (an ADF `doc`, or `null`) to Markdown.
+///
+/// Whitespace in text is normalized as Markdown reads it (runs of spaces
+/// collapse, edge spaces drop), so the first write-back can change it once;
+/// after that the round trip is stable.
 pub fn adf_to_markdown(adf: &Value) -> String {
     markdown::render(&adf::parse(adf))
 }
 
 /// Markdown to a Plane `description_html`.
+///
+/// Not sanitized: raw HTML in the Markdown (including `<script>` or `on…`
+/// attributes) and kept Plane elements are written as they are, so this relies
+/// on Plane sanitizing on its side. A caller writing text that didn't come
+/// from Plane or the user must sanitize it first.
 pub fn markdown_to_plane_html(markdown: &str) -> String {
     html::render(&markdown::parse(markdown))
 }

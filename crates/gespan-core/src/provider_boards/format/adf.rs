@@ -275,12 +275,35 @@ fn render_block(block: &Block, nested: bool) -> Vec<Value> {
         Block::Rule => paragraph(vec![json!({"type": "text", "text": "---"})]),
         Block::Html(raw) => code_block(Some(Source::Html.fence()), raw),
         Block::Preserved(preserved) => match preserved.source {
-            Source::Adf => serde_json::from_str(&preserved.raw)
-                .unwrap_or_else(|_| code_block(Some(Source::Adf.fence()), &preserved.raw)),
+            Source::Adf => kept_node(&preserved.raw, false)
+                .unwrap_or_else(|| code_block(Some(Source::Adf.fence()), &preserved.raw)),
             Source::Html => code_block(Some(Source::Html.fence()), &preserved.raw),
         },
     };
     vec![node]
+}
+
+/// ADF's inline node types; every other node is a block.
+const INLINE_NODES: &[&str] = &[
+    "date",
+    "emoji",
+    "hardBreak",
+    "inlineCard",
+    "inlineExtension",
+    "mediaInline",
+    "mention",
+    "placeholder",
+    "status",
+    "text",
+];
+
+/// The kept JSON as a node, if it's an object whose `type` belongs where it's
+/// going. A user can edit a read-only fence into anything, and Jira rejects
+/// the whole description over one bad node.
+fn kept_node(raw: &str, inline: bool) -> Option<Value> {
+    let node: Value = serde_json::from_str(raw).ok()?;
+    let kind = node.as_object()?.get("type")?.as_str()?;
+    (INLINE_NODES.contains(&kind) == inline).then_some(node)
 }
 
 fn render_items(items: &[Vec<Block>]) -> Vec<Value> {
@@ -333,21 +356,26 @@ fn render_inlines(content: &[Inline]) -> Vec<Value> {
         .map(|inline| match inline {
             Inline::Text { text, marks } => text_node(text, marks),
             Inline::HardBreak => json!({"type": "hardBreak"}),
-            Inline::Image { src, alt, .. } => {
+            Inline::Image { src, alt, link } => {
                 let text = if alt.is_empty() { src } else { alt };
-                let marks = Marks {
-                    link: (!src.is_empty()).then(|| Link {
+                // A linked image points where its link does; otherwise at
+                // the image itself.
+                let link = link.clone().or_else(|| {
+                    (!src.is_empty()).then(|| Link {
                         href: src.clone(),
                         title: None,
-                    }),
+                    })
+                });
+                let marks = Marks {
+                    link,
                     ..Marks::plain()
                 };
                 text_node(text, &marks)
             }
             Inline::Html(raw) => text_node(raw, &Marks::plain()),
             Inline::Preserved(preserved) => match preserved.source {
-                Source::Adf => serde_json::from_str(&preserved.raw)
-                    .unwrap_or_else(|_| text_node(&preserved.raw, &Marks::plain())),
+                Source::Adf => kept_node(&preserved.raw, true)
+                    .unwrap_or_else(|| text_node(&preserved.raw, &Marks::plain())),
                 Source::Html => text_node(&preserved.raw, &Marks::plain()),
             },
         })
@@ -361,7 +389,7 @@ mod tests {
 
     use super::super::doc::{normalize, Block, Doc, Inline, Link, Marks};
     use super::super::markdown;
-    use super::super::strategies::{doc, Profile};
+    use super::super::strategies::{doc, raw_doc, Profile};
     use super::super::{adf_to_markdown, markdown_to_adf};
     use super::*;
 
@@ -384,6 +412,15 @@ mod tests {
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(512))]
+
+        /// Text Jira sends un-normalized (double or edge spaces, empty
+        /// nodes) changes once on the first write-back, then never again.
+        #[test]
+        fn unnormalized_jira_text_settles_after_one_round(doc in raw_doc(Profile::Adf)) {
+            let sync = |value: &Value| markdown_to_adf(&adf_to_markdown(value));
+            let once = sync(&render(&doc));
+            prop_assert_eq!(sync(&once), once);
+        }
 
         #[test]
         fn adf_round_trips_any_document(doc in doc(Profile::Adf)) {
@@ -551,6 +588,57 @@ mod tests {
     }
 
     #[test]
+    fn linked_image_keeps_its_link() {
+        let markdown = "[![badge](https://ci.test/b.svg)](https://ci.test)";
+        let value = markdown_to_adf(markdown);
+        assert_eq!(
+            value,
+            adf(json!([{"type": "paragraph", "content": [
+                {"type": "text", "text": "badge", "marks": [{"type": "link", "attrs": {"href": "https://ci.test"}}]},
+            ]}]))
+        );
+        assert_eq!(adf_to_markdown(&value), "[badge](https://ci.test)");
+    }
+
+    #[test]
+    fn kept_json_that_is_not_a_node_stays_text() {
+        // A user can edit a read-only fence or span into anything.
+        for (markdown, expected) in [
+            (
+                "```gespan-adf\n42\n```",
+                json!([{"type": "codeBlock", "attrs": {"language": "gespan-adf"}, "content": [{"type": "text", "text": "42"}]}]),
+            ),
+            (
+                "```gespan-adf\n{\"type\":\"text\",\"text\":\"x\"}\n```",
+                json!([{"type": "codeBlock", "attrs": {"language": "gespan-adf"}, "content": [{"type": "text", "text": "{\"type\":\"text\",\"text\":\"x\"}"}]}]),
+            ),
+            (
+                "a <span data-gespan-adf=\"{&quot;type&quot;:&quot;rule&quot;}\">x</span>",
+                json!([{"type": "paragraph", "content": [{"type": "text", "text": "a "}, {"type": "text", "text": "{\"type\":\"rule\"}"}]}]),
+            ),
+            (
+                "a <span data-gespan-adf=\"[1]\">x</span>",
+                json!([{"type": "paragraph", "content": [{"type": "text", "text": "a "}, {"type": "text", "text": "[1]"}]}]),
+            ),
+        ] {
+            assert_eq!(markdown_to_adf(markdown), adf(expected), "{markdown}");
+        }
+    }
+
+    #[test]
+    fn markdown_br_is_a_hard_break() {
+        assert_eq!(
+            markdown_to_adf("one<br>two<br/>three<BR />four"),
+            adf(json!([{"type": "paragraph", "content": [
+                {"type": "text", "text": "one"}, {"type": "hardBreak"},
+                {"type": "text", "text": "two"}, {"type": "hardBreak"},
+                {"type": "text", "text": "three"}, {"type": "hardBreak"},
+                {"type": "text", "text": "four"},
+            ]}]))
+        );
+    }
+
+    #[test]
     fn null_and_empty_docs_give_empty_markdown() {
         assert_eq!(adf_to_markdown(&Value::Null), "");
         assert_eq!(adf_to_markdown(&adf(json!([]))), "");
@@ -573,8 +661,6 @@ mod tests {
             json!({"type": "bulletList", "content": [paragraph("not an item")]}),
             json!({"type": "codeBlock", "content": [{"type": "text", "text": "x", "marks": [{"type": "strong"}]}]}),
             json!({"type": "paragraph", "content": "oops"}),
-            json!("a bare string"),
-            json!({"no": "type"}),
         ];
         for node in bad {
             let value = adf(json!([node.clone()]));
@@ -585,6 +671,20 @@ mod tests {
                 "{node} gave {doc:?}"
             );
             assert_eq!(through_markdown(&value), value, "{node}");
+        }
+        // Not a node at all: kept in Markdown, but written back as a fence,
+        // since Jira would reject the whole description over it.
+        for node in [json!("a bare string"), json!({"no": "type"})] {
+            let value = adf(json!([node.clone()]));
+            assert!(matches!(parse(&value).blocks[..], [Block::Preserved(_)]));
+            let raw = serde_json::to_string(&node).unwrap();
+            assert_eq!(
+                through_markdown(&value),
+                adf(
+                    json!([{"type": "codeBlock", "attrs": {"language": "gespan-adf"}, "content": [{"type": "text", "text": raw}]}])
+                ),
+                "{node}"
+            );
         }
     }
 

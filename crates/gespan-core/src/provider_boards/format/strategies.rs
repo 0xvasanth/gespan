@@ -242,6 +242,18 @@ fn adf_restrict(blocks: Vec<Block>, nested: bool) -> Vec<Block> {
         .collect()
 }
 
+/// A document as a tracker might send it: not normalized, so with double
+/// spaces, edge spaces, empty runs and empty blocks.
+pub(crate) fn raw_doc(profile: Profile) -> impl Strategy<Value = Doc> {
+    prop::collection::vec(block(profile), 0..6).prop_map(move |blocks| Doc {
+        blocks: if profile == Profile::Adf {
+            adf_restrict(blocks, false)
+        } else {
+            blocks
+        },
+    })
+}
+
 /// A normalized document representable in `profile`'s format.
 pub(crate) fn doc(profile: Profile) -> impl Strategy<Value = Doc> {
     prop::collection::vec(block(profile), 0..6).prop_map(move |blocks| {

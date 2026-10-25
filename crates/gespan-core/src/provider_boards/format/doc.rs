@@ -4,6 +4,8 @@
 //! documents, so `parse(render(doc)) == doc` is the round-trip contract for
 //! every format.
 
+use quick_xml::escape::resolve_html5_entity;
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct Doc {
     pub blocks: Vec<Block>,
@@ -174,7 +176,11 @@ fn html_text(html: &str) -> String {
     decode_html_entities(&out)
 }
 
-/// Decodes named (the common ones) and numeric character references.
+/// The longest HTML5 entity name (`CounterClockwiseContourIntegral`), with
+/// room for long numeric references.
+const MAX_REFERENCE: usize = 32;
+
+/// Decodes every HTML5 named character reference and numeric references.
 /// Anything else is left as written.
 pub(crate) fn decode_html_entities(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -182,40 +188,36 @@ pub(crate) fn decode_html_entities(text: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
-        let decoded = rest[1..]
-            .find(';')
-            .filter(|end| *end <= 10)
+        // Only look as far as the longest reference, so a run of `&` stays
+        // linear.
+        let decoded = rest.as_bytes()[1..]
+            .iter()
+            .take(MAX_REFERENCE + 1)
+            .position(|b| *b == b';')
             .and_then(|end| {
                 let name = &rest[1..1 + end];
-                let c = match name {
-                    "amp" => Some('&'),
-                    "lt" => Some('<'),
-                    "gt" => Some('>'),
-                    "quot" => Some('"'),
-                    "apos" => Some('\''),
-                    "nbsp" => Some('\u{a0}'),
-                    _ => {
-                        let code = if let Some(hex) =
-                            name.strip_prefix("#x").or_else(|| name.strip_prefix("#X"))
-                        {
-                            u32::from_str_radix(hex, 16).ok()
-                        } else if let Some(dec) = name.strip_prefix('#') {
-                            dec.parse().ok()
-                        } else {
-                            None
-                        };
-                        code.map(|code| {
-                            char::from_u32(code)
-                                .filter(|c| *c != '\0')
-                                .unwrap_or('\u{FFFD}')
-                        })
-                    }
+                let numeric = if let Some(hex) =
+                    name.strip_prefix("#x").or_else(|| name.strip_prefix("#X"))
+                {
+                    Some(u32::from_str_radix(hex, 16).ok())
+                } else {
+                    name.strip_prefix('#').map(|dec| dec.parse().ok())
                 };
-                c.map(|c| (c, end + 2))
+                let text = match numeric {
+                    Some(code) => {
+                        let c = code?;
+                        let c = char::from_u32(c)
+                            .filter(|c| *c != '\0')
+                            .unwrap_or('\u{FFFD}');
+                        std::borrow::Cow::Owned(c.to_string())
+                    }
+                    None => std::borrow::Cow::Borrowed(resolve_html5_entity(name)?),
+                };
+                Some((text, end + 2))
             });
         match decoded {
-            Some((c, len)) => {
-                out.push(c);
+            Some((text, len)) => {
+                out.push_str(&text);
                 rest = &rest[len..];
             }
             None => {

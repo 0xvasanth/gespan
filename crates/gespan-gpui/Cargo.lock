@@ -2189,6 +2189,7 @@ dependencies = [
  "natpmp",
  "proptest",
  "pulldown-cmark",
+ "quick-xml 0.42.0",
  "quinn",
  "rand 0.10.3",
  "regex",

@@ -130,11 +130,16 @@ impl Tree {
                 } => {
                     // A block start ends an open paragraph, and a list item
                     // ends the previous one, as browsers do.
-                    let top = stack.last().map(|e| e.tag.as_str()).unwrap_or_default();
-                    if (top == "p" && !INLINE.contains(&name.as_str()))
-                        || (top == "li" && name == "li")
-                    {
-                        close(&mut stack, None);
+                    // `<li><p>a<li>` closes both.
+                    loop {
+                        let top = stack.last().map(|e| e.tag.as_str()).unwrap_or_default();
+                        if (top == "p" && !INLINE.contains(&name.as_str()))
+                            || (top == "li" && name == "li")
+                        {
+                            close(&mut stack, None);
+                        } else {
+                            break;
+                        }
                     }
                     let mut element = Element {
                         tag: name,
@@ -887,6 +892,22 @@ mod tests {
     }
 
     #[test]
+    fn every_html5_named_entity_decodes() {
+        let html = "<p>a&mdash;b &rsquo;q&lsquo; &hellip; &copy; &eacute; &CounterClockwiseContourIntegral; &amp;mdash;</p>";
+        assert_eq!(
+            parse(html).blocks,
+            vec![para(vec![plain(
+                "a\u{2014}b \u{2019}q\u{2018} \u{2026} \u{a9} \u{e9} \u{2233} &mdash;"
+            )])]
+        );
+        let back = markdown_to_plane_html(&plane_html_to_markdown(html));
+        assert_eq!(
+            back,
+            "<p>a\u{2014}b \u{2019}q\u{2018} \u{2026} \u{a9} \u{e9} \u{2233} &amp;mdash;</p>"
+        );
+    }
+
+    #[test]
     fn entities_decode_and_reencode() {
         let html = "<p>&amp; &lt;b&gt; &nbsp;x &#39; &#x1F600; &bogus; a&b</p>";
         assert_eq!(
@@ -963,6 +984,7 @@ mod tests {
             ("<p>a < b and c > d</p>", "a \\< b and c \\> d"),
             ("<p>first<p>second</p>", "first\n\nsecond"),
             ("<ul><li>one<li>two</ul>", "- one\n- two"),
+            ("<ul><li><p>a<li><p>b</ul>", "- a\n- b"),
             ("<p>x <!-- note --> y</p>", "x y"),
             ("<p>half <a href=\"x\"", "half \\<a href=\"x\""),
             ("plain text", "plain text"),

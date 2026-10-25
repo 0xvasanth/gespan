@@ -356,6 +356,7 @@ impl Builder {
     fn inline_html(&mut self, html: &str) {
         let tag = html.trim();
         match tag.to_ascii_lowercase().as_str() {
+            "<br>" | "<br/>" | "<br />" => self.push_inline(Inline::HardBreak),
             "<strong>" | "<b>" => self.strong += 1,
             "</strong>" | "</b>" => self.strong = self.strong.saturating_sub(1),
             "<em>" | "<i>" => self.em += 1,
