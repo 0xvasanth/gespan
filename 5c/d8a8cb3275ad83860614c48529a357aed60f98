@@ -1,0 +1,51 @@
+src/features/board/ui/UndoToast.tsx
+  s_938a6e0c93b076::t_6e97ade7b6a52c 1-41
+src/features/board/ui/ArchiveView.test.ts
+  s_938a6e0c93b076::t_d0ca902074d00e 1-192
+src/features/board/ui/ArchiveView.tsx
+  s_938a6e0c93b076::t_d30b2a855c97ad 1-50,52-134
+  s_938a6e0c93b076::t_b7a0e398d06fcc 51
+src/features/board/ui/boardControls.tsx
+  s_938a6e0c93b076::t_fe3264fc339644 27-30,36,38,40
+src/features/board/ui/BoardView.test.ts
+  s_938a6e0c93b076::t_3c9b9963f09592 22,2231,2234-2237,2239,2241
+  s_938a6e0c93b076::t_652d3612bee11a 1605-1646,1652-1655,1660-1665,1670-1681,1685-1766,1768-1802,1806-1859,1863-2024,2028-2041,2074-2221,2226-2230,2232-2233,2238,2240,2242-2243
+  s_938a6e0c93b076::t_d1f1ac410b1996 2042-2073
+  s_938a6e0c93b076::t_b7a0e398d06fcc 1647-1651,1656-1659,1666-1669,1682-1684,1767,1803-1805,1860-1862,2025-2027,2222-2225
+src/features/board/model/undo.test.ts
+  s_938a6e0c93b076::t_8b02aba5bf8a6c 1-291,293-295
+  s_938a6e0c93b076::t_0d0a913f6110f3 292
+src/features/board/ui/CardDetail.tsx
+  s_938a6e0c93b076::t_737bad47cd3727 43,79-80,98-101,274-275,277,333,654
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_791907f9d1d4d4 796-797,1072
+  s_938a6e0c93b076::t_2ed549da0171b2 9,20,26,32,39,64-72,74-76,80,92,102-114,238,254-264,366-367,380,482-484,486-490,492-504,546-562,564-583,585,587-633,660-663,665-670,676-679,684-685,691-693,700,703-710,791,827,829-833,978-990,1059-1071,1073
+  s_938a6e0c93b076::t_a34ff6dc7d2465 73,266-282,491,506,563,584,586,664,680-683,694-699
+  s_938a6e0c93b076::t_dba099a7755244 265
+src/features/board/model/undo.ts
+  s_938a6e0c93b076::t_35576ee6192720 1-112,114-211,215-220,222-225
+  s_938a6e0c93b076::t_0d0a913f6110f3 221
+  s_938a6e0c93b076::t_2ed549da0171b2 113
+  s_938a6e0c93b076::t_b7a0e398d06fcc 212-214
+src/features/board/ui/CardDetail.test.ts
+  s_938a6e0c93b076::t_b7a0e398d06fcc 232-237,259-261
+  s_938a6e0c93b076::t_51bf6e501a0864 70-71,221,226-231,238,241,243-254,256-258,262,625,627-630,632
+src/features/board/ui/BoardColumnHeader.tsx
+  s_938a6e0c93b076::t_19dd0de7c67136 38,57-61,190,210,214,221-224,229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5cd8a8cb3275ad83860614c48529a357aed60f98",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
