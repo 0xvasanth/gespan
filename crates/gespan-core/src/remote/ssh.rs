@@ -91,9 +91,11 @@ impl Job {
         let mut inner = self.inner.lock().unwrap();
         // Counted once it is saved; a cancelled connection is not a failure.
         let result = if self.cancelled.load(Ordering::Relaxed) {
+            tracing::info!("SSH connection cancelled");
             Err("Connection cancelled".into())
         } else {
             crate::diagnostics::metrics::track("remote.ssh_connect", action())
+                .inspect_err(|error| tracing::warn!(%error, "SSH connection failed"))
         };
         inner.view.done = true;
         inner.view.prompt = None;
@@ -936,5 +938,36 @@ mod tests {
         job.answer(&prompt.id, "yes".into()).unwrap();
         assert_eq!(thread.join().unwrap(), Some("yes".into()));
         assert!(job.answer(&prompt.id, "yes".into()).is_err());
+    }
+
+    #[test]
+    fn a_failed_ssh_job_logs_at_warn() {
+        let job = Job::new();
+        let logged = crate::diagnostics::test_capture(|| {
+            let _span =
+                tracing::info_span!("ssh_connect", reconnect = false, upgrade = false).entered();
+            job.complete(|| Err("Permission denied".into()));
+        });
+        assert_eq!(job.view().error.as_deref(), Some("Permission denied"));
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "warn");
+        assert_eq!(logged[0]["span"], "ssh_connect");
+        assert_eq!(
+            logged[0]["fields"],
+            serde_json::json!({"reconnect": false, "upgrade": false, "error": "Permission denied"})
+        );
+    }
+
+    #[test]
+    fn a_cancelled_ssh_job_logs_at_info() {
+        let job = Job::new();
+        job.cancel();
+        let logged = crate::diagnostics::test_capture(|| {
+            job.complete(|| unreachable!("a cancelled job does not save its machine"));
+        });
+        assert_eq!(job.view().error.as_deref(), Some("Connection cancelled"));
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "info");
+        assert_eq!(logged[0]["message"], "SSH connection cancelled");
     }
 }

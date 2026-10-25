@@ -169,6 +169,13 @@ impl Drop for Server {
 
 impl Server {
     pub fn start(session: i64) -> Result<Self, String> {
+        let _span =
+            tracing::info_span!("mcp_start", server = "visual", session_id = session).entered();
+        Self::open(session)
+            .inspect_err(|error| tracing::warn!(%error, "could not start a tool server"))
+    }
+
+    fn open(session: i64) -> Result<Self, String> {
         let hub = hub()?;
         let (send, publications) = mpsc::sync_channel(16);
         let (token, generation) = {
@@ -898,5 +905,21 @@ mod tests {
         assert_eq!(acp[0]["name"], "gespan_visual");
         assert_eq!(acp[0]["env"].as_array().unwrap().len(), 4);
         assert_eq!(mcp_server(&environment).unwrap()["command"], "/test/app");
+    }
+
+    #[test]
+    fn a_refused_visual_server_start_is_logged() {
+        let _active = Server::start(91).unwrap();
+        let mut second = None;
+        let logged = crate::diagnostics::test_capture(|| second = Some(Server::start(91)));
+        assert!(second.unwrap().is_err());
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "warn");
+        assert_eq!(logged[0]["span"], "mcp_start");
+        assert_eq!(logged[0]["session_id"], 91);
+        assert_eq!(
+            logged[0]["fields"],
+            json!({"server": "visual", "error": "A visual session turn is already active"})
+        );
     }
 }
