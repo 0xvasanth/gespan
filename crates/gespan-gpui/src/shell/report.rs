@@ -341,7 +341,10 @@ mod tests {
             crate::file_editor::menus(&crate::settings::Preferences::default(), cx);
             cx.get_menus().unwrap()
         });
-        let help = menus.iter().find(|menu| menu.name == "Help").expect("a Help menu");
+        let help = menus
+            .iter()
+            .find(|menu| menu.name == "Help")
+            .expect("a Help menu");
         assert!(help.items.iter().any(|item| matches!(
             item,
             gpui::OwnedMenuItem::Action { name, action, .. }

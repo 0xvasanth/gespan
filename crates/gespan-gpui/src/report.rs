@@ -183,10 +183,12 @@ impl ReportSheet {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn event_ids(&self) -> &[String] {
         &self.event_ids
     }
 
+    #[cfg(test)]
     pub(crate) fn bundle(&self) -> Option<&Bundle> {
         self.bundle.as_ref()
     }
