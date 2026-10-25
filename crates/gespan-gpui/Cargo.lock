@@ -2168,6 +2168,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gespan-board-schema"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+]
+
+[[package]]
 name = "gespan-core"
 version = "0.16.0"
 dependencies = [
@@ -2175,6 +2182,7 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "flate2",
+ "gespan-board-schema",
  "gespan-mobile-link",
  "gespan-redact",
  "gespan-tracker-secrets",

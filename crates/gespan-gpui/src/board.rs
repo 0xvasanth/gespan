@@ -32,11 +32,12 @@ use std::{
 };
 
 const POLL: Duration = Duration::from_secs(2);
-pub(crate) const ROLES: [(&str, &str); 4] = [
+pub(crate) const ROLES: [(&str, &str); 5] = [
     ("todo", "To do"),
     ("doing", "Doing"),
     ("review", "Review"),
     ("done", "Done"),
+    ("cancelled", "Cancelled"),
 ];
 
 pub(crate) enum Event {

@@ -30,12 +30,17 @@ fn forward_column<'a>(columns: &'a [Column], current: &Column, role: &str) -> Op
 
 /// Where a card should go when its linked work reports `event`, or `None` to
 /// stay. Cards only move right: started goes to doing, completed to review (or
-/// done when the board has no review column). Failed work never moves a card.
+/// done when the board has no review column). Failed work never moves a card,
+/// and neither does any event for a card already in a done or cancelled column.
 pub fn auto_move_target<'a>(
     columns: &'a [Column],
     current: &Column,
     event: LinkedWorkEvent,
 ) -> Option<&'a Column> {
+    // Finished work stays put, whether it was done or dropped.
+    if matches!(current.role.as_deref(), Some("done" | "cancelled")) {
+        return None;
+    }
     match event {
         LinkedWorkEvent::Started => forward_column(columns, current, "doing"),
         LinkedWorkEvent::Completed => {
@@ -94,6 +99,9 @@ mod tests {
             name: id.into(),
             position,
             role: role.map(Into::into),
+            color: None,
+            wip_limit: None,
+            collapsed: false,
         }
     }
 
@@ -363,4 +371,30 @@ mod tests {
         assert_eq!(where_is(&mut service, &board.id, &fine.id).0, "In Progress");
         assert_eq!(where_is(&mut service, &board.id, &broken.id).0, "Backlog");
     }
+    #[test]
+    fn cards_in_a_cancelled_column_never_move() {
+        // Cancelled sits left of doing and review, so a forward move exists.
+        let columns = vec![
+            column("todo", 0, Some("todo")),
+            column("cancelled", 1, Some("cancelled")),
+            column("doing", 2, Some("doing")),
+            column("review", 3, Some("review")),
+            column("done", 4, Some("done")),
+        ];
+        assert_eq!(target(&columns, "cancelled", LinkedWorkEvent::Started), None);
+        assert_eq!(target(&columns, "cancelled", LinkedWorkEvent::Completed), None);
+        assert_eq!(target(&columns, "todo", LinkedWorkEvent::Started), Some("doing"));
+    }
+
+    #[test]
+    fn cards_in_a_done_column_never_move_even_when_it_sits_left() {
+        let columns = vec![
+            column("done", 0, Some("done")),
+            column("doing", 1, Some("doing")),
+            column("review", 2, Some("review")),
+        ];
+        assert_eq!(target(&columns, "done", LinkedWorkEvent::Started), None);
+        assert_eq!(target(&columns, "done", LinkedWorkEvent::Completed), None);
+    }
+
 }

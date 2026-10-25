@@ -1,6 +1,8 @@
 //! The board, over the same `board*` tables the Tauri app keeps in `gespan.db`.
-//! The logic mirrors `src-tauri/src/board.rs`; `tests/shared_contracts.rs` pins
-//! the DDL and error strings to it.
+//! The schema and its migrations live in `gespan-board-schema`, shared with
+//! Tauri; the logic mirrors `src-tauri/src/board.rs`, and
+//! `tests/shared_contracts.rs` pins the two together.
+use gespan_board_schema::{sync_primary_link, ROLES};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::Serialize;
 use std::path::Path;
@@ -33,7 +35,6 @@ const MAX_TITLE: usize = 500;
 const MAX_BODY: usize = 1_000_000;
 const MAX_ACTIVITY: usize = 500;
 
-const ROLES: [&str; 4] = ["todo", "doing", "review", "done"];
 const LINK_KINDS: [&str; 3] = ["session", "pilot", "flow-run"];
 const ACTORS: [&str; 2] = ["user", "system"];
 /// Kinds `board_card_record` may append. Every other kind is written by the
@@ -63,6 +64,9 @@ pub struct Column {
     pub name: String,
     pub position: i64,
     pub role: Option<String>,
+    pub color: Option<String>,
+    pub wip_limit: Option<i64>,
+    pub collapsed: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -103,59 +107,9 @@ pub struct BoardDetail {
     pub cards: Vec<Card>,
 }
 
+/// Creates or upgrades the shared board tables; see `gespan-board-schema`.
 pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS boards (
-           id TEXT PRIMARY KEY,
-           name TEXT NOT NULL,
-           card_seq INTEGER NOT NULL DEFAULT 0,
-           created_at INTEGER NOT NULL,
-           updated_at INTEGER NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS board_columns (
-           id TEXT PRIMARY KEY,
-           board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-           name TEXT NOT NULL,
-           position INTEGER NOT NULL,
-           role TEXT
-         );
-         CREATE UNIQUE INDEX IF NOT EXISTS board_columns_role_idx
-           ON board_columns (board_id, role) WHERE role IS NOT NULL;
-         CREATE TABLE IF NOT EXISTS board_cards (
-           id TEXT PRIMARY KEY,
-           board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-           column_id TEXT NOT NULL REFERENCES board_columns(id),
-           number INTEGER NOT NULL,
-           title TEXT NOT NULL,
-           body TEXT NOT NULL DEFAULT '',
-           position INTEGER NOT NULL,
-           link_kind TEXT,
-           link_id TEXT,
-           created_at INTEGER NOT NULL,
-           updated_at INTEGER NOT NULL,
-           UNIQUE (board_id, number)
-         );
-         CREATE INDEX IF NOT EXISTS board_cards_column_idx
-           ON board_cards (column_id, position);
-         CREATE INDEX IF NOT EXISTS board_cards_link_idx
-           ON board_cards (link_kind, link_id);
-         CREATE TABLE IF NOT EXISTS board_activity (
-           id TEXT PRIMARY KEY,
-           board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-           card_id TEXT REFERENCES board_cards(id) ON DELETE CASCADE,
-           kind TEXT NOT NULL,
-           actor TEXT NOT NULL,
-           from_column TEXT,
-           to_column TEXT,
-           detail TEXT,
-           created_at INTEGER NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS board_activity_board_idx
-           ON board_activity (board_id, created_at DESC);
-         CREATE INDEX IF NOT EXISTS board_activity_card_idx
-           ON board_activity (card_id, created_at DESC);",
-    )?;
-    extras::ensure_tables(conn)
+    gespan_board_schema::ensure(conn)
 }
 
 fn db(error: rusqlite::Error) -> String {
@@ -214,6 +168,9 @@ fn column_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Column> {
         name: row.get("name")?,
         position: row.get("position")?,
         role: row.get("role")?,
+        color: row.get("color")?,
+        wip_limit: row.get("wip_limit")?,
+        collapsed: row.get::<_, i64>("collapsed")? != 0,
     })
 }
 
@@ -486,6 +443,9 @@ pub(crate) fn create_column(
         name,
         position,
         role: role.map(str::to_string),
+        color: None,
+        wip_limit: None,
+        collapsed: false,
     };
     tx.execute(
         "INSERT INTO board_columns (id, board_id, name, position, role)
@@ -764,11 +724,13 @@ pub(crate) fn link_card(
         // Unlinking an unlinked card equals `previous == link`, handled above.
         (None, None) => return Ok(card.board_id),
     };
+    let now = now_millis();
     tx.execute(
         "UPDATE board_cards SET link_kind = ?1, link_id = ?2, updated_at = ?3 WHERE id = ?4",
-        params![link.map(|l| l.0), link.map(|l| l.1), now_millis(), card_id],
+        params![link.map(|l| l.0), link.map(|l| l.1), now, card_id],
     )
     .map_err(db)?;
+    sync_primary_link(&tx, card_id, link, now).map_err(db)?;
     log_activity(
         &tx,
         NewActivity {
@@ -1657,4 +1619,67 @@ mod tests {
         b.create("Elsewhere").unwrap();
         assert_ne!(a.data_version().unwrap(), before);
     }
+    #[test]
+    fn card_link_keeps_the_primary_link_row_in_step() {
+        let conn = setup();
+        let (_, columns) = board_with_columns(&conn);
+        let card = add_cards(&conn, &columns[0].id, &["A"]).remove(0);
+        let primary = || -> Vec<String> {
+            let mut statement = conn
+                .prepare(
+                    "SELECT kind || '/' || ref FROM board_card_links
+                     WHERE card_id = ?1 AND role = 'primary'",
+                )
+                .unwrap();
+            statement
+                .query_map([&card.id], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
+        };
+        link_card(&conn, &card.id, Some("session"), Some("x")).unwrap();
+        assert_eq!(primary(), ["session/x"]);
+        link_card(&conn, &card.id, Some("pilot"), Some("y")).unwrap();
+        assert_eq!(primary(), ["pilot/y"]);
+        // A rejected link changes nothing.
+        assert!(link_card(&conn, &card.id, Some("pr"), Some("z")).is_err());
+        assert_eq!(primary(), ["pilot/y"]);
+        link_card(&conn, &card.id, None, None).unwrap();
+        assert!(primary().is_empty());
+    }
+
+    #[test]
+    fn cancelled_role_is_accepted() {
+        let conn = setup();
+        let (board, _) = board_with_columns(&conn);
+        let dropped = create_column(&conn, &board.id, "Dropped", Some("cancelled")).unwrap();
+        assert_eq!(dropped.role.as_deref(), Some("cancelled"));
+        let error = create_column(&conn, &board.id, "Won't do", Some("cancelled")).unwrap_err();
+        assert!(error.contains("already has the cancelled role"), "{error}");
+        assert_eq!(
+            create_column(&conn, &board.id, "Old", Some("archived")).unwrap_err(),
+            "Unknown column role: archived"
+        );
+    }
+
+    #[test]
+    fn columns_read_colour_wip_limit_and_collapsed() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        conn.execute(
+            "UPDATE board_columns SET color = 'd73a4a', wip_limit = 3, collapsed = 1 WHERE id = ?1",
+            [&columns[1].id],
+        )
+        .unwrap();
+        let read = get_board(&conn, &board.id).unwrap().columns;
+        assert_eq!(
+            (read[0].color.as_deref(), read[0].wip_limit, read[0].collapsed),
+            (None, None, false)
+        );
+        assert_eq!(
+            (read[1].color.as_deref(), read[1].wip_limit, read[1].collapsed),
+            (Some("d73a4a"), Some(3), true)
+        );
+    }
+
 }

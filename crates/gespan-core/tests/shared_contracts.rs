@@ -385,27 +385,34 @@ fn native_board() -> String {
     fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/board/mod.rs")).unwrap()
 }
 
-/// Every board table and index statement, whitespace-normalized.
-fn board_ddl(source: &str) -> Vec<String> {
-    regex::Regex::new(r"CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS board[^;]*;")
+/// Every native board source file, joined.
+fn native_board_sources() -> String {
+    let mut files = Vec::new();
+    rust_files(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src/board"),
+        &mut files,
+    );
+    files
+        .iter()
+        .map(|path| fs::read_to_string(path).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Board DDL written outside `gespan-board-schema`, which owns all of it.
+fn local_board_ddl(source: &str) -> Vec<String> {
+    regex::Regex::new(r"CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS board")
         .unwrap()
         .find_iter(source)
-        .map(|statement| {
-            statement
-                .as_str()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
+        .map(|statement| statement.as_str().to_string())
         .collect()
 }
 
 #[test]
-fn board_tables_match_tauri() {
-    let tauri_ddl = board_ddl(&tauri("src-tauri/src/board.rs"));
-    // Four tables and five indexes; an empty match would pass vacuously.
-    assert_eq!(tauri_ddl.len(), 9, "{tauri_ddl:#?}");
-    assert_eq!(board_ddl(&native_board()), tauri_ddl);
+fn both_apps_use_the_shared_board_schema() {
+    let native = native_board_sources();
+    assert!(native.contains("gespan_board_schema::ensure"));
+    assert_eq!(local_board_ddl(&native), Vec::<String>::new());
 }
 
 #[test]
@@ -425,29 +432,59 @@ fn board_error_strings_match_tauri() {
 }
 
 #[test]
-fn opening_the_gespan_store_then_the_board_service_creates_the_four_shared_board_tables() {
+fn opening_the_board_service_creates_exactly_the_v3_tables() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gespan.db");
     drop(Store::open_gespan(&path).unwrap());
     drop(gespan_core::board::Service::open(&path).unwrap());
     let conn = rusqlite::Connection::open(&path).unwrap();
-    let names: Vec<String> = conn
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'board%' ORDER BY name")
-        .unwrap()
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .map(Result::unwrap)
-        .collect();
-    // The shared tables are exactly Tauri's four; anything else the native app
-    // adds is its own, prefixed so Tauri never mistakes it for shared data.
-    let (native, shared): (Vec<_>, Vec<_>) = names
-        .iter()
-        .partition(|name| name.starts_with("board_native_"));
-    assert_eq!(
-        shared,
-        ["board_activity", "board_cards", "board_columns", "boards"]
+    let strings = |sql: &str| -> Vec<String> {
+        conn.prepare(sql)
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    // The contract, written out on purpose: changing the schema means
+    // changing this list and docs/board-schema.md together.
+    let expected: [(&str, &[&str]); 15] = [
+        ("board_activity", &["id", "board_id", "card_id", "kind", "actor", "from_column", "to_column", "detail", "created_at"]),
+        ("board_card_field_values", &["card_id", "field_id", "value_json"]),
+        ("board_card_labels", &["card_id", "label_id"]),
+        ("board_card_links", &["card_id", "kind", "ref", "role", "created_at"]),
+        ("board_card_meta", &["card_id", "priority", "due_at", "start_at", "estimate_minutes", "archived_at", "completed_at"]),
+        ("board_card_projects", &["card_id", "project"]),
+        ("board_card_relations", &["card_id", "related_card_id", "kind", "created_at"]),
+        ("board_cards", &["id", "board_id", "column_id", "number", "title", "body", "position", "link_kind", "link_id", "created_at", "updated_at"]),
+        ("board_columns", &["id", "board_id", "name", "position", "role", "color", "wip_limit", "collapsed"]),
+        ("board_comments", &["id", "card_id", "body", "author", "created_at", "edited_at"]),
+        ("board_fields", &["id", "board_id", "name", "kind", "options_json", "position"]),
+        ("board_labels", &["id", "board_id", "name", "color", "position"]),
+        ("board_schema_migrations", &["version", "applied_at"]),
+        ("board_subtasks", &["id", "card_id", "title", "done", "position", "converted_card_id"]),
+        ("boards", &["id", "name", "card_seq", "created_at", "updated_at"]),
+    ];
+    let tables = strings(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'board%' ORDER BY name",
     );
-    assert!(!native.is_empty());
+    let mut shared: Vec<&str> = gespan_board_schema::BOARD_TABLES.to_vec();
+    shared.push("board_schema_migrations");
+    shared.sort();
+    assert_eq!(tables, shared, "no board_native_* tables on a fresh database");
+    assert_eq!(
+        tables,
+        expected.iter().map(|(name, _)| *name).collect::<Vec<_>>()
+    );
+    for (table, columns) in expected {
+        assert_eq!(
+            strings(&format!(
+                "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
+            )),
+            columns,
+            "{table}"
+        );
+    }
 }
 
 #[test]

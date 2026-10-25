@@ -9,6 +9,7 @@ license.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
+gespan-board-schema = { path = "../board-schema" }
 async-channel = "2"
 shlex = "2"
 url = "2"
@@ -69,6 +70,7 @@ keyring = { version = "3.6", default-features = false, features = ["linux-native
 libc = "0.2"
 
 [dev-dependencies]
+gespan-board-schema = { path = "../board-schema", features = ["testing"] }
 gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
 tempfile = "3"
 gespan-redact = { path = "../gespan-redact", features = ["fixtures"] }
