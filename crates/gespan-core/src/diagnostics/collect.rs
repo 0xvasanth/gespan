@@ -202,6 +202,29 @@ pub fn redactor_for(projects: &[String]) -> Redactor {
     })
 }
 
+/// Every folder a report should hide behind `<project-N>`: the projects
+/// first, then each one's sibling worktree folder, then `others` (archived
+/// projects, session folders). Relative paths and repeats are left out.
+pub fn report_roots(projects: &[String], others: &[String]) -> Vec<String> {
+    let worktrees = projects.iter().map(|project| {
+        crate::worktree_management::default_root(Path::new(project))
+            .to_string_lossy()
+            .into_owned()
+    });
+    let mut roots: Vec<String> = Vec::new();
+    for root in projects
+        .iter()
+        .cloned()
+        .chain(worktrees)
+        .chain(others.iter().cloned())
+    {
+        if Path::new(&root).is_absolute() && !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    roots
+}
+
 /// The running app's log folder, once diagnostics have started.
 pub fn running_log_dir() -> Option<PathBuf> {
     STARTED.get().map(|config| config.log_dir.clone())
@@ -298,6 +321,7 @@ mod tests {
     use crate::diagnostics::bundle::tests::{stamp, system, unzip};
     use crate::diagnostics::{build, Destination, Report, Selection, MAX_BUNDLE_BYTES};
     use chrono::NaiveDate;
+    use std::path::PathBuf;
 
     fn at(text: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(text)
@@ -575,6 +599,67 @@ mod tests {
         );
         assert_eq!(pending[2].name, "2026-10-24T08-00-00.000Z.json");
         assert!(pending_crashes(&dir.path().join("none")).is_empty());
+    }
+
+    #[test]
+    fn report_roots_add_worktree_folders_and_skip_repeats() {
+        let roots = report_roots(
+            &["/Users/alice/Developer/acme".into(), "/w/app".into()],
+            &[
+                "/Users/alice/Developer/acme-worktrees/feature-x".into(),
+                "/w/app".into(),
+                "/Users/alice/old".into(),
+                "relative/dir".into(),
+                "".into(),
+            ],
+        );
+        assert_eq!(
+            roots,
+            [
+                "/Users/alice/Developer/acme",
+                "/w/app",
+                "/Users/alice/Developer/acme-worktrees",
+                "/w/app-worktrees",
+                "/Users/alice/Developer/acme-worktrees/feature-x",
+                "/Users/alice/old",
+            ]
+        );
+    }
+
+    #[test]
+    fn worktree_and_branch_names_are_scrubbed_from_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        write_day(
+            dir.path(),
+            "2026-10-25",
+            &[
+                r#"{"message":"git failed in /Users/alice/Developer/acme-worktrees/feature-x/src"}"#,
+                r#"{"message":"created /Users/alice/Developer/acme-worktrees/fix-y"}"#,
+            ]
+            .join("\n"),
+        );
+        let roots = report_roots(
+            &["/Users/alice/Developer/acme".into()],
+            &["/Users/alice/Developer/acme-worktrees/feature-x".into()],
+        );
+        let redactor = gespan_redact::Redactor::new(gespan_redact::Config {
+            home: Some("/Users/alice".into()),
+            projects: roots.iter().map(PathBuf::from).collect(),
+            secrets: Vec::new(),
+        });
+        let logs = collect(
+            dir.path(),
+            &redactor,
+            at("2026-10-25T10:00:00Z"),
+            None,
+            None,
+        )
+        .logs;
+        assert!(
+            !logs.contains("acme") && !logs.contains("feature-x"),
+            "{logs}"
+        );
+        assert!(logs.contains("<project-3>/src"), "{logs}");
     }
 
     #[test]

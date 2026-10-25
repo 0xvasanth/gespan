@@ -7,8 +7,6 @@ use std::{path::PathBuf, time::Duration};
 
 /// Error lines logged this long before a toast appears are linked to it.
 const TOAST_EVENTS: Duration = Duration::from_secs(10);
-/// A toast title longer than this is cut; the full text is the user's to add.
-const TITLE_CHARS: usize = 120;
 
 pub(super) struct Open {
     pub(super) sheet: Entity<ReportSheet>,
@@ -69,7 +67,7 @@ impl Shell {
         cx.notify();
     }
 
-    fn report_context(&self) -> SheetContext {
+    pub(super) fn report_context(&self) -> SheetContext {
         let (version, channel) = diagnostics::running_config().unwrap_or_else(|| {
             (
                 crate::notifications::updater::version().into(),
@@ -78,7 +76,17 @@ impl Shell {
         });
         SheetContext {
             log_dir: diagnostics::running_log_dir(),
-            projects: self.workspace.projects.clone(),
+            roots: diagnostics::report_roots(
+                &self.workspace.projects,
+                &self
+                    .workspace
+                    .archived_projects
+                    .iter()
+                    .cloned()
+                    .chain(self.session_summaries.values().map(|s| s.cwd.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            projects_count: self.workspace.projects.len(),
             sessions_count: self.session_summaries.len(),
             version,
             channel,
@@ -248,13 +256,9 @@ impl Shell {
             .child("Report")
             .on_click(cx.listener(|this, _, window, cx| {
                 let (message, event_ids) = this.report.toast.clone().unwrap_or_default();
-                let title: String = message
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .chars()
-                    .take(TITLE_CHARS)
-                    .collect();
+                // Never cut inside the text: scrubbing matches whole paths and
+                // tokens, so a cut-off one would survive into the issue.
+                let title = message.lines().next().unwrap_or_default().to_owned();
                 this.error = None;
                 this.open_report(Prefill { title, event_ids }, window, cx);
             }))
@@ -381,6 +385,61 @@ mod tests {
                         .contains(&"toast-event-1".to_string())
                 );
                 assert!(shell.error.is_none(), "the toast gives way to the sheet");
+            })
+            .unwrap();
+    }
+
+    /// Scrubbing matches whole paths and tokens, so the toast's text must
+    /// not be cut before it is scrubbed: a cut-off home path survives.
+    #[gpui::test]
+    fn a_long_toast_is_not_cut_before_scrubbing(cx: &mut TestAppContext) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        let message = format!(
+            "{} /Users/alice/code/app failed",
+            "git exited 128;".repeat(9)
+        );
+        window
+            .update(visual, |shell, _, cx| {
+                shell.error = Some(format!("{message}\nsecond line"));
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let report = visual.debug_bounds("report-error").unwrap();
+        visual.simulate_click(report.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, cx| {
+                assert_eq!(sheet_title(shell, cx), message)
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn reports_hide_worktree_and_session_folders(cx: &mut TestAppContext) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, _| {
+                shell
+                    .workspace
+                    .archived_projects
+                    .push("/work/old-secret".into());
+                let roots = shell.report_context().roots;
+                for root in [
+                    "/work/gespan",
+                    "/work/another-project",
+                    "/work/gespan-worktrees",
+                    "/work/another-project-worktrees",
+                    "/work/old-secret",
+                ] {
+                    assert!(roots.iter().any(|r| r == root), "{root} in {roots:?}");
+                }
+                assert_eq!(
+                    shell.report_context().projects_count,
+                    shell.workspace.projects.len()
+                );
             })
             .unwrap();
     }

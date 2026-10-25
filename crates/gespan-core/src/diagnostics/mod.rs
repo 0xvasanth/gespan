@@ -18,8 +18,8 @@ pub use bundle::{
 };
 pub use collect::{
     build_channel, collect, environment_json, installed_providers, locale_from, log_tail,
-    pending_crashes, redactor_for, running_config, running_log_dir, system, Environment,
-    PendingCrash, TAIL_LINES,
+    pending_crashes, redactor_for, report_roots, running_config, running_log_dir, system,
+    Environment, PendingCrash, TAIL_LINES,
 };
 pub use fallback::{
     downloads_dir, issue_url, remove_crashes, save_bundle, CUT_NOTE, ISSUE_FORM, MAX_URL_BYTES,

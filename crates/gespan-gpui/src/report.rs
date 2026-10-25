@@ -48,7 +48,9 @@ pub(crate) type Reveal = Arc<dyn Fn(&Path) -> Result<(), String> + Send + Sync>;
 pub(crate) struct SheetContext {
     /// `None` until diagnostics have started: then there are no logs to add.
     pub log_dir: Option<PathBuf>,
-    pub projects: Vec<String>,
+    /// Folders the redactor hides behind `<project-N>`, projects first.
+    pub roots: Vec<String>,
+    pub projects_count: usize,
     pub sessions_count: usize,
     pub version: String,
     pub channel: Channel,
@@ -137,7 +139,8 @@ impl ReportSheet {
             .collect();
         let SheetContext {
             log_dir,
-            projects,
+            roots,
+            projects_count,
             sessions_count,
             version,
             channel,
@@ -149,7 +152,15 @@ impl ReportSheet {
         let gather = {
             let log_dir = log_dir.clone();
             cx.background_executor().spawn(async move {
-                gather(log_dir, projects, sessions_count, &version, channel, facts)
+                gather(
+                    log_dir,
+                    roots,
+                    projects_count,
+                    sessions_count,
+                    &version,
+                    channel,
+                    facts,
+                )
             })
         };
         cx.spawn(async move |this, cx| {
@@ -370,7 +381,8 @@ fn row(name: &str, included: bool) -> Row {
 /// Reads and scrubs everything a report can attach. Runs off the UI thread.
 fn gather(
     log_dir: Option<PathBuf>,
-    projects: Vec<String>,
+    roots: Vec<String>,
+    projects_count: usize,
     sessions_count: usize,
     version: &str,
     channel: Channel,
@@ -385,10 +397,10 @@ fn gather(
     };
     let environment = Environment {
         providers,
-        projects_count: projects.len(),
+        projects_count,
         sessions_count,
     };
-    let redactor = diagnostics::redactor_for(&projects);
+    let redactor = diagnostics::redactor_for(&roots);
     let sources = match &log_dir {
         Some(dir) => {
             diagnostics::collect(dir, &redactor, chrono::Utc::now(), Some(environment), None)
@@ -801,7 +813,8 @@ mod tests {
         let revealed = f.revealed.clone();
         let context = SheetContext {
             log_dir: Some(f.logs.clone()),
-            projects: vec!["/Users/alice/code".into()],
+            roots: vec!["/Users/alice/code".into()],
+            projects_count: 1,
             sessions_count: 3,
             version: "0.1.0".into(),
             channel: Channel::Release,
