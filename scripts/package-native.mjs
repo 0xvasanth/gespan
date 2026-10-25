@@ -36,9 +36,34 @@ function run(command, args, options = {}) {
     ...options,
   });
   if (result.error) throw result.error;
-  if (result.status !== 0)
-    throw new Error(`${command} failed (${result.status})`);
+  if (result.status !== 0) {
+    const error = new Error(`${command} failed (${result.status})`);
+    error.status = result.status;
+    throw error;
+  }
   return result;
+}
+
+// stapler's EX_NOHOST (68) can indicate a ticket-service/network failure.
+// Retry it boundedly; every other status still stops packaging immediately.
+export async function runStapler(
+  action,
+  file,
+  { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {},
+) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      run("xcrun", ["stapler", action, file]);
+      return;
+    } catch (error) {
+      if (error.status !== 68 || attempt === 5) throw error;
+      const delay = attempt * 10_000;
+      console.warn(
+        `Apple ticket service unavailable during ${action}; retrying in ${delay / 1000}s (${attempt}/5)`,
+      );
+      await wait(delay);
+    }
+  }
 }
 async function notices(directory) {
   await mkdir(directory, { recursive: true });
@@ -170,8 +195,8 @@ export async function packageNative({
           `Apple did not accept ${basename(file)} for notarization`,
         );
       if (staple) {
-        run("xcrun", ["stapler", "staple", staple]);
-        run("xcrun", ["stapler", "validate", staple]);
+        await runStapler("staple", staple);
+        await runStapler("validate", staple);
       }
     };
     const zip = join(work, "notarize.zip");

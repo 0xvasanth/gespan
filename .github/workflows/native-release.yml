@@ -114,11 +114,11 @@ jobs:
         run: cargo test --locked --manifest-path crates/monocode-gpui/Cargo.toml -p monocode-core --profile native-dev app_update
       - name: Build optimized native app
         run: cargo build --locked --manifest-path crates/monocode-gpui/Cargo.toml -p monocode-gpui --target ${{ matrix.target }} --release
-      - name: Use TCP for Intel Mac notarization
-        if: matrix.target == 'x86_64-apple-darwin'
+      - name: Use TCP for Mac notarization
+        if: runner.os == 'macOS'
         run: |
-          # GitHub's Intel runners drop HTTP/3 connections to Apple's ticket service.
-          # Scope the documented workaround to this disposable runner; preserve
+          # Mac runners can drop HTTP/3 connections to Apple's ticket service.
+          # Scope this workaround to the disposable runners; preserve
           # notarization, ticket validation and Gatekeeper checks.
           # https://github.com/actions/runner-images/issues/14924
           echo 'block return out quick proto udp from any to any port 443' | sudo pfctl -f -
