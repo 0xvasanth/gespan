@@ -699,9 +699,12 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 
 const VIEWER_ACCOUNT_QUERY: &str = "query { viewer { id name displayName email } }";
 const TEAM_STATES_QUERY: &str = r#"
-query BoardTeamStates($id: String!) {
+query BoardTeamStates($id: String!, $after: String) {
   team(id: $id) {
-    states(first: 100) { nodes { id name type position } }
+    states(first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { id name type position }
+    }
   }
 }
 "#;
@@ -744,22 +747,32 @@ query BoardIssues($first: Int!, $after: String, $filter: IssueFilter) {
   }
 }
 "#;
-const BOARD_ISSUE_QUERY: &str = r#"
-query BoardIssue($id: String!) {
-  issue(id: $id) {
-    id
-    identifier
-    title
-    url
-    updatedAt
-    description
-    state { id name type }
-    team { id }
-    labels { nodes { id name color } }
-    assignee { id name displayName avatarUrl }
-  }
+// The issue fields every board read and write selects.
+macro_rules! board_issue_fields {
+    () => {
+        "id identifier title url updatedAt description \
+         state { id name type } team { id } \
+         labels { nodes { id name color } } \
+         assignee { id name displayName avatarUrl }"
+    };
 }
-"#;
+const BOARD_ISSUE_QUERY: &str = concat!(
+    "query BoardIssue($id: String!) { issue(id: $id) { ",
+    board_issue_fields!(),
+    " } }"
+);
+const ISSUE_CREATE_MUTATION: &str = concat!(
+    "mutation BoardIssueCreate($input: IssueCreateInput!) { ",
+    "issueCreate(input: $input) { success issue { ",
+    board_issue_fields!(),
+    " } } }"
+);
+const ISSUE_UPDATE_MUTATION: &str = concat!(
+    "mutation BoardIssueUpdate($id: String!, $input: IssueUpdateInput!) { ",
+    "issueUpdate(id: $id, input: $input) { success issue { ",
+    board_issue_fields!(),
+    " } } }"
+);
 
 fn require_id(id: &str, what: &str) -> ProviderResult<String> {
     let id = id.trim();
@@ -770,6 +783,96 @@ fn require_id(id: &str, what: &str) -> ProviderResult<String> {
             "Missing Linear {what}"
         )))
     }
+}
+
+fn invalid<T>(message: &str) -> ProviderResult<T> {
+    Err(ProviderError::InvalidInput(message.into()))
+}
+
+fn require_ids(ids: &[String], what: &str) -> ProviderResult<Vec<String>> {
+    ids.iter().map(|id| require_id(id, what)).collect()
+}
+
+fn require_title(title: &str) -> ProviderResult<String> {
+    match title.trim() {
+        "" => invalid("Linear issue title cannot be empty"),
+        title => Ok(title.to_string()),
+    }
+}
+
+/// Linear issues have one assignee: none, one, or a rejected list.
+fn single_assignee(ids: &[String]) -> ProviderResult<Option<String>> {
+    match ids {
+        [] => Ok(None),
+        [id] => require_id(id, "assignee").map(Some),
+        _ => invalid("Linear issues take one assignee"),
+    }
+}
+
+fn create_variables(team_id: &str, draft: &IssueDraft) -> ProviderResult<Value> {
+    let mut input = serde_json::Map::new();
+    input.insert("teamId".into(), json!(require_id(team_id, "team")?));
+    input.insert("title".into(), json!(require_title(&draft.title)?));
+    if !draft.description.trim().is_empty() {
+        input.insert("description".into(), json!(draft.description));
+    }
+    if let Some(state_id) = &draft.state_id {
+        input.insert("stateId".into(), json!(require_id(state_id, "state")?));
+    }
+    if !draft.label_ids.is_empty() {
+        input.insert("labelIds".into(), json!(require_ids(&draft.label_ids, "label")?));
+    }
+    if let Some(assignee) = single_assignee(&draft.assignee_ids)? {
+        input.insert("assigneeId".into(), json!(assignee));
+    }
+    Ok(json!({ "input": input }))
+}
+
+fn update_variables(id: &str, patch: &IssuePatch) -> ProviderResult<Value> {
+    let id = require_id(id, "issue")?;
+    let mut input = serde_json::Map::new();
+    if let Some(title) = &patch.title {
+        input.insert("title".into(), json!(require_title(title)?));
+    }
+    if let Some(description) = &patch.description {
+        input.insert("description".into(), json!(description));
+    }
+    if let Some(labels) = &patch.label_ids {
+        input.insert("labelIds".into(), json!(require_ids(labels, "label")?));
+    }
+    if let Some(assignees) = &patch.assignee_ids {
+        // `null` unassigns.
+        input.insert("assigneeId".into(), json!(single_assignee(assignees)?));
+    }
+    if input.is_empty() {
+        return invalid("Nothing to update on the Linear issue");
+    }
+    Ok(json!({ "id": id, "input": input }))
+}
+
+/// Linear moves by setting `stateId` directly: there are no transitions, and
+/// so no transition fields to fill in.
+fn move_variables(id: &str, target: &MoveTarget) -> ProviderResult<Value> {
+    let id = require_id(id, "issue")?;
+    let state_id = require_id(&target.state_id, "state")?;
+    if !target.required_fields.is_empty() {
+        return invalid("Linear moves take no extra fields");
+    }
+    Ok(json!({ "id": id, "input": { "stateId": state_id } }))
+}
+
+/// Reads `issueCreate` / `issueUpdate`: a success with the issue it produced.
+fn parse_issue_payload(data: &Value, field: &str, verb: &str) -> Result<RemoteIssue, String> {
+    let payload = data
+        .get(field)
+        .ok_or_else(|| "Linear did not return the issue".to_string())?;
+    if payload.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(format!("Could not {verb} Linear issue"));
+    }
+    payload
+        .get("issue")
+        .and_then(parse_remote_issue)
+        .ok_or_else(|| "Linear did not return the issue".to_string())
 }
 
 fn not_supported<T>(operation: &'static str) -> ProviderResult<T> {
@@ -797,12 +900,8 @@ fn team_field<'a>(data: &'a Value, connection: &str) -> Result<&'a Value, String
         .ok_or_else(|| "Linear did not return that team".to_string())
 }
 
-fn parse_states(data: &Value) -> Result<Vec<WorkflowState>, String> {
-    let nodes = team_field(data, "/team/states")?
-        .get("nodes")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+/// Orders states by `position`, the order Linear shows its columns in.
+fn parse_states(nodes: &[Value]) -> Vec<WorkflowState> {
     let mut states: Vec<(f64, WorkflowState)> = nodes
         .iter()
         .filter_map(|node| {
@@ -821,7 +920,7 @@ fn parse_states(data: &Value) -> Result<Vec<WorkflowState>, String> {
         })
         .collect();
     states.sort_by(|a, b| a.0.total_cmp(&b.0));
-    Ok(states.into_iter().map(|(_, state)| state).collect())
+    states.into_iter().map(|(_, state)| state).collect()
 }
 
 /// Collects `nodes` from every page of the connection at `connection`.
@@ -997,9 +1096,8 @@ impl BoardProvider for LinearProvider {
     }
 
     fn list_states(&self, container_id: &str) -> ProviderResult<Vec<WorkflowState>> {
-        let id = require_id(container_id, "team")?;
-        let data = self.graphql(TEAM_STATES_QUERY, json!({ "id": id }))?;
-        Ok(parse_states(&data)?)
+        let nodes = self.team_nodes(TEAM_STATES_QUERY, container_id, "/team/states")?;
+        Ok(parse_states(&nodes))
     }
 
     fn list_labels(&self, container_id: &str) -> ProviderResult<Vec<BoardLabel>> {
@@ -1030,17 +1128,22 @@ impl BoardProvider for LinearProvider {
             .ok_or_else(|| ProviderError::Remote("Linear did not return that issue".into()))
     }
 
-    // Linear writes and delta sync land in #98; webhook parsing waits on #109's fixtures.
-    fn create_issue(&self, _: &str, _: &IssueDraft) -> ProviderResult<RemoteIssue> {
-        not_supported("create_issue")
+    fn create_issue(&self, container_id: &str, draft: &IssueDraft) -> ProviderResult<RemoteIssue> {
+        let variables = create_variables(container_id, draft)?;
+        let data = self.graphql(ISSUE_CREATE_MUTATION, variables)?;
+        Ok(parse_issue_payload(&data, "issueCreate", "create")?)
     }
 
-    fn update_issue(&self, _: &str, _: &IssuePatch) -> ProviderResult<RemoteIssue> {
-        not_supported("update_issue")
+    fn update_issue(&self, id: &str, patch: &IssuePatch) -> ProviderResult<RemoteIssue> {
+        let variables = update_variables(id, patch)?;
+        let data = self.graphql(ISSUE_UPDATE_MUTATION, variables)?;
+        Ok(parse_issue_payload(&data, "issueUpdate", "update")?)
     }
 
-    fn move_issue(&self, _: &str, _: &MoveTarget) -> ProviderResult<RemoteIssue> {
-        not_supported("move_issue")
+    fn move_issue(&self, id: &str, target: &MoveTarget) -> ProviderResult<RemoteIssue> {
+        let variables = move_variables(id, target)?;
+        let data = self.graphql(ISSUE_UPDATE_MUTATION, variables)?;
+        Ok(parse_issue_payload(&data, "issueUpdate", "update")?)
     }
 
     fn comment(
@@ -1287,13 +1390,13 @@ mod tests {
 
     #[test]
     fn states_are_ordered_by_position_and_grouped() {
-        let data = json!({ "team": { "states": { "nodes": [
-            { "id": "d", "name": "Done", "type": "completed", "position": 3.0 },
-            { "id": "t", "name": "Todo", "type": "unstarted", "position": 1.0 },
-            { "id": "x", "name": "Dropped", "type": "canceled", "position": 4.5 },
-            { "id": "p", "name": "Doing", "type": "started", "position": 2 },
-        ]}}});
-        let states = parse_states(&data).unwrap();
+        let nodes = [
+            json!({ "id": "d", "name": "Done", "type": "completed", "position": 3.0 }),
+            json!({ "id": "t", "name": "Todo", "type": "unstarted", "position": 1.0 }),
+            json!({ "id": "x", "name": "Dropped", "type": "canceled", "position": 4.5 }),
+            json!({ "id": "p", "name": "Doing", "type": "started", "position": 2 }),
+        ];
+        let states = parse_states(&nodes);
         let order: Vec<(&str, StateGroup)> =
             states.iter().map(|s| (s.id.as_str(), s.group)).collect();
         assert_eq!(
@@ -1305,9 +1408,10 @@ mod tests {
                 ("x", StateGroup::Cancelled),
             ]
         );
+        let (linear, _) = scripted(vec![Ok(json!({ "team": null }))]);
         assert_eq!(
-            parse_states(&json!({ "team": null })).unwrap_err(),
-            "Linear did not return that team"
+            linear.list_states("t1"),
+            Err(ProviderError::Remote("Linear did not return that team".into()))
         );
     }
 
@@ -1432,29 +1536,270 @@ mod tests {
     }
 
     #[test]
-    fn write_operations_are_not_supported_yet() {
+    fn webhook_parsing_is_not_supported_yet() {
         let linear = LinearProvider::new("lin_api_unused");
-        let unsupported = |result: ProviderResult<()>, operation: &str| match result {
+        assert!(matches!(
+            linear.parse_webhook(&[], b"{}"),
             Err(ProviderError::NotSupported {
                 provider: ProviderKind::Linear,
-                operation: actual,
-            }) => assert_eq!(actual, operation),
-            other => panic!("{operation}: {other:?}"),
+                operation: "parse_webhook",
+            })
+        ));
+    }
+
+    fn mutation_reply(field: &str, issue: Value) -> Result<Value, String> {
+        Ok(json!({ field: { "success": true, "issue": issue } }))
+    }
+
+    fn with_state(id: &str, name: &str, kind: &str) -> Value {
+        let mut node = issue_node();
+        node["state"] = json!({ "id": id, "name": name, "type": kind });
+        node
+    }
+
+    fn expect_invalid<T: std::fmt::Debug>(result: ProviderResult<T>) {
+        assert!(
+            matches!(result, Err(ProviderError::InvalidInput(_))),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn create_sends_team_title_and_optional_fields() {
+        let (linear, transport) = scripted(vec![
+            mutation_reply("issueCreate", with_state("s0", "Todo", "unstarted")),
+            mutation_reply("issueCreate", issue_node()),
+        ]);
+        let draft = IssueDraft {
+            title: "  Fix login ".into(),
+            description: "Steps".into(),
+            state_id: Some("s0".into()),
+            label_ids: vec!["l1".into(), "l2".into()],
+            assignee_ids: vec!["u1".into()],
         };
-        unsupported(
-            linear.create_issue("t1", &IssueDraft::default()).map(drop),
-            "create_issue",
+        let created = linear.create_issue(" t1 ", &draft).unwrap();
+        assert_eq!(created.id, "abc-1");
+        assert_eq!(created.state.group, StateGroup::Unstarted);
+        assert_eq!(created.description.as_deref(), Some("Steps:\n1. Log in"));
+
+        let bare = IssueDraft {
+            title: "Bare".into(),
+            ..Default::default()
+        };
+        linear.create_issue("t1", &bare).unwrap();
+        let requests = transport.requests();
+        assert_eq!(requests[0].0, ISSUE_CREATE_MUTATION);
+        assert_eq!(
+            requests[0].1,
+            json!({ "input": {
+                "teamId": "t1",
+                "title": "Fix login",
+                "description": "Steps",
+                "stateId": "s0",
+                "labelIds": ["l1", "l2"],
+                "assigneeId": "u1",
+            }})
         );
-        unsupported(
-            linear.update_issue("abc", &IssuePatch::default()).map(drop),
-            "update_issue",
+        assert_eq!(
+            requests[1].1,
+            json!({ "input": { "teamId": "t1", "title": "Bare" } })
         );
-        unsupported(
-            linear.move_issue("abc", &MoveTarget::default()).map(drop),
-            "move_issue",
+    }
+
+    #[test]
+    fn create_rejects_bad_input_without_a_request() {
+        let (linear, transport) = scripted(vec![]);
+        let draft = |edit: fn(&mut IssueDraft)| {
+            let mut draft = IssueDraft {
+                title: "Ok".into(),
+                ..Default::default()
+            };
+            edit(&mut draft);
+            draft
+        };
+        expect_invalid(linear.create_issue("t1", &draft(|d| d.title = "   ".into())));
+        expect_invalid(linear.create_issue(
+            "t1",
+            &draft(|d| d.assignee_ids = vec!["u1".into(), "u2".into()]),
+        ));
+        expect_invalid(linear.create_issue("t1", &draft(|d| d.state_id = Some("a b".into()))));
+        expect_invalid(linear.create_issue("t1", &draft(|d| d.label_ids = vec!["".into()])));
+        expect_invalid(linear.create_issue("", &draft(|_| {})));
+        assert!(transport.requests().is_empty());
+    }
+
+    #[test]
+    fn update_sends_only_set_fields_and_empty_assignees_unassign() {
+        let (linear, transport) = scripted(vec![
+            mutation_reply("issueUpdate", issue_node()),
+            mutation_reply("issueUpdate", issue_node()),
+        ]);
+        let rename = IssuePatch {
+            title: Some(" Renamed ".into()),
+            label_ids: Some(vec!["l2".into()]),
+            ..Default::default()
+        };
+        assert_eq!(linear.update_issue("abc-1", &rename).unwrap().id, "abc-1");
+        let clear = IssuePatch {
+            description: Some(String::new()),
+            label_ids: Some(Vec::new()),
+            assignee_ids: Some(Vec::new()),
+            ..Default::default()
+        };
+        linear.update_issue("abc-1", &clear).unwrap();
+        let requests = transport.requests();
+        assert_eq!(requests[0].0, ISSUE_UPDATE_MUTATION);
+        assert_eq!(
+            requests[0].1,
+            json!({ "id": "abc-1", "input": { "title": "Renamed", "labelIds": ["l2"] } })
         );
-        unsupported(linear.sync_since("t1", None).map(drop), "sync_since");
-        unsupported(linear.parse_webhook(&[], b"{}").map(drop), "parse_webhook");
+        assert_eq!(
+            requests[1].1,
+            json!({ "id": "abc-1", "input": {
+                "description": "",
+                "labelIds": [],
+                "assigneeId": null,
+            }})
+        );
+    }
+
+    #[test]
+    fn update_rejects_an_empty_patch_and_bad_fields() {
+        let (linear, transport) = scripted(vec![]);
+        expect_invalid(linear.update_issue("abc-1", &IssuePatch::default()));
+        let blank_title = IssuePatch {
+            title: Some("  ".into()),
+            ..Default::default()
+        };
+        expect_invalid(linear.update_issue("abc-1", &blank_title));
+        let two = IssuePatch {
+            assignee_ids: Some(vec!["u1".into(), "u2".into()]),
+            ..Default::default()
+        };
+        expect_invalid(linear.update_issue("abc-1", &two));
+        let rename = IssuePatch {
+            title: Some("Ok".into()),
+            ..Default::default()
+        };
+        expect_invalid(linear.update_issue("../x", &rename));
+        assert!(transport.requests().is_empty());
+    }
+
+    #[test]
+    fn move_sends_state_id_and_maps_the_new_state_type() {
+        let (linear, transport) = scripted(vec![mutation_reply(
+            "issueUpdate",
+            with_state("s9", "Done", "completed"),
+        )]);
+        let moved = linear
+            .move_issue(
+                "abc-1",
+                &MoveTarget {
+                    state_id: " s9 ".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            moved.state,
+            WorkflowState {
+                id: "s9".into(),
+                name: "Done".into(),
+                group: StateGroup::Completed,
+            }
+        );
+        assert_eq!(
+            transport.requests(),
+            [(
+                ISSUE_UPDATE_MUTATION.to_string(),
+                json!({ "id": "abc-1", "input": { "stateId": "s9" } })
+            )]
+        );
+    }
+
+    #[test]
+    fn move_rejects_required_fields_and_bad_state_ids() {
+        let (linear, transport) = scripted(vec![]);
+        expect_invalid(linear.move_issue("abc-1", &MoveTarget::default()));
+        let mut target = MoveTarget {
+            state_id: "s9".into(),
+            ..Default::default()
+        };
+        target
+            .required_fields
+            .insert("resolution".into(), json!("Fixed"));
+        expect_invalid(linear.move_issue("abc-1", &target));
+        assert!(transport.requests().is_empty());
+    }
+
+    #[test]
+    fn mutation_failures_are_remote_errors() {
+        let (linear, _) = scripted(vec![
+            Ok(json!({ "issueCreate": { "success": false, "issue": null } })),
+            Ok(json!({ "issueUpdate": { "success": true, "issue": null } })),
+            Ok(json!({ "issueUpdate": { "success": true, "issue": { "title": "no id" } } })),
+        ]);
+        let draft = IssueDraft {
+            title: "New".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            linear.create_issue("t1", &draft),
+            Err(ProviderError::Remote("Could not create Linear issue".into()))
+        );
+        let patch = IssuePatch {
+            title: Some("New".into()),
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            assert_eq!(
+                linear.update_issue("abc-1", &patch),
+                Err(ProviderError::Remote("Linear did not return the issue".into()))
+            );
+        }
+    }
+
+    #[test]
+    fn comment_sends_issue_body_and_parent() {
+        let (linear, transport) = scripted(vec![Ok(json!({ "commentCreate": {
+            "success": true,
+            "comment": { "id": "c2", "url": "https://linear.app/x/c2" }
+        }}))]);
+        let comment = linear.comment("abc-1", " Done ", Some("c1")).unwrap();
+        assert_eq!(
+            comment,
+            CommentRef {
+                id: "c2".into(),
+                url: "https://linear.app/x/c2".into(),
+            }
+        );
+        assert_eq!(
+            transport.requests(),
+            [(
+                COMMENT_CREATE_MUTATION.to_string(),
+                json!({ "input": { "issueId": "abc-1", "body": "Done", "parentId": "c1" } })
+            )]
+        );
+    }
+
+    #[test]
+    fn states_follow_every_page() {
+        let (linear, transport) = scripted(vec![
+            Ok(json!({ "team": { "states": {
+                "pageInfo": { "hasNextPage": true, "endCursor": "c1" },
+                "nodes": [{ "id": "late", "name": "Done", "type": "completed", "position": 9.0 }]
+            }}})),
+            Ok(json!({ "team": { "states": {
+                "pageInfo": { "hasNextPage": false, "endCursor": "c2" },
+                "nodes": [{ "id": "early", "name": "Todo", "type": "unstarted", "position": 1.0 }]
+            }}})),
+        ]);
+        let states = linear.list_states("t1").unwrap();
+        let ids: Vec<&str> = states.iter().map(|state| state.id.as_str()).collect();
+        assert_eq!(ids, ["early", "late"]);
+        let requests = transport.requests();
+        assert_eq!(requests[0].1, json!({ "id": "t1", "after": null }));
+        assert_eq!(requests[1].1, json!({ "id": "t1", "after": "c1" }));
     }
 
     #[test]
