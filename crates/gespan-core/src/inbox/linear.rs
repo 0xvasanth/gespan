@@ -1,6 +1,6 @@
-//! Native adapter of the original Tauri Inbox provider. Network parsing and secret-file formats remain identical.
+//! Native adapter of the original Tauri Inbox provider. Network parsing and the saved credential format remain identical.
+use gespan_tracker_secrets::{self as secrets, Tracker};
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -631,23 +631,15 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
         .map(|text| text.trim().to_string())
 }
 
-fn token_path(app: &Path) -> Result<PathBuf, String> {
-    Ok(app.join("linear-token"))
-}
-
 fn read_token(app: &Path) -> Result<Option<String>, String> {
-    let path = token_path(app)?;
-    match fs::read_to_string(&path) {
-        Ok(raw) => {
-            let token = raw.trim().to_string();
-            if token.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(token))
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
+    let Some(raw) = secrets::read(Tracker::Linear, app)? else {
+        return Ok(None);
+    };
+    let token = raw.trim().to_string();
+    if token.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(token))
     }
 }
 
@@ -656,40 +648,9 @@ fn require_token(app: &Path) -> Result<String, String> {
 }
 
 fn write_token(app: &Path, token: &str) -> Result<(), String> {
-    let path = token_path(app)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    write_secret_file(&path, token)
+    secrets::write(Tracker::Linear, app, token)
 }
 
 fn delete_token(app: &Path) -> Result<(), String> {
-    let path = token_path(app)?;
-    match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn write_secret_file(path: &std::path::Path, token: &str) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|error| error.to_string())?;
-        file.write_all(token.as_bytes())
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        fs::write(path, token).map_err(|error| error.to_string())
-    }
+    secrets::delete(Tracker::Linear, app)
 }
