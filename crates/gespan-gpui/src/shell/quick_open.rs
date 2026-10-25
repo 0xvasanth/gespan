@@ -67,6 +67,9 @@ impl Shell {
                         })
                         .detach();
                     }
+                    Command::ReportIssue => {
+                        window.dispatch_action(Box::new(crate::report::ReportIssue), cx)
+                    }
                     Command::CopyDiagnostics => {
                         // It scans the log and crash folders: keep that off
                         // the UI thread.
@@ -248,6 +251,47 @@ mod tests {
             })
             .unwrap();
     }
+    #[gpui::test]
+    fn palette_opens_the_report_sheet(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::input::bind(cx);
+            super::super::bind_keys(cx);
+            crate::popover::bind(cx);
+        });
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        cx.simulate_keystrokes(window.into(), &format!("{modifier}-shift-p"));
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                let search = shell
+                    .quick_open
+                    .as_ref()
+                    .unwrap()
+                    .picker
+                    .read(cx)
+                    .search
+                    .clone();
+                search.update(cx, |input, cx| {
+                    input.set_text(">Report an issue".into(), cx)
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_keystrokes(window.into(), "enter");
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                assert!(shell.quick_open.is_none());
+                assert!(shell.report.open.is_some());
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn palette_copies_diagnostics_and_reports_a_missing_logs_folder(cx: &mut TestAppContext) {
         cx.update(|cx| {

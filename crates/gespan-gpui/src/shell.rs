@@ -30,6 +30,7 @@ mod quick_open;
 mod rails;
 mod remote_projects;
 mod remote_sessions;
+mod report;
 mod search;
 mod session_filters;
 mod session_folders;
@@ -513,6 +514,7 @@ struct SessionPreview {
 pub(crate) struct Shell {
     pilots: Option<Entity<crate::pilots::Pilots>>,
     quick_open: Option<quick_open::Open>,
+    report: report::ReportState,
     image_lightbox: Option<(Entity<crate::image_lightbox::ImageLightbox>, Subscription)>,
     app_bridge: Option<gespan_core::pilot::bridge::Server>,
     mobile: mobile_host::Mobile,
@@ -875,6 +877,7 @@ impl Shell {
         let mut this = Self {
             pilots: None,
             quick_open: None,
+            report: Default::default(),
             image_lightbox: None,
             app_bridge: None,
             mobile: mobile_host::Mobile::default(),
@@ -7932,6 +7935,7 @@ impl Render for Shell {
                     this.open_quick_open(false, window, cx)
                 }),
             )
+            .on_action(cx.listener(report::report_issue))
             .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| {
                 this.open_quick_open(true, window, cx)
             }))
@@ -8270,6 +8274,7 @@ impl Render for Shell {
             .children(self.action_modal(window, cx))
             .children(self.resource_modal(window, cx))
             .children(self.quick_open_modal(window, cx))
+            .children(self.report_modal(window, cx))
             .children(self.remote_project_modal(window, cx))
             .children(self.notice_modals(window, cx))
             .children(self.folder_picker_popover(window, cx))

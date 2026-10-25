@@ -110,6 +110,44 @@ pub(crate) fn crash_records(log_dir: &Path) -> Vec<(String, String)> {
     records
 }
 
+/// A crash record waiting for the crash notice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingCrash {
+    /// The file name in `crashes/`.
+    pub name: String,
+    /// `Crash in <file>:<line>`, never the panic message: the title becomes
+    /// public (see `bundle-format.md`).
+    pub title: String,
+}
+
+/// Unsent crash records, newest first.
+pub fn pending_crashes(log_dir: &Path) -> Vec<PendingCrash> {
+    let mut pending: Vec<PendingCrash> = crash_records(log_dir)
+        .into_iter()
+        .map(|(name, text)| PendingCrash {
+            title: serde_json::from_str::<Value>(&text)
+                .ok()
+                .and_then(|record| crash_location(&record["location"]))
+                .map(|at| format!("Crash in {at}"))
+                .unwrap_or_else(|| "Gespan quit unexpectedly".into()),
+            name,
+        })
+        .collect();
+    pending.reverse();
+    pending
+}
+
+/// `file:line` from `{ file, line }` or from a `file:line:column` string.
+fn crash_location(location: &Value) -> Option<String> {
+    if let Some(file) = location["file"].as_str() {
+        return Some(format!("{file}:{}", location["line"].as_u64()?));
+    }
+    let mut parts = location.as_str()?.rsplitn(3, ':');
+    let _column = parts.next()?;
+    let line: u64 = parts.next()?.parse().ok()?;
+    Some(format!("{}:{line}", parts.next()?))
+}
+
 /// A crash file that isn't JSON (cut short by the crash) is still scrubbed.
 fn scrub_json_text(redactor: &Redactor, text: &str) -> String {
     match serde_json::from_str::<Value>(text) {
@@ -167,6 +205,13 @@ pub fn redactor_for(projects: &[String]) -> Redactor {
 /// The running app's log folder, once diagnostics have started.
 pub fn running_log_dir() -> Option<PathBuf> {
     STARTED.get().map(|config| config.log_dir.clone())
+}
+
+/// The running app's version and data channel, once diagnostics have started.
+pub fn running_config() -> Option<(String, Channel)> {
+    STARTED
+        .get()
+        .map(|config| (config.version.clone(), config.channel))
 }
 
 /// `release`, `preview` or `dev`, as `report.json` names them.
@@ -500,6 +545,36 @@ mod tests {
         assert_eq!(locale_from(env(&[("LANG", "POSIX")]), None), "und");
         assert_eq!(locale_from(env(&[]), None), "und");
         assert_eq!(locale_from(env(&[("LANG", "ja")]), None), "ja");
+    }
+
+    #[test]
+    fn pending_crashes_are_titled_by_location() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = crash_dir(dir.path());
+        std::fs::create_dir_all(&crashes).unwrap();
+        std::fs::write(
+            crashes.join("2026-10-24T08-00-00.000Z.json"),
+            r#"{"message":"secret text","location":"src/a.rs:12:5"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            crashes.join("2026-10-25T08-00-00.000Z.json"),
+            r#"{"location":{"file":"src/board.rs","line":212,"column":9}}"#,
+        )
+        .unwrap();
+        std::fs::write(crashes.join("2026-10-25T09-00-00.000Z.json"), "{cut").unwrap();
+        let pending = pending_crashes(dir.path());
+        let titles: Vec<_> = pending.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Gespan quit unexpectedly",
+                "Crash in src/board.rs:212",
+                "Crash in src/a.rs:12"
+            ]
+        );
+        assert_eq!(pending[2].name, "2026-10-24T08-00-00.000Z.json");
+        assert!(pending_crashes(&dir.path().join("none")).is_empty());
     }
 
     #[test]

@@ -183,6 +183,10 @@ impl ReportSheet {
         }
     }
 
+    pub(crate) fn event_ids(&self) -> &[String] {
+        &self.event_ids
+    }
+
     pub(crate) fn bundle(&self) -> Option<&Bundle> {
         self.bundle.as_ref()
     }
@@ -588,6 +592,7 @@ impl Render for ReportSheet {
                 .child(
                     div()
                         .id("report-saved")
+                        .debug_selector(|| "report-saved".into())
                         .role(Role::Status)
                         .text_size(px(12.))
                         .text_color(content(0.8))
@@ -622,6 +627,7 @@ impl Render for ReportSheet {
                 ))
                 .child(
                     crate::modal::ghost_button("report-cancel", "Cancel")
+                        .debug_selector(|| "report-cancel".into())
                         .w_full()
                         .cursor_pointer()
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(ReportEvent::Close))),
@@ -629,6 +635,7 @@ impl Render for ReportSheet {
         };
         div()
             .id("report-sheet")
+                        .debug_selector(|| "report-sheet".into())
             .role(Role::Dialog)
             .aria_label("Report an issue")
             .track_focus(&self.focus)
@@ -695,6 +702,7 @@ impl Render for ReportSheet {
                 d.child(
                     div()
                         .id("report-public-warning")
+                        .debug_selector(|| "report-public-warning".into())
                         .role(Role::Note)
                         .text_size(px(11.))
                         .line_height(px(16.))
@@ -711,6 +719,7 @@ impl Render for ReportSheet {
                         .child(
                             div()
                                 .id("report-error")
+                        .debug_selector(|| "report-error".into())
                                 .role(Role::Alert)
                                 .text_size(px(11.))
                                 .text_color(rgb(0xf87171))

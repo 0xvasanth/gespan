@@ -905,6 +905,9 @@ impl Shell {
     }
 
     pub(super) fn notices_overlay(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.sync_error_toast();
+        let report_error = self.report_error_button(cx);
+        let crash_notice = self.crash_notice(cx);
         let state = &self.notification_state;
         let pilot_error = self.pilots.as_ref().and_then(|pilots| {
             pilots
@@ -929,14 +932,22 @@ impl Shell {
                 stack.child(errors::card(
                     "app-error",
                     message,
-                    icon_button("dismiss-error", "Dismiss error", "close")
-                        .debug_selector(|| "dismiss-error".into())
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.error = None;
-                            cx.notify();
-                        })),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(report_error)
+                        .child(
+                            icon_button("dismiss-error", "Dismiss error", "close")
+                                .debug_selector(|| "dismiss-error".into())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.error = None;
+                                    cx.notify();
+                                })),
+                        ),
                 ))
             })
+            .children(crash_notice)
             .when_some(pilot_error, |stack, (pilots, message)| {
                 stack.child(errors::card(
                     "pilot-error",
