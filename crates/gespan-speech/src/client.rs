@@ -2,12 +2,13 @@
 //!
 //! One supervisor thread owns the child: it spawns it, reads its events and
 //! restarts it with backoff when it exits unexpectedly. [`SpeechClient::send`]
-//! writes straight to the child's stdin from the caller's thread, or queues
-//! the request while the helper is starting or restarting.
+//! hands the request to a per-process writer thread, or queues it while the
+//! helper is starting or restarting, so no pipe write holds the state lock.
 
 use std::io::{self, BufReader};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -49,11 +50,14 @@ pub fn helper_command() -> io::Result<(PathBuf, Vec<String>)> {
 
 #[derive(Default)]
 struct State {
-    stdin: Option<ChildStdin>,
+    /// Feeds the current helper's writer thread, so no write happens under
+    /// the state lock.
+    tx: Option<Sender<Request>>,
     /// The current helper has said `Ready`, so requests can be written.
     ready: bool,
-    /// A `Listening` event was seen and nothing has ended it yet.
-    listening: bool,
+    /// A `Start` was sent, or `Listening` seen, and no `Final`, `Cancelled`
+    /// or `Error` has followed. A helper exit in this state is a crash.
+    active: bool,
     queue: Vec<Request>,
     last_load: Option<Request>,
     gave_up: bool,
@@ -91,6 +95,12 @@ pub struct SpeechClient {
 }
 
 impl SpeechClient {
+    /// Starts the helper under supervision.
+    ///
+    /// `on_event` runs on the supervisor thread, so it may call [`send`]
+    /// but must not drop or shut down the client.
+    ///
+    /// [`send`]: SpeechClient::send
     pub fn spawn(
         program: PathBuf,
         args: Vec<String>,
@@ -152,10 +162,12 @@ impl SpeechClient {
             st.last_load = Some(req.clone());
         }
         if st.ready {
-            if let Some(stdin) = st.stdin.as_mut() {
+            let is_start = matches!(req, Request::Start { .. });
+            if let Some(tx) = st.tx.as_ref() {
                 // A failed write means the helper is exiting; the reader
-                // thread sees that as end of file and restarts it.
-                let _ = write_line(stdin, &req);
+                // sees end of file and restarts it.
+                let _ = tx.send(req);
+                st.active |= is_start;
                 return;
             }
         }
@@ -167,8 +179,8 @@ impl SpeechClient {
         {
             let mut st = self.shared.lock();
             st.closing = true;
-            if let Some(stdin) = st.stdin.as_mut() {
-                let _ = write_line(stdin, &Request::Shutdown);
+            if let Some(tx) = st.tx.as_ref() {
+                let _ = tx.send(Request::Shutdown);
             }
             self.shared.cv.notify_all();
         }
@@ -198,7 +210,7 @@ impl SpeechClient {
         {
             let mut st = self.shared.lock();
             st.closing = true;
-            st.stdin = None;
+            st.tx = None;
             self.shared.cv.notify_all();
         }
         self.shared.kill_child();
@@ -235,16 +247,16 @@ impl Supervisor {
             }
             self.run_once();
 
-            let was_listening = {
+            let was_active = {
                 let mut st = self.shared.lock();
                 st.ready = false;
-                st.stdin = None;
-                std::mem::take(&mut st.listening)
+                st.tx = None;
+                std::mem::take(&mut st.active)
             };
             if self.shared.lock().closing {
                 return;
             }
-            if was_listening {
+            if was_active {
                 self.emit_error(CRASHED);
             }
 
@@ -310,6 +322,17 @@ impl Supervisor {
             }
         };
         let stdin = child.stdin.take();
+        let (tx, rx) = channel::<Request>();
+        if let Some(mut stdin) = stdin {
+            // Ends when the sender is dropped or the pipe breaks.
+            thread::spawn(move || {
+                for req in rx {
+                    if write_line(&mut stdin, &req).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
         let stdout = child.stdout.take();
         *self.shared.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
         {
@@ -318,7 +341,7 @@ impl Supervisor {
                 drop(st);
                 self.shared.kill_child();
             } else {
-                st.stdin = stdin;
+                st.tx = Some(tx);
             }
         }
 
@@ -358,21 +381,21 @@ impl Supervisor {
             pending.extend(st.last_load.clone());
         }
         pending.extend(queue);
-        if let Some(stdin) = st.stdin.as_mut() {
-            for req in &pending {
-                if write_line(stdin, req).is_err() {
-                    break;
-                }
+        let started = pending.iter().any(|r| matches!(r, Request::Start { .. }));
+        if let Some(tx) = st.tx.clone() {
+            for req in pending {
+                let _ = tx.send(req);
             }
+            st.active |= started;
         }
         st.ready = true;
     }
 
     fn on_event(&self, event: Event) {
         match event {
-            Event::Listening => self.shared.lock().listening = true,
+            Event::Listening => self.shared.lock().active = true,
             Event::Final { .. } | Event::Cancelled | Event::Error { .. } => {
-                self.shared.lock().listening = false
+                self.shared.lock().active = false
             }
             _ => {}
         }

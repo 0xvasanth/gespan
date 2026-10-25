@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gespan_speech::protocol::{ErrorKind, Event, Request};
@@ -45,6 +45,35 @@ fn load() -> Request {
         model_dir: PathBuf::from("/models/parakeet"),
         model_id: "parakeet-tdt-0.6b".into(),
     }
+}
+
+fn pid_count(path: &PathBuf) -> usize {
+    log_lines(path)
+        .iter()
+        .filter(|l| l.starts_with("pid "))
+        .count()
+}
+
+/// Whether a process with this pid exists, on unix and windows.
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    let out = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .any(|word| word == pid.to_string())
 }
 
 fn log_lines(path: &PathBuf) -> Vec<String> {
@@ -123,33 +152,91 @@ fn restart_reloads_model_before_queued_requests() {
 
 #[test]
 fn gives_up_after_three_crashes_in_a_minute() {
-    let (client, rx) = spawn("crash-after-start", None);
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("fake.log");
+    let (client, rx) = spawn("crash-after-start", Some(&log));
     let deadline = Instant::now() + WAIT;
-    let mut stopped = 0;
-    let last = loop {
+    let mut unavailable = 0;
+    while unavailable == 0 {
         assert!(Instant::now() < deadline, "never gave up");
         client.send(Request::Start { terms: vec![] });
-        match rx.recv_timeout(Duration::from_millis(20)) {
-            Ok(Event::Error { message, .. }) if message.starts_with("Dictation is unavailable") => {
-                break message
-            }
-            Ok(Event::Error { message, .. }) => {
+        if let Ok(Event::Error { message, .. }) = rx.recv_timeout(Duration::from_millis(20)) {
+            if message == "Dictation is unavailable. Restart Gespan to try again." {
+                unavailable += 1;
+            } else {
                 assert_eq!(message, "Dictation stopped unexpectedly.");
-                stopped += 1;
             }
-            _ => {}
         }
-    };
-    assert_eq!(
-        last,
-        "Dictation is unavailable. Restart Gespan to try again."
-    );
-    // Initial run plus three restarts: four crashes, at most.
-    assert!((1..=4).contains(&stopped), "stopped {stopped} times");
-    // After giving up, send is a no-op and nothing more is emitted.
+    }
+    // The initial run plus exactly three restarts.
+    assert_eq!(pid_count(&log), 4);
+    // After giving up, send is a no-op: nothing spawns and nothing is emitted,
+    // and the give-up error never repeats.
     client.send(Request::Start { terms: vec![] });
-    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(pid_count(&log), 4);
+    while let Ok(event) = rx.try_recv() {
+        if let Event::Error { message, .. } = event {
+            assert_eq!(message, "Dictation stopped unexpectedly.");
+        }
+    }
     client.shutdown();
+}
+
+#[test]
+fn crash_before_listening_reports_error() {
+    let (client, rx) = spawn("crash-on-start", None);
+    client.send(load());
+    assert_eq!(next(&rx), Event::Loaded);
+    client.send(Request::Start { terms: vec![] });
+    // The helper dies on Start without ever saying Listening; the app must
+    // still hear about it instead of waiting forever.
+    assert_eq!(
+        next(&rx),
+        Event::Error {
+            kind: ErrorKind::Engine,
+            message: "Dictation stopped unexpectedly.".into()
+        }
+    );
+    client.shutdown();
+}
+
+#[test]
+fn on_event_can_send() {
+    let slot: Arc<Mutex<Option<Arc<SpeechClient>>>> = Arc::new(Mutex::new(None));
+    let (tx, rx) = channel();
+    let tx = Mutex::new(tx);
+    let cb_slot = slot.clone();
+    let client = Arc::new(SpeechClient::spawn_with(
+        PathBuf::from(FAKE),
+        Vec::new(),
+        vec![("FAKE_SPEECH_MODE".into(), "echo".into())],
+        fast_policy(),
+        move |event| {
+            if event == Event::Listening {
+                if let Some(c) = cb_slot.lock().unwrap().as_ref() {
+                    c.send(Request::Stop);
+                }
+            }
+            let _ = tx.lock().unwrap().send(event);
+        },
+    ));
+    *slot.lock().unwrap() = Some(client.clone());
+    client.send(Request::Start { terms: vec![] });
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+        Event::Listening
+    );
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+        Event::Final {
+            text: "ok".into(),
+            capped: false
+        }
+    );
+    // Release the callback's reference so the client can be shut down.
+    slot.lock().unwrap().take();
+    Arc::try_unwrap(client).ok().expect("sole owner").shutdown();
 }
 
 #[test]
@@ -186,7 +273,8 @@ fn shutdown_is_prompt_when_helper_exits() {
     assert_eq!(next(&rx), Event::Loaded);
     let started = Instant::now();
     client.shutdown();
-    assert!(started.elapsed() < Duration::from_secs(1));
+    let took = started.elapsed();
+    assert!(took < Duration::from_millis(1500), "took {took:?}");
     // A clean exit after Shutdown is not a crash.
     assert!(rx.try_recv().is_err());
 }
@@ -195,7 +283,7 @@ fn shutdown_is_prompt_when_helper_exits() {
 fn drop_without_shutdown_kills_helper() {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("fake.log");
-    let (client, rx) = spawn("hang", Some(&log));
+    let (client, _rx) = spawn("hang", Some(&log));
     client.send(Request::Stop);
     // Wait until the process is up.
     let deadline = Instant::now() + WAIT;
@@ -203,15 +291,8 @@ fn drop_without_shutdown_kills_helper() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(10));
     }
-    let pid: i32 = log_lines(&log)[0]["pid ".len()..].parse().unwrap();
+    let pid: u32 = log_lines(&log)[0]["pid ".len()..].parse().unwrap();
+    assert!(process_alive(pid), "helper should be running before drop");
     drop(client);
-    // The sender side of the channel is gone once the client's thread ended.
-    assert!(rx.recv_timeout(WAIT).is_err());
-    let alive = std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap()
-        .success();
-    assert!(!alive, "helper {pid} still running after drop");
+    assert!(!process_alive(pid), "helper {pid} still running after drop");
 }

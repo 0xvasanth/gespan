@@ -1,5 +1,5 @@
 //! Test-only stand-in for the speech helper. `FAKE_SPEECH_MODE` picks the
-//! behaviour: `echo`, `crash-after-start` or `hang`. When `FAKE_SPEECH_LOG`
+//! behaviour: `echo`, `crash-after-start`, `crash-on-start` or `hang`. When `FAKE_SPEECH_LOG`
 //! is set, the process appends a `pid <n>` line at start and a `load` line
 //! for each `Load` request, so tests can tell restarts apart.
 
@@ -40,6 +40,7 @@ fn main() {
                 log("load");
                 Event::Loaded
             }
+            Request::Start { .. } if mode == "crash-on-start" => exit(3),
             Request::Start { .. } => Event::Listening,
             Request::Stop => Event::Final {
                 text: "ok".into(),
