@@ -1,5 +1,7 @@
 use std::{env, fs, path::PathBuf};
 
+mod dependency_guard;
+
 fn main() {
     for name in [
         "MONOCODE_NATIVE_VERSION",
@@ -15,19 +17,7 @@ fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         embed_windows_icon(&manifest_dir);
     }
-    let lockfile = manifest_dir.join("Cargo.lock");
-    println!("cargo:rerun-if-changed={}", lockfile.display());
-    let lock = fs::read_to_string(&lockfile).expect("The native workspace requires Cargo.lock");
-    // Cargo writes canonical TOML. Check package names rather than license metadata:
-    // zed-scap advertises MIT but its published license has additional restrictions.
-    assert!(
-        !lock
-            .lines()
-            .any(|line| line.trim() == "name = \"zed-scap\""),
-        "zed-scap is prohibited in the native dependency graph, including optional dependencies. \
-         Restore the GPUI patches that remove it, or replace it with a dependency whose \
-         license has been reviewed. Do not suppress this check based on its MIT metadata."
-    );
+    dependency_guard::check(&manifest_dir);
 }
 
 /// GPUI loads the window and taskbar icon from resource ID 1 of the executable,
@@ -35,7 +25,10 @@ fn main() {
 fn embed_windows_icon(manifest_dir: &std::path::Path) {
     let icon = manifest_dir.join("../../src-tauri/icons/icon.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
-    assert!(icon.is_file(), "The Windows build requires src-tauri/icons/icon.ico");
+    assert!(
+        icon.is_file(),
+        "The Windows build requires src-tauri/icons/icon.ico"
+    );
     // Not canonicalize: its \\?\ verbatim prefix is rejected by rc.exe.
     let icon = icon.to_string_lossy().replace('\\', "/");
     let rc = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("monocode.rc");
