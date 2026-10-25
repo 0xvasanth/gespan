@@ -163,6 +163,10 @@ pub struct Flow {
     /// saved without it, like the TS app's, read as `"auto"`.
     #[serde(default = "default_access")]
     pub access: String,
+    /// The id of the Pilot that owns this Flow. Owned Flows are hidden from
+    /// the Flows view and may not contain approval states.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -315,6 +319,11 @@ pub fn validate_flow(flow: &Flow) -> Validation {
         if !(MIN_VISITS..=MAX_VISITS).contains(&visits) {
             errors.push(format!(
                 "State \"{id}\": maxVisits must be an integer from {MIN_VISITS} to {MAX_VISITS}"
+            ));
+        }
+        if flow.owner.is_some() && matches!(state, FlowState::Approval(_)) {
+            errors.push(format!(
+                "State \"{id}\": approval states are not allowed in a Pilot Flow"
             ));
         }
         if let FlowState::Agent(agent) = state {
@@ -473,6 +482,7 @@ pub const FLOW_KEYS: &[&str] = &[
     "initial",
     "states",
     "access",
+    "owner",
     "createdAt",
     "updatedAt",
 ];
@@ -580,6 +590,7 @@ mod tests {
     /// A Flow that writes every key, optional ones included.
     fn fully_populated() -> Flow {
         let mut flow = starter_flows().remove(0);
+        flow.owner = Some("p1".into());
         flow.inputs[0].default = Some("x".into());
         let approval = FlowState::Approval(ApprovalState {
             id: "gate".into(),
@@ -617,6 +628,37 @@ mod tests {
         let mut list: Vec<String> = list.iter().map(|s| s.to_string()).collect();
         list.sort();
         list
+    }
+
+    #[test]
+    fn pilot_flows_reject_approval_states() {
+        let mut flow = starter_flows().remove(0);
+        let gate = FlowState::Approval(ApprovalState {
+            id: "gate".into(),
+            title: "Gate".into(),
+            message: "ok?".into(),
+            transitions: vec![to(SUCCEEDED)],
+            max_visits: 1,
+        });
+        flow.states.push(gate);
+        let msg = "State \"gate\": approval states are not allowed in a Pilot Flow";
+        assert!(!validate_flow(&flow).errors.iter().any(|e| e == msg));
+        flow.owner = Some("p1".into());
+        assert!(validate_flow(&flow).errors.iter().any(|e| e == msg));
+    }
+
+    #[test]
+    fn owner_round_trips_and_old_json_without_it_still_parses() {
+        let mut flow = starter_flows().remove(0);
+        let json = serde_json::to_value(&flow).unwrap();
+        assert!(json.get("owner").is_none());
+        let old: Flow = serde_json::from_value(json).unwrap();
+        assert_eq!(old.owner, None);
+        flow.owner = Some("p1".into());
+        let json = serde_json::to_value(&flow).unwrap();
+        assert_eq!(json["owner"], "p1");
+        let back: Flow = serde_json::from_value(json).unwrap();
+        assert_eq!(back.owner.as_deref(), Some("p1"));
     }
 
     #[test]
@@ -709,6 +751,7 @@ mod tests {
             initial: "a".into(),
             states,
             access: "auto".into(),
+            owner: None,
             created_at: 0,
             updated_at: 0,
         }

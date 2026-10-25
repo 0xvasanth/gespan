@@ -12,7 +12,7 @@ pub use definition::{
     FlowState, Guard, GuardOp, OutputField, OutputType, OutputValue, Transition, Validation,
     VisitResult, ACCESS_MODES, DEFAULT_ACCESS, FAILED, SUCCEEDED,
 };
-pub use run::{FlowRun, FlowVisit, RunStatus, VisitStatus};
+pub use run::{FlowRun, FlowVisit, RunEdit, RunStatus, RunTag, VisitStatus};
 pub use runner::{AgentOutcome, AgentStatus, Effect, LaunchRequest, Runner, MAX_RUN_STEPS};
 pub use starter::starter_flows;
 pub use store::FlowStore;

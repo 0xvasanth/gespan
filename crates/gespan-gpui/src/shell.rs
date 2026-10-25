@@ -21,6 +21,7 @@ mod notifications;
 mod open_in_editor;
 mod orchestration;
 mod picker_preferences;
+pub(crate) mod pilot_flows;
 pub(crate) mod pilots;
 mod project_rail;
 mod project_removal;
@@ -1136,6 +1137,8 @@ impl Shell {
                 }
             }));
         this.pilots = Some(pilots);
+        // Its roster loaded with it: Pilot Flow events can be delivered.
+        this.flush_pilot_flow_events(cx);
         this.bind_notices(cx);
         this.init_app_bridge(cx);
         for summary in summaries {

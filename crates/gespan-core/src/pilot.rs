@@ -3,8 +3,10 @@
 pub mod api;
 pub mod bridge;
 pub mod cards;
+pub mod completions;
 mod desktop;
 pub mod files;
+pub mod flow_notes;
 pub mod habits;
 pub mod memory;
 pub mod work;
@@ -59,6 +61,15 @@ pub struct Pilot {
     pub pending_reports: Vec<String>,
     pub habit_sessions: Vec<i64>,
     pub seen_rows: usize,
+    /// Side-review notes about finished Flow steps, bounded by `flow_notes::MAX_NOTES`.
+    #[serde(default)]
+    pub flow_notes: Vec<flow_notes::FlowNote>,
+    /// Flow alerts waiting for the main chat to go idle.
+    #[serde(default)]
+    pub flow_alerts: Vec<String>,
+    /// The goals this Pilot's Flow runs serve.
+    #[serde(default)]
+    pub goals: Vec<flow_notes::Goal>,
 }
 impl Default for Pilot {
     fn default() -> Self {
@@ -81,6 +92,9 @@ impl Default for Pilot {
             pending_reports: Vec::new(),
             habit_sessions: Vec::new(),
             seen_rows: 0,
+            flow_notes: Vec::new(),
+            flow_alerts: Vec::new(),
+            goals: Vec::new(),
         }
     }
 }
@@ -187,6 +201,9 @@ pub struct Message {
     pub error: Option<String>,
     #[serde(default)]
     pub attachments: Vec<String>,
+    /// The sessions a delegated-work report names; `text` is rendered from them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub report: Vec<completions::Entry>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -318,7 +335,7 @@ pub fn context(pilot: &Pilot, files: &files::AgentFiles, executable: &Path) -> S
             .join("\n")
     };
     format!(
-        "<gespan_context>\nGespan adds this context, not the user. Act on it without quoting or describing it.\n\nYou are {}, a persistent Pilot in Gespan. Work only on the projects assigned to you:\n{projects}\n\nThe app CLI is `{cli} ACTION --json JSON`. Its credentials are already in your environment; never print them. Run `{cli} help` for the exact actions and inputs. Use sessions.*, worktrees.* and folders.* with project set to an assigned path. Use sessions.start for substantial independent work, inherit your model unless another is appropriate, and avoid overlapping edits. Once delegation is accepted, tell the user and end your turn. You will receive one completion report after every session in that turn's group stops; then inspect and integrate the results. sessions.send supports notifyOnComplete:true. Never poll delegated work.\n\n<soul>\n{}\n</soul>\nStanding instructions rank below the user's current request. Change your soul only when asked, through soul.read and soul.update with expectedHash; never edit its file directly.\n\n<memory>\n{}\nTopic notes: {}\n</memory>\nKeep useful facts through memory.add/replace/remove, use memory.search before answering about earlier facts, and never save credentials. Topic notes are read with memory.read.\n\nHabits are scheduled work in separate sessions. Suggest them when useful, but add one with habits.add only after agreement. State whether its instructions allow changes. Quiet runs should return NOTHING_TO_REPORT.\n\nSave substantial reports with artifacts.write, kind document or html, title, summary and complete body. Cards appear in the chat and overview. Use notes.write only for the user's Notes.\n\nFor acknowledgements requiring no words, your whole reply may be <reaction>👍</reaction> with one fitting emoji. Questions and requests still get a written answer.\n</gespan_context>",
+        "<gespan_context>\nGespan adds this context, not the user. Act on it without quoting or describing it.\n\nYou are {}, a persistent Pilot in Gespan. Work only on the projects assigned to you:\n{projects}\n\nThe app CLI is `{cli} ACTION --json JSON`. Its credentials are already in your environment; never print them. Run `{cli} help` for the exact actions and inputs. Use sessions.*, worktrees.* and folders.* with project set to an assigned path. Use sessions.start for substantial independent work, inherit your model unless another is appropriate, and avoid overlapping edits. Once delegation is accepted, tell the user and end your turn. Each delegated session reports back as soon as it stops; reports that arrive while you are busy come together in one message. Act on each result as it arrives, continuing that task without waiting for unrelated sessions, and give the user an integrated update when related work is done. sessions.send supports notifyOnComplete:true. Never poll delegated work.\n\n<soul>\n{}\n</soul>\nStanding instructions rank below the user's current request. Change your soul only when asked, through soul.read and soul.update with expectedHash; never edit its file directly.\n\n<memory>\n{}\nTopic notes: {}\n</memory>\nKeep useful facts through memory.add/replace/remove, use memory.search before answering about earlier facts, and never save credentials. Topic notes are read with memory.read.\n\nHabits are scheduled work in separate sessions. Suggest them when useful, but add one with habits.add only after agreement. State whether its instructions allow changes. Quiet runs should return NOTHING_TO_REPORT.\n\nFor a goal with several independent tasks that each need multiple focused steps, write a Flow blueprint with flows.save (one role per agent state, no approval states) and start one run per task with flows.start, giving the goal and task. Runs move on their own; never drive or poll them. You receive [Flow update] messages for failed steps, review suggestions and finished goals: recover failed tasks yourself with flows.run, flows.resume, flows.editRun or flows.start, and adjust a single task's remaining steps with flows.editRun. Ask the user only when you need clarification, when an action conflicts with your memory or their earlier input, or when a decision would affect or block them. Propose blueprint changes to the user and apply them with flows.save only after they agree. Record every user instruction about how work should run, and every blueprint change with its reason, in memory.\n\nSave substantial reports with artifacts.write, kind document or html, title, summary and complete body. Cards appear in the chat and overview. Use notes.write only for the user's Notes.\n\nFor acknowledgements requiring no words, your whole reply may be <reaction>👍</reaction> with one fitting emoji. Questions and requests still get a written answer.\n</gespan_context>",
         pilot.label(),
         files.soul.as_deref().unwrap_or_default(),
         memory::within_budget(&files.memory),

@@ -4,12 +4,14 @@ use super::contract::{contract_footer, parse_outputs, retry_prompt, select_trans
 use super::definition::{
     outputs_of, validate_flow, Flow, FlowState, OutputValue, VisitResult, FAILED, SUCCEEDED,
 };
-use super::run::{FlowRun, FlowVisit, RunStatus, VisitStatus};
+use super::run::{FlowRun, FlowVisit, RunEdit, RunStatus, RunTag, VisitStatus};
 use super::template::{render_template, resolve_inputs, BindingContext};
 use std::collections::{HashMap, HashSet};
 
 pub const MAX_RUN_STEPS: u32 = 50;
 const INTERRUPTED: &str = "Interrupted by app restart";
+const IDENTITY_EDIT: &str =
+    "A run edit cannot change the Flow's id, owner, initial state, access, folder or inputs";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaunchRequest {
@@ -40,7 +42,9 @@ pub struct AgentOutcome {
 }
 
 /// What the host must do. Apply in order: `Persist` always precedes the
-/// launch, follow-up, cancel or approval it records, and `Finished` is last.
+/// launch, follow-up, cancel or approval it records, and `Finished` follows
+/// them. `VisitFinished` reports come after everything else, so the next
+/// `Launch` never waits on whoever listens for them.
 // `Persist` carries the run by value, as the host contract specifies; effects
 // are short-lived, so the variant size gap does not matter.
 #[allow(clippy::large_enum_variant)]
@@ -65,6 +69,13 @@ pub enum Effect {
     Finished {
         run_id: String,
         status: RunStatus,
+    },
+    /// An agent visit ended (completed, failed or cancelled by its session),
+    /// or recovery failed it. `run` is the run as it stands after the step.
+    /// Not emitted for `Runner::cancel` or a contract retry.
+    VisitFinished {
+        run: FlowRun,
+        visit: FlowVisit,
     },
 }
 
@@ -151,6 +162,7 @@ impl Runner {
         &mut self,
         flow: &Flow,
         given: &HashMap<String, String>,
+        tag: Option<RunTag>,
     ) -> Result<(FlowRun, Vec<Effect>), Vec<String>> {
         let validation = validate_flow(flow);
         if !validation.errors.is_empty() {
@@ -168,6 +180,8 @@ impl Runner {
             error: None,
             created_at: (self.clock)(),
             finished_at: None,
+            tag,
+            edits: vec![],
         };
         let mut active = ActiveRun {
             run,
@@ -218,72 +232,97 @@ impl Runner {
         outcome: AgentOutcome,
     ) -> Vec<Effect> {
         self.with_run(run_id, |runner, active| {
-            let now = (runner.clock)();
-            let Some(visit) = active.current_mut(visit_id, VisitStatus::Running) else {
+            if active.current_mut(visit_id, VisitStatus::Running).is_none() {
                 return vec![];
-            };
-            let state_id = visit.state_id.clone();
-            match outcome.status {
-                AgentStatus::Cancelled => {
-                    visit.status = VisitStatus::Cancelled;
-                    visit.finished_at = Some(now);
-                    runner.finish(active, RunStatus::Cancelled, None, true)
-                }
-                AgentStatus::Failed => {
-                    let error = outcome.error.unwrap_or_else(|| "Agent failed".into());
+            }
+            let mut effects = runner.settle(active, visit_id, outcome);
+            // The visit ended unless a contract retry keeps it running.
+            if let Some(visit) = active
+                .visits
+                .iter()
+                .find(|v| v.id == visit_id && v.status != VisitStatus::Running)
+            {
+                effects.push(Effect::VisitFinished {
+                    run: active.run.clone(),
+                    visit: visit.clone(),
+                });
+            }
+            effects
+        })
+    }
+
+    /// Records the outcome on the running current visit `visit_id` and
+    /// follows its transition.
+    fn settle(
+        &mut self,
+        active: &mut ActiveRun,
+        visit_id: &str,
+        outcome: AgentOutcome,
+    ) -> Vec<Effect> {
+        let now = (self.clock)();
+        let Some(visit) = active.current_mut(visit_id, VisitStatus::Running) else {
+            return vec![];
+        };
+        let state_id = visit.state_id.clone();
+        match outcome.status {
+            AgentStatus::Cancelled => {
+                visit.status = VisitStatus::Cancelled;
+                visit.finished_at = Some(now);
+                self.finish(active, RunStatus::Cancelled, None, true)
+            }
+            AgentStatus::Failed => {
+                let error = outcome.error.unwrap_or_else(|| "Agent failed".into());
+                visit.status = VisitStatus::Failed;
+                visit.error = Some(error.clone());
+                visit.finished_at = Some(now);
+                self.advance(active, VisitResult::Failed, &HashMap::new(), error)
+            }
+            AgentStatus::Completed => {
+                let Some(state) = active.state(&state_id) else {
+                    let error = format!("Unknown state {state_id}");
+                    let visit = active.visits.last_mut().expect("current visit");
                     visit.status = VisitStatus::Failed;
                     visit.error = Some(error.clone());
                     visit.finished_at = Some(now);
-                    runner.advance(active, VisitResult::Failed, &HashMap::new(), error)
-                }
-                AgentStatus::Completed => {
-                    let Some(state) = active.state(&state_id) else {
-                        let error = format!("Unknown state {state_id}");
-                        let visit = active.visits.last_mut().expect("current visit");
-                        visit.status = VisitStatus::Failed;
-                        visit.error = Some(error.clone());
+                    return self.finish(active, RunStatus::Failed, Some(error), true);
+                };
+                let declared = outputs_of(&state);
+                let parsed = if declared.is_empty() {
+                    Ok(HashMap::new())
+                } else {
+                    parse_outputs(&outcome.text, &declared)
+                };
+                let visit = active.visits.last_mut().expect("current visit");
+                match parsed {
+                    Ok(values) => {
+                        visit.status = VisitStatus::Completed;
+                        visit.outputs = Some(values.clone());
                         visit.finished_at = Some(now);
-                        return runner.finish(active, RunStatus::Failed, Some(error), true);
-                    };
-                    let declared = outputs_of(&state);
-                    let parsed = if declared.is_empty() {
-                        Ok(HashMap::new())
-                    } else {
-                        parse_outputs(&outcome.text, &declared)
-                    };
-                    let visit = active.visits.last_mut().expect("current visit");
-                    match parsed {
-                        Ok(values) => {
-                            visit.status = VisitStatus::Completed;
-                            visit.outputs = Some(values.clone());
-                            visit.finished_at = Some(now);
-                            let error = format!("No transition matched from {state_id}");
-                            runner.advance(active, VisitResult::Completed, &values, error)
-                        }
-                        Err(errors) => match visit.session_id.clone() {
-                            Some(session_id) if !visit.retried => {
-                                visit.retried = true;
-                                vec![
-                                    active.persist(true),
-                                    Effect::FollowUp {
-                                        session_id,
-                                        prompt: retry_prompt(&errors),
-                                    },
-                                ]
-                            }
-                            _ => {
-                                let error =
-                                    format!("Output contract not met: {}", errors.join("; "));
-                                visit.status = VisitStatus::Failed;
-                                visit.error = Some(error.clone());
-                                visit.finished_at = Some(now);
-                                runner.advance(active, VisitResult::Failed, &HashMap::new(), error)
-                            }
-                        },
+                        let error = format!("No transition matched from {state_id}");
+                        self.advance(active, VisitResult::Completed, &values, error)
                     }
+                    Err(errors) => match visit.session_id.clone() {
+                        Some(session_id) if !visit.retried => {
+                            visit.retried = true;
+                            vec![
+                                active.persist(true),
+                                Effect::FollowUp {
+                                    session_id,
+                                    prompt: retry_prompt(&errors),
+                                },
+                            ]
+                        }
+                        _ => {
+                            let error = format!("Output contract not met: {}", errors.join("; "));
+                            visit.status = VisitStatus::Failed;
+                            visit.error = Some(error.clone());
+                            visit.finished_at = Some(now);
+                            self.advance(active, VisitResult::Failed, &HashMap::new(), error)
+                        }
+                    },
                 }
             }
-        })
+        }
     }
 
     /// Decides the run's pending approval; the note is the visit's `note` output.
@@ -311,6 +350,64 @@ impl Runner {
             active.run.status = RunStatus::Running;
             runner.advance(active, VisitResult::Completed, &values, error)
         })
+    }
+
+    /// Replaces an active run's snapshot with `flow`. Only the name, the
+    /// description and states that no visit has entered may change, so a
+    /// running session is never edited.
+    pub fn edit_run(
+        &mut self,
+        run_id: &str,
+        flow: Flow,
+        note: &str,
+    ) -> Result<Vec<Effect>, Vec<String>> {
+        let Some(active) = self.runs.get_mut(run_id) else {
+            return Err(vec!["Run not found".into()]);
+        };
+        let old = &active.run.flow;
+        // Launches take `cwd` and `access` from the snapshot, and the run's
+        // inputs were resolved at start: none of these may move mid-run.
+        if flow.id != old.id
+            || flow.owner != old.owner
+            || flow.initial != old.initial
+            || flow.access != old.access
+            || flow.cwd != old.cwd
+            || flow.inputs != old.inputs
+        {
+            return Err(vec![IDENTITY_EDIT.into()]);
+        }
+        let validation = validate_flow(&flow);
+        if !validation.errors.is_empty() {
+            return Err(validation.errors);
+        }
+        let find = |f: &Flow, id: &str| f.states.iter().find(|s| s.id() == id).cloned();
+        let mut visited: Vec<&str> = Vec::new();
+        for v in &active.visits {
+            if !visited.contains(&v.state_id.as_str()) {
+                visited.push(&v.state_id);
+            }
+        }
+        let errors: Vec<String> = visited
+            .into_iter()
+            .filter(|id| find(&flow, id) != find(old, id))
+            .map(|id| format!("State \"{id}\" has already run and cannot be changed"))
+            .collect();
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        let states = flow
+            .states
+            .iter()
+            .filter(|s| find(old, s.id()).as_ref() != Some(*s))
+            .map(|s| s.id().to_owned())
+            .collect();
+        active.run.flow = flow;
+        active.run.edits.push(RunEdit {
+            at: (self.clock)(),
+            note: note.to_owned(),
+            states,
+        });
+        Ok(vec![active.persist(false)])
     }
 
     pub fn cancel(&mut self, run_id: &str) -> Vec<Effect> {
@@ -415,16 +512,20 @@ impl Runner {
             if interrupted.is_empty() {
                 effects.push(active.persist(false));
             }
-            for visit in interrupted {
+            for visit in &interrupted {
                 effects.push(Effect::Persist {
                     run: active.run.clone(),
-                    visit: Some(visit),
+                    visit: Some(visit.clone()),
                 });
             }
             effects.push(Effect::Finished {
                 run_id: active.run.id.clone(),
                 status: RunStatus::Failed,
             });
+            effects.extend(interrupted.into_iter().map(|visit| Effect::VisitFinished {
+                run: active.run.clone(),
+                visit,
+            }));
         }
         effects
     }
@@ -585,7 +686,16 @@ impl Runner {
                     cwd: active.run.flow.cwd.clone(),
                     worktree_cwd: active.run.worktree_cwd.clone(),
                     access: active.run.flow.access.clone(),
-                    title: format!("{} · {}", active.run.flow.name, agent.title),
+                    // A Pilot run's sessions are recognised by task.
+                    title: format!(
+                        "{} · {}",
+                        active
+                            .run
+                            .tag
+                            .as_ref()
+                            .map_or(active.run.flow.name.as_str(), |tag| tag.task.as_str()),
+                        agent.title
+                    ),
                     prompt,
                 };
                 active.visits.push(visit);

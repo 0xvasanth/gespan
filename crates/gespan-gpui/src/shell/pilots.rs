@@ -82,6 +82,13 @@ impl Shell {
     pub(crate) fn pilot_groups(&self, project: &str) -> gespan_core::session_groups::Groups {
         self.groups.get(project).cloned().unwrap_or_default()
     }
+    /// A project's groups if the sidebar has loaded them.
+    pub(crate) fn pilot_loaded_groups(
+        &self,
+        project: &str,
+    ) -> Option<gespan_core::session_groups::Groups> {
+        self.groups.get(project).cloned()
+    }
     pub(crate) fn pilot_apply_groups(
         &mut self,
         project: String,

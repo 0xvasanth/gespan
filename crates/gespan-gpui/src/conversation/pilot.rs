@@ -69,6 +69,11 @@ impl Conversation {
         cx.emit(SessionChanged);
         Ok(())
     }
+    /// Tests: keep a follow-up queued, as when history is still loading, instead of starting a provider turn.
+    #[cfg(test)]
+    pub(crate) fn hold_history_for_test(&mut self) {
+        self.loading = true;
+    }
     pub(super) fn pilot_flush_external(&mut self, cx: &mut Context<Self>) {
         if !self.history_ready() || self.stopping {
             return;

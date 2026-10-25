@@ -943,6 +943,8 @@ mod tests {
             error: None,
             created_at: 1,
             finished_at: None,
+            tag: None,
+            edits: vec![],
         }
     }
 

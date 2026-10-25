@@ -66,6 +66,29 @@ pub struct FlowRun {
     pub error: Option<String>,
     pub created_at: i64,
     pub finished_at: Option<i64>,
+    /// The goal and task a Pilot started this run for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<RunTag>,
+    /// Edits made to the running definition, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edits: Vec<RunEdit>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunTag {
+    pub goal: String,
+    pub task: String,
+}
+
+/// One edit to a run's Flow snapshot.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunEdit {
+    pub at: i64,
+    pub note: String,
+    /// Ids of the states changed or added.
+    pub states: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -111,5 +134,43 @@ mod tests {
             assert_eq!(serde_json::to_value(s).unwrap(), s.as_str());
         }
         assert!(RunStatus::WaitingApproval.is_active() && !RunStatus::Failed.is_active());
+    }
+
+    #[test]
+    fn run_tag_and_edits_round_trip_and_default_when_absent() {
+        let flow = crate::flow::starter::starter_flows().remove(0);
+        let mut run = FlowRun {
+            id: "r".into(),
+            flow_id: flow.id.clone(),
+            flow,
+            status: RunStatus::Running,
+            inputs: HashMap::new(),
+            worktree_cwd: None,
+            current_state: None,
+            error: None,
+            created_at: 1,
+            finished_at: None,
+            tag: None,
+            edits: vec![],
+        };
+        let plain = serde_json::to_value(&run).unwrap();
+        assert!(plain.get("tag").is_none() && plain.get("edits").is_none());
+        let back: FlowRun = serde_json::from_value(plain).unwrap();
+        assert_eq!(back, run);
+
+        run.tag = Some(RunTag {
+            goal: "g".into(),
+            task: "t".into(),
+        });
+        run.edits = vec![RunEdit {
+            at: 5,
+            note: "n".into(),
+            states: vec!["a".into()],
+        }];
+        let json = serde_json::to_value(&run).unwrap();
+        assert_eq!(json["tag"]["goal"], "g");
+        assert_eq!(json["edits"][0]["states"][0], "a");
+        let back: FlowRun = serde_json::from_value(json).unwrap();
+        assert_eq!(back, run);
     }
 }

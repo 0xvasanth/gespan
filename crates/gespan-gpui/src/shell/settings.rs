@@ -99,8 +99,6 @@ impl Shell {
                             mascot: m.mascot.clone(),
                             color: m.color,
                             projects: m.projects.iter().map(|p| self.project_label(p)).collect(),
-                            show: m.show_started_sessions_in_sidebar,
-                            folders: m.use_sidebar_folders,
                         })
                         .collect()
                 })
@@ -221,12 +219,6 @@ impl Shell {
                         })
                         .detach();
                     }
-                }
-                SettingsEvent::PilotSidebar(id, show, folders) => {
-                    if let Some(m) = this.pilots.clone() {
-                        m.update(cx, |m, cx| m.sidebar_preferences(id, *show, *folders, cx));
-                    }
-                    this.sync_settings(cx);
                 }
                 SettingsEvent::MobileRefresh => this.sync_settings(cx),
                 SettingsEvent::MobileConfigure {

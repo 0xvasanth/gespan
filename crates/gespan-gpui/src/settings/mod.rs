@@ -97,8 +97,6 @@ pub(crate) struct PilotSetting {
     pub mascot: String,
     pub color: u32,
     pub projects: Vec<String>,
-    pub show: bool,
-    pub folders: bool,
 }
 
 pub(crate) enum SettingsEvent {
@@ -123,7 +121,6 @@ pub(crate) enum SettingsEvent {
         delete_sessions: bool,
     },
     ResetPilot(String),
-    PilotSidebar(String, bool, bool),
     /// Read mobile access again: the router and pairing change on their own.
     MobileRefresh,
     MobileConfigure {

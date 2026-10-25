@@ -7,6 +7,7 @@ mod color_picker;
 mod files;
 mod filters;
 mod floating;
+mod flow_reviews;
 mod host;
 mod html;
 mod memory_ui;
@@ -69,7 +70,8 @@ struct RunningHabit {
     failure: Option<String>,
     waiting_since: Option<u64>,
     cards: Vec<serde_json::Value>,
-    mailbox: Vec<String>,
+    /// Completion reports waiting for the run to finish its turn.
+    mailbox: Vec<Message>,
 }
 pub(crate) struct Pilots {
     #[cfg(all(target_os = "macos", not(test)))]
@@ -126,7 +128,8 @@ pub(crate) struct Pilots {
     rail_ids: Vec<String>,
     running: HashMap<i64, RunningHabit>,
     active_run: Option<i64>,
-    completion_work: HashSet<(String, u64)>,
+    /// Completion reports per `(pilot_id, source session)`, held until all of them are built.
+    completion_work: HashMap<(String, i64), Vec<host::PendingReport>>,
     /// The open background dialog, centred in the window it opened in.
     background: Option<(
         Entity<crate::project_settings::BackgroundDialog>,
@@ -147,6 +150,20 @@ pub(crate) struct Pilots {
     session_filter_anchor: AnchorSlot,
     app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
+    /// Side reviews of finished Flow steps, by review session.
+    reviews: HashMap<i64, flow_reviews::RunningReview>,
+    /// Completed steps waiting for a review slot, oldest first.
+    review_queue: std::collections::VecDeque<flow_reviews::QueuedReview>,
+    flow_watch: flow_reviews::Watch,
+    /// Prompts hidden runs were given; tests never send them.
+    #[cfg(test)]
+    pub(crate) hidden_prompts: Vec<(i64, String)>,
+    /// Hidden runs cannot start, as when their session refuses the prompt.
+    #[cfg(test)]
+    pub(crate) hidden_dispatch_fails: bool,
+    /// Every Flow event handed to a Pilot, in order.
+    #[cfg(test)]
+    pub(crate) flow_events: Vec<(String, crate::shell::pilot_flows::PilotFlowEvent)>,
 }
 impl EventEmitter<Changed> for Pilots {}
 impl EventEmitter<TabOpened> for Pilots {}
@@ -159,6 +176,7 @@ impl Pilots {
         self.chats
             .values()
             .chain(self.running.values().map(|r| &r.view))
+            .chain(self.reviews.values().map(|r| &r.view))
             .map(|v| {
                 let s = &v.read(cx).summary;
                 (
@@ -176,6 +194,7 @@ impl Pilots {
             .chats
             .values()
             .chain(self.running.values().map(|r| &r.view))
+            .chain(self.reviews.values().map(|r| &r.view))
             .find(|v| v.read(cx).summary.id == id)
         {
             view.update(cx, |v, cx| v.stop_if_busy(cx));
@@ -235,28 +254,6 @@ impl Pilots {
         for view in self.html_documents.values() {
             view.read(cx).hide();
         }
-    }
-    pub(crate) fn sidebar_preferences(
-        &mut self,
-        id: &str,
-        show: bool,
-        folders: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(m) = self.roster.get_mut(id) {
-            m.show_started_sessions_in_sidebar = show;
-            m.use_sidebar_folders = folders;
-        }
-        let sessions = self
-            .roster
-            .get(id)
-            .map(|m| m.launches.iter().map(|l| l.session_id).collect::<Vec<_>>())
-            .unwrap_or_default();
-        for session in sessions {
-            self.group_launch(id, session, cx);
-        }
-        self.configure_chat(id, cx);
-        self.save(cx);
     }
     pub(crate) fn new(
         store: Database,
@@ -352,7 +349,7 @@ impl Pilots {
             rail_ids: Vec::new(),
             running: HashMap::new(),
             active_run: None,
-            completion_work: HashSet::new(),
+            completion_work: HashMap::new(),
             background: None,
             backgrounds: HashMap::new(),
             drag: None,
@@ -368,6 +365,15 @@ impl Pilots {
             session_filter_anchor: AnchorSlot::default(),
             app_results: HashMap::new(),
             app_pending: HashSet::new(),
+            reviews: HashMap::new(),
+            review_queue: Default::default(),
+            flow_watch: Default::default(),
+            #[cfg(test)]
+            hidden_prompts: Vec::new(),
+            #[cfg(test)]
+            hidden_dispatch_fails: false,
+            #[cfg(test)]
+            flow_events: Vec::new(),
         };
         if let Some(rx) = rx {
             this._bridge_task = Some(cx.spawn(async move |this, cx| {
@@ -401,6 +407,7 @@ impl Pilots {
             this.ensure_chat(&id, cx);
             this.reload_files(&id, cx);
         }
+        this.file_loose_launches(cx);
         this
     }
     pub(crate) fn is_pilot_session(&self, id: i64) -> bool {
@@ -414,9 +421,6 @@ impl Pilots {
     }
     pub(crate) fn hidden_session(&self, id: i64) -> bool {
         self.is_pilot_session(id)
-            || self.roster.pilots.iter().any(|m| {
-                !m.show_started_sessions_in_sidebar && m.launches.iter().any(|l| l.session_id == id)
-            })
     }
     pub(crate) fn set_preferences(
         &mut self,
@@ -732,7 +736,7 @@ impl Pilots {
                                 .collect(),
                             false,
                             cx,
-                        )
+                        );
                     },
                 ));
                 let source = id.clone();
@@ -865,6 +869,7 @@ impl Pilots {
             view.update(cx, |view, cx| view.configure_pilot(pilot, root, env, cx));
         }
     }
+    /// Queues a message for Pilot `id`'s chat; returns the message's id.
     fn enqueue(
         &mut self,
         id: &str,
@@ -872,20 +877,21 @@ impl Pilots {
         attachments: Vec<String>,
         internal: bool,
         cx: &mut Context<Self>,
-    ) {
-        if let Some(pilot) = self.roster.get_mut(id) {
-            pilot.outbox.push(Message {
-                id: pilot::new_id(),
-                text,
-                sent_at: Some(gespan_core::time::now_ms()),
-                internal,
-                error: None,
-                attachments,
-            });
-            self.save(cx);
-            self.configure_chat(id, cx);
-            self.dispatch(id, cx);
-        }
+    ) -> Option<String> {
+        let message_id = pilot::new_id();
+        self.roster.get_mut(id)?.outbox.push(Message {
+            id: message_id.clone(),
+            text,
+            sent_at: Some(gespan_core::time::now_ms()),
+            internal,
+            error: None,
+            attachments,
+            report: Vec::new(),
+        });
+        self.save(cx);
+        self.configure_chat(id, cx);
+        self.dispatch(id, cx);
+        Some(message_id)
     }
     fn dispatch(&mut self, id: &str, cx: &mut Context<Self>) {
         let delivered = self
@@ -1011,6 +1017,14 @@ impl Pilots {
             }
             self.check_completions(cx);
             self.reload_files(id, cx);
+            if self.flow_alert_turns(id) {
+                // A turn that read a failure may have ended: its goal can
+                // roll up now.
+                self.settle_flows(id, cx);
+            } else {
+                self.flush_flow_alerts(id, cx);
+            }
+            self.pump_reviews(cx);
         }
         self.dispatch(id, cx);
         self.changed(cx);

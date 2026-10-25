@@ -17,6 +17,9 @@ struct Driver {
     changed: Vec<String>,
     closed: Vec<i64>,
     generation: u64,
+    /// Each finished visit, with how many launches had been made by then.
+    visits_finished: Vec<(FlowRun, FlowVisit, usize)>,
+    runs_finished: Vec<(String, RunStatus)>,
 }
 
 impl SessionDriver for Driver {
@@ -38,6 +41,12 @@ impl SessionDriver for Driver {
     }
     fn changed(&mut self, run_id: &str) {
         self.changed.push(run_id.to_owned());
+    }
+    fn visit_finished(&mut self, run: FlowRun, visit: FlowVisit) {
+        self.visits_finished.push((run, visit, self.launches.len()));
+    }
+    fn run_finished(&mut self, run_id: &str, status: RunStatus) {
+        self.runs_finished.push((run_id.to_owned(), status));
     }
 }
 
@@ -119,6 +128,7 @@ fn two_states() -> Flow {
             agent("build", vec![], "$succeeded"),
         ],
         access: "auto".into(),
+        owner: None,
         created_at: 0,
         updated_at: 0,
     }
@@ -126,7 +136,8 @@ fn two_states() -> Flow {
 
 fn start(host: &mut Host, driver: &mut Driver) -> FlowRun {
     let inputs = HashMap::from([("issue".to_string(), "42".to_string())]);
-    host.start(driver, &two_states(), &inputs).expect("start")
+    host.start(driver, &two_states(), &inputs, None)
+        .expect("start")
 }
 
 /// Reports the last launch's session as created and its prompt submitted.
@@ -659,7 +670,7 @@ fn every_visit_launches_with_the_run_snapshots_access_mode() {
     let mut flow = two_states();
     flow.access = "full-access".into();
     let inputs = HashMap::from([("issue".to_string(), "42".to_string())]);
-    let run = host.start(&mut driver, &flow, &inputs).unwrap();
+    let run = host.start(&mut driver, &flow, &inputs, None).unwrap();
     assert_eq!(run.flow.access, "full-access");
     assert_eq!(driver.launches[0].access, "full-access");
     launch(&mut host, &mut driver, 100);
@@ -675,4 +686,104 @@ fn every_visit_launches_with_the_run_snapshots_access_mode() {
     assert_eq!(cancelled.flow.access, "full-access");
     assert!(host.resume(&mut driver, cancelled, visits, "build"));
     assert_eq!(driver.launches.last().unwrap().access, "full-access");
+}
+
+#[test]
+fn visit_finished_reaches_the_driver_after_the_next_launch() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    let run = start(&mut host, &mut driver);
+    launch(&mut host, &mut driver, 100);
+    assert!(
+        driver.visits_finished.is_empty(),
+        "the turn has not settled"
+    );
+    finish(&mut host, &mut driver, 100, reply(PLAN, Some("/wt")));
+    assert_eq!(driver.visits_finished.len(), 1);
+    let (after, visit, launches) = &driver.visits_finished[0];
+    assert_eq!(*launches, 2, "the next visit launched first");
+    assert_eq!(after.id, run.id);
+    assert_eq!(after.current_state.as_deref(), Some("build"));
+    assert_eq!(visit.state_id, "plan");
+    assert_eq!(visit.status, VisitStatus::Completed);
+    assert!(driver.runs_finished.is_empty(), "the run goes on");
+
+    // A failed step is reported too, with the run as it ended.
+    launch(&mut host, &mut driver, 101);
+    let settled = Settled {
+        ok: false,
+        message: "boom".into(),
+        ..Default::default()
+    };
+    finish(&mut host, &mut driver, 101, settled);
+    assert_eq!(driver.visits_finished.len(), 2);
+    let (after, visit, _) = &driver.visits_finished[1];
+    assert_eq!(visit.state_id, "build");
+    assert_eq!(visit.status, VisitStatus::Failed);
+    assert_eq!(after.status, RunStatus::Failed);
+}
+
+#[test]
+fn run_finished_reaches_the_driver() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    let run = start(&mut host, &mut driver);
+    launch(&mut host, &mut driver, 100);
+    finish(&mut host, &mut driver, 100, reply(PLAN, Some("/wt")));
+    launch(&mut host, &mut driver, 101);
+    finish(&mut host, &mut driver, 101, reply("Built.", Some("/wt")));
+    assert_eq!(
+        driver.runs_finished,
+        vec![(run.id.clone(), RunStatus::Succeeded)]
+    );
+    assert_eq!(driver.changed, vec![run.id], "the Flows view still hears");
+
+    // A cancel finishes the run without a step event.
+    let (mut host, mut driver) = (self::host(), Driver::default());
+    let run = start(&mut host, &mut driver);
+    launch(&mut host, &mut driver, 100);
+    host.cancel(&mut driver, &run.id);
+    assert_eq!(driver.runs_finished, vec![(run.id, RunStatus::Cancelled)]);
+    assert!(driver.visits_finished.is_empty());
+}
+
+#[test]
+fn a_run_edit_is_persisted_through_the_driver() {
+    let (mut host, mut driver) = (host(), Driver::default());
+    let run = start(&mut host, &mut driver);
+    launch(&mut host, &mut driver, 100);
+    let mut flow = run.flow.clone();
+    flow.name = "Fix, edited".into();
+    if let FlowState::Agent(build) = &mut flow.states[1] {
+        build.brief = "build it carefully".into();
+    }
+    let persisted = driver.persisted.len();
+    host.edit_run(&mut driver, &run.id, flow, "be careful")
+        .expect("an edit to a state not yet entered");
+    assert_eq!(driver.persisted.len(), persisted + 1);
+    let (saved, visit) = driver.persisted.last().unwrap().clone();
+    assert_eq!(visit, None);
+    assert_eq!(saved.flow.name, "Fix, edited");
+    assert_eq!(saved.edits.len(), 1);
+    assert_eq!(saved.edits[0].note, "be careful");
+    assert_eq!(saved.edits[0].states, vec!["build".to_string()]);
+
+    // The next visit runs the edited brief.
+    finish(&mut host, &mut driver, 100, reply(PLAN, Some("/wt")));
+    assert!(driver.launches[1].prompt.starts_with("build it carefully"));
+
+    // A running state cannot change, and an unknown run is refused.
+    let mut running = driver.last_run().flow;
+    if let FlowState::Agent(build) = &mut running.states[1] {
+        build.brief = "changed mid-turn".into();
+    }
+    let persisted = driver.persisted.len();
+    assert!(host.edit_run(&mut driver, &run.id, running, "no").is_err());
+    assert_eq!(
+        host.edit_run(&mut driver, "missing", two_states(), "no"),
+        Err(vec!["Run not found".to_string()])
+    );
+    assert_eq!(
+        driver.persisted.len(),
+        persisted,
+        "a refusal writes nothing"
+    );
 }

@@ -1,8 +1,8 @@
 use super::*;
 use crate::flow::contract::retry_prompt;
 use crate::flow::definition::{
-    AgentState, FlowState, Guard, GuardOp, OutputField, OutputType, OutputValue, Transition,
-    VisitResult, FAILED, SUCCEEDED,
+    AgentState, FlowInput, FlowState, Guard, GuardOp, OutputField, OutputType, OutputValue,
+    Transition, VisitResult, FAILED, SUCCEEDED,
 };
 use crate::flow::run::VisitStatus;
 use crate::flow::starter_flows;
@@ -56,7 +56,7 @@ impl Host {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        let (run, effects) = self.runner.start(flow, &given).expect("start");
+        let (run, effects) = self.runner.start(flow, &given, None).expect("start");
         let effects = self.apply(effects);
         (run, effects)
     }
@@ -251,6 +251,7 @@ fn custom(initial: &str, states: Vec<FlowState>) -> Flow {
         initial: initial.into(),
         states,
         access: "auto".into(),
+        owner: None,
         created_at: 0,
         updated_at: 0,
     }
@@ -266,6 +267,7 @@ fn kinds(effects: &[Effect]) -> Vec<&'static str> {
             Effect::Persist { .. } => "persist",
             Effect::NeedsApproval { .. } => "needs-approval",
             Effect::Finished { .. } => "finished",
+            Effect::VisitFinished { .. } => "visit-finished",
         })
         .collect()
 }
@@ -439,7 +441,7 @@ fn contract_failing_twice_fails_the_run_with_output_contract_not_met() {
     let (run, _) = host.start(&fix_an_issue(), &[("issue", "Bug")]);
     host.reply(&run.id, "no json");
     let effects = host.outputs(&run.id, json!({"plan": 3, "files": []}));
-    assert_eq!(kinds(&effects), ["persist", "finished"]);
+    assert_eq!(kinds(&effects), ["persist", "finished", "visit-finished"]);
     let error = "Output contract not met: field plan must be string";
     let visit = host.visits().pop().unwrap();
     assert_eq!(visit.status, VisitStatus::Failed);
@@ -512,7 +514,7 @@ fn status_guard_routes_a_failed_agent_to_failed_terminal() {
     let mut host = Host::new();
     let (run, _) = host.start(&flow, &[]);
     let effects = host.fail(&run.id, Some("harness crashed"));
-    assert_eq!(kinds(&effects), ["persist", "finished"]);
+    assert_eq!(kinds(&effects), ["persist", "finished", "visit-finished"]);
     let visit = host.visits().pop().unwrap();
     assert_eq!(visit.status, VisitStatus::Failed);
     assert_eq!(visit.error.as_deref(), Some("harness crashed"));
@@ -547,7 +549,7 @@ fn max_visits_cap_fails_the_run_without_a_new_visit() {
     let (run, _) = host.start(&flow, &[]);
     host.outputs(&run.id, json!({"again": true}));
     let effects = host.outputs(&run.id, json!({"again": true}));
-    assert_eq!(*kinds(&effects).last().unwrap(), "finished");
+    assert!(kinds(&effects).ends_with(&["finished", "visit-finished"]));
     assert_eq!(host.launches().len(), 2);
     assert_eq!(host.visits().len(), 2);
     let last = host.last_run();
@@ -652,13 +654,16 @@ fn approval_waits_then_reject_note_reaches_the_next_brief() {
         json!({"findings": ["GPUI is fast"], "sources": ["zed.dev"]}),
     );
     let effects = host.outputs(&run.id, json!({"summary": "GPUI is fast."}));
-    assert_eq!(kinds(&effects), ["persist", "persist", "needs-approval"]);
+    assert_eq!(
+        kinds(&effects),
+        ["persist", "persist", "needs-approval", "visit-finished"]
+    );
     let review = host.visits().pop().unwrap();
     assert_eq!(review.status, VisitStatus::WaitingApproval);
     assert!(review.prompt.as_deref().unwrap().contains("GPUI is fast."));
     assert_eq!(host.last_run().status, RunStatus::WaitingApproval);
     assert!(matches!(
-        effects.last(),
+        effects.get(2),
         Some(Effect::NeedsApproval { run_id, visit_id }) if *run_id == run.id && *visit_id == review.id
     ));
 
@@ -729,7 +734,7 @@ fn agent_reporting_cancelled_cancels_the_run() {
             error: None,
         },
     );
-    assert_eq!(kinds(&effects), ["persist", "finished"]);
+    assert_eq!(kinds(&effects), ["persist", "finished", "visit-finished"]);
     assert_eq!(host.visits()[0].status, VisitStatus::Cancelled);
     assert_eq!(host.last_run().status, RunStatus::Cancelled);
 }
@@ -772,9 +777,9 @@ fn first_visit_failing_before_a_worktree_fails_the_run_without_hanging() {
     let (run, _) = host.start(&fix_an_issue(), &[("issue", "Bug")]);
     assert_eq!(host.last_launch().worktree_cwd, None);
     let effects = host.fail(&run.id, Some("Not a git repository"));
-    assert_eq!(kinds(&effects), ["persist", "finished"]);
+    assert_eq!(kinds(&effects), ["persist", "finished", "visit-finished"]);
     assert_eq!(
-        effects.last(),
+        effects.get(1),
         Some(&Effect::Finished {
             run_id: run.id.clone(),
             status: RunStatus::Failed
@@ -809,7 +814,7 @@ fn recover_fails_running_visits_and_keeps_waiting_approvals() {
         .runner
         .recover(vec![running_snapshot, waiting_snapshot]);
     // Only the interrupted run changes; the waiting run emits nothing.
-    assert_eq!(kinds(&effects), ["persist", "finished"]);
+    assert_eq!(kinds(&effects), ["persist", "finished", "visit-finished"]);
     host.apply(effects);
     let last = host.last_run();
     assert_eq!(last.id, running.id);
@@ -885,8 +890,10 @@ fn start_refuses_invalid_flow_or_missing_inputs() {
     let mut runner = Host::new().runner;
     let mut broken = fix_an_issue();
     broken.initial = "nowhere".into();
-    assert!(runner.start(&broken, &HashMap::new()).is_err());
-    let missing = runner.start(&fix_an_issue(), &HashMap::new()).unwrap_err();
+    assert!(runner.start(&broken, &HashMap::new(), None).is_err());
+    let missing = runner
+        .start(&fix_an_issue(), &HashMap::new(), None)
+        .unwrap_err();
     assert_eq!(missing, ["issue"]);
 }
 
@@ -938,7 +945,7 @@ fn cancel_before_the_session_is_reported_stops_the_late_session() {
     let flow = fix_an_issue();
     // Start without the fake host's automatic session reports.
     let given = HashMap::from([("issue".to_string(), "Bug".to_string())]);
-    let (run, effects) = host.runner.start(&flow, &given).unwrap();
+    let (run, effects) = host.runner.start(&flow, &given, None).unwrap();
     let Some(Effect::Launch(launch)) = effects.last() else {
         panic!("expected a launch");
     };
@@ -994,7 +1001,14 @@ fn recover_emits_finished_after_persist_for_each_failed_run() {
     let effects = host.runner.recover(vec![snap_a, snap_b]);
     assert_eq!(
         kinds(&effects),
-        ["persist", "finished", "persist", "finished"]
+        [
+            "persist",
+            "finished",
+            "visit-finished",
+            "persist",
+            "finished",
+            "visit-finished"
+        ]
     );
     assert_eq!(
         effects[1],
@@ -1004,7 +1018,7 @@ fn recover_emits_finished_after_persist_for_each_failed_run() {
         }
     );
     assert_eq!(
-        effects[3],
+        effects[4],
         Effect::Finished {
             run_id: b.id,
             status: RunStatus::Failed
@@ -1021,7 +1035,7 @@ fn settling_a_visit_whose_state_left_the_snapshot_fails_the_run() {
     active.run.flow.states.retain(|s| s.id() != "triage");
 
     let effects = host.outputs(&run.id, triage_out());
-    assert_eq!(kinds(&effects), ["persist", "finished"]);
+    assert_eq!(kinds(&effects), ["persist", "finished", "visit-finished"]);
     let visit = host.visits().pop().unwrap();
     assert_eq!(visit.status, VisitStatus::Failed);
     assert_eq!(visit.error.as_deref(), Some("Unknown state triage"));
@@ -1065,4 +1079,369 @@ fn launches_carry_the_snapshots_access_mode() {
     flow.id = "flow-ro".into();
     host.start(&flow, &[("issue", "Bug")]);
     assert_eq!(host.last_launch().access, "read-only");
+}
+
+// ---- Pilot Flows: VisitFinished, tags, run edits -------------------------
+
+/// `s1 -> s2 -> s3 -> $succeeded`, no outputs.
+fn three_steps() -> Flow {
+    custom(
+        "s1",
+        vec![
+            agent("s1", "First brief", vec![], vec![to("s2")], 3),
+            agent("s2", "Second brief", vec![], vec![to("s3")], 3),
+            agent("s3", "Third brief", vec![], vec![to(SUCCEEDED)], 3),
+        ],
+    )
+}
+
+fn set_brief(flow: &mut Flow, state: &str, brief: &str) {
+    let found = flow.states.iter_mut().find(|s| s.id() == state);
+    let Some(FlowState::Agent(a)) = found else {
+        panic!("no agent state {state}");
+    };
+    a.brief = brief.into();
+}
+
+fn visit_finished(effects: &[Effect]) -> Vec<(FlowRun, FlowVisit)> {
+    effects
+        .iter()
+        .filter_map(|e| match e {
+            Effect::VisitFinished { run, visit } => Some((run.clone(), visit.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_finished_visit_is_reported_after_the_next_launch() {
+    let flow = custom(
+        "s1",
+        vec![
+            agent("s1", "One", vec![], vec![to("s2")], 3),
+            agent("s2", "Two", vec![], vec![to(SUCCEEDED)], 3),
+        ],
+    );
+    let mut host = Host::new();
+    let (run, _) = host.start(&flow, &[]);
+    let effects = host.reply(&run.id, "done");
+    assert_eq!(
+        kinds(&effects),
+        ["persist", "persist", "launch", "visit-finished"]
+    );
+    let Effect::Launch(launch) = &effects[2] else {
+        panic!("expected a launch");
+    };
+    assert_eq!(launch.title, "Custom · S2");
+    let Some(Effect::VisitFinished { run: after, visit }) = effects.last() else {
+        panic!("expected VisitFinished last");
+    };
+    assert_eq!(visit.state_id, "s1");
+    assert_eq!(visit.status, VisitStatus::Completed);
+    assert!(visit.finished_at.is_some());
+    assert_eq!(after.id, run.id);
+    assert_eq!(after.status, RunStatus::Running);
+    assert_eq!(after.current_state.as_deref(), Some("s2"));
+
+    // The last step reports its visit after the run's Finished.
+    let effects = host.reply(&run.id, "done");
+    assert_eq!(kinds(&effects), ["persist", "finished", "visit-finished"]);
+    let reported = visit_finished(&effects);
+    assert_eq!(reported[0].1.state_id, "s2");
+    assert_eq!(reported[0].0.status, RunStatus::Succeeded);
+}
+
+#[test]
+fn a_failed_visit_and_a_failed_run_are_both_reported() {
+    let mut host = Host::new();
+    let (run, _) = host.start(&fix_an_issue(), &[("issue", "Bug")]);
+    let effects = host.fail(&run.id, Some("harness crashed"));
+    assert!(effects.contains(&Effect::Finished {
+        run_id: run.id.clone(),
+        status: RunStatus::Failed,
+    }));
+    let reported = visit_finished(&effects);
+    assert_eq!(reported.len(), 1);
+    let (after, visit) = &reported[0];
+    assert_eq!(visit.state_id, "triage");
+    assert_eq!(visit.status, VisitStatus::Failed);
+    assert_eq!(visit.error.as_deref(), Some("harness crashed"));
+    assert_eq!(after.status, RunStatus::Failed);
+}
+
+#[test]
+fn cancel_and_contract_retry_do_not_report_a_finished_visit() {
+    let mut host = Host::new();
+    let (run, _) = host.start(&fix_an_issue(), &[("issue", "Bug")]);
+    let effects = host.reply(&run.id, "no json");
+    assert_eq!(kinds(&effects), ["persist", "follow-up"]);
+
+    let effects = host.runner.cancel(&run.id);
+    assert_eq!(kinds(&effects), ["persist", "cancel", "finished"]);
+    host.apply(effects);
+    assert!(visit_finished(&host.log).is_empty());
+}
+
+#[test]
+fn recover_reports_each_interrupted_visit() {
+    let mut first = Host::new();
+    let (a, _) = first.start(&fix_an_issue(), &[("issue", "Bug")]);
+    let snap_a = (first.last_run(), first.visits());
+    let mut second = Host::new();
+    let (b, _) = second.start(&research(), &[("topic", "t")]);
+    let snap_b = (second.last_run(), second.visits());
+    let visit_a = snap_a.1[0].id.clone();
+    let visit_b = snap_b.1[0].id.clone();
+
+    let mut host = Host::new();
+    let effects = host.runner.recover(vec![snap_a, snap_b]);
+    let reported = visit_finished(&effects);
+    assert_eq!(reported.len(), 2);
+    for ((run, visit), (run_id, visit_id)) in
+        reported.iter().zip([(&a.id, &visit_a), (&b.id, &visit_b)])
+    {
+        assert_eq!(&run.id, run_id);
+        assert_eq!(run.status, RunStatus::Failed);
+        assert_eq!(&visit.id, visit_id);
+        assert_eq!(visit.status, VisitStatus::Failed);
+        assert_eq!(visit.error.as_deref(), Some("Interrupted by app restart"));
+    }
+}
+
+#[test]
+fn start_keeps_the_tag_on_the_run() {
+    let tag = RunTag {
+        goal: "goal-1".into(),
+        task: "task-1".into(),
+    };
+    let mut runner = Host::new().runner;
+    let (run, effects) = runner
+        .start(&three_steps(), &HashMap::new(), Some(tag.clone()))
+        .unwrap();
+    assert_eq!(run.tag.as_ref(), Some(&tag));
+    let Effect::Persist { run: persisted, .. } = &effects[0] else {
+        panic!("expected a persist");
+    };
+    assert_eq!(persisted.tag.as_ref(), Some(&tag));
+    assert!(run.edits.is_empty());
+
+    let (untagged, _) = runner.start(&three_steps(), &HashMap::new(), None).unwrap();
+    assert_eq!(untagged.tag, None);
+}
+
+#[test]
+fn tagged_runs_title_step_sessions_by_task() {
+    let flow = three_steps();
+    let tag = RunTag {
+        goal: "goal-1".into(),
+        task: "Ship the login fix".into(),
+    };
+    let mut runner = Host::new().runner;
+    let launch = |effects: Vec<Effect>| {
+        effects
+            .into_iter()
+            .find_map(|e| match e {
+                Effect::Launch(l) => Some(l),
+                _ => None,
+            })
+            .expect("a launch")
+    };
+    let (_, effects) = runner
+        .start(&flow, &HashMap::new(), Some(tag.clone()))
+        .unwrap();
+    assert_eq!(launch(effects).title, "Ship the login fix · S1");
+    let (_, effects) = runner.start(&flow, &HashMap::new(), None).unwrap();
+    assert_eq!(launch(effects).title, format!("{} · S1", flow.name));
+}
+
+#[test]
+fn edit_run_changes_only_states_not_yet_entered() {
+    let mut host = Host::new();
+    let flow = three_steps();
+    let (run, _) = host.start(&flow, &[]);
+    host.reply(&run.id, "done");
+    assert_eq!(host.last_launch().title, "Custom · S2");
+
+    let mut edited = flow.clone();
+    set_brief(&mut edited, "s3", "Brand new third brief");
+    let effects = host
+        .runner
+        .edit_run(&run.id, edited.clone(), "Sharpen the last step")
+        .expect("edit");
+    assert_eq!(kinds(&effects), ["persist"]);
+    let Effect::Persist {
+        run: persisted,
+        visit,
+    } = &effects[0]
+    else {
+        unreachable!();
+    };
+    assert!(visit.is_none());
+    assert_eq!(persisted.flow, edited);
+    assert_eq!(persisted.edits.len(), 1);
+    assert_eq!(persisted.edits[0].states, ["s3"]);
+    assert_eq!(persisted.edits[0].note, "Sharpen the last step");
+    assert!(persisted.edits[0].at > persisted.created_at);
+    host.apply(effects);
+
+    host.reply(&run.id, "done");
+    let third = host.last_launch();
+    assert_eq!(third.title, "Custom · S3");
+    assert!(third.prompt.contains("Brand new third brief"));
+    assert_eq!(host.last_run().edits.len(), 1);
+
+    // A new state counts as changed; an unchanged one does not.
+    let mut added = three_steps();
+    set_brief(&mut added, "s3", "Brand new third brief");
+    if let FlowState::Agent(a) = &mut added.states[2] {
+        a.transitions = vec![to("s4")];
+    }
+    added
+        .states
+        .push(agent("s4", "Fourth", vec![], vec![to(SUCCEEDED)], 3));
+    let err = host.runner.edit_run(&run.id, added, "late").unwrap_err();
+    assert_eq!(err, ["State \"s3\" has already run and cannot be changed"]);
+}
+
+#[test]
+fn edit_run_lists_new_states_as_changed() {
+    let mut host = Host::new();
+    let flow = three_steps();
+    let (run, _) = host.start(&flow, &[]);
+    let mut edited = flow.clone();
+    if let FlowState::Agent(a) = &mut edited.states[2] {
+        a.transitions = vec![to("s4")];
+    }
+    edited
+        .states
+        .push(agent("s4", "Fourth", vec![], vec![to(SUCCEEDED)], 3));
+    let effects = host.runner.edit_run(&run.id, edited, "add a step").unwrap();
+    let Effect::Persist { run: persisted, .. } = &effects[0] else {
+        panic!("expected a persist");
+    };
+    assert_eq!(persisted.edits[0].states, ["s3", "s4"]);
+}
+
+#[test]
+fn edit_run_refuses_visited_states_identity_changes_and_invalid_flows() {
+    let mut host = Host::new();
+    let flow = three_steps();
+    let (run, _) = host.start(&flow, &[]);
+    host.reply(&run.id, "done");
+    let snapshot = |host: &Host| {
+        let active = &host.runner.runs[&run.id];
+        (active.run.flow.clone(), active.run.edits.clone())
+    };
+    let before = snapshot(&host);
+    let identity =
+        "A run edit cannot change the Flow's id, owner, initial state, access, folder or inputs";
+
+    let cases: Vec<(Flow, Vec<String>)> = vec![
+        {
+            let mut f = flow.clone();
+            f.id = "other".into();
+            (f, vec![identity.into()])
+        },
+        {
+            let mut f = flow.clone();
+            f.owner = Some("pilot-1".into());
+            (f, vec![identity.into()])
+        },
+        {
+            let mut f = flow.clone();
+            f.initial = "s3".into();
+            (f, vec![identity.into()])
+        },
+        {
+            let mut f = flow.clone();
+            f.access = "read-only".into();
+            (f, vec![identity.into()])
+        },
+        {
+            let mut f = flow.clone();
+            f.cwd = "/elsewhere".into();
+            (f, vec![identity.into()])
+        },
+        {
+            let mut f = flow.clone();
+            f.inputs.push(FlowInput {
+                name: "extra".into(),
+                label: "Extra".into(),
+                required: true,
+                default: None,
+            });
+            (f, vec![identity.into()])
+        },
+        {
+            // A finished visit's state.
+            let mut f = flow.clone();
+            set_brief(&mut f, "s1", "Rewritten");
+            (
+                f,
+                vec!["State \"s1\" has already run and cannot be changed".into()],
+            )
+        },
+        {
+            // The running visit's state.
+            let mut f = flow.clone();
+            set_brief(&mut f, "s2", "Rewritten");
+            (
+                f,
+                vec!["State \"s2\" has already run and cannot be changed".into()],
+            )
+        },
+        {
+            // A visited state that the edit drops.
+            let mut f = flow.clone();
+            f.states.retain(|s| s.id() != "s2");
+            if let FlowState::Agent(a) = &mut f.states[0] {
+                a.transitions = vec![to("s3")];
+            }
+            (
+                f,
+                vec![
+                    "State \"s1\" has already run and cannot be changed".into(),
+                    "State \"s2\" has already run and cannot be changed".into(),
+                ],
+            )
+        },
+        {
+            let mut f = flow.clone();
+            if let FlowState::Agent(a) = &mut f.states[2] {
+                a.transitions = vec![to("nowhere")];
+            }
+            let errors = validate_flow(&f).errors;
+            assert!(!errors.is_empty());
+            (f, errors)
+        },
+    ];
+    for (edited, expected) in cases {
+        let err = host.runner.edit_run(&run.id, edited, "n").unwrap_err();
+        assert_eq!(err, expected);
+        assert_eq!(snapshot(&host), before, "the snapshot is unchanged");
+    }
+
+    // Name and description may change; no state does.
+    let mut renamed = flow.clone();
+    renamed.name = "Renamed".into();
+    renamed.description = "New words".into();
+    let effects = host
+        .runner
+        .edit_run(&run.id, renamed.clone(), "rename")
+        .unwrap();
+    let Effect::Persist { run: persisted, .. } = &effects[0] else {
+        panic!("expected a persist");
+    };
+    assert_eq!(persisted.flow, renamed);
+    assert!(persisted.edits[0].states.is_empty());
+
+    let err = host.runner.edit_run("nope", flow.clone(), "n").unwrap_err();
+    assert_eq!(err, ["Run not found"]);
+
+    // A finished run is no longer active.
+    host.reply(&run.id, "done");
+    host.reply(&run.id, "done");
+    assert_eq!(host.last_run().status, RunStatus::Succeeded);
+    let err = host.runner.edit_run(&run.id, flow, "n").unwrap_err();
+    assert_eq!(err, ["Run not found"]);
 }
