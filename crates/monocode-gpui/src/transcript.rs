@@ -140,6 +140,8 @@ enum Body {
         call: Box<ToolCall>,
         group: Option<usize>,
         tail: bool,
+        /// Its phase is still the live end of the turn.
+        live: bool,
     },
     Phase {
         title: String,
@@ -3304,6 +3306,7 @@ impl TranscriptView {
                         call: Box::new(tool),
                         group: phase.filter(|_| grouped).map(|group| group.start),
                         tail: phase.is_none_or(|group| group.last == at),
+                        live: active,
                     },
                     message,
                     first: false,
@@ -4711,11 +4714,18 @@ impl TranscriptView {
                     }))
                     .into_any_element()
             }
-            Body::Tool { call, group, tail } => {
-                // A lone running step leads with the spinner its phase header
-                // shows once a second step joins it.
+            Body::Tool {
+                call,
+                group,
+                tail,
+                live,
+            } => {
+                // A lone step leads with the spinner its phase header shows once
+                // a second step joins it. It keeps spinning after it settles,
+                // until whatever comes next arrives, so the hand-off to the
+                // group header never drops the loader.
                 let loading = group.is_none()
-                    && call.state == ToolState::Running
+                    && (call.state == ToolState::Running || live)
                     && !call.is_milestone()
                     && call.panel().is_none()
                     && !cx.reduce_motion();

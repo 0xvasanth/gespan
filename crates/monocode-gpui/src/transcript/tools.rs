@@ -828,4 +828,53 @@ mod tests {
             );
         });
     }
+
+    #[gpui::test]
+    fn a_settled_lone_step_keeps_its_loader_until_the_next_one_arrives(
+        cx: &mut TestAppContext,
+    ) {
+        let view = cx.new(|_| TranscriptView::new());
+        let row = |role: &str, text: String| Row {
+            role: role.into(),
+            text,
+            first: true,
+            sent_at: None,
+        };
+        let step = |id: &str, state: ToolState| {
+            let mut call = ToolCall::new(id, "Bash");
+            call.input = r#"{"command":"ls"}"#.into();
+            call.state = state;
+            row("tool", serde_json::to_string(&call).unwrap())
+        };
+        let lone = |view: &TranscriptView| {
+            view.rows.iter().find_map(|r| match &r.body {
+                Body::Tool { group: None, live, .. } => Some(*live),
+                _ => None,
+            })
+        };
+        view.update(cx, |view, cx| {
+            view.streaming(true, cx);
+            view.patch(
+                0,
+                vec![
+                    row("user", "List files".into()),
+                    step("first", ToolState::Completed),
+                ],
+                cx,
+            );
+            assert_eq!(lone(view), Some(true), "settled but still the live end");
+
+            view.patch(2, vec![step("second", ToolState::Running)], cx);
+            assert!(
+                view.rows
+                    .iter()
+                    .any(|r| matches!(r.body, Body::Phase { .. })),
+                "the second step hands the loader to its group header"
+            );
+
+            view.patch(1, vec![step("first", ToolState::Completed)], cx);
+            view.patch(2, vec![row("assistant", "Done".into())], cx);
+            assert_eq!(lone(view), Some(false), "an answer after it ends the wait");
+        });
+    }
 }
