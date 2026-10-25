@@ -1980,6 +1980,135 @@ describe("BoardView undo toasts, held deletes and the Archive view", () => {
     expect(cardIdsIn("backlog")).toEqual(["c1"]);
   });
 
+  function rightClick(id: string) {
+    act(() => {
+      container
+        .querySelector<HTMLElement>(`[data-board-card='${id}']`)!
+        .dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 40,
+            clientY: 60,
+          }),
+        );
+    });
+  }
+  const moreItem = (text: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(
+      (el) => el.textContent === text,
+    )!;
+
+  it("right-click on a card opens the More menu at the pointer, in order", async () => {
+    backend();
+    await renderBoard();
+    rightClick("c2");
+    const menu = document.querySelector<HTMLElement>(
+      '[role="menu"][aria-label="More actions for #2"]',
+    )!;
+    expect(menu).not.toBeNull();
+    expect(
+      [...menu.querySelectorAll("button")].map((el) => el.textContent),
+    ).toEqual([
+      "Open",
+      "Status…",
+      "Priority…",
+      "Labels…",
+      "Move to board…",
+      "Copy link",
+      "Copy #2 Write docs",
+      "Duplicate",
+      "Archive",
+      "Delete",
+    ]);
+    // A right-click is not a click: the card did not open.
+    expect(document.querySelector("[data-card-drawer]")).toBeNull();
+  });
+
+  it("the card's … menu has More… and it opens the same menu", async () => {
+    backend();
+    await renderBoard();
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Card actions for #2"]',
+        )!
+        .click(),
+    );
+    await act(async () => moreItem("More…").click());
+    expect(moreItem("Copy #2 Write docs")).toBeDefined();
+    expect(moreItem("Duplicate")).toBeDefined();
+  });
+
+  it("Archive from the More menu shows an Archived toast and Undo restores it", async () => {
+    const db = backend();
+    await renderBoard();
+    rightClick("c2");
+    await act(async () => moreItem("Archive").click());
+    await flush();
+    await flush();
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    expect(db.archivedIds()).toEqual(["c2"]);
+    expect(toastText()).toBe("Archived #2");
+    await clickUndo();
+    expect(commands("board_card_restore")).toEqual([
+      ["board_card_restore", { cardId: "c2", columnId: "backlog", index: 1 }],
+    ]);
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
+  });
+
+  it("Delete from the More menu is held: toast, then deleted when it expires", async () => {
+    const db = backend();
+    await renderBoard();
+    rightClick("c2");
+    await act(async () => moreItem("Delete").click());
+    await flush();
+    await flush();
+    expect(ask).not.toHaveBeenCalled();
+    expect(toastText()).toBe("Deleted #2");
+    expect(db.archivedIds()).toEqual(["c2"]);
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    await advance(8_000);
+    expect(db.exists("c2")).toBe(false);
+  });
+
+  it("Duplicate and Move to board run the store commands and say so", async () => {
+    backend();
+    handlers.board_list = () => [
+      BOARD,
+      { id: "b2", name: "Side", createdAt: 1, updatedAt: 1 },
+    ];
+    handlers.board_card_duplicate = (a) => ({
+      ...card("c9", "backlog", 1, 9, "Write docs (copy)"),
+      id: String(a.cardId) + "-copy",
+    });
+    handlers.board_card_move_to_board = () => ({
+      ...card("c2", "side-todo", 0, 5, "Write docs"),
+      boardId: "b2",
+    });
+    await renderBoard();
+    rightClick("c2");
+    await act(async () => moreItem("Duplicate").click());
+    await flush();
+    expect(commands("board_card_duplicate")).toEqual([
+      ["board_card_duplicate", { cardId: "c2" }],
+    ]);
+    expect(toastText()).toBe("Duplicated #2 as #9");
+    rightClick("c1");
+    await act(async () => moreItem("Move to board…").click());
+    expect(
+      [...document.querySelectorAll('[role="menu"] button')].map(
+        (el) => el.textContent,
+      ),
+    ).toEqual(["Back", "Side"]);
+    await act(async () => moreItem("Side").click());
+    await flush();
+    expect(commands("board_card_move_to_board")).toEqual([
+      ["board_card_move_to_board", { cardId: "c1", boardId: "b2" }],
+    ]);
+    expect(toastText()).toBe("Moved #1 to Side as #5");
+  });
+
   it("undo of a delete from the drawer restores the card at its index", async () => {
     const db = backend();
     await renderBoard();

@@ -9,16 +9,18 @@ import { Check, Plus, Trash2, X } from "../../../shared/ui/icons";
 import {
   addComment,
   addSubtask,
+  convertSubtask,
   deleteSubtask,
   listComments,
   listSubtasks,
+  moveSubtask,
   subscribeBoard,
   toggleSubtask,
   type BoardComment,
   type BoardLabel,
   type BoardSubtask,
 } from "../model/board";
-import { MenuItem, MenuSeparator, NameInput } from "./boardControls";
+import { MenuButton, MenuItem, MenuSeparator, NameInput } from "./boardControls";
 import { actorLabel, errorText, relativeTime } from "./boardFormat";
 
 export const FIELD =
@@ -226,41 +228,99 @@ export function Subtasks({
       </div>
       {subtasks?.length ? (
         <ul className="flex flex-col">
-          {subtasks.map((subtask) => (
-            <li
-              key={subtask.id}
-              className="group flex h-8 items-center gap-2 rounded-md px-1 hover:bg-content/5"
-            >
-              <input
-                type="checkbox"
-                aria-label={`Done: ${subtask.title}`}
-                checked={subtask.done}
-                onChange={() =>
-                  void run(
-                    "update the subtask",
-                    toggleSubtask(subtask.id, !subtask.done),
-                  )
-                }
-                className="size-3.5 shrink-0 accent-accent"
-              />
-              <span
-                className={`min-w-0 flex-1 truncate text-[13px] ${subtask.done ? "text-content/45 line-through" : "text-content/85"}`}
+          {subtasks.map((subtask, index) => {
+            const move = (to: number) => {
+              if (to < 0 || to >= subtasks.length) return;
+              void run("move the subtask", moveSubtask(subtask.id, to));
+            };
+            return (
+              <li
+                key={subtask.id}
+                data-subtask={subtask.id}
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (
+                    !event.altKey ||
+                    event.nativeEvent.isComposing ||
+                    (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+                  ) {
+                    return;
+                  }
+                  event.preventDefault();
+                  move(index + (event.key === "ArrowUp" ? -1 : 1));
+                }}
+                className="group flex h-8 items-center gap-2 rounded-md px-1 hover:bg-content/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
               >
-                {subtask.title}
-              </span>
-              <button
-                type="button"
-                aria-label={`Delete subtask ${subtask.title}`}
-                title="Delete subtask"
-                onClick={() =>
-                  void run("delete the subtask", deleteSubtask(subtask.id))
-                }
-                className="grid size-6 shrink-0 place-items-center rounded-md text-content/40 opacity-0 hover:bg-content/10 hover:text-content focus-visible:opacity-100 group-hover:opacity-100"
-              >
-                <Trash2 className="size-3.5" strokeWidth={1.75} />
-              </button>
-            </li>
-          ))}
+                <input
+                  type="checkbox"
+                  aria-label={`Done: ${subtask.title}`}
+                  checked={subtask.done}
+                  onChange={() =>
+                    void run(
+                      "update the subtask",
+                      toggleSubtask(subtask.id, !subtask.done),
+                    )
+                  }
+                  className="size-3.5 shrink-0 accent-accent"
+                />
+                <span
+                  className={`min-w-0 flex-1 truncate text-[13px] ${subtask.done ? "text-content/45 line-through" : "text-content/85"}`}
+                >
+                  {subtask.title}
+                </span>
+                <MenuButton
+                  label={`Subtask actions for ${subtask.title}`}
+                  width={180}
+                  className="grid size-6 shrink-0 place-items-center rounded-md text-content/40 opacity-0 hover:bg-content/10 hover:text-content focus-visible:opacity-100 group-hover:opacity-100 has-[[data-menu-open]]:opacity-100 data-[menu-open]:opacity-100"
+                >
+                  {(close) => (
+                    <>
+                      <MenuItem
+                        disabled={index === 0}
+                        onSelect={() => {
+                          close();
+                          move(index - 1);
+                        }}
+                      >
+                        Move up
+                      </MenuItem>
+                      <MenuItem
+                        disabled={index === subtasks.length - 1}
+                        onSelect={() => {
+                          close();
+                          move(index + 1);
+                        }}
+                      >
+                        Move down
+                      </MenuItem>
+                      <MenuItem
+                        onSelect={() => {
+                          close();
+                          void run(
+                            "convert the subtask",
+                            convertSubtask(subtask.id),
+                          );
+                        }}
+                      >
+                        Convert to card
+                      </MenuItem>
+                    </>
+                  )}
+                </MenuButton>
+                <button
+                  type="button"
+                  aria-label={`Delete subtask ${subtask.title}`}
+                  title="Delete subtask"
+                  onClick={() =>
+                    void run("delete the subtask", deleteSubtask(subtask.id))
+                  }
+                  className="grid size-6 shrink-0 place-items-center rounded-md text-content/40 opacity-0 hover:bg-content/10 hover:text-content focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <Trash2 className="size-3.5" strokeWidth={1.75} />
+                </button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       <input
@@ -321,8 +381,16 @@ export function Comments({
         <ol className="flex flex-col gap-2">
           {comments.map((comment) => (
             <li key={comment.id} className="flex flex-col gap-0.5">
-              <span className="text-[11px] text-content/45">
-                {actorLabel(comment.author)} · {relativeTime(comment.createdAt)}
+              <span className="flex items-center gap-1.5 text-[11px] text-content/45">
+                <span
+                  data-comment-avatar={comment.author}
+                  aria-hidden
+                  className={`grid size-4 shrink-0 place-items-center rounded-full text-[9px] font-medium ${comment.author === "user" ? "bg-content/15 text-content/70" : "bg-accent/25 text-accent"}`}
+                >
+                  {actorLabel(comment.author).charAt(0)}
+                </span>
+                <span data-comment-author="">{actorLabel(comment.author)}</span>
+                <span>· {relativeTime(comment.createdAt)}</span>
               </span>
               <span className="whitespace-pre-wrap break-words text-[13px] text-content/85">
                 {comment.body}

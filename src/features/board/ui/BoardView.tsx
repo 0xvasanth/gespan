@@ -26,6 +26,7 @@ import {
   deleteArchivedCard,
   deleteBoard,
   deleteColumn,
+  duplicateCard,
   getBoard,
   getCardExtras,
   getCardTickets,
@@ -35,6 +36,7 @@ import {
   moveCard,
   moveColumn,
   moveCards,
+  moveCardToBoard,
   renameBoard,
   restoreCard,
   setCardDue,
@@ -89,6 +91,7 @@ import {
 import { CardComposer } from "./CardComposer";
 import { loadBoardCardOpen } from "../../settings/model/settings";
 import { CardDetail } from "./CardDetail";
+import { CardMoreItems, type MoreActions } from "./CardMoreMenu";
 import { KanbanBoard } from "./kanban/KanbanBoard";
 import { UndoToast } from "./UndoToast";
 import {
@@ -246,9 +249,11 @@ function BoardContent({
 
   const detailRef = useRef(detail);
   const openIdRef = useRef(openId);
+  const boardsRef = useRef(boards);
   useLayoutEffect(() => {
     detailRef.current = detail;
     openIdRef.current = openId;
+    boardsRef.current = boards;
   });
   const request = useRef(0);
 
@@ -593,6 +598,60 @@ function BoardContent({
       });
   };
 
+  /** Archives a card from the More menu: off the board now, with an Undo. */
+  const archiveOne = (card: BoardCard) => {
+    const before = detailRef.current;
+    const from = before && placeOf(before, card.id);
+    if (!before || !from) return;
+    void undo.commitPending();
+    setOpenCard((open) => (open?.id === card.id ? null : open));
+    setDetail({
+      ...before,
+      cards: before.cards.filter((other) => other.id !== card.id),
+    });
+    archiveCard(card.id)
+      .then(() =>
+        pushUndo(before.board.id, archivedLabel([card.number]), {
+          kind: "archive",
+          items: [from.place],
+        }),
+      )
+      .catch((cause) => {
+        fail(`Couldn't archive card #${card.number}`)(cause);
+        void refresh();
+      });
+  };
+
+  /** Copies a card right after itself; `flush` saves a drawer's drafts first. */
+  const duplicateOne = (card: BoardCard, flush?: () => Promise<void>) => {
+    void undo.commitPending();
+    void (flush ? flush() : Promise.resolve())
+      .then(() => duplicateCard(card.id))
+      .then((copy) => {
+        undo.notify(`Duplicated #${card.number} as #${copy.number}`);
+      })
+      .catch(fail(`Couldn't duplicate card #${card.number}`));
+  };
+
+  const moveToBoard = (
+    card: BoardCard,
+    targetId: string,
+    flush?: () => Promise<void>,
+  ) => {
+    const target = boardsRef.current?.find((board) => board.id === targetId);
+    void undo.commitPending();
+    void (flush ? flush() : Promise.resolve())
+      .then(() => moveCardToBoard(card.id, targetId))
+      .then((moved) => {
+        setOpenCard((open) => (open?.id === card.id ? null : open));
+        undo.notify(
+          `Moved #${card.number} to ${target?.name ?? "the board"} as #${moved.number}`,
+        );
+        void refresh();
+      })
+      .catch(fail(`Couldn't move card #${card.number} to another board`));
+  };
+
   /** A move from the card drawer: to `index` in `columnId`, with undo. */
   const moveFromDrawer = (card: BoardCard, columnId: string, index: number) => {
     const before = detailRef.current;
@@ -777,6 +836,63 @@ function BoardContent({
     return ids?.length ? labels.filter((label) => ids.includes(label.id)) : [];
   };
 
+  /** The More menu of a card; `flush` is the drawer's draft save. */
+  const moreItemsFor =
+    (card: BoardCard) =>
+    (
+      close: () => void,
+      flush?: () => Promise<void>,
+      dropDrafts?: () => void,
+    ) => {
+      const mine = extras[card.id];
+      const columnsOf = (detail?.columns ?? []).map((column) => ({
+        id: column.id,
+        name: column.name,
+        cardCount: wholeColumn(column.id).length,
+      }));
+      const actions: MoreActions = {
+        open: () => showCard({ id: card.id }),
+        setStatus: (columnId, count) => moveFromDrawer(card, columnId, count),
+        setPriority: (priority) =>
+          void setCardPriority(card.id, priority).catch(
+            fail(`Couldn't set the priority of card #${card.number}`),
+          ),
+        setLabels: (ids) =>
+          void setCardLabels(card.id, ids).catch(
+            fail(`Couldn't set the labels of card #${card.number}`),
+          ),
+        createLabel: (name) =>
+          void createLabel(card.boardId, name, nextLabelColor(labels.length))
+            .then((created) =>
+              setCardLabels(card.id, [...(mine?.labels ?? []), created.id]),
+            )
+            .catch(fail(`Couldn't create a label for card #${card.number}`)),
+        moveToBoard: (targetId) => moveToBoard(card, targetId, flush),
+        duplicate: () => duplicateOne(card, flush),
+        archive: () =>
+          void (flush ? flush() : Promise.resolve()).then(() =>
+            archiveOne(card),
+          ),
+        remove: () => {
+          dropDrafts?.();
+          removeCard(card);
+        },
+        onError: setError,
+      };
+      return (
+        <CardMoreItems
+          card={card}
+          columns={columnsOf}
+          labels={labels}
+          labelIds={mine?.labels ?? []}
+          priority={mine?.priority ?? 0}
+          boards={boards}
+          actions={actions}
+          close={close}
+        />
+      );
+    };
+
   const renderCard = (card: BoardCard) => (
     <BoardCardItem
       card={card}
@@ -816,6 +932,7 @@ function BoardContent({
       onRename={() => showCard({ id: card.id, focus: "title" })}
       onLink={() => showCard({ id: card.id, focus: "link" })}
       onDelete={() => removeCard(card)}
+      moreItems={moreItemsFor(card)}
     />
   );
 
@@ -1096,6 +1213,7 @@ function BoardContent({
               moveFromDrawer(shownCard, columnId, index)
             }
             onDelete={() => removeCard(shownCard)}
+            renderMore={moreItemsFor(shownCard)}
             onError={setError}
           />
         ) : archiveOpen && detail ? (

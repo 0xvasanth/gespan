@@ -1,3 +1,5 @@
+import { useRef, useState, type ReactNode } from "react";
+import { Popover, type PopoverAnchor } from "../../../shared/ui/Popover";
 import {
   Bot,
   ExternalLink,
@@ -227,6 +229,7 @@ export function BoardCardItem({
   onRename,
   onLink,
   onDelete,
+  moreItems,
 }: {
   card: BoardCard;
   /** In a column with the `done` role: the title is dimmed. */
@@ -247,12 +250,29 @@ export function BoardCardItem({
   onRename: () => void;
   onLink: () => void;
   onDelete: () => void;
+  /**
+   * The More menu's content. It opens from a right-click at the pointer and
+   * from "More…" in the card's "…" menu.
+   */
+  moreItems?: (close: () => void) => ReactNode;
 }) {
   const target = link?.target;
+  const actions = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState<PopoverAnchor>(null);
+  const closeMore = () => setMore(null);
   return (
     <div
       data-board-card={card.id}
       onClick={onOpen}
+      onContextMenu={
+        moreItems
+          ? (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setMore({ x: event.clientX, y: event.clientY });
+            }
+          : undefined
+      }
       className="group/card relative cursor-pointer rounded-lg border border-stroke bg-background-base px-3 py-2.5 hover:border-selection-strong"
     >
       <div
@@ -345,7 +365,10 @@ export function BoardCardItem({
           {relativeTime(card.updatedAt)}
         </span>
       </div>
-      <div className="absolute right-1.5 top-1.5 flex items-center rounded-md bg-background-base opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 has-[[data-menu-open]]:opacity-100">
+      <div
+        ref={actions}
+        className="absolute right-1.5 top-1.5 flex items-center rounded-md bg-background-base opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 has-[[data-menu-open]]:opacity-100"
+      >
         {target ? (
           <button
             type="button"
@@ -380,6 +403,16 @@ export function BoardCardItem({
               >
                 Link…
               </MenuItem>
+              {moreItems ? (
+                <MenuItem
+                  onSelect={() => {
+                    close();
+                    setMore(actions);
+                  }}
+                >
+                  More…
+                </MenuItem>
+              ) : null}
               <MenuItem
                 danger
                 onSelect={() => {
@@ -393,6 +426,30 @@ export function BoardCardItem({
           )}
         </MenuButton>
       </div>
+      {more && moreItems ? (
+        <Popover
+          anchor={more}
+          side="bottom"
+          align={more === actions ? "end" : "start"}
+          gap={4}
+          width={240}
+          constrainHeight={false}
+          role="menu"
+          aria-label={`More actions for #${card.number}`}
+          onDismiss={closeMore}
+          className="p-1"
+          // The menu is portalled but still bubbles through the React tree.
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          {moreItems(closeMore)}
+        </Popover>
+      ) : null}
     </div>
   );
 }

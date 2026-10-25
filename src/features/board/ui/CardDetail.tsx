@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -26,6 +26,7 @@ import {
   type CardExtras,
 } from "../model/board";
 import { LinkChip } from "./BoardCardItem";
+import { MarkdownToolbar } from "./MarkdownToolbar";
 import {
   CloseButton,
   Comments,
@@ -88,6 +89,7 @@ export function CardDetail({
   onOpenLinkedWork,
   onMove,
   onDelete,
+  renderMore,
   onError,
 }: {
   card: BoardCard;
@@ -114,6 +116,16 @@ export function CardDetail({
   onMove: (columnId: string, index: number) => void;
   /** Deletes the card: held with an undo toast, so it never asks first. */
   onDelete: () => void;
+  /**
+   * The More menu's content for the top bar's "…". `flushDrafts` saves a
+   * typed but unsaved title or description and resolves once it is written,
+   * for actions that read the card. `dropDrafts` forgets them, for a delete.
+   */
+  renderMore?: (
+    close: () => void,
+    flushDrafts: () => Promise<void>,
+    dropDrafts: () => void,
+  ) => ReactNode;
   onError: (message: string) => void;
 }) {
   const [title, setTitle] = useState(card.title);
@@ -220,7 +232,7 @@ export function CardDetail({
   const failed = (what: string) => (error: unknown) =>
     onError(`Couldn't ${what} card #${card.number}: ${errorText(error)}`);
 
-  const saveFields = () => {
+  const saveFields = (): Promise<void> => {
     // An emptied title goes back to the saved one; the notes still save.
     const nextTitle = draft.current.title.trim() || saved.current.title;
     const nextBody = draft.current.body;
@@ -230,12 +242,12 @@ export function CardDetail({
       saved.current = { ...latest.current };
       setTitle(latest.current.title);
       setBody(latest.current.body);
-      return;
+      return Promise.resolve();
     }
     saved.current = { title: nextTitle, body: nextBody };
     draft.current.title = nextTitle;
     setTitle(nextTitle);
-    updateCard(card.id, nextTitle, nextBody).catch(failed("save"));
+    return updateCard(card.id, nextTitle, nextBody).catch(failed("save"));
   };
   const saveRef = useRef(saveFields);
   useEffect(() => {
@@ -288,9 +300,12 @@ export function CardDetail({
     }
   };
 
-  const remove = () => {
+  const dropDrafts = () => {
     // A pending draft is dropped with the card, as before the hold.
     deleted.current = true;
+  };
+  const remove = () => {
+    dropDrafts();
     onDelete();
   };
 
@@ -393,6 +408,11 @@ export function CardDetail({
           >
             <Maximize2 className="size-3.5" strokeWidth={1.75} />
           </button>
+        ) : null}
+        {renderMore ? (
+          <MenuButton label="More actions" width={240}>
+            {(closeMenu) => renderMore(closeMenu, saveFields, dropDrafts)}
+          </MenuButton>
         ) : null}
         <CloseButton onClick={close} />
       </div>
@@ -623,8 +643,18 @@ export function CardDetail({
           onOpenLinkedWork={onOpenLinkedWork}
           onError={onError}
         />
-        <label className="flex flex-col gap-1">
-          <span className="text-[12px] text-content/50">Description</span>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[12px] text-content/50">Description</span>
+            <MarkdownToolbar
+              textareaRef={bodyField}
+              value={body}
+              onChange={(next) => {
+                draft.current.body = next;
+                setBody(next);
+              }}
+            />
+          </div>
           <textarea
             ref={bodyField}
             aria-label="Description"
@@ -638,7 +668,7 @@ export function CardDetail({
             onBlur={saveFields}
             className={`${FIELD} resize-y py-2`}
           />
-        </label>
+        </div>
         <Subtasks
           cardId={card.id}
           boardId={card.boardId}
