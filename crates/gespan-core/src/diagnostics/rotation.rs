@@ -58,7 +58,8 @@ pub(super) fn scan(dir: &Path) -> io::Result<Vec<(NaiveDate, PathBuf, u64)>> {
 }
 
 /// Deletes daily files older than `max_days`, then the oldest until the total
-/// fits `max_bytes`. Today's file is never deleted. Returns what was deleted.
+/// fits `max_bytes`. Today's file is never deleted, and files that cannot be
+/// deleted are skipped. Returns what was deleted.
 pub fn prune(
     dir: &Path,
     today: NaiveDate,
@@ -73,8 +74,9 @@ pub fn prune(
         if day == today {
             continue;
         }
-        if day < oldest_kept || total > max_bytes {
-            std::fs::remove_file(&path)?;
+        // Retention is housekeeping: a file that cannot be deleted is
+        // skipped, never a reason to stop logging.
+        if (day < oldest_kept || total > max_bytes) && std::fs::remove_file(&path).is_ok() {
             total -= size;
             deleted.push(path);
         }
@@ -114,7 +116,7 @@ impl<C: Clock> DailyFile<C> {
             others: 0,
             full: false,
         };
-        this.prune(0)?;
+        this.prune(0);
         Ok(this)
     }
 
@@ -128,19 +130,19 @@ impl<C: Clock> DailyFile<C> {
     }
 
     /// Prunes so that `incoming` more bytes still fit, and recounts the rest.
-    fn prune(&mut self, incoming: u64) -> io::Result<()> {
-        prune(
+    fn prune(&mut self, incoming: u64) {
+        let _ = prune(
             &self.dir,
             self.day,
             self.max_days,
             self.max_bytes.saturating_sub(incoming),
-        )?;
-        self.others = scan(&self.dir)?
+        );
+        self.others = scan(&self.dir)
+            .unwrap_or_default()
             .into_iter()
             .filter(|(day, _, _)| *day != self.day)
             .map(|(_, _, size)| size)
             .sum();
-        Ok(())
     }
 
     fn fits(&self, len: u64) -> bool {
@@ -152,15 +154,17 @@ impl<C: Clock> Write for DailyFile<C> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let today = self.clock.today();
         if today != self.day {
+            // Open first: if today's file cannot open, the next line retries
+            // rather than landing in yesterday's file.
+            let (file, size) = Self::open(&self.dir, today)?;
             self.file.flush()?;
-            self.day = today;
-            (self.file, self.size) = Self::open(&self.dir, today)?;
+            (self.day, self.file, self.size) = (today, file, size);
             self.full = false;
-            self.prune(0)?;
+            self.prune(0);
         }
         let len = buf.len() as u64;
         if !self.full && !self.fits(len) {
-            self.prune(len)?;
+            self.prune(len);
             self.full = !self.fits(len);
         }
         if self.full {
@@ -344,6 +348,50 @@ mod tests {
         clock.advance(8);
         file.write_all(b"new\n").unwrap();
         assert_eq!(names(dir.path()), [file_name(day(18))]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_cannot_be_pruned_does_not_stop_logging() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let stale = seed(dir.path(), day(1), 10);
+        seed(dir.path(), day(25), 0);
+        // A read-only folder: nothing in it can be deleted.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let file = DailyFile::new(
+            dir.path().into(),
+            FakeClock::at(day(25)),
+            MAX_DAYS,
+            MAX_BYTES,
+        );
+        let written = file.and_then(|mut file| file.write_all(b"still logging\n"));
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        written.unwrap();
+        assert!(stale.exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(file_name(day(25)))).unwrap(),
+            "still logging\n"
+        );
+    }
+
+    #[test]
+    fn a_failed_rollover_retries_instead_of_writing_to_yesterday() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = FakeClock::at(day(24));
+        let mut file =
+            DailyFile::new(dir.path().into(), clock.clone(), MAX_DAYS, MAX_BYTES).unwrap();
+        file.write_all(b"yesterday\n").unwrap();
+        // Something else holds today's name, so today's file cannot open.
+        let blocker = dir.path().join(file_name(day(25)));
+        std::fs::create_dir(&blocker).unwrap();
+        clock.advance(1);
+        assert!(file.write_all(b"lost\n").is_err());
+        std::fs::remove_dir(&blocker).unwrap();
+        file.write_all(b"today\n").unwrap();
+        let read = |d| std::fs::read_to_string(dir.path().join(file_name(d))).unwrap();
+        assert_eq!(read(day(24)), "yesterday\n");
+        assert_eq!(read(day(25)), "today\n");
     }
 
     #[test]

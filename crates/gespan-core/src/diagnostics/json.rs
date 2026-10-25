@@ -7,6 +7,7 @@ use tracing::{
     span::{Attributes, Id, Record},
     Event, Subscriber,
 };
+use tracing_log::NormalizeEvent;
 use tracing_subscriber::{
     filter::LevelFilter, fmt::MakeWriter, layer::Context, registry::LookupSpan, EnvFilter, Layer,
 };
@@ -46,6 +47,11 @@ struct Fields {
 }
 impl Fields {
     fn put(&mut self, field: &Field, value: Value) {
+        // `log` records carry their target, module, file and line as
+        // `log.*` fields; the target is restored from them instead.
+        if field.name().starts_with("log.") {
+            return;
+        }
         if field.name() == "message" {
             self.message = Some(match value {
                 Value::String(text) => text,
@@ -117,7 +123,8 @@ where
         let mut fields = Fields::default();
         event.record(&mut fields);
         merged.extend(fields.values);
-        let metadata = event.metadata();
+        let normalized = event.normalized_metadata();
+        let metadata = normalized.as_ref().unwrap_or_else(|| event.metadata());
         let mut line = Map::new();
         line.insert(
             "ts".into(),
@@ -272,6 +279,27 @@ pub(crate) mod tests {
         let fields = &out.lines()[0]["fields"];
         assert_eq!(fields["error"], "disk full");
         assert_eq!(fields["path"], "\"/tmp/x\"");
+    }
+
+    #[test]
+    fn log_crate_records_keep_their_own_target() {
+        let out = capture(None, || {
+            let record = log::Record::builder()
+                .level(log::Level::Warn)
+                .target("gpui::window")
+                .module_path(Some("gpui::window"))
+                .file(Some("src/window.rs"))
+                .line(Some(13))
+                .args(format_args!("from log"))
+                .build();
+            tracing_log::format_trace(&record).unwrap();
+        });
+        let line = &out.lines()[0];
+        assert_eq!(line["target"], "gpui::window");
+        assert_eq!(line["level"], "warn");
+        assert_eq!(line["message"], "from log");
+        // The bridge's bookkeeping fields are not the event's own fields.
+        assert_eq!(line["fields"], serde_json::json!({}));
     }
 
     #[test]

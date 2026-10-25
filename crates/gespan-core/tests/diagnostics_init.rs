@@ -27,11 +27,17 @@ fn init_prunes_writes_both_apis_and_flushes() {
     .is_err());
 
     tracing::error!(code = 5, "e2e");
-    log::warn!("from log");
+    log::warn!(target: "gespan_core::git", "from log");
     tracing::debug!("below the default level");
     diagnostics::flush();
 
-    let text = std::fs::read_to_string(logs.join(diagnostics::file_name(today))).unwrap();
+    // Every daily file, in case the test ran across UTC midnight.
+    let text: String = std::fs::read_dir(&logs)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == "jsonl"))
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect();
     let lines: Vec<serde_json::Value> = text
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
@@ -47,7 +53,9 @@ fn init_prunes_writes_both_apis_and_flushes() {
     assert_eq!(e2e["fields"]["code"], 5);
     assert_eq!(e2e["app"], "native");
     assert_eq!(e2e["version"], "3.2.1");
-    assert_eq!(find("from log")["level"], "warn");
+    let bridged = find("from log");
+    assert_eq!(bridged["level"], "warn");
+    assert_eq!(bridged["target"], "gespan_core::git");
     assert!(lines
         .iter()
         .all(|l| l["message"] != "below the default level"));
