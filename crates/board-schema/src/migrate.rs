@@ -89,8 +89,71 @@ fn add_column_fields(tx: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Copies Native's v2 extras into the v3 tables. Filled in by the next step.
-fn copy_from_native(_tx: &Connection) -> Result<()> {
+/// Each Native v2 table and the statement that copies it into v3. Only
+/// rows whose card (and label) still exist are copied: orphans are already
+/// invisible in Native and would break the v3 foreign keys. Positions are
+/// renumbered 0..n-1; labels by name, matching Native's alphabetical order.
+/// Plain `INSERT`: the v3 tables are empty here, so a conflict is a real
+/// error and fails the whole upgrade instead of dropping rows.
+const NATIVE_COPIES: [(&str, &str); 6] = [
+    (
+        "board_native_meta",
+        "INSERT INTO board_card_meta (card_id, priority, due_at)
+         SELECT m.card_id, m.priority, m.due_at
+         FROM board_native_meta m JOIN board_cards c ON c.id = m.card_id",
+    ),
+    (
+        "board_native_projects",
+        "INSERT INTO board_card_projects (card_id, project)
+         SELECT p.card_id, p.project
+         FROM board_native_projects p JOIN board_cards c ON c.id = p.card_id",
+    ),
+    (
+        "board_native_labels",
+        "INSERT INTO board_labels (id, board_id, name, color, position)
+         SELECT l.id, l.board_id, l.name, l.color,
+                ROW_NUMBER() OVER (PARTITION BY l.board_id ORDER BY lower(l.name), l.rowid) - 1
+         FROM board_native_labels l JOIN boards b ON b.id = l.board_id",
+    ),
+    (
+        "board_native_card_labels",
+        "INSERT INTO board_card_labels (card_id, label_id)
+         SELECT cl.card_id, cl.label_id
+         FROM board_native_card_labels cl
+         JOIN board_cards c ON c.id = cl.card_id
+         JOIN board_labels l ON l.id = cl.label_id",
+    ),
+    (
+        "board_native_subtasks",
+        "INSERT INTO board_subtasks (id, card_id, title, done, position)
+         SELECT s.id, s.card_id, s.title, s.done,
+                ROW_NUMBER() OVER (PARTITION BY s.card_id ORDER BY s.position, s.rowid) - 1
+         FROM board_native_subtasks s JOIN board_cards c ON c.id = s.card_id",
+    ),
+    (
+        "board_native_comments",
+        "INSERT INTO board_comments (id, card_id, body, author, created_at, edited_at)
+         SELECT n.id, n.card_id, n.body, 'user', n.created_at, NULL
+         FROM board_native_comments n JOIN board_cards c ON c.id = n.card_id",
+    ),
+];
+
+/// Copies Native's v2 extras into the v3 tables, skipping any source table
+/// that does not exist. The `board_native_*` tables are left untouched.
+fn copy_from_native(tx: &Connection) -> Result<()> {
+    for (source, copy) in NATIVE_COPIES {
+        let exists = tx
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [source],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if exists {
+            tx.execute(copy, [])?;
+        }
+    }
     Ok(())
 }
 
@@ -109,6 +172,7 @@ fn backfill_links(tx: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{assert_native_v2_migrated, seed_native_v2};
     use crate::{BASE_DDL, BOARD_TABLES};
     use rusqlite::{params, Connection};
 
@@ -256,5 +320,119 @@ mod tests {
             count(&conn, "SELECT COUNT(*) FROM board_card_links WHERE role = 'origin'"),
             1
         );
+    }
+    #[test]
+    fn native_v2_data_is_copied_with_every_value() {
+        let conn = memory();
+        let seed = seed_native_v2(&conn);
+        ensure(&conn).unwrap();
+        assert_native_v2_migrated(&conn, &seed);
+    }
+
+    #[test]
+    fn orphans_are_skipped_and_positions_renumbered() {
+        let conn = memory();
+        let seed = seed_native_v2(&conn);
+        assert_eq!(count(&conn, "PRAGMA foreign_keys"), 1);
+        // The orphan rows would violate the v3 foreign keys if copied.
+        ensure(&conn).expect("orphans must not fail the open");
+        assert_native_v2_migrated(&conn, &seed);
+        assert_eq!(
+            strings(&conn, "SELECT CAST(position AS TEXT) FROM board_subtasks ORDER BY position"),
+            ["0", "1", "2"]
+        );
+    }
+
+    #[test]
+    fn rerun_does_not_resurrect_deleted_rows() {
+        let conn = memory();
+        seed_native_v2(&conn);
+        ensure(&conn).unwrap();
+        conn.execute_batch(
+            "DELETE FROM board_labels WHERE name = 'docs';
+             DELETE FROM board_subtasks WHERE title = 'Two';",
+        )
+        .unwrap();
+        ensure(&conn).unwrap();
+        assert_eq!(strings(&conn, "SELECT name FROM board_labels"), ["Bug"]);
+        assert_eq!(
+            strings(&conn, "SELECT title FROM board_subtasks ORDER BY position"),
+            ["One", "Three"]
+        );
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM board_card_labels WHERE label_id = 'label-docs'"),
+            0
+        );
+    }
+
+    #[test]
+    fn failed_copy_rolls_back_and_retries() {
+        let conn = memory();
+        let seed = seed_native_v2(&conn);
+        conn.execute_batch(V3_DDL).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail BEFORE INSERT ON board_comments BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+        )
+        .unwrap();
+        let error = ensure(&conn).unwrap_err();
+        assert!(error.to_string().contains("boom"), "{error}");
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_meta"), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_labels"), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"), 0);
+        assert!(conn.is_autocommit(), "the failed upgrade left a transaction open");
+        conn.execute_batch("DROP TRIGGER fail;").unwrap();
+        ensure(&conn).unwrap();
+        assert_native_v2_migrated(&conn, &seed);
+    }
+
+    #[test]
+    fn database_without_native_tables_only_backfills_links() {
+        let conn = memory();
+        conn.execute_batch(BASE_DDL).unwrap();
+        seed_v1_card(&conn, Some(("pilot", "p-1")));
+        ensure(&conn).unwrap();
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_links"), 1);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'board_native%'"
+            ),
+            0
+        );
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"), 1);
+    }
+
+    #[test]
+    fn concurrent_ensure_copies_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let open = |path: &std::path::Path| {
+            let conn = Connection::open(path).unwrap();
+            conn.execute_batch(
+                "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;",
+            )
+            .unwrap();
+            conn
+        };
+        let seed = seed_native_v2(&open(&path));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let conn = open(&path);
+                    barrier.wait();
+                    ensure(&conn)
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap().expect("each app's ensure succeeds");
+        }
+        let conn = open(&path);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_subtasks"), 3);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"), 1);
+        assert_native_v2_migrated(&conn, &seed);
     }
 }

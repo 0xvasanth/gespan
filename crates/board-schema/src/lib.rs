@@ -5,6 +5,8 @@
 //! See `docs/board-schema.md` for the contract.
 mod ddl;
 mod migrate;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use ddl::BASE_DDL;
 pub use migrate::{ensure, sync_primary_link};
