@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use gespan_models::{default_root, CancelToken, ModelSpec, ModelStatus, ModelStore, Progress};
 use gespan_speech::catalog;
-use gespan_speech::protocol::{Event, Request};
+use gespan_speech::protocol::{ErrorKind, Event, Request};
 use gespan_speech::{helper_command, local_branches, pick_terms, SpeechClient, VocabularySources};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -28,6 +28,9 @@ pub struct State {
     cancels: Mutex<HashMap<String, CancelToken>>,
     /// Model id last sent to the helper in a `Load`.
     loaded: Mutex<Option<String>>,
+    /// Tests record requests here instead of running the helper.
+    #[cfg(test)]
+    sent: Mutex<Option<Vec<Request>>>,
 }
 
 impl State {
@@ -37,6 +40,8 @@ impl State {
             store,
             cancels: Mutex::new(HashMap::new()),
             loaded: Mutex::new(None),
+            #[cfg(test)]
+            sent: Mutex::new(None),
         }
     }
 }
@@ -245,6 +250,27 @@ fn start_impl(state: &State, sink: &EventSink, args: StartArgs) -> Result<(), St
         user_words: &args.user_words,
     });
 
+    spawn_helper(state, sink)?;
+    let mut loaded = lock(&state.loaded);
+    if loaded.as_deref() != Some(args.model_id.as_str()) {
+        send_impl(
+            state,
+            Request::Load {
+                model_dir: state.store.dir(spec),
+                model_id: args.model_id.clone(),
+            },
+        );
+        *loaded = Some(args.model_id);
+    }
+    send_impl(state, Request::Start { terms });
+    Ok(())
+}
+
+fn spawn_helper(state: &State, sink: &EventSink) -> Result<(), String> {
+    #[cfg(test)]
+    if lock(&state.sent).is_some() {
+        return Ok(());
+    }
     let mut client = lock(&state.client);
     if client.as_ref().is_some_and(|c| c.is_unavailable()) {
         return Err("speech-unavailable".into());
@@ -254,20 +280,27 @@ fn start_impl(state: &State, sink: &EventSink, args: StartArgs) -> Result<(), St
         let sink = sink.clone();
         *client = Some(SpeechClient::spawn(program, helper_args, move |e| sink(e)));
     }
-    let client = client.as_ref().expect("client was just spawned");
-    let mut loaded = lock(&state.loaded);
-    if loaded.as_deref() != Some(args.model_id.as_str()) {
-        client.send(Request::Load {
-            model_dir: state.store.dir(spec),
-            model_id: args.model_id.clone(),
-        });
-        *loaded = Some(args.model_id);
-    }
-    client.send(Request::Start { terms });
     Ok(())
 }
 
+/// Bookkeeping for every helper event, before it reaches the webview.
+fn on_helper_event(state: &State, event: &Event) {
+    // The model is gone or failed to load, so the next start loads again.
+    if let Event::Error {
+        kind: ErrorKind::ModelMissing | ErrorKind::ModelLoad,
+        ..
+    } = event
+    {
+        *lock(&state.loaded) = None;
+    }
+}
+
 fn send_impl(state: &State, req: Request) {
+    #[cfg(test)]
+    if let Some(sent) = lock(&state.sent).as_mut() {
+        sent.push(req);
+        return;
+    }
     if let Some(client) = lock(&state.client).as_ref() {
         client.send(req);
     }
@@ -331,6 +364,7 @@ pub async fn dictation_start(
         let sink: EventSink = {
             let app = app.clone();
             Arc::new(move |event| {
+                on_helper_event(&app.state::<State>(), &event);
                 let _ = app.emit(DICTATION_EVENT, event);
             })
         };
@@ -579,6 +613,52 @@ mod tests {
             f.set_len(file.size).unwrap();
             std::fs::File::create(model_dir.join(format!("{}.verified", file.name))).unwrap();
         }
+    }
+
+    /// A state whose helper requests are recorded, with `spec` downloaded.
+    fn fake_helper(spec: &ModelSpec) -> (tempfile::TempDir, State) {
+        let (dir, state) = state();
+        make_ready(dir.path(), spec);
+        *lock(&state.sent) = Some(Vec::new());
+        (dir, state)
+    }
+
+    fn sent(state: &State) -> Vec<Request> {
+        lock(&state.sent).clone().unwrap()
+    }
+
+    fn is_load(req: &Request) -> bool {
+        matches!(req, Request::Load { .. })
+    }
+
+    fn error(kind: ErrorKind) -> Event {
+        Event::Error {
+            kind,
+            message: "x".into(),
+        }
+    }
+
+    #[test]
+    fn a_failed_load_makes_the_next_start_load_again() {
+        for kind in [ErrorKind::ModelLoad, ErrorKind::ModelMissing] {
+            let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
+            start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap();
+            on_helper_event(&state, &error(kind.clone()));
+            start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap();
+            let sent = sent(&state);
+            assert_eq!(sent.len(), 4, "{kind:?}: {sent:?}");
+            assert!(is_load(&sent[0]) && is_load(&sent[2]), "{kind:?}: {sent:?}");
+            assert!(matches!(sent[3], Request::Start { .. }));
+        }
+    }
+
+    #[test]
+    fn other_errors_keep_the_loaded_model() {
+        let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
+        start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap();
+        on_helper_event(&state, &error(ErrorKind::NoInputDevice));
+        start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap();
+        assert_eq!(sent(&state).iter().filter(|r| is_load(r)).count(), 1);
     }
 
     #[test]
