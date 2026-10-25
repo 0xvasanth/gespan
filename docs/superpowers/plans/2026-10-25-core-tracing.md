@@ -28,9 +28,9 @@
 5. **Where failures are logged.** The low-level `git()` helper logs a non-zero exit at `debug` (many callers probe and expect failure) and a failure to start Git at `error`. The operations named in the issue log their `Err` at `warn` once, at the operation level. A refused worktree removal (main copy, locked, detached) is also logged at `warn`: it is rare and useful when someone reports "delete does nothing". A cancelled SSH connection is logged at `info`, not `warn`.
 6. **MCP start** means the two per-session tool servers `gespan-core` starts: `visual_bridge::Server::start` (`server = "visual"`) and `pilot::bridge::Server::start` (`server = "pilot"`). `mcp.rs` only edits provider config files and is not a start.
 7. **The SSH span is created inside the connection thread** in `Connections::start_ssh_job`, around both the preparation and `Job::complete`; the failure event is emitted in `Job::complete` so every SSH job outcome is logged in one place.
+8. **Grep check is an integration test** (`crates/gespan-core/tests/no_eprintln.rs`) so it runs in `native:check` and CI with no new workflow step.
 9. **Review follow-up: user Git actions and background SSH.** `scm.rs`'s stage/unstage/discard/commit/push/pull/sync run Git through their own helper, not `git::git`, so each runs in a `git_action { op }` span and logs its failure at `warn` once; the internal `git_checked` probe stays silent. The automatic tunnel reopen in `Tunnels::endpoint` runs in `ssh_connect { background = true }` and logs each failed attempt (the existing 10 s backoff rate-limits it).
 10. **OpenSSH stderr is logged as-is.** It can name the host (`Could not resolve hostname …`). That is the same trade as Decision 4: the log stays local, and report-time scrubbing (#67/#72) owns redaction; adding the SSH target to the scrub list is listed as a follow-up.
-8. **Grep check is an integration test** (`crates/gespan-core/tests/no_eprintln.rs`) so it runs in `native:check` and CI with no new workflow step.
 
 ## Review Focus
 
