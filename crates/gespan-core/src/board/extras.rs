@@ -1,12 +1,15 @@
 //! Task fields beyond title and body: priority, due date, projects, labels,
 //! subtasks and comments. The storage is the shared board-store's v3 tables;
 //! these `Service` methods are the native app's handle on them.
-use super::{validate_id, Board, Service};
+use super::{validate_id, Board, Card, Service};
 use gespan_board_store as store;
 use rusqlite::Connection;
 use std::collections::HashMap;
 
-pub use gespan_board_store::{CardExtras, Comment, Label, Subtask, PRIORITIES};
+pub use gespan_board_store::{
+    CardExtras, CardLink, CardMeta, Comment, Field, FieldValue, Label, Relation, Subtask,
+    PRIORITIES,
+};
 
 /// The pre-v3 native tables. Nothing reads them now that board-store has
 /// copied them into its v3 tables; they are still created, and never dropped,
@@ -205,6 +208,122 @@ impl Service {
         validate_id(card_id, "card")?;
         store::add_comment(&self.conn, card_id, body, "user")
     }
+
+    /// A comment written by an agent (write-back); the author is "agent".
+    pub fn add_agent_comment(&mut self, card_id: &str, body: &str) -> Result<Comment, String> {
+        validate_id(card_id, "card")?;
+        store::add_comment(&self.conn, card_id, body, "agent")
+    }
+
+    pub fn edit_comment(&mut self, comment_id: &str, body: &str) -> Result<(), String> {
+        validate_id(comment_id, "comment")?;
+        store::edit_comment(&self.conn, comment_id, body).map(drop)
+    }
+
+    pub fn card_meta(&mut self, card_id: &str) -> Result<CardMeta, String> {
+        validate_id(card_id, "card")?;
+        store::card_meta(&self.conn, card_id)
+    }
+
+    pub fn set_start(&mut self, card_id: &str, start_at: Option<i64>) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::set_start(&self.conn, card_id, start_at).map(drop)
+    }
+
+    pub fn set_estimate(&mut self, card_id: &str, minutes: Option<i64>) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::set_estimate(&self.conn, card_id, minutes).map(drop)
+    }
+
+    pub fn add_relation(&mut self, card_id: &str, related: &str, kind: &str) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        validate_id(related, "card")?;
+        store::add_relation(&self.conn, card_id, related, kind).map(drop)
+    }
+
+    pub fn remove_relation(
+        &mut self,
+        card_id: &str,
+        related: &str,
+        kind: &str,
+    ) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        validate_id(related, "card")?;
+        store::remove_relation(&self.conn, card_id, related, kind).map(drop)
+    }
+
+    pub fn card_relations(&mut self, card_id: &str) -> Result<Vec<Relation>, String> {
+        validate_id(card_id, "card")?;
+        store::card_relations(&self.conn, card_id)
+    }
+
+    pub fn list_fields(&mut self, board_id: &str) -> Result<Vec<Field>, String> {
+        validate_id(board_id, "board")?;
+        store::list_fields(&self.conn, board_id)
+    }
+
+    pub fn set_field_value(
+        &mut self,
+        card_id: &str,
+        field_id: &str,
+        value_json: Option<&str>,
+    ) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        validate_id(field_id, "field")?;
+        store::set_field_value(&self.conn, card_id, field_id, value_json).map(drop)
+    }
+
+    pub fn field_values(&mut self, card_id: &str) -> Result<Vec<FieldValue>, String> {
+        validate_id(card_id, "card")?;
+        store::field_values(&self.conn, card_id)
+    }
+
+    pub fn add_link(
+        &mut self,
+        card_id: &str,
+        kind: &str,
+        reference: &str,
+        role: Option<&str>,
+    ) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::add_link(&self.conn, card_id, kind, reference, role).map(drop)
+    }
+
+    pub fn remove_link(
+        &mut self,
+        card_id: &str,
+        kind: &str,
+        reference: &str,
+    ) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::remove_link(&self.conn, card_id, kind, reference).map(drop)
+    }
+
+    pub fn card_links(&mut self, card_id: &str) -> Result<Vec<CardLink>, String> {
+        validate_id(card_id, "card")?;
+        store::card_links(&self.conn, card_id)
+    }
+
+    pub fn move_subtask(&mut self, subtask_id: &str, index: usize) -> Result<(), String> {
+        validate_id(subtask_id, "subtask")?;
+        store::move_subtask(&self.conn, subtask_id, index).map(drop)
+    }
+
+    pub fn convert_subtask(&mut self, subtask_id: &str) -> Result<Card, String> {
+        validate_id(subtask_id, "subtask")?;
+        store::convert_subtask(&self.conn, subtask_id)
+    }
+
+    pub fn duplicate_card(&mut self, card_id: &str) -> Result<Card, String> {
+        validate_id(card_id, "card")?;
+        store::duplicate_card(&self.conn, card_id)
+    }
+
+    pub fn move_card_to_board(&mut self, card_id: &str, board_id: &str) -> Result<Card, String> {
+        validate_id(card_id, "card")?;
+        validate_id(board_id, "board")?;
+        store::move_card_to_board(&self.conn, card_id, board_id)
+    }
 }
 
 #[cfg(test)]
@@ -275,6 +394,76 @@ mod tests {
         assert!(service.archive("bad id!").is_err());
         assert!(service.archive_many(&["bad id!".to_string()]).is_err());
         assert!(service.restore(&ids[2], "bad id!", 0).is_err());
+    }
+
+    #[test]
+    fn card_detail_operations_go_through_the_service() {
+        let (_dir, mut service, _) = service();
+        let (board, card) = card(&mut service);
+        let backlog = service.get(&board).unwrap().columns[0].id.clone();
+        let other = service.card_create(&backlog, "Other", "").unwrap();
+
+        service.set_start(&card, Some(1_000)).unwrap();
+        service.set_estimate(&card, Some(90)).unwrap();
+        let meta = service.card_meta(&card).unwrap();
+        assert_eq!(
+            (meta.start_at, meta.estimate_minutes),
+            (Some(1_000), Some(90))
+        );
+        assert!(service.set_estimate(&card, Some(0)).is_err());
+
+        service.add_relation(&card, &other.id, "blocks").unwrap();
+        assert_eq!(service.card_relations(&card).unwrap().len(), 1);
+        assert!(service.add_relation(&other.id, &card, "blocks").is_err());
+        service.remove_relation(&card, &other.id, "blocks").unwrap();
+        assert!(service.card_relations(&card).unwrap().is_empty());
+
+        assert!(service.list_fields(&board).unwrap().is_empty());
+        assert!(service.field_values(&card).unwrap().is_empty());
+        assert!(service.set_field_value(&card, "nope", Some("1")).is_err());
+
+        service
+            .add_link(&card, "pr", "https://x/pr/1", None)
+            .unwrap();
+        assert_eq!(
+            service.card_links(&card).unwrap()[0].reference,
+            "https://x/pr/1"
+        );
+        service.remove_link(&card, "pr", "https://x/pr/1").unwrap();
+        assert!(service.card_links(&card).unwrap().is_empty());
+
+        let first = service.add_subtask(&card, "one").unwrap();
+        let second = service.add_subtask(&card, "two").unwrap();
+        service.move_subtask(&second.id, 0).unwrap();
+        assert_eq!(service.subtasks(&card).unwrap()[0].id, second.id);
+        let converted = service.convert_subtask(&first.id).unwrap();
+        assert_eq!(converted.title, "one");
+        assert_eq!(service.subtasks(&card).unwrap().len(), 1);
+
+        let copy = service.duplicate_card(&card).unwrap();
+        assert_eq!(copy.title, "Task (copy)");
+
+        let target = service.create("Target").unwrap();
+        let moved = service.move_card_to_board(&card, &target.id).unwrap();
+        assert_eq!(moved.board_id, target.id);
+        assert!(service.move_card_to_board("bad id!", &target.id).is_err());
+    }
+
+    #[test]
+    fn comments_edit_and_agent_author() {
+        let (_dir, mut service, _) = service();
+        let (_, card) = card(&mut service);
+        let user = service.add_comment(&card, "hi").unwrap();
+        let agent = service.add_agent_comment(&card, "done").unwrap();
+        assert_eq!(
+            (user.author.as_str(), agent.author.as_str()),
+            ("user", "agent")
+        );
+        service.edit_comment(&user.id, "hello").unwrap();
+        let comments = service.comments(&card).unwrap();
+        assert_eq!(comments[0].body, "hello");
+        assert!(comments[0].edited_at.is_some());
+        assert!(service.edit_comment("bad id!", "x").is_err());
     }
 
     #[test]

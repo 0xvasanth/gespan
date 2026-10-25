@@ -1,17 +1,22 @@
 //! The board's Tauri commands. Storage is the shared `gespan-board-store`
 //! crate the native app also uses; each mutating command emits `CHANGED`.
 #[cfg(test)]
+use gespan_board_store::create_field;
+#[cfg(test)]
 use gespan_board_store::ensure_tables;
 use gespan_board_store::get_card;
 use gespan_board_store::{
-    add_comment, add_subtask, archive_card, archive_cards, archived_cards, card_extras,
-    cards_for_link, column_card_count, create_board, create_card, create_column, create_label,
-    delete_archived_card, delete_board, delete_card, delete_column, delete_subtask, get_board,
-    link_card, list_activity, list_boards, list_comments, list_labels, list_subtasks, move_card,
-    move_cards, move_column, record_card, rename_board, restore_card, set_card_labels,
-    set_column_display, set_due, set_priority, set_projects, toggle_subtask, unarchive_card,
-    update_card, update_column, validate_id, Activity, Board, BoardDetail, Card, CardExtras,
-    Column, Comment, Label, Subtask,
+    add_comment, add_link, add_relation, add_subtask, archive_card, archive_cards, archived_cards,
+    card_extras, card_links, card_meta, card_relations, cards_for_link, column_card_count,
+    convert_subtask, create_board, create_card, create_column, create_label, delete_archived_card,
+    delete_board, delete_card, delete_column, delete_subtask, duplicate_card, edit_comment,
+    field_values, get_board, link_card, list_activity, list_boards, list_comments, list_fields,
+    list_labels, list_subtasks, move_card, move_card_to_board, move_cards, move_column,
+    move_subtask, record_card, remove_link, remove_relation, rename_board, restore_card,
+    set_card_labels, set_column_display, set_due, set_estimate, set_field_value, set_priority,
+    set_projects, set_start, toggle_subtask, unarchive_card, update_card, update_column,
+    validate_id, Activity, Board, BoardDetail, Card, CardExtras, CardLink, CardMeta, Column,
+    Comment, Field, FieldValue, Label, Relation, Subtask,
 };
 use gespan_tracker_client::tickets::TicketRef;
 use serde::Serialize;
@@ -654,6 +659,257 @@ pub fn board_comment_add(
     Ok(comment)
 }
 
+/// Moves a card to another board; returns the board it left and the moved card.
+fn move_to_board_inner(
+    conn: &rusqlite::Connection,
+    card_id: &str,
+    board_id: &str,
+) -> Result<(String, Card), String> {
+    validate_id(card_id, "card")?;
+    validate_id(board_id, "board")?;
+    let source = get_card(conn, card_id)?.board_id;
+    let card = move_card_to_board(conn, card_id, board_id)?;
+    Ok((source, card))
+}
+
+#[tauri::command(async)]
+pub fn board_card_meta(
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<CardMeta, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    card_meta(&conn, &card_id)
+}
+
+#[tauri::command(async)]
+pub fn board_card_set_start(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    start_at: Option<i64>,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = set_start(&conn, &card_id, start_at)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_card_set_estimate(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    minutes: Option<i64>,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = set_estimate(&conn, &card_id, minutes)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_relation_add(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    related_card_id: String,
+    kind: String,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    validate_id(&related_card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = add_relation(&conn, &card_id, &related_card_id, &kind)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_relation_remove(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    related_card_id: String,
+    kind: String,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    validate_id(&related_card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = remove_relation(&conn, &card_id, &related_card_id, &kind)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_card_relations(
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<Vec<Relation>, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    card_relations(&conn, &card_id)
+}
+
+#[tauri::command(async)]
+pub fn board_fields(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<Vec<Field>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    list_fields(&conn, &board_id)
+}
+
+#[tauri::command(async)]
+pub fn board_field_value_set(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    field_id: String,
+    value_json: Option<String>,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    validate_id(&field_id, "field")?;
+    let conn = store.lock_conn()?;
+    let board_id = set_field_value(&conn, &card_id, &field_id, value_json.as_deref())?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_card_field_values(
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<Vec<FieldValue>, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    field_values(&conn, &card_id)
+}
+
+#[tauri::command(async)]
+pub fn board_link_add(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    kind: String,
+    reference: String,
+    role: Option<String>,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = add_link(&conn, &card_id, &kind, &reference, role.as_deref())?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_link_remove(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    kind: String,
+    reference: String,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = remove_link(&conn, &card_id, &kind, &reference)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_card_links(
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<Vec<CardLink>, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    card_links(&conn, &card_id)
+}
+
+#[tauri::command(async)]
+pub fn board_comment_edit(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    comment_id: String,
+    body: String,
+) -> Result<(), String> {
+    validate_id(&comment_id, "comment")?;
+    let conn = store.lock_conn()?;
+    let board_id = edit_comment(&conn, &comment_id, &body)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_subtask_move(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    subtask_id: String,
+    index: usize,
+) -> Result<(), String> {
+    validate_id(&subtask_id, "subtask")?;
+    let conn = store.lock_conn()?;
+    let board_id = move_subtask(&conn, &subtask_id, index)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_subtask_convert(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    subtask_id: String,
+) -> Result<Card, String> {
+    validate_id(&subtask_id, "subtask")?;
+    let conn = store.lock_conn()?;
+    let card = convert_subtask(&conn, &subtask_id)?;
+    drop(conn);
+    notify(&app, &card.board_id);
+    Ok(card)
+}
+
+#[tauri::command(async)]
+pub fn board_card_duplicate(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<Card, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let card = duplicate_card(&conn, &card_id)?;
+    drop(conn);
+    notify(&app, &card.board_id);
+    Ok(card)
+}
+
+/// Notifies both the board the card left and the one it joined.
+#[tauri::command(async)]
+pub fn board_card_move_to_board(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    board_id: String,
+) -> Result<Card, String> {
+    let conn = store.lock_conn()?;
+    let (source, card) = move_to_board_inner(&conn, &card_id, &board_id)?;
+    drop(conn);
+    notify(&app, &source);
+    notify(&app, &card.board_id);
+    Ok(card)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1291,5 +1547,64 @@ mod tests {
             None
         );
         assert!(card_delete_archived_inner(&conn, "bad id!").is_err());
+    }
+
+    #[test]
+    fn card_detail_types_serialize_with_the_camel_case_keys_the_ui_reads() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let cards = add_cards(&conn, &columns[0].id, &["A", "B"]);
+        let keys = |value: serde_json::Value| -> Vec<String> {
+            let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            keys
+        };
+        set_start(&conn, &cards[0].id, Some(5)).unwrap();
+        assert_eq!(
+            keys(serde_json::to_value(card_meta(&conn, &cards[0].id).unwrap()).unwrap()),
+            [
+                "archivedAt",
+                "completedAt",
+                "dueAt",
+                "estimateMinutes",
+                "priority",
+                "startAt"
+            ]
+        );
+        add_relation(&conn, &cards[0].id, &cards[1].id, "blocks").unwrap();
+        let relation = &card_relations(&conn, &cards[0].id).unwrap()[0];
+        assert_eq!(
+            keys(serde_json::to_value(relation).unwrap()),
+            ["cardId", "kind", "relatedCardId"]
+        );
+        add_link(&conn, &cards[0].id, "pr", "https://x/1", None).unwrap();
+        assert_eq!(
+            keys(serde_json::to_value(&card_links(&conn, &cards[0].id).unwrap()[0]).unwrap()),
+            ["cardId", "createdAt", "kind", "reference", "role"]
+        );
+        let field = create_field(&conn, &board.id, "Note", "text", None).unwrap();
+        assert_eq!(
+            keys(serde_json::to_value(&field).unwrap()),
+            ["boardId", "id", "kind", "name", "optionsJson", "position"]
+        );
+        set_field_value(&conn, &cards[0].id, &field.id, Some("\"x\"")).unwrap();
+        assert_eq!(
+            keys(serde_json::to_value(&field_values(&conn, &cards[0].id).unwrap()[0]).unwrap()),
+            ["cardId", "fieldId", "valueJson"]
+        );
+    }
+
+    #[test]
+    fn move_to_board_reports_the_source_board_and_the_moved_card() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let target = create_board(&conn, "Other").unwrap();
+        let card = add_cards(&conn, &columns[0].id, &["A"]).remove(0);
+        let (source, moved) = move_to_board_inner(&conn, &card.id, &target.id).unwrap();
+        assert_eq!(source, board.id);
+        assert_eq!(moved.board_id, target.id);
+        assert_ne!(source, moved.board_id);
+        assert!(move_to_board_inner(&conn, &card.id, "bad id!").is_err());
+        assert!(move_to_board_inner(&conn, "bad id!", &target.id).is_err());
     }
 }

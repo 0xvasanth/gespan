@@ -392,3 +392,145 @@ export function addComment(
 ): Promise<BoardComment> {
   return invoke<BoardComment>("board_comment_add", { cardId, body });
 }
+
+export type CardMeta = {
+  priority: number;
+  dueAt: number | null;
+  startAt: number | null;
+  estimateMinutes: number | null;
+  archivedAt: number | null;
+  completedAt: number | null;
+};
+
+export type RelationKind = "blocks" | "relates" | "duplicates";
+
+export type CardRelation = {
+  cardId: string;
+  relatedCardId: string;
+  kind: RelationKind;
+};
+
+export type BoardFieldKind = "text" | "number" | "date" | "select" | "checkbox";
+
+export type BoardField = {
+  id: string;
+  boardId: string;
+  name: string;
+  kind: BoardFieldKind;
+  optionsJson: string | null;
+  position: number;
+};
+
+export type FieldValue = {
+  cardId: string;
+  fieldId: string;
+  valueJson: string;
+};
+
+export type CardLinkRow = {
+  cardId: string;
+  kind: string;
+  reference: string;
+  role: string | null;
+  createdAt: number;
+};
+
+export function getCardMeta(cardId: string): Promise<CardMeta> {
+  return invoke<CardMeta>("board_card_meta", { cardId });
+}
+
+export function setCardStart(
+  cardId: string,
+  startAt: number | null,
+): Promise<void> {
+  return invoke("board_card_set_start", { cardId, startAt });
+}
+
+export function setCardEstimate(
+  cardId: string,
+  minutes: number | null,
+): Promise<void> {
+  return invoke("board_card_set_estimate", { cardId, minutes });
+}
+
+export function addRelation(
+  cardId: string,
+  relatedCardId: string,
+  kind: RelationKind,
+): Promise<void> {
+  return invoke("board_relation_add", { cardId, relatedCardId, kind });
+}
+
+export function removeRelation(
+  cardId: string,
+  relatedCardId: string,
+  kind: RelationKind,
+): Promise<void> {
+  return invoke("board_relation_remove", { cardId, relatedCardId, kind });
+}
+
+export function listCardRelations(cardId: string): Promise<CardRelation[]> {
+  return invoke<CardRelation[]>("board_card_relations", { cardId });
+}
+
+export function listFields(boardId: string): Promise<BoardField[]> {
+  return invoke<BoardField[]>("board_fields", { boardId });
+}
+
+/** Pass `null` to clear the value. */
+export function setFieldValue(
+  cardId: string,
+  fieldId: string,
+  valueJson: string | null,
+): Promise<void> {
+  return invoke("board_field_value_set", { cardId, fieldId, valueJson });
+}
+
+export function listFieldValues(cardId: string): Promise<FieldValue[]> {
+  return invoke<FieldValue[]>("board_card_field_values", { cardId });
+}
+
+export function addCardLink(
+  cardId: string,
+  kind: string,
+  reference: string,
+  role: string | null = null,
+): Promise<void> {
+  return invoke("board_link_add", { cardId, kind, reference, role });
+}
+
+export function removeCardLink(
+  cardId: string,
+  kind: string,
+  reference: string,
+): Promise<void> {
+  return invoke("board_link_remove", { cardId, kind, reference });
+}
+
+export function listCardLinks(cardId: string): Promise<CardLinkRow[]> {
+  return invoke<CardLinkRow[]>("board_card_links", { cardId });
+}
+
+export function editComment(commentId: string, body: string): Promise<void> {
+  return invoke("board_comment_edit", { commentId, body });
+}
+
+export function moveSubtask(subtaskId: string, index: number): Promise<void> {
+  return invoke("board_subtask_move", { subtaskId, index });
+}
+
+/** Turns the subtask into a card after its parent, related to it. */
+export function convertSubtask(subtaskId: string): Promise<BoardCard> {
+  return invoke<BoardCard>("board_subtask_convert", { subtaskId });
+}
+
+export function duplicateCard(cardId: string): Promise<BoardCard> {
+  return invoke<BoardCard>("board_card_duplicate", { cardId });
+}
+
+export function moveCardToBoard(
+  cardId: string,
+  boardId: string,
+): Promise<BoardCard> {
+  return invoke<BoardCard>("board_card_move_to_board", { cardId, boardId });
+}
