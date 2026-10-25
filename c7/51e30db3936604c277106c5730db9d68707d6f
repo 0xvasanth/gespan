@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-10-25-core-tracing.md
+  s_03df97e295d785::t_f1a5aa39b80c14 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c751e30db3936604c277106c5730db9d68707d6f",
+  "prompts": {},
+  "sessions": {
+    "s_03df97e295d785": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2771226f-979b-443c-8db1-0890eaff023e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
