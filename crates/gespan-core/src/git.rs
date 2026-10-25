@@ -908,7 +908,11 @@ mod tests {
         assert_eq!(logged.len(), 1, "{logged:?}");
         assert_eq!(logged[0]["level"], "warn");
         assert_eq!(logged[0]["span"], "worktree_create");
-        assert_eq!(logged[0]["fields"]["existing"], false);
-        assert!(!logged[0].to_string().contains("taken\""), "{}", logged[0]);
+        // The branch name reaches the log only inside Git's error text, never as a field.
+        let fields = logged[0]["fields"].as_object().unwrap();
+        let mut keys: Vec<_> = fields.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["error", "existing"], "{fields:?}");
+        assert_eq!(fields["existing"], false);
     }
 }
