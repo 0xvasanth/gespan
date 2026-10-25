@@ -1,0 +1,21 @@
+crates/gespan-core/src/diagnostics/rotation.rs
+  s_d3e103518690a2::t_1af24498d49609 49-51,71-88,154,159
+  s_d3e103518690a2::t_973e49e614e5dc 476-499
+  s_d3e103518690a2::t_f91f01091c8b92 475
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8676636cb43e4533449a4faf2276fee88c7a95f7",
+  "prompts": {},
+  "sessions": {
+    "s_d3e103518690a2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34c2fa24-ecff-4a6f-9e96-30c0a62d3b0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
