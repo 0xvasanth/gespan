@@ -3,6 +3,7 @@
 //! "Copy diagnostics" actions. Nothing here touches the network.
 mod actions;
 mod bundle;
+mod collect;
 mod json;
 mod panic;
 mod paths;
@@ -12,6 +13,10 @@ pub use actions::{open_logs_folder, summary, summary_for};
 pub use bundle::{
     build, default_consent, Bundle, Destination, Entry, Report, Selection, Sources, Stamp, System,
     MAX_BUNDLE_BYTES,
+};
+pub use collect::{
+    build_channel, collect, installed_providers, locale_from, log_tail, redactor_for,
+    running_log_dir, system, Environment, TAIL_LINES,
 };
 pub use json::{filter, json_layer, JsonLayer};
 pub use panic::{install_panic_hook, panic_message, write_crash};
