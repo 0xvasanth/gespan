@@ -1951,9 +1951,7 @@ impl Conversation {
             }
             return;
         }
-        if std::env::var_os("GESPAN_NATIVE_TRACE").is_some() {
-            eprintln!("native settings session={} action={id}", self.summary.id);
-        }
+        tracing::debug!(session_id = self.summary.id, action = %id, "session setting chosen");
         if let Some(mode) = id.strip_prefix("access:") {
             self.settings.access = AccessMode::from_id(mode);
             remember_access(self.settings.access, cx);
@@ -2158,14 +2156,12 @@ impl Conversation {
             return false;
         }
         let changed_model = self.summary.provider != picked.0.id() || self.model != picked.1;
-        if std::env::var_os("GESPAN_NATIVE_TRACE").is_some() {
-            eprintln!(
-                "native model session={} provider={} model={:?}",
-                self.summary.id,
-                picked.0.id(),
-                picked.1
-            );
-        }
+        tracing::debug!(
+            session_id = self.summary.id,
+            provider = picked.0.id(),
+            model = ?picked.1,
+            "session model chosen"
+        );
         if self.summary.provider != picked.0.id() {
             let reverting = self
                 .settings
