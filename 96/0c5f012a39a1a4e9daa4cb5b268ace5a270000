@@ -1,0 +1,21 @@
+docs/diagnostics/bundle-format.md
+  s_3d70b2915bde53::t_0def2378c8bb3f 1-186
+src/test/diagnosticsContract.test.ts
+  s_3d70b2915bde53::t_552a4401467d5b 98-167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "960c5f012a39a1a4e9daa4cb5b268ace5a270000",
+  "prompts": {},
+  "sessions": {
+    "s_3d70b2915bde53": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "090d580c-c9c5-4007-950a-6316c24edf7d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
