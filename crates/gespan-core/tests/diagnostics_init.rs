@@ -9,6 +9,10 @@ fn init_prunes_writes_both_apis_and_flushes() {
     // This binary has one test, so nothing else reads the environment.
     std::env::remove_var("GESPAN_LOG");
     let dir = tempfile::tempdir().unwrap();
+    // HOME is empty, but the profile folder still finds the home (as a
+    // passwd lookup would): the summary must hide it either way.
+    std::env::set_var("HOME", "");
+    std::env::set_var("USERPROFILE", dir.path());
     let logs = dir.path().join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     let today = chrono::Utc::now().date_naive();
@@ -65,6 +69,16 @@ fn init_prunes_writes_both_apis_and_flushes() {
     assert!(lines
         .iter()
         .all(|l| l["message"] != "below the default level"));
+
+    let summary = diagnostics::summary();
+    assert!(
+        summary.contains(&format!("Logs: ~{}logs\n", std::path::MAIN_SEPARATOR)),
+        "{summary}"
+    );
+    assert!(
+        !summary.contains(&*dir.path().to_string_lossy()),
+        "{summary}"
+    );
 
     // Flushing twice, and logging after the flush, must neither panic nor block.
     let started = Instant::now();

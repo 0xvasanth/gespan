@@ -65,9 +65,8 @@ pub fn summary() -> String {
     let Some(config) = STARTED.get() else {
         return "Gespan Native diagnostics have not started.".into();
     };
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from);
+    // The same home `log_dir` uses, so the `~` form always applies.
+    let home = crate::scm::shell::dirs_home().map(PathBuf::from);
     summary_for(
         &config.log_dir,
         &config.version,
