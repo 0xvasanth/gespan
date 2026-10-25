@@ -104,17 +104,17 @@ pub fn write(tracker: Tracker, data_dir: &Path, value: &str) -> Result<(), Strin
     Ok(())
 }
 
+/// Removes the old file first, so a keychain that refuses the delete can't
+/// leave it behind to keep serving the secret.
 pub fn delete(tracker: Tracker, data_dir: &Path) -> Result<(), String> {
+    remove_legacy_file(tracker, data_dir)?;
     match entry(tracker, data_dir)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(_) => {
-            return Err(format!(
-                "Could not remove the {} credentials from the keychain",
-                tracker.label()
-            ))
-        }
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => Err(format!(
+            "Could not remove the {} credentials from the keychain. {KEYCHAIN_HINT}",
+            tracker.label()
+        )),
     }
-    remove_legacy_file(tracker, data_dir)
 }
 
 fn entry(tracker: Tracker, data_dir: &Path) -> Result<keyring::Entry, String> {

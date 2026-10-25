@@ -284,3 +284,29 @@ fn migration_keeps_the_secret_when_the_old_file_cannot_be_deleted() {
     assert_eq!(result.unwrap().as_deref(), Some("cfg"));
     assert_eq!(stored(Tracker::Gitlab, &data).as_deref(), Some("cfg"));
 }
+
+#[test]
+fn disconnect_removes_the_old_file_even_when_the_keychain_refuses() {
+    let dir = dir();
+    fs::write(file(dir.path(), "linear-token"), "lin_api_secret").unwrap();
+    fail_reads(Tracker::Linear, dir.path(), true);
+    fail_writes(Tracker::Linear, dir.path(), true);
+
+    let error = delete(Tracker::Linear, dir.path()).unwrap_err();
+
+    assert!(!file(dir.path(), "linear-token").exists());
+    assert_eq!(read(Tracker::Linear, dir.path()).unwrap(), None);
+    assert!(error.contains("Linear"), "{error}");
+}
+
+#[test]
+fn a_refused_delete_never_reports_the_secret() {
+    let dir = dir();
+    write(Tracker::Jira, dir.path(), "jira_api_secret").unwrap();
+    fail_writes(Tracker::Jira, dir.path(), true);
+
+    let error = delete(Tracker::Jira, dir.path()).unwrap_err();
+
+    assert!(!error.contains("jira_api_secret"), "{error}");
+    assert_eq!(stored(Tracker::Jira, dir.path()).as_deref(), Some("jira_api_secret"));
+}

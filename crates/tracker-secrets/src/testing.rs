@@ -33,8 +33,8 @@ pub fn stored(tracker: Tracker, data_dir: &Path) -> Option<String> {
     Some(String::from_utf8(bytes.clone()).unwrap())
 }
 
-/// Makes keychain writes for this tracker and data directory fail, as a locked
-/// or missing keychain does.
+/// Makes keychain writes (saves and deletes) for this tracker and data
+/// directory fail, as a locked or missing keychain does.
 pub fn fail_writes(tracker: Tracker, data_dir: &Path, fail: bool) {
     let mut failing = FAILING
         .lock()
@@ -120,6 +120,19 @@ impl CredentialApi for MemoryCredential {
             .ok_or(keyring::Error::NoEntry)
     }
     fn delete_credential(&self) -> keyring::Result<()> {
+        let failing = FAILING
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if failing.as_ref().is_some_and(|set| set.contains(&self.0)) {
+            let held = self.get_secret().unwrap_or_default();
+            return Err(keyring::Error::NoStorageAccess(
+                format!(
+                    "keychain is locked; kept {}",
+                    String::from_utf8_lossy(&held)
+                )
+                .into(),
+            ));
+        }
         let mut values = VALUES
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
