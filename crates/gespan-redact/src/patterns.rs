@@ -138,7 +138,7 @@ pub(crate) fn redact_tokens(input: &str) -> String {
     }
     let out = BEARER.replace_all(&out, format!("${{1}}{REDACTED}"));
     let out = BASIC.replace_all(&out, format!("${{1}}{REDACTED}"));
-    let out = replace_secrets(&JSON_PAIR, &out, |caps| {
+    let out = replace_secrets(&JSON_PAIR, 2, &out, |caps| {
         is_secret_key(&caps[2]).then(|| {
             let quote = if caps[4].starts_with('\\') {
                 "\\\""
@@ -151,22 +151,22 @@ pub(crate) fn redact_tokens(input: &str) -> String {
             )
         })
     });
-    let out = replace_secrets(&KEY_VALUE, &out, |caps| {
+    let out = replace_secrets(&KEY_VALUE, 1, &out, |caps| {
         is_secret_key(&caps[1]).then(|| format!("{}={REDACTED}", &caps[1]))
     });
-    let out = replace_secrets(&COLON_QUOTED, &out, |caps| {
+    let out = replace_secrets(&COLON_QUOTED, 1, &out, |caps| {
         is_secret_key(&caps[1]).then(|| {
             let quote = &caps[3][..1];
             format!("{}{}{quote}{REDACTED}{quote}", &caps[1], &caps[2])
         })
     });
-    let out = replace_secrets(&COLON_BARE, &out, |caps| {
+    let out = replace_secrets(&COLON_BARE, 1, &out, |caps| {
         let scheme = caps.get(3).map_or("", |scheme| scheme.as_str());
         let looks_secret = !scheme.is_empty() || caps[4].bytes().any(|b| b.is_ascii_digit());
         (is_secret_key(&caps[1]) && looks_secret)
             .then(|| format!("{}{}{scheme}{REDACTED}", &caps[1], &caps[2]))
     });
-    let out = replace_secrets(&FLAG, &out, |caps| {
+    let out = replace_secrets(&FLAG, 2, &out, |caps| {
         is_secret_key(&caps[2]).then(|| format!("{}{} {REDACTED}", &caps[1], &caps[2]))
     });
     URL_PASSWORD
@@ -174,11 +174,13 @@ pub(crate) fn redact_tokens(input: &str) -> String {
         .into_owned()
 }
 
-/// Like `replace_all`, but a candidate that `secret` turns down only skips one
-/// character, so it can't swallow a real secret pair that follows it
-/// (`compass: password: …`).
+/// Like `replace_all`, but a candidate that `secret` turns down only skips its
+/// key (capture group `key`), so it can't swallow a real secret pair that
+/// follows it (`compass: password: …`). Skipping the whole key, not one
+/// character, keeps this linear.
 fn replace_secrets(
     pattern: &Regex,
+    key: usize,
     input: &str,
     secret: impl Fn(&Captures) -> Option<String>,
 ) -> String {
@@ -195,14 +197,14 @@ fn replace_secrets(
                 from = found.end();
             }
             None => {
-                let step = input[found.start()..]
-                    .chars()
-                    .next()
-                    .map_or(1, char::len_utf8);
-                from = found.start() + step;
+                from = caps
+                    .get(key)
+                    .expect("key group")
+                    .end()
+                    .max(found.start() + 1)
             }
         }
-        if from > input.len() {
+        if from >= input.len() {
             break;
         }
     }
@@ -669,6 +671,21 @@ mod tests {
         assert_eq!(
             redact_tokens("GET /blob?sv=2024&sig=AbCd%2Bef&se=1 and X-Amz-Signature=abc123"),
             "GET /blob?sv=2024&sig=<redacted>&se=1 and X-Amz-Signature=<redacted>"
+        );
+    }
+
+    #[test]
+    fn rejected_keys_do_not_make_scrubbing_quadratic() {
+        // Each `-` starts a new candidate key; retrying after every one of
+        // them took minutes on 40 KB.
+        let input = format!("{}tokens_used=5 password=x", "a-".repeat(5_000));
+        let started = std::time::Instant::now();
+        let out = redact_tokens(&input);
+        assert!(out.ends_with("tokens_used=5 password=<redacted>"));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "took {:?}",
+            started.elapsed()
         );
     }
 }

@@ -127,6 +127,7 @@ A fresh reviewer fed real inputs to the crate and found more ways for a secret t
 - **Other cheap fixes:** secret arrays in text, labelled PGP key blocks, `--token value` flags, lower-case and `+` URL encoding of known secrets, and dotted user names (`/Users/al.smith` is another user).
 - **Repeat until stable.** The idempotence property found that one rule's placeholder can expose a match for another. `redact_text` now repeats its rules until the output stops changing (at most 5 passes). Because of this, the guarantee "scrubbing the output again changes nothing" holds by construction. The token rule also repeats, for tokens glued onto other tokens.
 - **Rejected candidates no longer swallow text.** A candidate pair that isn't a secret (`compass: …`) only skips one character, so a real pair after it is still found.
+- **Linear on crafted keys.** A rejected candidate resumes after its key. Restarting one character later took 110 s on a 10 KB key full of dashes (`rejected_keys_do_not_make_scrubbing_quadratic`).
 - **ASCII word boundaries** (`(?-u:\b)`) for speed. With Unicode `\b` the regex crate fell back to a slow engine on non-ASCII text: a mixed 1 MB log took 480 ms. It now takes 37 ms (release build).
 - **Deferred minors:** boundary checks before a match (`/mnt/backup/Users/al` → `/mnt/backup~`, which over-redacts); Git Bash, WSL, `file://` and 8.3 forms of a Windows home; case-insensitive macOS paths; doubly escaped JSON; colliding scrubbed object keys; secrets in CLI argument arrays.
 
