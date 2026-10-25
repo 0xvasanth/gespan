@@ -6,99 +6,208 @@ use regex::{Captures, Regex};
 
 use crate::{EMAIL, REDACTED};
 
-/// Well-known token shapes. Each needs a word boundary before it and a
-/// minimum length, so words like `risk-assessment-framework` survive.
+/// Well-known token shapes, each with a minimum length. The character before
+/// one must not be a letter or digit (`_` is fine, so `token_ghp_…` is
+/// caught), which keeps words like `risk-assessment-framework` intact.
 static TOKENS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
-        r"\b(?:",
+        r"(^|[^A-Za-z0-9])(?:",
         r"sk-[A-Za-z0-9_-]{20,}",
+        r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}",
         r"|gh[pousr]_[A-Za-z0-9]{20,}",
         r"|github_pat_[A-Za-z0-9_]{20,}",
-        r"|xox[abposr]-[A-Za-z0-9-]{10,}",
+        r"|glpat-[A-Za-z0-9_-]{20,}",
+        r"|npm_[A-Za-z0-9]{36,}",
+        r"|hf_[A-Za-z0-9]{30,}",
+        r"|xox[abposre]-[A-Za-z0-9-]{10,}",
+        r"|xapp-[0-9]-[A-Za-z0-9-]{10,}",
         r"|(?:AKIA|ASIA)[0-9A-Z]{16,}",
+        r"|AIza[0-9A-Za-z_-]{35,}",
         r"|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*",
         r")",
     ))
     .expect("token pattern")
 });
 
-/// A PEM private key, or what is left of one when the text is cut short.
+/// A PEM or PGP private key, or what is left of one when the text is cut short.
 static PRIVATE_KEY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?s:.*?)(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)",
-    )
+    Regex::new(concat!(
+        r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----(?s:.*?)",
+        r"(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----|\z)",
+    ))
     .expect("private key pattern")
 });
 
-/// Words that make a key secret. [`is_secret_key`] has the final say.
-const MARKERS: &str = "password|passwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|credential|authorization|cookie";
+/// Words that make a key a candidate. [`is_secret_key`] has the final say.
+const MARKERS: &str = "pass|pwd|pw|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|credential|authorization|cookie|sig";
 
-/// `password=…`, `GITHUB_TOKEN = "…"`, `?access_token=…`. The value is quoted
-/// (JSON-escaped quotes too, and it may span lines) or runs to whitespace,
-/// `&`, `;` or `,`; an unclosed quote still counts.
+/// A key that contains a marker.
+fn key_pattern() -> String {
+    format!("[A-Za-z0-9_-]*(?:{MARKERS})[A-Za-z0-9_-]*")
+}
+
+/// A secret value after `=`: an optional `Bearer`/`Basic`/`token` scheme, then
+/// a quoted value (JSON-escaped quotes too; it may span lines, and an
+/// unclosed quote runs to the end of the line), then anything up to
+/// whitespace, `&` or a quote.
+const VALUE: &str = concat!(
+    r#"(?:(?:bearer|basic|token)\s+)?"#,
+    r#"(?:(?:\\"(?:[^"\\]|\\[^"])*\\"|"(?:[^"\\]|\\.)*"|'[^']*'|"[^"\n]*|'[^'\n]*)"#,
+    r#"(?:[^\s&"\\]|\\[^"])*|(?:[^\s&"\\]|\\[^"])+)"#,
+);
+
+/// `password=…`, `GITHUB_TOKEN = "…"`, `?access_token=…`.
 static KEY_VALUE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r#"(?i)\b([A-Za-z0-9_-]*(?:{MARKERS})[A-Za-z0-9_-]*)[ \t]*=[ \t]*(?:\\"[^"]*?\\"|"[^"]*"|'[^']*'|["']?[^\s&;,"']+|["'])"#
+        r"(?i)(?-u:\b)({})[ \t]*=[ \t]*{VALUE}",
+        key_pattern()
     ))
     .expect("key=value pattern")
+});
+
+/// `password: "…"` as Rust's `Debug` and YAML write it. A quoted value is
+/// never prose, so the colon is safe here.
+static COLON_QUOTED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r#"(?i)(?-u:\b)({})([ \t]*:[ \t]*)("(?:[^"\\]|\\.)*"|'[^']*')"#,
+        key_pattern()
+    ))
+    .expect("colon quoted pattern")
+});
+
+/// `X-Api-Key: abc123…` and `Authorization: token …` headers. Unquoted, so
+/// a value needs 8+ characters and either a scheme or a digit to count;
+/// "token: missing" stays.
+static COLON_BARE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r#"(?i)(?-u:\b)({})([ \t]*:[ \t]*)((?:bearer|basic|token)[ \t]+)?([^\s"',;]{{8,}})"#,
+        key_pattern()
+    ))
+    .expect("colon bare pattern")
+});
+
+/// `--token abc…` on a command line.
+static FLAG: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"(?i)(^|\s)(--?{})[ \t]+([^\s-]\S*)",
+        key_pattern()
+    ))
+    .expect("flag pattern")
 });
 
 /// `"token": "…"` inside text, plain or JSON-escaped (`\"token\":\"…\"`).
 static JSON_PAIR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r#"(?i)(\\?")([A-Za-z0-9_-]*(?:{MARKERS})[A-Za-z0-9_-]*)(\\?"\s*:\s*)(\\"[^"]*?\\"|"(?:[^"\\]|\\.)*"|[^\s,}}\]]+)"#
+        r#"(?i)(\\?")({})(\\?"\s*:\s*)(\\"(?:[^"\\]|\\[^"])*\\"|"(?:[^"\\]|\\.)*"|\[[^\]]*\]|[^\s,}}\]]+)"#,
+        key_pattern()
     ))
     .expect("JSON pair pattern")
 });
 
-/// The password in `scheme://user:password@host`.
+/// The password in `scheme://user:password@host`, up to the last `@` before
+/// the host; the user may be empty (`redis://:pw@host`).
 static URL_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)[^\s/@]+@").expect("URL password pattern")
+    Regex::new(r"(?i)(?-u:\b)([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s@]*(?:@[^\s@/?#]*)*@")
+        .expect("URL password pattern")
 });
 
 static BEARER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}").expect("bearer pattern")
+    Regex::new(r"(?i)(?-u:\b)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}").expect("bearer pattern")
 });
 
 /// Case-sensitive, as sent in headers, so the word "basic" in prose survives.
 static BASIC: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b(Basic\s+)[A-Za-z0-9+/=]{8,}").expect("basic pattern"));
+    LazyLock::new(|| Regex::new(r"(?-u:\b)(Basic\s+)[A-Za-z0-9+/=]{8,}").expect("basic pattern"));
 
 static EMAILS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\w.%+'-]+@[\w-]+(?:\.[\w-]+)*\.\w{2,}").expect("email pattern"));
 
-/// Private keys, `sk-…`, `ghp_…`, `xoxb-…`, `AKIA…`, JWTs, secret-named
-/// `key=value` and JSON pairs, URL passwords, `Bearer …` and `Basic …` all
-/// become `<redacted>`; the key, scheme or user stays.
+/// Private keys, well-known tokens, `Bearer`/`Basic` credentials, values of
+/// secret-named keys (`key=…`, `key: "…"`, `"key": …`, `--key …`) and URL
+/// passwords all become `<redacted>`; the key, scheme or user stays.
 pub(crate) fn redact_tokens(input: &str) -> String {
     let out = PRIVATE_KEY.replace_all(input, REDACTED);
-    let out = TOKENS.replace_all(&out, REDACTED);
-    let out = JSON_PAIR.replace_all(&out, |caps: &Captures| {
-        if !is_secret_key(&caps[2]) {
-            return caps[0].to_string();
-        }
-        let quote = if caps[4].starts_with('\\') {
-            "\\\""
-        } else {
-            "\""
-        };
-        format!(
-            "{}{}{}{quote}{REDACTED}{quote}",
-            &caps[1], &caps[2], &caps[3]
-        )
-    });
-    let out = KEY_VALUE.replace_all(&out, |caps: &Captures| {
-        if is_secret_key(&caps[1]) {
-            format!("{}={REDACTED}", &caps[1])
-        } else {
-            caps[0].to_string()
-        }
-    });
-    let out = URL_PASSWORD.replace_all(&out, format!("${{1}}{REDACTED}@"));
+    // A token glued onto another (`…AAsk-…`) only has a boundary once the
+    // first is replaced, so repeat. Every token is longer than `<redacted>`,
+    // so this ends.
+    let mut out = out.into_owned();
+    while TOKENS.is_match(&out) {
+        out = TOKENS
+            .replace_all(&out, format!("${{1}}{REDACTED}"))
+            .into_owned();
+    }
     let out = BEARER.replace_all(&out, format!("${{1}}{REDACTED}"));
-    BASIC
-        .replace_all(&out, format!("${{1}}{REDACTED}"))
+    let out = BASIC.replace_all(&out, format!("${{1}}{REDACTED}"));
+    let out = replace_secrets(&JSON_PAIR, &out, |caps| {
+        is_secret_key(&caps[2]).then(|| {
+            let quote = if caps[4].starts_with('\\') {
+                "\\\""
+            } else {
+                "\""
+            };
+            format!(
+                "{}{}{}{quote}{REDACTED}{quote}",
+                &caps[1], &caps[2], &caps[3]
+            )
+        })
+    });
+    let out = replace_secrets(&KEY_VALUE, &out, |caps| {
+        is_secret_key(&caps[1]).then(|| format!("{}={REDACTED}", &caps[1]))
+    });
+    let out = replace_secrets(&COLON_QUOTED, &out, |caps| {
+        is_secret_key(&caps[1]).then(|| {
+            let quote = &caps[3][..1];
+            format!("{}{}{quote}{REDACTED}{quote}", &caps[1], &caps[2])
+        })
+    });
+    let out = replace_secrets(&COLON_BARE, &out, |caps| {
+        let scheme = caps.get(3).map_or("", |scheme| scheme.as_str());
+        let looks_secret = !scheme.is_empty() || caps[4].bytes().any(|b| b.is_ascii_digit());
+        (is_secret_key(&caps[1]) && looks_secret)
+            .then(|| format!("{}{}{scheme}{REDACTED}", &caps[1], &caps[2]))
+    });
+    let out = replace_secrets(&FLAG, &out, |caps| {
+        is_secret_key(&caps[2]).then(|| format!("{}{} {REDACTED}", &caps[1], &caps[2]))
+    });
+    URL_PASSWORD
+        .replace_all(&out, format!("${{1}}{REDACTED}@"))
         .into_owned()
+}
+
+/// Like `replace_all`, but a candidate that `secret` turns down only skips one
+/// character, so it can't swallow a real secret pair that follows it
+/// (`compass: password: …`).
+fn replace_secrets(
+    pattern: &Regex,
+    input: &str,
+    secret: impl Fn(&Captures) -> Option<String>,
+) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut copied = 0;
+    let mut from = 0;
+    while let Some(caps) = pattern.captures_at(input, from) {
+        let found = caps.get(0).expect("whole match");
+        match secret(&caps) {
+            Some(replacement) => {
+                out.push_str(&input[copied..found.start()]);
+                out.push_str(&replacement);
+                copied = found.end();
+                from = found.end();
+            }
+            None => {
+                let step = input[found.start()..]
+                    .chars()
+                    .next()
+                    .map_or(1, char::len_utf8);
+                from = found.start() + step;
+            }
+        }
+        if from > input.len() {
+            break;
+        }
+    }
+    out.push_str(&input[copied..]);
+    out
 }
 
 /// Email addresses become `<email>`.
@@ -106,33 +215,80 @@ pub(crate) fn redact_emails(input: &str) -> String {
     EMAILS.replace_all(input, EMAIL).into_owned()
 }
 
-/// A key whose value is a secret: one that mentions a password, secret,
-/// token, API/private/access key, credential, authorization or cookie, in
-/// any case and spelling (`apiKey`, `API-KEY`). Token counters
-/// (`tokens_used`, `token_count`) are not secrets.
+/// A key whose value is a secret: one that mentions a password, secret, API,
+/// private or access key, credential, authorization, cookie or signature, in
+/// any case and spelling (`apiKey`, `API-KEY`), or has a `pass`, `pwd`, `pw`
+/// or `sig` segment (`DB_PASS`, `dbPass`). Keys that mention a token are
+/// secret too, unless they name a token counter (`max_tokens`,
+/// `input_tokens`, `tokens_used`, `token_count`).
 pub(crate) fn is_secret_key(key: &str) -> bool {
-    let key: String = key
+    let flat: String = key
         .chars()
         .filter(char::is_ascii_alphanumeric)
         .collect::<String>()
         .to_ascii_lowercase();
-    if key.contains("tokens") || key.ends_with("count") {
-        return false;
-    }
-    [
+    let strong = [
         "password",
         "passwd",
         "secret",
-        "token",
         "apikey",
         "privatekey",
         "accesskey",
         "credential",
         "authorization",
         "cookie",
-    ]
-    .iter()
-    .any(|marker| key.contains(marker))
+        "signature",
+    ];
+    if strong.iter().any(|marker| flat.contains(marker)) {
+        return true;
+    }
+    if segments(key).any(|segment| matches!(segment.as_str(), "pass" | "pwd" | "pw" | "sig")) {
+        return true;
+    }
+    flat.contains("token") && !is_token_counter(&flat)
+}
+
+/// `max_tokens`, `input_tokens`, `cache_read_input_tokens`, `tokens_used`,
+/// `token_count`: model usage numbers, not credentials.
+fn is_token_counter(flat: &str) -> bool {
+    ["count", "used", "limit", "usage"]
+        .iter()
+        .any(|suffix| flat.ends_with(suffix))
+        || (flat.ends_with("tokens")
+            && [
+                "max",
+                "min",
+                "input",
+                "output",
+                "total",
+                "prompt",
+                "completion",
+                "reasoning",
+                "cache",
+            ]
+            .iter()
+            .any(|prefix| flat.starts_with(prefix)))
+}
+
+/// A key's words, split at punctuation and at camelCase humps, lower-cased.
+fn segments(key: &str) -> impl Iterator<Item = String> + '_ {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut previous_lower = false;
+    for c in key.chars() {
+        if !c.is_ascii_alphanumeric() {
+            words.push(std::mem::take(&mut word));
+            previous_lower = false;
+            continue;
+        }
+        if c.is_ascii_uppercase() && previous_lower {
+            words.push(std::mem::take(&mut word));
+        }
+        previous_lower = c.is_ascii_lowercase();
+        word.push(c.to_ascii_lowercase());
+    }
+    words.push(word);
+    words.into_iter().filter(|word| !word.is_empty())
 }
 
 #[cfg(test)]
@@ -202,7 +358,7 @@ mod tests {
         );
         assert_eq!(
             redact_tokens("GET /cb?code=1&access_token=abc123; next"),
-            "GET /cb?code=1&access_token=<redacted>; next"
+            "GET /cb?code=1&access_token=<redacted> next"
         );
         assert_eq!(
             redact_tokens("GITHUB_TOKEN=\"a b\nc\" x"),
@@ -274,6 +430,17 @@ mod tests {
             "credentials",
             "password_hint",
             "refresh_token_v2",
+            "access_tokens",
+            "github_tokens",
+            "DB_PASS",
+            "MYSQL_PWD",
+            "dbPass",
+            "X-Amz-Signature",
+            "sig",
+            "secret_count",
+            "password_used",
+            "maxtoken",
+            "min_token_v2",
         ] {
             assert!(is_secret_key(key), "{key}");
         }
@@ -281,10 +448,16 @@ mod tests {
             "tokens_used",
             "token_count",
             "max_tokens",
+            "input_tokens",
+            "cache_read_input_tokens",
             "id",
             "key",
             "sort_key",
             "session_id",
+            "account",
+            "passport",
+            "compass",
+            "design",
         ] {
             assert!(!is_secret_key(key), "{key}");
         }
@@ -352,6 +525,150 @@ mod tests {
                 "key:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\nAAAA\n-----END OPENSSH PRIVATE KEY-----\ndone"
             ),
             "key:\n<redacted>\ndone"
+        );
+    }
+
+    #[test]
+    fn scheme_after_a_secret_key_goes_with_the_value() {
+        assert_eq!(
+            redact_tokens("INFO http: authorization=Bearer abcdefgh12345678 url=/x"),
+            "INFO http: authorization=<redacted> url=/x"
+        );
+        assert_eq!(
+            redact_tokens("authorization=Basic dXNlcjpwYXNzd29yZA=="),
+            "authorization=<redacted>"
+        );
+    }
+
+    #[test]
+    fn colon_forms_with_quoted_or_token_shaped_values() {
+        assert_eq!(
+            redact_tokens(
+                r#"Config { password: "hunter22", api_key: 'k3y-value-123', name: "x" }"#
+            ),
+            r#"Config { password: "<redacted>", api_key: '<redacted>', name: "x" }"#
+        );
+        assert_eq!(
+            redact_tokens("X-Api-Key: abc123def456"),
+            "X-Api-Key: <redacted>"
+        );
+        assert_eq!(
+            redact_tokens("Authorization: token abcdefghijkl"),
+            "Authorization: token <redacted>"
+        );
+        for prose in [
+            "token: missing",
+            "password: required",
+            "Secret: the cake is a lie",
+        ] {
+            assert_eq!(redact_tokens(prose), prose);
+        }
+    }
+
+    #[test]
+    fn secret_values_run_to_whitespace_or_their_closing_quote() {
+        assert_eq!(
+            redact_tokens("password=hunter,22;more x"),
+            "password=<redacted> x"
+        );
+        assert_eq!(
+            redact_tokens(r#"password="a\"b SECRET" x"#),
+            "password=<redacted> x"
+        );
+        assert_eq!(
+            redact_tokens("password=\"abc def SECRET (truncated\nnext line"),
+            "password=<redacted>\nnext line"
+        );
+        // Inside a JSON string the closing quote still ends the value.
+        assert_eq!(
+            redact_tokens(r#"{"m":"password=abc","n":1}"#),
+            r#"{"m":"password=<redacted>","n":1}"#
+        );
+        assert_eq!(
+            redact_tokens(r#"{\"m\":\"token=ab\\cd\"}"#),
+            r#"{\"m\":\"token=<redacted>\"}"#
+        );
+    }
+
+    #[test]
+    fn more_token_shapes() {
+        for token in [
+            "sk_live_51HabcDEFghiJKLmnoPQR",
+            "rk_test_51HabcDEFghiJKLmnoPQR",
+            "AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q",
+            "glpat-AbCdEfGhIjKlMnOpQrSt",
+            "npm_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+            "hf_AbCdEfGhIjKlMnOpQrStUvWxYz01234567",
+            "xapp-1-A0123456789-0123456789012-abcdef",
+        ] {
+            assert_eq!(gone(&format!("k {token} x"), token), "k <redacted> x");
+        }
+        assert_eq!(
+            redact_tokens("DB_PASS=hunter22 MYSQL_PWD=hunter22 compass=north"),
+            "DB_PASS=<redacted> MYSQL_PWD=<redacted> compass=north"
+        );
+    }
+
+    #[test]
+    fn distinctive_tokens_glued_after_underscore() {
+        assert_eq!(
+            redact_tokens(
+                "/cache/token_ghp_16C7e42F292c6912E7710c838347Ae178B4aAKIAIOSFODNN7EXAMPLE"
+            ),
+            "/cache/token_<redacted>"
+        );
+        // The second token only has a boundary once the first is replaced.
+        assert_eq!(
+            redact_tokens("AKIAIOSFODNN7EXAMPLEsk-ant-api03-AbCdEfGhIjKlMnOpQrStUv"),
+            "<redacted><redacted>"
+        );
+        assert_eq!(
+            redact_tokens("aws_id_AKIAIOSFODNN7EXAMPLE"),
+            "aws_id_<redacted>"
+        );
+    }
+
+    #[test]
+    fn url_passwords_with_empty_user_or_odd_characters() {
+        assert_eq!(
+            redact_tokens("redis://:hunter22pw@localhost:6379/0"),
+            "redis://:<redacted>@localhost:6379/0"
+        );
+        assert_eq!(
+            redact_tokens("https://x-access-token:ab/cd+ef@github.com/a"),
+            "https://x-access-token:<redacted>@github.com/a"
+        );
+        assert_eq!(
+            redact_tokens("https://u:p@ss@host/x?e=a@b.com"),
+            "https://u:<redacted>@host/x?e=a@b.com"
+        );
+    }
+
+    #[test]
+    fn secret_arrays_inside_text() {
+        assert_eq!(
+            redact_tokens(r#"{"token": ["sekretA","sekretB"], "n": 1}"#),
+            r#"{"token": "<redacted>", "n": 1}"#
+        );
+    }
+
+    #[test]
+    fn labelled_private_key_blocks() {
+        assert_eq!(
+            redact_tokens("-----BEGIN PGP PRIVATE KEY BLOCK-----\nabc\n-----END PGP PRIVATE KEY BLOCK-----\nok"),
+            "<redacted>\nok"
+        );
+    }
+
+    #[test]
+    fn command_line_flags_and_signed_urls() {
+        assert_eq!(
+            redact_tokens("run --token abc123secretvalue --verbose"),
+            "run --token <redacted> --verbose"
+        );
+        assert_eq!(
+            redact_tokens("GET /blob?sv=2024&sig=AbCd%2Bef&se=1 and X-Amz-Signature=abc123"),
+            "GET /blob?sv=2024&sig=<redacted>&se=1 and X-Amz-Signature=<redacted>"
         );
     }
 }

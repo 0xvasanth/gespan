@@ -337,6 +337,34 @@
       "kind": "text",
       "input": "read /home/zoë/.ssh/id_ed25519:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ",
       "expected": "read ~/.ssh/id_ed25519:\n<redacted>"
+    },
+    {
+      "name": "macos tracing key=value field with a Bearer header",
+      "context": "macos",
+      "kind": "text",
+      "input": "2026-10-25T10:00:00Z  INFO gespan_core::http: request authorization=Bearer abcdefgh12345678 url=/v1/x",
+      "expected": "2026-10-25T10:00:00Z  INFO gespan_core::http: request authorization=<redacted> url=/v1/x"
+    },
+    {
+      "name": "macos Rust Debug output of a config struct",
+      "context": "macos",
+      "kind": "text",
+      "input": "Err(Config { password: \"hunter22\", user: \"alice@example.com\", path: \"/Users/alice/code/gespan/a.toml\" })",
+      "expected": "Err(Config { password: \"<redacted>\", user: \"<email>\", path: \"<project-1>/a.toml\" })"
+    },
+    {
+      "name": "linux log tail cut mid-line still drops prompts",
+      "context": "linux",
+      "kind": "text",
+      "input": "t\":\"2026-10-25\",\"fields\":{\"prompt\":\"rewrite my secret plan\",\"diff\":\"+x\",\"n\":1}}",
+      "expected": "t\":\"2026-10-25\",\"fields\":{\"prompt\":\"<redacted>\",\"diff\":\"<redacted>\",\"n\":1}}"
+    },
+    {
+      "name": "linux Redis URL with an empty user",
+      "context": "linux",
+      "kind": "text",
+      "input": "connect redis://:hunter22pw@localhost:6379/0 failed",
+      "expected": "connect redis://:<redacted>@localhost:6379/0 failed"
     }
   ]
 }

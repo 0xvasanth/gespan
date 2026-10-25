@@ -46,12 +46,13 @@ impl PathRule {
         let mut out = String::with_capacity(input.len());
         let mut last = 0;
         for found in self.pattern.find_iter(input) {
-            // `/Users/al` must not eat `/Users/alice`.
-            if input[found.end()..]
-                .chars()
-                .next()
-                .is_some_and(continues_name)
-            {
+            // `/Users/al` must not eat `/Users/alice` or `/Users/al.smith`.
+            let mut rest = input[found.end()..].chars();
+            let continues = match rest.next() {
+                Some('.') => rest.next().is_some_and(continues_name),
+                next => next.is_some_and(continues_name),
+            };
+            if continues {
                 continue;
             }
             out.push_str(&input[last..found.start()]);

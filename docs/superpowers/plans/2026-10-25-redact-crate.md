@@ -112,10 +112,27 @@ An automated security review of the first commits, plus the shared fixtures, tur
 - **JSON strings that are themselves JSON objects or arrays** are parsed and scrubbed as JSON, so deny-listed fields inside them are dropped too.
 - **Known secrets run first**, before the path rules, and also match their JSON-escaped and percent-encoded forms.
 - **Added beyond #67's list:** URL passwords (`https://user:pw@host`), `Basic` auth (case-sensitive), and PEM private-key blocks, including a block cut off mid-way. They fall under the #45 rule "tokens and keys → `<redacted>`" and are cheap to add.
-- **Declined:** `token: value` with a colon and no quotes. It is too common in prose ("token: missing"), and real headers are covered by `Bearer`/`Basic`.
+
+### After the whole-branch review
+
+A fresh reviewer fed real inputs to the crate and found more ways for a secret to survive. Each fix below has a test that failed first:
+
+- **`authorization=Bearer …` (the `tracing` field format):** the `key=` value now takes an optional `Bearer`/`Basic`/`token` scheme, and the `Bearer` and `Basic` rules run first. Before, only the scheme word was replaced and the token stayed.
+- **Colon forms are now covered after all**, which reverses the earlier "declined" call. A quoted value after a colon (`password: "…"`, the form Rust's `Debug` writes) is always redacted. An unquoted value after a colon counts only when it has a scheme, or has 8+ characters including a digit, so `X-Api-Key: abc123…` goes and "token: missing" stays.
+- **Where values end.** A bare value now runs to whitespace, `&` or a quote. Quoted values honour `\"` escapes. An unclosed quote runs to the end of the line.
+- **Token counters are named explicitly:** plural `*tokens` keys with a usage prefix (`max`, `input`, `cache…`), or keys ending in `count`/`used`/`limit`/`usage`. `access_tokens` and `github_tokens` are secrets again. `pass`, `pwd`, `pw` and `sig` count as secret words, so `DB_PASS`, `MYSQL_PWD` and `dbPass` are caught, and so are signatures.
+- **Deny-listed fields inside text** (cut-off or escaped JSON) get `"<redacted>"`, using a small scanner that understands JSON strings, nesting and escape levels (`src/fields.rs`).
+- **More token shapes:** Stripe, Google, GitLab, npm, Hugging Face and Slack `xapp`. Tokens are now caught when glued after `_`; the left boundary is "not a letter or digit".
+- **URL passwords** may contain `@` and `/`, and the user may be empty.
+- **Other cheap fixes:** secret arrays in text, labelled PGP key blocks, `--token value` flags, lower-case and `+` URL encoding of known secrets, and dotted user names (`/Users/al.smith` is another user).
+- **Repeat until stable.** The idempotence property found that one rule's placeholder can expose a match for another. `redact_text` now repeats its rules until the output stops changing (at most 5 passes). Because of this, the guarantee "scrubbing the output again changes nothing" holds by construction. The token rule also repeats, for tokens glued onto other tokens.
+- **Rejected candidates no longer swallow text.** A candidate pair that isn't a secret (`compass: …`) only skips one character, so a real pair after it is still found.
+- **ASCII word boundaries** (`(?-u:\b)`) for speed. With Unicode `\b` the regex crate fell back to a slow engine on non-ASCII text: a mixed 1 MB log took 480 ms. It now takes 37 ms (release build).
+- **Deferred minors:** boundary checks before a match (`/mnt/backup/Users/al` → `/mnt/backup~`, which over-redacts); Git Bash, WSL, `file://` and 8.3 forms of a Windows home; case-insensitive macOS paths; doubly escaped JSON; colliding scrubbed object keys; secrets in CLI argument arrays.
 
 ## Follow-ups (out of scope)
 
 - Wiring into `src-tauri` and `gespan-core` (#72, #81, #124).
 - `docs/diagnostics/scrubbing.md` (#66) should link to `crates/gespan-redact/fixtures/`.
 - Cookie header values (`Cookie: a=b`) and Windows UNC paths (`\\server\share`) are not covered.
+- The deferred minors listed under "After the whole-branch review".

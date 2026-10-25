@@ -6,6 +6,7 @@
 //! `<project-N>`, keeping the path inside it; emails become `<email>`; tokens
 //! and known secrets become `<redacted>`; deny-listed JSON fields are dropped.
 
+mod fields;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
 mod paths;
@@ -23,6 +24,9 @@ pub const HOME: &str = "~";
 pub const EMAIL: &str = "<email>";
 /// Replaces a token, key or secret value.
 pub const REDACTED: &str = "<redacted>";
+
+/// Extra passes `redact_text` may take to reach stable output.
+const MAX_PASSES: usize = 4;
 
 /// What the redactor knows about this machine.
 #[derive(Clone, Debug, Default)]
@@ -62,7 +66,7 @@ impl Redactor {
                 .as_deref()
                 .and_then(|home| PathRule::new(home, HOME.to_string())),
         );
-        // Each secret as written, JSON-escaped and percent-encoded.
+        // Each secret as written, JSON-escaped and URL-encoded every common way.
         let mut secrets: Vec<String> = config
             .secrets
             .iter()
@@ -71,7 +75,10 @@ impl Redactor {
                 [
                     secret.clone(),
                     json_escaped(secret),
-                    percent_encoded(secret),
+                    percent_encoded(secret, false, false),
+                    percent_encoded(secret, true, false),
+                    percent_encoded(secret, false, true),
+                    percent_encoded(secret, true, true),
                 ]
             })
             .collect();
@@ -80,9 +87,24 @@ impl Redactor {
         Self { paths, secrets }
     }
 
-    /// Scrubs free text: a log message, a panic, a stack trace.
+    /// Scrubs free text: a log message, a panic, a stack trace. The output
+    /// is already scrubbed: scrubbing it again changes nothing.
     pub fn redact_text(&self, input: &str) -> String {
-        let mut out = input.to_string();
+        // One rule's placeholder can expose a match for another (a URL
+        // password inside a `password:` value), so repeat until stable.
+        let mut out = self.redact_once(input);
+        for _ in 0..MAX_PASSES {
+            let next = self.redact_once(&out);
+            if next == out {
+                break;
+            }
+            out = next;
+        }
+        out
+    }
+
+    fn redact_once(&self, input: &str) -> String {
+        let mut out = fields::blank_denied_fields(input);
         for secret in &self.secrets {
             out = out.replace(secret.as_str(), REDACTED);
         }
@@ -98,12 +120,16 @@ fn json_escaped(text: &str) -> String {
     quoted[1..quoted.len() - 1].to_string()
 }
 
-fn percent_encoded(text: &str) -> String {
+/// URL encoding in upper- or lower-case hex, with spaces as `%20` or (form
+/// encoding) `+`.
+fn percent_encoded(text: &str, lower: bool, plus: bool) -> String {
     text.bytes()
         .map(|byte| match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
                 (byte as char).to_string()
             }
+            b' ' if plus => "+".to_string(),
+            _ if lower => format!("%{byte:02x}"),
             _ => format!("%{byte:02X}"),
         })
         .collect()
@@ -149,6 +175,53 @@ mod tests {
             r.redact_text("?pw=p%40ss%20w0rd%22x&a=1"),
             "?pw=<redacted>&a=1"
         );
+    }
+
+    #[test]
+    fn known_secrets_in_lower_case_and_form_encoding() {
+        let r = Redactor::new(Config {
+            secrets: vec!["p@ss w0rd/x".into()],
+            ..Config::default()
+        });
+        assert_eq!(r.redact_text("a=p%40ss%20w0rd%2fx"), "a=<redacted>");
+        assert_eq!(r.redact_text("a=p%40ss+w0rd%2Fx"), "a=<redacted>");
+    }
+
+    #[test]
+    fn deny_listed_fields_inside_text_are_blanked() {
+        let r = Redactor::new(Config::default());
+        assert_eq!(
+            r.redact_text(
+                r#"{"level":"info","fields":{"prompt":"my private prompt","env":{"A":"b}"},"n":1}}"#
+            ),
+            r#"{"level":"info","fields":{"prompt":"<redacted>","env":"<redacted>","n":1}}"#
+        );
+        // The first line of a log tail is usually cut short.
+        assert_eq!(
+            r.redact_text(r#"{"prompt":"my private prompt cut"#),
+            r#"{"prompt":"<redacted>""#
+        );
+    }
+
+    #[test]
+    fn dotted_user_names_are_other_users() {
+        let r = redactor("/Users/al", &[]);
+        assert_eq!(
+            r.redact_text("/Users/al.smith/Documents/x"),
+            "/Users/al.smith/Documents/x"
+        );
+        assert_eq!(r.redact_text("saved to /Users/al."), "saved to ~.");
+    }
+
+    #[test]
+    fn output_is_already_scrubbed() {
+        // The URL rule's output exposes a `password:` value the colon rule
+        // had passed over; one more pass would change it.
+        let r = Redactor::new(Config::default());
+        let once = r.redact_text(
+            "password: https://u:token=\u{3a3}\"bob@example.comsk-_aaaa_0-A0_AaA0AaAA0",
+        );
+        assert_eq!(r.redact_text(&once), once);
     }
 
     #[test]

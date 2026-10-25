@@ -6,3 +6,9 @@
 # everyone who runs the test benefits from these saved cases.
 cc 49958899c320a36e713fb7cd6eae29a4ed75bb84cc4b4781a7f7813efdc8b911 # shrinks to prefix = "", open = " ", token = "gho_aaaA0aAaAAA0aAa00A00", close = " ", suffix = ""
 cc f2c5b54d859f1644f71e86abeb13f9f1086e0cce96f38eda23527b1a93158478 # shrinks to prefix = "", open = " ", key = "api_key", value = "!", close = " ", suffix = ""
+cc 23ea08bd4c1358f178bb5fdf8c3849a53a0d7a14fd5a5ae41b7cf7817823341c # shrinks to parts = ["token=", "\"prompt\":"]
+cc e717ea566ca620023667570a8f75cc76cdc3b69659e084b8b15aeb6c3bb24ec0 # shrinks to key = "authorization", scheme = "Basic", value = "_==AaAa=", sep = ": "
+cc 8f166842b8d2e359fc36813606df6003f21a1aaf54b91c608af2eca321c205ed # shrinks to parts = ["bob@example.com", "password: ", "password: ", "Bearer ", "sk-0_aa-0-Aa-aaa0Aa0aAA", "bob@example.com"]
+cc 0e13a9e6bb957b3c0621ae3f2e6333ce5bd812d40f83af5a51aa349a7afe714f # shrinks to parts = ["AKIA0AA0000AAA0AAAAA", "sk-0AA__0Aa_--aAA0--AaA"]
+cc 046ebf036582723debf7ce3ffd7c9a5d4845affbd7ad40d241a8231f08dc20b4 # shrinks to parts = ["password: ", "https://u:", "token=", "Σ", "\"", "bob@example.com", "sk-_aaaa_0-A0_AaA0AaAA0"]
+cc 18cf6b8b7ec92e75b09bb346a4ffbc6da0302c9a633a28cfac3cd634c1e68d5f # shrinks to prefix = "", open = " ", key = "mAxtoken", value = "A", close = " ", suffix = ""

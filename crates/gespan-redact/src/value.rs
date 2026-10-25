@@ -141,6 +141,24 @@ mod tests {
     }
 
     #[test]
+    fn deny_listed_fields_in_broken_or_escaped_json_text() {
+        let input = json!({"msg": "{\"prompt\":\"my private prompt\",\"x\":1"});
+        assert_eq!(
+            redactor().redact_value(input),
+            json!({"msg": "{\"prompt\":\"<redacted>\",\"x\":1"})
+        );
+        // JSON-escaped JSON inside raw text.
+        assert_eq!(
+            redactor().redact_text(r#"{"msg":"{\"diff\":\"+secret line\",\"x\":1}"}"#),
+            r#"{"msg":"{\"diff\":\"<redacted>\",\"x\":1}"}"#
+        );
+        assert_eq!(
+            redactor().redact_text(r#"{\"output\":\"say \\\"hi\\\" now\",\"n\":2}"#),
+            r#"{\"output\":\"<redacted>\",\"n\":2}"#
+        );
+    }
+
+    #[test]
     fn numbers_bools_and_null_are_untouched() {
         let input = json!([1, 2.5, true, null, {"n": -3}]);
         assert_eq!(redactor().redact_value(input.clone()), input);
