@@ -9,7 +9,7 @@
 use super::doc::{
     decode_html_entities, normalize, Block, Doc, Inline, Link, Marks, Preserved, Source,
 };
-use super::markdown::preserved_span_html;
+use super::markdown::{preserved_span_html, MAX_DEPTH};
 
 pub(crate) fn parse(html: &str) -> Doc {
     // HTML reads CR and CRLF as LF before anything else.
@@ -161,7 +161,12 @@ impl Tree {
                         }
                         element.end = i;
                         push_node(&mut stack, Node::Element(element), i);
-                    } else if self_closing || VOID.contains(&element.tag.as_str()) {
+                    } else if self_closing
+                        || VOID.contains(&element.tag.as_str())
+                        || stack.len() >= MAX_DEPTH
+                    {
+                        // Past MAX_DEPTH an element is left empty and its
+                        // content joins the parent, so recursion stays bounded.
                         push_node(&mut stack, Node::Element(element), end);
                     } else {
                         stack.push(element);
@@ -477,7 +482,31 @@ fn inlines(nodes: &[&Node], marks: &Marks, html: &str) -> Vec<Inline> {
     out
 }
 
+/// True when the model can hold the element and everything inside it.
+fn representable(element: &Element) -> bool {
+    let known = match element.tag.as_str() {
+        "span" => matches!(element.attrs.as_slice(), [(key, _)] if key == "data-gespan-adf"),
+        "strong" | "b" | "em" | "i" | "s" | "del" | "strike" | "code" | "br" => {
+            element.attrs_within(&[])
+        }
+        "a" => element.attrs_within(&["href", "title"]) && element.attr("href").is_some(),
+        "img" => element.attrs_within(&["src", "alt"]) && element.attr("src").is_some(),
+        _ => false,
+    };
+    known
+        && (element.tag == "code"
+            || element.children.iter().all(|child| match child {
+                Node::Text(_) => true,
+                Node::Element(inner) => representable(inner),
+            }))
+}
+
 fn inline(element: &Element, marks: &Marks, html: &str, out: &mut Vec<Inline>) {
+    // A link or bold around something unknown is kept whole, marks and all.
+    if !representable(element) {
+        out.push(Inline::Preserved(element.preserved(html)));
+        return;
+    }
     let children: Vec<&Node> = element.children.iter().collect();
     let mut inner = marks.clone();
     let known = match element.tag.as_str() {
@@ -707,9 +736,17 @@ fn render_inlines(content: &[Inline], out: &mut String) {
                     escape_attr(alt)
                 ));
             }
-            Inline::Html(raw) => out.push_str(raw),
+            // Kept content carries no marks of its own, and inside a known
+            // element it would make that whole element kept.
+            Inline::Html(raw) => {
+                set(&mut stack, &[], out);
+                out.push_str(raw);
+            }
             Inline::Preserved(preserved) => match preserved.source {
-                Source::Html => out.push_str(&preserved.raw),
+                Source::Html => {
+                    set(&mut stack, &[], out);
+                    out.push_str(&preserved.raw);
+                }
                 Source::Adf => out.push_str(&preserved_span_html(
                     preserved,
                     &escape(&preserved.fallback_text()),
@@ -975,6 +1012,45 @@ mod tests {
         for html in ["<p><u>abc", "<s a><!", "<script>x", "<table><tr><td>cell"] {
             let doc = parse(html);
             assert_eq!(parse(&render(&doc)), doc, "{html}");
+        }
+    }
+
+    #[test]
+    fn unknown_inline_inside_a_known_one_keeps_the_outer_marks() {
+        for (html, kept) in [
+            (
+                r#"<p>see <a href="https://x.test/doc"><u>the doc</u></a> now</p>"#,
+                r#"<a href="https://x.test/doc"><u>the doc</u></a>"#,
+            ),
+            (
+                "<p>see <strong>very <em><u>x</u></em></strong> now</p>",
+                "<strong>very <em><u>x</u></em></strong>",
+            ),
+        ] {
+            assert_eq!(
+                parse(html).blocks,
+                vec![para(vec![
+                    plain("see "),
+                    Inline::Preserved(preserved_html(kept)),
+                    plain(" now"),
+                ])],
+                "{html}"
+            );
+            assert_eq!(markdown_to_plane_html(&plane_html_to_markdown(html)), html);
+        }
+    }
+
+    #[test]
+    fn deep_nesting_is_flattened_not_fatal() {
+        for html in [
+            format!("{}x", "<blockquote>".repeat(10_000)),
+            format!("<p>{}x</p>", "<b>".repeat(10_000)),
+            format!("{}x", "<ul><li>".repeat(5_000)),
+        ] {
+            let markdown = plane_html_to_markdown(&html);
+            assert_eq!(markdown.matches('x').count(), 1, "{}", &html[..40]);
+            let back = markdown_to_plane_html(&markdown);
+            assert_eq!(markdown_to_plane_html(&plane_html_to_markdown(&back)), back);
         }
     }
 

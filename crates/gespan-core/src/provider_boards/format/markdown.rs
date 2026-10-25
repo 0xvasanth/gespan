@@ -41,14 +41,28 @@ enum Frame {
     },
 }
 
+/// Container frames (quotes, lists, items) deeper than this are flattened
+/// into their parent, so hostile input can't exhaust the stack.
+pub(crate) const MAX_DEPTH: usize = 64;
+
 struct Builder {
     frames: Vec<Frame>,
     strong: usize,
     em: usize,
     strike: usize,
     links: Vec<Link>,
-    /// Open `<span>`s inside a preserved span, whose text is skipped.
-    skip_span: usize,
+    skip: Option<Skip>,
+    /// Container starts ignored past [`MAX_DEPTH`], whose ends are ignored too.
+    overflow: usize,
+}
+
+/// The read-only text of a preserved span, held back until its `</span>`.
+/// If the span never closes, the text is put back, less the fallback.
+struct Skip {
+    /// Open `<span>`s, counting the preserved one.
+    depth: usize,
+    fallback: String,
+    held: Vec<Event<'static>>,
 }
 
 impl Builder {
@@ -59,11 +73,13 @@ impl Builder {
             em: 0,
             strike: 0,
             links: Vec::new(),
-            skip_span: 0,
+            skip: None,
+            overflow: 0,
         }
     }
 
     fn finish(mut self) -> Vec<Block> {
+        self.release_skip();
         while self.frames.len() > 1 {
             self.close_frame();
         }
@@ -74,25 +90,48 @@ impl Builder {
     }
 
     fn event(&mut self, event: Event) {
-        if self.skip_span > 0 {
-            match &event {
+        if let Some(skip) = &mut self.skip {
+            let held = match &event {
+                // Another preserved span means this one was never closed.
+                Event::InlineHtml(html) if preserved_span(html.trim()).is_some() => false,
                 Event::InlineHtml(html) => {
                     let tag = html.trim().to_ascii_lowercase();
                     if tag.starts_with("<span") {
-                        self.skip_span += 1;
+                        skip.depth += 1;
                     } else if tag == "</span>" {
-                        self.skip_span -= 1;
+                        skip.depth -= 1;
+                        if skip.depth == 0 {
+                            self.skip = None;
+                            return;
+                        }
                     }
-                    return;
+                    true
                 }
                 Event::Text(_)
                 | Event::Code(_)
                 | Event::SoftBreak
                 | Event::HardBreak
-                | Event::Start(Tag::Emphasis | Tag::Strong | Tag::Strikethrough)
-                | Event::End(TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough) => return,
-                _ => self.skip_span = 0,
+                | Event::Start(
+                    Tag::Emphasis
+                    | Tag::Strong
+                    | Tag::Strikethrough
+                    | Tag::Link { .. }
+                    | Tag::Image { .. },
+                )
+                | Event::End(
+                    TagEnd::Emphasis
+                    | TagEnd::Strong
+                    | TagEnd::Strikethrough
+                    | TagEnd::Link
+                    | TagEnd::Image,
+                ) => true,
+                _ => false,
+            };
+            if held {
+                skip.held.push(event.into_static());
+                return;
             }
+            self.release_skip();
         }
         match event {
             Event::Start(tag) => self.start(tag),
@@ -111,7 +150,36 @@ impl Builder {
         }
     }
 
+    /// Puts back what an unclosed preserved span held, less its fallback.
+    fn release_skip(&mut self) {
+        let Some(skip) = self.skip.take() else {
+            return;
+        };
+        let mut held = skip.held.into_iter().peekable();
+        let mut leading = String::new();
+        while let Some(Event::Text(text)) = held.peek() {
+            leading.push_str(text);
+            held.next();
+        }
+        let rest = leading
+            .strip_prefix(skip.fallback.as_str())
+            .unwrap_or(&leading);
+        if !rest.is_empty() {
+            self.text(&rest.to_string(), false);
+        }
+        for event in held {
+            self.event(event);
+        }
+    }
+
     fn start(&mut self, tag: Tag) {
+        let container = matches!(tag, Tag::BlockQuote(_) | Tag::List(_) | Tag::Item);
+        // A list needs room for its item as well.
+        let room = if matches!(tag, Tag::List(_)) { 2 } else { 1 };
+        if container && (self.overflow > 0 || self.frames.len() + room > MAX_DEPTH) {
+            self.overflow += 1;
+            return;
+        }
         match tag {
             Tag::Paragraph => self.open_block(Frame::Paragraph(Vec::new())),
             Tag::Heading { level, .. } => self.open_block(Frame::Heading(level as u8, Vec::new())),
@@ -151,6 +219,12 @@ impl Builder {
     }
 
     fn end(&mut self, tag: TagEnd) {
+        if self.overflow > 0
+            && matches!(tag, TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::Item)
+        {
+            self.overflow -= 1;
+            return;
+        }
         match tag {
             TagEnd::Paragraph
             | TagEnd::Heading(_)
@@ -233,6 +307,12 @@ impl Builder {
         match self.frames.last_mut() {
             Some(Frame::Paragraph(content) | Frame::Heading(_, content)) => content.push(inline),
             Some(Frame::Item { inlines, .. }) => inlines.push(inline),
+            // A tight item flattened past MAX_DEPTH: its text joins a
+            // paragraph in the parent.
+            Some(Frame::Container(blocks) | Frame::Quote(blocks)) => match blocks.last_mut() {
+                Some(Block::Paragraph(content)) => content.push(inline),
+                _ => blocks.push(Block::Paragraph(vec![inline])),
+            },
             Some(Frame::Image { alt, .. }) => {
                 if let Inline::Text { text, .. } = inline {
                     alt.push_str(&text);
@@ -270,8 +350,13 @@ impl Builder {
             "</del>" | "</s>" | "</strike>" => self.strike = self.strike.saturating_sub(1),
             _ => match preserved_span(tag) {
                 Some(preserved) => {
+                    let fallback = preserved.fallback_text();
                     self.push_inline(Inline::Preserved(preserved));
-                    self.skip_span = 1;
+                    self.skip = Some(Skip {
+                        depth: 1,
+                        fallback,
+                        held: Vec::new(),
+                    });
                 }
                 None => self.push_inline(Inline::Html(html.to_string())),
             },
@@ -1114,6 +1199,50 @@ mod tests {
         });
         let broken = render(&doc).replace("</span>", "");
         assert_eq!(parse(&broken), doc);
+    }
+
+    #[test]
+    fn missing_close_tag_keeps_the_text_after_the_span() {
+        let doc = normalize(Doc {
+            blocks: vec![para(vec![
+                plain("cc "),
+                Inline::Preserved(mention()),
+                plain(" please review the "),
+                strong("PR"),
+                plain(" and "),
+                Inline::Preserved(mention()),
+                plain(" today"),
+            ])],
+        });
+        let broken = render(&doc).replacen("</span>", "", 1);
+        assert_eq!(parse(&broken), doc, "{broken}");
+        let both = render(&doc).replace("</span>", "");
+        assert_eq!(parse(&both), doc, "{both}");
+    }
+
+    #[test]
+    fn edited_fallback_with_markup_is_ignored() {
+        let doc = normalize(Doc {
+            blocks: vec![para(vec![
+                plain("ping "),
+                Inline::Preserved(mention()),
+                plain(" now"),
+            ])],
+        });
+        let edited = render(&doc).replace(">@Alice<", ">@Alice and [Bob](https://x.test) `too`<");
+        assert_eq!(parse(&edited), doc);
+    }
+
+    #[test]
+    fn deep_nesting_is_flattened_not_fatal() {
+        for markdown in [
+            format!("{} x", ">".repeat(10_000)),
+            format!("{}x", "- ".repeat(5_000)),
+        ] {
+            let doc = parse(&markdown);
+            assert_eq!(render(&doc).matches('x').count(), 1);
+            assert_eq!(parse(&render(&doc)), doc);
+        }
     }
 
     #[test]

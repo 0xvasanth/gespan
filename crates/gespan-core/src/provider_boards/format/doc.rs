@@ -335,11 +335,15 @@ fn normalize_inlines(content: Vec<Inline>, heading: bool) -> Vec<Inline> {
                 }
             }
             Inline::HardBreak if heading => Inline::text(" ", Marks::plain()),
-            Inline::Image { src, alt, link } => Inline::Image {
-                src,
-                alt: collapse_whitespace(&alt).trim().to_string(),
-                link,
-            },
+            Inline::Image { src, alt, link } => {
+                let alt = collapse_whitespace(&alt).trim().to_string();
+                if src.is_empty() && alt.is_empty() {
+                    // Nothing to show or link to.
+                    Inline::text("", Marks::plain())
+                } else {
+                    Inline::Image { src, alt, link }
+                }
+            }
             other => other,
         })
         .collect();

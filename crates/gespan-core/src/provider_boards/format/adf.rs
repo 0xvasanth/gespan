@@ -336,7 +336,7 @@ fn render_inlines(content: &[Inline]) -> Vec<Value> {
             Inline::Image { src, alt, .. } => {
                 let text = if alt.is_empty() { src } else { alt };
                 let marks = Marks {
-                    link: Some(Link {
+                    link: (!src.is_empty()).then(|| Link {
                         href: src.clone(),
                         title: None,
                     }),
@@ -528,6 +528,12 @@ mod tests {
                 {"type": "text", "text": "https://x.test/e.png", "marks": link("https://x.test/e.png")},
             ]}]))
         );
+    }
+
+    #[test]
+    fn images_without_a_source_never_give_empty_text_or_links() {
+        assert_eq!(markdown_to_adf("a ![]() b"), adf(json!([paragraph("a b")])));
+        assert_eq!(markdown_to_adf("![alt]()"), adf(json!([paragraph("alt")])));
     }
 
     #[test]
