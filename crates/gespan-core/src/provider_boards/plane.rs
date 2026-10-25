@@ -58,7 +58,10 @@ impl HttpTransport {
 
 impl PlaneTransport for HttpTransport {
     fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<PlaneReply, String> {
-        let agent = ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build();
+        let agent = ureq::AgentBuilder::new()
+            .timeout(HTTP_TIMEOUT)
+            .redirects(0)
+            .build();
         let request = agent
             .request(method, &self.url(path))
             .set("X-API-Key", &self.config.api_key)
@@ -168,6 +171,16 @@ impl PlaneProvider {
         }
     }
 
+    /// Where a person opens the work item. Plane Cloud's API host differs from
+    /// its web host; a self-hosted site serves both from one origin.
+    fn web_url(&self, key: &str) -> String {
+        let origin = match self.config.base_url.as_str() {
+            "https://api.plane.so" => "https://app.plane.so",
+            other => other,
+        };
+        format!("{origin}/{}/browse/{key}/", self.config.workspace)
+    }
+
     fn workspace_path(&self, rest: &str) -> String {
         format!("/api/v1/workspaces/{}{rest}", self.config.workspace)
     }
@@ -190,6 +203,9 @@ impl PlaneProvider {
                 continue;
             }
             return match status {
+                // Redirects are never followed (the key would go along), so a
+                // 3xx means the base URL is not where Plane lives.
+                300..=399 => Err(remote("Plane redirected the request; check the base URL")),
                 200..=299 => Ok(reply),
                 401 | 403 => Err(ProviderError::Remote(
                     "Plane API key is invalid or has no access to this workspace".into(),
@@ -303,10 +319,7 @@ impl PlaneProvider {
             id: item.id.clone(),
             key: key.to_string(),
             title: str_field(raw, "name"),
-            url: format!(
-                "{}/{}/browse/{key}/",
-                self.config.base_url, self.config.workspace
-            ),
+            url: self.web_url(key),
             container_id: item.project_id.clone(),
             updated_at: str_field(raw, "updated_at"),
             state,
@@ -582,10 +595,7 @@ impl BoardProvider for PlaneProvider {
         )?;
         Ok(CommentRef {
             id: str_field(&created, "id"),
-            url: format!(
-                "{}/{}/browse/{key}/",
-                self.config.base_url, self.config.workspace
-            ),
+            url: self.web_url(&key),
         })
     }
 
@@ -802,6 +812,7 @@ mod tests {
         ]);
         let comment = plane.comment("PROJ-7", "**b**", None).unwrap();
         assert_eq!(comment.id, "comment-1");
+        assert_eq!(comment.url, "https://plane.example.com/acme/browse/PROJ-7/");
 
         let requests = transport.requests();
         let (method, path, body) = &requests[1];
@@ -819,7 +830,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(html.contains("a<br"), "{html}");
-        assert!(html.contains("b"), "{html}");
+        assert!(html.split_once("a<br").unwrap().1.contains('b'), "{html}");
     }
 
     #[test]
@@ -981,6 +992,84 @@ mod tests {
             transport.url("/api/v1/users/me/"),
             "https://plane.example.com/api/v1/users/me/"
         );
+    }
+
+    fn provider_at(base_url: &str) -> PlaneProvider {
+        PlaneProvider::new(base_url, "acme", "key").unwrap()
+    }
+
+    #[test]
+    fn web_url_uses_the_app_host_on_plane_cloud_only() {
+        let cases = [
+            (
+                "https://api.plane.so",
+                "https://app.plane.so/acme/browse/PROJ-7/",
+            ),
+            (
+                "https://plane.example.com",
+                "https://plane.example.com/acme/browse/PROJ-7/",
+            ),
+            (
+                "http://localhost:8000",
+                "http://localhost:8000/acme/browse/PROJ-7/",
+            ),
+        ];
+        for (base, expected) in cases {
+            assert_eq!(provider_at(base).web_url("PROJ-7"), expected, "{base}");
+        }
+    }
+
+    #[test]
+    fn a_redirect_is_an_error_and_is_not_followed() {
+        let (plane, transport, sleeps) = scripted(vec![Ok((
+            302,
+            vec![("location".into(), "http://evil.example/steal".into())],
+            Value::Null,
+        ))]);
+        let error = plane.whoami().unwrap_err();
+        assert_eq!(
+            error,
+            ProviderError::Remote("Plane redirected the request; check the base URL".into())
+        );
+        assert!(!error.to_string().contains("evil"));
+        assert_eq!(transport.requests().len(), 1);
+        assert!(sleeps.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_http_transport_does_not_follow_redirects() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            listener.set_nonblocking(false).unwrap();
+            // The redirect target is this same server: a follower would call back.
+            let (mut first, _) = listener.accept().unwrap();
+            let mut buffer = [0u8; 4096];
+            let read = first.read(&mut buffer).unwrap();
+            seen.push(String::from_utf8_lossy(&buffer[..read]).to_string());
+            first
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            drop(first);
+            listener.set_nonblocking(true).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+            (seen, listener.accept().is_ok())
+        });
+        let plane = provider_at(&format!("http://127.0.0.1:{port}"));
+        let error = plane.whoami().unwrap_err();
+        assert_eq!(
+            error,
+            ProviderError::Remote("Plane redirected the request; check the base URL".into())
+        );
+        let (seen, followed) = server.join().unwrap();
+        assert!(!followed, "the redirect was followed");
+        assert!(seen[0].to_ascii_lowercase().contains("x-api-key: key"));
     }
 
     #[test]

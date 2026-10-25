@@ -312,7 +312,10 @@ fn graphql_with_authorization(
     query: &str,
     variables: Value,
 ) -> Result<Value, String> {
-    let agent = ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(HTTP_TIMEOUT)
+        .redirects(0)
+        .build();
     let payload = serde_json::to_string(&json!({ "query": query, "variables": variables }))
         .map_err(|error| error.to_string())?;
     let result = agent

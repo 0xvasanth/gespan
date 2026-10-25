@@ -301,7 +301,10 @@ fn jira_authorization(config: &JiraConfig) -> String {
 }
 
 fn jira_get(config: &JiraConfig, path: &str) -> Result<Value, String> {
-    let agent = ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(HTTP_TIMEOUT)
+        .redirects(0)
+        .build();
     let result = agent
         .get(&format!("{}{path}", config.site))
         .set("Authorization", &jira_authorization(config))
@@ -311,7 +314,10 @@ fn jira_get(config: &JiraConfig, path: &str) -> Result<Value, String> {
 }
 
 fn jira_post(config: &JiraConfig, path: &str, body: &Value) -> Result<Value, String> {
-    let agent = ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(HTTP_TIMEOUT)
+        .redirects(0)
+        .build();
     let payload = serde_json::to_string(body).map_err(|error| error.to_string())?;
     let result = agent
         .post(&format!("{}{path}", config.site))
