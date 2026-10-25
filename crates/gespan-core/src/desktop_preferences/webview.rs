@@ -170,7 +170,10 @@ impl DesktopPreferences {
         // input. Keep the database and its iterators inside the unwind boundary:
         // a best-effort copy must fail like an I/O error, not terminate startup.
         std::panic::catch_unwind(|| Self::open_chromium_localstorage(staging.path()))
-            .unwrap_or_else(|_| Err("WebView2 localStorage is damaged or incomplete".into()))
+            .unwrap_or_else(|payload| {
+                crate::diagnostics::log_caught_panic("WebView2 localStorage", &*payload);
+                Err("WebView2 localStorage is damaged or incomplete".into())
+            })
     }
 
     #[cfg(any(windows, test))]
@@ -549,7 +552,18 @@ mod tests {
             }
             assert!(tables > 0);
             let before = snapshot_leveldb(&path);
-            assert!(DesktopPreferences::read_chromium_localstorage(&path).is_err());
+            let mut read = Ok(DesktopPreferences::default());
+            let logged = crate::diagnostics::test_capture(|| {
+                read = DesktopPreferences::read_chromium_localstorage(&path);
+            });
+            assert!(read.is_err());
+            // The reader's panic is caught, and logged rather than dropped.
+            let warning = logged
+                .iter()
+                .find(|line| line["level"] == "warn")
+                .expect("the caught panic is logged at warn");
+            assert_eq!(warning["fields"]["what"], "WebView2 localStorage");
+            assert!(!warning["fields"]["panic"].as_str().unwrap().is_empty());
 
             let preferences = DesktopPreferences::load_webview2_from(root.path());
             assert!(!preferences.is_available());
