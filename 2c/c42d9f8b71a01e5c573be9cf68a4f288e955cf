@@ -1,0 +1,30 @@
+crates/gespan-core/src/diagnostics/mod.rs
+  s_d3e103518690a2::t_bad5edafc2af1e 101-102
+  s_d3e103518690a2::t_e12208f1e94f92 18,91-94,96-98
+  s_d3e103518690a2::t_672b8a5d04cf15 95
+  s_d3e103518690a2::t_05d440e0a8c81d 99-100
+crates/gespan-core/tests/diagnostics_panic.rs
+  s_d3e103518690a2::t_df2b8610d59a13 3-8,18-45,48-54,90-118,128-137
+  s_d3e103518690a2::t_c8d40803a680cc 55,57-58
+crates/gespan-core/src/diagnostics/panic.rs
+  s_d3e103518690a2::t_672b8a5d04cf15 7,12-30,80-84
+  s_d3e103518690a2::t_c45540195e20a6 112
+crates/gespan-core/src/desktop_preferences/webview.rs
+  s_d3e103518690a2::t_bad5edafc2af1e 172-175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2cc42d9f8b71a01e5c573be9cf68a4f288e955cf",
+  "prompts": {},
+  "sessions": {
+    "s_d3e103518690a2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34c2fa24-ecff-4a6f-9e96-30c0a62d3b0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
