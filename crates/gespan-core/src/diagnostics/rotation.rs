@@ -164,7 +164,10 @@ impl<C: Clock> Write for DailyFile<C> {
             self.prune(0);
         }
         let len = buf.len() as u64;
-        if !self.fits(len) && !self.pruned_out {
+        // Today's file is never pruned, so a line too big for the budget even
+        // beside it alone is dropped without deleting older days for nothing.
+        let could_fit = self.size + len <= self.max_bytes;
+        if !self.fits(len) && !self.pruned_out && could_fit {
             self.prune(len);
             self.pruned_out = !self.fits(len);
         }
@@ -425,6 +428,27 @@ mod tests {
         assert_eq!(
             std::fs::read(dir.path().join(file_name(day(25)))).unwrap(),
             expected
+        );
+    }
+
+    #[test]
+    fn a_line_that_can_never_fit_keeps_the_history() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in 22..=24 {
+            seed(dir.path(), day(n), 10);
+        }
+        let mut file =
+            DailyFile::new(dir.path().into(), FakeClock::at(day(25)), MAX_DAYS, 100).unwrap();
+        file.write_all(&[b'a'; 20]).unwrap();
+        // 20 + 90 is over 100 even with every older day gone: drop the line,
+        // and don't delete the week's history for it.
+        assert_eq!(file.write(&[b'b'; 90]).unwrap(), 90);
+        assert_eq!(names(dir.path()).len(), 4);
+        // A line that fits once the oldest day goes still prunes it.
+        file.write_all(&[b'c'; 60]).unwrap();
+        assert_eq!(
+            names(dir.path()),
+            [file_name(day(23)), file_name(day(24)), file_name(day(25))]
         );
     }
 
