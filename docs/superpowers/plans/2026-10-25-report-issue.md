@@ -47,7 +47,7 @@ form encoding, Vitest only for `legacyNames`.
 - **Toast event ids.** The JSON layer keeps the last 32 `error` lines' `(Instant, event_id)`. When an app error toast first appears, the shell snapshots the ids logged in the 10 s before it; "Report" on that toast passes them as `event_ids` and prefills the title with the toast text.
 - **Help menu** is added to the existing app menu bar (`file_editor::menus`), as `Help → Report an issue…`.
 - **Removing things from the preview** is per entry (logs, each crash record, environment, counters), not per line.
-- **Long URLs.** GitHub rejects very long URLs; the description, then the steps, are cut so the URL stays ≤ 8,000 bytes, ending in `… (cut; see the attached zip)`. The zip still has the full text.
+- **Long URLs.** GitHub rejects very long URLs; the steps, then the description, are cut so the URL stays ≤ 8,000 bytes, ending in `… (cut; see the attached zip)`. The zip still has the full text.
 - **Locale** from `LC_ALL`/`LC_MESSAGES`/`LANG`, else macOS `AppleLocale`, as BCP 47 (`en_GB.UTF-8` → `en-GB`); `und` when unknown. **OS version** from `sw_vers -productVersion` / `/etc/os-release` `VERSION_ID` / `cmd /c ver`; `unknown` on failure.
 - **Build channel:** `Channel::Dev` → `dev`; release data with `-preview` in the version → `preview`; else `release`.
 
