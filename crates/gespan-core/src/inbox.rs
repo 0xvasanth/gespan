@@ -1091,7 +1091,10 @@ mod secret_tests {
 
         for provider in ["linear", "jira", "gitlab", "azuredevops"] {
             let status = service.status(provider);
-            assert!(!status.as_ref().unwrap().connected, "{provider}: {status:?}");
+            assert!(
+                !status.as_ref().unwrap().connected,
+                "{provider}: {status:?}"
+            );
         }
     }
 
