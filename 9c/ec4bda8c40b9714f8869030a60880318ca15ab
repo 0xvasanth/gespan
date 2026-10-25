@@ -1,0 +1,46 @@
+src/features/board/model/boardFilter.ts
+  s_938a6e0c93b076::t_5a23492fe05428 1-94
+src/features/board/ui/BoardFilter.tsx
+  s_938a6e0c93b076::t_d2e15224075673 1,5-10,28
+  s_938a6e0c93b076::t_81ac1d56f678af 2-4,11-27,29-147
+src/features/board/model/boardFilter.test.ts
+  s_938a6e0c93b076::t_1ee99696f6931a 6,163-182
+  s_938a6e0c93b076::t_4f771024ecb7db 1-5,7-11,17-38,45,49-62,69-70,77-82,88-90,94-96,129-162,183-184
+  s_938a6e0c93b076::t_7915721af8d871 12-16,39-44,46-48,63-68,71-76,83-87,91-93,97-128
+src/features/board/ui/boardFormat.test.ts
+  s_938a6e0c93b076::t_cd93b172523dbf 5,166-171,184-187,191-194,199,204
+  s_938a6e0c93b076::t_7915721af8d871 172-183,188-190,195-198,200-203
+  s_938a6e0c93b076::t_ebf894db76c33b 205
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_d2e15224075673 13,26,28,39-40,43-50,54,74,124-125,137,171,181-185,193-196,254,258-260,265-266,305-309,369-396,398,401-414,507-511,518-519,528,531-537,662-690,722,724
+src/features/board/ui/BoardColumnHeader.tsx
+  s_938a6e0c93b076::t_81ac1d56f678af 23,31,33-34,70
+src/features/board/ui/boardControls.tsx
+  s_938a6e0c93b076::t_81ac1d56f678af 50,56,62-63,86
+src/features/board/ui/BoardCardItem.tsx
+  s_938a6e0c93b076::t_d2e15224075673 10,13-14,20,23,40-92,136-137,149-151,201-218,222
+src/features/board/ui/boardFormat.ts
+  s_938a6e0c93b076::t_cd93b172523dbf 154-200
+src/app/App.tsx
+  s_938a6e0c93b076::t_d2e15224075673 13996-14007,14894
+src/features/board/ui/BoardView.test.ts
+  s_938a6e0c93b076::t_38738610e12bb7 14-15,78-87,152-153,190,859,913,916,930,937,945,1115
+  s_938a6e0c93b076::t_7915721af8d871 653-657,860-912,914-915,917-929,931-936,938-944,946-1114,1116-1128
+  s_938a6e0c93b076::t_2af75566e3ab90 1129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9cec4bda8c40b9714f8869030a60880318ca15ab",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
