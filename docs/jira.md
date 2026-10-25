@@ -26,5 +26,8 @@ Credentials are stored in the OS keychain (macOS Keychain, Windows Credential
 Manager, or the Secret Service on Linux), under the service `dev.gespan.trackers`.
 The Tauri app and Gespan Native read the same entry. A `jira-config.json` file
 saved by an earlier version is moved into the keychain the first time it is
-read and then deleted. If the keychain refuses the write, the file is kept so
-Jira stays connected, and the move is tried again on the next read.
+read and then deleted. If the keychain is locked or unavailable, the file is
+kept so Jira stays connected, and the move is tried again on the next read.
+On macOS, the first time the other app (or an updated build) reads the entry,
+macOS may ask whether Gespan can use it; choose **Always Allow**. On Linux,
+saving needs a running Secret Service such as GNOME Keyring or KWallet.
