@@ -311,7 +311,10 @@ mod tests {
             provider: ProviderKind::Linear,
             operation: "create_issue",
         };
-        assert_eq!(error.to_string(), "Linear does not support create_issue yet");
+        assert_eq!(
+            error.to_string(),
+            "Linear does not support create_issue yet"
+        );
         let error = ProviderError::NotSupported {
             provider: ProviderKind::Jira,
             operation: "sync_since",
@@ -322,7 +325,10 @@ mod tests {
     #[test]
     fn string_errors_become_remote() {
         let error = ProviderError::from("Linear API key is invalid".to_string());
-        assert_eq!(error, ProviderError::Remote("Linear API key is invalid".into()));
+        assert_eq!(
+            error,
+            ProviderError::Remote("Linear API key is invalid".into())
+        );
         assert_eq!(error.to_string(), "Linear API key is invalid");
         assert_eq!(ProviderError::InvalidInput("bad".into()).to_string(), "bad");
     }

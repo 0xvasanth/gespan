@@ -55,3 +55,6 @@ pub trait BoardProvider: Send + Sync {
         body: &[u8],
     ) -> ProviderResult<Vec<ChangeHint>>;
 }
+
+#[cfg(test)]
+pub(crate) mod fake;
