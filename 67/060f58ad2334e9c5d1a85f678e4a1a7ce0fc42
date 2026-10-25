@@ -1,0 +1,39 @@
+crates/gespan-core/src/provider_boards/format/corpus_tests.rs
+  s_d442e8c893e086::t_12af2de3fcb303 100-101
+  s_d442e8c893e086::t_812c50e7a7b082 1-99,102-148
+  s_d442e8c893e086::t_a14a36d6edccdd 149-208
+crates/gespan-core/src/provider_boards/format/fixtures/jira/bug-report.json
+  s_d442e8c893e086::t_4ed39e7766dbd5 1-419
+crates/gespan-core/src/provider_boards/format/fixtures/plane/editor-output.html
+  s_d442e8c893e086::t_4ed39e7766dbd5 1-3
+crates/gespan-core/src/provider_boards/format/fixtures/jira/empty.json
+  s_d442e8c893e086::t_4ed39e7766dbd5 1-5
+crates/gespan-core/src/provider_boards/format/fixtures/jira/media-and-cards.json
+  s_d442e8c893e086::t_4ed39e7766dbd5 1-142
+crates/gespan-core/src/provider_boards/format/fixtures/plane/empty.html
+  s_d442e8c893e086::t_4ed39e7766dbd5 1
+crates/gespan-core/src/provider_boards/format/fixtures/markdown/bug-note.md
+  s_d442e8c893e086::t_4ed39e7766dbd5 1-8
+crates/gespan-core/src/provider_boards/format/mod.rs
+  s_d442e8c893e086::t_12af2de3fcb303 10-11
+crates/gespan-core/src/provider_boards/format/fixtures/markdown/agent-pr.md
+  s_d442e8c893e086::t_4ed39e7766dbd5 1-19
+crates/gespan-core/src/provider_boards/format/fixtures/jira/feature-request.json
+  s_d442e8c893e086::t_4ed39e7766dbd5 1-243
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67060f58ad2334e9c5d1a85f678e4a1a7ce0fc42",
+  "prompts": {},
+  "sessions": {
+    "s_d442e8c893e086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39204e63-7ce9-4a40-a71a-ce641b8dbf8e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
