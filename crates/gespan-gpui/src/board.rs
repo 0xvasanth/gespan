@@ -9,6 +9,7 @@ mod drop;
 mod header;
 mod keyboard;
 mod markdown_toolbar;
+mod new_card;
 mod quick;
 pub(crate) mod style;
 mod switcher;
@@ -50,6 +51,11 @@ pub(crate) const ROLES: [(&str, &str); 4] = [
     ("review", "Review"),
     ("done", "Done"),
 ];
+
+/// The board's own keys (⌘N for a new card).
+pub(crate) fn bind(cx: &mut App) {
+    new_card::bind(cx);
+}
 
 pub(crate) enum Event {
     Close,
@@ -156,6 +162,7 @@ pub(crate) struct BoardView {
     ticket_requests: HashMap<String, (u64, Tracker, String)>,
     ticket_sequence: u64,
     pub(crate) composer: Option<Composer>,
+    new_card: Option<new_card::NewCard>,
     pub(crate) card_detail: Option<detail::CardDetail>,
     menu: Option<Menu>,
     renaming: Option<(Renaming, Entity<Input>)>,
@@ -275,6 +282,7 @@ impl BoardView {
             ticket_requests: HashMap::new(),
             ticket_sequence: 0,
             composer: None,
+            new_card: None,
             card_detail: None,
             menu: None,
             renaming: None,
@@ -341,6 +349,7 @@ impl BoardView {
         self.visible = false;
         self.cancel_keyboard_drag(cx);
         self.composer = None;
+        self.new_card = None;
         self.menu = None;
         self.card_menu = None;
         self.renaming = None;
@@ -942,7 +951,7 @@ impl BoardView {
         cx.notify();
     }
 
-    fn on_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.key != "escape" {
             return;
         }
@@ -954,7 +963,8 @@ impl BoardView {
             return;
         }
         // Innermost first: transient editors and menus, then the drawer.
-        if self.composer.take().is_some()
+        if self.close_new_card(Some(window), cx)
+            || self.composer.take().is_some()
             || std::mem::take(&mut self.filter_open)
             || std::mem::take(&mut self.open_in_open)
             || self.switcher.take().is_some()
@@ -1206,21 +1216,37 @@ use gpui::AnyElement;
 impl gpui::Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.forget_finished_drag(cx);
-        let root = div()
-            .id("board-view")
-            .debug_selector(|| "board-view".into())
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| this.on_key(event, cx)))
-            .on_mouse_up(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    if this.dragging {
-                        this.end_drag(cx);
-                    }
-                }),
-            )
-            .size_full()
-            .flex();
+        let root =
+            div()
+                .id("board-view")
+                .key_context("Board")
+                .debug_selector(|| "board-view".into())
+                .track_focus(&self.focus)
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    this.on_key(event, window, cx)
+                }))
+                .on_action(cx.listener(|this, _: &new_card::OpenNewCard, window, cx| {
+                    this.open_new_card(window, cx)
+                }))
+                .on_action(
+                    cx.listener(|this, _: &new_card::SubmitNewCard, window, cx| {
+                        if this.new_card.is_some() {
+                            this.submit_new_card(window, cx);
+                        } else {
+                            cx.propagate();
+                        }
+                    }),
+                )
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        if this.dragging {
+                            this.end_drag(cx);
+                        }
+                    }),
+                )
+                .size_full()
+                .flex();
         let error = self
             .error
             .clone()
@@ -1270,6 +1296,7 @@ impl gpui::Render for BoardView {
         let switcher = self.render_switcher(cx);
         let archive = self.render_archive(cx);
         let undo_toast = self.render_undo_toast(cx);
+        let new_card = self.render_new_card(cx);
         let full_page = self.card_detail.as_ref().is_some_and(|d| d.full_page());
         let board = div()
             .flex_1()
@@ -1313,5 +1340,6 @@ impl gpui::Render for BoardView {
             .children(menu)
             .children(card_menu)
             .children(undo_toast)
+            .children(new_card)
     }
 }

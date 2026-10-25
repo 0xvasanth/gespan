@@ -45,6 +45,7 @@ struct Fixture {
 fn open(cx: &mut TestAppContext) -> Fixture {
     cx.update(crate::input::bind);
     cx.update(crate::popover::bind);
+    cx.update(new_card::bind);
     cx.update(|cx| cx.set_reduce_motion(true));
     let dir = Scratch::new();
     let db = dir.0.join("gespan.db");
@@ -4177,4 +4178,415 @@ fn archive_and_delete_from_more_menu_show_undo(cx: &mut TestAppContext) {
     click(visual, "board-undo");
     assert!(archived_ids(&f, visual).is_empty());
     assert!(card_exists(&f, &b));
+}
+
+// ---- New card modal (⌘N) ----
+
+const MOD: &str = if cfg!(target_os = "macos") {
+    "cmd"
+} else {
+    "ctrl"
+};
+
+fn focus_board(f: &Fixture, cx: &mut VisualTestContext) {
+    f.window
+        .update(cx, |view, window, cx| window.focus(&view.focus, cx))
+        .unwrap();
+    cx.run_until_parked();
+}
+
+fn modal_open(f: &Fixture, cx: &mut VisualTestContext) -> bool {
+    f.window
+        .read_with(cx, |view, _| view.new_card.is_some())
+        .unwrap()
+}
+
+fn open_modal(f: &Fixture, visual: &mut VisualTestContext) {
+    focus_board(f, visual);
+    visual.simulate_keystrokes(&format!("{MOD}-n"));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(modal_open(f, visual), "{MOD}-n did not open the modal");
+}
+
+fn new_card_text(f: &Fixture, cx: &mut VisualTestContext) -> (String, String) {
+    f.window
+        .read_with(cx, |view, cx| {
+            let form = view.new_card.as_ref().unwrap();
+            (
+                form.title.read(cx).content.to_string(),
+                form.description.read(cx).content.to_string(),
+            )
+        })
+        .unwrap()
+}
+
+fn cards_titled(f: &Fixture, title: &str) -> Vec<gespan_core::board::Card> {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    service
+        .get(&board.id)
+        .unwrap()
+        .cards
+        .into_iter()
+        .filter(|card| card.title == title)
+        .collect()
+}
+
+fn card_count(f: &Fixture) -> usize {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    service.get(&board.id).unwrap().cards.len()
+}
+
+#[gpui::test]
+fn cmd_n_opens_the_new_card_modal_on_the_board(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    assert!(!modal_open(&f, visual));
+    open_modal(&f, visual);
+    assert!(shown(visual, "new-card"));
+    // The title takes the keys at once.
+    visual.simulate_input("Hello");
+    assert_eq!(new_card_text(&f, visual).0, "Hello");
+    // Pressing it again does not stack a second modal or lose the text.
+    visual.simulate_keystrokes(&format!("{MOD}-n"));
+    assert_eq!(new_card_text(&f, visual).0, "Hello");
+}
+
+#[gpui::test]
+fn the_default_column_is_the_first_todo_column_else_the_first(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let mut columns = detail(&f, cx).columns;
+    for column in &mut columns {
+        column.role = None;
+    }
+    assert_eq!(
+        new_card::default_column(&columns),
+        Some(columns[0].id.clone())
+    );
+    columns[2].role = Some("todo".into());
+    columns[3].role = Some("todo".into());
+    assert_eq!(
+        new_card::default_column(&columns),
+        Some(columns[2].id.clone())
+    );
+    assert_eq!(new_card::default_column(&[]), None);
+}
+
+#[gpui::test]
+fn cmd_n_in_the_search_box_opens_the_modal_without_typing(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    f.window
+        .update(visual, |view, window, cx| {
+            let focus = view.search.focus_handle(cx);
+            window.focus(&focus, cx)
+        })
+        .unwrap();
+    visual.simulate_input("ab");
+    visual.simulate_keystrokes(&format!("{MOD}-n"));
+    visual.run_until_parked();
+    assert!(modal_open(&f, visual));
+    f.window
+        .read_with(visual, |view, cx| {
+            assert_eq!(view.search.read(cx).content.as_ref(), "ab");
+        })
+        .unwrap();
+    assert_eq!(new_card_text(&f, visual), (String::new(), String::new()));
+}
+
+/// A stand-in for the shell: a `Workspace` context that owns ⌘N, with the
+/// board inside it.
+struct Workspace {
+    board: gpui::Entity<BoardView>,
+    focus: gpui::FocusHandle,
+    new_codex: Rc<AtomicUsize>,
+}
+impl gpui::Render for Workspace {
+    fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let count = self.new_codex.clone();
+        gpui::div()
+            .size_full()
+            .key_context("Workspace")
+            .track_focus(&self.focus)
+            .on_action(cx.listener(move |_, _: &crate::shell::NewCodex, _, _| {
+                count.fetch_add(1, Ordering::Relaxed);
+            }))
+            .child(self.board.clone())
+    }
+}
+
+#[gpui::test]
+fn the_workspace_new_codex_shortcut_still_works_outside_the_board(cx: &mut TestAppContext) {
+    cx.update(crate::input::bind);
+    cx.update(crate::popover::bind);
+    cx.update(crate::shell::bind_keys);
+    cx.update(new_card::bind);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let dir = Scratch::new();
+    let db = dir.0.join("gespan.db");
+    let store: crate::runtime::Database = Arc::new(Mutex::new(
+        Store::open_gespan(Path::new(":memory:")).unwrap(),
+    ));
+    let new_codex = Rc::new(AtomicUsize::new(0));
+    let count = new_codex.clone();
+    let window = cx.update(|cx| {
+        cx.open_window(WindowOptions::default(), |window, cx| {
+            let board = cx.new(|cx| BoardView::new(store, db, window, cx));
+            board.update(cx, |board, cx| board.shown(cx));
+            cx.new(|cx| Workspace {
+                board,
+                focus: cx.focus_handle(),
+                new_codex: count,
+            })
+        })
+        .unwrap()
+    });
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    // Focus on the workspace itself: the shell shortcut wins.
+    window
+        .update(visual, |view, window, cx| window.focus(&view.focus, cx))
+        .unwrap();
+    visual.simulate_keystrokes(&format!("{MOD}-n"));
+    assert_eq!(new_codex.load(Ordering::Relaxed), 1);
+    let board = window
+        .read_with(visual, |view, _| view.board.clone())
+        .unwrap();
+    assert!(board.read_with(visual, |board, _| board.new_card.is_none()));
+    // Focus inside the board: the board's binding wins and the shell is silent.
+    let board_focus = board.read_with(visual, |board, _| board.focus.clone());
+    window
+        .update(visual, |_, window, cx| window.focus(&board_focus, cx))
+        .unwrap();
+    visual.simulate_keystrokes(&format!("{MOD}-n"));
+    assert_eq!(new_codex.load(Ordering::Relaxed), 1);
+    assert!(board.read_with(visual, |board, _| board.new_card.is_some()));
+}
+
+#[gpui::test]
+fn title_is_required(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_modal(&f, visual);
+    assert!(!shown(visual, "new-card-title-error"));
+    visual.simulate_keystrokes(&format!("{MOD}-enter"));
+    visual.refresh().unwrap();
+    assert!(modal_open(&f, visual));
+    assert!(shown(visual, "new-card-title-error"));
+    assert_eq!(card_count(&f), 0);
+    // Spaces are not a title.
+    visual.simulate_input("   ");
+    click(visual, "new-card-create");
+    assert!(shown(visual, "new-card-title-error"));
+    assert_eq!(card_count(&f), 0);
+    // Typing a title clears the message, and the card is made.
+    visual.simulate_input("Real");
+    visual.refresh().unwrap();
+    assert!(!shown(visual, "new-card-title-error"));
+    click(visual, "new-card-create");
+    assert!(!modal_open(&f, visual));
+    assert_eq!(cards_titled(&f, "Real").len(), 1);
+}
+
+fn pick(visual: &mut VisualTestContext, opener: &'static str, row: &'static str) {
+    click(visual, opener);
+    click(visual, row);
+}
+
+#[gpui::test]
+fn cmd_enter_submits_and_sets_every_field(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let board = detail(&f, cx);
+    let review = board.columns[2].id.clone();
+    let bug = {
+        let mut service = Service::open(&f.db).unwrap();
+        service
+            .create_label(&board.board.id, "Bug", "e5534b")
+            .unwrap()
+    };
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    f.window
+        .update(visual, |view, _, cx| view.reload(cx))
+        .unwrap();
+    f.window
+        .update(visual, |view, _, cx| {
+            view.set_projects(
+                vec![
+                    ("/work/a".into(), "Alpha".into()),
+                    ("/work/b".into(), "Beta".into()),
+                ],
+                cx,
+            )
+        })
+        .unwrap();
+    open_modal(&f, visual);
+    visual.simulate_input("  Ship it  ");
+    pick(visual, "new-card-column", "menu-action-column-2");
+    pick(visual, "new-card-priority", "menu-action-priority-3");
+    pick(visual, "new-card-due", "menu-action-due-tomorrow");
+    click(visual, "new-card-labels");
+    click(visual, selector(format!("menu-action-label-{}", bug.id)));
+    // A multi-toggle stays open for the next pick.
+    assert!(shown(
+        visual,
+        selector(format!("menu-action-label-{}", bug.id))
+    ));
+    visual.simulate_keystrokes("escape");
+    click(visual, "new-card-projects");
+    click(visual, "menu-action-project-0");
+    click(visual, "menu-action-project-1");
+    click(visual, "menu-action-project-0");
+    visual.simulate_keystrokes("escape");
+    assert!(
+        modal_open(&f, visual),
+        "Escape closed a menu, not the modal"
+    );
+    click(visual, "new-card-description");
+    visual.simulate_input("Line one");
+    visual.simulate_keystrokes("shift-enter");
+    visual.simulate_input("Line two");
+    visual.simulate_keystrokes(&format!("{MOD}-enter"));
+    visual.run_until_parked();
+    assert!(!modal_open(&f, visual));
+    let cards = cards_titled(&f, "Ship it");
+    assert_eq!(cards.len(), 1);
+    let card = &cards[0];
+    assert_eq!(card.column_id, review);
+    assert_eq!(card.body, "Line one\nLine two");
+    let extras = extras_of(&f, &card.id);
+    assert_eq!(extras.priority, 3);
+    assert_eq!(extras.labels, [bug.id]);
+    assert_eq!(extras.projects, ["/work/b"]);
+    let tomorrow = chrono::Local::now()
+        .date_naive()
+        .checked_add_days(chrono::Days::new(1))
+        .unwrap();
+    assert_eq!(extras.due_at, super::style::day_start(tomorrow));
+}
+
+#[gpui::test]
+fn a_typed_due_date_is_used_and_a_bad_one_writes_nothing(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_modal(&f, visual);
+    visual.simulate_input("Dated");
+    pick(visual, "new-card-due", "menu-action-due-pick");
+    visual.simulate_input("not a date");
+    click(visual, "new-card-create");
+    assert!(modal_open(&f, visual));
+    assert!(shown(visual, "new-card-error"));
+    assert_eq!(card_count(&f), 0);
+    // Correct it in the same field.
+    f.window
+        .update(visual, |view, _, cx| {
+            let date = view.new_card.as_ref().unwrap().date.clone();
+            date.update(cx, |input, cx| input.set_text("2026-11-02".into(), cx));
+        })
+        .unwrap();
+    visual.simulate_keystrokes(&format!("{MOD}-enter"));
+    visual.run_until_parked();
+    assert!(!modal_open(&f, visual));
+    let card = &cards_titled(&f, "Dated")[0];
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+    assert_eq!(extras_of(&f, &card.id).due_at, super::style::day_start(day));
+}
+
+#[gpui::test]
+fn create_more_keeps_the_modal_open_with_fields_kept(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_modal(&f, visual);
+    click(visual, "new-card-more");
+    visual.simulate_input("First");
+    pick(visual, "new-card-column", "menu-action-column-1");
+    pick(visual, "new-card-priority", "menu-action-priority-4");
+    click(visual, "new-card-description");
+    visual.simulate_input("Notes");
+    visual.simulate_keystrokes(&format!("{MOD}-enter"));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(modal_open(&f, visual), "create more closed the modal");
+    assert_eq!(cards_titled(&f, "First").len(), 1);
+    assert_eq!(new_card_text(&f, visual), (String::new(), String::new()));
+    // The other fields stay, and the title has the keys again.
+    visual.simulate_input("Second");
+    assert_eq!(new_card_text(&f, visual).0, "Second");
+    visual.simulate_keystrokes(&format!("{MOD}-enter"));
+    visual.run_until_parked();
+    let board = detail(&f, visual);
+    let (first, second) = (
+        &cards_titled(&f, "First")[0],
+        &cards_titled(&f, "Second")[0],
+    );
+    assert_eq!(second.column_id, board.columns[1].id);
+    assert_eq!(second.column_id, first.column_id);
+    assert_eq!(extras_of(&f, &second.id).priority, 4);
+    assert_eq!(extras_of(&f, &first.id).priority, 4);
+    assert!(modal_open(&f, visual));
+    // Unticked, the next create closes it.
+    click(visual, "new-card-more");
+    visual.simulate_input("Third");
+    visual.simulate_keystrokes(&format!("{MOD}-enter"));
+    visual.run_until_parked();
+    assert!(!modal_open(&f, visual));
+    assert_eq!(card_count(&f), 3);
+}
+
+#[gpui::test]
+fn escape_closes_the_modal_without_creating_or_closing_the_board(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let (closed, _events) = events(&f, visual);
+    open_modal(&f, visual);
+    visual.simulate_input("Draft");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(!modal_open(&f, visual));
+    assert_eq!(card_count(&f), 0);
+    assert!(closed.borrow().is_empty(), "Escape also closed the board");
+    // Cancel does the same, and a reopened modal starts fresh.
+    open_modal(&f, visual);
+    assert_eq!(new_card_text(&f, visual).0, "");
+    click(visual, "new-card-cancel");
+    assert!(!modal_open(&f, visual));
+}
+
+#[gpui::test]
+fn a_failed_setter_keeps_the_created_card_and_says_so(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_modal(&f, visual);
+    visual.simulate_input("Odd");
+    f.window
+        .update(visual, |view, _, _| {
+            view.new_card.as_mut().unwrap().labels = vec!["no-such-label".into()];
+        })
+        .unwrap();
+    visual.simulate_keystrokes(&format!("{MOD}-enter"));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    // The card exists exactly once, the modal closed (Create more is off), and
+    // the board says what was not saved.
+    assert_eq!(cards_titled(&f, "Odd").len(), 1);
+    assert!(!modal_open(&f, visual));
+    assert!(shown(visual, "board-error"));
+    // With Create more on, the modal stays and shows it inside.
+    open_modal(&f, visual);
+    click(visual, "new-card-more");
+    visual.simulate_input("Odd two");
+    f.window
+        .update(visual, |view, _, _| {
+            view.new_card.as_mut().unwrap().labels = vec!["no-such-label".into()];
+        })
+        .unwrap();
+    visual.simulate_keystrokes(&format!("{MOD}-enter"));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert_eq!(cards_titled(&f, "Odd two").len(), 1);
+    assert!(modal_open(&f, visual));
+    assert!(shown(visual, "new-card-error"));
+    // A retry would need a new title: the modal never re-sends the old card.
+    assert_eq!(new_card_text(&f, visual).0, "");
 }

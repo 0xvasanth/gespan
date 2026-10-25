@@ -99,6 +99,7 @@ impl BoardView {
         self.card_menu = None;
         self.menu = None;
         self.composer = None;
+        self.new_card = None;
         self.renaming = None;
     }
 

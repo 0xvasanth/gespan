@@ -462,6 +462,7 @@ fn main() {
             composer_completion::bind(cx);
             file_editor::bind(cx);
             popover::bind(cx);
+            board::bind(cx);
             cx.set_prompt_builder(modal::prompt_builder);
             explorer::bind(cx);
             history::bind(cx);
