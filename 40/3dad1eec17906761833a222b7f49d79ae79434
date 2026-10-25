@@ -1,0 +1,19 @@
+crates/gespan-core/src/diagnostics/collect.rs
+  s_3d0adac742feaf::t_6f794b0757a265 627-629,631,633-635,643-648
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "403dad1eec17906761833a222b7f49d79ae79434",
+  "prompts": {},
+  "sessions": {
+    "s_3d0adac742feaf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "59f26b23-5087-4dc7-b434-604962752b44",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
