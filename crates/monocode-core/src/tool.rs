@@ -4,6 +4,9 @@ mod presentation;
 pub mod tasks;
 pub use presentation::{CommandStep, ToolPresentation};
 
+/// The app's own step while a conversation carries over from another model.
+pub const HANDOFF: &str = "providerHandoff";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolState {
@@ -40,6 +43,13 @@ impl ToolCall {
     }
     pub fn is_compaction(&self) -> bool {
         self.name == "contextCompaction"
+    }
+    pub fn is_handoff(&self) -> bool {
+        self.name == HANDOFF
+    }
+    /// Session milestones read as a status line rather than a tool step.
+    pub fn is_milestone(&self) -> bool {
+        self.is_compaction() || self.is_handoff()
     }
     pub fn append_output(&mut self, delta: &str) {
         self.output.push_str(delta);

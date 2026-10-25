@@ -66,7 +66,7 @@ impl TranscriptView {
             return panel;
         }
         let identity = scope.map_or_else(|| start.to_string(), |scope| format!("{start}:{scope}"));
-        if tool.is_compaction() {
+        if tool.is_milestone() {
             let running = tool.state == ToolState::Running;
             let failed = tool.state == ToolState::Failed;
             let label = tool.summary().0;

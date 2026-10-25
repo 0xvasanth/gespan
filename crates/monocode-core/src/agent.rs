@@ -143,6 +143,8 @@ pub struct Settings {
 #[serde(default)]
 pub struct ProviderSwitch {
     pub from: String,
+    /// The outgoing model's display name, for the transfer status.
+    pub model_label: String,
     pub cwd: String,
     pub model: Option<String>,
     pub model_settings: std::collections::HashMap<String, String>,

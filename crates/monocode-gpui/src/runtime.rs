@@ -12,6 +12,8 @@ use std::time::Duration;
 #[cfg(all(test, unix))]
 mod follow_up_tests;
 mod handoff;
+#[cfg(all(test, unix))]
+mod handoff_tests;
 mod persistence;
 pub(crate) mod remote;
 mod visual_discovery;
@@ -308,6 +310,49 @@ fn run_turn_using(
             )?;
         }
         if let Some(source) = settings.pending_provider_switch.take() {
+            // The turn's first step: the outgoing model's recap can take a while.
+            let mut transfer =
+                monocode_core::tool::ToolCall::new("provider-handoff", monocode_core::tool::HANDOFF);
+            let from = if source.model_label.is_empty() {
+                Kind::from_id(&source.from).label()
+            } else {
+                source.model_label.as_str()
+            };
+            transfer.input = serde_json::json!({ "from": from }).to_string();
+            let transfer_row = transcript.begin("tool");
+            transcript.rows[transfer_row].text =
+                serde_json::to_string(&transfer).map_err(|e| e.to_string())?;
+            pending.changed(transfer_row);
+            publish(
+                &tx,
+                &cancel,
+                Update {
+                    worktree_cwd: None,
+                    commands: None,
+                    provider_turn_id: None,
+                    turn_ready: false,
+                    follow_up_delivered: Vec::new(),
+                    follow_up_errors: Vec::new(),
+                    delivered: None,
+                    start: transfer_row,
+                    rows: transcript.rows[transfer_row..].to_vec(),
+                    provider_id: None,
+                    model: None,
+                    config_model: None,
+                    config_settings: None,
+                    context: None,
+                    metrics: None,
+                    usage_limit: None,
+                    background: None,
+                    approvals: Vec::new(),
+                    approvals_resolved: Vec::new(),
+                    questions: Vec::new(),
+                    questions_resolved: Vec::new(),
+                    handoff: None,
+                    status: "Preparing handoff…".into(),
+                    finished: false,
+                },
+            )?;
             let root = locked(&store)?.data_dir().map(std::path::Path::to_path_buf);
             let prepared = handoff::prepare(
                 summary.id,
@@ -318,6 +363,14 @@ fn run_turn_using(
                 root,
                 cancel.clone(),
             );
+            transfer.state = if cancel.load(Ordering::Relaxed) {
+                monocode_core::tool::ToolState::Cancelled
+            } else {
+                monocode_core::tool::ToolState::Completed
+            };
+            transcript.rows[transfer_row].text =
+                serde_json::to_string(&transfer).map_err(|e| e.to_string())?;
+            pending.changed(transfer_row);
             settings.handoff = Some(prepared.clone());
             prepared_handoff = Some(prepared.clone());
             provider_id = None;
@@ -340,8 +393,8 @@ fn run_turn_using(
                     follow_up_delivered: Vec::new(),
                     follow_up_errors: Vec::new(),
                     delivered: None,
-                    start: transcript.rows.len(),
-                    rows: Vec::new(),
+                    start: transfer_row,
+                    rows: transcript.rows[transfer_row..].to_vec(),
                     provider_id: None,
                     model: None,
                     config_model: None,

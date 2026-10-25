@@ -12,6 +12,7 @@ mod live_phase;
 mod mascot;
 mod measurements;
 mod outline;
+mod provider_switch;
 pub(crate) mod phases;
 mod remote_plans;
 pub(crate) mod selection;
@@ -389,13 +390,14 @@ pub(crate) fn mono_work_label(source: &[Row], group: usize) -> String {
     }) else {
         return THINKING[thought.saturating_sub(1) % THINKING.len()].into();
     };
-    if tool.is_compaction() {
-        return if tool.state == ToolState::Running {
-            "Compacting context…"
+    if tool.is_milestone() {
+        return if tool.state != ToolState::Running {
+            "Thinking…".into()
+        } else if tool.is_handoff() {
+            format!("{}…", tool.summary().0)
         } else {
-            "Thinking…"
-        }
-        .into();
+            "Compacting context…".into()
+        };
     }
     match tool.summary().0.as_str() {
         "Run" => "Running command…",
@@ -4714,7 +4716,7 @@ impl TranscriptView {
                 // shows once a second step joins it.
                 let loading = group.is_none()
                     && call.state == ToolState::Running
-                    && !call.is_compaction()
+                    && !call.is_milestone()
                     && call.panel().is_none()
                     && !cx.reduce_motion();
                 div()
@@ -5099,6 +5101,11 @@ impl TranscriptView {
             .flex_col()
             .children(if first {
                 self.mono_separator(message_start)
+            } else {
+                None
+            })
+            .children(if first {
+                self.provider_separator(message_start)
             } else {
                 None
             })

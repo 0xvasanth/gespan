@@ -275,6 +275,7 @@ impl Conversation {
                         this.settings.pending_provider_switch =
                             Some(monocode_core::agent::ProviderSwitch {
                                 from: this.summary.provider.clone(),
+                                model_label: this.model_label().to_string(),
                                 cwd: this.execution_cwd().to_owned(),
                                 model: this.model.clone(),
                                 model_settings: this.settings.model_settings.clone(),

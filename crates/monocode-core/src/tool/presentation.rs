@@ -86,6 +86,24 @@ pub(super) fn present(call: &ToolCall, fallback_cwd: Option<&str>) -> ToolPresen
             steps: Vec::new(),
         };
     }
+    if call.is_handoff() {
+        let input = serde_json::from_str::<Value>(&call.input).unwrap_or(Value::Null);
+        let from = input["from"].as_str().unwrap_or("the previous model");
+        return ToolPresentation {
+            action: match call.state {
+                ToolState::Running => format!("Transferring from {from}"),
+                ToolState::Completed => format!("Transferred from {from}"),
+                ToolState::Failed => format!("Transfer from {from} failed"),
+                ToolState::Cancelled => format!("Transfer from {from} cancelled"),
+            },
+            target: String::new(),
+            file_path: None,
+            start_line: None,
+            command: None,
+            description: None,
+            steps: Vec::new(),
+        };
+    }
     let mut input = serde_json::from_str::<Value>(&call.input).unwrap_or(Value::Null);
     normalize_inputs(&mut input, 0);
     let desktop = call.display.as_ref().unwrap_or(&input["__desktop"]);

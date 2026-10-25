@@ -2190,6 +2190,7 @@ impl Conversation {
                     self.settings.pending_provider_switch =
                         Some(monocode_core::agent::ProviderSwitch {
                             from: self.summary.provider.clone(),
+                            model_label: self.model_label().to_string(),
                             cwd: self.execution_cwd().to_owned(),
                             model: self.model.clone(),
                             model_settings: self.settings.model_settings.clone(),
