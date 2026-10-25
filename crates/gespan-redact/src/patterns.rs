@@ -251,25 +251,26 @@ pub(crate) fn is_secret_key(key: &str) -> bool {
 }
 
 /// `max_tokens`, `input_tokens`, `cache_read_input_tokens`, `tokens_used`,
-/// `token_count`: model usage numbers, not credentials.
+/// `token_count`: model usage numbers, not credentials. Anchored at the end,
+/// so every suffix of a counter key is a counter too and
+/// `replace_secrets` can skip a rejected key whole.
 fn is_token_counter(flat: &str) -> bool {
     ["count", "used", "limit", "usage"]
         .iter()
         .any(|suffix| flat.ends_with(suffix))
-        || (flat.ends_with("tokens")
-            && [
-                "max",
-                "min",
-                "input",
-                "output",
-                "total",
-                "prompt",
-                "completion",
-                "reasoning",
-                "cache",
-            ]
-            .iter()
-            .any(|prefix| flat.starts_with(prefix)))
+        || flat == "tokens"
+        || [
+            "max",
+            "min",
+            "input",
+            "output",
+            "total",
+            "prompt",
+            "completion",
+            "reasoning",
+        ]
+        .iter()
+        .any(|word| flat.ends_with(&format!("{word}tokens")))
 }
 
 /// A key's words, split at punctuation and at camelCase humps, lower-cased.
@@ -443,6 +444,8 @@ mod tests {
             "password_used",
             "maxtoken",
             "min_token_v2",
+            "cache-github-tokens",
+            "max_github_tokens",
         ] {
             assert!(is_secret_key(key), "{key}");
         }
@@ -687,5 +690,36 @@ mod tests {
             "took {:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    fn a_counter_prefix_does_not_hide_a_secret_key() {
+        assert_eq!(
+            redact_tokens("cache-github-tokens=ghs_secret input_tokens=12"),
+            "cache-github-tokens=<redacted> input_tokens=12"
+        );
+    }
+
+    #[test]
+    fn every_suffix_of_a_rejected_key_is_rejected_too() {
+        // `replace_secrets` skips a rejected key whole, which is only safe
+        // if no suffix of it would have been accepted on its own.
+        for key in [
+            "tokens_used",
+            "token_count",
+            "max_tokens",
+            "max-input-tokens",
+            "cache_read_input_tokens",
+            "x-total-tokens",
+            "id-tokens-limit",
+        ] {
+            assert!(!is_secret_key(key), "{key}");
+            for (i, c) in key.char_indices() {
+                if c == '-' || c == '_' {
+                    let suffix = &key[i + 1..];
+                    assert!(!is_secret_key(suffix), "{key} -> {suffix}");
+                }
+            }
+        }
     }
 }
