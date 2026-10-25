@@ -1,0 +1,16 @@
+[package]
+name = "gespan-board-store"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# Built under both the root workspace (src-tauri) and the gespan-gpui workspace
+# (gespan-core), so nothing here inherits from either workspace.
+[dependencies]
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks"] }
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+serde_json = "1"

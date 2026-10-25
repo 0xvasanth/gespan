@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/mobile-link", "crates/keep-awake", "crates/gespan-redact", "crates/tracker-secrets", "crates/tracker-client"]
+members = ["src-tauri", "crates/mobile-link", "crates/keep-awake", "crates/gespan-redact", "crates/tracker-secrets", "crates/tracker-client", "crates/board-store"]
 exclude = ["vendor/portable-pty", "vendor/gpui-pre", "vendor/gpui-pre-apple", "vendor/gpui-pre-linux", "vendor/gpui-pre-windows", "crates/gespan-core", "crates/gespan-gpui"]
 
 [workspace.package]

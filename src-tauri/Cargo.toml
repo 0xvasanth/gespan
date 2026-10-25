@@ -20,6 +20,7 @@ gespan-mobile-link = { path = "../crates/mobile-link" }
 gespan-keep-awake = { path = "../crates/keep-awake" }
 gespan-tracker-secrets = { path = "../crates/tracker-secrets" }
 gespan-tracker-client = { path = "../crates/tracker-client" }
+gespan-board-store = { path = "../crates/board-store" }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = ["sync", "time"] }
 if-addrs = "0.15"

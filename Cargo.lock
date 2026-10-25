@@ -1743,6 +1743,7 @@ dependencies = [
  "arboard",
  "base64 0.23.1",
  "block2",
+ "gespan-board-store",
  "gespan-keep-awake",
  "gespan-mobile-link",
  "gespan-tracker-client",
@@ -1790,6 +1791,16 @@ dependencies = [
  "windows",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "gespan-board-store"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

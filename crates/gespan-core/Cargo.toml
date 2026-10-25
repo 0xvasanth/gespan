@@ -26,6 +26,7 @@ unicode-width = "0.2"
 gespan-mobile-link = { path = "../mobile-link" }
 gespan-tracker-secrets = { path = "../tracker-secrets" }
 gespan-tracker-client = { path = "../tracker-client" }
+gespan-board-store = { path = "../board-store" }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 uuid = { version = "1", features = ["v4"] }

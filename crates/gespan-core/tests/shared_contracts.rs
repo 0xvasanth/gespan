@@ -380,38 +380,11 @@ fn flow_ddl_is_pinned() {
     );
 }
 
-/// The native board source, as the Tauri board source is read with `tauri`.
-fn native_board() -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/board/mod.rs")).unwrap()
-}
-
-/// Every board table and index statement, whitespace-normalized.
-fn board_ddl(source: &str) -> Vec<String> {
-    regex::Regex::new(r"CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS board[^;]*;")
-        .unwrap()
-        .find_iter(source)
-        .map(|statement| {
-            statement
-                .as_str()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .collect()
-}
-
-#[test]
-fn board_tables_match_tauri() {
-    let tauri_ddl = board_ddl(&tauri("src-tauri/src/board.rs"));
-    // Four tables and five indexes; an empty match would pass vacuously.
-    assert_eq!(tauri_ddl.len(), 9, "{tauri_ddl:#?}");
-    assert_eq!(board_ddl(&native_board()), tauri_ddl);
-}
-
+/// Both apps call the shared board-store crate, so its error strings are the
+/// ones the React board and the native board show.
 #[test]
 fn board_error_strings_match_tauri() {
-    let tauri_source = tauri("src-tauri/src/board.rs");
-    let native_source = native_board();
+    let store_source = tauri("crates/board-store/src/ops.rs");
     for message in [
         "Column not on this board",
         "Column has {cards} {plural}",
@@ -419,8 +392,19 @@ fn board_error_strings_match_tauri() {
         "Unknown column role: {role}",
         "already has the {role} role",
     ] {
-        assert!(tauri_source.contains(message), "Tauri lacks {message}");
-        assert!(native_source.contains(message), "native lacks {message}");
+        assert!(
+            store_source.contains(message),
+            "board-store lacks {message}"
+        );
+    }
+    for app in [
+        "src-tauri/src/board.rs",
+        "crates/gespan-core/src/board/mod.rs",
+    ] {
+        assert!(
+            tauri(app).contains("use gespan_board_store::"),
+            "{app} does not use board-store"
+        );
     }
 }
 
