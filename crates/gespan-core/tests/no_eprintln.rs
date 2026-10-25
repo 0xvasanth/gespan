@@ -8,11 +8,30 @@ fn offenders(path: &str, source: &str) -> Vec<String> {
         .lines()
         .enumerate()
         .filter(|(_, line)| {
-            let code = line.split("//").next().unwrap_or_default();
+            let code = without_comment(line);
             code.contains("eprintln!") || code.contains("eprint!")
         })
         .map(|(index, _)| format!("{path}:{}", index + 1))
         .collect()
+}
+
+/// `line` up to a `//` comment, skipping `//` inside string and char literals.
+fn without_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut in_string = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if in_string => index += 1,
+            b'"' => in_string = !in_string,
+            b'\'' if !in_string && bytes.get(index + 2) == Some(&b'\'') => index += 2,
+            b'\'' if !in_string && bytes.get(index + 1) == Some(&b'\\') => index += 3,
+            b'/' if !in_string && bytes.get(index + 1) == Some(&b'/') => return &line[..index],
+            _ => {}
+        }
+        index += 1;
+    }
+    line
 }
 
 fn scan(root: &Path, dir: &Path, found: &mut Vec<String>) {
@@ -36,6 +55,21 @@ fn scan(root: &Path, dir: &Path, found: &mut Vec<String>) {
 fn offenders_ignore_comments_only() {
     let source = "// as eprintln! did\n    /// eprint!\nlet x = 1; eprintln!(\"a\");\neprint!(\"b\") // note\n";
     assert_eq!(offenders("f.rs", source), ["f.rs:3", "f.rs:4"]);
+}
+
+#[test]
+fn offenders_see_past_slashes_inside_strings() {
+    let source = concat!(
+        "let u = \"https://x\"; eprintln!(\"{u}\");\n",
+        "let q = \"say \\\"//\\\"\"; eprint!(\"q\");\n",
+        "let c = '\"'; eprintln!(\"c\");\n",
+        "let e = '\\\"'; eprintln!(\"e\"); // after an escaped quote\n",
+        "let u = \"https://x\"; // eprintln! once did this\n",
+    );
+    assert_eq!(
+        offenders("f.rs", source),
+        ["f.rs:1", "f.rs:2", "f.rs:3", "f.rs:4"]
+    );
 }
 
 #[test]
