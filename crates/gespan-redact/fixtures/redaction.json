@@ -1,0 +1,398 @@
+{
+  "version": 1,
+  "contexts": {
+    "macos": {
+      "home": "/Users/alice",
+      "projects": [
+        "/Users/alice/code/gespan",
+        "/Volumes/Work/client-app"
+      ],
+      "secrets": [
+        "kc-Secret-Value-123"
+      ]
+    },
+    "linux": {
+      "home": "/home/zoë",
+      "projects": [
+        "/home/zoë/src/项目"
+      ]
+    },
+    "windows": {
+      "home": "C:\\Users\\Alice",
+      "projects": [
+        "D:\\dev\\shop"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "macos project file keeps its relative path",
+      "context": "macos",
+      "kind": "text",
+      "input": "Failed to open /Users/alice/code/gespan/src/main.rs: permission denied",
+      "expected": "Failed to open <project-1>/src/main.rs: permission denied"
+    },
+    {
+      "name": "macos second project outside home",
+      "context": "macos",
+      "kind": "text",
+      "input": "watching /Volumes/Work/client-app/package.json",
+      "expected": "watching <project-2>/package.json"
+    },
+    {
+      "name": "macos home log directory",
+      "context": "macos",
+      "kind": "text",
+      "input": "log file /Users/alice/Library/Logs/dev.gespan.native/gespan-native.2026-10-25.jsonl",
+      "expected": "log file ~/Library/Logs/dev.gespan.native/gespan-native.2026-10-25.jsonl"
+    },
+    {
+      "name": "macos other users that share the home prefix",
+      "context": "macos",
+      "kind": "text",
+      "input": "/Users/alice2/x and /Users/alice-old/y and /Users/alicea",
+      "expected": "/Users/alice2/x and /Users/alice-old/y and /Users/alicea"
+    },
+    {
+      "name": "macos multi-line panic with a path and a token",
+      "context": "macos",
+      "kind": "text",
+      "input": "thread 'main' panicked at /Users/alice/code/gespan/crates/core/src/git.rs:88:5:\ncalled `Result::unwrap()` on an `Err` value: auth failed with token=ghp_16C7e42F292c6912E7710c838347Ae178B4a\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      "expected": "thread 'main' panicked at <project-1>/crates/core/src/git.rs:88:5:\ncalled `Result::unwrap()` on an `Err` value: auth failed with token=<redacted>\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+    },
+    {
+      "name": "macos backtrace across lines",
+      "context": "macos",
+      "kind": "text",
+      "input": "   0: gespan_core::git::push\n             at /Users/alice/code/gespan/crates/gespan-core/src/git.rs:120:9\n   1: std::rt::lang_start\n             at /rustc/90b35a6/library/std/src/rt.rs:195:17\n",
+      "expected": "   0: gespan_core::git::push\n             at <project-1>/crates/gespan-core/src/git.rs:120:9\n   1: std::rt::lang_start\n             at /rustc/90b35a6/library/std/src/rt.rs:195:17\n"
+    },
+    {
+      "name": "macos email next to a path",
+      "context": "macos",
+      "kind": "text",
+      "input": "author alice@example.com edited /Users/alice/notes.txt",
+      "expected": "author <email> edited ~/notes.txt"
+    },
+    {
+      "name": "macos known keychain value",
+      "context": "macos",
+      "kind": "text",
+      "input": "keychain value kc-Secret-Value-123 was rejected",
+      "expected": "keychain value <redacted> was rejected"
+    },
+    {
+      "name": "macos access token in a URL query",
+      "context": "macos",
+      "kind": "text",
+      "input": "GET https://api.example.com/oauth/callback?code=1&access_token=ya29.a0Af_x-1&state=2",
+      "expected": "GET https://api.example.com/oauth/callback?code=1&access_token=<redacted>&state=2"
+    },
+    {
+      "name": "macos token in a URL fragment",
+      "context": "macos",
+      "kind": "text",
+      "input": "redirect to https://app.example.com/cb#token=abcDEF123&type=bearer",
+      "expected": "redirect to https://app.example.com/cb#token=<redacted>&type=bearer"
+    },
+    {
+      "name": "macos bearer header with an Anthropic key",
+      "context": "macos",
+      "kind": "text",
+      "input": "Authorization: Bearer sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123",
+      "expected": "Authorization: Bearer <redacted>"
+    },
+    {
+      "name": "macos Slack token",
+      "context": "macos",
+      "kind": "text",
+      "input": "posting with xoxp-1234567890-abcdefghij failed",
+      "expected": "posting with <redacted> failed"
+    },
+    {
+      "name": "macos AWS key pair in an env dump",
+      "context": "macos",
+      "kind": "text",
+      "input": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY region=us-east-1",
+      "expected": "AWS_ACCESS_KEY_ID=<redacted> AWS_SECRET_ACCESS_KEY=<redacted> region=us-east-1"
+    },
+    {
+      "name": "macos cookie header with a JWT",
+      "context": "macos",
+      "kind": "text",
+      "input": "Set-Cookie: session=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk; Path=/; HttpOnly",
+      "expected": "Set-Cookie: <redacted>; Path=/; HttpOnly"
+    },
+    {
+      "name": "macos GitHub tokens of several kinds",
+      "context": "macos",
+      "kind": "text",
+      "input": "pat github_pat_11ABCDEFG0123456789_abcdefghijklmnop, oauth gho_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123, app ghs_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123",
+      "expected": "pat <redacted>, oauth <redacted>, app <redacted>"
+    },
+    {
+      "name": "macos ordinary words that look like token prefixes",
+      "context": "macos",
+      "kind": "text",
+      "input": "branch risk-assessment-framework-v2 on task-runner-improvements-final, the bearer of bad news, token: missing",
+      "expected": "branch risk-assessment-framework-v2 on task-runner-improvements-final, the bearer of bad news, token: missing"
+    },
+    {
+      "name": "macos quoted password spanning lines",
+      "context": "macos",
+      "kind": "text",
+      "input": "config password=\"line one\nline two\" loaded",
+      "expected": "config password=<redacted> loaded"
+    },
+    {
+      "name": "macos raw JSONL line with escaped quotes",
+      "context": "macos",
+      "kind": "text",
+      "input": "{\"message\":\"retry with token=\\\"abc def\\\" for alice@example.com\"}",
+      "expected": "{\"message\":\"retry with token=<redacted> for <email>\"}"
+    },
+    {
+      "name": "macos log record drops deny-listed fields",
+      "context": "macos",
+      "kind": "json",
+      "input": {
+        "ts": "2026-10-25T10:00:00Z",
+        "level": "error",
+        "target": "gespan_core::agent",
+        "message": "agent start failed in /Users/alice/code/gespan",
+        "app": "native",
+        "fields": {
+          "session_id": "s-1",
+          "prompt": "refactor the auth module",
+          "env": {
+            "OPENAI_API_KEY": "sk-proj-a1B2c3D4e5F6g7H8i9J0k1L2"
+          },
+          "diff": "+let secret = 1;",
+          "exit_code": 1,
+          "cwd": "/Users/alice/code/gespan/web"
+        }
+      },
+      "expected": {
+        "ts": "2026-10-25T10:00:00Z",
+        "level": "error",
+        "target": "gespan_core::agent",
+        "message": "agent start failed in <project-1>",
+        "app": "native",
+        "fields": {
+          "session_id": "s-1",
+          "exit_code": 1,
+          "cwd": "<project-1>/web"
+        }
+      }
+    },
+    {
+      "name": "macos nested arrays and secret-named fields",
+      "context": "macos",
+      "kind": "json",
+      "input": {
+        "events": [
+          {
+            "output": "ls -la",
+            "kind": "tool"
+          },
+          {
+            "transcript": "hello",
+            "audio": "UklGRg==",
+            "kind": "voice"
+          }
+        ],
+        "auth": {
+          "password": "p",
+          "user": "alice@example.com"
+        },
+        "Content": "x",
+        "body": {
+          "html": "<p>"
+        }
+      },
+      "expected": {
+        "events": [
+          {
+            "kind": "tool"
+          },
+          {
+            "kind": "voice"
+          }
+        ],
+        "auth": {
+          "password": "<redacted>",
+          "user": "<email>"
+        }
+      }
+    },
+    {
+      "name": "macos multi-line string value",
+      "context": "macos",
+      "kind": "json",
+      "input": {
+        "error": "git push failed\nremote: Invalid username or password.\nfatal: Authentication failed for 'https://alice:ghp_16C7e42F292c6912E7710c838347Ae178B4a@github.com/acme/app.git'\ncwd: /Users/alice/code/gespan"
+      },
+      "expected": {
+        "error": "git push failed\nremote: Invalid username or password.\nfatal: Authentication failed for 'https://alice:<redacted>@github.com/acme/app.git'\ncwd: <project-1>"
+      }
+    },
+    {
+      "name": "linux Unicode project and home paths",
+      "context": "linux",
+      "kind": "text",
+      "input": "открыть /home/zoë/src/项目/模块/файл.rs не удалось; cache at /home/zoë/.cache/gespan",
+      "expected": "открыть <project-1>/模块/файл.rs не удалось; cache at ~/.cache/gespan"
+    },
+    {
+      "name": "linux Unicode user that shares the home prefix",
+      "context": "linux",
+      "kind": "text",
+      "input": "/home/zoëy/x stays, /home/zoë goes",
+      "expected": "/home/zoëy/x stays, ~ goes"
+    },
+    {
+      "name": "linux one path per line",
+      "context": "linux",
+      "kind": "text",
+      "input": "line1 /home/zoë/a\nline2 /home/zoë/b\n",
+      "expected": "line1 ~/a\nline2 ~/b\n"
+    },
+    {
+      "name": "windows home with backslashes",
+      "context": "windows",
+      "kind": "text",
+      "input": "Failed to read C:\\Users\\Alice\\AppData\\Roaming\\dev.gespan\\settings.json",
+      "expected": "Failed to read ~\\AppData\\Roaming\\dev.gespan\\settings.json"
+    },
+    {
+      "name": "windows home in any case and with forward slashes",
+      "context": "windows",
+      "kind": "text",
+      "input": "c:/users/alice/Documents and C:\\USERS\\ALICE\\Desktop",
+      "expected": "~/Documents and ~\\Desktop"
+    },
+    {
+      "name": "windows project path inside JSON-escaped text",
+      "context": "windows",
+      "kind": "text",
+      "input": "{\"path\":\"D:\\\\dev\\\\shop\\\\src\\\\app.ts\"}",
+      "expected": "{\"path\":\"<project-1>\\\\src\\\\app.ts\"}"
+    },
+    {
+      "name": "windows lower-case drive letter",
+      "context": "windows",
+      "kind": "text",
+      "input": "d:\\DEV\\Shop\\x.ts",
+      "expected": "<project-1>\\x.ts"
+    },
+    {
+      "name": "windows other user that shares the home prefix",
+      "context": "windows",
+      "kind": "text",
+      "input": "C:\\Users\\Alicia\\x",
+      "expected": "C:\\Users\\Alicia\\x"
+    },
+    {
+      "name": "windows log fields",
+      "context": "windows",
+      "kind": "json",
+      "input": {
+        "cwd": "C:\\Users\\Alice\\dev",
+        "error": "open D:\\dev\\shop\\index.html failed",
+        "body": "<html>"
+      },
+      "expected": {
+        "cwd": "~\\dev",
+        "error": "open <project-1>\\index.html failed"
+      }
+    },
+    {
+      "name": "macos password in a git remote URL",
+      "context": "macos",
+      "kind": "text",
+      "input": "fatal: unable to access 'https://alice:hunter2@git.example.com/acme/app.git/': 403",
+      "expected": "fatal: unable to access 'https://alice:<redacted>@git.example.com/acme/app.git/': 403"
+    },
+    {
+      "name": "macos response body logged as text",
+      "context": "macos",
+      "kind": "text",
+      "input": "oauth exchange returned {\"access_token\":\"ya29.a0AfH6SMBx\",\"expires_in\":3599,\"refresh_token\":\"1//0gLx\"}",
+      "expected": "oauth exchange returned {\"access_token\":\"<redacted>\",\"expires_in\":3599,\"refresh_token\":\"<redacted>\"}"
+    },
+    {
+      "name": "macos JSON string that holds JSON",
+      "context": "macos",
+      "kind": "json",
+      "input": {
+        "response": "{\"content\":\"the model reply\",\"usage\":{\"tokens_used\":12},\"api_key\":\"k-123\"}"
+      },
+      "expected": {
+        "response": "{\"api_key\":\"<redacted>\",\"usage\":{\"tokens_used\":12}}"
+      }
+    },
+    {
+      "name": "linux private key block cut off mid-way",
+      "context": "linux",
+      "kind": "text",
+      "input": "read /home/zoë/.ssh/id_ed25519:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ",
+      "expected": "read ~/.ssh/id_ed25519:\n<redacted>"
+    },
+    {
+      "name": "macos tracing key=value field with a Bearer header",
+      "context": "macos",
+      "kind": "text",
+      "input": "2026-10-25T10:00:00Z  INFO gespan_core::http: request authorization=Bearer abcdefgh12345678 url=/v1/x",
+      "expected": "2026-10-25T10:00:00Z  INFO gespan_core::http: request authorization=<redacted> url=/v1/x"
+    },
+    {
+      "name": "macos Rust Debug output of a config struct",
+      "context": "macos",
+      "kind": "text",
+      "input": "Err(Config { password: \"hunter22\", user: \"alice@example.com\", path: \"/Users/alice/code/gespan/a.toml\" })",
+      "expected": "Err(Config { password: \"<redacted>\", user: \"<email>\", path: \"<project-1>/a.toml\" })"
+    },
+    {
+      "name": "linux log tail cut mid-line still drops prompts",
+      "context": "linux",
+      "kind": "text",
+      "input": "t\":\"2026-10-25\",\"fields\":{\"prompt\":\"rewrite my secret plan\",\"diff\":\"+x\",\"n\":1}}",
+      "expected": "t\":\"2026-10-25\",\"fields\":{\"prompt\":\"<redacted>\",\"diff\":\"<redacted>\",\"n\":1}}"
+    },
+    {
+      "name": "linux Redis URL with an empty user",
+      "context": "linux",
+      "kind": "text",
+      "input": "connect redis://:hunter22pw@localhost:6379/0 failed",
+      "expected": "connect redis://:<redacted>@localhost:6379/0 failed"
+    },
+    {
+      "name": "macos secret-named key holding an object",
+      "context": "macos",
+      "kind": "text",
+      "input": "config {\"client_secret\": {\"value\": \"s3cr3t value\", \"rotated\": true}, \"n\": 1}",
+      "expected": "config {\"client_secret\": \"<redacted>\", \"n\": 1}"
+    },
+    {
+      "name": "macos secret-named key holding an array",
+      "context": "macos",
+      "kind": "text",
+      "input": "{\"tokens\": 3, \"access_tokens\": [\"tok one\", \"tok, two\"], \"n\": 1}",
+      "expected": "{\"tokens\": 3, \"access_tokens\": \"<redacted>\", \"n\": 1}"
+    },
+    {
+      "name": "linux log tail whose first line is cut inside a deny-listed object",
+      "context": "linux",
+      "kind": "text",
+      "input": "\"env\":{\"HOME\":\"/home/zoë\",\"A\":\"b\n{\"level\":\"error\",\"message\":\"open /home/zoë/src/项目/a.rs failed\"}\n",
+      "expected": "\"env\":\"<redacted>\"\n{\"level\":\"error\",\"message\":\"open <project-1>/a.rs failed\"}\n"
+    },
+    {
+      "name": "macos URL with a port and an @ in its query",
+      "context": "macos",
+      "kind": "text",
+      "input": "GET https://example.com:8443/docs?u=bob@corp.com#top 404",
+      "expected": "GET https://example.com:8443/docs?u=<email>#top 404"
+    }
+  ]
+}
