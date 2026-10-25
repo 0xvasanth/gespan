@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) enum Section {
     #[default]
     General,
+    Diagnostics,
     Connections,
     Appearance,
     Keybindings,
@@ -25,6 +26,7 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
         "App",
         &[
             Section::General,
+            Section::Diagnostics,
             Section::Connections,
             Section::Appearance,
             Section::Keybindings,
@@ -47,8 +49,9 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
 ];
 
 impl Section {
-    pub(crate) const ALL: [Section; 12] = [
+    pub(crate) const ALL: [Section; 13] = [
         Section::General,
+        Section::Diagnostics,
         Section::Connections,
         Section::Appearance,
         Section::Keybindings,
@@ -64,6 +67,7 @@ impl Section {
     pub(crate) fn id(self) -> &'static str {
         match self {
             Section::General => "general",
+            Section::Diagnostics => "diagnostics",
             Section::Connections => "connections",
             Section::Appearance => "appearance",
             Section::Keybindings => "keybindings",
@@ -80,6 +84,7 @@ impl Section {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Section::General => "General",
+            Section::Diagnostics => "Diagnostics",
             Section::Connections => "Connections",
             Section::Appearance => "Appearance",
             Section::Keybindings => "Keybindings",
@@ -98,6 +103,7 @@ impl Section {
             Section::General => {
                 "The build you are running, how Gespan reaches you, and the panels it shows."
             }
+            Section::Diagnostics => "Report an issue, open the logs, and see what failed lately.",
             Section::Connections => "Connect your machines and run agents remotely through SSH.",
             Section::Appearance => {
                 "Theme, tint, translucency, workspace layout, and conversation backgrounds."
@@ -126,6 +132,7 @@ impl Section {
     fn keywords(self) -> &'static str {
         match self {
             Section::General => "version update sounds notifications notes board rail",
+            Section::Diagnostics => "logs crash bug report issue feedback support failures errors counters",
             Section::Connections => "ssh remote host machine server environment always on",
             Section::Appearance => {
                 "theme dark light color accent glass blur zoom scale wallpaper rail sidebar"
@@ -153,6 +160,7 @@ impl Section {
     pub(crate) fn icon(self) -> &'static str {
         match self {
             Section::General => "sliders",
+            Section::Diagnostics => "bug",
             Section::Connections => "internet",
             Section::Appearance => "palette",
             Section::Keybindings => "keyboard",
@@ -218,6 +226,10 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "Project worktrees",
         "git branch working copy create delete manage",
     ),
+    ("report-issue", Section::Diagnostics, "Report an issue", "bug feedback crash github"),
+    ("open-logs", Section::Diagnostics, "Open logs folder", "log files finder explorer"),
+    ("copy-diagnostics", Section::Diagnostics, "Copy diagnostics", "summary clipboard support logs"),
+    ("failure-counters", Section::Diagnostics, "Failures in the last 7 days", "counters errors week logs"),
     (
         "update",
         Section::General,
@@ -611,5 +623,30 @@ mod tests {
                 .iter()
                 .any(|r| r.section == Section::Archive && r.setting.is_none())
         );
+    }
+
+    #[test]
+    fn logs_and_diagnostics_land_on_the_diagnostics_page() {
+        for query in ["logs", "diagnostics", "crash", "bug"] {
+            let results = search(query);
+            assert_eq!(
+                results.first().map(|r| r.section),
+                Some(Section::Diagnostics),
+                "{query}: {results:?}"
+            );
+        }
+        assert!(
+            search("diagnostics")
+                .iter()
+                .any(|r| r.section == Section::Diagnostics && r.setting.is_none())
+        );
+    }
+
+    #[test]
+    fn diagnostics_sits_under_app_after_general() {
+        let (group, sections) = GROUPS[0];
+        assert_eq!(group, "App");
+        assert_eq!(&sections[..2], &[Section::General, Section::Diagnostics]);
+        assert_eq!(&Section::ALL[..2], &[Section::General, Section::Diagnostics]);
     }
 }
