@@ -250,6 +250,36 @@ mod tests {
             .unwrap();
     }
 
+    /// Settings sends back its whole copy of the preferences on every
+    /// change, so it must hear about the answer or it would undo it.
+    #[gpui::test]
+    fn an_answer_given_while_settings_is_open_survives_the_next_settings_change(
+        cx: &mut TestAppContext,
+    ) {
+        let mut old = ConsentState::default();
+        old.answer(Answer::Always, "2026-01-01T00:00:00.000Z");
+        old.record.as_mut().unwrap().consent_version = CONSENT_VERSION - 1;
+        let (window, mut visual) = launch(old, None, cx);
+        window
+            .update(&mut visual, |shell, w, cx| {
+                shell.open_settings(crate::settings::Section::Diagnostics, w, cx)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        click(&mut visual, "consent-never");
+        click(&mut visual, "settings-toggle-include-logs");
+        window
+            .update(&mut visual, |shell, _, _| {
+                let state = &shell.workspace.preferences.diagnostics;
+                let record = state.record.as_ref().unwrap();
+                assert_eq!(record.crash_reports, CrashReports::Never);
+                assert!(!record.include_logs);
+                assert_eq!(state.install_id, None);
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn no_thanks_empties_the_crash_queue(cx: &mut TestAppContext) {
         let logs = tempfile::tempdir().unwrap();

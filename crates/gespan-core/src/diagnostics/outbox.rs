@@ -50,18 +50,23 @@ fn queued(log_dir: &Path, kind: Kind) -> Vec<PathBuf> {
 }
 
 /// Deletes everything queued of `kinds`. A missing queue is already empty.
+/// A file that can't be deleted doesn't stop the rest; the first such error
+/// is returned once every file has been tried.
 pub fn clear(log_dir: &Path, kinds: &[Kind]) -> io::Result<usize> {
     let mut removed = 0;
+    let mut failed = None;
     for kind in kinds {
         for file in queued(log_dir, *kind) {
             match std::fs::remove_file(&file) {
                 Ok(()) => removed += 1,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
+                Err(error) => {
+                    failed.get_or_insert(error);
+                }
             }
         }
     }
-    Ok(removed)
+    failed.map_or(Ok(removed), Err)
 }
 
 /// [`clear`] for consent changes: a queue that cannot be emptied is logged,
@@ -228,6 +233,23 @@ mod tests {
             lines[0]["message"],
             "could not empty the diagnostics send queue"
         );
+    }
+
+    /// One file that can't be deleted must not leave the other queues full.
+    #[cfg(unix)]
+    #[test]
+    fn clear_keeps_going_after_a_file_it_cannot_delete() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let crash = queue(dir.path(), Kind::Crash, "a.json");
+        let metrics = queue(dir.path(), Kind::Metrics, "2026-10-24.json");
+        let folder = queue_dir(dir.path(), Kind::Crash);
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let result = clear(dir.path(), &Kind::ALL);
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(result.is_err(), "the failure is still reported");
+        assert!(crash.exists());
+        assert!(!metrics.exists(), "the metrics queue is emptied anyway");
     }
 
     #[test]
