@@ -243,3 +243,44 @@ fn a_refused_save_says_how_to_fix_the_keychain() {
     assert!(error.contains("unlocked"), "{error}");
     assert!(error.contains("Secret Service"), "{error}");
 }
+
+/// An old "file" that can't be removed: a non-empty directory in its place.
+fn stuck_old_file(dir: &Path, name: &str) {
+    fs::create_dir_all(dir.join(name).join("x")).unwrap();
+}
+
+#[test]
+fn a_stuck_old_file_does_not_hide_the_keychain_value() {
+    let dir = dir();
+    write(Tracker::Linear, dir.path(), "lin_api_x").unwrap();
+    stuck_old_file(dir.path(), "linear-token");
+
+    assert_eq!(read(Tracker::Linear, dir.path()).unwrap().as_deref(), Some("lin_api_x"));
+}
+
+#[test]
+fn saving_succeeds_when_the_old_file_cannot_be_removed() {
+    let dir = dir();
+    stuck_old_file(dir.path(), "jira-config.json");
+
+    write(Tracker::Jira, dir.path(), "cfg").unwrap();
+
+    assert_eq!(stored(Tracker::Jira, dir.path()).as_deref(), Some("cfg"));
+}
+
+#[cfg(unix)]
+#[test]
+fn migration_keeps_the_secret_when_the_old_file_cannot_be_deleted() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = dir();
+    let data = dir.path().join("data");
+    fs::create_dir(&data).unwrap();
+    fs::write(data.join("gitlab-config.json"), "cfg").unwrap();
+    fs::set_permissions(&data, fs::Permissions::from_mode(0o500)).unwrap();
+
+    let result = read(Tracker::Gitlab, &data);
+    fs::set_permissions(&data, fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert_eq!(result.unwrap().as_deref(), Some("cfg"));
+    assert_eq!(stored(Tracker::Gitlab, &data).as_deref(), Some("cfg"));
+}

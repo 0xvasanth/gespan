@@ -73,7 +73,7 @@ pub fn read(tracker: Tracker, data_dir: &Path) -> Result<Option<String>, String>
     let entry = entry(tracker, data_dir)?;
     match entry.get_password() {
         Ok(value) => {
-            remove_legacy_file(tracker, data_dir)?;
+            discard_legacy_file(tracker, data_dir);
             Ok(Some(value))
         }
         Err(keyring::Error::NoEntry) => {
@@ -81,7 +81,7 @@ pub fn read(tracker: Tracker, data_dir: &Path) -> Result<Option<String>, String>
                 return Ok(None);
             };
             if entry.set_password(&value).is_ok() {
-                remove_legacy_file(tracker, data_dir)?;
+                discard_legacy_file(tracker, data_dir);
             }
             Ok(Some(value))
         }
@@ -100,7 +100,8 @@ pub fn write(tracker: Tracker, data_dir: &Path, value: &str) -> Result<(), Strin
             tracker.label()
         )
     })?;
-    remove_legacy_file(tracker, data_dir)
+    discard_legacy_file(tracker, data_dir);
+    Ok(())
 }
 
 pub fn delete(tracker: Tracker, data_dir: &Path) -> Result<(), String> {
@@ -130,6 +131,12 @@ fn read_legacy_file(tracker: Tracker, data_dir: &Path) -> Result<Option<String>,
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Once the keychain holds the secret, the old file is only a leftover: a
+/// failed removal is tried again on the next read rather than failing this one.
+fn discard_legacy_file(tracker: Tracker, data_dir: &Path) {
+    let _ = remove_legacy_file(tracker, data_dir);
 }
 
 fn remove_legacy_file(tracker: Tracker, data_dir: &Path) -> Result<(), String> {
