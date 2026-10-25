@@ -332,6 +332,12 @@ impl Conversation {
             self.draft_hint
         }
     }
+    pub(crate) fn draft_text(&self, cx: &gpui::App) -> String {
+        self.input.read(cx).content.to_string()
+    }
+    pub(crate) fn set_draft_text(&mut self, text: String, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.set_text(text, cx));
+    }
     pub(crate) fn needs_approval(&self) -> bool {
         !self.approvals.is_empty() || !self.questions.is_empty()
     }

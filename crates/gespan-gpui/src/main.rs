@@ -82,6 +82,7 @@ mod tab_label;
 mod tab_motion;
 mod terminal;
 mod theme;
+mod tickets;
 #[cfg(target_os = "macos")]
 mod traffic_lights;
 mod transcript;

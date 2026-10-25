@@ -584,6 +584,13 @@ pub(crate) struct Shell {
     reminders: Vec<gespan_core::store::Reminder>,
     renaming: Option<session_groups::Renaming>,
     link_dialog: Option<session_groups::LinkDialog>,
+    tickets: Arc<dyn crate::tickets::TicketBackend>,
+    /// Sessions whose linked ticket could not be read because its tracker is
+    /// disconnected; the chip then shows its cached data as stale.
+    stale_tickets: HashSet<i64>,
+    ticket_refreshing: HashSet<i64>,
+    /// New-session composers holding only the ticket key until its title arrives.
+    ticket_drafts: HashMap<i64, String>,
     action_dialog: Option<actions::ActionDialog>,
     actions_anchor: AnchorSlot,
     editor_anchor: AnchorSlot,
@@ -764,6 +771,8 @@ impl Shell {
             .unwrap_or_else(|| {
                 std::env::temp_dir().join(format!("gespan-remote-{}", std::process::id()))
             });
+        let tickets: Arc<dyn crate::tickets::TicketBackend> =
+            Arc::new(gespan_core::tickets::Tickets::new(remote_dir.clone()));
         let remote = Arc::new(gespan_core::remote::Connections::new(remote_dir));
         gespan_core::remote::set_default_connections(remote.clone());
         let quit_remote = remote.clone();
@@ -935,6 +944,10 @@ impl Shell {
             reminders: sidebar_metadata.reminders,
             renaming: None,
             link_dialog: None,
+            tickets,
+            stale_tickets: HashSet::new(),
+            ticket_refreshing: HashSet::new(),
+            ticket_drafts: HashMap::new(),
             action_dialog: None,
             actions_anchor: AnchorSlot::default(),
             editor_anchor: AnchorSlot::default(),
@@ -3779,6 +3792,7 @@ impl Shell {
         self.leave_app_search(cx);
         self.close_preview(cx);
         self.dismiss_due_reminder(id, cx);
+        self.refresh_ticket(id, false, cx);
         let Some(view) = self.ensure_session(id, cx) else {
             return;
         };
@@ -4050,16 +4064,17 @@ impl Shell {
         self.create_session(kind, false, cx);
     }
     fn create_session(&mut self, kind: Kind, only_if_empty: bool, cx: &mut Context<Self>) {
-        self.create_session_target(kind, only_if_empty, None, cx);
+        self.create_session_target(kind, only_if_empty, None, None, cx);
     }
     fn create_in_folder(&mut self, folder: String, cx: &mut Context<Self>) {
-        self.create_session_target(self.default_kind(), false, Some(folder), cx);
+        self.create_session_target(self.default_kind(), false, Some(folder), None, cx);
     }
     fn create_session_target(
         &mut self,
         kind: Kind,
         only_if_empty: bool,
         folder: Option<String>,
+        ticket: Option<gespan_core::tickets::TicketRef>,
         cx: &mut Context<Self>,
     ) {
         let store = self.store.clone();
@@ -4133,6 +4148,9 @@ impl Shell {
                     Ok((summary, settings)) => {
                         let id = summary.id;
                         this.add(summary, cx);
+                        if let Some(ticket) = ticket {
+                            this.start_ticket_session(id, ticket, cx);
+                        }
                         if let Some(folder) = &folder {
                             let groups = this.groups.entry(cwd.clone()).or_default();
                             groups.add_to_folder(folder, id);

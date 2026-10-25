@@ -3,11 +3,13 @@
 use super::*;
 use chrono::{Local, NaiveDateTime, TimeZone};
 use gespan_core::{
+    provider_boards::StateGroup,
     session_groups::{
         Entry, Groups, WorkItem, build_list, format_reminder, navigation_ids,
         parse_github_work_item, reminder_at, reminder_presets,
     },
     store::Reminder,
+    tickets::{Resolved, TicketError, TicketRef, Tracker, parse_ticket},
 };
 use gpui::EventEmitter;
 
@@ -103,11 +105,122 @@ pub(super) struct Renaming {
     _events: Vec<Subscription>,
 }
 pub(super) struct LinkDialog {
-    id: i64,
-    input: Entity<input::Input>,
-    error: Option<SharedString>,
+    /// `None` is "New session from ticket": the dialog only takes a ticket.
+    pub(super) id: Option<i64>,
+    pub(super) input: Entity<input::Input>,
+    pub(super) error: Option<SharedString>,
+    /// A bare key several connected trackers could own: ask which.
+    choices: Option<Vec<Tracker>>,
     editing: bool,
     _events: Vec<Subscription>,
+}
+
+/// What the ticket chip shows, apart from how it is drawn.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct TicketChip {
+    pub(super) tracker: Tracker,
+    pub(super) key: String,
+    pub(super) title: Option<String>,
+    pub(super) status: Option<String>,
+    pub(super) tone: u32,
+    pub(super) stale: bool,
+}
+impl TicketChip {
+    pub(super) fn new(ticket: &TicketRef, stale: bool) -> Self {
+        Self {
+            tracker: ticket.tracker,
+            key: ticket.key.clone(),
+            title: ticket.title.clone().filter(|title| !title.is_empty()),
+            status: ticket.status.clone().filter(|status| !status.is_empty()),
+            tone: ticket.status_group.map_or(GROUP_UNKNOWN, group_tone),
+            stale,
+        }
+    }
+}
+const GROUP_UNKNOWN: u32 = 0x8a8a8a;
+fn group_tone(group: StateGroup) -> u32 {
+    match group {
+        StateGroup::Started => ACCENT,
+        StateGroup::Completed => 0x4ade80,
+        StateGroup::Cancelled => 0xf87171,
+        StateGroup::Triage | StateGroup::Backlog | StateGroup::Unstarted | StateGroup::Unknown => {
+            GROUP_UNKNOWN
+        }
+    }
+}
+fn tracker_icon(tracker: Tracker) -> &'static str {
+    match tracker {
+        Tracker::Jira => "inbox-jira",
+        Tracker::Linear => "inbox-linear",
+        Tracker::Plane => "inbox-plane",
+    }
+}
+/// SessionCard's linked ticket: tracker, key, title and a status pill.
+/// The row's own menu carries Open, Refresh and Unlink; a click opens the ticket.
+fn ticket_chip(
+    id: i64,
+    chip: TicketChip,
+    url: Option<String>,
+    compact: bool,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let tone = gpui::Hsla::from(rgb(chip.tone));
+    div()
+        .id(("ticket-chip", id as usize))
+        .debug_selector(move || format!("ticket-chip-{id}"))
+        .role(Role::Link)
+        .aria_label(format!("Open {} in {}", chip.key, chip.tracker.label()))
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .px(px(2.))
+        .rounded_sm()
+        .text_size(px(11.))
+        .text_color(rgb(ACCENT))
+        .child(icon(tracker_icon(chip.tracker), 12.).text_color(rgb(ACCENT)))
+        .child(div().flex_shrink_0().child(chip.key.clone()))
+        .when(!compact, |d| {
+            d.when_some(chip.title.clone(), |d, title| {
+                d.child(
+                    div()
+                        .debug_selector(move || format!("ticket-chip-title-{id}"))
+                        .min_w_0()
+                        .max_w(px(120.))
+                        .truncate()
+                        .text_color(content(0.6))
+                        .child(title),
+                )
+            })
+            .when_some(chip.status.clone(), |d, status| {
+                d.child(
+                    div()
+                        .debug_selector(move || format!("ticket-chip-status-{id}"))
+                        .flex_shrink_0()
+                        .px(px(5.))
+                        .rounded_full()
+                        .bg(tone.opacity(0.15))
+                        .text_color(tone)
+                        .child(status),
+                )
+            })
+        })
+        .when(chip.stale, |d| {
+            d.child(
+                div()
+                    .debug_selector(move || format!("ticket-chip-stale-{id}"))
+                    .flex_shrink_0()
+                    .child(icon("clock", 11.).text_color(content(0.45))),
+            )
+        })
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |_, _, _, cx| {
+            cx.stop_propagation();
+            if let Some(url) = &url {
+                cx.open_url(url);
+            }
+        }))
+        .into_any_element()
 }
 
 /// FolderColorSwatches: the folder menu's palette row.
@@ -453,13 +566,22 @@ impl Shell {
                 MenuAction::new(
                     "link-work-item",
                     if summary.work_item.is_some() {
-                        "Edit GitHub issue or PR link…"
+                        "Edit issue, PR or ticket link…"
                     } else {
-                        "Link GitHub issue or PR…"
+                        "Link issue, PR or ticket…"
                     },
                 )
                 .into(),
             ]);
+            if let Some(WorkItem::Ticket(ticket)) = &summary.work_item {
+                items.extend([
+                    MenuAction::new("ticket-open", format!("Open in {}", ticket.tracker.label()))
+                        .disabled(ticket.url.is_none())
+                        .into(),
+                    MenuAction::new("ticket-refresh", "Refresh ticket").into(),
+                    MenuAction::new("ticket-unlink", "Unlink ticket").into(),
+                ]);
+            }
         }
         items.extend([
             MenuAction::new("reminder", "Remind me")
@@ -553,6 +675,16 @@ impl Shell {
             }
             "rename" => self.start_rename(RenameTarget::Session(id), window, cx),
             "link-work-item" => self.open_link_dialog(id, window, cx),
+            "ticket-open" => {
+                if let Some(WorkItem::Ticket(ticket)) =
+                    self.session_metadata(id, cx).summary.work_item.clone()
+                    && let Some(url) = ticket.url
+                {
+                    cx.open_url(&url);
+                }
+            }
+            "ticket-refresh" => self.refresh_ticket(id, true, cx),
+            "ticket-unlink" => self.set_work_item(id, None, cx),
             "reminder:cancel" => {
                 let occurrences: Vec<_> = self
                     .reminders
@@ -1084,8 +1216,10 @@ impl Shell {
     ) -> Option<AnyElement> {
         let item = match self.session_metadata(id, cx).summary.work_item.clone()? {
             WorkItem::Github(item) => item,
-            // Tickets get their own chip.
-            WorkItem::Ticket(_) => return None,
+            WorkItem::Ticket(ticket) => {
+                let chip = TicketChip::new(&ticket, self.stale_tickets.contains(&id));
+                return Some(ticket_chip(id, chip, ticket.url.clone(), compact, cx));
+            }
         };
         let noun = if item.kind == "pr" { "PR" } else { "issue" };
         let url = item.url.clone();
@@ -1628,19 +1762,49 @@ impl Shell {
     }
 
     fn open_link_dialog(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_link_target(Some(id), window, cx);
+    }
+    /// The palette's "Link ticket…": the session in view takes the link.
+    pub(super) fn link_ticket_to_active_session(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.workspace.active {
+            Some(id) => self.open_link_dialog(id, window, cx),
+            None => {
+                self.error = Some("Open a session to link a ticket".into());
+                cx.notify();
+            }
+        }
+    }
+    pub(super) fn open_new_ticket_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_link_target(None, window, cx);
+    }
+    fn open_link_target(&mut self, id: Option<i64>, window: &mut Window, cx: &mut Context<Self>) {
         self.close_preview(cx);
-        let initial = self.session_metadata(id, cx).summary.work_item.clone();
+        let initial = id.and_then(|id| self.session_metadata(id, cx).summary.work_item.clone());
         let input = cx.new(|cx| {
             input::Input::field(
-                "GitHub issue or pull request URL",
-                "https://github.com/owner/repo/pull/123",
+                "Issue, PR or ticket",
+                if id.is_some() {
+                    "https://github.com/owner/repo/pull/123 or ENG-123"
+                } else {
+                    "ENG-123 or a ticket link"
+                },
                 content(0.3),
                 cx,
             )
         });
-        if let Some(item) = initial.as_ref().and_then(|w| w.github()) {
-            let url = item.url.clone();
-            input.update(cx, |i, cx| i.set_text(url, cx));
+        let existing = match &initial {
+            Some(WorkItem::Github(item)) => Some(item.url.clone()),
+            Some(WorkItem::Ticket(ticket)) => {
+                Some(ticket.url.clone().unwrap_or_else(|| ticket.key.clone()))
+            }
+            None => None,
+        };
+        if let Some(text) = existing {
+            input.update(cx, |i, cx| i.set_text(text, cx));
         }
         let events = vec![
             cx.subscribe_in(
@@ -1650,7 +1814,7 @@ impl Shell {
             ),
             cx.subscribe(&input, |this, _, _: &input::Changed, cx| {
                 if let Some(dialog) = &mut this.link_dialog
-                    && dialog.error.take().is_some()
+                    && (dialog.error.take().is_some() || dialog.choices.take().is_some())
                 {
                     cx.notify();
                 }
@@ -1661,6 +1825,7 @@ impl Shell {
             id,
             input,
             error: None,
+            choices: None,
             editing: initial.is_some(),
             _events: events,
         });
@@ -1672,40 +1837,207 @@ impl Shell {
             cx.notify();
         }
     }
-    /// Saves the parsed link, or with `keep` false, removes it.
-    fn save_link(&mut self, keep: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(dialog) = &mut self.link_dialog else {
+    /// Saves the pasted GitHub link or ticket, or with `keep` false, removes the link.
+    pub(super) fn save_link(&mut self, keep: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dialog) = &self.link_dialog else {
             return;
         };
         let id = dialog.id;
-        let item = if keep {
-            match parse_github_work_item(dialog.input.read(cx).content.trim()) {
-                Some(item) => Some(WorkItem::Github(item)),
-                None => {
-                    dialog.error = Some("Enter a valid GitHub issue or pull request URL.".into());
-                    cx.notify();
-                    return;
-                }
+        if !keep {
+            if let Some(id) = id {
+                self.set_work_item(id, None, cx);
             }
-        } else {
-            None
+            self.close_link_dialog(window, cx);
+            return;
+        }
+        let text = dialog.input.read(cx).content.trim().to_string();
+        if let Some(id) = id
+            && let Some(item) = parse_github_work_item(&text)
+        {
+            self.set_work_item(id, Some(WorkItem::Github(item)), cx);
+            self.close_link_dialog(window, cx);
+            return;
+        }
+        let resolved = self.tickets.resolve(&text);
+        let error = match resolved {
+            Resolved::One(ticket) => {
+                self.close_link_dialog(window, cx);
+                return self.finish_ticket_link(id, ticket, cx);
+            }
+            Resolved::Ambiguous(trackers) => {
+                if let Some(dialog) = &mut self.link_dialog {
+                    dialog.choices = Some(trackers);
+                    dialog.error = None;
+                }
+                cx.notify();
+                return;
+            }
+            Resolved::Invalid if parse_ticket(&text).is_some() => {
+                "Connect Jira, Linear or Plane in Settings to link tickets".to_string()
+            }
+            Resolved::Invalid if id.is_some() => {
+                "Enter a GitHub issue or PR URL, or a ticket key or link".to_string()
+            }
+            other => other.message().unwrap_or_default(),
         };
+        if let Some(dialog) = &mut self.link_dialog {
+            dialog.error = Some(error.into());
+        }
+        cx.notify();
+    }
+    /// A bare key several trackers could own, once the user picks one.
+    fn choose_ticket_tracker(
+        &mut self,
+        tracker: Tracker,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog) = &self.link_dialog else {
+            return;
+        };
+        let id = dialog.id;
+        let Some(parsed) = parse_ticket(dialog.input.read(cx).content.trim()) else {
+            return;
+        };
+        self.close_link_dialog(window, cx);
+        self.finish_ticket_link(
+            id,
+            TicketRef {
+                tracker,
+                key: parsed.key,
+                url: None,
+                title: None,
+                status: None,
+                status_group: None,
+                fetched_at: None,
+            },
+            cx,
+        );
+    }
+    fn finish_ticket_link(&mut self, id: Option<i64>, ticket: TicketRef, cx: &mut Context<Self>) {
+        match id {
+            Some(id) => self.link_ticket(id, ticket, cx),
+            None => self.create_session_target(self.default_kind(), false, None, Some(ticket), cx),
+        }
+    }
+    /// Saves the link at once, with no network; the title and status follow.
+    fn link_ticket(&mut self, id: i64, ticket: TicketRef, cx: &mut Context<Self>) {
+        self.stale_tickets.remove(&id);
+        self.set_work_item(id, Some(WorkItem::Ticket(Box::new(ticket))), cx);
+        self.refresh_ticket(id, false, cx);
+    }
+    /// A session made from a ticket drafts the key until the title is fetched.
+    pub(super) fn start_ticket_session(
+        &mut self,
+        id: i64,
+        ticket: TicketRef,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(view) = self.sessions.get(&id) {
+            let key = ticket.key.clone();
+            view.update(cx, |view, cx| view.set_draft_text(key.clone(), cx));
+            self.ticket_drafts.insert(id, key);
+        }
+        self.link_ticket(id, ticket, cx);
+    }
+    fn set_work_item(&mut self, id: i64, item: Option<WorkItem>, cx: &mut Context<Self>) {
         if let Some(summary) = self.session_summaries.get_mut(&id) {
             summary.work_item = item.clone();
         }
         if let Some(session) = self.sessions.get(&id) {
             session.update(cx, |s, _| s.summary.work_item = item.clone());
         }
+        if item.is_none() {
+            self.stale_tickets.remove(&id);
+        }
         self.store_write("link the session", cx, move |s| {
             s.set_work_item(id, item.as_ref())
         });
         self.invalidate_chrome(cx);
-        self.close_link_dialog(window, cx);
+    }
+    /// Reads the linked ticket's title and status. Runs on link, on open and
+    /// from the menu, never on a timer. `report` shows a failure to the user.
+    pub(super) fn refresh_ticket(&mut self, id: i64, report: bool, cx: &mut Context<Self>) {
+        let Some(WorkItem::Ticket(ticket)) =
+            self.session_metadata(id, cx).summary.work_item.clone()
+        else {
+            return;
+        };
+        if !self.ticket_refreshing.insert(id) {
+            return;
+        }
+        let backend = self.tickets.clone();
+        let requested = (*ticket).clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { backend.fetch(&requested) });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.ticket_refreshed(id, &ticket, result, report, cx)
+            });
+        })
+        .detach();
+    }
+    fn ticket_refreshed(
+        &mut self,
+        id: i64,
+        requested: &TicketRef,
+        result: Result<TicketRef, TicketError>,
+        report: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.ticket_refreshing.remove(&id);
+        let placeholder = self.ticket_drafts.remove(&id);
+        // Unlinked or relinked while the request was out.
+        let still_linked = matches!(
+            self.session_metadata(id, cx).summary.work_item.clone(),
+            Some(WorkItem::Ticket(current))
+                if current.tracker == requested.tracker && current.key == requested.key
+        );
+        if !still_linked {
+            return;
+        }
+        match result {
+            Ok(fresh) => {
+                self.stale_tickets.remove(&id);
+                if let (Some(placeholder), Some(title), Some(view)) =
+                    (placeholder, fresh.title.clone(), self.sessions.get(&id))
+                {
+                    view.update(cx, |view, cx| {
+                        if view.draft_text(cx) == placeholder {
+                            view.set_draft_text(title, cx);
+                        }
+                    });
+                }
+                self.set_work_item(id, Some(WorkItem::Ticket(Box::new(fresh))), cx);
+            }
+            Err(error) => {
+                if matches!(error, TicketError::NotConnected(_)) {
+                    self.stale_tickets.insert(id);
+                }
+                if report {
+                    self.error = Some(error.to_string());
+                } else {
+                    tracing::warn!(session = id, %error, "ticket refresh failed");
+                }
+                self.invalidate_chrome(cx);
+            }
+        }
+        cx.notify();
     }
     /// LinkSessionWorkItemDialog, centred over the window.
     pub(super) fn link_modal(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dialog = self.link_dialog.as_ref()?;
-        let title = self.session_metadata(dialog.id, cx).display_title();
+        let heading = match (dialog.id, dialog.editing) {
+            (None, _) => "New session from ticket",
+            (Some(_), true) => "Edit link",
+            (Some(_), false) => "Link issue, PR or ticket",
+        };
+        let title = dialog
+            .id
+            .map(|id| self.session_metadata(id, cx).display_title())
+            .unwrap_or_default();
         let viewport = window.viewport_size();
         let width = 384f32.min(viewport.width.as_f32() - 24.);
         let anchor = Anchor::Point(gpui::point(
@@ -1758,11 +2090,7 @@ impl Shell {
                             div()
                                 .id("link-work-item-dialog")
                                 .role(Role::Dialog)
-                                .aria_label(if dialog.editing {
-                                    "Edit GitHub link"
-                                } else {
-                                    "Link GitHub issue or PR"
-                                })
+                                .aria_label(heading)
                                 .flex()
                                 .flex_col()
                                 .child(
@@ -1777,11 +2105,7 @@ impl Shell {
                                                 .text_size(px(14.))
                                                 .font_weight(FontWeight::SEMIBOLD)
                                                 .text_color(content(1.))
-                                                .child(if dialog.editing {
-                                                    "Edit GitHub link"
-                                                } else {
-                                                    "Link GitHub issue or PR"
-                                                }),
+                                                .child(heading),
                                         )
                                         .child(
                                             div()
@@ -1807,9 +2131,52 @@ impl Shell {
                                                     div()
                                                         .font_weight(FontWeight::MEDIUM)
                                                         .text_color(content(0.8))
-                                                        .child("Issue or pull request URL"),
+                                                        .child(if dialog.id.is_some() {
+                                                            "Issue, PR or ticket"
+                                                        } else {
+                                                            "Ticket key or link"
+                                                        }),
                                                 )
                                                 .child(field)
+                                                .when_some(dialog.choices.clone(), |d, trackers| {
+                                                    d.child(
+                                                        div()
+                                                            .id("link-tracker-choice")
+                                                            .flex()
+                                                            .flex_col()
+                                                            .gap_1p5()
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(11.))
+                                                                    .text_color(content(0.6))
+                                                                    .child("Which tracker is this ticket in?"),
+                                                            )
+                                                            .child(
+                                                                div().flex().gap_2().children(
+                                                                    trackers.into_iter().map(|tracker| {
+                                                                        crate::modal::ghost_button(
+                                                                            SharedString::from(format!(
+                                                                                "link-tracker-{}",
+                                                                                tracker.as_str()
+                                                                            )),
+                                                                            tracker.label(),
+                                                                        )
+                                                                        .debug_selector(move || {
+                                                                            format!("link-tracker-{}", tracker.as_str())
+                                                                        })
+                                                                        .cursor_pointer()
+                                                                        .on_click(cx.listener(
+                                                                            move |this, _, window, cx| {
+                                                                                this.choose_ticket_tracker(
+                                                                                    tracker, window, cx,
+                                                                                )
+                                                                            },
+                                                                        ))
+                                                                    }),
+                                                                ),
+                                                            ),
+                                                    )
+                                                })
                                                 .child(match &dialog.error {
                                                     Some(error) => div()
                                                             .id("link-error")
@@ -1822,7 +2189,11 @@ impl Shell {
                                                         .text_size(px(11.))
                                                         .text_color(content(0.45))
                                                         .child(
-                                                            "Paste the full github.com URL. The linked item will appear on the session card.",
+                                                            if dialog.id.is_some() {
+                                                                "Paste a github.com URL, a ticket key like ENG-123 or a Jira, Linear or Plane link."
+                                                            } else {
+                                                                "Paste a ticket key like ENG-123 or a Jira, Linear or Plane link."
+                                                            },
                                                         ),
                                                 }),
                                         )
@@ -2501,5 +2872,391 @@ mod tests {
         window.update(visual, |shell, _, _| {
             assert!(matches!(&shell.renaming.as_ref().unwrap().target, RenameTarget::Folder(id) if id == "work"));
         }).unwrap();
+    }
+
+    use crate::tickets::fakes::FakeTickets;
+
+    /// `debug_bounds` wants a `'static` selector; a leaked test string is fine.
+    fn sel(selector: String) -> &'static str {
+        Box::leak(selector.into_boxed_str())
+    }
+
+    fn fake_tickets(shell: &mut Shell, connected: &[Tracker]) -> Arc<FakeTickets> {
+        let fake = Arc::new(FakeTickets::new(connected));
+        shell.tickets = fake.clone();
+        fake
+    }
+
+    fn open_link(shell: &mut Shell, id: i64, text: &str, w: &mut Window, cx: &mut Context<Shell>) {
+        shell.run_menu(MenuTarget::Session(id), "link-work-item", None, w, cx);
+        shell
+            .link_dialog
+            .as_ref()
+            .unwrap()
+            .input
+            .update(cx, |i, cx| i.set_text(text.into(), cx));
+    }
+
+    fn saved_ticket(shell: &Shell, id: i64) -> Option<TicketRef> {
+        match locked(&shell.store)
+            .unwrap()
+            .sessions()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == id)?
+            .work_item?
+        {
+            WorkItem::Ticket(ticket) => Some(*ticket),
+            WorkItem::Github(_) => None,
+        }
+    }
+
+    #[gpui::test]
+    fn link_dialog_accepts_a_ticket_url_and_saves_it(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        window
+            .update(cx, |shell, w, cx| {
+                fake_tickets(shell, &[Tracker::Linear]);
+                open_link(
+                    shell,
+                    a,
+                    "https://linear.app/acme/issue/ENG-7/fix-login",
+                    w,
+                    cx,
+                );
+                shell.save_link(true, w, cx);
+                assert!(shell.link_dialog.is_none());
+                // Saved before any fetch has run.
+                let Some(WorkItem::Ticket(ticket)) = shell.session_summaries[&a].work_item.clone()
+                else {
+                    panic!("the session links a ticket")
+                };
+                assert_eq!(
+                    (ticket.tracker, ticket.key.as_str()),
+                    (Tracker::Linear, "ENG-7")
+                );
+                assert_eq!(ticket.title, None);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                let ticket = saved_ticket(shell, a).expect("persisted");
+                assert_eq!(ticket.key, "ENG-7");
+                assert_eq!(ticket.title.as_deref(), Some("Fix login"));
+                assert_eq!(ticket.status.as_deref(), Some("In Progress"));
+                assert_eq!(ticket.fetched_at, Some(1_700_000_000_000));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn github_urls_still_link_and_unknown_input_saves_nothing(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        window
+            .update(cx, |shell, w, cx| {
+                fake_tickets(shell, &[Tracker::Linear]);
+                for (input, message) in [
+                    (
+                        "nonsense",
+                        "Enter a GitHub issue or PR URL, or a ticket key or link",
+                    ),
+                    (
+                        "https://acme.atlassian.net/browse/ENG-7",
+                        "Connect Jira in Settings",
+                    ),
+                ] {
+                    open_link(shell, a, input, w, cx);
+                    shell.save_link(true, w, cx);
+                    let error = shell.link_dialog.as_ref().unwrap().error.clone().unwrap();
+                    assert!(error.starts_with(message), "{input}: {error}");
+                    assert!(shell.session_summaries[&a].work_item.is_none());
+                }
+                open_link(shell, a, "https://github.com/acme/app/issues/5", w, cx);
+                shell.save_link(true, w, cx);
+                assert!(matches!(
+                    shell.session_summaries[&a].work_item,
+                    Some(WorkItem::Github(_))
+                ));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn ticket_key_with_no_tracker_connected_points_to_settings(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        window
+            .update(cx, |shell, w, cx| {
+                fake_tickets(shell, &[]);
+                open_link(shell, a, "ENG-7", w, cx);
+                shell.save_link(true, w, cx);
+                let error = shell.link_dialog.as_ref().unwrap().error.clone().unwrap();
+                assert!(error.contains("Settings"), "{error}");
+                assert!(shell.session_summaries[&a].work_item.is_none());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn ambiguous_key_asks_which_tracker(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        window
+            .update(cx, |shell, w, cx| {
+                fake_tickets(shell, &[Tracker::Jira, Tracker::Linear]);
+                open_link(shell, a, "eng-7", w, cx);
+            })
+            .unwrap();
+        // The input's change event clears stale hints, so let it land first.
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, w, cx| {
+                shell.save_link(true, w, cx);
+                let dialog = shell.link_dialog.as_ref().unwrap();
+                assert_eq!(dialog.choices, Some(vec![Tracker::Jira, Tracker::Linear]));
+                assert!(shell.session_summaries[&a].work_item.is_none());
+            })
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let linear = visual.debug_bounds("link-tracker-linear");
+        assert!(visual.debug_bounds("link-tracker-jira").is_some());
+        assert!(linear.is_some(), "one button per connected tracker");
+        window
+            .update(visual, |shell, w, cx| {
+                shell.choose_ticket_tracker(Tracker::Linear, w, cx);
+                assert!(shell.link_dialog.is_none());
+                let Some(WorkItem::Ticket(ticket)) = shell.session_summaries[&a].work_item.clone()
+                else {
+                    panic!("linked")
+                };
+                assert_eq!(
+                    (ticket.tracker, ticket.key.as_str()),
+                    (Tracker::Linear, "ENG-7")
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn chip_shows_key_title_status_and_stale_when_disconnected(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        let fake = window
+            .update(cx, |shell, w, cx| {
+                let fake = fake_tickets(shell, &[Tracker::Plane]);
+                shell.workspace.compact_session_cards = false;
+                shell.invalidate_chrome(cx);
+                open_link(shell, a, "ENG-7", w, cx);
+                shell.save_link(true, w, cx);
+                fake
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        window
+            .update(visual, |shell, _, cx| {
+                let Some(WorkItem::Ticket(ticket)) =
+                    shell.session_metadata(a, cx).summary.work_item.clone()
+                else {
+                    panic!("linked")
+                };
+                let chip = TicketChip::new(&ticket, false);
+                assert_eq!(chip.key, "ENG-7");
+                assert_eq!(chip.title.as_deref(), Some("Fix login"));
+                assert_eq!(chip.status.as_deref(), Some("In Progress"));
+                assert_eq!(chip.tone, ACCENT, "started tickets use the accent");
+                assert!(!chip.stale);
+            })
+            .unwrap();
+        assert!(
+            visual
+                .debug_bounds(sel(format!("ticket-chip-{a}")))
+                .is_some()
+        );
+        assert!(
+            visual
+                .debug_bounds(sel(format!("ticket-chip-title-{a}")))
+                .is_some()
+        );
+        assert!(
+            visual
+                .debug_bounds(sel(format!("ticket-chip-status-{a}")))
+                .is_some()
+        );
+        assert!(
+            visual
+                .debug_bounds(sel(format!("ticket-chip-stale-{a}")))
+                .is_none()
+        );
+
+        fake.disconnect();
+        window
+            .update(visual, |shell, _, cx| shell.refresh_ticket(a, true, cx))
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(
+            visual
+                .debug_bounds(sel(format!("ticket-chip-stale-{a}")))
+                .is_some()
+        );
+        assert!(
+            visual
+                .debug_bounds(sel(format!("ticket-chip-title-{a}")))
+                .is_some(),
+            "cached data stays"
+        );
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(shell.error.as_deref(), Some("Connect Plane in Settings"));
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn chip_tone_follows_the_state_group() {
+        assert_eq!(group_tone(StateGroup::Completed), 0x4ade80);
+        assert_eq!(group_tone(StateGroup::Cancelled), 0xf87171);
+        assert_eq!(group_tone(StateGroup::Backlog), GROUP_UNKNOWN);
+        let ticket = TicketRef {
+            tracker: Tracker::Jira,
+            key: "ENG-1".into(),
+            url: None,
+            title: Some(String::new()),
+            status: None,
+            status_group: None,
+            fetched_at: None,
+        };
+        let chip = TicketChip::new(&ticket, true);
+        assert_eq!(chip.title, None, "an empty title is not shown");
+        assert_eq!(chip.tone, GROUP_UNKNOWN);
+    }
+
+    #[gpui::test]
+    fn ticket_refreshes_when_the_session_opens_and_never_on_a_timer(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        let fake = window
+            .update(cx, |shell, w, cx| {
+                let fake = fake_tickets(shell, &[Tracker::Linear]);
+                open_link(shell, a, "ENG-7", w, cx);
+                shell.save_link(true, w, cx);
+                fake
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(fake.fetch_count(), 1, "one fetch on link");
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(3600));
+        cx.run_until_parked();
+        assert_eq!(fake.fetch_count(), 1, "nothing polls");
+        window
+            .update(cx, |shell, w, cx| shell.open(a, w, cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(fake.fetch_count(), 2, "one fetch on open");
+    }
+
+    #[gpui::test]
+    fn unlink_clears_the_ticket(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        window
+            .update(cx, |shell, w, cx| {
+                fake_tickets(shell, &[Tracker::Linear]);
+                open_link(shell, a, "ENG-7", w, cx);
+                shell.save_link(true, w, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, w, cx| {
+                assert!(saved_ticket(shell, a).is_some());
+                shell.run_menu(MenuTarget::Session(a), "ticket-unlink", None, w, cx);
+                assert!(shell.session_summaries[&a].work_item.is_none());
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                assert!(saved_ticket(shell, a).is_none());
+                assert!(
+                    locked(&shell.store).unwrap().sessions().unwrap()[..]
+                        .iter()
+                        .find(|s| s.id == a)
+                        .unwrap()
+                        .work_item
+                        .is_none()
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn an_in_flight_fetch_does_not_revive_an_unlinked_ticket(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        window
+            .update(cx, |shell, w, cx| {
+                fake_tickets(shell, &[Tracker::Linear]);
+                open_link(shell, a, "ENG-7", w, cx);
+                shell.save_link(true, w, cx);
+                shell.run_menu(MenuTarget::Session(a), "ticket-unlink", None, w, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                assert!(shell.session_summaries[&a].work_item.is_none());
+                assert!(saved_ticket(shell, a).is_none());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn open_in_tracker_opens_the_url(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        window
+            .update(cx, |shell, w, cx| {
+                fake_tickets(shell, &[Tracker::Linear]);
+                let labels = |shell: &Shell, cx: &App| -> Vec<String> {
+                    shell
+                        .session_menu_items(a, cx)
+                        .into_iter()
+                        .filter_map(|item| match item {
+                            MenuItem::Action(action) => Some(action.label.to_string()),
+                            _ => None,
+                        })
+                        .collect()
+                };
+                assert!(!labels(shell, cx).iter().any(|l| l.starts_with("Open in")));
+                open_link(shell, a, "ENG-7", w, cx);
+                shell.save_link(true, w, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, w, cx| {
+                let labels: Vec<_> = shell
+                    .session_menu_items(a, cx)
+                    .into_iter()
+                    .filter_map(|item| match item {
+                        MenuItem::Action(action) => Some(action.label.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                for expected in ["Open in Linear", "Refresh ticket", "Unlink ticket"] {
+                    assert!(
+                        labels.iter().any(|l| l == expected),
+                        "{expected} in {labels:?}"
+                    );
+                }
+                shell.run_menu(MenuTarget::Session(a), "ticket-open", None, w, cx);
+            })
+            .unwrap();
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://tracker.test/ENG-7")
+        );
     }
 }

@@ -23,6 +23,8 @@ pub(crate) enum Command {
     Plan,
     Operator,
     Orchestrator,
+    LinkTicket,
+    NewSessionFromTicket,
     OpenLogs,
     CopyDiagnostics,
     ReportIssue,
@@ -39,6 +41,12 @@ const COMMANDS: &[(Command, &str, &str)] = &[
     (Command::Plan, "Toggle Plan mode", ""),
     (Command::Operator, "Toggle Operator", ""),
     (Command::Orchestrator, "Toggle Orchestrator", ""),
+    (Command::LinkTicket, "Link ticket…", ""),
+    (
+        Command::NewSessionFromTicket,
+        "New session from ticket…",
+        "",
+    ),
     (Command::OpenLogs, "Open logs folder", ""),
     (Command::CopyDiagnostics, "Copy diagnostics", ""),
     (Command::ReportIssue, "Report an issue", ""),
@@ -174,7 +182,11 @@ impl QuickOpen {
             cx.notify();
         }
     }
-    fn pick(&mut self, ix: usize, cx: &mut Context<Self>) {
+    #[cfg(test)]
+    pub(crate) fn labels(&self) -> Vec<String> {
+        self.rows.iter().map(|row| row.label.clone()).collect()
+    }
+    pub(crate) fn pick(&mut self, ix: usize, cx: &mut Context<Self>) {
         if self.search.read(cx).is_composing() {
             return;
         }
