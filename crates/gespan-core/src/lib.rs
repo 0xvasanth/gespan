@@ -11,6 +11,7 @@ pub mod desktop_preferences;
 pub mod diff;
 pub mod external_editor;
 pub mod files;
+pub mod flow;
 pub mod follow_up;
 pub mod git;
 pub mod harness_updates;

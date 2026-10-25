@@ -685,6 +685,7 @@ impl Shell {
                     ("Inbox", "inbox"),
                     ("Notes", "note"),
                     ("Automations", "zap"),
+                    ("Flows", "git-merge"),
                     ("Board", "kanban"),
                 ]
                 .into_iter()
@@ -754,6 +755,7 @@ impl Shell {
                             "Inbox" => this.open_inbox(window, cx),
                             "Notes" => this.open_notes(window, cx),
                             "Automations" => this.open_automations(window, cx),
+                            "Flows" => this.open_flows(window, cx),
                             "Board" => this.open_board(window, cx),
                             _ => (),
                         }))

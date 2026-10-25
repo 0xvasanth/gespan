@@ -343,21 +343,17 @@ impl Shell {
         if let Some(id) = reuse {
             self.ensure_session(id, cx);
         }
-        let account = crate::accounts::get(cx)
-            .map(|accounts| accounts.read(cx).selected(kind, &automation.cwd))
-            .unwrap_or_default();
         if let Some(id) = reuse {
             self.automation_state.reserved.insert(id);
         }
-        let mut settings = reuse
+        let settings = reuse
             .and_then(|id| {
                 self.sessions
                     .get(&id)
                     .map(|view| view.read(cx).settings.clone())
             })
             .unwrap_or_default();
-        settings.account = account;
-        settings.model = gespan_core::store::native_model(&automation.model, kind.id());
+        let mut settings = managed_settings(settings, kind, &automation.cwd, &automation.model, cx);
         settings.model_settings = automation.model_settings.clone();
         settings.effort = [
             "effort",
@@ -382,29 +378,20 @@ impl Shell {
             .get("thinking")
             .and_then(|value| value.parse().ok());
         settings.access = gespan_core::agent::AccessMode::from_id(&automation.runtime_mode);
-        settings.new_worktree = automation.workspace_mode == "worktree";
-        settings.worktree_base = (automation.workspace_mode == "worktree").then(|| "HEAD".into());
-        settings.worktree_cwd =
-            (automation.workspace_mode == "existing").then(|| automation.worktree_cwd.clone());
-        settings.plan = false;
-        settings.operator = false;
-        settings.orchestrator = false;
-        settings.prepared_prompt = None;
+        WorktreeChoice::from_mode(&automation.workspace_mode, &automation.worktree_cwd)
+            .apply(&mut settings);
         let store = self.store.clone();
         let launch = due.clone();
         let revision = self.navigation_revision;
         let work = cx.background_executor().spawn(async move {
-            if Kind::parse(&launch.automation.harness).is_none() {
-                return Err("The automation's agent is unavailable".into());
-            }
-            if !std::path::Path::new(&launch.automation.cwd).is_dir() {
-                return Err("The automation's project folder is unavailable".into());
-            }
-            if launch.automation.workspace_mode == "existing"
-                && !std::path::Path::new(&launch.automation.worktree_cwd).is_dir()
-            {
-                return Err("The automation's worktree is unavailable".into());
-            }
+            let automation = &launch.automation;
+            launch_available(
+                "automation",
+                &automation.harness,
+                &automation.cwd,
+                (automation.workspace_mode == "existing")
+                    .then_some(automation.worktree_cwd.as_str()),
+            )?;
             let store = locked(&store)?;
             let mut settings = settings;
             let mut summary = if let Some(id) = reuse {
@@ -491,18 +478,12 @@ impl Shell {
                                 .add_to_folder(&due.automation.session_folder_id, id);
                             this.persist_automation_folder(&due.automation.cwd, cx);
                         }
-                        // Background runs append a tab without changing the focused project.
-                        if !this.workspace.tabs.contains(&id) {
-                            this.workspace.tabs.push(id);
-                            this.workspace.title_order.push(TitleTab::Session(id));
-                        }
                         let prompt = due
                             .run
                             .prompt
                             .clone()
                             .unwrap_or_else(|| due.automation.prompt.clone());
-                        this.sessions[&id]
-                            .update(cx, |view, cx| view.quick_submit(prompt, settings, cx));
+                        this.submit_in_background(id, prompt, settings, cx);
                         if let Some(run) = this.automation_state.running.get_mut(&id) {
                             run.submitting = false;
                         }
@@ -601,6 +582,22 @@ impl Shell {
         }));
     }
 
+    /// Background runs append a tab without changing the focused project, then
+    /// submit their prompt.
+    pub(super) fn submit_in_background(
+        &mut self,
+        id: i64,
+        prompt: String,
+        settings: gespan_core::agent::Settings,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.workspace.tabs.contains(&id) {
+            self.workspace.tabs.push(id);
+            self.workspace.title_order.push(TitleTab::Session(id));
+        }
+        self.sessions[&id].update(cx, |view, cx| view.quick_submit(prompt, settings, cx));
+    }
+
     fn persist_automation_folder(&mut self, cwd: &str, cx: &mut Context<Self>) {
         let cwd = cwd.to_string();
         let groups = self.groups.get(&cwd).cloned().unwrap_or_default();
@@ -621,6 +618,75 @@ impl Shell {
             }
         }));
     }
+}
+
+/// Where a background run works: a new worktree from `HEAD`, an existing
+/// worktree, or the project folder itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum WorktreeChoice {
+    New,
+    Reuse(String),
+    Current,
+}
+
+impl WorktreeChoice {
+    /// An automation's `workspace_mode` and saved `worktree_cwd`.
+    fn from_mode(mode: &str, worktree_cwd: &str) -> Self {
+        match mode {
+            "worktree" => Self::New,
+            "existing" => Self::Reuse(worktree_cwd.into()),
+            _ => Self::Current,
+        }
+    }
+
+    pub(super) fn apply(&self, settings: &mut gespan_core::agent::Settings) {
+        settings.new_worktree = *self == Self::New;
+        settings.worktree_base = (*self == Self::New).then(|| "HEAD".into());
+        settings.worktree_cwd = match self {
+            Self::Reuse(path) => Some(path.clone()),
+            Self::New | Self::Current => None,
+        };
+    }
+}
+
+/// A background run's settings: the harness's selected account and native
+/// model, with no composer mode or prepared prompt.
+pub(super) fn managed_settings(
+    mut settings: gespan_core::agent::Settings,
+    kind: Kind,
+    cwd: &str,
+    model: &str,
+    cx: &App,
+) -> gespan_core::agent::Settings {
+    settings.account = crate::accounts::get(cx)
+        .map(|accounts| accounts.read(cx).selected(kind, cwd))
+        .unwrap_or_default();
+    settings.model = gespan_core::store::native_model(model, kind.id());
+    settings.plan = false;
+    settings.operator = false;
+    settings.orchestrator = false;
+    settings.prepared_prompt = None;
+    settings
+}
+
+/// Fails when a background run's agent, project folder or worktree is gone;
+/// `owner` names the run in the message ("The automation's agent ...").
+pub(super) fn launch_available(
+    owner: &str,
+    harness: &str,
+    cwd: &str,
+    worktree: Option<&str>,
+) -> Result<(), String> {
+    if Kind::parse(harness).is_none() {
+        return Err(format!("The {owner}'s agent is unavailable"));
+    }
+    if !std::path::Path::new(cwd).is_dir() {
+        return Err(format!("The {owner}'s project folder is unavailable"));
+    }
+    if worktree.is_some_and(|path| !std::path::Path::new(path).is_dir()) {
+        return Err(format!("The {owner}'s worktree is unavailable"));
+    }
+    Ok(())
 }
 
 fn automation_work_item(
@@ -646,4 +712,59 @@ fn automation_work_item(
     gespan_core::session_groups::parse_github_work_item(&format!(
         "https://github.com/{repo}/{kind}/{number}"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automation_workspace_modes_keep_their_worktree_settings() {
+        // The values the inline launch code set before the shared helper.
+        let cases = [
+            ("worktree", true, Some("HEAD"), None),
+            ("existing", false, None, Some("/repo/.worktrees/a")),
+            ("current", false, None, None),
+            ("", false, None, None),
+        ];
+        for (mode, new_worktree, base, cwd) in cases {
+            let mut settings = gespan_core::agent::Settings {
+                new_worktree: !new_worktree,
+                worktree_base: Some("stale".into()),
+                worktree_cwd: Some("/stale".into()),
+                ..Default::default()
+            };
+            WorktreeChoice::from_mode(mode, "/repo/.worktrees/a").apply(&mut settings);
+            assert_eq!(settings.new_worktree, new_worktree, "{mode}");
+            assert_eq!(settings.worktree_base.as_deref(), base, "{mode}");
+            assert_eq!(settings.worktree_cwd.as_deref(), cwd, "{mode}");
+        }
+    }
+
+    #[test]
+    fn launch_checks_keep_the_automation_messages_and_order() {
+        let here = env!("CARGO_MANIFEST_DIR");
+        assert_eq!(
+            launch_available("automation", "nope", "/missing", Some("/missing")),
+            Err("The automation's agent is unavailable".into())
+        );
+        assert_eq!(
+            launch_available("automation", "codex", "/missing", Some("/missing")),
+            Err("The automation's project folder is unavailable".into())
+        );
+        assert_eq!(
+            launch_available("automation", "codex", here, Some("/missing")),
+            Err("The automation's worktree is unavailable".into())
+        );
+        assert_eq!(
+            launch_available("automation", "codex", here, Some(here)),
+            Ok(())
+        );
+        // Only the "existing" mode passes a worktree to check.
+        assert_eq!(launch_available("automation", "codex", here, None), Ok(()));
+        assert_eq!(
+            launch_available("Flow", "codex", "/missing", None),
+            Err("The Flow's project folder is unavailable".into())
+        );
+    }
 }

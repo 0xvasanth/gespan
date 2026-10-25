@@ -60,14 +60,18 @@ impl Shell {
             .filter_map(|view| {
                 let chat = view.read(cx);
                 let id = chat.summary.id;
-                (!shown.contains(&id) && preview != Some(id) && !chat.busy && chat.history_loaded())
-                    .then(|| {
-                        (
-                            id,
-                            self.history_recency.get(&id).copied().unwrap_or(0),
-                            chat.history_weight(cx),
-                        )
-                    })
+                (!shown.contains(&id)
+                    && preview != Some(id)
+                    && !chat.busy
+                    && chat.history_loaded()
+                    && !self.flows_state.awaits(id))
+                .then(|| {
+                    (
+                        id,
+                        self.history_recency.get(&id).copied().unwrap_or(0),
+                        chat.history_weight(cx),
+                    )
+                })
             })
             .collect();
         inactive.sort_unstable_by_key(|&(id, recency, _)| (recency, id));

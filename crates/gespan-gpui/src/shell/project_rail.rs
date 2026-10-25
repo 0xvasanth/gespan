@@ -605,6 +605,7 @@ impl Shell {
                     ("Inbox", "inbox"),
                     ("Notes", "file"),
                     ("Automations", "zap"),
+                    ("Flows", "git-merge"),
                     ("Board", "kanban"),
                 ]
                 .into_iter()
@@ -655,6 +656,7 @@ impl Shell {
                             "Inbox" => this.open_inbox(w, cx),
                             "Notes" => this.open_notes(w, cx),
                             "Automations" => this.open_automations(w, cx),
+                            "Flows" => this.open_flows(w, cx),
                             "Board" => this.open_board(w, cx),
                             _ => (),
                         }))
@@ -842,6 +844,7 @@ impl Shell {
                         workspace::AppView::Automations,
                         self.workspace.sidebar_automations_visible,
                     ),
+                    (workspace::AppView::Flows, true),
                     (workspace::AppView::Board, self.workspace.preferences.board),
                 ]
                 .into_iter()
@@ -858,6 +861,7 @@ impl Shell {
                             workspace::AppView::Inbox => "rail-inbox",
                             workspace::AppView::Notes => "rail-notes",
                             workspace::AppView::Automations => "rail-automations",
+                            workspace::AppView::Flows => "rail-flows",
                             workspace::AppView::Board => "rail-board",
                         },
                         view.label(),
@@ -885,6 +889,7 @@ impl Shell {
                                 workspace::AppView::Inbox => this.open_inbox(w, cx),
                                 workspace::AppView::Notes => this.open_notes(w, cx),
                                 workspace::AppView::Automations => this.open_automations(w, cx),
+                                workspace::AppView::Flows => this.open_flows(w, cx),
                                 workspace::AppView::Board => this.open_board(w, cx),
                             }
                         }

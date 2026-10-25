@@ -8,6 +8,9 @@ mod classic_sidebar;
 mod classic_surface_tests;
 mod classic_surfaces;
 mod file_panes;
+mod flow_runs;
+#[cfg(test)]
+mod flow_view_tests;
 mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
@@ -603,10 +606,12 @@ pub(crate) struct Shell {
     notes: Option<Entity<Notes>>,
     inbox: Option<Entity<crate::inbox::Inbox>>,
     automations: Option<Entity<crate::automations::Automations>>,
+    flows: Option<Entity<crate::flows::FlowsView>>,
     board: Option<Entity<crate::board::BoardView>>,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
+    flows_state: flow_runs::State,
     settings: Option<Entity<crate::settings::SettingsView>>,
     settings_events: Option<Subscription>,
     settings_overlay_watch: Option<Subscription>,
@@ -950,10 +955,12 @@ impl Shell {
             notes: None,
             inbox: None,
             automations: None,
+            flows: None,
             board: None,
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),
+            flows_state: Default::default(),
             settings: None,
             settings_events: None,
             settings_overlay_watch: None,
@@ -1153,6 +1160,7 @@ impl Shell {
         this.apply_preferences(cx);
         this.poll_reminders(cx);
         this.initialize_automations(cx);
+        this.initialize_flows(cx);
         if this.workspace.active.is_none() {
             cx.spawn(async move |this, cx| {
                 let _ = this.update_in(cx, |this, window, cx| {
@@ -1252,6 +1260,7 @@ impl Shell {
                 this.sync_search_session(id, cx);
                 this.orchestration_session_changed(id, cx);
                 this.automation_session_changed(id, cx);
+                this.flow_session_changed(id, cx);
                 this.sync_review_locks(cx);
                 this.refresh_session_mark(id, cx);
                 this.sync_keep_awake();

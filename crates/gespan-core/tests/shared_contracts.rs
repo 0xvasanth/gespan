@@ -313,6 +313,73 @@ fn agent_run_and_wake_marker_json_names_match() {
         .any(|(_, text)| text.contains("custom_type: \"task-notification\".into()")));
 }
 
+#[test]
+fn flow_ddl_is_pinned() {
+    use gespan_core::flow::store::{
+        ensure_tables, FLOWS_DDL, FLOW_INDEXES_DDL, FLOW_RUNS_DDL, FLOW_VISITS_DDL,
+    };
+    // Literal copies: the Phase 3 Tauri twin must create exactly this text.
+    assert_eq!(
+        FLOWS_DDL,
+        "CREATE TABLE IF NOT EXISTS flows (
+  id TEXT PRIMARY KEY,
+  definition_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+)"
+    );
+    assert_eq!(
+        FLOW_RUNS_DDL,
+        "CREATE TABLE IF NOT EXISTS flow_runs (
+  id TEXT PRIMARY KEY,
+  flow_id TEXT NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  run_json TEXT NOT NULL
+)"
+    );
+    assert_eq!(
+        FLOW_VISITS_DDL,
+        "CREATE TABLE IF NOT EXISTS flow_visits (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES flow_runs(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  state_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  visit_json TEXT NOT NULL,
+  UNIQUE (run_id, seq)
+)"
+    );
+    assert_eq!(
+        FLOW_INDEXES_DDL,
+        [
+            "CREATE INDEX IF NOT EXISTS flow_runs_history_idx ON flow_runs (flow_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS flow_runs_status_idx ON flow_runs (status)",
+            "CREATE INDEX IF NOT EXISTS flow_visits_order_idx ON flow_visits (run_id, seq)",
+        ]
+    );
+    // What SQLite actually stored matches too.
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_tables(&conn).unwrap();
+    ensure_tables(&conn).unwrap();
+    let sql = |name: &str| -> String {
+        conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE name = ?1",
+            [name],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(sql("flows"), FLOWS_DDL.replace(" IF NOT EXISTS", ""));
+    assert_eq!(
+        sql("flow_runs"),
+        FLOW_RUNS_DDL.replace(" IF NOT EXISTS", "")
+    );
+    assert_eq!(
+        sql("flow_visits"),
+        FLOW_VISITS_DDL.replace(" IF NOT EXISTS", "")
+    );
+}
+
 /// The native board source, as the Tauri board source is read with `tauri`.
 fn native_board() -> String {
     fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/board/mod.rs")).unwrap()
