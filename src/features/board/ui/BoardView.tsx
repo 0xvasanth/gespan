@@ -244,6 +244,7 @@ function BoardContent({
   const [pageCardId, setPageCardId] = useState<string | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [newCardOpen, setNewCardOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const showCard = (next: { id: string; focus?: "title" | "link" }) => {
     setOpenCard(next);
     setPageCardId(loadBoardCardOpen() === "page" ? next.id : null);
@@ -1036,10 +1037,13 @@ function BoardContent({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col"
-      onKeyDown={(event) => {
+      ref={rootRef}
+      tabIndex={-1}
+      className="flex min-h-0 flex-1 flex-col outline-none"
+      onKeyDownCapture={(event) => {
         // Cmd+N (Ctrl+N elsewhere) with focus anywhere in the board, the
-        // search box included. Shift and Alt variants stay with the app.
+        // search box and menu buttons included (capture, so a control that
+        // stops keydown can't swallow it). Shift and Alt variants stay with the app.
         const mod = IS_MAC ? event.metaKey : event.ctrlKey;
         if (
           !mod ||
@@ -1280,6 +1284,7 @@ function BoardContent({
           projects={projects}
           onClose={() => setNewCardOpen(false)}
           onNotice={setError}
+          returnFocusTo={() => rootRef.current}
         />
       ) : null}
       {toast}

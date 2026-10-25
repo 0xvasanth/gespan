@@ -2613,4 +2613,109 @@ describe("BoardView New card shortcut", () => {
     });
     expect(dialog()).toBeNull();
   });
+
+  const modalTitle = () =>
+    document.querySelector<HTMLInputElement>(
+      '[role="dialog"] [aria-label="Title"]',
+    )!;
+
+  it("opens from the column composer without typing an n", async () => {
+    await renderBoard();
+    const add = [...columnEl("backlog").querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Add card"),
+    )!;
+    act(() => add.click());
+    const composer = container.querySelector<HTMLTextAreaElement>(
+      '[aria-label="New card in Backlog"]',
+    )!;
+    composer.focus();
+    const event = keydown(composer, modKey);
+    expect(event.defaultPrevented).toBe(true);
+    expect(dialog()).not.toBeNull();
+    expect(composer.value).toBe("");
+  });
+
+  it("opens from the card title field in the drawer without typing an n", async () => {
+    await renderBoard();
+    act(() =>
+      container
+        .querySelector<HTMLElement>("[data-board-card='c1']")!
+        .click(),
+    );
+    await flush();
+    const title = document.querySelector<HTMLInputElement>(
+      '[data-card-drawer] [aria-label="Title"]',
+    )!;
+    title.focus();
+    const event = keydown(title, modKey);
+    expect(event.defaultPrevented).toBe(true);
+    expect(dialog()).not.toBeNull();
+    expect(title.value).toBe("Fix login");
+  });
+
+  it("opens with focus on a card's menu button, which stops other keys", async () => {
+    await renderBoard();
+    const priority = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Priority of #1"]',
+    )!;
+    priority.focus();
+    const event = keydown(priority, modKey);
+    expect(event.defaultPrevented).toBe(true);
+    expect(dialog()).not.toBeNull();
+  });
+
+  it("returns focus to the board after Create, so the shortcut works again", async () => {
+    await renderBoard();
+    const card = cardEl("c1");
+    card.focus();
+    keydown(card, modKey);
+    const title = modalTitle();
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    act(() => {
+      setter.call(title, "Next");
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      title.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          ...modKey,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await flush();
+    expect(dialog()).toBeNull();
+    expect(container.contains(document.activeElement)).toBe(true);
+    keydown(document.activeElement as HTMLElement, modKey);
+    expect(dialog()).not.toBeNull();
+  });
+
+  it("returns focus to the board after Escape, so the shortcut works again", async () => {
+    await renderBoard();
+    searchBox().focus();
+    keydown(searchBox(), modKey);
+    press(modalTitle(), "Escape");
+    expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(searchBox());
+    keydown(document.activeElement as HTMLElement, modKey);
+    expect(dialog()).not.toBeNull();
+  });
+
+  it("falls back to the board when the opener is gone", async () => {
+    await renderBoard();
+    const card = cardEl("c2");
+    card.focus();
+    keydown(card, modKey);
+    card.remove();
+    press(modalTitle(), "Escape");
+    expect(dialog()).toBeNull();
+    expect(container.contains(document.activeElement)).toBe(true);
+    keydown(document.activeElement as HTMLElement, modKey);
+    expect(dialog()).not.toBeNull();
+  });
 });

@@ -84,6 +84,7 @@ export function NewCardModal({
   projects,
   onClose,
   onNotice,
+  returnFocusTo,
 }: {
   boardId: string;
   columns: readonly BoardColumn[];
@@ -92,7 +93,22 @@ export function NewCardModal({
   onClose: () => void;
   /** Told when the card was made but a field was not saved, after the modal closes. */
   onNotice: (message: string) => void;
+  /** Where focus goes on close when what had it before is gone. */
+  returnFocusTo?: () => HTMLElement | null;
 }) {
+  // Whatever had focus when the modal opened gets it back on close, so the
+  // board keeps its keys (Cmd+N again) instead of focus falling to the page.
+  const opener = useRef<Element | null>(document.activeElement);
+  const fallback = useRef(returnFocusTo);
+  fallback.current = returnFocusTo;
+  useEffect(
+    () => () => {
+      const before = opener.current;
+      if (before instanceof HTMLElement && before.isConnected) before.focus();
+      else fallback.current?.()?.focus();
+    },
+    [],
+  );
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [columnId, setColumnId] = useState(
