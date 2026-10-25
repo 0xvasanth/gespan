@@ -1445,7 +1445,7 @@ fn run_operation(
     match request.kind {
         Kind::Codex => {
             command.arg("app-server");
-            crate::visual_bridge::configure_codex(&mut command, &request.settings.environment);
+            crate::tool_servers::configure_codex(&mut command, &request.settings.environment);
             if let Some(pilot) = &request.settings.pilot {
                 if let Some(home) =
                     crate::pilot::codex_home(&pilot.root, &request.settings.account.id)?
@@ -1491,10 +1491,11 @@ fn run_operation(
                 command.args(["--tools", "Read,Glob,Grep,Bash", "--allowedTools", "Read,Glob,Grep,Bash(git status *),Bash(git diff *),Bash(git log *),Bash(git show *),Bash(pwd),Bash(ls *),Bash(rg *)"]);
             }
             if !settings.text_only {
-                if let Some(server) = crate::visual_bridge::mcp_server(&settings.environment) {
+                let servers = crate::tool_servers::mcp_servers(&settings.environment);
+                if !servers.is_empty() {
                     command.args([
                         "--mcp-config",
-                        &json!({"mcpServers":{"gespan_visual":server}}).to_string(),
+                        &json!({ "mcpServers": servers }).to_string(),
                     ]);
                 }
             }
@@ -1818,9 +1819,9 @@ fn run_operation(
                 pending_bytes = 0;
                 last_emit = Instant::now();
             }
-            // A visual publication may arrive while the provider is waiting
-            // for its tool result and therefore emits no stream events.
-            if crate::visual_bridge::configured(&protocol.request.settings.environment) {
+            // A visual publication or ticket call may arrive while the provider
+            // is waiting for its tool result and therefore emits no stream events.
+            if crate::tool_servers::configured(&protocol.request.settings.environment) {
                 emit(Vec::new())?;
             }
             if protocol.done {

@@ -21,6 +21,7 @@ const ENV_ENDPOINT: &str = "GESPAN_VISUAL_ENDPOINT";
 const ENV_TOKEN: &str = "GESPAN_VISUAL_TOKEN";
 const ENV_SESSION: &str = "GESPAN_VISUAL_SESSION";
 const ENV_EXECUTABLE: &str = "GESPAN_VISUAL_EXECUTABLE";
+pub(crate) const ENV_KEYS: [&str; 4] = [ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE];
 
 /// Loaded through visual_docs or the CLI only when authoring a visual. Keep the
 /// SDK out of ordinary prompts, server instructions and tool descriptions.
@@ -523,7 +524,7 @@ fn publish_with_environment(
 }
 
 fn current_environment() -> HashMap<String, String> {
-    [ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE]
+    ENV_KEYS
         .into_iter()
         .filter_map(|key| std::env::var(key).ok().map(|value| (key.to_owned(), value)))
         .collect()
@@ -622,53 +623,6 @@ fn documentation() -> Value {
             "show": "gespan-gpui visual show --input FILE --title TITLE"
         }
     })
-}
-
-pub fn configured(environment: &HashMap<String, String>) -> bool {
-    [ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE]
-        .iter()
-        .all(|key| environment.contains_key(*key))
-}
-
-/// Provider-specific adapters use this ephemeral stdio server definition.
-pub fn mcp_server(environment: &HashMap<String, String>) -> Option<Value> {
-    configured(environment).then(|| {
-        json!({
-            "type":"stdio", "command":environment[ENV_EXECUTABLE], "args":["visual-mcp"]
-        })
-    })
-}
-
-pub fn acp_servers(environment: &HashMap<String, String>) -> Value {
-    let Some(mut server) = mcp_server(environment) else {
-        return json!([]);
-    };
-    // ACP's stdio server shape omits the transport discriminator.
-    server.as_object_mut().unwrap().remove("type");
-    server["name"] = "gespan_visual".into();
-    server["env"] = [ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE]
-        .into_iter()
-        .map(|key| json!({"name":key,"value":environment[key]}))
-        .collect::<Vec<_>>()
-        .into();
-    json!([server])
-}
-
-pub fn configure_codex(command: &mut std::process::Command, environment: &HashMap<String, String>) {
-    if !configured(environment) {
-        return;
-    }
-    for (key, value) in [
-        ("command", json!(environment[ENV_EXECUTABLE])),
-        ("args", json!(["visual-mcp"])),
-        (
-            "env_vars",
-            json!([ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE]),
-        ),
-    ] {
-        // JSON's strings and arrays are valid TOML literals for these values.
-        command.args(["-c", &format!("mcp_servers.gespan_visual.{key}={value}")]);
-    }
 }
 
 pub fn tool_definitions() -> Vec<Value> {
@@ -823,7 +777,7 @@ mod tests {
         let response = mcp_response(json!({"id":2,"method":"tools/call","params":{"name":"visual_show","arguments":input()}}), &environment).unwrap();
         assert_eq!(response["result"]["isError"], true);
         assert_eq!(tool_definitions().len(), 3);
-        assert_eq!(acp_servers(&environment), json!([]));
+        assert_eq!(crate::tool_servers::acp_servers(&environment), json!([]));
     }
 
     #[test]
@@ -892,7 +846,7 @@ mod tests {
         let server = Server::start(84).unwrap();
         let environment = server.environment(std::path::Path::new("/test/app"));
         let mut command = std::process::Command::new("provider");
-        configure_codex(&mut command, &environment);
+        crate::tool_servers::configure_codex(&mut command, &environment);
         let arguments = command
             .get_args()
             .map(|arg| arg.to_string_lossy())
@@ -901,10 +855,13 @@ mod tests {
         assert!(arguments.contains("visual-mcp"));
         assert!(arguments.contains(ENV_TOKEN));
         assert!(!arguments.contains(&environment[ENV_TOKEN]));
-        let acp = acp_servers(&environment);
+        let acp = crate::tool_servers::acp_servers(&environment);
         assert_eq!(acp[0]["name"], "gespan_visual");
         assert_eq!(acp[0]["env"].as_array().unwrap().len(), 4);
-        assert_eq!(mcp_server(&environment).unwrap()["command"], "/test/app");
+        assert_eq!(
+            crate::tool_servers::mcp_servers(&environment)["gespan_visual"],
+            json!({"type":"stdio","command":"/test/app","args":["visual-mcp"]})
+        );
     }
 
     #[test]

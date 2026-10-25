@@ -523,7 +523,7 @@ pub(super) fn run(
                 result?;
                 return emit(vec![Event::Done]);
             }
-            if crate::visual_bridge::configured(&request.settings.environment) {
+            if crate::tool_servers::configured(&request.settings.environment) {
                 emit(Vec::new())?;
             }
             if !connected && started.elapsed() >= Duration::from_secs(30) {
