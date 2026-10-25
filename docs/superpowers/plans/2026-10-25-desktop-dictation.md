@@ -209,8 +209,8 @@ Each app runs its own binary again with a `speech-helper` subcommand. That child
 **Interfaces:**
 - Consumes: Task 3's `Request` and `Event`, Task 4's `SpeechEngine` and `ParakeetEngine::load`, Task 2's `postprocess`.
 - Produces:
-  - `pub trait AudioSource: Send { fn start(&mut self, sink: Box<dyn FnMut(&[f32]) + Send>) -> Result<(), CaptureError>; fn stop(&mut self); }`. Samples handed to the sink are already 16 kHz mono f32.
-  - `pub struct MicSource`, which implements it with `cpal` 0.18: the default input device, downmixed to mono and linearly resampled to 16 kHz. It maps a missing device to `CaptureError::NoInputDevice` and a permission or stream-build failure to `CaptureError::Denied`.
+  - `pub trait AudioSource: Send { fn start(&mut self, sink: Box<dyn FnMut(&[f32]) + Send>) -> Result<(), CaptureError>; fn stop(&mut self); }`. Samples handed to the sink are already 16 kHz single-channel f32.
+  - `pub struct MicSource`, which implements it with `cpal` 0.18: the default input device, downmixed to a single channel and linearly resampled to 16 kHz. It maps a missing device to `CaptureError::NoInputDevice` and a permission or stream-build failure to `CaptureError::Denied`.
   - `pub const MAX_RECORDING_SECS: u32 = 120;` and `pub const PARTIAL_INTERVAL_MS: u64 = 1000;`
   - `pub fn run_helper(input: impl BufRead, output: impl Write + Send + 'static, make_engine: impl Fn(&Path) -> Result<Box<dyn SpeechEngine>, EngineError>, source: Box<dyn AudioSource>) -> io::Result<()>`
   - `pub fn helper_main() -> !`, which runs `run_helper` on stdin and stdout with `ParakeetEngine` and `MicSource`, and exits 0 on `Shutdown` or end of input. This is what the apps' `speech-helper` subcommand calls.

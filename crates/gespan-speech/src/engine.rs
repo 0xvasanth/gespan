@@ -1,4 +1,4 @@
-/// Turns 16 kHz mono samples into text. `terms` are project vocabulary the
+/// Turns 16 kHz single-channel samples into text. `terms` are project vocabulary the
 /// engine may use to bias recognition.
 pub trait SpeechEngine: Send {
     fn transcribe(&mut self, samples_16k: &[f32], terms: &[String]) -> Result<String, EngineError>;

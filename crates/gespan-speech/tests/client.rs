@@ -157,6 +157,7 @@ fn gives_up_after_three_crashes_in_a_minute() {
     let (client, rx) = spawn("crash-after-start", Some(&log));
     let deadline = Instant::now() + WAIT;
     let mut unavailable = 0;
+    assert!(!client.is_unavailable());
     while unavailable == 0 {
         assert!(Instant::now() < deadline, "never gave up");
         client.send(Request::Start { terms: vec![] });
@@ -168,6 +169,7 @@ fn gives_up_after_three_crashes_in_a_minute() {
             }
         }
     }
+    assert!(client.is_unavailable());
     // The initial run plus exactly three restarts.
     assert_eq!(pid_count(&log), 4);
     // After giving up, send is a no-op: nothing spawns and nothing is emitted,

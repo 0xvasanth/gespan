@@ -134,8 +134,7 @@ fn models_impl(state: &State) -> Vec<ModelInfo> {
 
 /// Registers a cancel token for `model_id`, refusing a second download of the
 /// same model.
-fn begin_download(state: &State, model_id: &str) -> Result<CancelToken, String> {
-    find_spec(model_id)?;
+fn register_download(state: &State, model_id: &str) -> Result<CancelToken, String> {
     let mut cancels = lock(&state.cancels);
     if cancels.contains_key(model_id) {
         return Err("already-downloading".into());
@@ -147,6 +146,18 @@ fn begin_download(state: &State, model_id: &str) -> Result<CancelToken, String> 
 
 fn end_download(state: &State, model_id: &str) {
     lock(&state.cancels).remove(model_id);
+}
+
+/// Releases the download's cancel token when dropped, even on a panic.
+struct DownloadGuard<'a> {
+    state: &'a State,
+    model_id: &'a str,
+}
+
+impl Drop for DownloadGuard<'_> {
+    fn drop(&mut self) {
+        end_download(self.state, self.model_id);
+    }
 }
 
 fn cancel_download_impl(state: &State, model_id: &str) {
@@ -162,8 +173,17 @@ fn download_impl(
     model_id: &str,
     emit: impl Fn(DownloadEvent),
 ) -> Result<(), String> {
-    let token = begin_download(state, model_id)?;
-    let spec = find_spec(model_id)?;
+    download_spec(state, find_spec(model_id)?, emit)
+}
+
+fn download_spec(
+    state: &State,
+    spec: &ModelSpec,
+    emit: impl Fn(DownloadEvent),
+) -> Result<(), String> {
+    let model_id = spec.id;
+    let token = register_download(state, model_id)?;
+    let guard = DownloadGuard { state, model_id };
     let mut throttle = ProgressThrottle::new(Instant::now());
     let result = state.store.download(spec, &token, |p: Progress| {
         if throttle.allow(Instant::now(), p.downloaded, p.total) {
@@ -174,7 +194,8 @@ fn download_impl(
             });
         }
     });
-    end_download(state, model_id);
+    // Release before the final event so a retry on `Done`/`Failed` is accepted.
+    drop(guard);
     match result {
         Ok(()) => {
             emit(DownloadEvent::Done {
@@ -225,6 +246,9 @@ fn start_impl(state: &State, sink: &EventSink, args: StartArgs) -> Result<(), St
     });
 
     let mut client = lock(&state.client);
+    if client.as_ref().is_some_and(|c| c.is_unavailable()) {
+        return Err("speech-unavailable".into());
+    }
     if client.is_none() {
         let (program, helper_args) = helper_command().map_err(|e| e.to_string())?;
         let sink = sink.clone();
@@ -251,7 +275,8 @@ fn send_impl(state: &State, req: Request) {
 
 /// Stops the helper on app exit.
 pub fn shutdown(state: &State) {
-    if let Some(client) = lock(&state.client).take() {
+    let client = lock(&state.client).take();
+    if let Some(client) = client {
         client.shutdown();
     }
 }
@@ -340,8 +365,10 @@ pub async fn dictation_cancel(state: tauri::State<'_, State>) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gespan_models::ModelFile;
     use gespan_models::ModelStore;
-    use gespan_speech::catalog::PARAKEET_V2_EN;
+    use gespan_speech::catalog::{PARAKEET_V2_EN, PARAKEET_V3_MULTI};
+    use gespan_speech::RestartPolicy;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
@@ -413,27 +440,27 @@ mod tests {
     #[test]
     fn second_download_of_same_model_is_refused_until_the_first_ends() {
         let (_dir, state) = state();
-        let token = begin_download(&state, PARAKEET_V2_EN.id).unwrap();
+        let token = register_download(&state, PARAKEET_V2_EN.id).unwrap();
         assert_eq!(
-            begin_download(&state, PARAKEET_V2_EN.id).err().unwrap(),
+            register_download(&state, PARAKEET_V2_EN.id).err().unwrap(),
             "already-downloading"
         );
         // A different model is independent.
-        assert!(begin_download(&state, "parakeet-tdt-0.6b-v3-multi").is_ok());
+        assert!(register_download(&state, PARAKEET_V3_MULTI.id).is_ok());
 
         // Cancel reaches the running download's token.
         cancel_download_impl(&state, PARAKEET_V2_EN.id);
         assert!(token.is_cancelled());
 
         end_download(&state, PARAKEET_V2_EN.id);
-        assert!(begin_download(&state, PARAKEET_V2_EN.id).is_ok());
+        assert!(register_download(&state, PARAKEET_V2_EN.id).is_ok());
     }
 
     #[test]
     fn download_of_unknown_model_is_rejected() {
         let (_dir, state) = state();
         assert_eq!(
-            begin_download(&state, "nope").err().unwrap(),
+            download_impl(&state, "nope", |_| {}).unwrap_err(),
             "unknown-model"
         );
     }
@@ -444,7 +471,7 @@ mod tests {
         *state.loaded.lock().unwrap() = Some(PARAKEET_V2_EN.id.into());
         std::fs::create_dir_all(dir.path().join(PARAKEET_V2_EN.id)).unwrap();
 
-        delete_model_impl(&state, "parakeet-tdt-0.6b-v3-multi").unwrap();
+        delete_model_impl(&state, PARAKEET_V3_MULTI.id).unwrap();
         assert_eq!(
             state.loaded.lock().unwrap().as_deref(),
             Some(PARAKEET_V2_EN.id)
@@ -495,5 +522,92 @@ mod tests {
         })
         .unwrap();
         assert_eq!(err, serde_json::json!({"modelId":"m","error":"x"}));
+    }
+
+    static UNREACHABLE: ModelSpec = ModelSpec {
+        id: "unreachable-test-model",
+        label: "Unreachable",
+        base_urls: &["http://127.0.0.1:1/"],
+        files: &[ModelFile {
+            name: "model.bin",
+            url_path: "model.bin",
+            size: 10,
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+        }],
+    };
+
+    #[test]
+    fn failed_download_reports_error_and_releases_the_token() {
+        let (_dir, state) = state();
+        let events = std::cell::RefCell::new(Vec::new());
+        let result = download_spec(&state, &UNREACHABLE, |e| events.borrow_mut().push(e));
+        let error = result.unwrap_err();
+
+        let events = events.into_inner();
+        let last = serde_json::to_value(events.last().unwrap()).unwrap();
+        assert_eq!(
+            last,
+            serde_json::json!({"modelId": UNREACHABLE.id, "error": error})
+        );
+        assert!(lock(&state.cancels).is_empty());
+        // A retry is accepted rather than refused as already-downloading.
+        let retry = download_spec(&state, &UNREACHABLE, |_| {}).unwrap_err();
+        assert_ne!(retry, "already-downloading");
+    }
+
+    #[test]
+    fn download_guard_releases_the_token_on_panic() {
+        let (_dir, state) = state();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            register_download(&state, PARAKEET_V2_EN.id).ok().unwrap();
+            let _guard = DownloadGuard {
+                state: &state,
+                model_id: PARAKEET_V2_EN.id,
+            };
+            panic!("download thread died");
+        }));
+        assert!(outcome.is_err());
+        assert!(register_download(&state, PARAKEET_V2_EN.id).is_ok());
+    }
+
+    /// Marks the model as fully downloaded without writing its real bytes.
+    fn make_ready(dir: &std::path::Path, spec: &ModelSpec) {
+        let model_dir = dir.join(spec.id);
+        std::fs::create_dir_all(&model_dir).unwrap();
+        for file in spec.files {
+            let f = std::fs::File::create(model_dir.join(file.name)).unwrap();
+            f.set_len(file.size).unwrap();
+            std::fs::File::create(model_dir.join(format!("{}.verified", file.name))).unwrap();
+        }
+    }
+
+    #[test]
+    fn start_against_a_given_up_client_reports_speech_unavailable() {
+        let (dir, state) = state();
+        make_ready(dir.path(), &PARAKEET_V2_EN);
+        // A helper that cannot be launched exhausts its restarts quickly.
+        let client = SpeechClient::spawn_with(
+            dir.path().join("no-such-helper"),
+            Vec::new(),
+            Vec::new(),
+            RestartPolicy {
+                delays: vec![Duration::from_millis(5); 3],
+                window: Duration::from_secs(60),
+                max_restarts: 3,
+            },
+            |_| {},
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !client.is_unavailable() {
+            assert!(Instant::now() < deadline, "client never gave up");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        *lock(&state.client) = Some(client);
+
+        let err = start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap_err();
+        assert_eq!(err, "speech-unavailable");
+        // Nothing was sent, so the model is not recorded as loaded.
+        assert!(lock(&state.loaded).is_none());
+        shutdown(&state);
     }
 }

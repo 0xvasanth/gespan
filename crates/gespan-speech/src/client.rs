@@ -151,6 +151,13 @@ impl SpeechClient {
         }
     }
 
+    /// True once the supervisor has given up restarting the helper. The client
+    /// never recovers on its own, so callers should report dictation as
+    /// unavailable.
+    pub fn is_unavailable(&self) -> bool {
+        self.shared.lock().gave_up
+    }
+
     /// Sends a request, or queues it until the helper is ready. Does nothing
     /// once the client has given up or been shut down.
     pub fn send(&self, req: Request) {

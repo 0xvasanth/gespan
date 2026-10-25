@@ -1,4 +1,4 @@
-//! Microphone capture. Audio handed to the sink is 16 kHz mono f32.
+//! Microphone capture. Audio handed to the sink is 16 kHz single-channel f32.
 
 use std::sync::mpsc;
 use std::thread::JoinHandle;
@@ -18,14 +18,14 @@ pub enum CaptureError {
     Denied,
 }
 
-/// A source of 16 kHz mono samples that only runs between `start` and `stop`.
+/// A source of 16 kHz single-channel samples that only runs between `start` and `stop`.
 pub trait AudioSource: Send {
     fn start(&mut self, sink: Sink) -> Result<(), CaptureError>;
     fn stop(&mut self);
 }
 
-/// Averages interleaved frames of `channels` channels into one mono channel.
-pub fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
+/// Averages interleaved frames of `channels` channels into one channel.
+pub fn downmix_to_single_channel(interleaved: &[f32], channels: usize) -> Vec<f32> {
     if channels <= 1 {
         return interleaved.to_vec();
     }
@@ -35,7 +35,7 @@ pub fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
         .collect()
 }
 
-/// Streaming linear-interpolation resampler for mono audio.
+/// Streaming linear-interpolation resampler for single-channel audio.
 pub struct Resampler {
     step: f64,
     pos: f64,
@@ -67,7 +67,7 @@ impl Resampler {
     }
 }
 
-/// Converts device frames to 16 kHz mono and forwards them to the sink.
+/// Converts device frames to 16 kHz single-channel and forwards them to the sink.
 struct Pipeline {
     channels: usize,
     resampler: Resampler,
@@ -76,8 +76,8 @@ struct Pipeline {
 
 impl Pipeline {
     fn push(&mut self, interleaved: &[f32]) {
-        let mono = downmix_to_mono(interleaved, self.channels);
-        let out = self.resampler.process(&mono);
+        let single = downmix_to_single_channel(interleaved, self.channels);
+        let out = self.resampler.process(&single);
         if !out.is_empty() {
             (self.sink)(&out);
         }
@@ -211,23 +211,26 @@ mod tests {
     #[test]
     fn downmix_averages_channels() {
         let stereo = [1.0, 0.0, 0.5, 0.5, -1.0, 1.0];
-        assert_eq!(downmix_to_mono(&stereo, 2), vec![0.5, 0.5, 0.0]);
-        assert_eq!(downmix_to_mono(&[0.25, 0.75], 1), vec![0.25, 0.75]);
+        assert_eq!(downmix_to_single_channel(&stereo, 2), vec![0.5, 0.5, 0.0]);
+        assert_eq!(
+            downmix_to_single_channel(&[0.25, 0.75], 1),
+            vec![0.25, 0.75]
+        );
     }
 
     #[test]
     fn downmix_drops_a_trailing_partial_frame() {
-        assert_eq!(downmix_to_mono(&[1.0, 1.0, 9.0], 2), vec![1.0]);
+        assert_eq!(downmix_to_single_channel(&[1.0, 1.0, 9.0], 2), vec![1.0]);
     }
 
     #[test]
-    fn stereo_48k_becomes_mono_16k_and_keeps_dc() {
+    fn stereo_48k_becomes_single_channel_16k_and_keeps_dc() {
         let frames = 48_000;
         let stereo: Vec<f32> = std::iter::repeat_n([0.5f32, 0.5], frames)
             .flatten()
             .collect();
-        let mono = downmix_to_mono(&stereo, 2);
-        let out = Resampler::new(48_000, 16_000).process(&mono);
+        let single = downmix_to_single_channel(&stereo, 2);
+        let out = Resampler::new(48_000, 16_000).process(&single);
         assert!(out.len().abs_diff(16_000) <= 2, "len {}", out.len());
         assert!(out.iter().all(|s| (s - 0.5).abs() < 1e-6));
     }
