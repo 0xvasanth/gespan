@@ -1767,6 +1767,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gespan-redact"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde_json",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
