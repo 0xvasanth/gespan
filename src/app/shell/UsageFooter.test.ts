@@ -23,6 +23,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("UsageFooter hold slot", () => {
+  it("renders Hold last, at the far right of the status bar", () => {
+    const markup = renderToStaticMarkup(
+      createElement(UsageFooter, {
+        providers: [],
+        onNewTerminal: () => undefined,
+        holdSlot: createElement("button", { id: "hold" }, "Hold all"),
+      }),
+    );
+    expect(markup).toContain("Hold all");
+    expect(markup.indexOf("Terminal")).toBeLessThan(markup.indexOf("Hold all"));
+  });
+});
+
 describe("UsageFooter terminal control", () => {
   it("replaces the generic terminal button with the live process control", () => {
     const markup = renderToStaticMarkup(

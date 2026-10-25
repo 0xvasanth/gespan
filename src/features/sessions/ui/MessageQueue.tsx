@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
+import { HoldPhaseContext } from "../../hold/model/holdContext";
 import {
   Check,
   CornerDownRight,
@@ -33,6 +34,7 @@ export function MessageQueue({
   variant?: "queue" | "messages";
   sendingId?: string;
 }) {
+  const holdPhase = useContext(HoldPhaseContext);
   const [editingId, setEditingId] = useState<string>();
   const [editDraft, setEditDraft] = useState("");
   const onEditingChangeRef = useRef(onEditingChange);
@@ -46,6 +48,8 @@ export function MessageQueue({
   }, []);
   if (messages.length === 0) return null;
   const paused = status === "paused";
+  // While everything is on hold, Resume belongs to the whole app.
+  const held = holdPhase !== null;
   const failed = messages.some((message) => message.error);
 
   const startEdit = (message: QueuedMessage) => {
@@ -77,18 +81,22 @@ export function MessageQueue({
             <span className="min-w-0 flex-1 truncate">
               {failed
                 ? "A message couldn't be sent"
-                : variant === "messages"
-                  ? "Messages paused"
-                  : "Queue paused because you interrupted"}
+                : held
+                  ? "Held: sends on Resume"
+                  : variant === "messages"
+                    ? "Messages paused"
+                    : "Queue paused because you interrupted"}
             </span>
-            <button
-              type="button"
-              onClick={onResume}
-              className="flex h-6 shrink-0 items-center gap-1.5 rounded-md px-1.5 hover:bg-content/10 hover:text-content"
-            >
-              <Play className="size-3.5" />
-              {failed ? "Retry" : "Resume"}
-            </button>
+            {held ? null : (
+              <button
+                type="button"
+                onClick={onResume}
+                className="flex h-6 shrink-0 items-center gap-1.5 rounded-md px-1.5 hover:bg-content/10 hover:text-content"
+              >
+                <Play className="size-3.5" />
+                {failed ? "Retry" : "Resume"}
+              </button>
+            )}
           </div>
         ) : null}
         {variant === "messages" && !paused ? (

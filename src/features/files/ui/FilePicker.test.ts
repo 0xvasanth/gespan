@@ -124,6 +124,32 @@ describe("file picker command mode", () => {
     expect(rankProjectFiles).not.toHaveBeenCalled();
   });
 
+  it("offers Hold everything, or Resume everything once on hold", () => {
+    const { onRunAction } = renderPicker(">");
+    let dialog = document.querySelector<HTMLElement>("[data-file-picker]")!;
+    const hold = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes("Hold everything"),
+    )!;
+    expect(hold.textContent).toContain("H");
+    act(() => hold.click());
+    expect(onRunAction).toHaveBeenCalledWith("hold");
+    act(() =>
+      root.render(
+        createElement(FilePicker, {
+          open: true,
+          cwd: "/repo",
+          initialQuery: ">",
+          holdLabel: "Resume everything",
+          onOpenFile: vi.fn(),
+          onRunAction: vi.fn(),
+          onClose: vi.fn(),
+        }),
+      ),
+    );
+    dialog = document.querySelector<HTMLElement>("[data-file-picker]")!;
+    expect(dialog.textContent).toContain("Resume everything");
+  });
+
   it("only treats a leading > as command mode and reverts when it is deleted", () => {
     renderPicker();
     const dialog = document.querySelector<HTMLElement>("[data-file-picker]")!;

@@ -835,7 +835,10 @@ import {
   sameSessionSummaries,
   summaryFromSession,
 } from "../features/sessions/data/sessionHistory";
+import { HoldPhaseContext } from "../features/hold/model/holdContext";
 import { useHold } from "../features/hold/model/useHold";
+import { ConfirmHold } from "../features/hold/ui/ConfirmHold";
+import { HoldControl } from "../features/hold/ui/HoldControl";
 import {
   CONTINUE_PROMPT,
   canAutoContinue,
@@ -13373,6 +13376,8 @@ function Workspace({
           run("open_settings", () => a.openSettings());
         else if (shortcut === "App: Find in Files")
           run("find_in_project", a.onFindInProject);
+        else if (shortcut === "App: Hold Everything")
+          run("hold_toggle", () => void holdRef.current.toggle());
         return;
       }
     };
@@ -13441,6 +13446,9 @@ function Workspace({
       listen("go_to_file", () => run("go_to_file", actions.current.onGoToFile)),
       listen("open_command_palette", () =>
         run("open_command_palette", actions.current.onOpenCommandPalette),
+      ),
+      listen("hold_toggle", () =>
+        run("hold_toggle", () => void holdRef.current.toggle()),
       ),
       listen("reload", () => run("reload", actions.current.onReload)),
       listen("open_search", () => actions.current.onOpenSearch()),
@@ -14441,6 +14449,18 @@ function Workspace({
     (pilotCovers && !insetLayout) ? null : (
       <UsageFooter
         pressureSlot={setPressureChipHost}
+        holdSlot={
+          <HoldControl
+            phase={holdApi.phase}
+            summary={holdApi.hold.summary()}
+            settling={holdApi.hold.settling().map((id) => {
+              const session = sessions.find((s) => s.id === id);
+              return { id, title: session?.title || "Session" };
+            })}
+            onToggle={() => void holdApi.hold.toggle()}
+            onStopNow={(id) => holdApi.hold.stopNow(id)}
+          />
+        }
         providers={usageProviders}
         session={usageSession}
         project={usageSource?.cwd ?? projectCwd}
@@ -14469,6 +14489,7 @@ function Workspace({
     );
 
   return (
+    <HoldPhaseContext.Provider value={holdApi.phase}>
     <SessionStateContext.Provider value={sessionState}>
     <OrchestrationActions.Provider value={orchestrationActions}>
       <OrchestrationWorkers.Provider value={orchestrationWorkers}>
@@ -15049,13 +15070,23 @@ function Workspace({
               openPaths={openFilePaths}
               initialQuery={filePickerInitialQuery}
               onOpenFile={onOpenFile}
+              holdLabel={
+                holdApi.phase === "onHold" ? "Resume everything" : "Hold everything"
+              }
               onRunAction={(id) => {
                 if (id === "reload") actions.current.onReload();
+                if (id === "hold") void holdRef.current.toggle();
               }}
               onClose={() => setFilePickerOpen(false)}
             />
           ) : null}
 
+          {holdApi.confirming && (
+            <ConfirmHold
+              running={sessions.filter((s) => s.busy).length}
+              onClose={holdApi.answer}
+            />
+          )}
           {sessionDeleteDialog && (
             <DeleteSessionDialog
               mode={sessionDeleteDialog.mode}
@@ -15137,6 +15168,7 @@ function Workspace({
       </OrchestrationWorkers.Provider>
     </OrchestrationActions.Provider>
     </SessionStateContext.Provider>
+    </HoldPhaseContext.Provider>
   );
 }
 function conversationTitle(session: Session): string {
