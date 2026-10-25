@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { BoardActivity } from "../model/board";
 import {
   activityText,
+  dayStart,
   dueChip,
+  dueInputValue,
+  nextLabelColor,
+  LABEL_COLORS,
+  parseDueInput,
   linkValue,
   parseLinkValue,
   relativeTime,
@@ -60,28 +65,28 @@ describe("activityText", () => {
         }),
         NOW,
       ),
-    ).toBe("Moved from In Progress to Review · system · 2m ago");
+    ).toBe("Moved from In Progress to Review · System · 2m ago");
   });
 
   it.each([
     [
       { kind: "created", toColumn: "Backlog" },
-      "Created in Backlog · user · just now",
+      "Created in Backlog · You · just now",
     ],
-    [{ kind: "edited" }, "Edited · user · just now"],
-    [{ kind: "linked" }, "Linked work · user · just now"],
-    [{ kind: "unlinked" }, "Unlinked work · user · just now"],
+    [{ kind: "edited" }, "Edited · You · just now"],
+    [{ kind: "linked" }, "Linked work · You · just now"],
+    [{ kind: "unlinked" }, "Unlinked work · You · just now"],
     [
       { kind: "started", actor: "system" },
-      "Linked work started · system · just now",
+      "Linked work started · System · just now",
     ],
     [
       { kind: "completed", actor: "system" },
-      "Linked work completed · system · just now",
+      "Linked work completed · System · just now",
     ],
     [
       { kind: "failed", actor: "system" },
-      "Linked work failed · system · just now",
+      "Linked work failed · System · just now",
     ],
   ] as const)("reads %o", (overrides, text) => {
     expect(activityText(row(overrides), NOW)).toBe(text);
@@ -201,5 +206,54 @@ describe("dueChip", () => {
       text: "Sep 1",
       tone: "overdue",
     });
+  });
+});
+
+describe("edited rows with a detail", () => {
+  it("edited_with_detail_reads_changed_detail", () => {
+    expect(
+      activityText(row({ kind: "edited", detail: "priority: High" }), NOW),
+    ).toBe("Changed priority: High · You · just now");
+  });
+
+  it("names the actor: You, System, else Agent", () => {
+    const detail = "labels: Bug";
+    expect(
+      activityText(row({ kind: "edited", detail, actor: "system" }), NOW),
+    ).toBe("Changed labels: Bug · System · just now");
+    expect(
+      activityText(
+        row({ kind: "edited", detail, actor: "claude-code" as never }),
+        NOW,
+      ),
+    ).toBe("Changed labels: Bug · Agent · just now");
+  });
+});
+
+describe("due dates and label colours", () => {
+  it("builds local-midnight days and reads them back for the date input", () => {
+    const now = new Date(2026, 9, 25, 23, 59).getTime();
+    expect(dayStart(0, now)).toBe(new Date(2026, 9, 25).getTime());
+    expect(dayStart(1, now)).toBe(new Date(2026, 9, 26).getTime());
+    expect(dayStart(7, now)).toBe(new Date(2026, 10, 1).getTime());
+    expect(dueInputValue(new Date(2026, 10, 2, 18).getTime())).toBe(
+      "2026-11-02",
+    );
+    expect(dueInputValue(null)).toBe("");
+  });
+
+  it("parses a date input to local midnight, null when empty or invalid", () => {
+    expect(parseDueInput("2026-12-31")).toBe(new Date(2026, 11, 31).getTime());
+    expect(parseDueInput("")).toBeNull();
+    expect(parseDueInput("2026-13-40")).toBeNull();
+    expect(parseDueInput("nope")).toBeNull();
+  });
+
+  it("hands out the eight palette colours round-robin", () => {
+    expect(LABEL_COLORS).toHaveLength(8);
+    for (const color of LABEL_COLORS) expect(color).toMatch(/^[0-9a-f]{6}$/);
+    expect(nextLabelColor(0)).toBe(LABEL_COLORS[0]);
+    expect(nextLabelColor(8)).toBe(LABEL_COLORS[0]);
+    expect(nextLabelColor(10)).toBe(LABEL_COLORS[2]);
   });
 });

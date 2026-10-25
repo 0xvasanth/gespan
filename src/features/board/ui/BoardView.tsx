@@ -718,37 +718,48 @@ function BoardContent({
           </button>
         )}
       </div>
-      <div className="min-h-0 flex-1">
-        {shownDetail ? (
-          <KanbanBoard
-            detail={shownDetail}
-            renderCard={renderCard}
-            renderColumnHeader={renderColumnHeader}
-            renderColumnFooter={renderColumnFooter}
-            onCardMove={onCardMove}
-            onColumnMove={onColumnMove}
-            onCardOpen={(card) => setOpenCard({ id: card.id })}
-            trailing={trailing}
+      <div className="flex min-h-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1">
+          {shownDetail ? (
+            <KanbanBoard
+              detail={shownDetail}
+              renderCard={renderCard}
+              renderColumnHeader={renderColumnHeader}
+              renderColumnFooter={renderColumnFooter}
+              onCardMove={onCardMove}
+              onColumnMove={onColumnMove}
+              onCardOpen={(card) => setOpenCard({ id: card.id })}
+              trailing={trailing}
+            />
+          ) : null}
+        </div>
+        {shownCard ? (
+          <CardDetail
+            key={shownCard.id}
+            card={shownCard}
+            columns={(detail?.columns ?? []).map((column) => ({
+              id: column.id,
+              name: column.name,
+              cardCount: (detail?.cards ?? []).filter(
+                (other) => other.columnId === column.id,
+              ).length,
+            }))}
+            extras={extras[shownCard.id]}
+            labels={labels}
+            projects={projects}
+            link={resolveLink(shownCard, linkStates)}
+            ticket={tickets[shownCard.id] ?? null}
+            linkTargets={linkTargets}
+            focus={openCard?.focus}
+            onClose={() => setOpenCard(null)}
+            onOpenLinkedWork={(target) => {
+              setOpenCard(null);
+              openLinkedWork(target);
+            }}
+            onError={setError}
           />
         ) : null}
       </div>
-      {shownCard ? (
-        <CardDetail
-          key={shownCard.id}
-          card={shownCard}
-          columnName={columnsById.get(shownCard.columnId)?.name ?? ""}
-          link={resolveLink(shownCard, linkStates)}
-          ticket={tickets[shownCard.id] ?? null}
-          linkTargets={linkTargets}
-          focus={openCard?.focus}
-          onClose={() => setOpenCard(null)}
-          onOpenLinkedWork={(target) => {
-            setOpenCard(null);
-            openLinkedWork(target);
-          }}
-          onError={setError}
-        />
-      ) : null}
       {ticketCardOpen && detail ? (
         <LinkSessionWorkItemDialog
           ticketOnly

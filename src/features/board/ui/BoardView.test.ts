@@ -151,6 +151,8 @@ beforeEach(() => {
     board_activity: () => [],
     board_card_extras: () => ({}),
     board_labels: () => [],
+    board_subtasks: () => [],
+    board_comments: () => [],
     board_card_create: (args) =>
       card("new", String(args.columnId), 9, 9, String(args.title)),
   };
@@ -325,13 +327,13 @@ describe("BoardView", () => {
     act(() => menu.focus());
     press(menu, "Enter", { code: "Enter" });
     await flush();
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector("[data-card-drawer]")).toBeNull();
 
     act(() => wrapper.focus());
     press(wrapper, "Enter", { code: "Enter" });
     await flush();
     expect(wrapper.hasAttribute("data-dragging")).toBe(false);
-    const dialog = document.querySelector('[role="dialog"]');
+    const dialog = document.querySelector("[data-card-drawer]");
     expect(dialog?.textContent).toContain("Card #1");
   });
 
@@ -380,7 +382,7 @@ describe("BoardView", () => {
     expect(vi.mocked(ask).mock.calls[0][0]).toContain("Write docs");
     expect(commands("board_card_delete")).toHaveLength(0);
     // The menu click doesn't also open the card.
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector("[data-card-drawer]")).toBeNull();
 
     vi.mocked(ask).mockResolvedValue(true);
     await deleteFromMenu();
@@ -581,7 +583,7 @@ describe("BoardView linked work", () => {
     await act(async () => open.click());
     expect(props.onOpenLinkedWork).toHaveBeenCalledWith(target);
     // The button doesn't also open the card, and success shows no error.
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector("[data-card-drawer]")).toBeNull();
     expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 
@@ -621,7 +623,9 @@ describe("BoardView linked work", () => {
     );
     await flush();
     const detailButton = [
-      ...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+      ...document.querySelectorAll<HTMLButtonElement>(
+        "[data-card-drawer] button",
+      ),
     ].find((button) => button.textContent?.includes("Open linked work"))!;
     await act(async () => detailButton.click());
     await flush();
@@ -785,15 +789,78 @@ describe("BoardView linked work", () => {
     )!;
     act(() => cardEl.click());
     await flush();
-    const dialog = document.querySelector('[role="dialog"]')!;
+    const dialog = document.querySelector("[data-card-drawer]")!;
     expect(dialog.textContent).toContain("Card #3");
     expect(commands("board_activity")[0][1]).toMatchObject({
       boardId: "b1",
       cardId: "c3",
     });
-    expect(dialog.querySelector("[data-card-activity]")?.textContent).toBe(
-      "Moved from Backlog to In Progress · system · 2m ago",
+    await act(async () =>
+      [...dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+        .find((tab) => tab.textContent === "Activity")!
+        .click(),
     );
+    expect(dialog.querySelector("[data-card-activity]")?.textContent).toBe(
+      "Moved from Backlog to In Progress · System · 2m ago",
+    );
+  });
+});
+
+describe("BoardView card drawer", () => {
+  const openCardEl = (id: string) =>
+    columnEl("backlog")
+      .closest("[data-app-board]")!
+      .querySelector<HTMLElement>(`[data-board-card='${id}']`)!;
+  const drawerEl = () =>
+    document.querySelector<HTMLElement>("[data-card-drawer]");
+
+  it("docks beside the board, which stays on screen, and swaps with another card", async () => {
+    await renderBoard();
+    act(() => openCardEl("c1").click());
+    await flush();
+    expect(drawerEl()?.getAttribute("aria-label")).toBe("Card #1");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    // In the same layout row as the board, not on top of it.
+    expect(drawerEl()!.parentElement!.contains(columnEl("backlog"))).toBe(true);
+    expect(drawerEl()!.contains(columnEl("backlog"))).toBe(false);
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
+
+    act(() => openCardEl("c2").click());
+    await flush();
+    expect(document.querySelectorAll("[data-card-drawer]")).toHaveLength(1);
+    expect(drawerEl()?.getAttribute("aria-label")).toBe("Card #2");
+  });
+
+  it("keeps a title being typed when the board refreshes under it", async () => {
+    await renderBoard();
+    act(() => openCardEl("c1").click());
+    await flush();
+    const title = () =>
+      drawerEl()!.querySelector<HTMLInputElement>('input[aria-label="Title"]')!;
+    act(() => title().focus());
+    act(() => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(title(), "My draft");
+      title().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // Native renames the same card; the board-changed refresh brings it in.
+    handlers.board_get = () => {
+      const next = fixture();
+      next.cards[0] = { ...next.cards[0], title: "Renamed elsewhere" };
+      return next;
+    };
+    emitBoardChanged("b1");
+    await flush();
+    expect(columnEl("backlog").textContent).toContain("Renamed elsewhere");
+    expect(title().value).toBe("My draft");
+    expect(commands("board_card_update")).toHaveLength(0);
+    act(() => title().blur());
+    await flush();
+    expect(commands("board_card_update")).toEqual([
+      ["board_card_update", { cardId: "c1", title: "My draft", body: "" }],
+    ]);
   });
 });
 

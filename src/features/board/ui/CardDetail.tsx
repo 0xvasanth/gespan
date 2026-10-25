@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Modal } from "../../../shared/ui/Modal";
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -10,22 +9,54 @@ import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItem
 import { SessionTicketChip } from "../../sessions/ui/SessionTicketChip";
 import type { LinkedWorkItem, TicketRef } from "../../sessions/model/session";
 import {
+  PRIORITIES,
+  createLabel,
   deleteCard,
   linkCard,
   listActivity,
+  moveCard,
+  setCardDue,
+  setCardLabels,
+  setCardPriority,
+  setCardProjects,
   setCardTicket,
   subscribeBoard,
   updateCard,
   type BoardActivity,
   type BoardCard,
+  type BoardLabel,
+  type CardExtras,
 } from "../model/board";
 import { LinkChip } from "./BoardCardItem";
-import { confirmDeleteCard } from "./boardControls";
+import {
+  CloseButton,
+  Comments,
+  FIELD,
+  LabelDot,
+  LabelPicker,
+  PROPERTY_TRIGGER,
+  PropertyRow,
+  SMALL_BUTTON,
+  Subtasks,
+  toggled,
+  useAhead,
+} from "./CardDrawerParts";
+import {
+  confirmDeleteCard,
+  MenuButton,
+  MenuItem,
+  MenuSeparator,
+} from "./boardControls";
 import {
   activityText,
+  dayStart,
+  dueChip,
+  dueInputValue,
   errorText,
   LINK_KIND_LABEL,
   linkValue,
+  nextLabelColor,
+  parseDueInput,
   parseLinkValue,
   type BoardLinkTarget,
   type ResolvedLink,
@@ -34,16 +65,20 @@ import {
 const ACTIVITY_LIMIT = 50;
 const NO_LINK = "";
 
-const FIELD =
-  "w-full rounded-lg border border-stroke bg-background-base px-3 text-[13px] text-content outline-none placeholder:text-content/35 focus:border-accent/60";
+type Tab = "comments" | "activity";
 
 /**
- * A card opened from the board: its title and notes, its linked work and the
- * activity timeline. Edits save on blur; the link saves on pick.
+ * A card opened from the board, docked beside it: title, properties,
+ * description, subtasks, and the comments and activity tabs. The board stays
+ * live. Title and description are drafts that save on blur (or Enter, or
+ * close); a refresh never overwrites one being edited.
  */
 export function CardDetail({
   card,
-  columnName,
+  columns,
+  extras,
+  labels,
+  projects,
   link,
   ticket = null,
   linkTargets,
@@ -53,7 +88,13 @@ export function CardDetail({
   onError,
 }: {
   card: BoardCard;
-  columnName: string;
+  /** The board's columns in order, with how many cards each holds. */
+  columns: readonly { id: string; name: string; cardCount: number }[];
+  extras?: CardExtras;
+  /** The board's labels. */
+  labels: readonly BoardLabel[];
+  /** The workspace's projects. */
+  projects: readonly { path: string; name: string }[];
   link: ResolvedLink | null;
   /** The ticket the card links to. */
   ticket?: TicketRef | null;
@@ -65,6 +106,7 @@ export function CardDetail({
 }) {
   const [title, setTitle] = useState(card.title);
   const [body, setBody] = useState(card.body);
+  const [tab, setTab] = useState<Tab>("comments");
   // Null until the first load answers; `failed` keeps a failed load from
   // reading as an empty history.
   const [activity, setActivity] = useState<{
@@ -81,16 +123,33 @@ export function CardDetail({
     ticketRef.current = ticket;
   });
   const titleField = useRef<HTMLInputElement>(null);
+  const bodyField = useRef<HTMLTextAreaElement>(null);
   const linkRow = useRef<HTMLDivElement>(null);
   // What was last saved, so blur and close don't both write the same edit.
   const saved = useRef({ title: card.title, body: card.body });
+  // What the fields hold now, and what the board last said.
+  const draft = useRef({ title: card.title, body: card.body });
+  const latest = useRef({ title: card.title, body: card.body });
+  const deleted = useRef(false);
 
-  // A save elsewhere (or an agent) updates the card under us.
+  // A save elsewhere (or an agent) updates the card under us. A field that
+  // is being edited, or holds unsaved text, keeps its draft.
   useEffect(() => {
-    saved.current = { title: card.title, body: card.body };
-    setTitle(card.title);
-    setBody(card.body);
-  }, [card.title, card.body]);
+    latest.current = { title: card.title, body: card.body };
+    const active = document.activeElement;
+    for (const field of ["title", "body"] as const) {
+      const dirty = draft.current[field] !== saved.current[field];
+      const element = field === "title" ? titleField : bodyField;
+      if (dirty) {
+        // Saving the draft later is the user's edit on top of this one.
+        saved.current[field] = card[field];
+      } else if (active !== element.current) {
+        saved.current[field] = card[field];
+        draft.current[field] = card[field];
+        (field === "title" ? setTitle : setBody)(card[field]);
+      }
+    }
+  }, [card.title, card.body]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (focus === "title") titleField.current?.select();
@@ -146,25 +205,48 @@ export function CardDetail({
     ];
   }, [linkTargets, linked]);
 
+  const failed = (what: string) => (error: unknown) =>
+    onError(`Couldn't ${what} card #${card.number}: ${errorText(error)}`);
+
   const saveFields = () => {
-    const nextTitle = title.trim();
-    if (!nextTitle) {
-      setTitle(saved.current.title);
+    // An emptied title goes back to the saved one; the notes still save.
+    const nextTitle = draft.current.title.trim() || saved.current.title;
+    const nextBody = draft.current.body;
+    if (nextTitle === saved.current.title && nextBody === saved.current.body) {
+      // Nothing to write: take what the board says now.
+      draft.current = { ...latest.current };
+      saved.current = { ...latest.current };
+      setTitle(latest.current.title);
+      setBody(latest.current.body);
       return;
     }
-    if (nextTitle === saved.current.title && body === saved.current.body) {
-      return;
-    }
-    saved.current = { title: nextTitle, body };
-    updateCard(card.id, nextTitle, body).catch((error) =>
-      onError(`Couldn't save card #${card.number}: ${errorText(error)}`),
-    );
+    saved.current = { title: nextTitle, body: nextBody };
+    draft.current.title = nextTitle;
+    setTitle(nextTitle);
+    updateCard(card.id, nextTitle, nextBody).catch(failed("save"));
+  };
+  const saveRef = useRef(saveFields);
+  useEffect(() => {
+    saveRef.current = saveFields;
+  });
+  // Closing, or opening another card, saves a pending draft.
+  useEffect(
+    () => () => {
+      if (!deleted.current) saveRef.current();
+    },
+    [],
+  );
+
+  const close = () => {
+    // The ticket dialog owns Escape while it is open.
+    if (linkingTicket) return;
+    saveFields();
+    onClose();
   };
 
   const changeLink = (value: string) => {
     linkCard(card.id, value === NO_LINK ? null : parseLinkValue(value)).catch(
-      (error) =>
-        onError(`Couldn't link card #${card.number}: ${errorText(error)}`),
+      failed("link"),
     );
   };
 
@@ -172,10 +254,8 @@ export function CardDetail({
     // Only tickets link to a card; the link dialog hands one over.
     if (item && item.kind !== "ticket") return;
     setLinkingTicket(false);
-    setCardTicket(card.id, item ? item.ticket : null).catch((error) =>
-      onError(
-        `Couldn't link a ticket to card #${card.number}: ${errorText(error)}`,
-      ),
+    setCardTicket(card.id, item ? item.ticket : null).catch(
+      failed("link a ticket to"),
     );
   };
 
@@ -196,142 +276,441 @@ export function CardDetail({
 
   const remove = async () => {
     if (!(await confirmDeleteCard(card))) return;
+    deleted.current = true;
     deleteCard(card.id)
       .then(onClose)
-      .catch((error) =>
-        onError(`Couldn't delete card #${card.number}: ${errorText(error)}`),
-      );
+      .catch((error) => {
+        deleted.current = false;
+        failed("delete")(error);
+      });
   };
 
+  // ---- properties ----
+  const [priority, setPriority, revertPriority] = useAhead(
+    extras?.priority ?? 0,
+    String(extras?.priority ?? 0),
+  );
+  const [dueAt, setDueAt, revertDue] = useAhead(
+    extras?.dueAt ?? null,
+    String(extras?.dueAt ?? null),
+  );
+  const [projectPaths, setProjectPaths, revertProjects] = useAhead(
+    extras?.projects ?? [],
+    (extras?.projects ?? []).join("\n"),
+  );
+  const [labelIds, setLabelIds, revertLabels] = useAhead(
+    extras?.labels ?? [],
+    (extras?.labels ?? []).join("\n"),
+  );
+
+  const choosePriority = (next: number) => {
+    setPriority(next);
+    setCardPriority(card.id, next).catch((error) => {
+      revertPriority();
+      failed("set the priority of")(error);
+    });
+  };
+  const chooseDue = (next: number | null) => {
+    setDueAt(next);
+    setCardDue(card.id, next).catch((error) => {
+      revertDue();
+      failed("set the due date of")(error);
+    });
+  };
+  const chooseProjects = (next: string[]) => {
+    setProjectPaths(next);
+    setCardProjects(card.id, next).catch((error) => {
+      revertProjects();
+      failed("set the projects of")(error);
+    });
+  };
+  const chooseLabels = (next: string[]) => {
+    setLabelIds(next);
+    return setCardLabels(card.id, next).catch((error) => {
+      revertLabels();
+      failed("set the labels of")(error);
+    });
+  };
+  const addLabel = (name: string) => {
+    createLabel(card.boardId, name, nextLabelColor(labels.length))
+      .then((created) => chooseLabels([...labelIds, created.id]))
+      .catch(failed("create a label for"));
+  };
+  const moveTo = (columnId: string, cardCount: number) => {
+    if (columnId === card.columnId) return;
+    moveCard(card.id, columnId, cardCount, "user").catch(failed("move"));
+  };
+
+  const [dueInput, setDueInput] = useState(dueInputValue(dueAt));
+  useEffect(() => setDueInput(dueInputValue(dueAt)), [dueAt]);
+
+  const columnName = columns.find(
+    (column) => column.id === card.columnId,
+  )?.name;
+  const due = dueAt === null ? null : dueChip(dueAt);
+  const cardLabels = labels.filter((label) => labelIds.includes(label.id));
+  const cardProjects = projectPaths.map(
+    (path) => projects.find((project) => project.path === path)?.name ?? path,
+  );
   const current =
     card.linkKind && card.linkId ? linkValue(card.linkKind, card.linkId) : "";
   const target = linked;
 
   return (
-    <Modal
-      title={`Card #${card.number}`}
-      description={columnName}
-      size="md"
-      onClose={() => {
-        // The ticket dialog owns Escape while it is open.
-        if (linkingTicket) return;
-        saveFields();
-        onClose();
+    <aside
+      data-card-drawer=""
+      aria-label={`Card #${card.number}`}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+          event.preventDefault();
+          close();
+        }
       }}
+      className="flex min-h-0 w-[380px] shrink-0 flex-col border-l border-stroke bg-background-base/40"
     >
-      <div className="flex flex-col gap-4 px-4 pb-4 pt-3">
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] text-content/50">Title</span>
-          <input
-            ref={titleField}
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            onBlur={saveFields}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                event.currentTarget.blur();
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-stroke px-3">
+        <span className="min-w-0 flex-1 truncate text-[12px] text-content/50">
+          Card #{card.number}
+        </span>
+        <CloseButton onClick={close} />
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4 pt-3">
+        <input
+          ref={titleField}
+          aria-label="Title"
+          value={title}
+          onChange={(event) => {
+            draft.current.title = event.target.value;
+            setTitle(event.target.value);
+          }}
+          onBlur={saveFields}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+          }}
+          className="h-9 w-full rounded-lg border border-transparent bg-transparent px-2 text-[16px] font-medium text-content outline-none hover:border-stroke focus:border-accent/60"
+        />
+        <div className="flex flex-col">
+          <PropertyRow name="status" label="Status">
+            <MenuButton
+              label="Status"
+              className={PROPERTY_TRIGGER}
+              trigger={<span className="truncate">{columnName ?? "None"}</span>}
+            >
+              {(closeMenu) =>
+                columns.map((column) => (
+                  <MenuItem
+                    key={column.id}
+                    checked={column.id === card.columnId}
+                    onSelect={() => {
+                      closeMenu();
+                      moveTo(column.id, column.cardCount);
+                    }}
+                  >
+                    {column.name}
+                  </MenuItem>
+                ))
               }
-            }}
-            className={`${FIELD} h-8`}
-          />
-        </label>
+            </MenuButton>
+          </PropertyRow>
+          <PropertyRow name="priority" label="Priority">
+            <MenuButton
+              label="Priority"
+              className={PROPERTY_TRIGGER}
+              trigger={
+                <span className="truncate">
+                  {PRIORITIES[priority] ?? PRIORITIES[0]}
+                </span>
+              }
+            >
+              {(closeMenu) =>
+                PRIORITIES.map((name, index) => (
+                  <MenuItem
+                    key={name}
+                    checked={index === priority}
+                    onSelect={() => {
+                      closeMenu();
+                      choosePriority(index);
+                    }}
+                  >
+                    {name}
+                  </MenuItem>
+                ))
+              }
+            </MenuButton>
+          </PropertyRow>
+          <PropertyRow name="due" label="Due">
+            <MenuButton
+              label="Due"
+              className={PROPERTY_TRIGGER}
+              trigger={<span className="truncate">{due?.text ?? "None"}</span>}
+            >
+              {(closeMenu) => (
+                <>
+                  {(
+                    [
+                      ["Today", 0],
+                      ["Tomorrow", 1],
+                      ["Next week", 7],
+                    ] as const
+                  ).map(([name, days]) => (
+                    <MenuItem
+                      key={name}
+                      onSelect={() => {
+                        closeMenu();
+                        chooseDue(dayStart(days));
+                      }}
+                    >
+                      {name}
+                    </MenuItem>
+                  ))}
+                  <MenuSeparator />
+                  <MenuItem
+                    disabled={dueAt === null}
+                    onSelect={() => {
+                      closeMenu();
+                      chooseDue(null);
+                    }}
+                  >
+                    Clear
+                  </MenuItem>
+                </>
+              )}
+            </MenuButton>
+            <input
+              type="date"
+              aria-label="Due date"
+              value={dueInput}
+              onChange={(event) => {
+                setDueInput(event.target.value);
+                const next = parseDueInput(event.target.value);
+                // A half-typed date waits; an emptied one clears.
+                if (next !== null) chooseDue(next);
+                else if (event.target.value === "") chooseDue(null);
+              }}
+              className="h-7 rounded-md border border-stroke bg-background-base px-2 text-[12px] text-content/80 outline-none focus:border-accent/60"
+            />
+          </PropertyRow>
+          <PropertyRow name="projects" label="Projects">
+            <MenuButton
+              label="Projects"
+              width={240}
+              className={PROPERTY_TRIGGER}
+              trigger={
+                <span className="truncate">
+                  {cardProjects.length ? cardProjects.join(", ") : "None"}
+                </span>
+              }
+            >
+              {() =>
+                projects.length ? (
+                  projects.map((project) => (
+                    <MenuItem
+                      key={project.path}
+                      kind="checkbox"
+                      checked={projectPaths.includes(project.path)}
+                      onSelect={() =>
+                        chooseProjects(toggled(projectPaths, project.path))
+                      }
+                    >
+                      <span className="min-w-0 truncate">{project.name}</span>
+                    </MenuItem>
+                  ))
+                ) : (
+                  <div className="px-2 py-1.5 text-[12px] text-content/45">
+                    No projects in this workspace
+                  </div>
+                )
+              }
+            </MenuButton>
+          </PropertyRow>
+          <PropertyRow name="labels" label="Labels">
+            <MenuButton
+              label="Labels"
+              width={240}
+              className={PROPERTY_TRIGGER}
+              trigger={
+                cardLabels.length ? (
+                  <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                    {cardLabels.map((label) => (
+                      <span
+                        key={label.id}
+                        className="inline-flex items-center gap-1"
+                      >
+                        <LabelDot color={label.color} />
+                        {label.name}
+                      </span>
+                    ))}
+                  </span>
+                ) : (
+                  "None"
+                )
+              }
+            >
+              {(closeMenu) => (
+                <LabelPicker
+                  labels={labels}
+                  selected={labelIds}
+                  onToggle={(id) => chooseLabels(toggled(labelIds, id))}
+                  onCreate={addLabel}
+                  close={closeMenu}
+                />
+              )}
+            </MenuButton>
+          </PropertyRow>
+          <div data-property="linked" className="flex items-start gap-2">
+            <span className="flex h-8 w-20 shrink-0 items-center text-[12px] text-content/50">
+              Linked work
+            </span>
+            <div
+              ref={linkRow}
+              className="flex min-w-0 flex-1 flex-col gap-1 py-0.5"
+            >
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <SearchableSelect
+                    label="Linked work"
+                    value={current}
+                    options={options}
+                    onChange={changeLink}
+                    placeholder="Link a session or Pilot…"
+                    searchPlaceholder="Search sessions and Pilots…"
+                    emptyLabel="No matching sessions or Pilots"
+                  />
+                </div>
+                {target ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenLinkedWork(target)}
+                    className={`${SMALL_BUTTON} gap-1.5`}
+                  >
+                    <ExternalLink className="size-3.5" strokeWidth={1.75} />
+                    Open linked work
+                  </button>
+                ) : null}
+              </div>
+              {link ? (
+                <div className="text-[11px]">
+                  <LinkChip link={link} full />
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div data-property="ticket" className="flex items-start gap-2">
+            <span className="flex h-8 w-20 shrink-0 items-center text-[12px] text-content/50">
+              Ticket
+            </span>
+            <div
+              data-card-ticket=""
+              className="flex min-w-0 flex-1 flex-wrap items-center gap-2 py-0.5"
+            >
+              {ticket ? (
+                <SessionTicketChip
+                  key={`${ticket.tracker}:${ticket.key}`}
+                  ticket={ticket}
+                  visible
+                  onChange={chipChange}
+                  current={() =>
+                    ticketRef.current
+                      ? { kind: "ticket", ticket: ticketRef.current }
+                      : undefined
+                  }
+                />
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setLinkingTicket(true)}
+                className={SMALL_BUTTON}
+              >
+                {ticket ? "Change ticket…" : "Link ticket…"}
+              </button>
+            </div>
+          </div>
+        </div>
         <label className="flex flex-col gap-1">
-          <span className="text-[11px] text-content/50">Notes</span>
+          <span className="text-[12px] text-content/50">Description</span>
           <textarea
+            ref={bodyField}
+            aria-label="Description"
             value={body}
             rows={4}
-            placeholder="Add notes…"
-            onChange={(event) => setBody(event.target.value)}
+            placeholder="Add a description…"
+            onChange={(event) => {
+              draft.current.body = event.target.value;
+              setBody(event.target.value);
+            }}
             onBlur={saveFields}
             className={`${FIELD} resize-y py-2`}
           />
         </label>
-        <div ref={linkRow} className="flex flex-col gap-1">
-          <span className="text-[11px] text-content/50">Linked work</span>
-          <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <SearchableSelect
-                label="Linked work"
-                value={current}
-                options={options}
-                onChange={changeLink}
-                placeholder="Link a session or Pilot…"
-                searchPlaceholder="Search sessions and Pilots…"
-                emptyLabel="No matching sessions or Pilots"
-              />
-            </div>
-            {target ? (
+        <Subtasks
+          cardId={card.id}
+          boardId={card.boardId}
+          number={card.number}
+          onError={onError}
+        />
+        <section className="flex flex-col gap-2">
+          <div role="tablist" className="flex gap-1 border-b border-stroke">
+            {(
+              [
+                ["comments", "Comments"],
+                ["activity", "Activity"],
+              ] as const
+            ).map(([id, name]) => (
               <button
+                key={id}
                 type="button"
-                onClick={() => onOpenLinkedWork(target)}
-                className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-content/15 px-2.5 text-[12px] text-content/80 hover:border-content/30 hover:bg-content/10 hover:text-content"
+                role="tab"
+                aria-selected={tab === id}
+                onClick={() => setTab(id)}
+                className={`-mb-px h-8 border-b-2 px-2 text-[12px] ${tab === id ? "border-accent text-content" : "border-transparent text-content/50 hover:text-content"}`}
               >
-                <ExternalLink className="size-3.5" strokeWidth={1.75} />
-                Open linked work
+                {name}
               </button>
-            ) : null}
+            ))}
           </div>
-          {link ? (
-            <div className="text-[11px]">
-              <LinkChip link={link} full />
+          {tab === "comments" ? (
+            <Comments
+              cardId={card.id}
+              boardId={card.boardId}
+              number={card.number}
+              onError={onError}
+            />
+          ) : (
+            <div className="flex flex-col gap-1">
+              {activity?.rows.length ? (
+                <ol data-card-activity="" className="flex flex-col gap-1">
+                  {activity.rows.map((row) => (
+                    <li key={row.id} className="text-[12px] text-content/70">
+                      {activityText(row)}
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              {activity?.failed ? (
+                <span className="text-[12px] text-diff-del-fg/80">
+                  Couldn't load activity
+                </span>
+              ) : activity && !activity.rows.length ? (
+                <span className="text-[12px] text-content/45">
+                  No activity yet
+                </span>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-        <div data-card-ticket="" className="flex flex-col gap-1">
-          <span className="text-[11px] text-content/50">Ticket</span>
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {ticket ? (
-              <SessionTicketChip
-                key={`${ticket.tracker}:${ticket.key}`}
-                ticket={ticket}
-                visible
-                onChange={chipChange}
-                current={() =>
-                  ticketRef.current
-                    ? { kind: "ticket", ticket: ticketRef.current }
-                    : undefined
-                }
-              />
-            ) : null}
-            <button
-              type="button"
-              onClick={() => setLinkingTicket(true)}
-              className="inline-flex h-7 shrink-0 items-center rounded-md border border-content/15 px-2.5 text-[12px] text-content/80 hover:border-content/30 hover:bg-content/10 hover:text-content"
-            >
-              {ticket ? "Change ticket…" : "Link ticket…"}
-            </button>
-          </div>
-        </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-[11px] text-content/50">Activity</span>
-          {activity?.rows.length ? (
-            <ol data-card-activity="" className="flex flex-col gap-1">
-              {activity.rows.map((row) => (
-                <li key={row.id} className="text-[12px] text-content/70">
-                  {activityText(row)}
-                </li>
-              ))}
-            </ol>
-          ) : null}
-          {activity?.failed ? (
-            <span className="text-[12px] text-diff-del-fg/80">
-              Couldn't load activity
-            </span>
-          ) : activity && !activity.rows.length ? (
-            <span className="text-[12px] text-content/45">No activity yet</span>
-          ) : null}
-        </div>
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={() => void remove()}
-            className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-red-300/90 hover:bg-red-500/15"
-          >
-            <Trash2 className="size-3.5" strokeWidth={1.75} />
-            Delete card
-          </button>
-        </div>
+          )}
+        </section>
+      </div>
+      <div className="flex h-11 shrink-0 items-center justify-end border-t border-stroke px-3">
+        <button
+          type="button"
+          onClick={() => void remove()}
+          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-red-300/90 hover:bg-red-500/15"
+        >
+          <Trash2 className="size-3.5" strokeWidth={1.75} />
+          Delete card
+        </button>
       </div>
       {linkingTicket ? (
         <LinkSessionWorkItemDialog
@@ -343,6 +722,6 @@ export function CardDetail({
           onClose={() => setLinkingTicket(false)}
         />
       ) : null}
-    </Modal>
+    </aside>
   );
 }

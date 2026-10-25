@@ -129,7 +129,7 @@ function activityAction(row: BoardActivity): string {
     case "created":
       return row.toColumn ? `Created in ${row.toColumn}` : "Created";
     case "edited":
-      return "Edited";
+      return row.detail ? `Changed ${row.detail}` : "Edited";
     case "moved":
       return `Moved from ${row.fromColumn ?? "?"} to ${row.toColumn ?? "?"}`;
     case "linked":
@@ -147,9 +147,68 @@ function activityAction(row: BoardActivity): string {
   }
 }
 
-/** One timeline row: "Moved from In Progress to Review · system · 2m ago". */
+/** Who did it: "You", "System", or "Agent" for any other writer. */
+export function actorLabel(actor: string): string {
+  if (actor === "user") return "You";
+  if (actor === "system") return "System";
+  return "Agent";
+}
+
+/** One timeline row: "Moved from In Progress to Review · System · 2m ago". */
 export function activityText(row: BoardActivity, now = Date.now()): string {
-  return `${activityAction(row)} · ${row.actor} · ${relativeTime(row.createdAt, now)}`;
+  return `${activityAction(row)} · ${actorLabel(row.actor)} · ${relativeTime(row.createdAt, now)}`;
+}
+
+/** Label colours (six hex digits), in the order new labels take them. Same as Native. */
+export const LABEL_COLORS = [
+  "8a867e",
+  "e5534b",
+  "e0823d",
+  "e8c547",
+  "3fb950",
+  "2bb3a8",
+  "4da3f5",
+  "a371f7",
+] as const;
+
+/** The colour a board's `count`-th label gets. */
+export function nextLabelColor(count: number): string {
+  return LABEL_COLORS[count % LABEL_COLORS.length];
+}
+
+/** Local midnight `days` days after the day of `now`, as epoch ms. */
+export function dayStart(days: number, now = Date.now()): number {
+  const today = new Date(now);
+  return new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate() + days,
+  ).getTime();
+}
+
+const pad = (value: number) => String(value).padStart(2, "0");
+
+/** A due date as a date input's value ("YYYY-MM-DD", local), or "". */
+export function dueInputValue(dueAt: number | null): string {
+  if (dueAt === null) return "";
+  const date = new Date(dueAt);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** A date input's value as local midnight; null when empty or not a real day. */
+export function parseDueInput(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [year, month, day] = match.slice(1).map(Number);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date.getTime();
 }
 
 export type DueTone = "overdue" | "soon" | "later";
