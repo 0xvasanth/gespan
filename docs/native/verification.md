@@ -135,7 +135,7 @@ These runtime checks are pending; none has been run by hand yet:
   card is in the Archive view, not lost; Restore puts it back.
 - Move or delete the card in the other app during the 8 s, then press Undo:
   the toast says what could not be undone and nothing is duplicated.
-- Archive view: open it from the header; archived cards are newest first.
+- Archive view: open it from the board; archived cards are newest first.
   Restore puts a card at the end of its column, and Delete forever asks first.
 - Delete column is disabled with "Move or delete its N cards first" while the
   column holds live or archived cards, and works once both are gone.
