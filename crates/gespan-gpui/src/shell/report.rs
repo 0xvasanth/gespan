@@ -201,7 +201,14 @@ impl Shell {
                                         .debug_selector(|| "crash-notice-report".into())
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            let title = this.report.crashes[0].title.clone();
+                                            let Some(title) = this
+                                                .report
+                                                .crashes
+                                                .first()
+                                                .map(|c| c.title.clone())
+                                            else {
+                                                return;
+                                            };
                                             this.report.crashes.clear();
                                             this.open_report(
                                                 Prefill {

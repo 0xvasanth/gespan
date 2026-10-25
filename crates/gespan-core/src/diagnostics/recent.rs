@@ -59,7 +59,7 @@ mod tests {
         note_error_event("stale-id".into());
         RECENT.lock().unwrap().iter_mut().for_each(|(at, id)| {
             if id == "stale-id" {
-                *at -= Duration::from_secs(60);
+                *at = at.checked_sub(Duration::from_secs(60)).unwrap_or(*at);
             }
         });
         let ids: Vec<String> = (0..KEPT + 5).map(|n| format!("kept-limit-{n}")).collect();

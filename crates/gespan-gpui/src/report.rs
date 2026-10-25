@@ -13,7 +13,8 @@ use gespan_core::diagnostics::{
 use gespan_redact::Redactor;
 use gpui::{
     ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, IntoElement,
-    Render, Role, SharedString, Subscription, Window, div, prelude::*, px, rgb, uniform_list,
+    ListHorizontalSizingBehavior, Render, Role, SharedString, Subscription,
+    UniformListScrollHandle, Window, div, prelude::*, px, rgb, uniform_list,
 };
 use std::{
     path::{Path, PathBuf},
@@ -93,9 +94,14 @@ pub(crate) struct ReportSheet {
     downloads: Option<PathBuf>,
     destination: Destination,
     reveal: Reveal,
-    gathered: Option<Gathered>,
+    gathered: Option<Arc<Gathered>>,
+    /// The rebuild in flight; replacing it cancels the older one.
+    building: Option<gpui::Task<()>>,
     bundle: Option<Bundle>,
     shown: Option<String>,
+    /// The shown entry's lines, split once per bundle.
+    shown_lines: Arc<Vec<SharedString>>,
+    preview_scroll: UniformListScrollHandle,
     saving: bool,
     focus: FocusHandle,
     _changes: Vec<Subscription>,
@@ -166,7 +172,7 @@ impl ReportSheet {
         cx.spawn(async move |this, cx| {
             let gathered = gather.await;
             let _ = this.update(cx, |this, cx| {
-                this.gathered = Some(gathered);
+                this.gathered = Some(Arc::new(gathered));
                 this.rebuild(cx);
             });
         })
@@ -186,8 +192,11 @@ impl ReportSheet {
             destination,
             reveal,
             gathered: None,
+            building: None,
             bundle: None,
             shown: None,
+            shown_lines: Arc::default(),
+            preview_scroll: UniformListScrollHandle::new(),
             saving: false,
             focus: cx.focus_handle(),
             _changes: changes,
@@ -276,30 +285,79 @@ impl ReportSheet {
         }
     }
 
+    /// Rebuilds the zip in the background: deflating the log tail on every
+    /// keystroke would stall typing.
     fn rebuild(&mut self, cx: &mut Context<Self>) {
+        let Some(gathered) = self.gathered.clone() else {
+            return;
+        };
         let report = self.report(cx);
-        if let Some(gathered) = &self.gathered {
-            match diagnostics::build(
+        let selection = self.selection.clone();
+        let destination = self.destination;
+        let stamp = self.stamp.clone();
+        let build = cx.background_executor().spawn(async move {
+            diagnostics::build(
                 &report,
                 &gathered.system,
                 &gathered.sources,
-                &self.selection,
-                self.destination,
+                &selection,
+                destination,
                 &gathered.redactor,
-                &self.stamp,
+                &stamp,
                 diagnostics::MAX_BUNDLE_BYTES,
-            ) {
-                Ok(bundle) => self.bundle = Some(bundle),
-                Err(error) => self.error = Some(format!("Could not build the report: {error}")),
-            }
-        }
+            )
+        });
+        self.building = Some(cx.spawn(async move |this, cx| {
+            let built = build.await;
+            let _ = this.update(cx, |this, cx| {
+                this.building = None;
+                match built {
+                    Ok(bundle) => {
+                        this.bundle = Some(bundle);
+                        // An edit answers the last complaint.
+                        this.error = None;
+                        this.split_shown();
+                    }
+                    Err(error) => {
+                        // Never leave an older zip ready to save.
+                        this.bundle = None;
+                        this.error = Some(format!("Could not build the report: {error}"));
+                    }
+                }
+                cx.notify();
+            });
+        }));
         cx.notify();
+    }
+
+    /// Opens an entry's text in the preview, or closes it.
+    pub(crate) fn show_entry(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.shown = if self.shown.as_deref() == Some(name) {
+            None
+        } else {
+            Some(name.to_owned())
+        };
+        self.split_shown();
+        cx.notify();
+    }
+
+    fn split_shown(&mut self) {
+        let text = self
+            .shown
+            .as_deref()
+            .and_then(|name| self.preview_text(name))
+            .unwrap_or_default();
+        self.shown_lines = Arc::new(
+            text.lines()
+                .map(|line| SharedString::from(if line.is_empty() { " " } else { line }.to_owned()))
+                .collect(),
+        );
     }
 
     /// Saves the previewed zip to Downloads, reveals it and opens the
     /// prefilled GitHub issue.
     pub(crate) fn submit(&mut self, cx: &mut Context<Self>) {
-        if self.saving {
+        if self.saving || self.building.is_some() {
             return;
         }
         let report = self.report(cx);
@@ -342,11 +400,15 @@ impl ReportSheet {
         let url = diagnostics::issue_url(&bundle.report());
         cx.spawn(async move |this, cx| {
             let result = save.await;
+            // The zip is saved even if the sheet was closed meanwhile, so the
+            // issue still opens.
+            if result.is_ok() {
+                cx.update(|cx| cx.open_url(&url));
+            }
             let _ = this.update(cx, |this, cx| {
                 this.saving = false;
                 match result {
                     Ok((path, revealed)) => {
-                        cx.open_url(&url);
                         this.saved = Some(
                             path.file_name()
                                 .map(|name| name.to_string_lossy().into_owned())
@@ -542,32 +604,22 @@ impl ReportSheet {
                                             .text_color(accent_color())
                                             .child(if shown { "Hide" } else { "Show" })
                                             .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.shown =
-                                                    if this.shown.as_deref() == Some(&toggled) {
-                                                        None
-                                                    } else {
-                                                        Some(toggled.clone())
-                                                    };
-                                                cx.notify();
+                                                this.show_entry(&toggled, cx);
                                             })),
                                     )
                             }),
                     )
-                    .when(shown, |d| d.child(self.entry_text(&name)))
+                    .when(shown, |d| d.child(self.entry_text()))
             }))
             .into_any_element()
     }
 
-    /// An entry's lines, a viewport at a time.
-    fn entry_text(&self, name: &str) -> impl IntoElement {
-        let text: Arc<Vec<SharedString>> = Arc::new(
-            self.preview_text(name)
-                .unwrap_or_default()
-                .lines()
-                .map(|line| SharedString::from(if line.is_empty() { " " } else { line }.to_owned()))
-                .collect(),
-        );
+    /// The shown entry's lines, a viewport at a time. Long lines scroll
+    /// sideways: every byte the zip holds can be read.
+    fn entry_text(&self) -> impl IntoElement {
+        let text = self.shown_lines.clone();
         let count = text.len();
+        let longest = (0..count).max_by_key(|&ix| text[ix].chars().count());
         div()
             .id("report-entry-text")
             .h(px((count as f32 * PREVIEW_LINE).min(PREVIEW_HEIGHT)))
@@ -579,6 +631,8 @@ impl ReportSheet {
                     range
                         .map(|ix| {
                             div()
+                                .id(("report-line", ix))
+                                .debug_selector(move || format!("report-line-{ix}"))
                                 .h(px(PREVIEW_LINE))
                                 .text_size(px(11.))
                                 .line_height(px(PREVIEW_LINE))
@@ -589,6 +643,9 @@ impl ReportSheet {
                         })
                         .collect()
                 })
+                .with_width_from_item(longest)
+                .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+                .track_scroll(&self.preview_scroll)
                 .size_full(),
             )
     }
@@ -637,7 +694,7 @@ impl Render for ReportSheet {
                     .w_full()
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
-                    self.saving || self.bundle.is_none(),
+                    self.saving || self.building.is_some() || self.bundle.is_none(),
                 ))
                 .child(
                     crate::modal::ghost_button("report-cancel", "Cancel")
@@ -732,8 +789,8 @@ impl Render for ReportSheet {
                         .gap_1()
                         .child(
                             div()
-                                .id("report-error")
-                        .debug_selector(|| "report-error".into())
+                                .id("report-sheet-error")
+                        .debug_selector(|| "report-sheet-error".into())
                                 .role(Role::Alert)
                                 .text_size(px(11.))
                                 .text_color(rgb(0xf87171))
@@ -907,11 +964,74 @@ mod tests {
     }
 
     #[gpui::test]
+    fn the_bundle_is_rebuilt_off_the_ui_thread(cx: &mut TestAppContext) {
+        let f = fixture();
+        let sheet = sheet(&f, Destination::Fallback, cx);
+        type_into(&sheet, cx, "Before", "x");
+        sheet.update(cx, |sheet, cx| {
+            sheet
+                .title
+                .update(cx, |input, cx| input.set_text("After".into(), cx));
+        });
+        // The change has been handled, but the zip is rebuilt in the
+        // background: the UI thread hasn't built it yet.
+        sheet.read_with(cx, |sheet, _| {
+            assert_eq!(sheet.bundle().unwrap().report()["title"], "Before")
+        });
+        cx.run_until_parked();
+        sheet.read_with(cx, |sheet, _| {
+            assert_eq!(sheet.bundle().unwrap().report()["title"], "After")
+        });
+    }
+
+    #[gpui::test]
+    fn long_lines_scroll_instead_of_being_cut(cx: &mut TestAppContext) {
+        let f = fixture();
+        let long = format!("{{\"message\":\"{}\"}}", "x".repeat(400));
+        let day = chrono::Utc::now().date_naive();
+        std::fs::write(f.logs.join(gespan_core::diagnostics::file_name(day)), &long).unwrap();
+        let sheet = sheet(&f, Destination::Fallback, cx);
+        let window = cx.add_window(|_, _| Holder(sheet.clone()));
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        sheet.update(visual, |sheet, cx| sheet.show_entry("logs.jsonl", cx));
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let line = visual
+            .debug_bounds("report-line-0")
+            .expect("the line is drawn");
+        // 400+ monospace characters at 11 px are far wider than the sheet.
+        assert!(line.size.width > gpui::px(1500.), "{:?}", line.size.width);
+    }
+
+    #[gpui::test]
+    fn closing_while_saving_still_opens_github(cx: &mut TestAppContext) {
+        let f = fixture();
+        let sheet = sheet(&f, Destination::Fallback, cx);
+        type_into(&sheet, cx, "t", "d");
+        sheet.update(cx, |sheet, cx| sheet.submit(cx));
+        drop(sheet);
+        cx.run_until_parked();
+        assert!(
+            cx.opened_url().is_some(),
+            "the zip is saved, so the issue opens"
+        );
+        assert_eq!(std::fs::read_dir(&f.downloads).unwrap().count(), 1);
+    }
+
+    struct Holder(Entity<ReportSheet>);
+    impl Render for Holder {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.0.clone())
+        }
+    }
+
+    #[gpui::test]
     fn unticking_attach_leaves_only_report_json(cx: &mut TestAppContext) {
         let f = fixture();
         let sheet = sheet(&f, Destination::Fallback, cx);
         type_into(&sheet, cx, "t", "d");
         sheet.update(cx, |sheet, cx| sheet.set_attach(false, cx));
+        cx.run_until_parked();
         sheet.read_with(cx, |sheet, _| {
             let bundle = sheet.bundle().unwrap();
             assert_eq!(bundle.entries.len(), 1);
@@ -928,6 +1048,7 @@ mod tests {
             sheet.toggle_entry("logs.jsonl", cx);
             sheet.toggle_entry("crashes/2026-10-25T09-15-30.123Z.json", cx);
         });
+        cx.run_until_parked();
         sheet.read_with(cx, |sheet, _| {
             assert_eq!(
                 sheet.bundle().unwrap().report()["files"],
@@ -942,6 +1063,7 @@ mod tests {
             );
         });
         sheet.update(cx, |sheet, cx| sheet.toggle_entry("logs.jsonl", cx));
+        cx.run_until_parked();
         sheet.read_with(cx, |sheet, _| {
             assert_eq!(
                 sheet.bundle().unwrap().report()["files"],
