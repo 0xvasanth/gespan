@@ -1,6 +1,6 @@
+use gespan_tracker_secrets::{self as secrets, Tracker};
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -665,27 +665,23 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
         .map(|text| text.trim().to_string())
 }
 
-fn token_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join("linear-token"))
+fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|error| error.to_string())
 }
 
 fn read_token(app: &AppHandle) -> Result<Option<String>, String> {
-    let path = token_path(app)?;
-    match fs::read_to_string(&path) {
-        Ok(raw) => {
-            let token = raw.trim().to_string();
-            if token.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(token))
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
+    read_token_in(&data_dir(app)?)
+}
+
+fn read_token_in(dir: &Path) -> Result<Option<String>, String> {
+    let Some(raw) = secrets::read(Tracker::Linear, dir)? else {
+        return Ok(None);
+    };
+    let token = raw.trim().to_string();
+    if token.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(token))
     }
 }
 
@@ -694,47 +690,41 @@ fn require_token(app: &AppHandle) -> Result<String, String> {
 }
 
 fn write_token(app: &AppHandle, token: &str) -> Result<(), String> {
-    let path = token_path(app)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    write_secret_file(&path, token)
+    secrets::write(Tracker::Linear, &data_dir(app)?, token)
 }
 
 fn delete_token(app: &AppHandle) -> Result<(), String> {
-    let path = token_path(app)?;
-    match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn write_secret_file(path: &std::path::Path, token: &str) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|error| error.to_string())?;
-        file.write_all(token.as_bytes())
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        fs::write(path, token).map_err(|error| error.to_string())
-    }
+    secrets::delete(Tracker::Linear, &data_dir(app)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn secrets_dir() -> tempfile::TempDir {
+        gespan_tracker_secrets::testing::use_memory_keychain();
+        tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn read_token_in_migrates_the_saved_file() {
+        let dir = secrets_dir();
+        std::fs::write(dir.path().join("linear-token"), " lin_api_saved\n").unwrap();
+
+        assert_eq!(
+            read_token_in(dir.path()).unwrap().as_deref(),
+            Some("lin_api_saved")
+        );
+        assert!(!dir.path().join("linear-token").exists());
+        assert_eq!(
+            gespan_tracker_secrets::testing::stored(Tracker::Linear, dir.path()).as_deref(),
+            Some(" lin_api_saved\n")
+        );
+        assert_eq!(
+            read_token_in(dir.path()).unwrap().as_deref(),
+            Some("lin_api_saved")
+        );
+    }
 
     #[test]
     fn linear_authorization_sends_the_raw_api_key() {

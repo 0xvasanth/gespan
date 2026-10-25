@@ -18,6 +18,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 gespan-mobile-link = { path = "../crates/mobile-link" }
 gespan-keep-awake = { path = "../crates/keep-awake" }
+gespan-tracker-secrets = { path = "../crates/tracker-secrets" }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = ["sync", "time"] }
 if-addrs = "0.15"
@@ -79,3 +80,7 @@ tauri-plugin-updater = "2"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-window-state = "2.4.1"
+
+[dev-dependencies]
+gespan-tracker-secrets = { path = "../crates/tracker-secrets", features = ["testing"] }
+tempfile = "3"
