@@ -11,7 +11,8 @@ use gespan_models::{
     CancelToken, DownloadError, ModelSpec, ModelStatus, ModelStore, Progress, default_root,
 };
 use gespan_speech::{
-    SpeechClient, VocabularySources, catalog, helper_command, local_branches, pick_terms,
+    CRASHED, SpeechClient, UNAVAILABLE, VocabularySources, catalog, helper_command, local_branches,
+    pick_terms,
     protocol::{ErrorKind, Event, Request},
 };
 use gpui::{
@@ -25,7 +26,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(crate) const UNAVAILABLE: &str = "Dictation is unavailable. Restart Gespan to try again.";
 const ALREADY_DOWNLOADING: &str = "The speech model is already downloading.";
 pub(crate) const DOWNLOAD_PROMPT: &str = "Download the speech model (about 660 MB)?";
 pub(crate) const DICTATE_COMMAND: &str = "Composer: Dictate";
@@ -141,7 +141,7 @@ pub(crate) fn speech(cx: &mut App) -> Entity<Speech> {
 
 /// The client's own messages for a helper that died or was given up on.
 fn supervisor_error(message: &str) -> bool {
-    message == UNAVAILABLE || message == "Dictation stopped unexpectedly."
+    message == UNAVAILABLE || message == CRASHED
 }
 
 /// Leaving for another session: dictation running anywhere but `keep` is
