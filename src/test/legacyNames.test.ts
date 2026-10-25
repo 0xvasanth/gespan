@@ -94,8 +94,15 @@ function withoutKeptUses(text: string, file: string): string {
   }
   return out;
 }
-const usesSecondName = (line: string, file = "") =>
-  PRODUCT_USES.some((re) => re.test(withoutKeptUses(line, file)));
+// Masking only blanks text out, so a line that never spells the word in any
+// case cannot match. Skipping those keeps the whole-repo scan inside the test
+// timeout on slower CI runners.
+const MAY_NAME = new RegExp(SECOND_NAME, "i");
+function usesSecondName(line: string, file = ""): boolean {
+  if (!MAY_NAME.test(line)) return false;
+  const masked = withoutKeptUses(line, file);
+  return PRODUCT_USES.some((re) => re.test(masked));
+}
 
 // ---------------------------------------------------------------------------
 
