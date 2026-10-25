@@ -1,0 +1,23 @@
+crates/gespan-redact/src/patterns.rs
+  s_430b45d89d3c54::t_f279c17def8a60 447-448,694-699
+  s_430b45d89d3c54::t_9c81d103950e62 254-256,261-273,701-724
+  s_430b45d89d3c54::t_d0d5d2253ff6d9 700
+docs/superpowers/plans/2026-10-25-redact-crate.md
+  s_430b45d89d3c54::t_f6ccd4f536e370 131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6fe3c35d2c1face7909792b32a3b1bf81f75677",
+  "prompts": {},
+  "sessions": {
+    "s_430b45d89d3c54": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07486962-5f99-445f-93ca-0c706f185048",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
