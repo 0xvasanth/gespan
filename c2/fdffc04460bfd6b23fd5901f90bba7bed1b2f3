@@ -1,0 +1,55 @@
+crates/gespan-redact/src/lib.rs
+  s_430b45d89d3c54::t_7855d6785fccfc 181-193,197-199,204-208,213,225-226
+  s_430b45d89d3c54::t_a6f410c2cd8da6 9,107,123-125,131-132,194-196,200-203,209-212
+  s_430b45d89d3c54::t_4dcf0e4e1b3cd9 28-30,90-91,93-106,221-223
+  s_430b45d89d3c54::t_9b6a71121ae9ce 69,180,214-220,224
+  s_430b45d89d3c54::t_2b48b8f38cf523 78-81
+crates/gespan-redact/src/value.rs
+  s_430b45d89d3c54::t_7855d6785fccfc 144-160
+  s_430b45d89d3c54::t_94a5972d60b7af 143
+crates/gespan-redact/src/fields.rs
+  s_430b45d89d3c54::t_a6f410c2cd8da6 1-70,73-91
+  s_430b45d89d3c54::t_265442047d4a14 71-72
+crates/gespan-redact/src/paths.rs
+  s_430b45d89d3c54::t_4fe98900198e7a 49-55
+crates/gespan-redact/src/patterns.rs
+  s_430b45d89d3c54::t_7855d6785fccfc 441,443,458,460,530-541,545-547,554,560-565,570,575-610,624-667,669-670
+  s_430b45d89d3c54::t_da13fbe7baafa7 137-152,154-155,157,159,161-163,165-166,171-173,177-206
+  s_430b45d89d3c54::t_faef1ca6ec91e5 74-76
+  s_430b45d89d3c54::t_b290c2b2d88956 255-256,438-439
+  s_430b45d89d3c54::t_af9f115995046c 126-127,130-134,611-613
+  s_430b45d89d3c54::t_db19f85ea22a2b 68,79,111
+  s_430b45d89d3c54::t_3897a6e62d3944 614-619
+  s_430b45d89d3c54::t_f70e9936a0170d 160,552-553
+  s_430b45d89d3c54::t_a6f410c2cd8da6 9-11,14,16,19-23,25,32,34-37,41-47,49-59,62-63,69-73,77-78,80-97,101-102,107,135-136,158,164,167-169,208,218-223,225,230,240-254,257-291,361,433-437,451-452,542-544,548-551,555-559,566-569,571-574,620-623,671
+  s_430b45d89d3c54::t_70ccfe11b48ce1 108,110,115,120,125,170,207,209-212,440,442,457,459,668,672-673
+crates/gespan-redact/fixtures/redaction.json
+  s_430b45d89d3c54::t_4d6b57728c4363 340-367
+crates/gespan-redact/tests/property.proptest-regressions
+  s_430b45d89d3c54::t_f70e9936a0170d 11
+  s_430b45d89d3c54::t_da13fbe7baafa7 12
+  s_430b45d89d3c54::t_85d791d9aabea9 10
+  s_430b45d89d3c54::t_76f5247cab2234 13-14
+  s_430b45d89d3c54::t_739d0bc14cc058 9
+crates/gespan-redact/tests/property.rs
+  s_430b45d89d3c54::t_739d0bc14cc058 14-23,28-31,81-146
+  s_430b45d89d3c54::t_4bffb4a855a757 147
+docs/superpowers/plans/2026-10-25-redact-crate.md
+  s_430b45d89d3c54::t_b55d8d52fa017f 115-131,138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c2fdffc04460bfd6b23fd5901f90bba7bed1b2f3",
+  "prompts": {},
+  "sessions": {
+    "s_430b45d89d3c54": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07486962-5f99-445f-93ca-0c706f185048",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
