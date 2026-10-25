@@ -8,6 +8,7 @@ import {
   readdir,
   writeFile,
   chmod,
+  lstat,
 } from "node:fs/promises";
 import { join, resolve, dirname, basename } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -64,6 +65,17 @@ export async function runStapler(
       await wait(delay);
     }
   }
+}
+
+// Count apparent bytes, including sparse files, without following the
+// Applications shortcut or any other symlinks outside the staging tree.
+async function logicalBytes(path) {
+  const info = await lstat(path);
+  if (!info.isDirectory()) return info.size;
+  const children = await Promise.all(
+    (await readdir(path)).map((name) => logicalBytes(join(path, name))),
+  );
+  return info.size + children.reduce((sum, size) => sum + size, 0);
 }
 async function notices(directory) {
   await mkdir(directory, { recursive: true });
@@ -217,6 +229,8 @@ export async function packageNative({
     run("ditto", [app, join(imageRoot, "Monocode Native.app")]);
     run("ln", ["-s", "/Applications", join(imageRoot, "Applications")]);
     const dmg = add(`MonocodeNative_${version}_${name}.dmg`);
+    const imageSizeMiB =
+      Math.ceil((await logicalBytes(imageRoot)) / 1048576) + 64;
     run("hdiutil", [
       "create",
       "-volname",
@@ -226,6 +240,10 @@ export async function packageNative({
       "-ov",
       "-format",
       "UDZO",
+      "-fs",
+      "HFS+",
+      "-size",
+      `${imageSizeMiB}m`,
       dmg,
     ]);
     run("codesign", [

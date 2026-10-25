@@ -40,10 +40,18 @@ if (name === 'uname') console.log('Darwin');
 if (name === 'lipo') console.log('arm64');
 if (name === 'ditto') {
   if (args[0] === '-c') fs.writeFileSync(args.at(-1), 'zip');
-  else fs.cpSync(args[0], args[1], { recursive: true });
+  else {
+    fs.cpSync(args[0], args[1], { recursive: true });
+    if (process.env.NATIVE_TEST_SPARSE_DMG_BYTES) {
+      fs.truncateSync(path.join(args[1], 'Contents/MacOS/monocode-gpui'), Number(process.env.NATIVE_TEST_SPARSE_DMG_BYTES));
+    }
+  }
 }
 if (name === 'tar') fs.writeFileSync(args[1], 'archive');
-if (name === 'hdiutil') fs.writeFileSync(args.at(-1), 'dmg');
+if (name === 'hdiutil') {
+  fs.writeFileSync(process.env.NATIVE_TEST_HDIUTIL_ARGS, JSON.stringify(args));
+  fs.writeFileSync(args.at(-1), 'dmg');
+}
 if (name === 'xcrun' && args[0] === 'notarytool') console.log(JSON.stringify({ status: process.env.NATIVE_TEST_NOTARY_STATUS || 'Accepted' }));
 if (name === 'xcrun' && args[0] === 'stapler' && process.env.NATIVE_TEST_STAPLER_MODE) {
   const state = process.env.NATIVE_TEST_STAPLER_STATE;
@@ -75,6 +83,9 @@ if (name === 'xcrun' && args[0] === 'stapler' && process.env.NATIVE_TEST_STAPLER
       APPLE_API_ISSUER: "fixture-issuer",
       NATIVE_TEST_STAPLER_MODE: "",
       NATIVE_TEST_STAPLER_STATE: join(directory, "stapler-state"),
+      // A sparse executable exposes image estimates based on allocated blocks.
+      NATIVE_TEST_SPARSE_DMG_BYTES: String(128 * 1024 * 1024),
+      NATIVE_TEST_HDIUTIL_ARGS: join(directory, "hdiutil-args.json"),
     };
     const original = Object.fromEntries(
       Object.keys(overrides).map((key) => [key, process.env[key]]),
@@ -106,6 +117,20 @@ if (name === 'xcrun' && args[0] === 'stapler' && process.env.NATIVE_TEST_STAPLER
     assert.ok(artifacts.some((a) => !a.target && a.filename.endsWith(".dmg")));
     for (const artifact of artifacts)
       await access(join(out, artifact.filename));
+    const imageArgs = JSON.parse(
+      await readFile(process.env.NATIVE_TEST_HDIUTIL_ARGS, "utf8"),
+    );
+    assert.equal(imageArgs[imageArgs.indexOf("-fs") + 1], "HFS+");
+    const imageSize = imageArgs[imageArgs.indexOf("-size") + 1];
+    assert.match(imageSize, /^\d+m$/);
+    assert.ok(
+      parseInt(imageSize, 10) >= 192,
+      "capacity covers logical bytes and filesystem headroom",
+    );
+    assert.ok(
+      parseInt(imageSize, 10) < 256,
+      "Applications symlink is not traversed",
+    );
     const plist = await readFile(
       join(release, "Monocode Native.app/Contents/Info.plist"),
       "utf8",
