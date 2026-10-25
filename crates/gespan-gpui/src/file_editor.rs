@@ -682,7 +682,7 @@ impl FileEditor {
                                     metrics::ErrorKind::of_message(&error),
                                 );
                             }
-                            eprintln!("gespan: editor analysis failed: {error}");
+                            tracing::warn!(%error, "editor analysis failed");
                         }
                     }
                 }
