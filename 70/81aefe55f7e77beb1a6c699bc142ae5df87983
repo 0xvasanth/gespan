@@ -1,0 +1,21 @@
+crates/gespan-speech/src/vocabulary.rs
+  s_cb714e3c395324::t_deaf4fdda5bde1 11,36-38,41-44,75,102
+crates/gespan-speech/tests/identifiers.rs
+  s_cb714e3c395324::t_1d521c6acc57c3 67,91-92,111,128-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7081aefe55f7e77beb1a6c699bc142ae5df87983",
+  "prompts": {},
+  "sessions": {
+    "s_cb714e3c395324": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9490eb45-d269-459d-a64c-099ef06fd161",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
