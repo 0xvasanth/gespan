@@ -255,7 +255,10 @@ mod tests {
         assert_eq!(pairs["title"], "title");
         assert!(pairs["what-happened"].ends_with(CUT_NOTE));
         assert!(pairs["what-happened"].starts_with("éé"));
-        assert_eq!(pairs["repro"], CUT_NOTE, "the steps go before what happened");
+        assert_eq!(
+            pairs["repro"], CUT_NOTE,
+            "the steps go before what happened"
+        );
         // A short report is left alone.
         let (_, short) = query(&issue_url(&report("title", "short", None, "macos")));
         assert!(short

@@ -8,6 +8,7 @@ mod fallback;
 mod json;
 mod panic;
 mod paths;
+mod recent;
 mod rotation;
 
 pub use actions::{open_logs_folder, summary, summary_for};
@@ -25,6 +26,7 @@ pub use fallback::{
 pub use json::{filter, json_layer, JsonLayer};
 pub use panic::{install_panic_hook, panic_message, write_crash};
 pub use paths::{crash_dir, log_dir, Channel};
+pub use recent::{note_error_event, recent_error_events};
 pub use rotation::{file_name, prune, Clock, DailyFile, SystemClock, MAX_BYTES, MAX_DAYS};
 
 use std::{

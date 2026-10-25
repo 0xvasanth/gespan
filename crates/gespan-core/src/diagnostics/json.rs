@@ -162,7 +162,11 @@ where
             line.insert("span".into(), path.join(":").into());
         }
         line.insert("fields".into(), Value::Object(merged));
-        line.insert("event_id".into(), uuid::Uuid::new_v4().to_string().into());
+        let event_id = uuid::Uuid::new_v4().to_string();
+        if *metadata.level() == tracing::Level::ERROR {
+            super::note_error_event(event_id.clone());
+        }
+        line.insert("event_id".into(), event_id.into());
         // serde_json escapes newlines, so a record is always exactly one line.
         let mut bytes = Value::Object(line).to_string().into_bytes();
         bytes.push(b'\n');
