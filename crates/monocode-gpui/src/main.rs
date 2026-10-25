@@ -434,6 +434,9 @@ fn main() {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(820.), px(520.))),
+                    // Linux desktops match this to the .desktop file's
+                    // StartupWMClass to show the app icon.
+                    app_id: Some("dev.usemono.gpui".into()),
                     window_background: if cfg!(target_os = "macos") {
                         WindowBackgroundAppearance::Blurred
                     } else {
