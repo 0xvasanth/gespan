@@ -43,6 +43,8 @@ pub(crate) struct Update {
     pub(crate) usage_limit: Option<gespan_core::usage::Limit>,
     /// The tasks a yielded turn still waits on, when that changed.
     pub(crate) background: Option<Vec<provider::BackgroundTask>>,
+    /// A held turn reached its safe point.
+    pub(crate) hold: Option<provider::HoldPoint>,
     pub(crate) approvals: Vec<Approval>,
     pub(crate) approvals_resolved: Vec<String>,
     pub(crate) questions: Vec<gespan_core::agent::Question>,
@@ -54,6 +56,13 @@ pub(crate) struct Update {
     /// afterwards: the work itself is done, and `status` reports the save.
     pub(crate) succeeded: bool,
     pub(crate) finished: bool,
+}
+/// Stop and Hold both end a turn on purpose: no error row, status Ready.
+pub(crate) fn ended_by_user<T>(cancel: &AtomicBool, result: &Result<T, String>) -> bool {
+    cancel.load(Ordering::Relaxed)
+        || result
+            .as_ref()
+            .is_err_and(|error| error == "Stopped" || error == "Held")
 }
 fn publish(
     tx: &async_channel::Sender<Update>,
@@ -262,6 +271,7 @@ fn run_turn_using(
                 metrics: None,
                 usage_limit: None,
                 background: None,
+                hold: None,
                 approvals: Vec::new(),
                 approvals_resolved: Vec::new(),
                 questions: Vec::new(),
@@ -317,6 +327,7 @@ fn run_turn_using(
                     metrics: None,
                     usage_limit: None,
                     background: None,
+                    hold: None,
                     approvals: Vec::new(),
                     approvals_resolved: Vec::new(),
                     questions: Vec::new(),
@@ -371,6 +382,7 @@ fn run_turn_using(
                     metrics: None,
                     usage_limit: None,
                     background: None,
+                    hold: None,
                     approvals: Vec::new(),
                     approvals_resolved: Vec::new(),
                     questions: Vec::new(),
@@ -565,6 +577,7 @@ fn run_turn_using(
                 let mut context_changed = false;
                 let mut metrics = None;
                 let mut background = None;
+                let mut hold = None;
                 let mut approvals = Vec::new();
                 let mut approvals_resolved = Vec::new();
                 let mut questions = Vec::new();
@@ -793,6 +806,10 @@ fn run_turn_using(
                         }
                         Event::Status(text) => status = text,
                         Event::Background(tasks) => background = Some(tasks),
+                        Event::HoldSettled(point) => {
+                            hold = Some(point);
+                            boundary = true;
+                        }
                         Event::UsageLimited(limit) => usage_limit = Some(limit),
                         Event::Done => {
                             status = "Ready".into();
@@ -835,6 +852,7 @@ fn run_turn_using(
                             metrics,
                             usage_limit: None,
                             background,
+                            hold,
                             approvals,
                             approvals_resolved,
                             questions,
@@ -873,8 +891,7 @@ fn run_turn_using(
         }
         result
     })();
-    let cancelled =
-        cancel.load(Ordering::Relaxed) || result.as_ref().is_err_and(|error| error == "Stopped");
+    let cancelled = ended_by_user(&cancel, &result);
     let handoff = prepared_handoff.map(|mut ready| {
         if handoff_accepted {
             None
@@ -1008,6 +1025,7 @@ fn run_turn_using(
         metrics: None,
         usage_limit: if cancelled { None } else { usage_limit },
         background: None,
+        hold: None,
         approvals: Vec::new(),
         approvals_resolved: Vec::new(),
         questions: Vec::new(),
