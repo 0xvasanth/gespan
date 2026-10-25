@@ -5,10 +5,9 @@ use std::path::{Path, PathBuf};
 /// Plain text for the clipboard. It carries no log lines: scrubbing them is
 /// the redaction crate's job, so this only describes the app and its files.
 pub fn summary_for(log_dir: &Path, version: &str, channel: Channel, home: Option<&Path>) -> String {
-    let shown = match home.and_then(|home| log_dir.strip_prefix(home).ok()) {
-        Some(rest) => Path::new("~").join(rest),
-        None => log_dir.to_path_buf(),
-    };
+    let shown = home
+        .and_then(|home| tilde(log_dir, home, std::path::MAIN_SEPARATOR))
+        .unwrap_or_else(|| log_dir.display().to_string());
     let logs = scan(log_dir).unwrap_or_default();
     let bytes: u64 = logs.iter().map(|(_, _, size)| size).sum();
     let mut crashes: Vec<String> = std::fs::read_dir(crash_dir(log_dir))
@@ -29,7 +28,7 @@ pub fn summary_for(log_dir: &Path, version: &str, channel: Channel, home: Option
         "Gespan Native {version} ({channel})\nOS: {} {}\nLogs: {}\nLog files: {} ({})\nCrash files: {}",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        shown.display(),
+        shown,
         logs.len(),
         size(bytes),
         crashes.len()
@@ -38,6 +37,18 @@ pub fn summary_for(log_dir: &Path, version: &str, channel: Channel, home: Option
         text.push_str(&format!(" (latest: {latest})"));
     }
     text
+}
+
+/// `path` under `home` as `~` plus its components, joined by `separator`
+/// alone, so Windows never shows a mixed `~\Library/Logs`.
+fn tilde(path: &Path, home: &Path, separator: char) -> Option<String> {
+    let rest = path.strip_prefix(home).ok()?;
+    let mut shown = String::from("~");
+    for part in rest.components() {
+        shown.push(separator);
+        shown.push_str(&part.as_os_str().to_string_lossy());
+    }
+    Some(shown)
 }
 
 fn size(bytes: u64) -> String {
@@ -81,7 +92,11 @@ mod tests {
     #[test]
     fn summary_hides_home_and_counts_files() {
         let home = tempfile::tempdir().unwrap();
-        let logs = home.path().join("Library/Logs/dev.gespan.native");
+        let logs = home
+            .path()
+            .join("Library")
+            .join("Logs")
+            .join("dev.gespan.native");
         std::fs::create_dir_all(crash_dir(&logs)).unwrap();
         std::fs::write(
             logs.join("gespan-native.2026-10-24.jsonl"),
@@ -104,12 +119,30 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "Gespan Native 0.16.0 (release)\nOS: {} {}\nLogs: ~/Library/Logs/dev.gespan.native\nLog files: 2 (2.0 KB)\nCrash files: 2 (latest: 2026-10-24T09-15-30.123Z.json)",
+                "Gespan Native 0.16.0 (release)\nOS: {} {}\nLogs: ~{sep}Library{sep}Logs{sep}dev.gespan.native\nLog files: 2 (2.0 KB)\nCrash files: 2 (latest: 2026-10-24T09-15-30.123Z.json)",
                 std::env::consts::OS,
-                std::env::consts::ARCH
+                std::env::consts::ARCH,
+                sep = std::path::MAIN_SEPARATOR
             )
         );
         assert!(!text.contains(&*home.path().to_string_lossy()));
+    }
+
+    #[test]
+    fn home_is_shown_with_one_separator() {
+        let home = Path::new("/Users/ada");
+        let logs = Path::new("/Users/ada/Library/Logs/dev.gespan.native");
+        assert_eq!(
+            tilde(logs, home, '/').as_deref(),
+            Some("~/Library/Logs/dev.gespan.native")
+        );
+        // Windows: never `~\Library/Logs`, whatever separators the path had.
+        assert_eq!(
+            tilde(logs, home, '\\').as_deref(),
+            Some("~\\Library\\Logs\\dev.gespan.native")
+        );
+        assert_eq!(tilde(home, home, '/').as_deref(), Some("~"));
+        assert_eq!(tilde(Path::new("/opt/logs"), home, '/'), None);
     }
 
     #[test]
