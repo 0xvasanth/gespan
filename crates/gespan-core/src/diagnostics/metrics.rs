@@ -66,16 +66,24 @@ impl ErrorKind {
     pub fn of_message(message: &str) -> Self {
         let message = message.to_lowercase();
         let has = |needles: &[&str]| needles.iter().any(|n| message.contains(n));
+        // Status codes only as whole words, not inside hashes, paths or ports.
+        let status = |codes: &[&str]| {
+            message
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|word| codes.contains(&word))
+        };
         if has(&["timed out", "timeout"]) {
             Self::Timeout
+        } else if has(&["(os error 13)"]) {
+            // A file the OS refused to open, not a sign-in problem.
+            Self::Io
         } else if has(&[
             "permission denied",
             "unauthorized",
             "forbidden",
             "authentication",
-            "401",
-            "403",
-        ]) {
+        ]) || status(&["401", "403"])
+        {
             Self::Auth
         } else if has(&[
             "could not resolve",
@@ -552,6 +560,17 @@ mod tests {
             ),
             ("Could not resolve host: github.com", ErrorKind::Network),
             ("Connection refused", ErrorKind::Network),
+            ("Permission denied (os error 13)", ErrorKind::Io),
+            (
+                "pathspec 'src/4031.rs' did not match any files",
+                ErrorKind::Other,
+            ),
+            (
+                "cannot lock ref: abc4013f is not a commit",
+                ErrorKind::Other,
+            ),
+            ("listening on port 14010", ErrorKind::Other),
+            ("server returned status 403", ErrorKind::Auth),
             ("boom", ErrorKind::Other),
             ("", ErrorKind::Other),
         ] {

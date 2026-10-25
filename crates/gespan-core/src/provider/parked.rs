@@ -49,17 +49,27 @@ pub(super) struct Wire {
     _account: crate::accounts::Tracked,
 }
 impl Wire {
-    pub fn spawn(command: &mut Command, request: &Request) -> Result<Self, String> {
-        let counter = format!("agent.start.{}", request.kind.id());
+    /// `count_start`: a conversation's start, counted as `agent.start.<id>`;
+    /// model-catalog probes are not.
+    pub fn spawn(
+        command: &mut Command,
+        request: &Request,
+        count_start: bool,
+    ) -> Result<Self, String> {
+        let counter = count_start.then(|| format!("agent.start.{}", request.kind.id()));
         let mut child = command.spawn().map_err(|e| {
-            metrics::failure(&counter, metrics::ErrorKind::of_spawn(&e));
+            if let Some(counter) = &counter {
+                metrics::failure(counter, metrics::ErrorKind::of_spawn(&e));
+            }
             format!(
                 "Cannot start {} at {}: {e}",
                 request.kind.label(),
                 request.binary.display()
             )
         })?;
-        metrics::success(&counter);
+        if let Some(counter) = &counter {
+            metrics::success(counter);
+        }
         let registration = process::register(child.id());
         let account = crate::accounts::track(child.id(), request.kind, &request.settings.account);
         let stdout = child.stdout.take().unwrap();
@@ -536,7 +546,8 @@ mod tests {
     fn agent_starts_are_counted_by_provider() {
         use crate::diagnostics::metrics::{capture, ErrorKind};
         let missing = start_request(Kind::Claude, "/nonexistent/gespan-test/claude");
-        let (wire, counts) = capture(|| Wire::spawn(&mut Command::new(&missing.binary), &missing));
+        let (wire, counts) =
+            capture(|| Wire::spawn(&mut Command::new(&missing.binary), &missing, true));
         assert!(wire.is_err());
         let got: Vec<_> = counts.into_iter().map(|c| (c.name, c.kind)).collect();
         assert_eq!(
@@ -550,7 +561,7 @@ mod tests {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
-        let (wire, counts) = capture(|| Wire::spawn(&mut command, &started));
+        let (wire, counts) = capture(|| Wire::spawn(&mut command, &started, true));
         drop(wire.unwrap());
         let got: Vec<_> = counts.into_iter().map(|c| (c.name, c.kind)).collect();
         assert_eq!(got, [("agent.start.codex".into(), None)]);

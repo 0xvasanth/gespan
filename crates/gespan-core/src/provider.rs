@@ -1595,7 +1595,7 @@ fn run_operation(
             parked::discard_session(&request);
         }
         (
-            parked::Wire::spawn(&mut command, &request)?,
+            parked::Wire::spawn(&mut command, &request, !probe && !command_probe)?,
             Protocol::new(request),
             false,
         )
@@ -1964,6 +1964,23 @@ mod tests {
                 !counts.iter().any(|(name, _)| name == "agent.turn_error"),
                 "{counts:?}"
             );
+        }
+
+        #[test]
+        fn model_catalog_probes_are_not_agent_starts() {
+            let dir = tempfile::tempdir().unwrap();
+            let request = agent(dir.path(), Kind::Cursor, "exit 3");
+            let (result, counts) = capture(|| {
+                run_process(
+                    request,
+                    Arc::new(AtomicBool::new(false)),
+                    None,
+                    true,
+                    |_| Ok(()),
+                )
+            });
+            assert!(result.is_err());
+            assert!(counts.is_empty(), "{:?}", counted(counts));
         }
 
         #[test]

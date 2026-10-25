@@ -653,16 +653,18 @@ impl FileEditor {
             let base = original.clone();
             let work = cx.background_executor().spawn(async move {
                 use gespan_core::diagnostics::metrics;
-                // Failures only: a success per typing pause would be a write per edit.
                 match syntax {
                     Some(syntax) => {
                         crate::editor_syntax::analyze(&syntax, &path, &source, base.as_deref())
                     }
-                    None => crate::editor_analysis::analyze(&path, &source, base.as_deref()),
+                    // Failures only, and only here: the native path runs per
+                    // edit, and its one failure, a missing grammar, is
+                    // counted once as `editor.syntax_grammar`.
+                    None => crate::editor_analysis::analyze(&path, &source, base.as_deref())
+                        .inspect_err(|e| {
+                            metrics::failure("editor.analysis", metrics::ErrorKind::of_message(e))
+                        }),
                 }
-                .inspect_err(|e| {
-                    metrics::failure("editor.analysis", metrics::ErrorKind::of_message(e))
-                })
             });
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
