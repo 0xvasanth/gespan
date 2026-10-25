@@ -1226,6 +1226,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2142,6 +2151,134 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "gespan-core"
+version = "0.16.0"
+dependencies = [
+ "async-channel",
+ "base64 0.23.1",
+ "chrono",
+ "flate2",
+ "gespan-mobile-link",
+ "hostname",
+ "if-addrs",
+ "igd-next",
+ "image",
+ "keyring",
+ "libc",
+ "log",
+ "minisign-verify",
+ "natpmp",
+ "quinn",
+ "rand 0.10.3",
+ "regex",
+ "rquickjs",
+ "rusqlite",
+ "rusty-leveldb",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "shlex",
+ "similar",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml 1.1.8+spec-1.1.0",
+ "tracing",
+ "tracing-appender",
+ "tracing-log",
+ "tracing-subscriber",
+ "unicode-normalization",
+ "unicode-width",
+ "ureq",
+ "url",
+ "uuid",
+ "webpki-roots 1.0.11",
+ "zstd",
+]
+
+[[package]]
+name = "gespan-gpui"
+version = "0.16.0"
+dependencies = [
+ "alacritty_terminal",
+ "async-channel",
+ "base64 0.23.1",
+ "block2 0.6.2",
+ "chrono",
+ "gespan-core",
+ "gespan-keep-awake",
+ "gpui-pre",
+ "gpui-pre-apple",
+ "gpui-pre-platform",
+ "image",
+ "libc",
+ "mimalloc",
+ "notify",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "objc2-user-notifications",
+ "objc2-web-kit",
+ "parking_lot",
+ "pulldown-cmark",
+ "qrcode",
+ "raw-window-handle",
+ "rquickjs",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "similar",
+ "streaming-iterator",
+ "syntect",
+ "tempfile",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
+ "tree-sitter-go",
+ "tree-sitter-html",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-json",
+ "tree-sitter-language",
+ "tree-sitter-python",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-toml-ng",
+ "tree-sitter-typescript",
+ "tree-sitter-yaml",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "gespan-keep-awake"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "gespan-mobile-link"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "jni",
+ "p256",
+ "pulldown-cmark",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "socket2",
+ "tokio",
+ "x509-parser",
 ]
 
 [[package]]
@@ -3602,6 +3739,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "matchers"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
+dependencies = [
+ "regex-automata",
+]
+
+[[package]]
 name = "maybe-rayon"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3942,6 +4088,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42b8cfee0e339a0337359f3c88165702ac6e600dc01c0cc9579a92d62b08477a"
 dependencies = [
  "bitflags 2.13.2",
+]
+
+[[package]]
+name = "nu-ansi-term"
+version = "0.50.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5269,129 +5424,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gespan-core"
-version = "0.16.0"
-dependencies = [
- "async-channel",
- "base64 0.23.1",
- "chrono",
- "flate2",
- "hostname",
- "if-addrs",
- "igd-next",
- "image",
- "keyring",
- "libc",
- "minisign-verify",
- "natpmp",
- "quinn",
- "rand 0.10.3",
- "gespan-mobile-link",
- "regex",
- "rquickjs",
- "rusqlite",
- "rusty-leveldb",
- "semver",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "shlex",
- "similar",
- "tar",
- "tempfile",
- "tokio",
- "toml 1.1.8+spec-1.1.0",
- "unicode-normalization",
- "unicode-width",
- "ureq",
- "url",
- "uuid",
- "webpki-roots 1.0.11",
- "zstd",
-]
-
-[[package]]
-name = "gespan-gpui"
-version = "0.16.0"
-dependencies = [
- "alacritty_terminal",
- "async-channel",
- "base64 0.23.1",
- "block2 0.6.2",
- "chrono",
- "gpui-pre",
- "gpui-pre-apple",
- "gpui-pre-platform",
- "image",
- "libc",
- "mimalloc",
- "notify",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "objc2-user-notifications",
- "objc2-web-kit",
- "parking_lot",
- "pulldown-cmark",
- "qrcode",
- "raw-window-handle",
- "gespan-core",
- "gespan-keep-awake",
- "rquickjs",
- "rusqlite",
- "serde",
- "serde_json",
- "similar",
- "streaming-iterator",
- "syntect",
- "tempfile",
- "tree-sitter",
- "tree-sitter-bash",
- "tree-sitter-c",
- "tree-sitter-cpp",
- "tree-sitter-css",
- "tree-sitter-go",
- "tree-sitter-html",
- "tree-sitter-java",
- "tree-sitter-javascript",
- "tree-sitter-json",
- "tree-sitter-language",
- "tree-sitter-python",
- "tree-sitter-ruby",
- "tree-sitter-rust",
- "tree-sitter-toml-ng",
- "tree-sitter-typescript",
- "tree-sitter-yaml",
- "unicode-segmentation",
-]
-
-[[package]]
-name = "gespan-keep-awake"
-version = "0.1.0"
-dependencies = [
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "gespan-mobile-link"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "jni",
- "p256",
- "pulldown-cmark",
- "quinn",
- "rcgen",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "socket2",
- "tokio",
- "x509-parser",
-]
-
-[[package]]
 name = "reborrow"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6036,6 +6068,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sharded-slab"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
+dependencies = [
+ "lazy_static",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6328,6 +6369,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "symlink"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
+
+[[package]]
 name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6516,6 +6563,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "thread_local"
+version = "1.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
+dependencies = [
+ "cfg-if",
 ]
 
 [[package]]
@@ -6744,6 +6800,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-appender"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
+dependencies = [
+ "crossbeam-channel",
+ "symlink",
+ "thiserror 2.0.21",
+ "time",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "tracing-attributes"
 version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6761,6 +6830,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
+ "valuable",
+]
+
+[[package]]
+name = "tracing-log"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
+dependencies = [
+ "log",
+ "once_cell",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-subscriber"
+version = "0.3.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319"
+dependencies = [
+ "matchers",
+ "nu-ansi-term",
+ "once_cell",
+ "regex-automata",
+ "sharded-slab",
+ "thread_local",
+ "tracing",
+ "tracing-core",
 ]
 
 [[package]]
@@ -7129,6 +7226,12 @@ dependencies = [
  "num-traits",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "valuable"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vcpkg"
