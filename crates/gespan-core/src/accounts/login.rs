@@ -127,8 +127,8 @@ fn safe_detail(value: &str) -> String {
         .collect()
 }
 pub(crate) fn cli_output(kind: Kind, args: &[&str], profile: &Profile) -> Result<String, String> {
-    let binary =
-        provider::resolve(kind).ok_or_else(|| format!("{} CLI not found", kind.label()))?;
+    let binary = provider::resolve(kind)
+        .ok_or_else(|| kind.missing_binary_or(format!("{} CLI not found", kind.label())))?;
     let mut command = Command::new(binary);
     crate::scm::shell::apply_gui_env(&mut command);
     profile.apply(kind, &mut command)?;

@@ -396,13 +396,7 @@ fn run_turn_using(
         }
         let kind = Kind::parse(&summary.provider)
             .ok_or_else(|| format!("Unknown provider: {}", summary.provider))?;
-        let binary = resolve_binary(kind).ok_or_else(|| {
-            format!(
-                "{} CLI not found. Install it and sign in, or set GESPAN_{}_BINARY.",
-                kind.label(),
-                kind.id().to_uppercase()
-            )
-        })?;
+        let binary = resolve_binary(kind).ok_or_else(|| kind.missing_binary_message())?;
         // These providers parse slash arguments themselves. App context before
         // the command would turn it into an ordinary message instead.
         let prompt = settings.prepared_prompt.take().unwrap_or(prompt);

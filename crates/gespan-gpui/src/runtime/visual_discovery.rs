@@ -188,6 +188,7 @@ mod tests {
             Kind::Antigravity,
             Kind::Hermes,
             Kind::Devin,
+            Kind::Kiro,
         ] {
             for provider_id in [None, Some("existing")] {
                 assert!(
