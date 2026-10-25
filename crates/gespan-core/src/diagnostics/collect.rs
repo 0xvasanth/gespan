@@ -626,7 +626,13 @@ mod tests {
     fn report_roots_add_worktree_folders_and_skip_repeats() {
         // Absolute on every platform: `/Users/…` is not absolute on Windows.
         let base = std::env::temp_dir().join("gespan-report-roots-none");
-        let path = |rel: &str| base.join(rel).to_string_lossy().into_owned();
+        // One component at a time, so Windows gets `\` throughout.
+        let path = |rel: &str| {
+            rel.split('/')
+                .fold(base.clone(), |path, part| path.join(part))
+                .to_string_lossy()
+                .into_owned()
+        };
         let roots = report_roots(
             &[path("alice/Developer/acme"), path("w/app")],
             &[
