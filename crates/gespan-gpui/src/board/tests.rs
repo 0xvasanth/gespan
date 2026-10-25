@@ -99,7 +99,7 @@ fn with_board(cx: &mut TestAppContext) -> Fixture {
 }
 
 #[gpui::test]
-fn the_board_opens_with_four_steps_and_no_board_switcher(cx: &mut TestAppContext) {
+fn the_board_opens_with_four_steps_and_a_board_switcher(cx: &mut TestAppContext) {
     let f = with_board(cx);
     let detail = detail(&f, cx);
     let names: Vec<&str> = detail.columns.iter().map(|c| c.name.as_str()).collect();
@@ -107,7 +107,7 @@ fn the_board_opens_with_four_steps_and_no_board_switcher(cx: &mut TestAppContext
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     visual.refresh().unwrap();
     assert!(visual.debug_bounds("board-header").is_some());
-    assert!(visual.debug_bounds("board-switcher").is_none());
+    assert!(visual.debug_bounds("board-switcher").is_some());
     assert!(visual.debug_bounds("board-new").is_none());
     for index in 0..4 {
         assert!(
@@ -121,6 +121,260 @@ fn the_board_opens_with_four_steps_and_no_board_switcher(cx: &mut TestAppContext
                 .is_some()
         );
     }
+}
+
+fn boards(f: &Fixture) -> Vec<gespan_core::board::Board> {
+    Service::open(&f.db).unwrap().list().unwrap()
+}
+
+fn open_id(f: &Fixture, cx: &mut impl gpui::AppContext) -> String {
+    f.window
+        .read_with(cx, |view, _| {
+            view.open_board_id.clone().expect("a board is open")
+        })
+        .unwrap()
+}
+
+fn open_name(f: &Fixture, cx: &mut impl gpui::AppContext) -> String {
+    detail(f, cx).board.name
+}
+
+/// A second view over the same database and settings, as after a restart.
+fn reopen(f: &Fixture, cx: &mut TestAppContext) -> WindowHandle<BoardView> {
+    let (store, db) = (f.store.clone(), f.db.clone());
+    let window = cx.update(|cx| {
+        cx.open_window(WindowOptions::default(), |window, cx| {
+            cx.new(|cx| BoardView::new(store, db, window, cx))
+        })
+        .unwrap()
+    });
+    window.update(cx, |view, _, cx| view.shown(cx)).unwrap();
+    cx.run_until_parked();
+    window
+}
+
+fn saved_board(f: &Fixture) -> Option<String> {
+    crate::runtime::locked(&f.store)
+        .unwrap()
+        .setting("board-open")
+        .unwrap()
+}
+
+#[gpui::test]
+fn the_board_switcher_lists_boards_and_opens_one(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let first = open_id(&f, cx);
+    let sprint = Service::open(&f.db).unwrap().create("Sprint").unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-switcher");
+    assert!(visual.debug_bounds("board-switch-0").is_some());
+    assert!(visual.debug_bounds("board-switch-1").is_some());
+    assert!(visual.debug_bounds("board-switch-2").is_none());
+    click(visual, "board-switch-1");
+    assert_eq!(open_id(&f, visual), sprint.id);
+    assert_eq!(open_name(&f, visual), "Sprint");
+    assert_eq!(saved_board(&f), Some(sprint.id.clone()));
+    assert!(
+        visual.debug_bounds("board-switch-1").is_none(),
+        "picking a board closes the menu"
+    );
+    // The poll and later reloads keep the selection.
+    f.window
+        .update(visual, |view, _, cx| view.reload(cx))
+        .unwrap();
+    assert_eq!(open_id(&f, visual), sprint.id);
+    click(visual, "board-switcher");
+    click(visual, "board-switch-0");
+    assert_eq!(open_id(&f, visual), first);
+}
+
+#[gpui::test]
+fn a_new_board_opens_and_is_remembered_after_reload(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-switcher");
+    click(visual, "board-new");
+    visual.simulate_input("  Sprint  ");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(open_name(&f, visual), "Sprint");
+    assert_eq!(boards(&f).len(), 2);
+    let again = reopen(&f, visual);
+    let name = again
+        .read_with(visual, |view, _| view.open_board_id.clone())
+        .unwrap();
+    assert_eq!(name, Some(open_id(&f, visual)));
+}
+
+#[gpui::test]
+fn a_blank_or_too_long_new_board_name_is_rejected_inline(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-switcher");
+    click(visual, "board-new");
+    visual.simulate_input("   ");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(boards(&f).len(), 1, "a blank name creates nothing");
+    assert!(
+        visual.debug_bounds("board-new-name").is_some(),
+        "the field stays"
+    );
+    retype(visual, "board-new-name", &"x".repeat(201));
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(boards(&f).len(), 1);
+    assert!(visual.debug_bounds("board-switcher-error").is_some());
+    assert!(
+        visual.debug_bounds("board-new-name").is_some(),
+        "the name stays to correct"
+    );
+    retype(visual, "board-new-name", "Fine");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(open_name(&f, visual), "Fine");
+    assert!(visual.debug_bounds("board-switcher-error").is_none());
+}
+
+#[gpui::test]
+fn renaming_the_open_board_updates_the_switcher(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let id = open_id(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-switcher");
+    click(visual, "board-rename");
+    retype(visual, "board-rename-name", "  Roadmap ");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(open_name(&f, visual), "Roadmap");
+    assert_eq!(open_id(&f, visual), id);
+    assert_eq!(boards(&f)[0].name, "Roadmap");
+    click(visual, "board-switcher");
+    click(visual, "board-rename");
+    retype(visual, "board-rename-name", "");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(
+        boards(&f)[0].name,
+        "Roadmap",
+        "a blank name changes nothing"
+    );
+}
+
+#[gpui::test]
+fn deleting_the_open_board_opens_another(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let first = open_id(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-switcher");
+    click(visual, "board-new");
+    visual.simulate_input("Sprint");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    let sprint = open_id(&f, visual);
+    click(visual, "board-switcher");
+    click(visual, "board-delete");
+    assert_eq!(boards(&f).len(), 2, "the first press only asks");
+    click(visual, "board-delete-confirm");
+    assert_eq!(boards(&f).len(), 1);
+    assert_eq!(open_id(&f, visual), first);
+    assert!(detail(&f, visual).columns.len() == 4, "a board is shown");
+    assert_ne!(saved_board(&f), Some(sprint));
+}
+
+#[gpui::test]
+fn deleting_the_last_board_creates_a_default_one(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let old = open_id(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-switcher");
+    click(visual, "board-delete");
+    click(visual, "board-delete-confirm");
+    let now = boards(&f);
+    assert_eq!(now.len(), 1);
+    assert_ne!(now[0].id, old);
+    assert_eq!(open_id(&f, visual), now[0].id);
+    assert_eq!(detail(&f, visual).columns.len(), 4);
+}
+
+#[gpui::test]
+fn the_delete_confirmation_goes_away_with_the_menu(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-switcher");
+    click(visual, "board-delete");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    click(visual, "board-switcher");
+    assert!(visual.debug_bounds("board-delete-confirm").is_none());
+    assert_eq!(boards(&f).len(), 1);
+}
+
+#[gpui::test]
+fn a_remembered_board_that_no_longer_exists_falls_back(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let first = open_id(&f, cx);
+    crate::runtime::locked(&f.store)
+        .unwrap()
+        .save_setting("board-open", "not-a-board")
+        .unwrap();
+    let again = reopen(&f, cx);
+    assert_eq!(
+        again
+            .read_with(cx, |view, _| view.open_board_id.clone())
+            .unwrap(),
+        Some(first)
+    );
+}
+
+#[gpui::test]
+fn a_board_deleted_elsewhere_falls_back_on_reload(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let first = open_id(&f, cx);
+    let mut service = Service::open(&f.db).unwrap();
+    let sprint = service.create("Sprint").unwrap();
+    f.window
+        .update(cx, |view, _, cx| view.open_board(sprint.id.clone(), cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(open_id(&f, cx), sprint.id);
+    service.delete(&sprint.id).unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    assert_eq!(open_id(&f, cx), first);
+}
+
+#[gpui::test]
+fn switching_boards_clears_search_filter_drawer_and_menus(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Alpha", "Beta"]);
+    let sprint = Service::open(&f.db).unwrap().create("Sprint").unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-search");
+    visual.simulate_input("alpha");
+    visual.run_until_parked();
+    click(visual, "board-card-1");
+    f.window
+        .read_with(visual, |view, cx| {
+            assert_eq!(view.query(cx), "alpha");
+            assert!(view.card_detail.is_some(), "the drawer is open");
+        })
+        .unwrap();
+    f.window
+        .update(visual, |view, _, _| {
+            view.filter.priorities.insert(0);
+        })
+        .unwrap();
+    click(visual, "board-switcher");
+    click(visual, "board-switch-1");
+    assert_eq!(open_id(&f, visual), sprint.id);
+    f.window
+        .read_with(visual, |view, cx| {
+            assert_eq!(view.query(cx), "");
+            assert_eq!(view.filter.len(), 0);
+            assert!(view.card_detail.is_none());
+        })
+        .unwrap();
 }
 
 #[gpui::test]

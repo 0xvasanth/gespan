@@ -7,6 +7,7 @@ mod detail;
 mod drop;
 mod header;
 pub(crate) mod style;
+mod switcher;
 #[cfg(test)]
 mod tests;
 mod tickets;
@@ -116,6 +117,13 @@ pub(crate) struct BoardView {
     focus: FocusHandle,
     visible: bool,
     pub(crate) open_board_id: Option<String>,
+    /// The board the user picked this run; `load` prefers it.
+    selected_board_id: Option<String>,
+    /// Every board, for the switcher.
+    boards: Vec<gespan_core::board::Board>,
+    switcher: Option<switcher::Switcher>,
+    switcher_anchor: AnchorSlot,
+    switcher_focus: FocusHandle,
     pub(crate) detail: Option<BoardDetail>,
     pub(crate) dragging: bool,
     pub(crate) pending_reload: bool,
@@ -208,6 +216,11 @@ impl BoardView {
             focus: cx.focus_handle(),
             visible: false,
             open_board_id: None,
+            selected_board_id: None,
+            boards: Vec::new(),
+            switcher: None,
+            switcher_anchor: AnchorSlot::default(),
+            switcher_focus: cx.focus_handle(),
             detail: None,
             dragging: false,
             pending_reload: false,
@@ -279,6 +292,7 @@ impl BoardView {
         self.card_menu = None;
         self.renaming = None;
         self.filter_open = false;
+        self.switcher = None;
         cx.notify();
     }
 
@@ -333,11 +347,29 @@ impl BoardView {
     }
 
     fn load(&mut self, cx: &App) -> Result<(), String> {
+        // The remembered board only matters until the user picks one.
+        let remembered = match self.selected_board_id {
+            Some(_) => None,
+            None => locked(&self.store)
+                .and_then(|db| db.setting(switcher::SETTING))
+                .ok()
+                .flatten(),
+        };
+        let wanted = self.selected_board_id.clone().or(remembered);
         let service = self.service()?;
         // Read the version first: a commit landing during the reads below
         // then shows up as a newer version on the next poll and reloads again.
         let version = service.data_version()?;
-        let board = service.default_board()?;
+        let boards = service.list()?;
+        let board = match wanted.and_then(|id| boards.iter().find(|b| b.id == id).cloned()) {
+            Some(board) => board,
+            None => service.default_board()?,
+        };
+        let boards = if boards.iter().any(|b| b.id == board.id) {
+            boards
+        } else {
+            service.list()?
+        };
         let detail = service.get(&board.id)?;
         let extras = service.extras(&board.id)?;
         let labels = service.labels(&board.id)?;
@@ -347,7 +379,9 @@ impl BoardView {
             hook();
         }
         self.last_data_version = version;
+        self.selected_board_id = Some(board.id.clone());
         self.open_board_id = Some(board.id);
+        self.boards = boards;
         self.detail = Some(detail);
         self.extras = extras;
         self.labels = labels;
@@ -802,6 +836,7 @@ impl BoardView {
         // Innermost first: transient editors and menus, then the drawer.
         if self.composer.take().is_some()
             || std::mem::take(&mut self.filter_open)
+            || self.switcher.take().is_some()
             || self.renaming.take().is_some()
             || self.menu.take().is_some()
             || self.close_detail_layer(cx)
@@ -1054,6 +1089,7 @@ impl gpui::Render for BoardView {
         });
         let card_detail = self.render_card_detail(cx);
         let filter = self.render_filter(cx);
+        let switcher = self.render_switcher(cx);
         let board = div()
             .flex_1()
             .min_w_0()
@@ -1086,6 +1122,7 @@ impl gpui::Render for BoardView {
         root.child(board)
             .children(card_detail)
             .children(filter)
+            .children(switcher)
             .children(menu)
             .children(card_menu)
     }

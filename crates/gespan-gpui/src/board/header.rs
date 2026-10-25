@@ -11,7 +11,7 @@ use gpui::{
 };
 
 /// A filter row that says whether it is on, to assistive tech as well.
-fn checked_row(
+pub(super) fn checked_row(
     id: SharedString,
     label: impl Into<SharedString>,
     on: bool,
@@ -22,7 +22,7 @@ fn checked_row(
 }
 
 /// Enter or Space on a focused header button presses it.
-fn presses(event: &gpui::KeyDownEvent) -> bool {
+pub(super) fn presses(event: &gpui::KeyDownEvent) -> bool {
     matches!(event.keystroke.key.as_str(), "enter" | "space")
 }
 
@@ -153,19 +153,7 @@ impl BoardView {
             .gap_3()
             .border_b_1()
             .border_color(content(0.07))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(icon("kanban", 14.).text_color(content(0.55)))
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child("Board"),
-                    ),
-            )
+            .child(self.render_switcher_button(cx))
             .child(
                 div()
                     .id("board-search")
