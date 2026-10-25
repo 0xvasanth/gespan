@@ -10,6 +10,8 @@ pub struct ParsedTicket {
     pub key: String,
     /// Origin of a Jira or Plane URL, needed to find the instance again.
     pub site: Option<String>,
+    /// Workspace slug of a Plane URL.
+    pub workspace: Option<String>,
 }
 
 /// Accepts a bare key (`abc-12`) or a ticket URL from Jira, Linear or Plane.
@@ -20,6 +22,7 @@ pub fn parse_ticket(input: &str) -> Option<ParsedTicket> {
             tracker: None,
             key,
             site: None,
+            workspace: None,
         });
     }
     parse_url(&Url::parse(input).ok()?)
@@ -48,6 +51,7 @@ fn parse_url(url: &Url) -> Option<ParsedTicket> {
             tracker: Some(tracker),
             key,
             site,
+            workspace: None,
         })
     };
 
@@ -74,9 +78,12 @@ fn parse_url(url: &Url) -> Option<ParsedTicket> {
     // serves `/browse/KEY`, Plane nests it under a workspace slug.
     match segments.as_slice() {
         ["browse", key, ..] => jira(normalize_key(key)?),
-        [_workspace, "browse", key, ..] => {
-            found(Tracker::Plane, normalize_key(key)?, Some(site.clone()))
-        }
+        [workspace, "browse", key, ..] => Some(ParsedTicket {
+            tracker: Some(Tracker::Plane),
+            key: normalize_key(key)?,
+            site: Some(site.clone()),
+            workspace: Some(workspace.to_string()),
+        }),
         _ => jira(selected_issue?),
     }
 }
@@ -92,7 +99,8 @@ mod tests {
             ParsedTicket {
                 tracker: None,
                 key: "ABC-12".into(),
-                site: None
+                site: None,
+                workspace: None
             }
         );
         assert!(parse_ticket("12").is_none());
@@ -175,12 +183,12 @@ mod tests {
                 Some("https://plane.example.com")
             )
         );
-        assert_eq!(
-            parse_ticket("https://app.plane.so/acme/browse/WEB-3")
-                .unwrap()
-                .tracker,
-            Some(Tracker::Plane)
-        );
+        assert_eq!(p.workspace.as_deref(), Some("acme"));
+        let cloud = parse_ticket("https://app.plane.so/acme/browse/WEB-3").unwrap();
+        assert_eq!(cloud.tracker, Some(Tracker::Plane));
+        assert_eq!(cloud.workspace.as_deref(), Some("acme"));
+        let jira = parse_ticket("https://jira.example.com/browse/ABC-9").unwrap();
+        assert_eq!(jira.workspace, None);
     }
 
     #[test]

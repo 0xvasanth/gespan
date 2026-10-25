@@ -27,7 +27,40 @@ pub enum Resolved {
     One(TicketRef),
     Ambiguous(Vec<Tracker>),
     NotConnected(Tracker),
+    /// The pasted URL names another site (or Plane workspace) than the saved
+    /// connection, so a same-keyed ticket there would be a different ticket.
+    OtherSite {
+        tracker: Tracker,
+        connected: String,
+        pasted: String,
+    },
     Invalid,
+}
+
+impl Resolved {
+    /// What to tell the user when the input did not resolve to one ticket.
+    pub fn message(&self) -> Option<String> {
+        match self {
+            Self::NotConnected(tracker) => Some(TicketError::NotConnected(*tracker).to_string()),
+            Self::OtherSite {
+                tracker,
+                connected,
+                pasted,
+            } => Some(format!(
+                "{} is connected to {connected}, not {pasted}",
+                tracker.label()
+            )),
+            Self::Invalid => Some("Not a ticket key or link".into()),
+            Self::One(_) | Self::Ambiguous(_) => None,
+        }
+    }
+}
+
+/// Where a saved connection points.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Location {
+    pub site: String,
+    pub workspace: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,6 +112,11 @@ pub(crate) trait Connection: Send + Sync {
     fn transitions(&self, _key: &str) -> ProviderResult<Option<Vec<Transition>>> {
         Ok(None)
     }
+
+    /// `None` when URLs need no site check (Linear has one site).
+    fn location(&self) -> Option<Location> {
+        None
+    }
 }
 
 impl Connection for JiraProvider {
@@ -88,6 +126,13 @@ impl Connection for JiraProvider {
 
     fn transitions(&self, key: &str) -> ProviderResult<Option<Vec<Transition>>> {
         JiraProvider::transitions(self, key).map(Some)
+    }
+
+    fn location(&self) -> Option<Location> {
+        Some(Location {
+            site: self.site().to_string(),
+            workspace: None,
+        })
     }
 }
 
@@ -100,6 +145,14 @@ impl Connection for LinearProvider {
 impl Connection for PlaneProvider {
     fn board(&self) -> &dyn BoardProvider {
         self
+    }
+
+    fn location(&self) -> Option<Location> {
+        let config = self.config();
+        Some(Location {
+            site: config.base_url.clone(),
+            workspace: Some(config.workspace.clone()),
+        })
     }
 }
 
@@ -161,8 +214,21 @@ impl Tickets {
             })
         };
         if let Some(tracker) = parsed.tracker {
-            if !self.connected().contains(&tracker) {
+            let Ok(connection) = self.connection(tracker) else {
                 return Resolved::NotConnected(tracker);
+            };
+            if let Some(saved) = connection.location() {
+                if let Some((connected, pasted)) = site_mismatch(
+                    &saved,
+                    parsed.site.as_deref().unwrap_or_default(),
+                    parsed.workspace.as_deref(),
+                ) {
+                    return Resolved::OtherSite {
+                        tracker,
+                        connected,
+                        pasted,
+                    };
+                }
             }
             return ticket(tracker, Some(input.trim().to_string()));
         }
@@ -279,6 +345,47 @@ impl Tickets {
     }
 }
 
+fn plain_host(origin: &str) -> String {
+    origin
+        .split_once("://")
+        .map_or(origin, |(_, rest)| rest)
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
+}
+
+/// Plane Cloud's web host and API host are the same site.
+fn same_host(a: &str, b: &str) -> bool {
+    let canonical = |origin: &str| match plain_host(origin).as_str() {
+        "api.plane.so" => "app.plane.so".to_string(),
+        host => host.to_string(),
+    };
+    canonical(a) == canonical(b)
+}
+
+/// `(saved, pasted)` labels when the pasted URL is for another site or workspace.
+fn site_mismatch(
+    saved: &Location,
+    pasted_site: &str,
+    pasted_workspace: Option<&str>,
+) -> Option<(String, String)> {
+    let same_site = same_host(&saved.site, pasted_site);
+    let same_workspace = match (saved.workspace.as_deref(), pasted_workspace) {
+        (Some(saved), Some(pasted)) => saved.eq_ignore_ascii_case(pasted),
+        _ => true,
+    };
+    if same_site && same_workspace {
+        return None;
+    }
+    let label = |site: &str, workspace: Option<&str>| match workspace {
+        Some(workspace) => format!("{}/{workspace}", plain_host(site)),
+        None => plain_host(site),
+    };
+    Some((
+        label(&saved.site, saved.workspace.as_deref()),
+        label(pasted_site, pasted_workspace),
+    ))
+}
+
 /// Fails with the fields still missing when every transition to `target`
 /// demands something the caller has not supplied. A target no transition
 /// matches is left for the tracker to reject.
@@ -344,6 +451,7 @@ mod tests {
     struct Conn {
         fake: FakeProvider,
         transitions: Option<Vec<Transition>>,
+        location: Option<Location>,
     }
 
     impl Connection for Conn {
@@ -353,6 +461,10 @@ mod tests {
 
         fn transitions(&self, _: &str) -> ProviderResult<Option<Vec<Transition>>> {
             Ok(self.transitions.clone())
+        }
+
+        fn location(&self) -> Option<Location> {
+            self.location.clone()
         }
     }
 
@@ -375,7 +487,11 @@ mod tests {
     }
 
     fn conn(fake: FakeProvider, transitions: Option<Vec<Transition>>) -> Arc<dyn Connection> {
-        Arc::new(Conn { fake, transitions })
+        Arc::new(Conn {
+            fake,
+            transitions,
+            location: None,
+        })
     }
 
     fn tickets(providers: Vec<(Tracker, Arc<dyn Connection>)>) -> Tickets {
@@ -397,6 +513,107 @@ mod tests {
             status_group: None,
             fetched_at: None,
         }
+    }
+
+    fn at(site: &str, workspace: Option<&str>) -> Arc<dyn Connection> {
+        Arc::new(Conn {
+            fake: FakeProvider::new(),
+            transitions: None,
+            location: Some(Location {
+                site: site.into(),
+                workspace: workspace.map(String::from),
+            }),
+        })
+    }
+
+    fn other_site(tracker: Tracker, connected: &str, pasted: &str) -> Resolved {
+        Resolved::OtherSite {
+            tracker,
+            connected: connected.into(),
+            pasted: pasted.into(),
+        }
+    }
+
+    #[test]
+    fn jira_url_for_another_site_is_not_resolved_against_the_saved_one() {
+        let t = tickets(vec![(
+            Tracker::Jira,
+            at("https://acme.atlassian.net", None),
+        )]);
+        let resolved = t.resolve("https://other.atlassian.net/browse/ENG-1");
+        assert_eq!(
+            resolved,
+            other_site(Tracker::Jira, "acme.atlassian.net", "other.atlassian.net")
+        );
+        assert_eq!(
+            resolved.message().unwrap(),
+            "Jira is connected to acme.atlassian.net, not other.atlassian.net"
+        );
+    }
+
+    #[test]
+    fn jira_site_match_ignores_case() {
+        let t = tickets(vec![(
+            Tracker::Jira,
+            at("https://acme.atlassian.net/", None),
+        )]);
+        assert!(matches!(
+            t.resolve("https://ACME.atlassian.net/browse/ENG-1"),
+            Resolved::One(_)
+        ));
+    }
+
+    #[test]
+    fn plane_web_and_api_hosts_are_the_same_site() {
+        let t = tickets(vec![(
+            Tracker::Plane,
+            at("https://api.plane.so", Some("acme")),
+        )]);
+        assert!(matches!(
+            t.resolve("https://app.plane.so/acme/browse/WEB-3"),
+            Resolved::One(_)
+        ));
+    }
+
+    #[test]
+    fn plane_other_workspace_or_host_is_another_site() {
+        let t = tickets(vec![(
+            Tracker::Plane,
+            at("https://plane.example.com", Some("acme")),
+        )]);
+        assert_eq!(
+            t.resolve("https://plane.example.com/beta/browse/WEB-3"),
+            other_site(
+                Tracker::Plane,
+                "plane.example.com/acme",
+                "plane.example.com/beta"
+            )
+        );
+        assert_eq!(
+            t.resolve("https://plane.other.org/acme/browse/WEB-3"),
+            other_site(
+                Tracker::Plane,
+                "plane.example.com/acme",
+                "plane.other.org/acme"
+            )
+        );
+        assert!(matches!(
+            t.resolve("https://plane.example.com/ACME/browse/WEB-3"),
+            Resolved::One(_)
+        ));
+    }
+
+    #[test]
+    fn bare_keys_and_linear_urls_skip_the_site_check() {
+        let t = tickets(vec![
+            (Tracker::Jira, at("https://acme.atlassian.net", None)),
+            (Tracker::Linear, plain(FakeProvider::new())),
+        ]);
+        assert!(matches!(t.resolve("ENG-1"), Resolved::Ambiguous(_)));
+        assert!(matches!(
+            t.resolve("https://linear.app/any/issue/ENG-2/x"),
+            Resolved::One(_)
+        ));
     }
 
     fn done_transition(required: Vec<RequiredField>) -> Transition {
@@ -525,7 +742,7 @@ mod tests {
         assert_eq!(description, "Login fails on **Safari**");
         assert!(matches!(
             t.fetch(&link(Tracker::Linear, "ENG-404")),
-            Err(TicketError::Invalid(_)) | Err(TicketError::Remote(_))
+            Err(TicketError::Invalid(_))
         ));
     }
 
