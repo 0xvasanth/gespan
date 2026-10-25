@@ -1060,3 +1060,22 @@ fn a_git_action_whose_probe_fails_logs_nothing() {
     assert!(!dir.join("new.txt").exists());
     assert!(logged.is_empty(), "{logged:?}");
 }
+
+#[test]
+fn a_logged_git_action_error_drops_url_credentials() {
+    let error = "fatal: unable to access 'https://me:ghp_secret@github.com/o/r.git/': 403\n\
+                 also ssh://git@host.example/r.git and https://github.com/o/r.git";
+    let mut returned = Ok(());
+    let logged =
+        crate::diagnostics::test_capture(|| returned = action("push", || Err(error.into())));
+    // The person sees Git's own message; only the log copy is scrubbed.
+    assert_eq!(returned.unwrap_err(), error);
+    let logged = logged[0]["fields"]["error"].as_str().unwrap();
+    assert!(
+        !logged.contains("ghp_secret") && !logged.contains("me:"),
+        "{logged}"
+    );
+    assert!(!logged.contains("git@"), "{logged}");
+    assert!(logged.contains("https://github.com/o/r.git/"), "{logged}");
+    assert!(logged.contains("ssh://host.example/r.git"), "{logged}");
+}

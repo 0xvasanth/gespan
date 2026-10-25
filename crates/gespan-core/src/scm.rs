@@ -266,7 +266,17 @@ pub fn commit(cwd: &Path, message: &str, amend: bool) -> Result<(), String> {
 /// A Git change the user asked for, in a span, with its failure logged once.
 fn action(op: &'static str, run: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
     let _span = tracing::info_span!("git_action", op).entered();
-    run().inspect_err(|error| tracing::warn!(%error, "git action failed"))
+    run().inspect_err(
+        |error| tracing::warn!(error = %without_url_credentials(error), "git action failed"),
+    )
+}
+
+/// Git can echo a remote URL with its `user:token@` part; the log never keeps it.
+fn without_url_credentials(text: &str) -> std::borrow::Cow<'_, str> {
+    static USERINFO: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    USERINFO
+        .get_or_init(|| regex::Regex::new(r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s']+@").unwrap())
+        .replace_all(text, "$1")
 }
 
 /// Full message (subject and body) of the commit at HEAD.
