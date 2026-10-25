@@ -587,7 +587,7 @@ impl SettingsView {
             .flex()
             .items_center()
             .child(
-                div()
+                crate::shell::titlebar_drag_area()
                     .min_w_0()
                     .flex_1()
                     .flex()
