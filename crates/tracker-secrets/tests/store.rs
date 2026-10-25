@@ -176,15 +176,20 @@ fn unreadable_keychain_still_serves_and_keeps_the_file() {
 }
 
 #[test]
-fn unreadable_keychain_without_a_file_reports_the_tracker() {
+fn unreadable_keychain_with_no_old_file_reads_as_nothing_saved() {
+    // Someone who never connected the tracker, on a machine whose keychain is
+    // locked, denied or missing: "not connected", not an error.
     let dir = dir();
-    write(Tracker::Linear, dir.path(), "lin_api_secret").unwrap();
-    fail_reads(Tracker::Linear, dir.path(), true);
-
-    let error = read(Tracker::Linear, dir.path()).unwrap_err();
-
-    assert!(error.contains("Linear"), "{error}");
-    assert!(!error.contains("lin_api_secret"), "{error}");
+    for tracker in [
+        Tracker::Linear,
+        Tracker::Jira,
+        Tracker::Gitlab,
+        Tracker::AzureDevOps,
+        Tracker::Plane,
+    ] {
+        fail_reads(tracker, dir.path(), true);
+        assert_eq!(read(tracker, dir.path()).unwrap(), None);
+    }
 }
 
 #[test]
@@ -229,17 +234,12 @@ fn a_symlinked_data_directory_shares_the_entry() {
 }
 
 #[test]
-fn keychain_errors_say_how_to_fix_the_keychain() {
+fn a_refused_save_says_how_to_fix_the_keychain() {
     let dir = dir();
     fail_writes(Tracker::Linear, dir.path(), true);
-    let write_error = write(Tracker::Linear, dir.path(), "lin_api_x").unwrap_err();
-    fail_writes(Tracker::Linear, dir.path(), false);
-    write(Tracker::Linear, dir.path(), "lin_api_x").unwrap();
-    fail_reads(Tracker::Linear, dir.path(), true);
-    let read_error = read(Tracker::Linear, dir.path()).unwrap_err();
 
-    for error in [write_error, read_error] {
-        assert!(error.contains("unlocked"), "{error}");
-        assert!(error.contains("Secret Service"), "{error}");
-    }
+    let error = write(Tracker::Linear, dir.path(), "lin_api_x").unwrap_err();
+
+    assert!(error.contains("unlocked"), "{error}");
+    assert!(error.contains("Secret Service"), "{error}");
 }

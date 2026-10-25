@@ -86,16 +86,10 @@ pub fn read(tracker: Tracker, data_dir: &Path) -> Result<Option<String>, String>
             Ok(Some(value))
         }
         // A locked or unavailable keychain: an unmigrated file still serves,
-        // and stays until the keychain can take it.
-        Err(_) => match read_legacy_file(tracker, data_dir)? {
-            Some(value) => Ok(Some(value)),
-            // Keychain errors can quote what they were handed; report only
-            // which tracker failed.
-            None => Err(format!(
-                "Could not read the {} credentials from the keychain. {KEYCHAIN_HINT}",
-                tracker.label()
-            )),
-        },
+        // and stays until the keychain can take it. Without one, the tracker
+        // reads as not connected; most people with no usable keychain never
+        // connected it, and an error here would fail every Inbox refresh.
+        Err(_) => read_legacy_file(tracker, data_dir),
     }
 }
 

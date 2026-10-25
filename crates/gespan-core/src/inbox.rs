@@ -1074,6 +1074,28 @@ mod secret_tests {
     }
 
     #[test]
+    fn unreadable_keychain_reports_never_connected_trackers_as_not_connected() {
+        let dir = data_dir();
+        for tracker in [
+            Tracker::Linear,
+            Tracker::Jira,
+            Tracker::Gitlab,
+            Tracker::AzureDevOps,
+        ] {
+            testing::fail_reads(tracker, dir.path(), true);
+        }
+        let service = Service {
+            data_dir: dir.path().into(),
+            cwd: dir.path().into(),
+        };
+
+        for provider in ["linear", "jira", "gitlab", "azuredevops"] {
+            let status = service.status(provider);
+            assert!(!status.as_ref().unwrap().connected, "{provider}: {status:?}");
+        }
+    }
+
+    #[test]
     fn disconnect_clears_the_keychain_entry() {
         let dir = data_dir();
         gespan_tracker_secrets::write(Tracker::Linear, dir.path(), "lin_api_saved").unwrap();
