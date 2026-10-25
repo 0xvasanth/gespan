@@ -4,9 +4,11 @@
 mod actions;
 mod bundle;
 mod collect;
+pub mod consent;
 mod fallback;
 mod json;
 pub mod metrics;
+pub mod outbox;
 mod panic;
 mod paths;
 mod recent;
@@ -22,6 +24,7 @@ pub use collect::{
     pending_crashes, redactor_for, report_roots, running_config, running_log_dir, system,
     Environment, PendingCrash, TAIL_LINES,
 };
+pub use consent::{Answer, Consent, ConsentState, CrashReports, CONSENT_VERSION};
 pub use fallback::{
     downloads_dir, issue_url, remove_crashes, save_bundle, CUT_NOTE, ISSUE_FORM, MAX_URL_BYTES,
 };
