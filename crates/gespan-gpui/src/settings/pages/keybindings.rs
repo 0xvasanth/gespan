@@ -91,6 +91,12 @@ pub(crate) const BINDINGS: &[Binding] = &[
         fixed: false,
     },
     Binding {
+        command: "Composer: Dictate",
+        keys: "⌘⇧M",
+        when: "Composer focused",
+        fixed: false,
+    },
+    Binding {
         command: "View: Reload",
         keys: "⌘⇧R",
         when: "Always",

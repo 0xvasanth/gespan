@@ -3785,6 +3785,8 @@ impl Shell {
         let Some(view) = self.ensure_session(id, cx) else {
             return;
         };
+        let dictation = view.read(cx).dictation.clone();
+        crate::conversation::dictation::switched_to(&dictation, cx);
         self.history.record(id);
         self.workspace.open(id);
         self.workspace.project = view.read(cx).summary.cwd.clone();

@@ -84,6 +84,9 @@ pub(crate) struct Preferences {
     pub pilot_menu_bar_icon: bool,
     // Archive
     pub show_archived: bool,
+    // Dictation: the speech model id, and custom words one per line as typed.
+    pub dictation_model: String,
+    pub dictation_words: String,
     // Keybindings: a changed shortcut, or `None` for a disabled one.
     pub keybindings: HashMap<String, Option<String>>,
 }
@@ -160,6 +163,8 @@ impl Default for Preferences {
             rail_pilots_pinned: false,
             pilot_menu_bar_icon: true,
             show_archived: false,
+            dictation_model: gespan_speech::catalog::PARAKEET_V2_EN.id.into(),
+            dictation_words: String::new(),
             keybindings: HashMap::new(),
         }
     }
