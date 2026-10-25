@@ -1,0 +1,19 @@
+crates/gespan-core/src/provider.rs
+  s_665d32631cef67::t_63938b3352222f 1891-1892
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be8e13a7b1cd20a5da13b093712d0ffbe412ab27",
+  "prompts": {},
+  "sessions": {
+    "s_665d32631cef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e452dccc-b021-4d25-9f04-4f74301df988",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
