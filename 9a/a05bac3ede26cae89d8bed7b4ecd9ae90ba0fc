@@ -1,0 +1,41 @@
+Cargo.lock
+  s_cb714e3c395324::t_7d51e1e4fa4bf8 1843-1851
+Cargo.toml
+  s_cb714e3c395324::t_742ec3d49c0e50 3
+crates/gespan-speech/Cargo.toml
+  s_cb714e3c395324::t_85cbf11b5f9b2a 1-13
+crates/gespan-speech/src/lib.rs
+  s_cb714e3c395324::t_3066dd7b03ddf5 1-8
+crates/gespan-speech/src/postprocess.rs
+  s_cb714e3c395324::t_50748c8824b968 1-190
+crates/gespan-speech/src/vocabulary.rs
+  s_cb714e3c395324::t_1038b3d4fe1ee7 1-102
+crates/gespan-speech/tests/fixtures/identifier_phrases.json
+  s_b06ab57b57164e::t_5b3e2c3e3666f0 1-40
+crates/gespan-speech/tests/identifiers.rs
+  s_cb714e3c395324::t_2a875fab2f9c1e 1-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9aa05bac3ede26cae89d8bed7b4ecd9ae90ba0fc",
+  "prompts": {},
+  "sessions": {
+    "s_b06ab57b57164e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bbb2945e-6204-480d-8aee-b490f9bc914d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_cb714e3c395324": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9490eb45-d269-459d-a64c-099ef06fd161",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
