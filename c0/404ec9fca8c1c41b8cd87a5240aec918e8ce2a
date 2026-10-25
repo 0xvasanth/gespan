@@ -1,0 +1,38 @@
+crates/gespan-core/src/provider_boards/format/html.rs
+  s_d442e8c893e086::t_104f4ec8756aa9 1077-1081,1090-1094
+  s_d442e8c893e086::t_c2303507fa7a65 212,214-218
+  s_d442e8c893e086::t_0685af416e0410 1050-1072,1074-1075,1082-1089,1095-1096
+  s_d442e8c893e086::t_4032b466732864 1073,1076
+crates/gespan-core/src/provider_boards/format/doc.rs
+  s_d442e8c893e086::t_c2303507fa7a65 366-372
+  s_d442e8c893e086::t_0685af416e0410 643,648,663-667
+crates/gespan-core/src/provider_boards/format/markdown.rs
+  s_d442e8c893e086::t_c2303507fa7a65 265-267,272-279,485,502-508
+  s_d442e8c893e086::t_0685af416e0410 509,1273-1282,1287-1288
+  s_d442e8c893e086::t_104f4ec8756aa9 268-271,1283-1286
+  s_d442e8c893e086::t_12a031e91a653c 510-511,1272
+crates/gespan-core/src/provider_boards/format/adf.rs
+  s_d442e8c893e086::t_0685af416e0410 540,550-552
+  s_d442e8c893e086::t_104f4ec8756aa9 541-549
+  s_d442e8c893e086::t_4fa76e8f35b611 539
+crates/gespan-core/src/provider_boards/format/strategies.rs
+  s_d442e8c893e086::t_104f4ec8756aa9 159-165
+docs/superpowers/plans/2026-10-25-description-converters.md
+  s_d442e8c893e086::t_ce84508aa8da39 77,87-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c0404ec9fca8c1c41b8cd87a5240aec918e8ce2a",
+  "prompts": {},
+  "sessions": {
+    "s_d442e8c893e086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39204e63-7ce9-4a40-a71a-ce641b8dbf8e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
