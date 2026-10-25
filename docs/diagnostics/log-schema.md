@@ -16,14 +16,20 @@ never leave the machine unless the user sends a report (see
 | Native | macOS | `~/Library/Logs/dev.gespan.native/` |
 | Native | Linux | `$XDG_STATE_HOME/gespan-native/logs/` (falls back to `~/.local/state/gespan-native/logs/`) |
 | Native | Windows | `%LOCALAPPDATA%\dev.gespan.native\logs\` |
+| Native (dev data) | macOS | `~/Library/Logs/dev.gespan.native.dev/` |
+| Native (dev data) | Linux | `$XDG_STATE_HOME/gespan-native-dev/logs/` (falls back to `~/.local/state/gespan-native-dev/logs/`) |
+| Native (dev data) | Windows | `%LOCALAPPDATA%\dev.gespan.native.dev\logs\` |
 | Tauri | all | Tauri's `app_log_dir()`, for example `~/Library/Logs/dev.gespan.desktop/` on macOS |
 
-- Development builds use their own app id (`dev.gespan.native.dev`,
-  `dev.gespan.desktop.dev`), so dev logs never mix with release logs.
+- Dev logs never mix with release logs. Native running with dev data
+  (`--dev-data`) uses the dev folders above. Tauri dev builds run as
+  `dev.gespan.desktop.dev`, so `app_log_dir()` is already separate.
 - Files rotate daily: `gespan-native.YYYY-MM-DD.jsonl` and
   `gespan-tauri.YYYY-MM-DD.jsonl`. The date is the UTC day.
-- Retention: 7 days or 50 MB in total, whichever limit is hit first. The
-  oldest files are pruned at startup.
+- Retention: 7 days or 50 MB in total, whichever limit is hit first. Old
+  files are pruned at startup, at each UTC midnight rollover, and whenever a
+  write would take the total over 50 MB (oldest files first). If today's
+  file alone fills the 50 MB, further lines that day are dropped.
 - Crash records are separate files in `crashes/` next to the logs (see
   [bundle-format.md](bundle-format.md#crashesjson)).
 

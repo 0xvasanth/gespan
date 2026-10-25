@@ -147,6 +147,12 @@ than the current one, the app keeps sending only what the old record allowed
 (never more) and shows the first-run prompt again. Never quietly widen what
 is sent.
 
+A re-prompt only asks about crash reports, so its answer sets
+`crash_reports`, `consent_version` and `decided_at`, and keeps the stored
+`metrics` and `include_logs` the user chose in Settings. The one exception: if
+the new version widens what error metrics send, its change-log row says so and
+the re-prompt sets `metrics` to `false` until the user turns them on again.
+
 | Version | Change |
 |---|---|
 | 1 | First version: crash reports, error metrics, user-sent reports with optional logs. |

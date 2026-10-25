@@ -55,7 +55,7 @@ one.
 | `os_version` | string | yes | For example `"15.1"`. |
 | `arch` | string | yes | `"aarch64"` or `"x86_64"`. |
 | `locale` | string | yes | BCP 47 tag, for example `"en-GB"`. |
-| `title` | string | yes | The user's title. For a crash send, generated from the panic message. |
+| `title` | string | yes | The user's title. For a crash send, `Crash in <file>:<line>` from the crash record's `location`, never the panic message, because nobody previews a crash send's title before it becomes public. |
 | `description` | string | yes | "What happened?". Empty for a crash send. |
 | `steps` | string | no | "Steps to reproduce". Omitted when empty. |
 | `contact_email` | string | no | Optional, entered by the user. Kept in the private bundle only and never put in the public issue. Left out of a fallback bundle (see [intake-api.md](intake-api.md#fallback-when-the-intake-cant-be-reached)), which the user attaches to a public issue. |

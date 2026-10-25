@@ -114,6 +114,20 @@ describe("log schema", () => {
     expect(section(md, "Deny-listed fields")).toMatch(/any\s+dotted\s+segment/i);
   });
 
+  it("gives Native dev builds their own log folder on every OS", () => {
+    const files = section(md, "Files");
+    expect(files).toContain("`~/Library/Logs/dev.gespan.native.dev/`");
+    expect(files).toContain("`$XDG_STATE_HOME/gespan-native-dev/logs/`");
+    expect(files).toContain("`%LOCALAPPDATA%\\dev.gespan.native.dev\\logs\\`");
+  });
+
+  it("prunes while running, not only at startup, so a long session stays inside the limits", () => {
+    const files = section(md, "Files");
+    expect(files).toMatch(/at\s+startup/);
+    expect(files).toMatch(/UTC\s+midnight/);
+    expect(files).toMatch(/would\s+take\s+the\s+total\s+over\s+50\s+MB/);
+  });
+
   it("lists exactly the deny-listed field names the scrubber drops", () => {
     const listed = [...section(md, "Deny-listed fields").matchAll(/^- `(\w+)`/gm)].map((m) => m[1]);
     expect(listed).toEqual(DENY_LIST);
@@ -176,6 +190,14 @@ describe("bundle format", () => {
 
   it("names crash files so two panics in the same second cannot overwrite each other", () => {
     expect(section(md, "crashes/*.json")).toContain("crashes/<timestamp>-<random>.json");
+  });
+
+  it("titles a crash send from the panic location only, never the panic message", () => {
+    const row = section(md, "report.json")
+      .split("\n")
+      .find((l) => l.startsWith("| `title`"));
+    expect(row).toContain("`Crash in <file>:<line>`");
+    expect(row).toMatch(/never\s+the\s+panic\s+message/i);
   });
 
   it("keeps the contact email out of anything public", () => {
@@ -259,6 +281,11 @@ describe("consent", () => {
     for (const row of rows) expect(row[header.indexOf("`metrics`")], row[0]).toBe("`false`");
   });
 
+  it("keeps the choices a re-prompt doesn't ask about", () => {
+    const bump = section(md, "When `consent_version` changes");
+    expect(bump).toMatch(/keeps\s+the\s+stored\s+`metrics`\s+and\s+`include_logs`/);
+  });
+
   it("matches the consent_version recorded in the bundle example", () => {
     const report = exampleIn(doc(BUNDLE), "report.json") as { consent: Json };
     expect(report.consent.consent_version).toBe(version);
@@ -289,10 +316,11 @@ describe("intake API", () => {
     expectRequired(md, "Metrics request", request);
     expect(request).not.toHaveProperty("install_id");
     expect(request).not.toHaveProperty("submission_id");
+    expect(request, "one version per send can't describe a day that spans an update").not.toHaveProperty("version");
     expect(request.day).toMatch(/^\d{4}-\d\d-\d\d$/);
     expect(request.consent_version).toBe(currentConsentVersion(doc(CONSENT)));
     for (const c of request.counters as Json[]) {
-      expect(Object.keys(c).sort()).toEqual(["count", "error_kind", "name"]);
+      expect(Object.keys(c).sort()).toEqual(["app_version", "count", "error_kind", "name"]);
       expect(c.error_kind === null || /^[a-z_]+$/.test(String(c.error_kind))).toBe(true);
       expect(Number.isInteger(c.count)).toBe(true);
     }
@@ -320,6 +348,27 @@ describe("intake API", () => {
     }
     const privacyFallback = /\*\*Fallback\*\*[^]*?(?=\n- \*\*|\n## )/.exec(doc(PRIVACY))?.[0];
     expect(privacyFallback).toMatch(/without\s+your\s+contact\s+email\s+or\s+install\s+ID/i);
+  });
+
+  it("stops retrying a background send before the intake forgets its send_id", () => {
+    expect(section(md, "Errors")).toMatch(/at\s+most\s+24\s+hours\s+after\s+the\s+first\s+attempt/);
+    expect(section(md, "Metrics request")).toMatch(/keeps\s+it\s+for\s+24\s+hours/);
+  });
+
+  it("rate-limits by IP and ingest key, which every request has", () => {
+    const [, rows] = table(md, "Errors");
+    expect(rows.find((r) => r[0] === "429")?.[2]).toMatch(/IP\s+address\s+and\s+ingest\s+key/);
+  });
+
+  it("maps os values to the bug report form's dropdown labels", () => {
+    const form = doc(".github/ISSUE_TEMPLATE/bug_report.yml");
+    const options = /id: os\n[^]*?options:\n((?:\s+- .+\n)+)/.exec(form)![1]
+      .split("\n")
+      .map((l) => l.replace(/^\s+- /, "").trim())
+      .filter(Boolean);
+    const fallback = section(md, "Fallback when the intake can't be reached");
+    const mapped = [...fallback.matchAll(/`(macos|linux|windows)` → `([^`]+)`/g)].map((m) => m[2]);
+    expect(mapped.sort()).toEqual([...options].sort());
   });
 
   it("never opens the browser fallback for a send the user did not start", () => {

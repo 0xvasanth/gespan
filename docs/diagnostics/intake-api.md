@@ -64,24 +64,24 @@ most once a day per day of data.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `app` | string | yes | `"native"` or `"tauri"`. |
-| `version` | string | yes | App version that recorded the counts. |
 | `build_channel` | string | yes | `"release"`, `"preview"` or `"dev"`. |
 | `os` | string | yes | `"macos"`, `"linux"` or `"windows"`. |
 | `arch` | string | yes | `"aarch64"` or `"x86_64"`. |
 | `consent_version` | number | yes | The `consent_version` the user agreed to. |
 | `day` | string | yes | The UTC day the counts are for, `YYYY-MM-DD`. |
 | `send_id` | string | yes | A random UUID v4 made for this one send and reused only for its retries. |
-| `counters` | array | yes | One `{ name, error_kind, count }` per counter, as in [`counters.json`](bundle-format.md#countersjson). |
+| `counters` | array | yes | One `{ name, error_kind, count, app_version }` per counter, as in [`counters.json`](bundle-format.md#countersjson). `app_version` is per row, so a day that spans an update reports each version's counts separately. |
 
 There is deliberately no install ID or submission id: metrics are stored as
 daily counts per version and are never tied to an install or a report.
 `send_id` is fresh for every day's send, so it links nothing; the intake
-keeps it for 24 hours only to drop retries.
+keeps it for 24 hours only to drop retries. The app stops retrying a send
+before that window closes (see [Errors](#errors)), so a late retry can't be
+counted twice.
 
 ```json
 {
   "app": "native",
-  "version": "0.1.0",
   "build_channel": "release",
   "os": "macos",
   "arch": "aarch64",
@@ -89,9 +89,9 @@ keeps it for 24 hours only to drop retries.
   "day": "2026-10-24",
   "send_id": "9d4e7a12-6c3b-4f80-a5e1-2b8f0c7d3e96",
   "counters": [
-    { "name": "worktree.create", "error_kind": "not_found", "count": 3 },
-    { "name": "worktree.create", "error_kind": null, "count": 11 },
-    { "name": "agent.start", "error_kind": "spawn_failed", "count": 1 }
+    { "name": "worktree.create", "error_kind": "not_found", "count": 3, "app_version": "0.1.0" },
+    { "name": "worktree.create", "error_kind": null, "count": 11, "app_version": "0.1.0" },
+    { "name": "agent.start", "error_kind": "spawn_failed", "count": 1, "app_version": "0.1.1" }
   ]
 }
 ```
@@ -99,7 +99,7 @@ keeps it for 24 hours only to drop retries.
 ### Metrics response
 
 `202 Accepted` with an empty JSON object, `{}`. The intake adds the counts to
-the day's totals for that version. A retry with a `send_id` it has already
+the day's totals for each row's version. A retry with a `send_id` it has already
 accepted gets `202` again and is not counted twice. The app marks a day as
 sent only after a `202`.
 
@@ -113,12 +113,13 @@ Every error has the same body, and a fixed `code` the app can match on.
 | 401 | `invalid_ingest_key` | The ingest key is missing, unknown or revoked. | Use the fallback. Don't retry. |
 | 413 | `too_large` | The body is over the size cap. | Rebuild the bundle without logs, then the fallback. |
 | 415 | `unsupported_media_type` | The wrong `Content-Type`. | Don't retry (an app bug). |
-| 429 | `rate_limited` | Too many requests from this install ID or IP. `Retry-After` says when to try again. | Queue it and retry after `Retry-After`. |
+| 429 | `rate_limited` | Too many requests from this IP address and ingest key, the two things every request carries. `Retry-After` says when to try again. | Queue it and retry after `Retry-After`. |
 | 5xx | `server_error` | The intake failed. | Retry up to 3 times with backoff (1 s, 4 s, 16 s), then the fallback. |
 
 Background sends (error metrics and automatic crash sends, which the user
 didn't start) never use the fallback and never show an error. On `429` or
-`5xx` they stay queued and are retried later; on any other error they are
+`5xx` they stay queued and are retried with backoff, for at most 24 hours
+after the first attempt; after that, or on any other error, they are
 dropped.
 
 ```json
@@ -165,7 +166,8 @@ With no `GESPAN_REPORTS_URL`, a `401`, or retries used up, "Report an issue":
 2. opens
    `https://github.com/0xvasanth/gespan/issues/new?template=bug_report.yml&title=…&version=…&os=…&os-version=…&what-happened=…`
    with the bug report form's field ids as query parameters, asking the user
-   to drag the zip in.
+   to drag the zip in. `os` is a dropdown, so it takes the form's option
+   label: `macos` → `macOS`, `linux` → `Linux`, `windows` → `Windows`.
 
 The report sheet must say clearly that this needs a GitHub account and that
 the attached zip will be public.
