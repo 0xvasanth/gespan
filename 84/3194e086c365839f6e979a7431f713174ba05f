@@ -1,0 +1,21 @@
+.github/workflows/native.yml
+  s_938a6e0c93b076::t_7c03771df9d86e 82-83
+package.json
+  s_938a6e0c93b076::t_7c03771df9d86e 45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "843194e086c365839f6e979a7431f713174ba05f",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
