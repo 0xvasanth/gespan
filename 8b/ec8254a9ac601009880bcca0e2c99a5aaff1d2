@@ -1,0 +1,20 @@
+crates/gespan-core/src/git.rs
+  s_723f23b667816d::t_00450f1da6a763 913-915
+  s_723f23b667816d::t_b73f91c8d1dd60 911-912,916
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8bec8254a9ac601009880bcca0e2c99a5aaff1d2",
+  "prompts": {},
+  "sessions": {
+    "s_723f23b667816d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09d88fd0-1ba2-46bd-ab5c-dc747e3a6767",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
