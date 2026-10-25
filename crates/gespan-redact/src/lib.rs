@@ -9,11 +9,14 @@
 mod fields;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
+mod pairs;
 mod paths;
 mod patterns;
 mod value;
 
 use std::path::PathBuf;
+
+use aho_corasick::{AhoCorasick, MatchKind};
 
 use paths::PathRule;
 pub use value::DENY_LIST;
@@ -46,8 +49,8 @@ pub struct Config {
 pub struct Redactor {
     /// Project roots longest first, then home, so a project under home wins.
     paths: Vec<PathRule>,
-    /// Known secret values, longest first.
-    secrets: Vec<String>,
+    /// Known secret values in every encoding, longest match first.
+    secrets: Option<AhoCorasick>,
 }
 
 impl Redactor {
@@ -66,11 +69,18 @@ impl Redactor {
                 .as_deref()
                 .and_then(|home| PathRule::new(home, HOME.to_string())),
         );
+        // A secret that is part of a placeholder would be found again inside
+        // its own replacement on every pass.
+        let placeholders: Vec<String> = [HOME.to_string(), EMAIL.to_string(), REDACTED.to_string()]
+            .into_iter()
+            .chain((1..=config.projects.len()).map(|n| format!("<project-{n}>")))
+            .collect();
         // Each secret as written, JSON-escaped and URL-encoded every common way.
-        let mut secrets: Vec<String> = config
+        let mut variants: Vec<String> = config
             .secrets
             .iter()
             .filter(|secret| secret.chars().count() >= 8)
+            .filter(|secret| !placeholders.iter().any(|p| p.contains(secret.as_str())))
             .flat_map(|secret| {
                 [
                     secret.clone(),
@@ -82,8 +92,14 @@ impl Redactor {
                 ]
             })
             .collect();
-        secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
-        secrets.dedup();
+        variants.sort();
+        variants.dedup();
+        let secrets = (!variants.is_empty()).then(|| {
+            AhoCorasick::builder()
+                .match_kind(MatchKind::LeftmostLongest)
+                .build(&variants)
+                .expect("literal secrets build an automaton")
+        });
         Self { paths, secrets }
     }
 
@@ -105,8 +121,13 @@ impl Redactor {
 
     fn redact_once(&self, input: &str) -> String {
         let mut out = fields::blank_denied_fields(input);
-        for secret in &self.secrets {
-            out = out.replace(secret.as_str(), REDACTED);
+        if let Some(secrets) = &self.secrets {
+            let mut replaced = String::with_capacity(out.len());
+            secrets.replace_all_with(&out, &mut replaced, |_, _, dst| {
+                dst.push_str(REDACTED);
+                true
+            });
+            out = replaced;
         }
         for rule in &self.paths {
             out = rule.apply(&out);
@@ -222,6 +243,75 @@ mod tests {
             "password: https://u:token=\u{3a3}\"bob@example.comsk-_aaaa_0-A0_AaA0AaAA0",
         );
         assert_eq!(r.redact_text(&once), once);
+    }
+
+    #[test]
+    fn repeated_counter_keys_stay_linear() {
+        // Each rejected key used to re-read the same long value: 48 KB of
+        // `tokens_used=` took 13.7 s in a release build.
+        let r = Redactor::new(Config::default());
+        for input in [
+            "tokens_used=".repeat(4000),
+            "token_count:".repeat(4000),
+            "input_tokens=1,output_tokens=2,".repeat(1600),
+            "token: ".repeat(6000),
+        ] {
+            let started = std::time::Instant::now();
+            let out = r.redact_text(&input);
+            assert!(out.len() <= input.len() + 16);
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(2),
+                "{:?} took {:?}",
+                &input[..12],
+                started.elapsed()
+            );
+        }
+    }
+
+    #[test]
+    fn cut_off_deny_listed_values_stop_at_the_end_of_the_line() {
+        let r = Redactor::new(Config::default());
+        assert_eq!(
+            r.redact_text("{\"env\":{\"A\":\"b\n{\"level\":\"info\",\"msg\":\"keep me\"}\n"),
+            "{\"env\":\"<redacted>\"\n{\"level\":\"info\",\"msg\":\"keep me\"}\n"
+        );
+        assert_eq!(
+            r.redact_text("{\"prompt\":\"cut\n{\"level\":\"info\",\"msg\":\"keep\"}"),
+            "{\"prompt\":\"<redacted>\"\n{\"level\":\"info\",\"msg\":\"keep\"}"
+        );
+        // A complete value may still span lines.
+        assert_eq!(
+            r.redact_text("{\"env\": {\n  \"A\": \"b\"\n}, \"n\": 1}"),
+            "{\"env\": \"<redacted>\", \"n\": 1}"
+        );
+    }
+
+    #[test]
+    fn known_secrets_inside_placeholders_are_ignored() {
+        let r = Redactor::new(Config {
+            projects: vec!["/w/app".into()],
+            secrets: vec![
+                "redacted".into(),
+                "project-1".into(),
+                "kc-Secret-Value-123".into(),
+            ],
+            ..Config::default()
+        });
+        let once = r.redact_text("x redacted y kc-Secret-Value-123 /w/app/a");
+        assert_eq!(once, "x redacted y <redacted> <project-1>/a");
+        assert_eq!(r.redact_text(&once), once);
+    }
+
+    #[test]
+    fn the_longest_known_secret_wins() {
+        let r = Redactor::new(Config {
+            secrets: vec!["abcdefgh".into(), "abcdefghijkl".into()],
+            ..Config::default()
+        });
+        assert_eq!(
+            r.redact_text("[abcdefghijkl] [abcdefgh]"),
+            "[<redacted>] [<redacted>]"
+        );
     }
 
     #[test]

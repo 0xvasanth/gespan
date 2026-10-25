@@ -17,7 +17,7 @@ static DENIED_KEY: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Replaces the value of every deny-listed `"key": value` pair with
 /// `"<redacted>"`. Text can't drop a field cleanly, so the key stays. A
-/// value that is cut short runs to the end of the text.
+/// value that is cut short runs to the end of its line.
 pub(crate) fn blank_denied_fields(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut pos = 0;
@@ -40,7 +40,11 @@ pub(crate) fn blank_denied_fields(input: &str) -> String {
 /// Where the JSON value starting at `start` ends. In JSON-escaped text a
 /// structural quote is `\"`, so it follows 1 (mod 4) backslashes; in plain
 /// text it follows an even number.
-fn value_end(bytes: &[u8], start: usize, escaped: bool) -> usize {
+///
+/// A value that is cut short ends at the end of its line. JSON strings never
+/// hold a raw newline, and JSONL puts one record per line, so the next line
+/// is another record and must survive.
+pub(crate) fn value_end(bytes: &[u8], start: usize, escaped: bool) -> usize {
     let structural = |i: usize| {
         let backslashes = bytes[..i].iter().rev().take_while(|b| **b == b'\\').count();
         if escaped {
@@ -56,20 +60,32 @@ fn value_end(bytes: &[u8], start: usize, escaped: bool) -> usize {
             bytes[i] == b'"'
         }
     };
+    let line_end = || {
+        bytes[start..]
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(bytes.len(), |offset| start + offset)
+    };
     if start >= bytes.len() {
         return start;
     }
     if opens_string(start) {
         let first = start + if escaped { 2 } else { 1 };
-        return (first..bytes.len())
-            .find(|&i| bytes[i] == b'"' && structural(i))
-            .map_or(bytes.len(), |i| i + 1);
+        for (i, byte) in bytes.iter().enumerate().skip(first) {
+            match byte {
+                b'\n' => return i,
+                b'"' if structural(i) => return i + 1,
+                _ => {}
+            }
+        }
+        return bytes.len();
     }
     if matches!(bytes[start], b'{' | b'[') {
         let mut depth = 0usize;
         let mut in_string = false;
         for (i, byte) in bytes.iter().enumerate().skip(start) {
             match byte {
+                b'\n' if in_string => return line_end(),
                 b'"' if structural(i) => in_string = !in_string,
                 b'{' | b'[' if !in_string => depth += 1,
                 b'}' | b']' if !in_string => {
@@ -81,7 +97,7 @@ fn value_end(bytes: &[u8], start: usize, escaped: bool) -> usize {
                 _ => {}
             }
         }
-        return bytes.len();
+        return line_end();
     }
     (start..bytes.len())
         .find(|&i| {

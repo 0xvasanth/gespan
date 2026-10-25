@@ -2,28 +2,33 @@
 
 use std::sync::LazyLock;
 
-use regex::{Captures, Regex};
+use regex::Regex;
 
-use crate::{EMAIL, REDACTED};
+use crate::{pairs, EMAIL, REDACTED};
 
-/// Well-known token shapes, each with a minimum length. The character before
-/// one must not be a letter or digit (`_` is fine, so `token_ghp_…` is
-/// caught), which keeps words like `risk-assessment-framework` intact.
+/// Well-known token shapes, each with a minimum length.
+///
+/// Prefixes that also turn up inside ordinary words (`sk-` in `risk-…`,
+/// `sk_live_` in `task_live_…`, `eyJ`, `hf_`, `npm_`) need a character before
+/// them that is not a letter or digit (`_` is fine, so `token_sk-…` is
+/// caught). Prefixes that never do (`ghp_`, `AKIA`, `glpat-`, …) match
+/// anywhere, even right after a digit.
 static TOKENS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r"(^|[^A-Za-z0-9])(?:",
         r"sk-[A-Za-z0-9_-]{20,}",
         r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}",
-        r"|gh[pousr]_[A-Za-z0-9]{20,}",
-        r"|github_pat_[A-Za-z0-9_]{20,}",
-        r"|glpat-[A-Za-z0-9_-]{20,}",
         r"|npm_[A-Za-z0-9]{36,}",
         r"|hf_[A-Za-z0-9]{30,}",
+        r"|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*",
+        r")|(?:",
+        r"gh[pousr]_[A-Za-z0-9]{20,}",
+        r"|github_pat_[A-Za-z0-9_]{20,}",
+        r"|glpat-[A-Za-z0-9_-]{20,}",
         r"|xox[abposre]-[A-Za-z0-9-]{10,}",
         r"|xapp-[0-9]-[A-Za-z0-9-]{10,}",
         r"|(?:AKIA|ASIA)[0-9A-Z]{16,}",
         r"|AIza[0-9A-Za-z_-]{35,}",
-        r"|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*",
         r")",
     ))
     .expect("token pattern")
@@ -38,76 +43,11 @@ static PRIVATE_KEY: LazyLock<Regex> = LazyLock::new(|| {
     .expect("private key pattern")
 });
 
-/// Words that make a key a candidate. [`is_secret_key`] has the final say.
-const MARKERS: &str = "pass|pwd|pw|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|credential|authorization|cookie|sig";
-
-/// A key that contains a marker.
-fn key_pattern() -> String {
-    format!("[A-Za-z0-9_-]*(?:{MARKERS})[A-Za-z0-9_-]*")
-}
-
-/// A secret value after `=`: an optional `Bearer`/`Basic`/`token` scheme, then
-/// a quoted value (JSON-escaped quotes too; it may span lines, and an
-/// unclosed quote runs to the end of the line), then anything up to
-/// whitespace, `&` or a quote.
-const VALUE: &str = concat!(
-    r#"(?:(?:bearer|basic|token)\s+)?"#,
-    r#"(?:(?:\\"(?:[^"\\]|\\[^"])*\\"|"(?:[^"\\]|\\.)*"|'[^']*'|"[^"\n]*|'[^'\n]*)"#,
-    r#"(?:[^\s&"\\]|\\[^"])*|(?:[^\s&"\\]|\\[^"])+)"#,
-);
-
-/// `password=…`, `GITHUB_TOKEN = "…"`, `?access_token=…`.
-static KEY_VALUE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r"(?i)(?-u:\b)({})[ \t]*=[ \t]*{VALUE}",
-        key_pattern()
-    ))
-    .expect("key=value pattern")
-});
-
-/// `password: "…"` as Rust's `Debug` and YAML write it. A quoted value is
-/// never prose, so the colon is safe here.
-static COLON_QUOTED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r#"(?i)(?-u:\b)({})([ \t]*:[ \t]*)("(?:[^"\\]|\\.)*"|'[^']*')"#,
-        key_pattern()
-    ))
-    .expect("colon quoted pattern")
-});
-
-/// `X-Api-Key: abc123…` and `Authorization: token …` headers. Unquoted, so
-/// a value needs 8+ characters and either a scheme or a digit to count;
-/// "token: missing" stays.
-static COLON_BARE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r#"(?i)(?-u:\b)({})([ \t]*:[ \t]*)((?:bearer|basic|token)[ \t]+)?([^\s"',;]{{8,}})"#,
-        key_pattern()
-    ))
-    .expect("colon bare pattern")
-});
-
-/// `--token abc…` on a command line.
-static FLAG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r"(?i)(^|\s)(--?{})[ \t]+([^\s-]\S*)",
-        key_pattern()
-    ))
-    .expect("flag pattern")
-});
-
-/// `"token": "…"` inside text, plain or JSON-escaped (`\"token\":\"…\"`).
-static JSON_PAIR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r#"(?i)(\\?")({})(\\?"\s*:\s*)(\\"(?:[^"\\]|\\[^"])*\\"|"(?:[^"\\]|\\.)*"|\[[^\]]*\]|[^\s,}}\]]+)"#,
-        key_pattern()
-    ))
-    .expect("JSON pair pattern")
-});
-
 /// The password in `scheme://user:password@host`, up to the last `@` before
-/// the host; the user may be empty (`redis://:pw@host`).
+/// the host; the user may be empty (`redis://:pw@host`). A `?` or `#` ends
+/// the authority, so `host:8443/docs?u=bob@corp.com` is not a password.
 static URL_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?-u:\b)([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s@]*(?:@[^\s@/?#]*)*@")
+    Regex::new(r"(?i)(?-u:\b)([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s@?#]*(?:@[^\s@/?#]*)*@")
         .expect("URL password pattern")
 });
 
@@ -119,8 +59,11 @@ static BEARER: LazyLock<Regex> = LazyLock::new(|| {
 static BASIC: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?-u:\b)(Basic\s+)[A-Za-z0-9+/=]{8,}").expect("basic pattern"));
 
-static EMAILS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[\w.%+'-]+@[\w-]+(?:\.[\w-]+)*\.\w{2,}").expect("email pattern"));
+/// The local part may hold a `'` (`o'neil@…`) but never start with one, so
+/// a quoted `'bob@x.io'` keeps its opening quote.
+static EMAILS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[\w.%+-][\w.%+'-]*@[\w-]+(?:\.[\w-]+)*\.\w{2,}").expect("email pattern")
+});
 
 /// Private keys, well-known tokens, `Bearer`/`Basic` credentials, values of
 /// secret-named keys (`key=…`, `key: "…"`, `"key": …`, `--key …`) and URL
@@ -138,78 +81,10 @@ pub(crate) fn redact_tokens(input: &str) -> String {
     }
     let out = BEARER.replace_all(&out, format!("${{1}}{REDACTED}"));
     let out = BASIC.replace_all(&out, format!("${{1}}{REDACTED}"));
-    let out = replace_secrets(&JSON_PAIR, 2, &out, |caps| {
-        is_secret_key(&caps[2]).then(|| {
-            let quote = if caps[4].starts_with('\\') {
-                "\\\""
-            } else {
-                "\""
-            };
-            format!(
-                "{}{}{}{quote}{REDACTED}{quote}",
-                &caps[1], &caps[2], &caps[3]
-            )
-        })
-    });
-    let out = replace_secrets(&KEY_VALUE, 1, &out, |caps| {
-        is_secret_key(&caps[1]).then(|| format!("{}={REDACTED}", &caps[1]))
-    });
-    let out = replace_secrets(&COLON_QUOTED, 1, &out, |caps| {
-        is_secret_key(&caps[1]).then(|| {
-            let quote = &caps[3][..1];
-            format!("{}{}{quote}{REDACTED}{quote}", &caps[1], &caps[2])
-        })
-    });
-    let out = replace_secrets(&COLON_BARE, 1, &out, |caps| {
-        let scheme = caps.get(3).map_or("", |scheme| scheme.as_str());
-        let looks_secret = !scheme.is_empty() || caps[4].bytes().any(|b| b.is_ascii_digit());
-        (is_secret_key(&caps[1]) && looks_secret)
-            .then(|| format!("{}{}{scheme}{REDACTED}", &caps[1], &caps[2]))
-    });
-    let out = replace_secrets(&FLAG, 2, &out, |caps| {
-        is_secret_key(&caps[2]).then(|| format!("{}{} {REDACTED}", &caps[1], &caps[2]))
-    });
+    let out = pairs::redact_secret_pairs(&out);
     URL_PASSWORD
         .replace_all(&out, format!("${{1}}{REDACTED}@"))
         .into_owned()
-}
-
-/// Like `replace_all`, but a candidate that `secret` turns down only skips its
-/// key (capture group `key`), so it can't swallow a real secret pair that
-/// follows it (`compass: password: …`). Skipping the whole key, not one
-/// character, keeps this linear.
-fn replace_secrets(
-    pattern: &Regex,
-    key: usize,
-    input: &str,
-    secret: impl Fn(&Captures) -> Option<String>,
-) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut copied = 0;
-    let mut from = 0;
-    while let Some(caps) = pattern.captures_at(input, from) {
-        let found = caps.get(0).expect("whole match");
-        match secret(&caps) {
-            Some(replacement) => {
-                out.push_str(&input[copied..found.start()]);
-                out.push_str(&replacement);
-                copied = found.end();
-                from = found.end();
-            }
-            None => {
-                from = caps
-                    .get(key)
-                    .expect("key group")
-                    .end()
-                    .max(found.start() + 1)
-            }
-        }
-        if from >= input.len() {
-            break;
-        }
-    }
-    out.push_str(&input[copied..]);
-    out
 }
 
 /// Email addresses become `<email>`.
@@ -224,12 +99,15 @@ pub(crate) fn redact_emails(input: &str) -> String {
 /// secret too, unless they name a token counter (`max_tokens`,
 /// `input_tokens`, `tokens_used`, `token_count`).
 pub(crate) fn is_secret_key(key: &str) -> bool {
-    let flat: String = key
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    let strong = [
+    let flat = flatten(key);
+    is_strong_secret_key(key) || flat.contains("token") && !is_token_counter(&flat)
+}
+
+/// A secret key whose name alone says so (`password`, `api_key`, `cookie`),
+/// as opposed to one that only mentions a token.
+pub(crate) fn is_strong_secret_key(key: &str) -> bool {
+    let flat = flatten(key);
+    [
         "password",
         "passwd",
         "secret",
@@ -240,20 +118,23 @@ pub(crate) fn is_secret_key(key: &str) -> bool {
         "authorization",
         "cookie",
         "signature",
-    ];
-    if strong.iter().any(|marker| flat.contains(marker)) {
-        return true;
-    }
-    if segments(key).any(|segment| matches!(segment.as_str(), "pass" | "pwd" | "pw" | "sig")) {
-        return true;
-    }
-    flat.contains("token") && !is_token_counter(&flat)
+    ]
+    .iter()
+    .any(|marker| flat.contains(marker))
+        || segments(key).any(|segment| matches!(segment.as_str(), "pass" | "pwd" | "pw" | "sig"))
+}
+
+fn flatten(key: &str) -> String {
+    key.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>()
+        .to_ascii_lowercase()
 }
 
 /// `max_tokens`, `input_tokens`, `cache_read_input_tokens`, `tokens_used`,
 /// `token_count`: model usage numbers, not credentials. Anchored at the end,
-/// so every suffix of a counter key is a counter too and
-/// `replace_secrets` can skip a rejected key whole.
+/// so every suffix of a counter key is a counter too and the pair scanner
+/// can skip a rejected key whole.
 fn is_token_counter(flat: &str) -> bool {
     ["count", "used", "limit", "usage"]
         .iter()
@@ -721,5 +602,73 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn secret_keys_holding_objects_or_arrays_in_text() {
+        assert_eq!(
+            redact_tokens(r#"{"secret": {"value": "s3cr3tvalue"}, "n":1}"#),
+            r#"{"secret": "<redacted>", "n":1}"#
+        );
+        assert_eq!(
+            redact_tokens(r#"x "client_secret":{"v": "hunter hunter"} y"#),
+            r#"x "client_secret":"<redacted>" y"#
+        );
+        assert_eq!(
+            redact_tokens(r#"{"token": ["a b", "c, d"], "n": 1}"#),
+            r#"{"token": "<redacted>", "n": 1}"#
+        );
+        assert_eq!(
+            redact_tokens(r#"{\"secret\":{\"v\":\"x y\"},\"n\":1}"#),
+            r#"{\"secret\":\"<redacted>\",\"n\":1}"#
+        );
+    }
+
+    #[test]
+    fn strong_header_names_need_no_digit() {
+        assert_eq!(
+            redact_tokens("X-Api-Key: abcdefghijklmnopqrstuv"),
+            "X-Api-Key: <redacted>"
+        );
+        assert_eq!(
+            redact_tokens("Cookie: session=abcdefghijklmnop; Path=/"),
+            "Cookie: <redacted>; Path=/"
+        );
+        for prose in [
+            "Password: incorrect",
+            "token: missing",
+            "Authorization: required",
+        ] {
+            assert_eq!(redact_tokens(prose), prose);
+        }
+    }
+
+    #[test]
+    fn a_port_and_an_at_sign_in_the_query_are_not_userinfo() {
+        let url = "https://example.com:8443/docs?u=bob@corp.com#top";
+        assert_eq!(redact_tokens(url), url);
+    }
+
+    #[test]
+    fn distinctive_tokens_right_after_a_digit() {
+        assert_eq!(
+            redact_tokens("1ghp_16C7e42F292c6912E7710c838347Ae178B4a"),
+            "1<redacted>"
+        );
+        assert_eq!(redact_tokens("id9AKIAIOSFODNN7EXAMPLE"), "id9<redacted>");
+        // Prefixes that occur inside ordinary words still need a boundary.
+        assert_eq!(
+            redact_tokens("task_live_abcdefghijklmnopqrstu"),
+            "task_live_abcdefghijklmnopqrstu"
+        );
+    }
+
+    #[test]
+    fn emails_do_not_take_the_opening_quote() {
+        assert_eq!(
+            redact_emails("{'email': 'bob@x.io'}"),
+            "{'email': '<email>'}"
+        );
+        assert_eq!(redact_emails("o'neil@x.io"), "<email>");
     }
 }

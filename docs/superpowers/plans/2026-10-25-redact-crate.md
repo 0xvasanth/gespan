@@ -132,6 +132,19 @@ A fresh reviewer fed real inputs to the crate and found more ways for a secret t
 - **ASCII word boundaries** (`(?-u:\b)`) for speed. With Unicode `\b` the regex crate fell back to a slow engine on non-ASCII text: a mixed 1 MB log took 480 ms. It now takes 37 ms (release build).
 - **Deferred minors:** boundary checks before a match (`/mnt/backup/Users/al` → `/mnt/backup~`, which over-redacts); Git Bash, WSL, `file://` and 8.3 forms of a Windows home; case-insensitive macOS paths; doubly escaped JSON; colliding scrubbed object keys; secrets in CLI argument arrays.
 
+### PR review round 1
+
+Each fix has a test that failed first.
+
+- **Secret pairs are found key first** (`src/pairs.rs`). Keys are found in one pass and judged on their own. A value is matched, anchored at the key's end, only for a secret key. Before, a rejected key re-read its whole value, so 48 KB of `tokens_used=` took 13.7 s; it now takes 3 ms.
+- **JSON values of secret keys use `fields::value_end`,** so an object or array value goes as a whole: `{"secret": {"value": …}}` no longer leaks.
+- **A cut-off value ends at its line.** JSON strings hold no raw newline and JSONL has one record per line, so one cut line can't blank the rest of a log tail.
+- **Strong header names** (`api-key`, `authorization`, `cookie`, …) need no digit once the value has 16+ characters. Weak names (`token`) still do, so `token: missing` survives. A cookie header's value now goes as a whole.
+- **Distinctive token prefixes** (`ghp_`, `AKIA`, `glpat-`, `AIza`, `xox…`) match even right after a digit. Prefixes that occur inside words (`sk-`, `sk_live_`, `eyJ`, `hf_`, `npm_`) keep the boundary.
+- **A URL password stops at `?` or `#`,** so `host:8443/docs?u=bob@corp.com` keeps its host. `/` stays allowed, because Git URLs with an unencoded `/` in a token are caught that way.
+- **Known secrets go through one Aho-Corasick scan** (LeftmostLongest) instead of a `str::replace` per encoded variant. Secrets that are part of a placeholder (`redacted`, `project-1`) are ignored, so scrubbing stays stable.
+- **Emails never start with `'`.**
+
 ## Follow-ups (out of scope)
 
 - Wiring into `src-tauri` and `gespan-core` (#72, #81, #124).

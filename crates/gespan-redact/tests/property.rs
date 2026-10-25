@@ -80,7 +80,7 @@ proptest! {
 
     #[test]
     fn distinctive_tokens_never_survive_even_glued(
-        prefix in "[A-Za-z0-9 ]{0,10}", glue in prop::sample::select(vec!["_", "/", "=", ":", " "]),
+        prefix in "[A-Za-z0-9 ]{0,10}", glue in prop::sample::select(vec!["_", "/", "=", ":", " ", "1", "9", "x"]),
         token in distinctive_token(), suffix in any::<String>(),
     ) {
         let input = format!("{prefix}{glue}{token} {suffix}");

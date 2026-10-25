@@ -1819,6 +1819,7 @@ dependencies = [
 name = "gespan-redact"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "gespan-redact",
  "proptest",
  "regex",

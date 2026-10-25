@@ -117,11 +117,11 @@
       "expected": "AWS_ACCESS_KEY_ID=<redacted> AWS_SECRET_ACCESS_KEY=<redacted> region=us-east-1"
     },
     {
-      "name": "macos JWT in a cookie",
+      "name": "macos cookie header with a JWT",
       "context": "macos",
       "kind": "text",
       "input": "Set-Cookie: session=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk; Path=/; HttpOnly",
-      "expected": "Set-Cookie: session=<redacted>; Path=/; HttpOnly"
+      "expected": "Set-Cookie: <redacted>; Path=/; HttpOnly"
     },
     {
       "name": "macos GitHub tokens of several kinds",
@@ -365,6 +365,34 @@
       "kind": "text",
       "input": "connect redis://:hunter22pw@localhost:6379/0 failed",
       "expected": "connect redis://:<redacted>@localhost:6379/0 failed"
+    },
+    {
+      "name": "macos secret-named key holding an object",
+      "context": "macos",
+      "kind": "text",
+      "input": "config {\"client_secret\": {\"value\": \"s3cr3t value\", \"rotated\": true}, \"n\": 1}",
+      "expected": "config {\"client_secret\": \"<redacted>\", \"n\": 1}"
+    },
+    {
+      "name": "macos secret-named key holding an array",
+      "context": "macos",
+      "kind": "text",
+      "input": "{\"tokens\": 3, \"access_tokens\": [\"tok one\", \"tok, two\"], \"n\": 1}",
+      "expected": "{\"tokens\": 3, \"access_tokens\": \"<redacted>\", \"n\": 1}"
+    },
+    {
+      "name": "linux log tail whose first line is cut inside a deny-listed object",
+      "context": "linux",
+      "kind": "text",
+      "input": "\"env\":{\"HOME\":\"/home/zoë\",\"A\":\"b\n{\"level\":\"error\",\"message\":\"open /home/zoë/src/项目/a.rs failed\"}\n",
+      "expected": "\"env\":\"<redacted>\"\n{\"level\":\"error\",\"message\":\"open <project-1>/a.rs failed\"}\n"
+    },
+    {
+      "name": "macos URL with a port and an @ in its query",
+      "context": "macos",
+      "kind": "text",
+      "input": "GET https://example.com:8443/docs?u=bob@corp.com#top 404",
+      "expected": "GET https://example.com:8443/docs?u=<email>#top 404"
     }
   ]
 }
