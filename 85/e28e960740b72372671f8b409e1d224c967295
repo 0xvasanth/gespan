@@ -1,0 +1,31 @@
+docs/superpowers/plans/2026-10-25-report-issue.md
+  s_3d0adac742feaf::t_3436f83490f45d 1-230
+crates/gespan-core/src/diagnostics/mod.rs
+  s_3d0adac742feaf::t_f81752d946510a 5,12-15
+crates/gespan-core/Cargo.toml
+  s_3d0adac742feaf::t_8fe0c8abf48288 47-49,72
+crates/gespan-core/src/diagnostics/bundle.rs
+  s_3d0adac742feaf::t_7cb2ae24c94cf6 556,561,569-570,572,581-587,593,595
+  s_3d0adac742feaf::t_2eb740336ed82e 1-153,208-366,368-394,396-409,411-437,439-452,454-485,487-488,490-502,504-505,507-524,526-555,557,559-560,562-568,571,573-580,588-592,594,596-604
+  s_3d0adac742feaf::t_c67eab2846c58b 367,395,410,438,453,486,489,503,506,525,558
+  s_3d0adac742feaf::t_0956d26f7c942a 154-207
+  s_3d0adac742feaf::t_81ed8daf7411ad 605-646
+crates/gespan-gpui/Cargo.lock
+  s_3d0adac742feaf::t_8bb89216076e27 203-205,1415-1425,2179,2215,2300-2309,8675-8687
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "85e28e960740b72372671f8b409e1d224c967295",
+  "prompts": {},
+  "sessions": {
+    "s_3d0adac742feaf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "59f26b23-5087-4dc7-b434-604962752b44",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
