@@ -1888,6 +1888,8 @@ fn run_operation(
 mod tests {
     use super::*;
 
+    // The agents here are shell scripts.
+    #[cfg(unix)]
     mod counters {
         use super::*;
         use crate::diagnostics::metrics::{capture, ErrorKind};
