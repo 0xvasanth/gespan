@@ -360,12 +360,12 @@ pub fn fixture_matches(path: &Path, actual: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ensure;
+    use crate::{ensure, App};
 
     fn fresh() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         conn
     }
 
@@ -467,7 +467,7 @@ mod tests {
         let x = Connection::open_in_memory().unwrap();
         x.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         seed_native_v2(&x);
-        ensure(&x).unwrap();
+        ensure(&x, App::Native).unwrap();
         scenario(&x, IDS_ONE, 5, "Extra");
         let dumped = dump(&x);
         let y = fresh();

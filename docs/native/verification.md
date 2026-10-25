@@ -77,7 +77,7 @@ pins the table and column list, error strings and the `gespan.boardEnabled`
 key, checks that neither app writes board DDL of its own, and runs the
 cross-app fixtures. Task projects, labels, priority, due date, subtasks and
 comments live in the shared v3 tables; data from older Native builds'
-`board_native_*` tables is copied in once on the first v3 open. Deleting a
+`board_native_*` tables is copied in once, on the first v3 Native open. Deleting a
 card in either app removes its rows there, including which labels it carries;
 the board's label definitions stay until the board is deleted. The Board setting is on by default in both apps.
 Automated coverage: storage, ordering, extras and concurrent writes (core);

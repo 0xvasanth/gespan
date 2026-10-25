@@ -17,8 +17,9 @@ Neither app writes board DDL of its own:
 - Native: `crates/gespan-core/src/board` `ensure_tables`, called from
   `Service::open`.
 
-Both call `gespan_board_schema::ensure(conn)` on every open. `ensure` opens
-its own `BEGIN IMMEDIATE` transaction, so callers must not already be in one.
+Both call `gespan_board_schema::ensure(conn, app)` on every open, Tauri with
+`App::Tauri` and Native with `App::Native`. `ensure` opens its own
+`BEGIN IMMEDIATE` transaction, so callers must not already be in one.
 The service logic (moves, positions, activity, validation) is still written
 twice, once per app, because the apps live in separate Cargo workspaces with
 different connection models. The cross-app tests below keep the two copies in
@@ -56,8 +57,8 @@ reads.
 | `board_card_relations` | `(card_id, related_card_id, kind)`, `created_at`. `kind` is one of `RELATION_KINDS` and reads left to right: `card_id` *blocks* / *relates to* / *duplicates* `related_card_id` |
 | `board_fields` | Custom fields per board: `id`, `name` (unique per board, case-insensitive), `kind` (one of `FIELD_KINDS`), `options_json` (a JSON object, `{}` by default; select options live here), `position` |
 | `board_card_field_values` | `(card_id, field_id)`, `value_json`: one JSON value whose shape follows the field kind (`text`/`url`/`select`: string, `number`: number, `multi-select`: array of strings, `date`: ms number, `checkbox`: boolean) |
-| `board_card_links` | `(card_id, kind, ref)`, `role` (default `primary`), `created_at`. A card's link to a session, Pilot, Flow run or anything else |
-| `board_schema_migrations` | `(version, applied_at)`: one row per board schema version applied |
+| `board_card_links` | `(card_id, kind, ref, role)`, `created_at`. A card's link to a session, Pilot, Flow run or anything else. `role` defaults to `primary` and is part of the key, so one target can be linked in several roles |
+| `board_schema_migrations` | `(version, applied_at)`: one row per board schema version whose one-time data steps have run |
 
 The exact DDL is `BASE_DDL` and `V3_DDL` in `crates/board-schema/src/ddl.rs`.
 `opening_the_board_service_creates_exactly_the_v3_tables` in
@@ -89,34 +90,48 @@ so a schema change also has to change that test.
 
 ## Versioning
 
-`ensure` runs every `CREATE … IF NOT EXISTS` and every missing
-`ALTER TABLE … ADD COLUMN` on each open, and then, only if
-`board_schema_migrations` has no row for version 3, runs the one-time data
-steps and writes that row. All of this happens in one `BEGIN IMMEDIATE`
-transaction, so two apps opening the file at the same moment take turns. The
+On every open, `ensure` runs every `CREATE … IF NOT EXISTS` and every missing
+`ALTER TABLE … ADD COLUMN`. Until `board_schema_migrations` has a row for
+version 3, it also:
+
+- backfills the `primary` link rows from `board_cards.link_kind/link_id`.
+  Both apps do this, and it is safe to repeat because those rows always
+  mirror the card's own columns;
+- **Native only**: copies the old `board_native_*` tables (below) and writes
+  the version 3 row.
+
+Tauri never copies and never writes the marker. Native is the only app that
+ever wrote `board_native_*`, and an older Native build can keep writing them
+after Tauri has updated. So the copy waits for the first v3 Native open, the
+moment the last writer stops. On a machine that only runs Tauri, the marker
+is never written, and the backfill keeps running harmlessly on each open.
+
+Everything happens in one `BEGIN IMMEDIATE` transaction, so two apps (or two
+Native connections) opening the file at the same moment take turns, and the
 second one sees the marker and copies nothing. A failure rolls the whole
 transaction back, fails the open and is retried on the next open.
 
 Rules for later versions:
 
-- Never edit `BASE_DDL` or the v3 statements. Older builds of either app
-  still open this file.
+- Never edit `BASE_DDL` or the v3 statements once released. Older builds of
+  either app still open this file.
 - Only add. New tables use `IF NOT EXISTS`; new columns go through the same
   "add if missing" check.
 - Data steps for v4 go in their own block that checks for a `4` row and
-  writes it, in the same transaction.
+  writes it, in the same transaction. Decide which app may run each step.
 - Raise `SCHEMA_VERSION` and update this page and the column-list test.
 
 ## The v3 copy from Native's `board_native_*` tables
 
 Native builds before v3 kept extras in `board_native_meta`, `_projects`,
-`_labels`, `_card_labels`, `_subtasks` and `_comments`. The first v3 open
-copies them into the shared tables once:
+`_labels`, `_card_labels`, `_subtasks` and `_comments`. The first v3 Native
+open copies them into the shared tables once:
 
 - Values are copied as they are: priority, due date, `done`, titles, bodies
   and comment times. Comments get `author = 'user'` and no `edited_at`.
 - Positions are renumbered to 0..n-1: subtasks per card in their old order,
-  labels per board by `lower(name)`, matching Native's old alphabetical order.
+  labels per board by `lower(name)`, matching Native's old alphabetical order
+  for ASCII names.
 - Orphan rows, whose card, label or board is gone, are skipped. They were
   already invisible, and copying them would break the foreign keys and fail
   the open. Any other copy error fails the whole migration rather than
@@ -124,15 +139,30 @@ copies them into the shared tables once:
 - The copy runs only once. Deleting a migrated label or subtask and then
   reopening does not bring it back.
 - The `board_native_*` tables are left exactly as they were and are no longer
-  written, so a rollback is possible for this release. Dropping them is a
-  follow-up.
+  written by v3 builds, so a rollback is possible for this release. Dropping
+  them is a follow-up.
+- The copy uses plain `INSERT` into tables nothing else writes yet. Once
+  Tauri writes labels or subtasks itself (#86), the copy must also handle a
+  label name that already exists on the board, or a not-yet-updated Native
+  would fail to open.
 
-### Downgrade caveat
+### Older builds on a v3 file
 
-A pre-v3 build can still open a v3 file: it only sees the four v1 tables,
-which are unchanged. But a pre-v3 **Native** build still reads and writes
-`board_native_*`. Anything it writes there after the migration is not seen
-by v3 builds, and anything written in v3 is not seen by it.
+A pre-v3 build of either app can still open a v3 file: the four v1 tables
+keep their DDL, and `board_columns` only gains columns that older builds,
+which name their columns explicitly, ignore. Known gaps while an older build
+is in use:
+
+- A pre-v3 **Native** build reads and writes `board_native_*`. Until the
+  first v3 Native open, its edits are still copied. After that, anything it
+  writes there is not seen by v3 builds, and anything written in v3 is not
+  seen by it.
+- A pre-v3 build's `link_card` does not update `board_card_links`, so the
+  `primary` rows go stale once the marker exists. Nothing reads them yet;
+  switching reads to them (#95) needs to re-backfill.
+- A pre-v3 build knows only the four old roles. Saving a column that has the
+  `cancelled` role (for example renaming it) fails there with
+  "Unknown column role: cancelled".
 
 ## Cross-app fixtures
 

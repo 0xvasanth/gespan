@@ -1,6 +1,6 @@
 //! Brings any board database (none, v1, or Native's v2 extras) up to v3.
 use crate::ddl::{BASE_DDL, V3_DDL};
-use crate::{LINK_ROLE_PRIMARY, SCHEMA_VERSION};
+use crate::{App, LINK_ROLE_PRIMARY, SCHEMA_VERSION};
 use rusqlite::{params, Connection, OptionalExtension, Result, Transaction, TransactionBehavior};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,14 +11,18 @@ const COLUMN_ADDS: [(&str, &str); 3] = [
     ("collapsed", "collapsed INTEGER NOT NULL DEFAULT 0"),
 ];
 
-/// Creates or upgrades every shared board table, then copies Native's old
-/// `board_native_*` data and backfills `board_card_links` exactly once.
+/// Creates or upgrades every shared board table and mirrors each card's link
+/// into `board_card_links`. When Native opens the file (`App::Native`), it
+/// also copies Native's old `board_native_*` data, once, and writes the
+/// version marker. Tauri never copies: an older Native build may still be
+/// writing those tables, and what it writes would be lost if the copy had
+/// already run. The copy waits for the first v3 Native, the last writer.
 ///
 /// It runs on every open and opens its own `BEGIN IMMEDIATE` transaction, so
 /// it must not be called inside one. Two apps opening the file at the same
-/// moment serialize on that lock; the second sees the version marker and
-/// copies nothing. Any failure rolls the whole upgrade back and is returned.
-pub fn ensure(conn: &Connection) -> Result<()> {
+/// moment serialize on that lock; once the marker is there, nothing is
+/// copied again. Any failure rolls the whole upgrade back and is returned.
+pub fn ensure(conn: &Connection, app: App) -> Result<()> {
     let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
     tx.execute_batch(BASE_DDL)?;
     add_column_fields(&tx)?;
@@ -32,20 +36,24 @@ pub fn ensure(conn: &Connection) -> Result<()> {
         .optional()?
         .is_some();
     if !migrated {
-        copy_from_native(&tx)?;
+        // Idempotent: a primary row always mirrors the card's own columns.
         backfill_links(&tx)?;
-        tx.execute(
-            "INSERT INTO board_schema_migrations (version, applied_at) VALUES (?1, ?2)",
-            params![SCHEMA_VERSION, now_millis()],
-        )?;
+        if app == App::Native {
+            copy_from_native(&tx)?;
+            tx.execute(
+                "INSERT INTO board_schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![SCHEMA_VERSION, now_millis()],
+            )?;
+        }
     }
     tx.commit()
 }
 
 /// Replaces a card's `primary` link row with `link`, or removes it for
-/// `None`, leaving links of every other role alone. This keeps
-/// `board_card_links` in step with `board_cards.link_kind/link_id`; callers
-/// run it inside the transaction that changes those columns.
+/// `None`. Links with any other role stay, even to the same target, since
+/// `role` is part of the key. This keeps `board_card_links` in step with
+/// `board_cards.link_kind/link_id`; callers run it inside the transaction
+/// that changes those columns.
 pub fn sync_primary_link(
     conn: &Connection,
     card_id: &str,
@@ -58,7 +66,7 @@ pub fn sync_primary_link(
     )?;
     if let Some((kind, reference)) = link {
         conn.execute(
-            "INSERT OR REPLACE INTO board_card_links (card_id, kind, ref, role, created_at)
+            "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![card_id, kind, reference, LINK_ROLE_PRIMARY, now],
         )?;
@@ -175,7 +183,7 @@ fn backfill_links(tx: &Connection) -> Result<()> {
 mod tests {
     use super::*;
     use crate::testing::{assert_native_v2_migrated, seed_native_v2};
-    use crate::{BASE_DDL, BOARD_TABLES};
+    use crate::{App, BASE_DDL, BOARD_TABLES};
     use rusqlite::{params, Connection};
 
     fn memory() -> Connection {
@@ -215,7 +223,7 @@ mod tests {
     #[test]
     fn fresh_database_gets_every_table_and_the_marker() {
         let conn = memory();
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         let tables = strings(
             &conn,
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'board%' ORDER BY name",
@@ -236,9 +244,9 @@ mod tests {
     #[test]
     fn ensure_twice_changes_nothing() {
         let conn = memory();
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         let version = count(&conn, "PRAGMA schema_version");
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         assert_eq!(count(&conn, "PRAGMA schema_version"), version);
         assert_eq!(
             count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"),
@@ -251,7 +259,7 @@ mod tests {
         let conn = memory();
         conn.execute_batch(BASE_DDL).unwrap();
         seed_v1_card(&conn, Some(("session", "s-1")));
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         let (color, wip, collapsed): (Option<String>, Option<i64>, i64) = conn
             .query_row(
                 "SELECT color, wip_limit, collapsed FROM board_columns WHERE id = 'col'",
@@ -278,7 +286,7 @@ mod tests {
         let conn = memory();
         conn.execute_batch(BASE_DDL).unwrap();
         seed_v1_card(&conn, Some(("session", "s-1")));
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         let links = strings(
             &conn,
             "SELECT card_id || '/' || kind || '/' || ref || '/' || role || '/' || created_at
@@ -290,7 +298,7 @@ mod tests {
     #[test]
     fn ref_and_role_columns_round_trip() {
         let conn = memory();
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         seed_v1_card(&conn, None);
         conn.execute(
             "INSERT INTO board_card_links (card_id, kind, ref, created_at)
@@ -310,7 +318,7 @@ mod tests {
     #[test]
     fn sync_primary_link_replaces_and_clears() {
         let conn = memory();
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         seed_v1_card(&conn, None);
         conn.execute(
             "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
@@ -342,7 +350,7 @@ mod tests {
     fn native_v2_data_is_copied_with_every_value() {
         let conn = memory();
         let seed = seed_native_v2(&conn);
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         assert_native_v2_migrated(&conn, &seed);
     }
 
@@ -352,7 +360,7 @@ mod tests {
         let seed = seed_native_v2(&conn);
         assert_eq!(count(&conn, "PRAGMA foreign_keys"), 1);
         // The orphan rows would violate the v3 foreign keys if copied.
-        ensure(&conn).expect("orphans must not fail the open");
+        ensure(&conn, App::Native).expect("orphans must not fail the open");
         assert_native_v2_migrated(&conn, &seed);
         assert_eq!(
             strings(
@@ -367,13 +375,13 @@ mod tests {
     fn rerun_does_not_resurrect_deleted_rows() {
         let conn = memory();
         seed_native_v2(&conn);
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         conn.execute_batch(
             "DELETE FROM board_labels WHERE name = 'docs';
              DELETE FROM board_subtasks WHERE title = 'Two';",
         )
         .unwrap();
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         assert_eq!(strings(&conn, "SELECT name FROM board_labels"), ["Bug"]);
         assert_eq!(
             strings(&conn, "SELECT title FROM board_subtasks ORDER BY position"),
@@ -397,7 +405,7 @@ mod tests {
             "CREATE TRIGGER fail BEFORE INSERT ON board_comments BEGIN SELECT RAISE(ABORT, 'boom'); END;",
         )
         .unwrap();
-        let error = ensure(&conn).unwrap_err();
+        let error = ensure(&conn, App::Native).unwrap_err();
         assert!(error.to_string().contains("boom"), "{error}");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_meta"), 0);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_labels"), 0);
@@ -410,7 +418,7 @@ mod tests {
             "the failed upgrade left a transaction open"
         );
         conn.execute_batch("DROP TRIGGER fail;").unwrap();
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         assert_native_v2_migrated(&conn, &seed);
     }
 
@@ -419,7 +427,7 @@ mod tests {
         let conn = memory();
         conn.execute_batch(BASE_DDL).unwrap();
         seed_v1_card(&conn, Some(("pilot", "p-1")));
-        ensure(&conn).unwrap();
+        ensure(&conn, App::Native).unwrap();
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_links"), 1);
         assert_eq!(
             count(
@@ -447,15 +455,18 @@ mod tests {
             conn
         };
         let seed = seed_native_v2(&open(&path));
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-        let handles: Vec<_> = (0..2)
-            .map(|_| {
+        // Tauri and two Native connections (Native opens one per turn) race.
+        let apps = [App::Native, App::Tauri, App::Native];
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(apps.len()));
+        let handles: Vec<_> = apps
+            .into_iter()
+            .map(|app| {
                 let path = path.clone();
                 let barrier = barrier.clone();
                 std::thread::spawn(move || {
                     let conn = open(&path);
                     barrier.wait();
-                    ensure(&conn)
+                    ensure(&conn, app)
                 })
             })
             .collect();
@@ -469,5 +480,78 @@ mod tests {
             1
         );
         assert_native_v2_migrated(&conn, &seed);
+    }
+    #[test]
+    fn tauri_leaves_the_native_copy_to_native() {
+        let conn = memory();
+        seed_native_v2(&conn);
+        ensure(&conn, App::Tauri).unwrap();
+        // Tauri creates the tables and mirrors links, but copies nothing and
+        // writes no marker: an older Native may still be writing its tables.
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_meta"), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_subtasks"), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_links"), 1);
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"),
+            0
+        );
+        ensure(&conn, App::Tauri).unwrap();
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_links"), 1);
+        // The older Native build keeps writing until it is updated.
+        conn.execute(
+            "INSERT INTO board_native_comments (id, card_id, body, created_at)
+             VALUES ('comment-3', 'card-a', 'Written by an older Native', 3000)",
+            [],
+        )
+        .unwrap();
+        ensure(&conn, App::Native).unwrap();
+        assert_eq!(
+            strings(&conn, "SELECT body FROM board_comments ORDER BY created_at"),
+            ["First", "Second", "Written by an older Native"]
+        );
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"),
+            1
+        );
+    }
+
+    #[test]
+    fn tauri_on_a_fresh_database_writes_no_marker_and_native_later_does() {
+        let conn = memory();
+        ensure(&conn, App::Tauri).unwrap();
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"),
+            0
+        );
+        ensure(&conn, App::Native).unwrap();
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"),
+            1
+        );
+    }
+
+    #[test]
+    fn a_link_can_be_primary_and_keep_another_role() {
+        let conn = memory();
+        ensure(&conn, App::Native).unwrap();
+        seed_v1_card(&conn, None);
+        conn.execute(
+            "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
+             VALUES ('card', 'session', 's-1', 'origin', 1)",
+            [],
+        )
+        .unwrap();
+        let links = |conn: &Connection| {
+            strings(
+                conn,
+                "SELECT kind || '/' || ref || '/' || role FROM board_card_links ORDER BY role, ref",
+            )
+        };
+        sync_primary_link(&conn, "card", Some(("session", "s-1")), 2).unwrap();
+        assert_eq!(links(&conn), ["session/s-1/origin", "session/s-1/primary"]);
+        sync_primary_link(&conn, "card", Some(("pilot", "x")), 3).unwrap();
+        assert_eq!(links(&conn), ["session/s-1/origin", "pilot/x/primary"]);
+        sync_primary_link(&conn, "card", None, 4).unwrap();
+        assert_eq!(links(&conn), ["session/s-1/origin"]);
     }
 }

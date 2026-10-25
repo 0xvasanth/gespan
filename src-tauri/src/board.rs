@@ -87,8 +87,9 @@ pub struct BoardDetail {
 
 /// Creates or upgrades the board tables `gespan.db` shares with Native; the
 /// schema and its migrations live in `gespan-board-schema`.
+/// Tauri never copies Native's old `board_native_*` tables; Native does.
 pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
-    gespan_board_schema::ensure(conn)
+    gespan_board_schema::ensure(conn, gespan_board_schema::App::Tauri)
 }
 
 fn db(error: rusqlite::Error) -> String {
@@ -1540,7 +1541,7 @@ mod tests {
     }
 
     #[test]
-    fn native_v2_database_opens_in_tauri_with_every_value() {
+    fn native_v2_database_opens_in_tauri_and_leaves_the_copy_to_native() {
         use gespan_board_schema::testing::{assert_native_v2_migrated, seed_native_v2};
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gespan.db");
@@ -1549,21 +1550,36 @@ mod tests {
             conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
             seed_native_v2(&conn)
         };
+        let store = SessionStore::open(path.clone()).unwrap();
+        {
+            let conn = store.lock_conn().unwrap();
+            let detail = get_board(&conn, &seed.board_id).unwrap();
+            let cards: Vec<(String, i64)> = detail
+                .cards
+                .iter()
+                .map(|card| (card.title.clone(), card.position))
+                .collect();
+            assert_eq!(cards, [("A".into(), 0), ("B".into(), 1), ("C".into(), 2)]);
+            let a = &detail.cards[0];
+            assert_eq!(
+                (a.link_kind.as_deref(), a.link_id.as_deref()),
+                (Some("session"), Some("s-1"))
+            );
+            // An older Native may still write board_native_*: Tauri copies none of it.
+            assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_meta"), 0);
+            assert_eq!(
+                count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"),
+                0
+            );
+        }
+        // The first v3 Native open copies everything.
+        let native = Connection::open(&path).unwrap();
+        native.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        gespan_board_schema::ensure(&native, gespan_board_schema::App::Native).unwrap();
+        assert_native_v2_migrated(&native, &seed);
+        drop(store);
         let store = SessionStore::open(path).unwrap();
-        let conn = store.lock_conn().unwrap();
-        assert_native_v2_migrated(&conn, &seed);
-        let detail = get_board(&conn, &seed.board_id).unwrap();
-        let cards: Vec<(String, i64)> = detail
-            .cards
-            .iter()
-            .map(|card| (card.title.clone(), card.position))
-            .collect();
-        assert_eq!(cards, [("A".into(), 0), ("B".into(), 1), ("C".into(), 2)]);
-        let a = &detail.cards[0];
-        assert_eq!(
-            (a.link_kind.as_deref(), a.link_id.as_deref()),
-            (Some("session"), Some("s-1"))
-        );
+        assert_native_v2_migrated(&store.lock_conn().unwrap(), &seed);
     }
 
     #[test]
@@ -1578,13 +1594,7 @@ mod tests {
         let store = SessionStore::open(path).unwrap();
         let conn = store.lock_conn().unwrap();
         assert_eq!(count(&conn, "PRAGMA schema_version"), version);
-        assert_eq!(
-            strings(
-                &conn,
-                "SELECT CAST(version AS TEXT) FROM board_schema_migrations"
-            ),
-            ["3"]
-        );
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_links"), 0);
     }
 
     #[test]

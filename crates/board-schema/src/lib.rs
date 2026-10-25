@@ -11,6 +11,14 @@ pub mod testing;
 pub use ddl::BASE_DDL;
 pub use migrate::{ensure, sync_primary_link};
 
+/// Which app is opening the database. Only Native copies its old
+/// `board_native_*` tables, because only Native writes them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum App {
+    Tauri,
+    Native,
+}
+
 /// The board schema version this crate writes into `board_schema_migrations`.
 pub const SCHEMA_VERSION: i64 = 3;
 

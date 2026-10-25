@@ -100,5 +100,5 @@ CREATE INDEX IF NOT EXISTS board_card_field_values_field_idx ON board_card_field
 CREATE TABLE IF NOT EXISTS board_card_links (
   card_id TEXT NOT NULL REFERENCES board_cards(id) ON DELETE CASCADE,
   kind TEXT NOT NULL, ref TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'primary', created_at INTEGER NOT NULL,
-  PRIMARY KEY (card_id, kind, ref));
+  PRIMARY KEY (card_id, kind, ref, role));
 CREATE INDEX IF NOT EXISTS board_card_links_ref_idx ON board_card_links (kind, ref);";

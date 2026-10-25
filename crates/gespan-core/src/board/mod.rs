@@ -108,8 +108,10 @@ pub struct BoardDetail {
 }
 
 /// Creates or upgrades the shared board tables; see `gespan-board-schema`.
+/// Native is the only writer of the old `board_native_*` tables, so its
+/// first v3 open is the one that copies them.
 pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
-    gespan_board_schema::ensure(conn)
+    gespan_board_schema::ensure(conn, gespan_board_schema::App::Native)
 }
 
 fn db(error: rusqlite::Error) -> String {
