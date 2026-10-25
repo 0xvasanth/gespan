@@ -521,7 +521,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(moved.state.group, StateGroup::Started);
-        assert!(moved.updated_at > "2025-12-31T00:00:09Z".to_string());
+        assert!(moved.updated_at.as_str() > "2025-12-31T00:00:09Z");
         let next = fake.sync_since("C1", Some(&first.next_cursor)).unwrap();
         assert_eq!(ids(&next.changes), ["early"]);
         assert!(fake.sync_since("C2", None).is_err());
