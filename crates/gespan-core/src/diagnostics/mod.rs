@@ -3,6 +3,7 @@
 //! "Copy diagnostics" actions. Nothing here touches the network.
 mod actions;
 mod json;
+pub mod metrics;
 mod panic;
 mod paths;
 mod rotation;
