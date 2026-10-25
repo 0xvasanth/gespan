@@ -1,18 +1,21 @@
-//! src-tauri/src/macos.rs's traffic lights: 14 pt buttons, 6 pt apart, 12 pt
+//! src-tauri/src/macos.rs's traffic lights: native buttons, 6 pt apart, 12 pt
 //! from the left edge. GPUI's `traffic_light_position` only moves the row and
 //! keeps AppKit's own spacing, which on recent macOS crowds the sidebar
 //! toggle. Auto Layout pins the buttons, so GPUI's frame updates on resize,
 //! focus and fullscreen don't move them back.
 //!
-//! The buttons hang from the titlebar container's top, which GPUI keeps at the
-//! window's top. GPUI sizes the container from the live button frame plus its
-//! own inset, so on macOS versions whose buttons report a larger frame the
-//! container grows and anything measured from its bottom sinks below the bar.
+//! The buttons are centred on the bar from the titlebar container's top, which
+//! GPUI keeps at the window's top. GPUI sizes the container from the live
+//! button frame plus its own inset, so on macOS versions whose buttons are
+//! larger than 14 pt the container grows and anything measured from its bottom
+//! sinks below the bar. The buttons keep AppKit's size too: forcing 14 pt
+//! squashes artwork drawn for a larger frame.
 
 use gpui::Window;
 use objc2_app_kit::{NSLayoutAttribute, NSView, NSWindow, NSWindowButton};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+/// The classic button size, the smallest GPUI's container is sized for.
 const BUTTON_SIZE: f64 = 14.;
 const LEFT_MARGIN: f64 = 12.;
 const BUTTON_SPACING: f64 = 6.;
@@ -27,20 +30,25 @@ pub(crate) fn pin(window: &Window, title_bar_height: f32) {
     // The buttons keep their native size; the bar they sit in and the gaps
     // around them follow the interface zoom.
     let zoom = f64::from(window.content_zoom());
-    let top = (f64::from(title_bar_height) * zoom - BUTTON_SIZE) / 2.;
+    let center = f64::from(title_bar_height) * zoom / 2.;
+    let mut x = LEFT_MARGIN * zoom;
     let kinds = [
         NSWindowButton::CloseButton,
         NSWindowButton::MiniaturizeButton,
         NSWindowButton::ZoomButton,
     ];
-    for (i, kind) in kinds.into_iter().enumerate() {
+    for kind in kinds {
         let Some(button) = ns_window.standardWindowButton(kind) else {
             continue;
         };
         let Some(titlebar) = (unsafe { button.superview() }) else {
             continue;
         };
-        let x = LEFT_MARGIN * zoom + i as f64 * (BUTTON_SIZE + BUTTON_SPACING * zoom);
+        // Pinned to the native frame, so it reads the same before and after.
+        let size = button.frame().size;
+        let width = size.width;
+        let leading = x;
+        x += width + BUTTON_SPACING * zoom;
         // Already pinned: move the constraints, since a second set would only
         // conflict.
         if !button.translatesAutoresizingMaskIntoConstraints() {
@@ -51,8 +59,8 @@ pub(crate) fn pin(window: &Window, title_bar_height: f32) {
                     continue;
                 }
                 match constraint.firstAttribute() {
-                    NSLayoutAttribute::Leading => constraint.setConstant(x),
-                    NSLayoutAttribute::Top => constraint.setConstant(top),
+                    NSLayoutAttribute::Leading => constraint.setConstant(leading),
+                    NSLayoutAttribute::CenterY => constraint.setConstant(center),
                     _ => {}
                 }
             }
@@ -60,14 +68,14 @@ pub(crate) fn pin(window: &Window, title_bar_height: f32) {
         }
         button.setTranslatesAutoresizingMaskIntoConstraints(false);
         for constraint in [
-            button.widthAnchor().constraintEqualToConstant(BUTTON_SIZE),
-            button.heightAnchor().constraintEqualToConstant(BUTTON_SIZE),
+            button.widthAnchor().constraintEqualToConstant(size.width),
+            button.heightAnchor().constraintEqualToConstant(size.height),
             button
                 .leadingAnchor()
-                .constraintEqualToAnchor_constant(&titlebar.leadingAnchor(), x),
+                .constraintEqualToAnchor_constant(&titlebar.leadingAnchor(), leading),
             button
-                .topAnchor()
-                .constraintEqualToAnchor_constant(&titlebar.topAnchor(), top),
+                .centerYAnchor()
+                .constraintEqualToAnchor_constant(&titlebar.topAnchor(), center),
         ] {
             constraint.setActive(true);
         }
@@ -75,8 +83,8 @@ pub(crate) fn pin(window: &Window, title_bar_height: f32) {
 }
 
 /// GPUI's own position for the buttons, which sizes the titlebar container:
-/// scaled with the interface zoom so the container always spans the bar and
-/// never clips the pinned buttons.
+/// scaled with the interface zoom so the container (button height plus twice
+/// this inset) always spans the bar and never clips the pinned buttons.
 pub(crate) fn position(zoom: f32, title_bar_height: f32) -> gpui::Point<gpui::Pixels> {
     gpui::point(
         gpui::px(LEFT_MARGIN as f32 * zoom),
