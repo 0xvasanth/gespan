@@ -595,7 +595,15 @@ impl Tunnels {
         }
         let reopened = {
             let _span = tracing::info_span!("ssh_connect", background = true).entered();
-            start().inspect_err(|error| tracing::warn!(%error, "SSH connection failed"))
+            // An offline machine fails every backoff window; only a new failure is a warning.
+            let previous = current.failure.as_ref().map(|(_, error)| error);
+            start().inspect_err(|error| {
+                if previous == Some(error) {
+                    tracing::debug!(%error, "SSH connection still failing");
+                } else {
+                    tracing::warn!(%error, "SSH connection failed");
+                }
+            })
         };
         match reopened {
             Ok(tunnel) => {
@@ -1005,6 +1013,43 @@ mod tests {
                 "background": true,
                 "error": "SSH connection failed: Connection refused."
             })
+        );
+    }
+
+    #[test]
+    fn an_offline_machine_warns_once_and_logs_repeats_at_debug() {
+        let tunnels = Tunnels::default();
+        let refused = || Err::<Tunnel, _>("SSH connection failed: Connection refused.".to_string());
+        // Each call stands for a remote request after the 10 s backoff has run out.
+        let after_backoff = || {
+            let slot = tunnels.slots()["machine"].clone();
+            let mut slot = slot.lock().unwrap();
+            let (when, _) = slot.failure.as_mut().unwrap();
+            *when = Instant::now() - Duration::from_secs(11);
+        };
+        let logged = crate::diagnostics::test_capture_with("gespan_core=debug", || {
+            assert!(tunnels.endpoint_with("machine", refused).is_err());
+            after_backoff();
+            assert!(tunnels.endpoint_with("machine", refused).is_err());
+            after_backoff();
+            assert!(tunnels.endpoint_with("machine", refused).is_err());
+            after_backoff();
+            // A different failure is news again.
+            assert!(tunnels
+                .endpoint_with("machine", || Err(
+                    "SSH connection failed: Host key changed.".into()
+                ))
+                .is_err());
+        });
+        let levels: Vec<_> = logged
+            .iter()
+            .map(|line| line["level"].as_str().unwrap())
+            .collect();
+        assert_eq!(levels, ["warn", "debug", "debug", "warn"], "{logged:?}");
+        assert!(logged.iter().all(|line| line["span"] == "ssh_connect"));
+        assert_eq!(
+            logged[3]["fields"]["error"],
+            "SSH connection failed: Host key changed."
         );
     }
 }
