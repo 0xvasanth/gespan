@@ -3140,6 +3140,20 @@ impl Shell {
         self.persist(cx);
         cx.notify();
     }
+    /// A session whose pane or tab closed stops dictating, even when the
+    /// active session stays the same.
+    pub(super) fn leave_closed_dictation(&self, cx: &mut Context<Self>) {
+        let open = self.workspace.open_sessions();
+        let closed: Vec<_> = self
+            .sessions
+            .iter()
+            .filter(|(id, _)| !open.contains(id))
+            .map(|(_, view)| view.read(cx).dictation.clone())
+            .collect();
+        for dictation in closed {
+            dictation.update(cx, |d, cx| d.leave(cx));
+        }
+    }
     /// Close one pane of a split tab; the tab's only pane closes the tab.
     fn close_pane(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         let active = self.workspace.active;
@@ -3150,6 +3164,7 @@ impl Shell {
         }
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
+        self.leave_closed_dictation(cx);
         self.navigation_revision += 1;
         self.begin_pane_motion(before, cx);
         self.fit_sidebar(cx);
@@ -8707,6 +8722,60 @@ mod tests {
                 assert_eq!(shell.workspace.project, "/work/gespan");
             })
             .unwrap();
+    }
+    #[gpui::test]
+    fn closing_a_dictating_pane_cancels_its_dictation(cx: &mut TestAppContext) {
+        use crate::conversation::dictation::{self, DictationState};
+        use gespan_speech::protocol::{Event, Request};
+        let models = tempfile::tempdir().unwrap();
+        dictation::tests::make_ready(models.path(), &gespan_speech::catalog::PARAKEET_V2_EN);
+        let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let log = sent.clone();
+        let hub = cx.update(|cx| {
+            dictation::with_sink(
+                gespan_models::ModelStore::new(models.path().to_path_buf()),
+                move |r| log.borrow_mut().push(r),
+                cx,
+            )
+        });
+        let (window, a, _) = window(cx);
+        let (c, speaking) = window
+            .update(cx, |shell, w, cx| {
+                let summary = locked(&shell.store)
+                    .unwrap()
+                    .create("codex", "/work/another-project")
+                    .unwrap();
+                let c = summary.id;
+                shell.add(summary, cx);
+                shell.open(a, w, cx);
+                shell.workspace.split(c, SplitDir::Right);
+                shell.focus_pane(a, w, cx);
+                let speaking = shell.sessions[&a].read(cx).dictation.clone();
+                speaking.update(cx, |d, cx| d.toggle(cx));
+                (c, speaking)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        hub.read_with(cx, |s, _| s.emit(Event::Listening));
+        cx.run_until_parked();
+        assert!(speaking.read_with(cx, |d, _| d.dictating()));
+        sent.borrow_mut().clear();
+
+        // Focusing the other pane keeps listening; closing A's pane does not.
+        window
+            .update(cx, |shell, w, cx| {
+                shell.focus_pane(c, w, cx);
+                assert!(speaking.read(cx).dictating());
+                shell.close_pane(a, w, cx);
+                assert_eq!(shell.workspace.active, Some(c));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(*sent.borrow(), vec![Request::Cancel]);
+        assert_eq!(
+            speaking.read_with(cx, |d, _| d.state().clone()),
+            DictationState::Idle
+        );
     }
     #[gpui::test]
     fn tab_lifecycle_closing_an_inactive_split_pane_keeps_notes(cx: &mut TestAppContext) {

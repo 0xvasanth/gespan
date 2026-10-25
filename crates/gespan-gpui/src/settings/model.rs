@@ -148,7 +148,7 @@ impl Section {
                 "theme dark light color accent glass blur zoom scale wallpaper rail sidebar"
             }
             Section::Keybindings => "shortcut hotkey keyboard binding",
-            Section::Dictation => "voice, microphone, speech, parakeet",
+            Section::Dictation => "voice microphone speech parakeet",
             Section::Chat => {
                 "transcript composer prompt message diff review layout format save editor"
             }
@@ -629,7 +629,7 @@ mod tests {
         let (group, app) = GROUPS[0];
         assert_eq!(group, "App");
         assert_eq!(app.last(), Some(&Section::Dictation));
-        for query in ["dictation", "microphone", "parakeet"] {
+        for query in ["dictation", "microphone", "parakeet", "microphone speech"] {
             assert!(
                 search(query)
                     .iter()

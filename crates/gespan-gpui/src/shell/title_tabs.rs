@@ -346,6 +346,7 @@ impl Shell {
         }
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
+        self.leave_closed_dictation(cx);
         if self.workspace.active.is_none() && !self.pilot_active(cx) && !self.app_view_open() {
             self.focus_active(window, cx);
         }

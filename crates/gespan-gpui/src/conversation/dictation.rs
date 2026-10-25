@@ -100,6 +100,11 @@ pub(crate) struct Speech {
     loaded: Option<String>,
     /// The composer the helper's events belong to.
     owner: Option<WeakEntity<Dictation>>,
+    /// Every composer's dictation, so leaving a session can reset its prompt.
+    members: Vec<WeakEntity<Dictation>>,
+    /// Cancels sent that the helper has not answered yet. Until it has, an
+    /// error before `Listening` belongs to the abandoned take.
+    unanswered_cancels: std::cell::Cell<usize>,
     events: async_channel::Sender<Event>,
     downloads: HashMap<&'static str, (CancelToken, Progress)>,
     /// Each catalog model's status, once read.
@@ -134,17 +139,28 @@ pub(crate) fn speech(cx: &mut App) -> Entity<Speech> {
     hub
 }
 
+/// The client's own messages for a helper that died or was given up on.
+fn supervisor_error(message: &str) -> bool {
+    message == UNAVAILABLE || message == "Dictation stopped unexpectedly."
+}
+
 /// Leaving for another session: dictation running anywhere but `keep` is
-/// cancelled and inserts nothing.
+/// cancelled and inserts nothing, and a download prompt left behind closes,
+/// so its download finishing later does not open the mic there.
 pub(crate) fn switched_to(keep: &Entity<Dictation>, cx: &mut App) {
     let Some(hub) = cx.try_global::<SpeechGlobal>().map(|g| g.0.clone()) else {
         return;
     };
-    let owner = hub.read(cx).owner.clone();
-    if let Some(owner) = owner
-        && owner.entity_id() != keep.entity_id()
-    {
-        let _ = owner.update(cx, |d, cx| d.cancel(cx));
+    let others: Vec<_> = hub.update(cx, |s, _| {
+        s.members.retain(|m| m.upgrade().is_some());
+        s.members
+            .iter()
+            .filter(|m| m.entity_id() != keep.entity_id())
+            .cloned()
+            .collect()
+    });
+    for other in others {
+        let _ = other.update(cx, |d, cx| d.leave(cx));
     }
 }
 
@@ -154,7 +170,10 @@ impl Speech {
         // Supervisor-thread events are handled here, on the foreground.
         let drain = cx.spawn(async move |this, cx| {
             while let Ok(event) = rx.recv().await {
-                let Ok(owner) = this.read_with(cx, |s, _| s.owner.clone()) else {
+                let Ok(owner) = this.read_with(cx, |s, _| {
+                    s.answered(&event);
+                    s.owner.clone()
+                }) else {
                     break;
                 };
                 if let Some(owner) = owner {
@@ -167,6 +186,8 @@ impl Speech {
             store: Arc::new(store),
             loaded: None,
             owner: None,
+            members: Vec::new(),
+            unanswered_cancels: Default::default(),
             events,
             downloads: HashMap::new(),
             models: None,
@@ -228,6 +249,10 @@ impl Speech {
     }
 
     fn send(&self, request: Request) {
+        if request == Request::Cancel {
+            self.unanswered_cancels
+                .set(self.unanswered_cancels.get() + 1);
+        }
         match &self.transport {
             Transport::Helper(client) => {
                 if let Some(client) = client {
@@ -237,6 +262,24 @@ impl Speech {
             #[cfg(test)]
             Transport::Sink { send, .. } => send(request),
         }
+    }
+
+    /// Keeps count of the helper's replies to Cancel. `Listening` means it has
+    /// read everything sent before the latest Start, and the supervisor's own
+    /// errors mean the process went away with whatever was unread.
+    fn answered(&self, event: &Event) {
+        let n = &self.unanswered_cancels;
+        match event {
+            Event::Cancelled => n.set(n.get().saturating_sub(1)),
+            Event::Listening => n.set(0),
+            Event::Error { message, .. } if supervisor_error(message) => n.set(0),
+            _ => {}
+        }
+    }
+
+    /// An error now may be the tail of a take that was cancelled.
+    fn stale_errors(&self) -> bool {
+        self.unanswered_cancels.get() > 0
     }
 
     /// The model is gone or failed to load, so the next start loads again.
@@ -396,6 +439,8 @@ pub(crate) struct Dictation {
 impl Dictation {
     pub(crate) fn new(input: WeakEntity<Input>, cx: &mut Context<Self>) -> Self {
         let speech = speech(cx);
+        let me = cx.weak_entity();
+        speech.update(cx, |s, _| s.members.push(me));
         let observer = cx.observe(&speech, |_, _, cx| cx.notify());
         let me = cx.entity_id();
         // Closing the composer mid-dictation inserts nothing anywhere.
@@ -647,6 +692,14 @@ impl Dictation {
         self.set_state(DictationState::Idle, cx);
     }
 
+    /// Its session closed or another took over: anything running or prompting
+    /// stops, and nothing is inserted.
+    pub(crate) fn leave(&mut self, cx: &mut Context<Self>) {
+        if self.cancellable() {
+            self.cancel(cx);
+        }
+    }
+
     fn release(&mut self, cx: &mut Context<Self>) {
         self.active = false;
         self.sent = false;
@@ -682,6 +735,10 @@ impl Dictation {
                 self.insert(&text, cx);
                 self.set_state(DictationState::Idle, cx);
             }
+            Event::Error { message, .. }
+                if !self.heard
+                    && !supervisor_error(&message)
+                    && self.speech.read(cx).stale_errors() => {}
             Event::Error { kind, message } => {
                 self.release(cx);
                 if matches!(kind, ErrorKind::ModelMissing | ErrorKind::ModelLoad) {
@@ -709,7 +766,12 @@ impl Dictation {
         input.update(cx, |input, cx| {
             let before = &input.content[..input.selection().start];
             if let Some(text) = spaced(before, text) {
+                // What was said still lands if the field turned read-only
+                // meanwhile, as it would in the desktop app.
+                let read_only = input.read_only();
+                input.set_read_only(false);
                 input.replace_text(None, &text, cx);
+                input.set_read_only(read_only);
             }
         });
     }
@@ -1103,4 +1165,4 @@ impl Speech {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

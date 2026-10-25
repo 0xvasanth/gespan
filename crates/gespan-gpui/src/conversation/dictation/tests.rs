@@ -42,7 +42,7 @@ impl Harness {
 }
 
 /// Marks the model as downloaded without writing its real bytes.
-fn make_ready(dir: &Path, spec: &ModelSpec) {
+pub(crate) fn make_ready(dir: &Path, spec: &ModelSpec) {
     let model_dir = dir.join(spec.id);
     std::fs::create_dir_all(&model_dir).unwrap();
     for file in spec.files {
@@ -585,4 +585,123 @@ fn stop_and_cancel_controls_work_while_disabled(cx: &mut TestAppContext) {
     assert_eq!(state(&d, visual), DictationState::Idle);
     assert_eq!(h.take(), vec![Request::Cancel]);
     assert!(visual.debug_bounds("dictation-cancel").is_none());
+}
+
+#[gpui::test]
+fn finished_download_starts_where_it_was_asked(cx: &mut TestAppContext) {
+    let h = Harness::new(false, cx);
+    let (_input, d) = composer("", cx);
+    d.update(cx, |d, cx| d.toggle(cx));
+    cx.run_until_parked();
+    assert_eq!(state(&d, cx), DictationState::NeedsModel);
+    // Already on disk, so the download verifies and ends without a request.
+    make_ready(h._dir.path(), &catalog::PARAKEET_V2_EN);
+    d.update(cx, |d, cx| d.download(cx));
+    cx.run_until_parked();
+    assert_eq!(state(&d, cx), DictationState::Starting);
+    let requests = h.take();
+    assert!(
+        is_load(&requests[0]) && is_start(&requests[1]),
+        "{requests:?}"
+    );
+}
+
+#[gpui::test]
+fn finished_download_does_not_start_in_a_session_left_behind(cx: &mut TestAppContext) {
+    let h = Harness::new(false, cx);
+    let (_left_input, left) = composer("", cx);
+    let (other_input, other) = composer("", cx);
+    left.update(cx, |d, cx| d.toggle(cx));
+    cx.run_until_parked();
+    assert_eq!(state(&left, cx), DictationState::NeedsModel);
+    make_ready(h._dir.path(), &catalog::PARAKEET_V2_EN);
+    left.update(cx, |d, cx| d.download(cx));
+
+    // The user moves to another session before the download finishes, and
+    // dictates there.
+    cx.update(|cx| switched_to(&other, cx));
+    assert_eq!(state(&left, cx), DictationState::Idle);
+    cx.run_until_parked();
+    listen(&h, &other, cx);
+    h.take();
+
+    // The left session neither opens the mic nor ends the other take.
+    assert_eq!(state(&left, cx), DictationState::Idle);
+    assert_eq!(state(&other, cx), DictationState::Listening);
+    h.emit(final_text("still mine"), cx);
+    assert!(h.take().is_empty());
+    assert_eq!(text(&other_input, cx), "still mine");
+}
+
+#[gpui::test]
+fn final_lands_even_if_the_composer_turned_read_only(cx: &mut TestAppContext) {
+    let h = Harness::new(true, cx);
+    let (input, d) = composer("keep", cx);
+    listen(&h, &d, cx);
+    d.update(cx, |d, cx| d.stop(cx));
+    input.update(cx, |i, _| i.set_read_only(true));
+    h.emit(final_text("this"), cx);
+    assert_eq!(text(&input, cx), "keep this");
+    // The field stays read-only for the user.
+    assert!(input.read_with(cx, |i, _| i.read_only()));
+}
+
+#[gpui::test]
+fn stale_error_does_not_end_next_attempt(cx: &mut TestAppContext) {
+    let h = Harness::new(true, cx);
+    let (input, d) = composer("", cx);
+    listen(&h, &d, cx);
+    d.update(cx, |d, cx| d.cancel(cx));
+    d.update(cx, |d, cx| d.toggle(cx));
+    cx.run_until_parked();
+
+    // The abandoned take's decode failed before the helper read its Cancel.
+    h.emit(
+        Event::Error {
+            kind: ErrorKind::Engine,
+            message: "The speech model couldn't decode.".into(),
+        },
+        cx,
+    );
+    assert_eq!(state(&d, cx), DictationState::Starting);
+    assert!(d.read_with(cx, |d, _| d.error().is_none()));
+
+    // Once that Cancel is answered, this attempt's own errors count.
+    h.emit(Event::Cancelled, cx);
+    h.emit(
+        Event::Error {
+            kind: ErrorKind::MicrophoneDenied,
+            message: DENIED.into(),
+        },
+        cx,
+    );
+    assert_eq!(state(&d, cx), DictationState::Idle);
+    assert_eq!(
+        d.read_with(cx, |d, _| d.error().map(|e| e.to_string())),
+        Some(DENIED.into())
+    );
+    assert_eq!(text(&input, cx), "");
+}
+
+#[gpui::test]
+fn a_crash_is_reported_even_with_a_cancel_unanswered(cx: &mut TestAppContext) {
+    let h = Harness::new(true, cx);
+    let (_input, d) = composer("", cx);
+    listen(&h, &d, cx);
+    d.update(cx, |d, cx| d.cancel(cx));
+    d.update(cx, |d, cx| d.toggle(cx));
+    cx.run_until_parked();
+    // The helper died with the Cancel unread; the supervisor says so.
+    h.emit(
+        Event::Error {
+            kind: ErrorKind::Engine,
+            message: "Dictation stopped unexpectedly.".into(),
+        },
+        cx,
+    );
+    assert_eq!(state(&d, cx), DictationState::Idle);
+    assert_eq!(
+        d.read_with(cx, |d, _| d.error().map(|e| e.to_string())),
+        Some("Dictation stopped unexpectedly.".into())
+    );
 }
