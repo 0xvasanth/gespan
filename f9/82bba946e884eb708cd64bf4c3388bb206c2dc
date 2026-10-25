@@ -1,0 +1,45 @@
+src/features/board/ui/BoardCardItem.tsx
+  s_938a6e0c93b076::t_afd8086f32ae70 114-119,126-132
+  s_938a6e0c93b076::t_76221f1555ca54 14
+crates/gespan-gpui/src/board/tickets.rs
+  s_938a6e0c93b076::t_c22c4dc051a03e 45,51,56,58-62
+src/features/board/ui/BoardCardItem.test.ts
+  s_938a6e0c93b076::t_76221f1555ca54 1-94
+crates/gespan-gpui/src/board/tests.rs
+  s_938a6e0c93b076::t_c22c4dc051a03e 1980-2005
+crates/gespan-gpui/src/board/detail/view.rs
+  s_938a6e0c93b076::t_c22c4dc051a03e 371-377
+src/features/board/model/ticketCards.ts
+  s_938a6e0c93b076::t_afd8086f32ae70 6,20-51,55-56,70
+crates/board-store/src/ops.rs
+  s_938a6e0c93b076::t_c2b2f0055f41be 676-678
+  s_938a6e0c93b076::t_e747e366e49109 1
+src/features/board/ui/CardDetail.tsx
+  s_938a6e0c93b076::t_afd8086f32ae70 8,172,182-196,289
+crates/gespan-gpui/src/board/card.rs
+  s_938a6e0c93b076::t_c22c4dc051a03e 188
+src/features/board/model/ticketCards.test.ts
+  s_938a6e0c93b076::t_76221f1555ca54 10-14,48-51,60-62,66,68,117-161
+src/features/board/ui/CardDetail.test.ts
+  s_938a6e0c93b076::t_76221f1555ca54 382-465
+  s_938a6e0c93b076::t_9e66fb8187e86c 262
+crates/board-store/src/links.rs
+  s_938a6e0c93b076::t_c2b2f0055f41be 55-57,150-157,183,201,228,247-248,259-260,268-269,449-495
+  s_938a6e0c93b076::t_7a2d6e5aab5b82 496
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f982bba946e884eb708cd64bf4c3388bb206c2dc",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
