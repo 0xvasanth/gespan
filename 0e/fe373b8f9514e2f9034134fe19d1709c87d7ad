@@ -1,0 +1,29 @@
+crates/board-store/src/card_ops.rs
+  s_938a6e0c93b076::t_f00bd95e2c5f87 278-281,302-306,325-328
+  s_938a6e0c93b076::t_269c9142bdce05 1-277,282-301,307-324,329-427
+crates/board-store/src/lib.rs
+  s_938a6e0c93b076::t_269c9142bdce05 7,20,41-43
+crates/board-store/src/subtasks.rs
+  s_938a6e0c93b076::t_269c9142bdce05 134-181
+crates/board-store/tests/v3.rs
+  s_938a6e0c93b076::t_334979245859ad 837-968,970-1025,1029-1099,1102-1149,1152,1155-1183
+  s_938a6e0c93b076::t_c7b5b78c93b0b7 1100-1101
+  s_938a6e0c93b076::t_f00bd95e2c5f87 1026-1028,1150-1151,1153-1154
+  s_938a6e0c93b076::t_0985814de6ac12 969
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0efe373b8f9514e2f9034134fe19d1709c87d7ad",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
