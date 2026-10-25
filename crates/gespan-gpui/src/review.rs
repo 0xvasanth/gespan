@@ -1381,8 +1381,8 @@ impl ReviewPane {
             return;
         };
         let cwd = PathBuf::from(cwd);
-        let (id, work): (SharedString, Box<dyn FnOnce() -> Result<(), String> + Send>) = match event
-        {
+        type Work = Box<dyn FnOnce() -> Result<(), String> + Send>;
+        let (action, id, work): (&str, SharedString, Work) = match event {
             DiffEvent::Comment(text) => {
                 cx.emit(ReviewEvent::Comment(text.clone()));
                 return;
@@ -1393,6 +1393,7 @@ impl ReviewPane {
                 };
                 let stage = matches!(event, DiffEvent::StageFile(_));
                 (
+                    if stage { "stage_file" } else { "discard_file" },
                     id.clone(),
                     Box::new(move || {
                         if stage {
@@ -1417,6 +1418,7 @@ impl ReviewPane {
                     return;
                 };
                 (
+                    "stage_hunk",
                     id.clone(),
                     Box::new(move || scm::stage_contents(&cwd, &relative, next.as_bytes())),
                 )
@@ -1437,7 +1439,7 @@ impl ReviewPane {
                 });
                 this.git.update(cx, |git, cx| git.changed(cx));
                 if let Err(error) = result {
-                    log_error(&error);
+                    log_error(action, &error);
                 }
             });
         })
@@ -1753,8 +1755,8 @@ impl ReviewPane {
     }
 }
 
-fn log_error(error: &str) {
-    eprintln!("gespan: review action failed: {error}");
+fn log_error(action: &str, error: &str) {
+    tracing::error!(action, error, "review action failed");
 }
 
 /// Polls every future to completion; the workers share one queue.
@@ -1899,6 +1901,18 @@ fn centered() -> gpui::Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_actions_log_their_action_and_error() {
+        let lines = crate::log_capture::capture(|| log_error("stage_hunk", "index locked"));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let line = &lines[0];
+        assert_eq!(line["level"], "error");
+        assert_eq!(line["target"], "gespan_gpui::review");
+        assert_eq!(line["message"], "review action failed");
+        assert_eq!(line["fields"]["action"], "stage_hunk");
+        assert_eq!(line["fields"]["error"], "index locked");
+    }
     struct Repo(PathBuf);
     impl Repo {
         fn new() -> Self {

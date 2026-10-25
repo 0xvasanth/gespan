@@ -1,7 +1,8 @@
-//! "Report an issue": the sheet, its exact preview of the bundle, and (until
-//! the intake exists) saving the zip and opening a prefilled GitHub issue.
-//! The preview draws [`Bundle::entries`] and saving writes [`Bundle::zip`],
-//! which is made from those entries, so what the user reads is what is saved.
+//! "Report an issue": the sheet, its exact preview of the bundle, and saving
+//! the zip for the user to send on, by email or in a prefilled GitHub issue.
+//! Gespan never sends it. The preview draws [`Bundle::entries`] and saving
+//! writes [`Bundle::zip`], which is made from those entries, so what the user
+//! reads is what is saved.
 use crate::{
     input::{self, Input},
     markdown::PILOT,
@@ -24,11 +25,13 @@ use std::{
 gpui::actions!(report, [ReportIssue]);
 
 pub(crate) const REQUIRED: &str = "Add a title and say what happened.";
-/// Shown while there is no report intake (`intake-api.md`, fallback).
-pub(crate) const PUBLIC_WARNING: &str = "No report service is connected yet. Saving puts the zip in your Downloads folder and opens a new GitHub issue in your browser. You need a GitHub account, and the zip you attach there will be public.";
+/// Says where each way out sends the report, and that nothing goes on its own.
+pub(crate) const PUBLIC_WARNING: &str = "Gespan never sends this by itself. Both buttons save the zip to your Downloads folder for you to attach. Email goes privately to the Gespan maintainer. A GitHub issue needs a GitHub account, and the issue and its zip are public.";
 const REPORT_JSON: &str = "report.json";
 const PREVIEW_LINE: f32 = 17.;
 const PREVIEW_HEIGHT: f32 = 220.;
+/// Typing settles this long before the zip is rebuilt.
+const REBUILD_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// What an entry point already knows: an error toast's text and the
 /// `event_id`s logged just before it, or a crash's location.
@@ -50,9 +53,11 @@ pub(crate) struct SheetContext {
     /// `None` until diagnostics have started: then there are no logs to add.
     pub log_dir: Option<PathBuf>,
     pub projects: Vec<String>,
-    /// More folders to hide behind `<project-N>`: archived projects and
-    /// session folders.
+    /// More folders to hide behind `<project-N>`: archived projects,
+    /// session folders and session worktree folders.
     pub other_folders: Vec<String>,
+    /// Where the scrubber reads this machine's known secrets.
+    pub machine: diagnostics::Machine,
     pub sessions_count: usize,
     pub version: String,
     pub channel: Channel,
@@ -73,6 +78,15 @@ pub(crate) enum ReportEvent {
     Close,
 }
 
+/// How the user sends the saved zip on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Via {
+    /// A `mailto:` link to the maintainer: private.
+    Email,
+    /// GitHub's prefilled bug form: public.
+    GitHub,
+}
+
 /// Scrubbed sources and the redactor that scrubbed them, gathered once.
 struct Gathered {
     system: System,
@@ -86,8 +100,8 @@ pub(crate) struct ReportSheet {
     pub(crate) steps: Entity<Input>,
     pub(crate) email: Entity<Input>,
     pub(crate) error: Option<String>,
-    /// The saved zip's file name, once saved.
-    pub(crate) saved: Option<String>,
+    /// The saved zip's file name and where it was sent on, once saved.
+    pub(crate) saved: Option<(String, Via)>,
     event_ids: Vec<String>,
     selection: Selection,
     stamp: Stamp,
@@ -96,8 +110,12 @@ pub(crate) struct ReportSheet {
     destination: Destination,
     reveal: Reveal,
     gathered: Option<Arc<Gathered>>,
-    /// The rebuild in flight; replacing it cancels the older one.
+    /// The rebuild waiting or in flight; replacing it cancels the older one
+    /// if it hasn't started.
     building: Option<gpui::Task<()>>,
+    /// Finished builds, so tests can tell a settled rebuild from many.
+    #[cfg(test)]
+    pub(crate) builds: usize,
     bundle: Option<Bundle>,
     shown: Option<String>,
     /// The shown entry's lines, split once per bundle.
@@ -142,12 +160,17 @@ impl ReportSheet {
         });
         let changes = [&title, &description, &steps, &email]
             .into_iter()
-            .map(|input| cx.subscribe(input, |this, _, _: &input::Changed, cx| this.rebuild(cx)))
+            .map(|input| {
+                cx.subscribe(input, |this, _, _: &input::Changed, cx| {
+                    this.rebuild_after(REBUILD_DELAY, cx)
+                })
+            })
             .collect();
         let SheetContext {
             log_dir,
             projects,
             other_folders,
+            machine,
             sessions_count,
             version,
             channel,
@@ -161,8 +184,11 @@ impl ReportSheet {
             cx.background_executor().spawn(async move {
                 gather(
                     log_dir,
-                    projects,
-                    other_folders,
+                    Hidden {
+                        projects,
+                        other_folders,
+                        machine,
+                    },
                     sessions_count,
                     &version,
                     channel,
@@ -194,6 +220,8 @@ impl ReportSheet {
             reveal,
             gathered: None,
             building: None,
+            #[cfg(test)]
+            builds: 0,
             bundle: None,
             shown: None,
             shown_lines: Arc::default(),
@@ -286,9 +314,14 @@ impl ReportSheet {
         }
     }
 
-    /// Rebuilds the zip in the background: deflating the log tail on every
-    /// keystroke would stall typing.
     fn rebuild(&mut self, cx: &mut Context<Self>) {
+        self.rebuild_after(std::time::Duration::ZERO, cx);
+    }
+
+    /// Rebuilds the zip in the background, once `delay` has passed without
+    /// another change: deflating the log tail on every keystroke would stall
+    /// typing. Save stays off until it's done.
+    fn rebuild_after(&mut self, delay: std::time::Duration, cx: &mut Context<Self>) {
         let Some(gathered) = self.gathered.clone() else {
             return;
         };
@@ -296,22 +329,31 @@ impl ReportSheet {
         let selection = self.selection.clone();
         let destination = self.destination;
         let stamp = self.stamp.clone();
-        let build = cx.background_executor().spawn(async move {
-            diagnostics::build(
-                &report,
-                &gathered.system,
-                &gathered.sources,
-                &selection,
-                destination,
-                &gathered.redactor,
-                &stamp,
-                diagnostics::MAX_BUNDLE_BYTES,
-            )
-        });
         self.building = Some(cx.spawn(async move |this, cx| {
-            let built = build.await;
+            if !delay.is_zero() {
+                cx.background_executor().timer(delay).await;
+            }
+            let built = cx
+                .background_executor()
+                .spawn(async move {
+                    diagnostics::build(
+                        &report,
+                        &gathered.system,
+                        &gathered.sources,
+                        &selection,
+                        destination,
+                        &gathered.redactor,
+                        &stamp,
+                        diagnostics::MAX_BUNDLE_BYTES,
+                    )
+                })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 this.building = None;
+                #[cfg(test)]
+                {
+                    this.builds += 1;
+                }
                 match built {
                     Ok(bundle) => {
                         this.bundle = Some(bundle);
@@ -355,9 +397,9 @@ impl ReportSheet {
         );
     }
 
-    /// Saves the previewed zip to Downloads, reveals it and opens the
-    /// prefilled GitHub issue.
-    pub(crate) fn submit(&mut self, cx: &mut Context<Self>) {
+    /// Saves the previewed zip to Downloads, reveals it and opens a prefilled
+    /// email or GitHub issue for the user to attach it to.
+    pub(crate) fn submit(&mut self, via: Via, cx: &mut Context<Self>) {
         if self.saving || self.building.is_some() {
             return;
         }
@@ -398,23 +440,30 @@ impl ReportSheet {
             let revealed = reveal(&path);
             Ok::<_, String>((path, revealed))
         });
-        let url = diagnostics::issue_url(&bundle.report());
+        let report = bundle.report();
         cx.spawn(async move |this, cx| {
-            let result = save.await;
+            let result = save.await.map(|(path, revealed)| {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                (name, revealed)
+            });
             // The zip is saved even if the sheet was closed meanwhile, so the
-            // issue still opens.
-            if result.is_ok() {
+            // email or issue still opens. The email names the saved file,
+            // which may carry a `-1` suffix.
+            if let Ok((name, _)) = &result {
+                let url = match via {
+                    Via::Email => diagnostics::mail_url(&report, name),
+                    Via::GitHub => diagnostics::issue_url(&report),
+                };
                 cx.update(|cx| cx.open_url(&url));
             }
             let _ = this.update(cx, |this, cx| {
                 this.saving = false;
                 match result {
-                    Ok((path, revealed)) => {
-                        this.saved = Some(
-                            path.file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_default(),
-                        );
+                    Ok((name, revealed)) => {
+                        this.saved = Some((name, via));
                         if let Err(error) = revealed {
                             this.error = Some(format!("Saved, but could not show it: {error}"));
                         }
@@ -441,11 +490,17 @@ fn row(name: &str, included: bool) -> Row {
     }
 }
 
+/// What the scrubber hides: these folders and this machine's secrets.
+struct Hidden {
+    projects: Vec<String>,
+    other_folders: Vec<String>,
+    machine: diagnostics::Machine,
+}
+
 /// Reads and scrubs everything a report can attach. Runs off the UI thread.
 fn gather(
     log_dir: Option<PathBuf>,
-    projects: Vec<String>,
-    other_folders: Vec<String>,
+    hidden: Hidden,
     sessions_count: usize,
     version: &str,
     channel: Channel,
@@ -460,10 +515,13 @@ fn gather(
     };
     let environment = Environment {
         providers,
-        projects_count: projects.len(),
+        projects_count: hidden.projects.len(),
         sessions_count,
     };
-    let redactor = diagnostics::redactor_for(&diagnostics::report_roots(&projects, &other_folders));
+    let redactor = diagnostics::redactor_for(
+        &hidden.machine,
+        &diagnostics::report_roots(&hidden.projects, &hidden.other_folders),
+    );
     let sources = match &log_dir {
         Some(dir) => {
             diagnostics::collect(dir, &redactor, chrono::Utc::now(), Some(environment), None)
@@ -656,7 +714,12 @@ impl Render for ReportSheet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let max_height = (window.viewport_size().height.as_f32() - 96.).max(240.);
         let attach = self.selection.attach;
-        let actions = if let Some(saved) = &self.saved {
+        let busy = self.saving || self.building.is_some() || self.bundle.is_none();
+        let actions = if let Some((saved, via)) = &self.saved {
+            let opened = match via {
+                Via::Email => "email",
+                Via::GitHub => "GitHub issue",
+            };
             div()
                 .flex()
                 .flex_col()
@@ -669,7 +732,7 @@ impl Render for ReportSheet {
                         .text_size(px(12.))
                         .text_color(content(0.8))
                         .child(format!(
-                            "Saved {saved} to Downloads. Drag it into the GitHub issue that just opened."
+                            "Saved {saved} to Downloads. Drag it into the {opened} that just opened."
                         )),
                 )
                 .child(
@@ -685,17 +748,26 @@ impl Render for ReportSheet {
                 .gap_2()
                 .child(crate::modal::disabled(
                     crate::modal::primary_button(
-                        "report-save",
+                        "report-email",
                         if self.saving {
                             "Saving…"
                         } else {
-                            "Save zip and open GitHub"
+                            "Save zip and email"
                         },
                     )
+                    .debug_selector(|| "report-email".into())
                     .w_full()
                     .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
-                    self.saving || self.building.is_some() || self.bundle.is_none(),
+                    .on_click(cx.listener(|this, _, _, cx| this.submit(Via::Email, cx))),
+                    busy,
+                ))
+                .child(crate::modal::disabled(
+                    crate::modal::ghost_button("report-save", "Save zip and open GitHub")
+                        .debug_selector(|| "report-save".into())
+                        .w_full()
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| this.submit(Via::GitHub, cx))),
+                    busy,
                 ))
                 .child(
                     crate::modal::ghost_button("report-cancel", "Cancel")
@@ -873,6 +945,7 @@ mod tests {
             log_dir: Some(f.logs.clone()),
             projects: vec!["/Users/alice/code".into()],
             other_folders: Vec::new(),
+            machine: diagnostics::Machine::default(),
             sessions_count: 3,
             version: "0.1.0".into(),
             channel: Channel::Release,
@@ -912,7 +985,40 @@ mod tests {
                 .description
                 .update(cx, |input, cx| input.set_text(what.into(), cx));
         });
+        settle(cx);
+    }
+
+    /// Lets typing settle and the rebuild finish.
+    fn settle(cx: &mut TestAppContext) {
+        cx.executor().advance_clock(REBUILD_DELAY);
         cx.run_until_parked();
+    }
+
+    /// Each keystroke used to deflate the whole log tail again; typing now
+    /// settles first, and a keystroke cancels the build it supersedes.
+    #[gpui::test]
+    fn typing_quickly_builds_the_zip_once(cx: &mut TestAppContext) {
+        let f = fixture();
+        let sheet = sheet(&f, Destination::Fallback, cx);
+        type_into(&sheet, cx, "W", "x");
+        let before = sheet.read_with(cx, |sheet, _| sheet.builds);
+        for title in ["Wo", "Wor", "Work"] {
+            sheet.update(cx, |sheet, cx| {
+                sheet
+                    .title
+                    .update(cx, |input, cx| input.set_text(title.into(), cx));
+            });
+            cx.run_until_parked();
+        }
+        sheet.read_with(cx, |sheet, _| {
+            assert_eq!(sheet.builds, before, "nothing built while typing");
+            assert_eq!(sheet.bundle().unwrap().report()["title"], "W");
+        });
+        settle(cx);
+        sheet.read_with(cx, |sheet, _| {
+            assert_eq!(sheet.builds, before + 1);
+            assert_eq!(sheet.bundle().unwrap().report()["title"], "Work");
+        });
     }
 
     #[gpui::test]
@@ -979,7 +1085,7 @@ mod tests {
         sheet.read_with(cx, |sheet, _| {
             assert_eq!(sheet.bundle().unwrap().report()["title"], "Before")
         });
-        cx.run_until_parked();
+        settle(cx);
         sheet.read_with(cx, |sheet, _| {
             assert_eq!(sheet.bundle().unwrap().report()["title"], "After")
         });
@@ -1009,7 +1115,7 @@ mod tests {
         let f = fixture();
         let sheet = sheet(&f, Destination::Fallback, cx);
         type_into(&sheet, cx, "t", "d");
-        sheet.update(cx, |sheet, cx| sheet.submit(cx));
+        sheet.update(cx, |sheet, cx| sheet.submit(Via::GitHub, cx));
         drop(sheet);
         cx.run_until_parked();
         assert!(
@@ -1078,7 +1184,7 @@ mod tests {
         let f = fixture();
         let sheet = sheet(&f, Destination::Fallback, cx);
         type_into(&sheet, cx, "  ", "Something broke");
-        sheet.update(cx, |sheet, cx| sheet.submit(cx));
+        sheet.update(cx, |sheet, cx| sheet.submit(Via::GitHub, cx));
         cx.run_until_parked();
         sheet.read_with(cx, |sheet, _| {
             assert_eq!(sheet.error.as_deref(), Some(REQUIRED));
@@ -1103,7 +1209,7 @@ mod tests {
         let sheet = sheet(&f, Destination::Fallback, cx);
         type_into(&sheet, cx, "Worktree fails", "Nothing happens.");
         let previewed = sheet.read_with(cx, |sheet, _| sheet.bundle().unwrap().clone());
-        sheet.update(cx, |sheet, cx| sheet.submit(cx));
+        sheet.update(cx, |sheet, cx| sheet.submit(Via::GitHub, cx));
         cx.run_until_parked();
         let saved = f.downloads.join(&previewed.file_name);
         assert_eq!(std::fs::read(&saved).unwrap(), previewed.zip());
@@ -1120,8 +1226,112 @@ mod tests {
                 .exists()
         );
         sheet.read_with(cx, |sheet, _| {
-            assert_eq!(sheet.saved.as_deref(), Some(previewed.file_name.as_str()));
+            assert_eq!(
+                sheet.saved,
+                Some((previewed.file_name.clone(), Via::GitHub))
+            );
             assert!(sheet.error.is_none());
         });
+    }
+
+    /// The opened `mailto:` link's address, subject and body.
+    fn opened_mail(cx: &TestAppContext) -> (String, String, String) {
+        let opened = cx.opened_url().expect("opens the mail app");
+        let url = url::Url::parse(&opened).unwrap();
+        assert_eq!(url.scheme(), "mailto", "{opened}");
+        let pairs: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        (
+            url.path().to_owned(),
+            pairs["subject"].clone(),
+            pairs["body"].clone(),
+        )
+    }
+
+    #[gpui::test]
+    fn email_saves_the_previewed_zip_and_opens_a_mail_to_the_maintainer(cx: &mut TestAppContext) {
+        let f = fixture();
+        let sheet = sheet(&f, Destination::Fallback, cx);
+        type_into(&sheet, cx, "Worktree fails", "Nothing happens.");
+        let previewed = sheet.read_with(cx, |sheet, _| sheet.bundle().unwrap().clone());
+        sheet.update(cx, |sheet, cx| sheet.submit(Via::Email, cx));
+        cx.run_until_parked();
+        let saved = f.downloads.join(&previewed.file_name);
+        assert_eq!(std::fs::read(&saved).unwrap(), previewed.zip());
+        assert_eq!(*f.revealed.lock().unwrap(), vec![saved]);
+        let (to, subject, body) = opened_mail(cx);
+        assert_eq!(to, "itparser%2Bgespan@gmail.com");
+        assert_eq!(subject, "[Gespan 0.1.0] Worktree fails");
+        assert!(
+            body.starts_with("What happened:\r\nNothing happens.\r\n"),
+            "{body}"
+        );
+        assert!(body.contains("OS: macOS 15.1 (aarch64)"), "{body}");
+        assert!(body.contains("Event IDs: 0b7f1c2e-5a4d-4e8b-9f3a-2c6d1e0a9b47"));
+        assert!(body.contains(&previewed.file_name), "{body}");
+        // The crash record now lives in the saved zip, as with GitHub.
+        assert!(
+            !gespan_core::diagnostics::crash_dir(&f.logs)
+                .join("2026-10-25T09-15-30.123Z.json")
+                .exists()
+        );
+        sheet.read_with(cx, |sheet, _| {
+            assert_eq!(sheet.saved, Some((previewed.file_name.clone(), Via::Email)));
+            assert!(sheet.error.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn email_names_the_file_actually_saved(cx: &mut TestAppContext) {
+        let f = fixture();
+        let sheet = sheet(&f, Destination::Fallback, cx);
+        type_into(&sheet, cx, "t", "d");
+        let name = sheet.read_with(cx, |sheet, _| sheet.bundle().unwrap().file_name.clone());
+        std::fs::create_dir_all(&f.downloads).unwrap();
+        std::fs::write(f.downloads.join(&name), b"an older report").unwrap();
+        sheet.update(cx, |sheet, cx| sheet.submit(Via::Email, cx));
+        cx.run_until_parked();
+        let suffixed = name.replace(".zip", "-1.zip");
+        let (_, _, body) = opened_mail(cx);
+        assert!(
+            body.contains(&format!("attach {suffixed} from")),
+            "the email must point at the new zip, not the older one: {body}"
+        );
+    }
+
+    #[gpui::test]
+    fn email_keeps_scrubbed_text_out_of_the_mail(cx: &mut TestAppContext) {
+        let f = fixture();
+        let sheet = sheet(&f, Destination::Fallback, cx);
+        type_into(
+            &sheet,
+            cx,
+            "git fails in /Users/alice/code",
+            "token sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789",
+        );
+        sheet.update(cx, |sheet, cx| sheet.submit(Via::Email, cx));
+        cx.run_until_parked();
+        let (_, subject, body) = opened_mail(cx);
+        for text in [&subject, &body] {
+            assert!(
+                !text.contains("alice") && !text.contains("sk-ant"),
+                "{text}"
+            );
+        }
+        assert!(subject.ends_with("git fails in <project-1>"), "{subject}");
+    }
+
+    #[gpui::test]
+    fn email_also_needs_a_title_and_what_happened(cx: &mut TestAppContext) {
+        let f = fixture();
+        let sheet = sheet(&f, Destination::Fallback, cx);
+        type_into(&sheet, cx, "A title", "   ");
+        sheet.update(cx, |sheet, cx| sheet.submit(Via::Email, cx));
+        cx.run_until_parked();
+        sheet.read_with(cx, |sheet, _| {
+            assert_eq!(sheet.error.as_deref(), Some(REQUIRED));
+            assert!(sheet.saved.is_none());
+        });
+        assert!(!f.downloads.exists());
+        assert!(cx.opened_url().is_none());
     }
 }

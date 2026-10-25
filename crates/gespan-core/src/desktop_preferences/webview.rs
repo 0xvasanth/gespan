@@ -149,9 +149,10 @@ impl DesktopPreferences {
             match Self::read_chromium_localstorage(&path) {
                 Ok(loaded) if loaded.available => return loaded,
                 Ok(_) => {}
-                Err(error) => eprintln!(
-                    "Could not read desktop WebView2 preferences from {}: {error}",
-                    path.display()
+                Err(error) => tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "could not read WebView2 preferences"
                 ),
             }
         }
@@ -564,8 +565,21 @@ mod tests {
             assert_eq!(warning["fields"]["what"], "WebView2 localStorage");
             assert!(!warning["fields"]["panic"].as_str().unwrap().is_empty());
 
-            let preferences = DesktopPreferences::load_webview2_from(root.path());
+            let mut preferences = DesktopPreferences::default();
+            let logged = crate::diagnostics::test_capture(|| {
+                preferences = DesktopPreferences::load_webview2_from(root.path());
+            });
             assert!(!preferences.is_available());
+            let failure = logged
+                .iter()
+                .find(|line| line["message"] == "could not read WebView2 preferences")
+                .expect("the failed read is logged");
+            assert_eq!(failure["level"], "warn");
+            assert!(failure["fields"]["path"]
+                .as_str()
+                .unwrap()
+                .ends_with("leveldb"));
+            assert!(!failure["fields"]["error"].as_str().unwrap().is_empty());
             let mut workspace = serde_json::json!({
                 "projects": ["/code/native"],
                 "project": "/code/native",

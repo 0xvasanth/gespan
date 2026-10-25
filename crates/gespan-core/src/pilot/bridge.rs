@@ -65,6 +65,10 @@ impl Drop for Server {
 }
 impl Server {
     pub fn start() -> Result<(Self, async_channel::Receiver<Call>), String> {
+        let _span = tracing::info_span!("mcp_start", server = "pilot").entered();
+        Self::open().inspect_err(|error| tracing::warn!(%error, "could not start a tool server"))
+    }
+    fn open() -> Result<(Self, async_channel::Receiver<Call>), String> {
         let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
         listener.set_nonblocking(true).map_err(|e| e.to_string())?;
         let endpoint = listener

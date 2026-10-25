@@ -507,7 +507,9 @@ impl Connections {
             jobs.insert(id.clone(), job.clone());
         }
         let state = self.clone();
+        let span = tracing::info_span!("ssh_connect", reconnect = existing.is_some(), upgrade);
         std::thread::spawn(move || {
+            let _span = span.entered();
             let prepared = (|| -> Result<(StoredMachine, Tunnel), String> {
                 let askpass = job.askpass()?;
                 let mut target = target;

@@ -36,7 +36,7 @@ pub(crate) fn install(db_path: PathBuf, pilots: Option<WeakEntity<Pilots>>, cx: 
                     match Service::open(&db_path) {
                         Ok(opened) => service = Some(opened),
                         Err(error) => {
-                            eprintln!("gespan: board unavailable: {error}");
+                            tracing::warn!(%error, "board unavailable");
                             continue;
                         }
                     }
@@ -46,7 +46,7 @@ pub(crate) fn install(db_path: PathBuf, pilots: Option<WeakEntity<Pilots>>, cx: 
                 };
                 for (kind, id, event) in calls {
                     if let Err(error) = on_linked_work(service, kind, &id, event) {
-                        eprintln!("gespan: moving board cards failed: {error}");
+                        tracing::warn!(%error, ?kind, %id, "moving board cards failed");
                     }
                 }
             }

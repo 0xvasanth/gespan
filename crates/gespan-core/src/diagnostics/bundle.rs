@@ -126,8 +126,8 @@ const LOGS: &str = "logs.jsonl";
 const COUNTERS: &str = "counters.json";
 const ENVIRONMENT: &str = "environment.json";
 
-/// The consent record used before the user has answered anything
-/// (`docs/diagnostics/consent.md#defaults`).
+/// The `consent` field of `report.json`: always this default, because
+/// Gespan has no sending choices (`docs/diagnostics/bundle-format.md`).
 pub fn default_consent() -> Value {
     json!({
         "consent_version": 1,

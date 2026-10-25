@@ -18,12 +18,13 @@ pub use bundle::{
     MAX_BUNDLE_BYTES,
 };
 pub use collect::{
-    build_channel, collect, environment_json, installed_providers, locale_from, log_tail,
-    pending_crashes, redactor_for, report_roots, running_config, running_log_dir, system,
-    Environment, PendingCrash, TAIL_LINES,
+    build_channel, collect, environment_json, installed_providers, known_secrets, locale_from,
+    log_tail, pending_crashes, redactor_for, report_roots, running_config, running_log_dir, system,
+    Environment, Machine, PendingCrash, TAIL_LINES,
 };
 pub use fallback::{
-    downloads_dir, issue_url, remove_crashes, save_bundle, CUT_NOTE, ISSUE_FORM, MAX_URL_BYTES,
+    downloads_dir, issue_url, mail_url, remove_crashes, save_bundle, CUT_NOTE, ISSUE_FORM,
+    MAX_MAILTO_BYTES, MAX_URL_BYTES, REPORT_EMAIL,
 };
 pub use json::{filter, json_layer, JsonLayer};
 pub use panic::{install_panic_hook, panic_message, write_crash};
@@ -140,6 +141,12 @@ fn log_caught_panic(what: &str, payload: &(dyn Any + Send)) {
 #[cfg(test)]
 pub(crate) fn test_capture(body: impl FnOnce()) -> Vec<serde_json::Value> {
     json::tests::capture(None, body).lines()
+}
+
+/// [`test_capture`] with a `GESPAN_LOG`-style filter, for `debug` lines.
+#[cfg(test)]
+pub(crate) fn test_capture_with(spec: &str, body: impl FnOnce()) -> Vec<serde_json::Value> {
+    json::tests::capture(Some(spec), body).lines()
 }
 
 #[cfg(test)]

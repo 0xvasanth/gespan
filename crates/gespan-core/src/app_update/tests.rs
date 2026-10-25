@@ -121,3 +121,67 @@ fn unsigned_tauri_production_feed_is_never_accepted_as_native() {
     )
     .is_err());
 }
+/// Nothing listens on the discard port, so a request fails at once, offline.
+const UNREACHABLE: &str = "https://127.0.0.1:9/native-preview/latest.json";
+fn fixture_update() -> Update {
+    verify_feed(FEED, &config("0.16.0-preview.1"), "darwin-aarch64-app")
+        .unwrap()
+        .unwrap()
+}
+fn installation() -> Installation {
+    Installation {
+        kind: PackageKind::App,
+        path: PathBuf::from("/Applications/Gespan Native.app"),
+    }
+}
+#[test]
+fn a_failed_update_check_is_logged() {
+    let config = Config::new(UNREACHABLE, KEY, "0.16.0").unwrap();
+    let mut checked = Ok(None);
+    let logged = crate::diagnostics::test_capture(|| checked = check(&config, &installation()));
+    assert!(checked.is_err());
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["level"], "warn");
+    assert_eq!(logged[0]["span"], "app_update");
+    assert_eq!(logged[0]["fields"]["step"], "check");
+    assert!(!logged[0]["fields"]["error"].as_str().unwrap().is_empty());
+}
+#[test]
+fn a_failed_download_is_logged_with_its_version() {
+    let mut update = fixture_update();
+    update.artifact.url = UNREACHABLE.into();
+    let mut downloaded = None;
+    let logged = crate::diagnostics::test_capture(|| {
+        downloaded = Some(update.download(|_, _| {}).map(|_| ()));
+    });
+    assert!(downloaded.unwrap().is_err());
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["span"], "app_update");
+    assert_eq!(logged[0]["fields"]["step"], "download");
+    assert_eq!(logged[0]["fields"]["version"], "0.16.0-preview.2");
+}
+#[test]
+fn a_tampered_install_is_logged_with_its_version() {
+    let update = fixture_update();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("package");
+    std::fs::write(&path, b"tampered package").unwrap();
+    let download = Download {
+        _directory: directory,
+        path,
+    };
+    let mut installed = None;
+    let logged = crate::diagnostics::test_capture(|| {
+        installed = Some(update.install(download, &installation()).map(|_| ()));
+    });
+    assert!(installed.unwrap().is_err());
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["level"], "warn");
+    assert_eq!(logged[0]["span"], "app_update");
+    assert_eq!(logged[0]["fields"]["step"], "install");
+    assert_eq!(logged[0]["fields"]["version"], "0.16.0-preview.2");
+    assert!(logged[0]["fields"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("signature verification failed"));
+}

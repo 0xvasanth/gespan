@@ -310,6 +310,11 @@ fn request(url: &str) -> Result<ureq::Response, String> {
 }
 
 pub fn check(config: &Config, installation: &Installation) -> Result<Option<Update>, String> {
+    let _span = tracing::info_span!("app_update", step = "check").entered();
+    check_feed(config, installation)
+        .inspect_err(|error| tracing::warn!(%error, "update check failed"))
+}
+fn check_feed(config: &Config, installation: &Installation) -> Result<Option<Update>, String> {
     let response = request(&config.endpoint)?;
     if response.status() == 204 {
         return Ok(None);
@@ -327,7 +332,15 @@ pub fn check(config: &Config, installation: &Installation) -> Result<Option<Upda
 }
 
 impl Update {
-    pub fn download(&self, mut progress: impl FnMut(u64, Option<u64>)) -> Result<Download, String> {
+    pub fn download(&self, progress: impl FnMut(u64, Option<u64>)) -> Result<Download, String> {
+        let _span = self.span("download").entered();
+        self.fetch(progress)
+            .inspect_err(|error| tracing::warn!(%error, "update download failed"))
+    }
+    fn span(&self, step: &'static str) -> tracing::Span {
+        tracing::info_span!("app_update", step, version = %self.version)
+    }
+    fn fetch(&self, mut progress: impl FnMut(u64, Option<u64>)) -> Result<Download, String> {
         let response = request(&self.artifact.url)?;
         let total = response
             .header("Content-Length")
@@ -392,8 +405,10 @@ impl Update {
         download: Download,
         installation: &Installation,
     ) -> Result<Installed, String> {
+        let _span = self.span("install").entered();
         // Reverify immediately before installation, including cached downloads.
-        self.verify_file(&download.path)?;
-        install::install(self, download, installation)
+        self.verify_file(&download.path)
+            .and_then(|()| install::install(self, download, installation))
+            .inspect_err(|error| tracing::warn!(%error, "update install failed"))
     }
 }

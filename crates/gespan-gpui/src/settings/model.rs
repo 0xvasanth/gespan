@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) enum Section {
     #[default]
     General,
+    Diagnostics,
     Connections,
     Appearance,
     Keybindings,
@@ -25,6 +26,7 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
         "App",
         &[
             Section::General,
+            Section::Diagnostics,
             Section::Connections,
             Section::Appearance,
             Section::Keybindings,
@@ -47,8 +49,9 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
 ];
 
 impl Section {
-    pub(crate) const ALL: [Section; 12] = [
+    pub(crate) const ALL: [Section; 13] = [
         Section::General,
+        Section::Diagnostics,
         Section::Connections,
         Section::Appearance,
         Section::Keybindings,
@@ -64,6 +67,7 @@ impl Section {
     pub(crate) fn id(self) -> &'static str {
         match self {
             Section::General => "general",
+            Section::Diagnostics => "diagnostics",
             Section::Connections => "connections",
             Section::Appearance => "appearance",
             Section::Keybindings => "keybindings",
@@ -80,6 +84,7 @@ impl Section {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Section::General => "General",
+            Section::Diagnostics => "Diagnostics",
             Section::Connections => "Connections",
             Section::Appearance => "Appearance",
             Section::Keybindings => "Keybindings",
@@ -97,6 +102,9 @@ impl Section {
         match self {
             Section::General => {
                 "The build you are running, how Gespan reaches you, and the panels it shows."
+            }
+            Section::Diagnostics => {
+                "Report a problem, your logs, and the failures counted on this machine."
             }
             Section::Connections => "Connect your machines and run agents remotely through SSH.",
             Section::Appearance => {
@@ -126,6 +134,9 @@ impl Section {
     fn keywords(self) -> &'static str {
         match self {
             Section::General => "version update sounds notifications notes board rail",
+            Section::Diagnostics => {
+                "diagnostics crash report issue bug email github logs folder copy failures counters errors"
+            }
             Section::Connections => "ssh remote host machine server environment always on",
             Section::Appearance => {
                 "theme dark light color accent glass blur zoom scale wallpaper rail sidebar"
@@ -153,6 +164,7 @@ impl Section {
     pub(crate) fn icon(self) -> &'static str {
         match self {
             Section::General => "sliders",
+            Section::Diagnostics => "bug",
             Section::Connections => "internet",
             Section::Appearance => "palette",
             Section::Keybindings => "keyboard",

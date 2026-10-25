@@ -335,7 +335,7 @@ impl Shell {
         let mode = gespan_keep_awake::Mode::parse(&self.workspace.preferences.keep_awake)
             .unwrap_or_default();
         if let Err(error) = self.keep_awake.update(mode, !self.busy_sessions.is_empty()) {
-            eprintln!("gespan: keep screen awake failed: {error}");
+            tracing::warn!(%error, ?mode, "keep screen awake failed");
         }
     }
     pub(super) fn set_preferences(
@@ -684,6 +684,7 @@ mod tests {
         assert!(visual.debug_bounds("sidebar-content").is_none());
         for (section, selector) in Section::ALL.into_iter().zip([
             "settings-nav-general",
+            "settings-nav-diagnostics",
             "settings-nav-connections",
             "settings-nav-appearance",
             "settings-nav-keybindings",

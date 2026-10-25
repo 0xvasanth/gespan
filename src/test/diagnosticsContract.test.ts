@@ -234,154 +234,8 @@ describe("bundle format", () => {
   });
 });
 
-const CONSENT = "docs/diagnostics/consent.md";
-
-/** The `consent_version` a document declares as current. */
-const currentConsentVersion = (md: string) =>
-  Number(/current `consent_version` is \*\*(\d+)\*\*/i.exec(md)?.[1]);
-
-describe("consent", () => {
-  const md = doc(CONSENT);
-  const version = currentConsentVersion(md);
-
-  it("declares a current consent_version", () => {
-    expect(Number.isInteger(version) && version >= 1).toBe(true);
-  });
-
-  it("stores a record with the five contract fields at the current version", () => {
-    expect(requiredFields(md, "Consent record").sort()).toEqual(
-      ["consent_version", "crash_reports", "decided_at", "include_logs", "metrics"].sort(),
-    );
-    expectRequired(md, "Consent record", exampleIn(md, "Consent record"));
-    expect(exampleIn(md, "Consent record").consent_version).toBe(version);
-  });
-
-  it("defaults to sending nothing: ask for crashes, metrics off, logs included, undecided", () => {
-    expect(exampleIn(md, "Defaults")).toEqual({
-      consent_version: version,
-      crash_reports: "ask",
-      metrics: false,
-      include_logs: true,
-      decided_at: null,
-    });
-  });
-
-  it("offers three prompt buttons, and dismissing the prompt is the same as Ask me each time", () => {
-    const [header, rows] = table(md, "First-run prompt");
-    const choice = (label: string) => {
-      const row = rows.find((r) => r[0].includes(label));
-      expect(row, label).toBeDefined();
-      return Object.fromEntries(header.slice(1).map((h, i) => [h, row![i + 1]]));
-    };
-    const buttons = ["Send crash reports automatically", "Ask me each time", "No thanks"];
-    expect(new Set(buttons.map((b) => choice(b)["`crash_reports`"]))).toEqual(
-      new Set(["`\"always\"`", "`\"ask\"`", "`\"never\"`"]),
-    );
-    expect(choice("Dismissed")).toEqual(choice("Ask me each time"));
-    for (const row of rows) expect(row[header.indexOf("`metrics`")], row[0]).toBe("`false`");
-  });
-
-  it("keeps the choices a re-prompt doesn't ask about", () => {
-    const bump = section(md, "When `consent_version` changes");
-    expect(bump).toMatch(/keeps\s+the\s+stored\s+`metrics`\s+and\s+`include_logs`/);
-  });
-
-  it("matches the consent_version recorded in the bundle example", () => {
-    const report = exampleIn(doc(BUNDLE), "report.json") as { consent: Json };
-    expect(report.consent.consent_version).toBe(version);
-  });
-});
-
-const INTAKE = "docs/diagnostics/intake-api.md";
-
-describe("intake API", () => {
-  const md = doc(INTAKE);
-
-  it("authenticates with a public per-build ingest key, never a secret", () => {
-    const conventions = section(md, "Conventions");
-    expect(conventions).toContain("`X-Gespan-Ingest-Key`");
-    expect(conventions).toMatch(/not a secret/i);
-  });
-
-  it("sends the bundle zip to POST /v1/reports and answers with report_id and issue_url", () => {
-    expect(section(md, "POST /v1/reports")).toMatch(/application\/zip/);
-    const response = exampleIn(md, "Report response");
-    expectRequired(md, "Report response", response);
-    expect(Object.keys(response).sort()).toEqual(["issue_url", "report_id"]);
-    expect(String(response.issue_url)).toMatch(/^https:\/\/github\.com\/0xvasanth\/gespan\/issues\/\d+$/);
-  });
-
-  it("takes a daily aggregate at POST /v1/metrics that cannot be tied to a person or a report", () => {
-    const request = exampleIn(md, "Metrics request");
-    expectRequired(md, "Metrics request", request);
-    expect(request).not.toHaveProperty("install_id");
-    expect(request).not.toHaveProperty("submission_id");
-    expect(request, "one version per send can't describe a day that spans an update").not.toHaveProperty("version");
-    expect(request.day).toMatch(/^\d{4}-\d\d-\d\d$/);
-    expect(request.consent_version).toBe(currentConsentVersion(doc(CONSENT)));
-    for (const c of request.counters as Json[]) {
-      expect(Object.keys(c).sort()).toEqual(["app_version", "count", "error_kind", "name"]);
-      expect(c.error_kind === null || /^[a-z_]+$/.test(String(c.error_kind))).toBe(true);
-      expect(Number.isInteger(c.count)).toBe(true);
-    }
-  });
-
-  it("documents the rejections both apps must handle, each with a fixed error code", () => {
-    const [, rows] = table(md, "Errors");
-    const statuses = rows.map((r) => r[0]);
-    for (const status of ["400", "401", "413", "415", "429", "5xx"]) expect(statuses).toContain(status);
-    for (const r of rows) expect(r[1]).toMatch(/^`[a-z_]+`$/);
-    const error = exampleIn(md, "Errors") as { error: Json };
-    expect(Object.keys(error.error).sort()).toEqual(["code", "message"]);
-    expect(rows.map((r) => r[1])).toContain(`\`${error.error.code}\``);
-  });
-
-  it("strips the contact email and install ID from a bundle the fallback makes public", () => {
-    const fallback = section(md, "Fallback when the intake can't be reached");
-    expect(fallback).toMatch(/without\s+`contact_email`\s+and\s+`install_id`/);
-    const row = (name: string) =>
-      section(doc(BUNDLE), "report.json")
-        .split("\n")
-        .find((l) => l.startsWith(`| \`${name}\``));
-    for (const name of ["contact_email", "install_id"]) {
-      expect(row(name), name).toMatch(/left\s+out\s+of\s+a\s+fallback\s+bundle/i);
-    }
-    const privacyFallback = /\*\*Fallback\*\*[^]*?(?=\n- \*\*|\n## )/.exec(doc(PRIVACY))?.[0];
-    expect(privacyFallback).toMatch(/without\s+your\s+contact\s+email\s+or\s+install\s+ID/i);
-  });
-
-  it("stops retrying a background send before the intake forgets its send_id", () => {
-    expect(section(md, "Errors")).toMatch(/at\s+most\s+24\s+hours\s+after\s+the\s+first\s+attempt/);
-    expect(section(md, "Metrics request")).toMatch(/keeps\s+it\s+for\s+24\s+hours/);
-  });
-
-  it("rate-limits by IP and ingest key, which every request has", () => {
-    const [, rows] = table(md, "Errors");
-    expect(rows.find((r) => r[0] === "429")?.[2]).toMatch(/IP\s+address\s+and\s+ingest\s+key/);
-  });
-
-  it("maps os values to the bug report form's dropdown labels", () => {
-    const form = doc(".github/ISSUE_TEMPLATE/bug_report.yml");
-    const options = /id: os\n[^]*?options:\n((?:\s+- .+\n)+)/.exec(form)![1]
-      .split("\n")
-      .map((l) => l.replace(/^\s+- /, "").trim())
-      .filter(Boolean);
-    const fallback = section(md, "Fallback when the intake can't be reached");
-    const mapped = [...fallback.matchAll(/`(macos|linux|windows)` → `([^`]+)`/g)].map((m) => m[2]);
-    expect(mapped.sort()).toEqual([...options].sort());
-  });
-
-  it("never opens the browser fallback for a send the user did not start", () => {
-    expect(section(md, "Errors")).toMatch(/background sends[^.]*never\s+use\s+the\s+fallback/i);
-  });
-
-  it("tags error-tracker events with the report_id so a deletion request can find them", () => {
-    expect(section(md, "What the intake does with a report")).toMatch(/tagged with[^.]*`report_id`/);
-  });
-});
-
 const PRIVACY = "docs/privacy.md";
-const CONTRACT_DOCS = [LOG_SCHEMA, BUNDLE, CONSENT, INTAKE, PRIVACY];
+const CONTRACT_DOCS = [LOG_SCHEMA, BUNDLE, PRIVACY];
 
 /** GitHub's anchor for a heading: lowercase, punctuation dropped, spaces to dashes. */
 const slug = (heading: string) =>
@@ -404,46 +258,50 @@ describe("privacy notice", () => {
     }
   });
 
-  it("states the same consent_version as the consent wording", () => {
-    expect(currentConsentVersion(md)).toBe(currentConsentVersion(doc(CONSENT)));
+  it("promises that Gespan never sends anything by itself", () => {
+    expect(md).toMatch(/\*\*Gespan never sends diagnostics by itself\.\*\*/);
+    expect(md).not.toMatch(/consent_version|install ID|intake|opt in to something/i);
   });
 
-  it("quotes the first-run prompt exactly as consent.md words it, and says no answer turns on metrics", () => {
-    const heading = /^> \*\*(.+)\*\*$/m.exec(section(doc(CONSENT), "First-run prompt"))?.[1];
-    expect(heading).toBeTruthy();
-    const asked = section(md, "How you are asked");
-    expect(asked).toContain(`"${heading}"`);
-    expect(asked).toMatch(/none\s+of\s+the\s+answers\s+turns\s+on\s+error\s+metrics/i);
+  it("names both ways a user sends a report on, and says which one is public", () => {
+    const where = section(md, "Where it goes");
+    expect(where).toContain('"Save zip and email"');
+    expect(where).toContain('"Save zip and open GitHub"');
+    expect(where).toMatch(/\*\*public\*\*/);
+  });
+
+  it("gives the same report address as the app", () => {
+    const address = /REPORT_EMAIL: &str = "([^"]+)"/.exec(
+      doc("crates/gespan-core/src/diagnostics/fallback.rs"),
+    )?.[1];
+    expect(address).toBeTruthy();
+    expect(section(md, "Where it goes")).toContain(`\`${address}\``);
   });
 
   it("says what every report carries even without attached diagnostics", () => {
-    const sent = section(md, "Sent only with your consent");
-    for (const item of ["install ID", "locale", "consent choices", "app and OS versions"]) {
-      expect(sent).toContain(item);
+    const report = section(md, "In a report you save");
+    for (const item of ["locale", "app and OS versions", "IDs of the\nlog lines"]) {
+      expect(report).toContain(item);
     }
   });
 
-  it("prunes crash records even when they are never sent", () => {
+  it("prunes crash records even when they are never reported", () => {
     const [, rows] = table(md, "How long it is kept");
     expect(rows.find((r) => r[0] === "Crash records" && r[1] === "Your machine")?.[2]).toMatch(/7 days/);
   });
 
-  it("gives automatic crash sends a findable report ID", () => {
-    expect(section(md, "How to have it deleted")).toContain("sent-reports.json");
-  });
-
-  it("names every deny-listed field as never sent", () => {
-    const never = section(md, "What is never sent");
+  it("names every deny-listed field as never collected", () => {
+    const never = section(md, "What is never collected");
     for (const field of DENY_LIST) expect(never).toContain(`\`${field}\``);
   });
 
   it("gives the retention limits the contract sets", () => {
     const kept = section(md, "How long it is kept");
-    for (const limit of ["7 days", "50 MB", "90 days"]) expect(kept).toContain(limit);
+    for (const limit of ["7 days", "50 MB", "30 days"]) expect(kept).toContain(limit);
   });
 
   it("links to each diagnostics contract document", () => {
-    for (const path of [LOG_SCHEMA, BUNDLE, CONSENT, INTAKE]) {
+    for (const path of [LOG_SCHEMA, BUNDLE]) {
       expect(md).toContain(`](${path.replace("docs/", "")}`);
     }
   });

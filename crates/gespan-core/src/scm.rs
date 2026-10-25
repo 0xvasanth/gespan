@@ -159,91 +159,125 @@ pub fn history(cwd: &Path, limit: Option<u32>) -> Result<History, String> {
 
 /// Stage a changed file or folder (`git add`).
 pub fn stage_file(cwd: &Path, relative: &str) -> Result<(), String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command("git_stage_file", json!({"cwd":cwd,"relative":relative}));
-    }
-    let root = expand_home(cwd);
-    let relative = resolve_repo_path(&root, relative)?;
-    git_checked(&root, &["--literal-pathspecs", "add", "--", &relative])
+    action("stage_file", || {
+        if remote_workspace::is_remote(cwd) {
+            return remote_workspace::command(
+                "git_stage_file",
+                json!({"cwd":cwd,"relative":relative}),
+            );
+        }
+        let root = expand_home(cwd);
+        let relative = resolve_repo_path(&root, relative)?;
+        git_checked(&root, &["--literal-pathspecs", "add", "--", &relative])
+    })
 }
 
 /// Unstage a file or folder (`git restore --staged`).
 pub fn unstage_file(cwd: &Path, relative: &str) -> Result<(), String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command(
-            "git_unstage_file",
-            json!({"cwd":cwd,"relative":relative}),
-        );
-    }
-    let root = expand_home(cwd);
-    let relative = resolve_repo_path(&root, relative)?;
-    git_checked(
-        &root,
-        &[
-            "--literal-pathspecs",
-            "restore",
-            "--staged",
-            "--",
-            &relative,
-        ],
-    )
+    action("unstage_file", || {
+        if remote_workspace::is_remote(cwd) {
+            return remote_workspace::command(
+                "git_unstage_file",
+                json!({"cwd":cwd,"relative":relative}),
+            );
+        }
+        let root = expand_home(cwd);
+        let relative = resolve_repo_path(&root, relative)?;
+        git_checked(
+            &root,
+            &[
+                "--literal-pathspecs",
+                "restore",
+                "--staged",
+                "--",
+                &relative,
+            ],
+        )
+    })
 }
 
 /// Discard unstaged changes so the file matches the index (or delete if untracked).
 pub fn discard_file(cwd: &Path, relative: &str) -> Result<(), String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command(
-            "git_discard_file",
-            json!({"cwd":cwd,"relative":relative}),
-        );
-    }
-    discard_file_for(&expand_home(cwd), relative)
+    action("discard_file", || {
+        if remote_workspace::is_remote(cwd) {
+            return remote_workspace::command(
+                "git_discard_file",
+                json!({"cwd":cwd,"relative":relative}),
+            );
+        }
+        discard_file_for(&expand_home(cwd), relative)
+    })
 }
 
 /// Stage every changed file in the repo.
 pub fn stage_all(cwd: &Path) -> Result<(), String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command("git_stage_all", json!({"cwd":cwd}));
-    }
-    git_checked(&expand_home(cwd), &["add", "-A", "--", "."])
+    action("stage_all", || {
+        if remote_workspace::is_remote(cwd) {
+            return remote_workspace::command("git_stage_all", json!({"cwd":cwd}));
+        }
+        git_checked(&expand_home(cwd), &["add", "-A", "--", "."])
+    })
 }
 
 /// Unstage every staged file.
 pub fn unstage_all(cwd: &Path) -> Result<(), String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command("git_unstage_all", json!({"cwd":cwd}));
-    }
-    git_checked(&expand_home(cwd), &["restore", "--staged", "--", "."])
+    action("unstage_all", || {
+        if remote_workspace::is_remote(cwd) {
+            return remote_workspace::command("git_unstage_all", json!({"cwd":cwd}));
+        }
+        git_checked(&expand_home(cwd), &["restore", "--staged", "--", "."])
+    })
 }
 
 /// Discard every unstaged change (restore tracked files; delete untracked).
 pub fn discard_all(cwd: &Path) -> Result<(), String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command("git_discard_all", json!({"cwd":cwd}));
-    }
-    let root = expand_home(cwd);
-    let files: Vec<String> = diff_index_with(&root, true)
-        .files
-        .into_iter()
-        .filter(|file| file.unstaged)
-        .map(|file| file.relative)
-        .collect();
-    for relative in files {
-        discard_file_for(&root, &relative)?;
-    }
-    Ok(())
+    action("discard_all", || {
+        if remote_workspace::is_remote(cwd) {
+            return remote_workspace::command("git_discard_all", json!({"cwd":cwd}));
+        }
+        let root = expand_home(cwd);
+        let files: Vec<String> = diff_index_with(&root, true)
+            .files
+            .into_iter()
+            .filter(|file| file.unstaged)
+            .map(|file| file.relative)
+            .collect();
+        for relative in files {
+            discard_file_for(&root, &relative)?;
+        }
+        Ok(())
+    })
 }
 
 /// Create a commit from the current index, or rewrite HEAD with it when `amend` is set.
 pub fn commit(cwd: &Path, message: &str, amend: bool) -> Result<(), String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command(
-            "git_commit",
-            json!({"cwd":cwd,"message":message,"amend":amend}),
-        );
-    }
-    let extra: &[&str] = if amend { &["--amend"] } else { &[] };
-    commit_args(&expand_home(cwd), message, extra)
+    action("commit", || {
+        if remote_workspace::is_remote(cwd) {
+            return remote_workspace::command(
+                "git_commit",
+                json!({"cwd":cwd,"message":message,"amend":amend}),
+            );
+        }
+        let extra: &[&str] = if amend { &["--amend"] } else { &[] };
+        commit_args(&expand_home(cwd), message, extra)
+    })
+}
+
+/// A Git change the user asked for, in a span, with its failure logged once.
+fn action(op: &'static str, run: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    let _span = tracing::info_span!("git_action", op).entered();
+    run().inspect_err(
+        |error| tracing::warn!(error = %without_url_credentials(error), "git action failed"),
+    )
+}
+
+/// Git can echo a remote URL with its `user:token@` part; the log never keeps it,
+/// up to the last `@` before the host, so a password holding `@` goes too.
+fn without_url_credentials(text: &str) -> std::borrow::Cow<'_, str> {
+    static USERINFO: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    USERINFO
+        .get_or_init(|| regex::Regex::new(r#"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s'"]+@"#).unwrap())
+        .replace_all(text, "$1")
 }
 
 /// Full message (subject and body) of the commit at HEAD.
@@ -257,31 +291,37 @@ pub fn head_message(cwd: &Path) -> Result<String, String> {
 
 /// Push the current branch to its upstream, or set upstream on first push.
 pub fn push(cwd: &Path) -> Result<(), String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command("git_push", json!({"cwd":cwd}));
-    }
-    push_for(&expand_home(cwd))
+    action("push", || {
+        if remote_workspace::is_remote(cwd) {
+            return remote_workspace::command("git_push", json!({"cwd":cwd}));
+        }
+        push_for(&expand_home(cwd))
+    })
 }
 
 /// Fast-forward the current branch from its upstream.
 pub fn pull(cwd: &Path) -> Result<(), String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command("git_pull", json!({"cwd":cwd}));
-    }
-    git_checked(&expand_home(cwd), &["pull", "--ff-only"])
+    action("pull", || {
+        if remote_workspace::is_remote(cwd) {
+            return remote_workspace::command("git_pull", json!({"cwd":cwd}));
+        }
+        git_checked(&expand_home(cwd), &["pull", "--ff-only"])
+    })
 }
 
 /// Pull incoming commits, then push local commits.
 pub fn sync(cwd: &Path) -> Result<(), String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command("git_sync", json!({"cwd":cwd}));
-    }
-    let root = expand_home(cwd);
-    if git_stdout(&root, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_some() {
-        git_checked(&root, &["pull", "--no-edit", "--ff"]).map_err(with_signing_hint)?;
-        return git_checked(&root, &["push"]);
-    }
-    push_for(&root)
+    action("sync", || {
+        if remote_workspace::is_remote(cwd) {
+            return remote_workspace::command("git_sync", json!({"cwd":cwd}));
+        }
+        let root = expand_home(cwd);
+        if git_stdout(&root, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_some() {
+            git_checked(&root, &["pull", "--no-edit", "--ff"]).map_err(with_signing_hint)?;
+            return git_checked(&root, &["push"]);
+        }
+        push_for(&root)
+    })
 }
 
 /// Staged diff (or unstaged vs HEAD if nothing is staged) for commit text generation.
@@ -1119,7 +1159,7 @@ fn gh_run(root: &Path, args: &[&str]) -> Result<String, String> {
     } else if !stdout.is_empty() {
         stdout
     } else {
-        format!("gh {} failed", args.join(" "))
+        gh_failed(args)
     };
     Err(detail)
 }
@@ -1191,7 +1231,22 @@ fn git_checked(root: &Path, args: &[&str]) -> Result<(), String> {
     if !msg.is_empty() {
         return Err(msg.to_string());
     }
-    Err(format!("git {} failed", args.join(" ")))
+    Err(git_failed(args))
+}
+
+/// Names only the subcommand: the arguments can hold a commit message or file names.
+fn git_failed(args: &[&str]) -> String {
+    format!("git {} failed", crate::git::subcommand(args))
+}
+
+/// Names only the command, such as `pr create`, never its flag values.
+fn gh_failed(args: &[&str]) -> String {
+    let command: Vec<_> = args
+        .iter()
+        .take_while(|arg| !arg.starts_with('-'))
+        .copied()
+        .collect();
+    format!("gh {} failed", command.join(" "))
 }
 
 fn git_run(root: &Path, args: &[&str]) -> Option<String> {

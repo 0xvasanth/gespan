@@ -91,9 +91,11 @@ impl Job {
         let mut inner = self.inner.lock().unwrap();
         // Counted once it is saved; a cancelled connection is not a failure.
         let result = if self.cancelled.load(Ordering::Relaxed) {
+            tracing::info!("SSH connection cancelled");
             Err("Connection cancelled".into())
         } else {
             crate::diagnostics::metrics::track("remote.ssh_connect", action())
+                .inspect_err(|error| tracing::warn!(%error, "SSH connection failed"))
         };
         inner.view.done = true;
         inner.view.prompt = None;
@@ -567,6 +569,13 @@ impl Tunnels {
         drop(old);
     }
     pub fn endpoint(&self, id: &str, target: &SshTarget) -> Result<TunnelLease, String> {
+        self.endpoint_with(id, || Tunnel::start(target, None, None))
+    }
+    fn endpoint_with(
+        &self,
+        id: &str,
+        start: impl FnOnce() -> Result<Tunnel, String>,
+    ) -> Result<TunnelLease, String> {
         let slot = self.slots().entry(id.into()).or_default().clone();
         let mut current = slot.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(tunnel) = current.tunnel.as_mut() {
@@ -584,7 +593,19 @@ impl Tunnels {
                 return Err(error.clone());
             }
         }
-        match Tunnel::start(target, None, None) {
+        let reopened = {
+            let _span = tracing::info_span!("ssh_connect", background = true).entered();
+            // An offline machine fails every backoff window; only a new failure is a warning.
+            let previous = current.failure.as_ref().map(|(_, error)| error);
+            start().inspect_err(|error| {
+                if previous == Some(error) {
+                    tracing::debug!(%error, "SSH connection still failing");
+                } else {
+                    tracing::warn!(%error, "SSH connection failed");
+                }
+            })
+        };
+        match reopened {
             Ok(tunnel) => {
                 let endpoint = format!("http://127.0.0.1:{}", tunnel.port);
                 current.failure = None;
@@ -936,5 +957,129 @@ mod tests {
         job.answer(&prompt.id, "yes".into()).unwrap();
         assert_eq!(thread.join().unwrap(), Some("yes".into()));
         assert!(job.answer(&prompt.id, "yes".into()).is_err());
+    }
+
+    #[test]
+    fn a_failed_ssh_job_logs_at_warn() {
+        let job = Job::new();
+        let logged = crate::diagnostics::test_capture(|| {
+            let _span =
+                tracing::info_span!("ssh_connect", reconnect = false, upgrade = false).entered();
+            job.complete(|| Err("Permission denied".into()));
+        });
+        assert_eq!(job.view().error.as_deref(), Some("Permission denied"));
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "warn");
+        assert_eq!(logged[0]["span"], "ssh_connect");
+        assert_eq!(
+            logged[0]["fields"],
+            serde_json::json!({"reconnect": false, "upgrade": false, "error": "Permission denied"})
+        );
+    }
+
+    #[test]
+    fn a_cancelled_ssh_job_logs_at_info() {
+        let job = Job::new();
+        job.cancel();
+        let logged = crate::diagnostics::test_capture(|| {
+            job.complete(|| unreachable!("a cancelled job does not save its machine"));
+        });
+        assert_eq!(job.view().error.as_deref(), Some("Connection cancelled"));
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "info");
+        assert_eq!(logged[0]["message"], "SSH connection cancelled");
+    }
+
+    #[test]
+    fn a_failed_connect_is_logged_and_counted_once_and_a_cancel_is_neither() {
+        use crate::diagnostics::metrics::{capture, ErrorKind};
+        let job = Job::new();
+        let (logged, counts) = capture(|| {
+            crate::diagnostics::test_capture(|| job.complete(|| Err("Permission denied".into())))
+        });
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "warn");
+        let counts: Vec<_> = counts
+            .into_iter()
+            .map(|c| (c.name, c.kind, c.count))
+            .collect();
+        assert_eq!(
+            counts,
+            [("remote.ssh_connect".into(), Some(ErrorKind::Auth), 1)]
+        );
+
+        let job = Job::new();
+        job.cancel();
+        let (logged, counts) = capture(|| {
+            crate::diagnostics::test_capture(|| {
+                job.complete(|| unreachable!("a cancelled job does not save its machine"))
+            })
+        });
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "info");
+        assert!(counts.is_empty(), "{counts:?}");
+    }
+
+    #[test]
+    fn a_failed_background_reconnect_is_logged_once_per_attempt() {
+        let tunnels = Tunnels::default();
+        let mut attempts = 0;
+        let logged = crate::diagnostics::test_capture(|| {
+            let mut refused = || {
+                attempts += 1;
+                Err::<Tunnel, _>("SSH connection failed: Connection refused.".to_string())
+            };
+            assert!(tunnels.endpoint_with("machine", &mut refused).is_err());
+            // Within the backoff the cached failure is returned without a new attempt.
+            assert!(tunnels.endpoint_with("machine", &mut refused).is_err());
+        });
+        assert_eq!(attempts, 1);
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "warn");
+        assert_eq!(logged[0]["span"], "ssh_connect");
+        assert_eq!(
+            logged[0]["fields"],
+            serde_json::json!({
+                "background": true,
+                "error": "SSH connection failed: Connection refused."
+            })
+        );
+    }
+
+    #[test]
+    fn an_offline_machine_warns_once_and_logs_repeats_at_debug() {
+        let tunnels = Tunnels::default();
+        let refused = || Err::<Tunnel, _>("SSH connection failed: Connection refused.".to_string());
+        // Each call stands for a remote request after the 10 s backoff has run out.
+        let after_backoff = || {
+            let slot = tunnels.slots()["machine"].clone();
+            let mut slot = slot.lock().unwrap();
+            let (when, _) = slot.failure.as_mut().unwrap();
+            *when = Instant::now() - Duration::from_secs(11);
+        };
+        let logged = crate::diagnostics::test_capture_with("gespan_core=debug", || {
+            assert!(tunnels.endpoint_with("machine", refused).is_err());
+            after_backoff();
+            assert!(tunnels.endpoint_with("machine", refused).is_err());
+            after_backoff();
+            assert!(tunnels.endpoint_with("machine", refused).is_err());
+            after_backoff();
+            // A different failure is news again.
+            assert!(tunnels
+                .endpoint_with("machine", || Err(
+                    "SSH connection failed: Host key changed.".into()
+                ))
+                .is_err());
+        });
+        let levels: Vec<_> = logged
+            .iter()
+            .map(|line| line["level"].as_str().unwrap())
+            .collect();
+        assert_eq!(levels, ["warn", "debug", "debug", "warn"], "{logged:?}");
+        assert!(logged.iter().all(|line| line["span"] == "ssh_connect"));
+        assert_eq!(
+            logged[3]["fields"]["error"],
+            "SSH connection failed: Host key changed."
+        );
     }
 }

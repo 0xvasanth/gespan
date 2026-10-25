@@ -37,6 +37,8 @@ mod image_lightbox;
 mod image_memory;
 mod inbox;
 mod input;
+#[cfg(test)]
+mod log_capture;
 mod markdown;
 mod markdown_model;
 #[cfg(target_os = "macos")]
@@ -187,6 +189,20 @@ fn exit(code: i32) -> ! {
     gespan_core::diagnostics::flush();
     std::process::exit(code)
 }
+/// Whether a fatal startup error also needs a stderr copy: the Dev channel's
+/// subscriber already prints readable lines there, Release logs only to file.
+fn echo_fatal(logging: bool, channel: gespan_core::diagnostics::Channel) -> bool {
+    !logging || channel != gespan_core::diagnostics::Channel::Dev
+}
+/// Logs a startup error that ends the process, and copies it to a terminal
+/// when logging isn't already printing it there.
+fn fatal(echo: bool, code: i32, message: &str) -> ! {
+    tracing::error!("{message}");
+    if echo {
+        eprintln!("{message}");
+    }
+    exit(code)
+}
 fn main() {
     if let Some(code) = gespan_core::remote::ssh_askpass::maybe_run() {
         exit(code);
@@ -279,9 +295,12 @@ fn main() {
         exit(2);
     }
     // Kept for the life of the process; exit paths flush through `exit`.
-    let _diagnostics = gespan_core::diagnostics::init(diagnostics_config(use_gespan))
+    let config = diagnostics_config(use_gespan);
+    let channel = config.channel;
+    let diagnostics = gespan_core::diagnostics::init(config)
         .inspect_err(|error| eprintln!("{error}"))
         .ok();
+    let echo = echo_fatal(diagnostics.is_some(), channel);
     let cwd = cwd
         .canonicalize()
         .unwrap_or(cwd)
@@ -299,10 +318,11 @@ fn main() {
             .zip(gespan_core::store::gespan_database().canonicalize().ok())
             .is_some_and(|(development, desktop)| development == desktop)
     {
-        eprintln!(
-            "The isolated development directory points at the desktop database. Choose a separate GESPAN_NATIVE_DATA_DIR."
+        fatal(
+            echo,
+            2,
+            "The isolated development directory points at the desktop database. Choose a separate GESPAN_NATIVE_DATA_DIR.",
         );
-        exit(2);
     }
     let mut db = if check_data {
         Store::read_gespan(&database)
@@ -310,8 +330,11 @@ fn main() {
         Store::open_gespan(&database)
     }
     .unwrap_or_else(|error| {
-        eprintln!("Cannot open {}: {error}", database.display());
-        exit(1);
+        fatal(
+            echo,
+            1,
+            &format!("Cannot open {}: {error}", database.display()),
+        )
     });
     if check_data {
         match db.sessions() {
@@ -320,10 +343,7 @@ fn main() {
                 database.display(),
                 sessions.len()
             ),
-            Err(error) => {
-                eprintln!("{error}");
-                exit(1);
-            }
+            Err(error) => fatal(echo, 1, &error),
         }
         return;
     }
@@ -339,7 +359,7 @@ fn main() {
             .join("checkpoints"),
     );
     let saved = db.ui_state().unwrap_or_else(|e| {
-        eprintln!("Cannot read workspace settings: {e}");
+        tracing::warn!(error = %e, "cannot read workspace settings");
         None
     });
     let existing_project = if use_gespan {
@@ -382,7 +402,11 @@ fn main() {
             t.append(&format!("Message {i:05} · Native transcript stress fixture.\nUnicode stays intact: 🙂 漢字 café. Scroll up while another session streams.\nThis message is local fixture data; sending resumes a new real provider conversation."));
         }
         db.write_rows(s.id, 0, &t.rows).unwrap();
-        eprintln!("Seeded {} rows in {:?}", t.rows.len(), started.elapsed());
+        tracing::info!(
+            rows = t.rows.len(),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "seeded the transcript fixture"
+        );
     }
     if chat_fixture {
         let s = db.create("codex", &cwd).expect("create chat fixture");
@@ -507,6 +531,63 @@ fn main() {
             .expect("open GPUI window");
             cx.activate(true);
         });
+}
+
+#[cfg(test)]
+mod startup_log_tests {
+    use super::*;
+    use gespan_core::diagnostics::Channel;
+
+    #[test]
+    fn fatal_errors_reach_a_terminal_exactly_once() {
+        // Without a subscriber, stderr is the only place the error can go.
+        assert!(echo_fatal(false, Channel::Dev));
+        assert!(echo_fatal(false, Channel::Release));
+        // Release logging writes only the file, so the terminal needs a copy.
+        assert!(echo_fatal(true, Channel::Release));
+        // Dev logging already prints readable lines on stderr.
+        assert!(!echo_fatal(true, Channel::Dev));
+    }
+
+    /// Error paths log through `tracing`; stderr is kept only for messages
+    /// written before logging starts, the `--check-data` report, `fatal`'s
+    /// terminal copy, and benchmark output in tests.
+    #[test]
+    fn no_new_eprintln_in_gespan_gpui() {
+        let allowed = [
+            ("main.rs", 6),
+            ("shell.rs", 1),
+            ("shell/sidebar_list.rs", 1),
+        ];
+        let needle = concat!("eprint", "ln!(");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut pending = vec![root.clone()];
+        let mut found = Vec::new();
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let count = std::fs::read_to_string(&path)
+                        .unwrap()
+                        .matches(needle)
+                        .count();
+                    if count > 0 {
+                        let relative = path.strip_prefix(&root).unwrap();
+                        found.push((relative.to_string_lossy().replace('\\', "/"), count));
+                    }
+                }
+            }
+        }
+        found.sort();
+        let mut allowed: Vec<_> = allowed.iter().map(|(f, n)| (f.to_string(), *n)).collect();
+        allowed.sort();
+        assert_eq!(
+            found, allowed,
+            "log error paths with tracing instead of stderr"
+        );
+    }
 }
 
 #[cfg(test)]

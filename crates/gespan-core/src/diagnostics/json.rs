@@ -216,6 +216,12 @@ pub(crate) mod tests {
         let out = Capture::default();
         let subscriber = tracing_subscriber::registry()
             .with(json_layer(out.clone(), "1.2.3").with_filter(filter(spec).0));
+        // With a single registered dispatcher, tracing-core computes a new
+        // callsite's interest from the registering thread's default only, so
+        // a parallel test with no subscriber would disable it for this one.
+        // A second, permanent dispatcher makes it consult every live one.
+        static ANCHOR: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+        ANCHOR.get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()));
         tracing::subscriber::with_default(subscriber, body);
         out
     }

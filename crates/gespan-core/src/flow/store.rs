@@ -74,7 +74,7 @@ fn readable<T: serde::de::DeserializeOwned>(
         let (id, raw) = row.map_err(err)?;
         match serde_json::from_str(&raw) {
             Ok(value) => out.push(value),
-            Err(error) => eprintln!("gespan: skipped unreadable {table} row {id}: {error}"),
+            Err(error) => tracing::warn!(table, id = %id, %error, "skipped an unreadable row"),
         }
     }
     Ok(out)
@@ -504,7 +504,15 @@ mod tests {
                 [],
             )
             .unwrap();
-        assert_eq!(s.list().unwrap(), vec![good.clone()]);
+        let mut listed = Ok(Vec::new());
+        let logged = crate::diagnostics::test_capture(|| listed = s.list());
+        assert_eq!(listed.unwrap(), vec![good.clone()]);
+        assert_eq!(logged.len(), 1);
+        assert_eq!(logged[0]["level"], "warn");
+        assert_eq!(logged[0]["message"], "skipped an unreadable row");
+        assert_eq!(logged[0]["fields"]["table"], "flows");
+        assert_eq!(logged[0]["fields"]["id"], "bad");
+        assert!(!logged[0]["fields"]["error"].as_str().unwrap().is_empty());
 
         let running = run("r1", &good, RunStatus::Running, 1);
         s.save_run(&running).unwrap();
