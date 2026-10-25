@@ -2187,6 +2187,8 @@ dependencies = [
  "log",
  "minisign-verify",
  "natpmp",
+ "proptest",
+ "pulldown-cmark",
  "quinn",
  "rand 0.10.3",
  "regex",

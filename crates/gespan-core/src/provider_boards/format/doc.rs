@@ -119,6 +119,115 @@ impl Inline {
     }
 }
 
+impl Preserved {
+    /// Readable text for the preserved content, shown next to it in
+    /// Markdown. It's derived from `raw` every time, so editing it changes
+    /// nothing.
+    pub(crate) fn fallback_text(&self) -> String {
+        let text = match self.source {
+            Source::Adf => serde_json::from_str::<serde_json::Value>(&self.raw)
+                .map(|node| adf_text(&node))
+                .unwrap_or_default(),
+            Source::Html => html_text(&self.raw),
+        };
+        collapse_whitespace(&text).trim().to_string()
+    }
+}
+
+fn adf_text(node: &serde_json::Value) -> String {
+    if let Some(text) = node.get("text").and_then(|t| t.as_str()) {
+        return text.to_string();
+    }
+    let attrs = node.get("attrs");
+    for key in ["text", "shortName", "url", "title"] {
+        if let Some(value) = attrs.and_then(|a| a.get(key)).and_then(|v| v.as_str()) {
+            return value.to_string();
+        }
+    }
+    let mut out = String::new();
+    for child in node
+        .get("content")
+        .and_then(|c| c.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let inline = child.get("type").and_then(|t| t.as_str()) == Some("text");
+        if !inline && !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(&adf_text(child));
+    }
+    out
+}
+
+fn html_text(html: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    decode_html_entities(&out)
+}
+
+/// Decodes named (the common ones) and numeric character references.
+/// Anything else is left as written.
+pub(crate) fn decode_html_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let decoded = rest[1..]
+            .find(';')
+            .filter(|end| *end <= 10)
+            .and_then(|end| {
+                let name = &rest[1..1 + end];
+                let c = match name {
+                    "amp" => Some('&'),
+                    "lt" => Some('<'),
+                    "gt" => Some('>'),
+                    "quot" => Some('"'),
+                    "apos" => Some('\''),
+                    "nbsp" => Some('\u{a0}'),
+                    _ => {
+                        let code = if let Some(hex) =
+                            name.strip_prefix("#x").or_else(|| name.strip_prefix("#X"))
+                        {
+                            u32::from_str_radix(hex, 16).ok()
+                        } else if let Some(dec) = name.strip_prefix('#') {
+                            dec.parse().ok()
+                        } else {
+                            None
+                        };
+                        code.map(|code| {
+                            char::from_u32(code)
+                                .filter(|c| *c != '\0')
+                                .unwrap_or('\u{FFFD}')
+                        })
+                    }
+                };
+                c.map(|c| (c, end + 2))
+            });
+        match decoded {
+            Some((c, len)) => {
+                out.push(c);
+                rest = &rest[len..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Markdown can't number a list past this.
 pub(crate) const MAX_LIST_START: u64 = 999_999_999;
 
@@ -254,9 +363,7 @@ fn merge_runs(inlines: Vec<Inline>) -> Vec<Inline> {
                     marks: previous_marks,
                 }) if *previous_marks == marks => {
                     previous.push_str(&text);
-                    if !marks.code {
-                        *previous = collapse_whitespace(previous);
-                    }
+                    *previous = collapse_whitespace(previous);
                 }
                 _ => out.push(Inline::Text { text, marks }),
             },
@@ -427,6 +534,23 @@ mod tests {
     }
 
     #[test]
+    fn merged_code_runs_still_collapse_spaces() {
+        let code = Marks {
+            code: true,
+            ..Marks::plain()
+        };
+        let doc = one(para(vec![
+            plain("x"),
+            Inline::text(" ", code.clone()),
+            Inline::text(" ", code.clone()),
+        ]));
+        assert_eq!(
+            doc.blocks,
+            vec![para(vec![plain("x"), Inline::text(" ", code)])]
+        );
+    }
+
+    #[test]
     fn emphasis_edges_move_spaces_outside() {
         let doc = one(para(vec![plain("x"), strong(" a "), plain("y")]));
         assert_eq!(
@@ -543,6 +667,39 @@ mod tests {
                     items: vec![vec![Block::Html("<div>x</div>".into())]],
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn fallback_text_reads_preserved_content() {
+        let fallback = |source, raw: &str| {
+            Preserved {
+                source,
+                raw: raw.into(),
+            }
+            .fallback_text()
+        };
+        assert_eq!(
+            fallback(
+                Source::Adf,
+                r#"{"type":"mention","attrs":{"id":"1","text":"@Alice"}}"#
+            ),
+            "@Alice"
+        );
+        assert_eq!(
+            fallback(
+                Source::Adf,
+                r#"{"type":"panel","content":[{"type":"paragraph","content":[{"type":"text","text":"Heads "},{"type":"text","text":"up"}]},{"type":"paragraph","content":[{"type":"text","text":"twice"}]}]}"#
+            ),
+            "Heads up twice"
+        );
+        assert_eq!(fallback(Source::Adf, "not json"), "");
+        assert_eq!(
+            fallback(
+                Source::Html,
+                "<table><tr><td>a &amp; b</td><td>&#x1F600;&bogus;</td></tr></table>"
+            ),
+            "a & b\u{1F600}&bogus;"
         );
     }
 

@@ -48,6 +48,7 @@ tracing-log = { version = "0.2", default-features = false, features = ["log-trac
 # Report an issue: the scrubber and the bundle zip.
 gespan-redact = { path = "../gespan-redact" }
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
@@ -70,5 +71,6 @@ libc = "0.2"
 
 [dev-dependencies]
 gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
+proptest = "1"
 tempfile = "3"
 gespan-redact = { path = "../gespan-redact", features = ["fixtures"] }

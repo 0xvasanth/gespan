@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3ac1eb256fe7d1be96dc49958e116b33720d2c5f4ef950a1475f985ec3734d92 # shrinks to doc = Doc { blocks: [Paragraph([Text { text: "&", marks: Marks { strong: false, em: false, strike: false, code: false, link: None } }])] }
+cc b80aece8cfa7319274eea01cb0e1167d51a8a7964976c21f7110ce029c2b5dda # shrinks to doc = Doc { blocks: [OrderedList { start: 0, items: [[Quote([Paragraph([Text { text: "  ", marks: Marks { strong: false, em: false, strike: false, code: true, link: None } }])])]] }] }
+cc 4fbe0f0ab45598f1c22883b2afb5d9965b7854f3c90f7ed0653fe80ea44862a2 # shrinks to doc = Doc { blocks: [BulletList([[BulletList([[Paragraph([Text { text: "  ", marks: Marks { strong: false, em: false, strike: false, code: true, link: None } }])]])]])] }
+cc 3f60137e9e63f7926be771a843197dfea17570c160d78d0128fe5157465d79a9 # shrinks to doc = Doc { blocks: [Quote([Paragraph([Html("<kbd>")])])] }

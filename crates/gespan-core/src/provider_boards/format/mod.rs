@@ -5,3 +5,6 @@
 //! mentions, styled text, …) is kept as the original ADF node or HTML element
 //! and written back unchanged, so a round trip never drops it.
 mod doc;
+mod markdown;
+#[cfg(test)]
+mod strategies;
