@@ -1,3 +1,4 @@
+use gespan_tracker_secrets::{self as secrets, Tracker};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -1998,30 +1999,26 @@ fn valid_repo_parts(project: &str, repo: &str) -> bool {
 
 // ---- Config storage ----
 
-fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join("azure-devops-config.json"))
+fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|error| error.to_string())
 }
 
 fn read_config(app: &AppHandle) -> Result<Option<AzureDevOpsConfig>, String> {
-    let path = config_path(app)?;
-    match fs::read_to_string(path) {
-        Ok(raw) => {
-            let mut config: AzureDevOpsConfig = serde_json::from_str(&raw)
-                .map_err(|_| "Azure DevOps settings are invalid".to_string())?;
-            config.url = normalize_azure_devops_url(&config.url)?;
-            config.token = config.token.trim().to_string();
-            if config.token.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(config))
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
+    read_config_in(&data_dir(app)?)
+}
+
+fn read_config_in(dir: &Path) -> Result<Option<AzureDevOpsConfig>, String> {
+    let Some(raw) = secrets::read(Tracker::AzureDevOps, dir)? else {
+        return Ok(None);
+    };
+    let mut config: AzureDevOpsConfig =
+        serde_json::from_str(&raw).map_err(|_| "Azure DevOps settings are invalid".to_string())?;
+    config.url = normalize_azure_devops_url(&config.url)?;
+    config.token = config.token.trim().to_string();
+    if config.token.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(config))
     }
 }
 
@@ -2030,43 +2027,12 @@ fn require_config(app: &AppHandle) -> Result<AzureDevOpsConfig, String> {
 }
 
 fn write_config(app: &AppHandle, config: &AzureDevOpsConfig) -> Result<(), String> {
-    let path = config_path(app)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
     let value = serde_json::to_string(config).map_err(|error| error.to_string())?;
-    write_secret_file(&path, &value)
+    secrets::write(Tracker::AzureDevOps, &data_dir(app)?, &value)
 }
 
 fn delete_config(app: &AppHandle) -> Result<(), String> {
-    let path = config_path(app)?;
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn write_secret_file(path: &Path, value: &str) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|error| error.to_string())?;
-        file.write_all(value.as_bytes())
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        fs::write(path, value).map_err(|error| error.to_string())
-    }
+    secrets::delete(Tracker::AzureDevOps, &data_dir(app)?)
 }
 
 fn expand_home(input: &str) -> PathBuf {
@@ -2087,6 +2053,27 @@ fn expand_home(input: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn secrets_dir() -> tempfile::TempDir {
+        gespan_tracker_secrets::testing::use_memory_keychain();
+        tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn read_config_in_migrates_the_saved_file() {
+        let dir = secrets_dir();
+        let saved = r#"{"url":"https://dev.azure.com/acme","token":"ado-secret"}"#;
+        std::fs::write(dir.path().join("azure-devops-config.json"), saved).unwrap();
+
+        let config = read_config_in(dir.path()).unwrap().unwrap();
+
+        assert_eq!(config.token, "ado-secret");
+        assert!(!dir.path().join("azure-devops-config.json").exists());
+        assert_eq!(
+            gespan_tracker_secrets::testing::stored(Tracker::AzureDevOps, dir.path()).as_deref(),
+            Some(saved)
+        );
+    }
     use serde_json::json;
 
     #[test]

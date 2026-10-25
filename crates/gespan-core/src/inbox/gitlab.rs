@@ -1,5 +1,5 @@
-//! Native adapter of the original Tauri Inbox provider. Network parsing and secret-file formats remain identical.
-use std::fs;
+//! Native adapter of the original Tauri Inbox provider. Network parsing and the saved credential format remain identical.
+use gespan_tracker_secrets::{self as secrets, Tracker};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -1006,26 +1006,18 @@ fn valid_project_path(path: &str) -> bool {
         })
 }
 
-fn config_path(app: &Path) -> Result<PathBuf, String> {
-    Ok(app.join("gitlab-config.json"))
-}
-
 fn read_config(app: &Path) -> Result<Option<GitlabConfig>, String> {
-    let path = config_path(app)?;
-    match fs::read_to_string(path) {
-        Ok(raw) => {
-            let mut config: GitlabConfig = serde_json::from_str(&raw)
-                .map_err(|_| "GitLab settings are invalid".to_string())?;
-            config.url = normalize_gitlab_url(&config.url)?;
-            config.token = config.token.trim().to_string();
-            if config.token.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(config))
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
+    let Some(raw) = secrets::read(Tracker::Gitlab, app)? else {
+        return Ok(None);
+    };
+    let mut config: GitlabConfig =
+        serde_json::from_str(&raw).map_err(|_| "GitLab settings are invalid".to_string())?;
+    config.url = normalize_gitlab_url(&config.url)?;
+    config.token = config.token.trim().to_string();
+    if config.token.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(config))
     }
 }
 
@@ -1034,43 +1026,12 @@ fn require_config(app: &Path) -> Result<GitlabConfig, String> {
 }
 
 fn write_config(app: &Path, config: &GitlabConfig) -> Result<(), String> {
-    let path = config_path(app)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
     let value = serde_json::to_string(config).map_err(|error| error.to_string())?;
-    write_secret_file(&path, &value)
+    secrets::write(Tracker::Gitlab, app, &value)
 }
 
 fn delete_config(app: &Path) -> Result<(), String> {
-    let path = config_path(app)?;
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn write_secret_file(path: &Path, value: &str) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|error| error.to_string())?;
-        file.write_all(value.as_bytes())
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        fs::write(path, value).map_err(|error| error.to_string())
-    }
+    secrets::delete(Tracker::Gitlab, app)
 }
 
 fn expand_home(input: &str) -> PathBuf {

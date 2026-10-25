@@ -2162,6 +2162,7 @@ dependencies = [
  "chrono",
  "flate2",
  "gespan-mobile-link",
+ "gespan-tracker-secrets",
  "hostname",
  "if-addrs",
  "igd-next",
@@ -2279,6 +2280,13 @@ dependencies = [
  "socket2",
  "tokio",
  "x509-parser",
+]
+
+[[package]]
+name = "gespan-tracker-secrets"
+version = "0.1.0"
+dependencies = [
+ "keyring",
 ]
 
 [[package]]

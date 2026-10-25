@@ -1745,6 +1745,7 @@ dependencies = [
  "block2",
  "gespan-keep-awake",
  "gespan-mobile-link",
+ "gespan-tracker-secrets",
  "hostname",
  "if-addrs",
  "igd-next",
@@ -1777,6 +1778,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "tauri-winrt-notification",
+ "tempfile",
  "time",
  "tokio",
  "toml 1.1.8+spec-1.1.0",
@@ -1825,6 +1827,15 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "gespan-tracker-secrets"
+version = "0.1.0"
+dependencies = [
+ "gespan-tracker-secrets",
+ "keyring",
+ "tempfile",
 ]
 
 [[package]]

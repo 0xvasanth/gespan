@@ -9,6 +9,7 @@ on:
       - 'crates/gespan-core/**'
       - 'crates/gespan-gpui/**'
       - 'crates/mobile-link/**'
+      - 'crates/tracker-secrets/**'
       - 'vendor/gpui-pre*/**'
       - 'scripts/*native*'
       - 'scripts/native-editor/**'
