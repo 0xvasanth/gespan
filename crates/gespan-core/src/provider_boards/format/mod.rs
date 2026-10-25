@@ -22,6 +22,12 @@ pub fn markdown_to_adf(markdown: &str) -> Value {
     adf::render(&markdown::parse(markdown))
 }
 
+/// Markdown to an ADF comment: like [`markdown_to_adf`], but each single
+/// newline outside code blocks is a line break.
+pub fn markdown_to_adf_comment(markdown: &str) -> Value {
+    adf::render(&markdown::parse_comment(markdown))
+}
+
 /// A Jira description (an ADF `doc`, or `null`) to Markdown.
 ///
 /// Whitespace in text is normalized as Markdown reads it (runs of spaces
@@ -39,6 +45,12 @@ pub fn adf_to_markdown(adf: &Value) -> String {
 /// from Plane or the user must sanitize it first.
 pub fn markdown_to_plane_html(markdown: &str) -> String {
     html::render(&markdown::parse(markdown))
+}
+
+/// Markdown to a Plane comment: like [`markdown_to_plane_html`], but each
+/// single newline outside code blocks is a line break. Same sanitizing caveat.
+pub fn markdown_to_plane_comment_html(markdown: &str) -> String {
+    html::render(&markdown::parse_comment(markdown))
 }
 
 /// A Plane `description_html` to Markdown.

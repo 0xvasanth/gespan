@@ -6,7 +6,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::format::{adf_to_markdown, markdown_to_adf};
+use super::format::{adf_to_markdown, markdown_to_adf_comment};
 use super::{
     Account, BoardLabel, BoardProvider, ChangeHint, CommentRef, Container, IssueDraft, IssueFilter,
     IssuePatch, Member, MoveTarget, Page, ProviderError, ProviderKind, ProviderResult, RemoteIssue,
@@ -245,7 +245,7 @@ impl JiraProvider {
     fn send_comment(&self, key: &str, body: &str) -> Result<CommentRef, String> {
         let data = self.post(
             &format!("/rest/api/3/issue/{key}/comment"),
-            json!({ "body": markdown_to_adf(body) }),
+            json!({ "body": markdown_to_adf_comment(body) }),
         )?;
         let id = string_field(&data, "id").unwrap_or_default();
         if id.is_empty() {
@@ -819,7 +819,10 @@ fn parse_transitions(data: &Value) -> Result<Vec<Transition>, String> {
                 .and_then(Value::as_object)
                 .into_iter()
                 .flatten()
-                .filter(|(_, field)| field.get("required").and_then(Value::as_bool) == Some(true))
+                .filter(|(_, field)| {
+                    let flag = |name| field.get(name).and_then(Value::as_bool) == Some(true);
+                    flag("required") && !flag("hasDefaultValue")
+                })
                 .map(|(key, field)| RequiredField {
                     key: key.clone(),
                     name: string_field(field, "name").unwrap_or_else(|| key.clone()),
@@ -858,14 +861,23 @@ fn pick_transition<'a>(
     target: &MoveTarget,
 ) -> ProviderResult<&'a Transition> {
     let wanted = target.state_id.trim();
+    // Several transitions can reach one status; prefer one that can be sent as is.
+    let sendable = |t: &&Transition| missing_fields(t, target).is_empty();
+    let best = |mut candidates: Vec<&'a Transition>| {
+        candidates.sort_by_key(|t| !sendable(t));
+        candidates.into_iter().next()
+    };
     let found = transitions
         .iter()
         .find(|t| t.id == wanted)
-        .or_else(|| transitions.iter().find(|t| t.to.id == wanted))
+        .or_else(|| best(transitions.iter().filter(|t| t.to.id == wanted).collect()))
         .or_else(|| {
-            transitions
-                .iter()
-                .find(|t| t.to.name.eq_ignore_ascii_case(wanted))
+            best(
+                transitions
+                    .iter()
+                    .filter(|t| t.to.name.eq_ignore_ascii_case(wanted))
+                    .collect(),
+            )
         });
     let Some(transition) = found else {
         let available: Vec<String> = transitions.iter().map(|t| t.to.name.clone()).collect();
@@ -878,7 +890,19 @@ fn pick_transition<'a>(
             }
         )));
     };
-    let missing: Vec<String> = transition
+    let missing = missing_fields(transition, target);
+    if !missing.is_empty() {
+        return Err(ProviderError::InvalidInput(format!(
+            "Moving to \"{}\" requires: {}",
+            transition.to.name,
+            missing.join("; ")
+        )));
+    }
+    Ok(transition)
+}
+
+fn missing_fields(transition: &Transition, target: &MoveTarget) -> Vec<String> {
+    transition
         .required_fields
         .iter()
         .filter(|field| !target.required_fields.contains_key(&field.key))
@@ -889,15 +913,7 @@ fn pick_transition<'a>(
                 format!("{} (one of: {})", field.name, field.allowed.join(", "))
             }
         })
-        .collect();
-    if !missing.is_empty() {
-        return Err(ProviderError::InvalidInput(format!(
-            "Moving to \"{}\" requires: {}",
-            transition.to.name,
-            missing.join("; ")
-        )));
-    }
-    Ok(transition)
+        .collect()
 }
 
 fn parse_remote_jira_issue(node: &Value, site: &str) -> Option<RemoteIssue> {
@@ -1591,6 +1607,82 @@ mod tests {
         assert_eq!(posts[0].1["body"], format::markdown_to_adf(markdown));
         assert_eq!(posts[0].1["body"]["type"], "doc");
         assert_eq!(posts[0].1["body"]["content"][0]["type"], "heading");
+    }
+
+    #[test]
+    fn comment_single_newlines_become_hard_breaks() {
+        let (jira, transport) = scripted(vec![Ok(json!({ "id": "1" }))]);
+        jira.comment("ABC-1", "line one\nline two", None).unwrap();
+        assert_eq!(
+            transport.posts()[0].1["body"]["content"],
+            json!([{ "type": "paragraph", "content": [
+                { "type": "text", "text": "line one" },
+                { "type": "hardBreak" },
+                { "type": "text", "text": "line two" }
+            ]}])
+        );
+    }
+
+    #[test]
+    fn comment_code_blocks_and_paragraphs_keep_their_shape() {
+        let (jira, transport) = scripted(vec![Ok(json!({ "id": "1" })), Ok(json!({ "id": "2" }))]);
+        jira.comment("ABC-1", "```\na\nb\n```", None).unwrap();
+        assert_eq!(
+            transport.posts()[0].1["body"]["content"],
+            json!([{ "type": "codeBlock", "content": [{ "type": "text", "text": "a\nb" }] }])
+        );
+        jira.comment("ABC-1", "one\n\ntwo", None).unwrap();
+        let content = &transport.posts()[1].1["body"]["content"];
+        assert_eq!(content.as_array().unwrap().len(), 2);
+        assert_eq!(
+            content[0]["content"],
+            json!([{ "type": "text", "text": "one" }])
+        );
+    }
+
+    #[test]
+    fn move_prefers_a_sendable_transition_to_the_same_status() {
+        let to = json!({ "id": "5", "name": "Done", "statusCategory": { "key": "done" } });
+        let (jira, transport) = scripted(vec![
+            Ok(json!({ "transitions": [
+                { "id": "41", "name": "Resolve", "to": to, "fields": resolution_field() },
+                { "id": "42", "name": "Close", "to": to, "fields": {} }
+            ]})),
+            Ok(Value::Null),
+            Ok(issue_node()),
+        ]);
+        jira.move_issue(
+            "ABC-1",
+            &MoveTarget {
+                state_id: "Done".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            transport.posts()[0].1,
+            json!({ "transition": { "id": "42" } })
+        );
+    }
+
+    #[test]
+    fn required_fields_with_defaults_do_not_block() {
+        let (jira, transport) = scripted(vec![
+            Ok(start_transition(json!({ "resolution": {
+                "required": true, "hasDefaultValue": true, "name": "Resolution"
+            }}))),
+            Ok(Value::Null),
+            Ok(issue_node()),
+        ]);
+        jira.move_issue(
+            "ABC-1",
+            &MoveTarget {
+                state_id: "In Progress".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(transport.posts().len(), 1);
     }
 
     #[test]

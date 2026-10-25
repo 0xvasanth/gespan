@@ -8,7 +8,18 @@ use super::doc::{
 };
 
 pub(crate) fn parse(markdown: &str) -> Doc {
+    parse_with(markdown, false)
+}
+
+/// Like [`parse`], but each single newline in running text is a line break,
+/// as people write comments. Code blocks are untouched.
+pub(crate) fn parse_comment(markdown: &str) -> Doc {
+    parse_with(markdown, true)
+}
+
+fn parse_with(markdown: &str, newlines_break: bool) -> Doc {
     let mut builder = Builder::new();
+    builder.newlines_break = newlines_break;
     for event in Parser::new_ext(markdown, Options::ENABLE_STRIKETHROUGH) {
         builder.event(event);
     }
@@ -54,6 +65,7 @@ struct Builder {
     skip: Option<Skip>,
     /// Container starts ignored past [`MAX_DEPTH`], whose ends are ignored too.
     overflow: usize,
+    newlines_break: bool,
 }
 
 /// The read-only text of a preserved span, held back until its `</span>`.
@@ -75,6 +87,7 @@ impl Builder {
             links: Vec::new(),
             skip: None,
             overflow: 0,
+            newlines_break: false,
         }
     }
 
@@ -138,6 +151,7 @@ impl Builder {
             Event::End(tag) => self.end(tag),
             Event::Text(text) => self.text(&text, false),
             Event::Code(text) => self.text(&text, true),
+            Event::SoftBreak if self.newlines_break => self.push_inline(Inline::HardBreak),
             Event::SoftBreak => self.text(" ", false),
             Event::HardBreak => self.push_inline(Inline::HardBreak),
             Event::InlineHtml(html) => self.inline_html(&html),
