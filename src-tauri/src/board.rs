@@ -1713,4 +1713,107 @@ mod tests {
         assert_eq!(json[1]["collapsed"], true);
     }
 
+    /// A committed cross-app board fixture in `crates/board-schema/fixtures`.
+    fn board_fixture(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/board-schema/fixtures")
+            .join(name)
+    }
+
+    #[test]
+    fn tauri_writes_the_committed_fixture() {
+        use gespan_board_schema::testing::{dump, fixture_matches};
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::open(dir.path().join("gespan.db")).unwrap();
+        let conn = store.lock_conn().unwrap();
+        let (board, columns) = {
+            let board = create_board(&conn, "Fixture").unwrap();
+            let columns = get_board(&conn, &board.id).unwrap().columns;
+            (board, columns)
+        };
+        let alpha = create_card(&conn, &columns[0].id, "Alpha", "").unwrap();
+        let beta = create_card(&conn, &columns[0].id, "Beta", "").unwrap();
+        move_card(&conn, &beta.id, &columns[2].id, 0, "user").unwrap();
+        update_column(&conn, &columns[0].id, "Queue", Some("todo")).unwrap();
+        create_column(&conn, &board.id, "Dropped", Some("cancelled")).unwrap();
+        link_card(&conn, &alpha.id, Some("pilot"), Some("pilot-fixture")).unwrap();
+        update_card(&conn, &beta.id, "Beta", "Notes").unwrap();
+        fixture_matches(&board_fixture("written_by_tauri.sql"), &dump(&conn));
+    }
+
+    #[test]
+    fn tauri_opens_a_database_written_by_native() {
+        use gespan_board_schema::testing::{load, SEED_DUE_AT};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        {
+            let store = SessionStore::open(path.clone()).unwrap();
+            let conn = store.lock_conn().unwrap();
+            let fixture = std::fs::read_to_string(board_fixture("written_by_native.sql")).unwrap();
+            load(&conn, &fixture).unwrap();
+        }
+        let store = SessionStore::open(path).unwrap();
+        let conn = store.lock_conn().unwrap();
+        let board = list_boards(&conn).unwrap().remove(0);
+        let detail = get_board(&conn, &board.id).unwrap();
+        assert_eq!(detail.cards.len(), 3);
+        for column in &detail.columns {
+            let positions: Vec<i64> = detail
+                .cards
+                .iter()
+                .filter(|card| card.column_id == column.id)
+                .map(|card| card.position)
+                .collect();
+            assert_eq!(positions, (0..positions.len() as i64).collect::<Vec<_>>());
+        }
+        let first = detail.cards.iter().find(|c| c.title == "First").unwrap();
+        assert_eq!(
+            (first.link_kind.as_deref(), first.link_id.as_deref()),
+            (Some("session"), Some("session-fixture"))
+        );
+        let third = detail.cards.iter().find(|c| c.title == "Third").unwrap();
+        assert_eq!(third.column_id, detail.columns[1].id);
+        let total = count(&conn, "SELECT COUNT(*) FROM board_activity");
+        assert_eq!(
+            list_activity(&conn, &board.id, None, 500).unwrap().len() as i64,
+            total
+        );
+        assert!(total >= 12, "every Native write logged a row: {total}");
+        let id = &first.id;
+        assert_eq!(
+            strings(
+                &conn,
+                &format!("SELECT priority || ':' || due_at FROM board_card_meta WHERE card_id = '{id}'")
+            ),
+            [format!("3:{SEED_DUE_AT}")]
+        );
+        assert_eq!(
+            strings(
+                &conn,
+                &format!(
+                    "SELECT l.name FROM board_card_labels cl JOIN board_labels l ON l.id = cl.label_id
+                     WHERE cl.card_id = '{id}'"
+                )
+            ),
+            ["Bug"]
+        );
+        assert_eq!(
+            strings(
+                &conn,
+                &format!(
+                    "SELECT title || ':' || done || ':' || position FROM board_subtasks
+                     WHERE card_id = '{id}' ORDER BY position"
+                )
+            ),
+            ["Write test:1:0", "Ship:0:1"]
+        );
+        assert_eq!(
+            strings(&conn, &format!("SELECT author FROM board_comments WHERE card_id = '{id}'")),
+            ["user"]
+        );
+        // Tauri's own writes still work on Native's rows, and cascade them.
+        delete_card(&conn, id).unwrap();
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_subtasks"), 0);
+    }
+
 }

@@ -431,6 +431,8 @@ fn board_error_strings_match_tauri() {
         "Board not found",
         "Unknown column role: {role}",
         "already has the {role} role",
+        "Unknown link kind: {kind}",
+        "A link needs both a kind and an id",
     ] {
         assert!(tauri_source.contains(message), "Tauri lacks {message}");
         assert!(native_source.contains(message), "native lacks {message}");
@@ -502,4 +504,92 @@ fn board_setting_key_matches_tauri() {
     )
     .unwrap();
     assert!(native.contains("(\"board\", \"boardEnabled\", true)"));
+}
+
+/// A committed cross-app board fixture in `crates/board-schema/fixtures`.
+fn board_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../board-schema/fixtures")
+        .join(name)
+}
+
+fn raw_strings(conn: &rusqlite::Connection, sql: &str) -> Vec<String> {
+    conn.prepare(sql)
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+#[test]
+fn native_writes_the_committed_fixture() {
+    use gespan_board_schema::testing::{dump, fixture_matches, SEED_DUE_AT};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    let mut service = gespan_core::board::Service::open(&path).unwrap();
+    let board = service.create("Fixture").unwrap();
+    let columns = service.get(&board.id).unwrap().columns;
+    let first = service.card_create(&columns[0].id, "First", "").unwrap();
+    service.card_create(&columns[0].id, "Second", "").unwrap();
+    let third = service.card_create(&columns[0].id, "Third", "").unwrap();
+    service
+        .card_move(&third.id, &columns[1].id, 0, "user")
+        .unwrap();
+    service.set_priority(&first.id, 3).unwrap();
+    service.set_due(&first.id, Some(SEED_DUE_AT)).unwrap();
+    service
+        .set_projects(&first.id, &["/work/gespan".into()])
+        .unwrap();
+    let bug = service.create_label(&board.id, "Bug", "d73a4a").unwrap();
+    service.set_labels(&first.id, &[bug.id]).unwrap();
+    let write_test = service.add_subtask(&first.id, "Write test").unwrap();
+    service.toggle_subtask(&write_test.id, true).unwrap();
+    service.add_subtask(&first.id, "Ship").unwrap();
+    service.add_comment(&first.id, "Looks good").unwrap();
+    service
+        .card_link(&first.id, Some("session"), Some("session-fixture"))
+        .unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    fixture_matches(&board_fixture("written_by_native.sql"), &dump(&conn));
+}
+
+#[test]
+fn native_opens_a_database_written_by_tauri() {
+    use gespan_board_schema::testing::load;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    drop(gespan_core::board::Service::open(&path).unwrap());
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        let fixture = fs::read_to_string(board_fixture("written_by_tauri.sql")).unwrap();
+        load(&conn, &fixture).unwrap();
+    }
+    let mut service = gespan_core::board::Service::open(&path).unwrap();
+    let board = service.list().unwrap().remove(0);
+    let detail = service.get(&board.id).unwrap();
+    let names: Vec<&str> = detail.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["Queue", "In Progress", "Review", "Done", "Dropped"]);
+    assert_eq!(detail.columns[4].role.as_deref(), Some("cancelled"));
+    let linked = service.cards_for_link("pilot", "pilot-fixture").unwrap();
+    assert_eq!(
+        linked.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(),
+        ["Alpha"]
+    );
+    let beta = detail.cards.iter().find(|c| c.title == "Beta").unwrap();
+    assert_eq!(beta.body, "Notes");
+    assert_eq!(beta.column_id, detail.columns[2].id);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        raw_strings(
+            &conn,
+            "SELECT c.title || ':' || l.kind || ':' || l.ref || ':' || l.role
+             FROM board_card_links l JOIN board_cards c ON c.id = l.card_id"
+        ),
+        ["Alpha:pilot:pilot-fixture:primary"]
+    );
+    // Native's own writes still work on Tauri's rows.
+    service.set_priority(&beta.id, 1).unwrap();
+    assert_eq!(service.extras(&board.id).unwrap()[&beta.id].priority, 1);
 }

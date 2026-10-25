@@ -1,0 +1,14 @@
+INSERT INTO boards (id, name, card_seq, created_at, updated_at) VALUES ('id-0001', 'Fixture', 2, 0, 0);
+INSERT INTO board_columns (id, board_id, name, position, role, color, wip_limit, collapsed) VALUES ('id-0002', 'id-0001', 'Queue', 0, 'todo', NULL, NULL, 0);
+INSERT INTO board_columns (id, board_id, name, position, role, color, wip_limit, collapsed) VALUES ('id-0003', 'id-0001', 'In Progress', 1, 'doing', NULL, NULL, 0);
+INSERT INTO board_columns (id, board_id, name, position, role, color, wip_limit, collapsed) VALUES ('id-0004', 'id-0001', 'Review', 2, 'review', NULL, NULL, 0);
+INSERT INTO board_columns (id, board_id, name, position, role, color, wip_limit, collapsed) VALUES ('id-0005', 'id-0001', 'Done', 3, 'done', NULL, NULL, 0);
+INSERT INTO board_columns (id, board_id, name, position, role, color, wip_limit, collapsed) VALUES ('id-0006', 'id-0001', 'Dropped', 4, 'cancelled', NULL, NULL, 0);
+INSERT INTO board_cards (id, board_id, column_id, number, title, body, position, link_kind, link_id, created_at, updated_at) VALUES ('id-0007', 'id-0001', 'id-0002', 1, 'Alpha', '', 0, 'pilot', 'pilot-fixture', 0, 0);
+INSERT INTO board_cards (id, board_id, column_id, number, title, body, position, link_kind, link_id, created_at, updated_at) VALUES ('id-0008', 'id-0001', 'id-0004', 2, 'Beta', 'Notes', 0, NULL, NULL, 0, 0);
+INSERT INTO board_card_links (card_id, kind, ref, role, created_at) VALUES ('id-0007', 'pilot', 'pilot-fixture', 'primary', 0);
+INSERT INTO board_activity (id, board_id, card_id, kind, actor, from_column, to_column, detail, created_at) VALUES ('id-0009', 'id-0001', 'id-0007', 'created', 'user', NULL, 'Backlog', NULL, 0);
+INSERT INTO board_activity (id, board_id, card_id, kind, actor, from_column, to_column, detail, created_at) VALUES ('id-0010', 'id-0001', 'id-0008', 'created', 'user', NULL, 'Backlog', NULL, 0);
+INSERT INTO board_activity (id, board_id, card_id, kind, actor, from_column, to_column, detail, created_at) VALUES ('id-0011', 'id-0001', 'id-0008', 'moved', 'user', 'Backlog', 'Review', NULL, 0);
+INSERT INTO board_activity (id, board_id, card_id, kind, actor, from_column, to_column, detail, created_at) VALUES ('id-0012', 'id-0001', 'id-0007', 'linked', 'user', NULL, NULL, 'pilot:pilot-fixture', 0);
+INSERT INTO board_activity (id, board_id, card_id, kind, actor, from_column, to_column, detail, created_at) VALUES ('id-0013', 'id-0001', 'id-0008', 'edited', 'user', NULL, NULL, NULL, 0);
