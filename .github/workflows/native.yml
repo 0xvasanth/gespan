@@ -79,6 +79,8 @@ jobs:
       - run: bun run native:test:dev
       - run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --all-targets --profile native-dev -- -D warnings
       - run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core --profile native-dev
+      # The shared ticket crate is a root-workspace member, so its tests run there.
+      - run: cargo test --locked -p gespan-tracker-client
 
   desktop:
     name: Gespan Native (macOS)
