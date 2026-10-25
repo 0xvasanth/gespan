@@ -9,6 +9,7 @@ mod github;
 pub mod gitlab;
 pub mod jira;
 pub mod linear;
+pub mod plane;
 
 use crate::{desktop_preferences::DesktopPreferences, session_groups::WorkItem, store::Store};
 use chrono::{Datelike, Local, TimeZone};

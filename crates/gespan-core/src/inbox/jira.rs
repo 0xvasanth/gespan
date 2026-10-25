@@ -75,6 +75,11 @@ pub fn jira_issue_comment(app: PathBuf, key: String, body: String) -> Result<Str
         .map(|comment| comment.url)
 }
 
+/// The connected Jira client, or `None` when Jira is not set up.
+pub(crate) fn provider(app: &Path) -> Result<Option<JiraProvider>, String> {
+    Ok(read_config(app)?.map(JiraProvider::from_config))
+}
+
 fn require_provider(app: &Path) -> Result<JiraProvider, String> {
     require_config(app).map(JiraProvider::from_config)
 }

@@ -70,6 +70,11 @@ pub fn linear_issue_comment(
     require_provider(&app)?.post_comment(&id, &body, &parent_id)
 }
 
+/// The connected Linear client, or `None` when Linear is not set up.
+pub(crate) fn provider(app: &Path) -> Result<Option<LinearProvider>, String> {
+    Ok(read_token(app)?.map(|token| LinearProvider::new(&token)))
+}
+
 fn require_provider(app: &Path) -> Result<LinearProvider, String> {
     require_token(app).map(|token| LinearProvider::new(&token))
 }

@@ -134,6 +134,10 @@ pub struct PlaneProvider {
 }
 
 impl PlaneProvider {
+    pub fn config(&self) -> &PlaneConfig {
+        &self.config
+    }
+
     pub fn new(base_url: &str, workspace: &str, api_key: &str) -> Result<Self, String> {
         let workspace = workspace.trim();
         if !is_path_safe(workspace) {

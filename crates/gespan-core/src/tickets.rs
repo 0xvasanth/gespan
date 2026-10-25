@@ -1,11 +1,13 @@
 //! Links from sessions and board cards to tickets in an external tracker.
 mod parse;
+mod service;
 
 use serde::{Deserialize, Serialize};
 
 use crate::provider_boards::{ProviderKind, StateGroup};
 
 pub use parse::{parse_ticket, ParsedTicket};
+pub use service::{Resolved, StatusChoice, TicketError, Tickets};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
