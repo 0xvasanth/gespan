@@ -42,8 +42,11 @@ pub trait BoardProvider: Send + Sync {
         reply_to: Option<&str>,
     ) -> ProviderResult<CommentRef>;
 
-    /// Issues in `container_id` changed after `cursor` (everything when `None`),
-    /// oldest first.
+    /// Issues in `container_id` changed after `cursor` (everything when the
+    /// cursor is `None` or empty), oldest first. A provider may leave out the
+    /// changes its own writes made (Linear does, for writes made through the
+    /// same provider value), so callers should apply the issue each write
+    /// returns, and must still tolerate seeing their own writes here.
     fn sync_since(
         &self,
         container_id: &str,

@@ -133,3 +133,13 @@
 - `parse_webhook` for Linear with an actor-id check, once #109's fixtures land.
 - Archived and trashed issues in `sync_since` (`includeArchived`), for #103's "remote delete archives the card".
 - Reuse one `ureq::Agent` per provider (already in #154's follow-ups).
+
+## Self-review changes (after Task 3)
+
+- **A full page counts as "more"** even when `hasPreviousPage` is false, so the boundary hold-back can't be skipped by a mis-set flag.
+- **A cheap probe** (`issues(first: 1)` with `updatedAt lt <oldest on page>`) runs on every page that has more. It proves the `last:` page really is the oldest end. If anything older turns up, sync stops with `Remote("Linear skipped older issues while syncing")`.
+- **The crowded-instant read must include every row the page already showed at that instant.** If it doesn't, sync stops with `Remote("Linear returned an incomplete set of issues")`.
+- **Ledger entries are retired only when a newer `updatedAt` supersedes them**, not on the first match. A replay from an older cursor still leaves our write out.
+- **Bad input is rejected:** an out-of-range cursor is `InvalidInput`, and a sync row without `updatedAt` is `Remote`.
+- **Docs:** the trait's `sync_since` comment says providers may leave out their own writes, that callers apply what writes return, and that they still tolerate echoes. The fake deliberately doesn't leave them out.
+- **Not done, recorded as a risk:** the commit-visibility race of any `updatedAt` watermark. A transaction stamped before the cursor can become visible after it. #103's webhooks and periodic reconcile are the backstop. A fixed overlap window would re-deliver the same rows on every quiet poll.
