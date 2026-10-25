@@ -4,6 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { resetTicketLinkCaches } from "../../sessions/model/ticketLinks";
+import type { TicketRef } from "../../sessions/model/session";
 import type { BoardCard } from "../model/board";
 import { CardDetail } from "./CardDetail";
 
@@ -145,7 +147,11 @@ describe("CardDetail linked work", () => {
 
   it("shows a linked target the picker list doesn't hold", async () => {
     vi.mocked(invoke).mockResolvedValue([]);
-    const elsewhere = { kind: "session" as const, id: "s9", label: "Elsewhere" };
+    const elsewhere = {
+      kind: "session" as const,
+      id: "s9",
+      label: "Elsewhere",
+    };
     await renderDetail({
       card: { ...CARD, linkKind: "session", linkId: "s9" },
       link: { kind: "session", target: elsewhere },
@@ -220,5 +226,156 @@ describe("CardDetail delete", () => {
     await settle();
     expect(deletes()).toHaveLength(0);
     expect(props.onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("CardDetail ticket link", () => {
+  const LINEAR: TicketRef = {
+    tracker: "linear",
+    key: "ENG-7",
+    url: "https://linear.app/acme/issue/ENG-7",
+    title: null,
+    status: null,
+    statusGroup: null,
+    fetchedAt: null,
+  };
+  const FETCHED: TicketRef = {
+    ...LINEAR,
+    title: "Fix login",
+    status: "In Progress",
+    statusGroup: "started",
+    fetchedAt: Date.now() - 10 * 60_000,
+  };
+
+  const writes = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([cmd]) => cmd === "board_card_set_ticket");
+  const fetches = () =>
+    vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "ticket_fetch");
+
+  beforeEach(() => {
+    resetTicketLinkCaches();
+    vi.mocked(invoke).mockImplementation(async (cmd, args) => {
+      if (cmd === "board_activity") return [];
+      if (cmd === "ticket_connected") return ["linear"];
+      if (cmd === "ticket_resolve") {
+        const input = (args as { input: string }).input;
+        return input.includes("github.com")
+          ? { kind: "error", message: "Not a ticket key or link" }
+          : { kind: "one", ticket: LINEAR };
+      }
+      if (cmd === "ticket_fetch")
+        return { ...(args as { ticket: TicketRef }).ticket, ...FETCHED };
+      return undefined;
+    });
+  });
+
+  const settle = () =>
+    act(async () => {
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+
+  const buttonByText = (text: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === text,
+    );
+
+  async function typeAndSubmit(value: string) {
+    const field = document.querySelector<HTMLInputElement>(
+      'input[aria-label^="Ticket link"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(field, value);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      field
+        .closest("form")!
+        .dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        );
+    });
+    await settle();
+  }
+
+  it("links a ticket from the card and saves it on the card", async () => {
+    await renderDetail();
+    expect(dialogText()).toContain("Ticket");
+    await act(async () => buttonByText("Link ticket…")!.click());
+    // A card takes tickets only.
+    expect(document.body.textContent).toContain(
+      "Paste a Jira, Linear or Plane link",
+    );
+    await typeAndSubmit("ENG-7");
+    expect(writes()).toEqual([
+      ["board_card_set_ticket", { cardId: "c3", ticket: LINEAR }],
+    ]);
+  });
+
+  it("refuses a GitHub link instead of saving it as the card's link", async () => {
+    await renderDetail();
+    await act(async () => buttonByText("Link ticket…")!.click());
+    await typeAndSubmit("https://github.com/acme/app/pull/12");
+    expect(writes()).toHaveLength(0);
+    expect(
+      vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "board_card_link"),
+    ).toHaveLength(0);
+    expect(document.body.textContent).toContain("Not a ticket key or link");
+  });
+
+  it("shows the chip and reads the ticket when the card opens", async () => {
+    await renderDetail({ ticket: FETCHED });
+    const chip = document.querySelector("[data-card-ticket]")!;
+    expect(chip.textContent).toContain("ENG-7");
+    expect(chip.textContent).toContain("Fix login");
+    expect(chip.textContent).toContain("Change ticket…");
+    await settle();
+    expect(fetches()).toHaveLength(1);
+    expect(writes()).toHaveLength(1);
+    expect(writes()[0][1]).toMatchObject({ cardId: "c3" });
+  });
+
+  it("does not read a ticket that was read less than a minute ago", async () => {
+    await renderDetail({
+      ticket: { ...FETCHED, fetchedAt: Date.now() - 5_000 },
+    });
+    await settle();
+    expect(fetches()).toHaveLength(0);
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("unlinks through the chip menu", async () => {
+    await renderDetail({ ticket: { ...FETCHED, fetchedAt: Date.now() } });
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Ticket actions"]')!
+        .click(),
+    );
+    const unlink = [
+      ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ].find((el) => el.textContent === "Unlink")!;
+    await act(async () => unlink.click());
+    expect(writes()).toEqual([
+      ["board_card_set_ticket", { cardId: "c3", ticket: null }],
+    ]);
+  });
+
+  it("reports a failed save", async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd === "board_activity") return [];
+      if (cmd === "ticket_resolve") return { kind: "one", ticket: LINEAR };
+      if (cmd === "board_card_set_ticket") throw "database is locked";
+      return undefined;
+    });
+    const props = await renderDetail();
+    await act(async () => buttonByText("Link ticket…")!.click());
+    await typeAndSubmit("ENG-7");
+    expect(props.onError).toHaveBeenCalledWith(
+      "Couldn't link a ticket to card #3: database is locked",
+    );
   });
 });

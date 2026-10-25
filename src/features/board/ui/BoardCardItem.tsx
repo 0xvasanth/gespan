@@ -4,7 +4,13 @@ import {
   MessageSquare,
   Play,
 } from "../../../shared/ui/icons";
-import type { BoardCard, CardLinkKind } from "../model/board";
+import type { TicketRef } from "../../sessions/model/session";
+import { SessionTicketChip } from "../../sessions/ui/SessionTicketChip";
+import {
+  setCardTicket,
+  type BoardCard,
+  type CardLinkKind,
+} from "../model/board";
 import { ICON_BUTTON, MenuButton, MenuItem, noDrag } from "./boardControls";
 import {
   LINK_KIND_LABEL,
@@ -67,6 +73,7 @@ export function BoardCardItem({
   card,
   done,
   link,
+  ticket = null,
   onOpen,
   onOpenLinkedWork,
   onRename,
@@ -77,6 +84,7 @@ export function BoardCardItem({
   /** In a column with the `done` role: the title is dimmed. */
   done: boolean;
   link: ResolvedLink | null;
+  ticket?: TicketRef | null;
   onOpen: () => void;
   onOpenLinkedWork: (target: BoardLinkTarget) => void;
   onRename: () => void;
@@ -97,6 +105,26 @@ export function BoardCardItem({
       >
         {card.title}
       </div>
+      {ticket ? (
+        <div
+          data-card-ticket={card.id}
+          className="mt-1.5 flex min-w-0"
+          {...noDrag}
+        >
+          {/* Read on the card's drawer, not on the board: never `visible` here. */}
+          <SessionTicketChip
+            ticket={ticket}
+            visible={false}
+            onChange={(item) => {
+              if (item && item.kind !== "ticket") return;
+              void setCardTicket(card.id, item ? item.ticket : null).catch(
+                () => undefined,
+              );
+            }}
+            current={() => ({ kind: "ticket", ticket })}
+          />
+        </div>
+      ) : null}
       <div className="mt-1.5 flex min-w-0 items-center gap-2 text-[11px]">
         <span className="shrink-0 font-mono text-content/45">
           #{card.number}

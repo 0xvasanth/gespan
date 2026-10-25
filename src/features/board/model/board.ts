@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { TicketRef } from "../../sessions/model/session";
 
 export const BOARD_CHANGED = "gespan:board-changed";
 
@@ -143,6 +144,26 @@ export function linkCard(
     linkKind: link?.kind ?? null,
     linkId: link?.id ?? null,
   });
+}
+
+/** The ticket the card links to, or null. */
+export function getCardTicket(cardId: string): Promise<TicketRef | null> {
+  return invoke<TicketRef | null>("board_card_ticket", { cardId });
+}
+
+/** Every ticket-linked card on the board, by card id. */
+export function getCardTickets(
+  boardId: string,
+): Promise<Record<string, TicketRef>> {
+  return invoke<Record<string, TicketRef>>("board_card_tickets", { boardId });
+}
+
+/** Links the card to a ticket (replacing any other); null removes it. */
+export function setCardTicket(
+  cardId: string,
+  ticket: TicketRef | null,
+): Promise<void> {
+  return invoke("board_card_set_ticket", { cardId, ticket });
 }
 
 export function deleteCard(cardId: string): Promise<void> {

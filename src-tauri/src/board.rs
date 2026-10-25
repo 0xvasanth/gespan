@@ -8,6 +8,8 @@ use gespan_board_store::{
 };
 #[cfg(test)]
 use gespan_board_store::{ensure_tables, get_card};
+use gespan_tracker_client::tickets::TicketRef;
+use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::session_store::SessionStore;
@@ -195,6 +197,53 @@ pub fn board_card_link(
     validate_id(&card_id, "card")?;
     let conn = store.lock_conn()?;
     let board_id = link_card(&conn, &card_id, link_kind.as_deref(), link_id.as_deref())?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+/// The ticket a card links to. A stored value that no longer parses reads as
+/// no ticket.
+#[tauri::command(async)]
+pub fn board_card_ticket(
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<Option<TicketRef>, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    Ok(gespan_board_store::ticket(&conn, &card_id)?
+        .and_then(|json| serde_json::from_str(&json).ok()))
+}
+
+/// Every ticket-linked card on the board, by card id, for the card faces.
+#[tauri::command(async)]
+pub fn board_card_tickets(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<HashMap<String, TicketRef>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    Ok(gespan_board_store::board_tickets(&conn, &board_id)?
+        .into_iter()
+        .filter_map(|(card, json)| Some((card, serde_json::from_str(&json).ok()?)))
+        .collect())
+}
+
+/// Links the card to a ticket (replacing any other) or, with `None`, removes it.
+#[tauri::command(async)]
+pub fn board_card_set_ticket(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    ticket: Option<TicketRef>,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let json = ticket
+        .as_ref()
+        .map(|ticket| serde_json::to_string(ticket).map_err(|e| e.to_string()))
+        .transpose()?;
+    let conn = store.lock_conn()?;
+    let board_id = gespan_board_store::set_ticket(&conn, &card_id, json.as_deref())?;
     drop(conn);
     notify(&app, &board_id);
     Ok(())
@@ -714,6 +763,28 @@ mod tests {
     /// A database board-store wrote, with v3 extras the Tauri UI doesn't show
     /// yet (as the native app writes them), opens in the session store and its
     /// board reads and writes keep working.
+    #[test]
+    fn a_ticket_ref_in_the_shared_camel_case_shape_round_trips_through_the_store() {
+        use gespan_board_store as store;
+        let conn = setup();
+        let (_, columns) = board_with_columns(&conn);
+        let card = add_cards(&conn, &columns[0].id, &["Task"]).remove(0);
+        // The shape the session link and tests/fixtures/shared/ticket-work-item.json use.
+        let ticket: TicketRef = serde_json::from_str(
+            r#"{"tracker":"jira","key":"ENG-142","url":"https://acme.atlassian.net/browse/ENG-142",
+                "title":"T","status":"In Progress","statusGroup":"started","fetchedAt":1761350400000}"#,
+        )
+        .unwrap();
+        let json = serde_json::to_string(&ticket).unwrap();
+        store::set_ticket(&conn, &card.id, Some(&json)).unwrap();
+        let stored = store::ticket(&conn, &card.id).unwrap().unwrap();
+        assert_eq!(serde_json::from_str::<TicketRef>(&stored).unwrap(), ticket);
+        let all = store::board_tickets(&conn, &card.board_id).unwrap();
+        assert_eq!(all, [(card.id.clone(), stored)]);
+        store::set_ticket(&conn, &card.id, None).unwrap();
+        assert_eq!(store::ticket(&conn, &card.id).unwrap(), None);
+    }
+
     #[test]
     fn a_database_written_by_board_store_opens_in_the_session_store() {
         use gespan_board_store as store;

@@ -12,11 +12,17 @@ import {
 export function LinkSessionWorkItemDialog({
   initial,
   sessionTitle,
+  ticketOnly = false,
+  heading,
   onSave,
   onClose,
 }: {
   initial?: LinkedWorkItem;
   sessionTitle: string;
+  /** Takes a ticket only (a board card's link): a GitHub link is refused. */
+  ticketOnly?: boolean;
+  /** Replaces the default title. */
+  heading?: string;
   onSave: (item: LinkedWorkItem | undefined) => void;
   onClose: () => void;
 }) {
@@ -50,7 +56,7 @@ export function LinkSessionWorkItemDialog({
     event.preventDefault();
     const input = url.trim();
     if (!input || busy) return;
-    const github = parseGithubWorkItemUrl(input);
+    const github = ticketOnly ? null : parseGithubWorkItemUrl(input);
     if (github) {
       onSave(github);
       return;
@@ -77,7 +83,7 @@ export function LinkSessionWorkItemDialog({
 
   return (
     <Modal
-      title={initial ? "Edit link" : "Link issue, PR or ticket"}
+      title={heading ?? (initial ? "Edit link" : "Link issue, PR or ticket")}
       description={sessionTitle}
       size="sm"
       onClose={onClose}
@@ -88,16 +94,24 @@ export function LinkSessionWorkItemDialog({
       >
         <label className="flex flex-col gap-1.5">
           <span className="font-medium text-content/80">
-            Issue, PR or ticket
+            {ticketOnly ? "Ticket" : "Issue, PR or ticket"}
           </span>
           <input
             autoFocus
             type="text"
             value={url}
-            aria-label="Issue, PR or ticket link or key"
+            aria-label={
+              ticketOnly
+                ? "Ticket link or key"
+                : "Issue, PR or ticket link or key"
+            }
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? "linked-work-item-error" : undefined}
-            placeholder="GitHub link, ticket link or key like ENG-123"
+            placeholder={
+              ticketOnly
+                ? "Ticket link or key like ENG-123"
+                : "GitHub link, ticket link or key like ENG-123"
+            }
             autoComplete="off"
             spellCheck={false}
             onChange={(event) => {
@@ -120,8 +134,9 @@ export function LinkSessionWorkItemDialog({
             </span>
           ) : (
             <span className="text-[11px] text-content/45">
-              Paste a GitHub link, a Jira, Linear or Plane link, or a ticket
-              key. The link appears on the session.
+              {ticketOnly
+                ? "Paste a Jira, Linear or Plane link, or a ticket key."
+                : "Paste a GitHub link, a Jira, Linear or Plane link, or a ticket key. The link appears on the session."}
             </span>
           )}
         </label>

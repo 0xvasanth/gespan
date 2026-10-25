@@ -12,6 +12,8 @@ import { WindowControls } from "../../../app/shell/WindowControls";
 import { IS_MAC } from "../../../platform/tauri/platform";
 import { Kanban, Plus } from "../../../shared/ui/icons";
 import { SearchableSelect } from "../../../shared/ui/SearchableSelect";
+import type { TicketRef } from "../../sessions/model/session";
+import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItemDialog";
 import { FileActionError } from "../../files/ui/FileActionError";
 import {
   createBoard,
@@ -21,6 +23,7 @@ import {
   deleteCard,
   deleteColumn,
   getBoard,
+  getCardTickets,
   listBoards,
   moveCard,
   moveColumn,
@@ -33,6 +36,7 @@ import {
   type BoardDetail,
   type ColumnRole,
 } from "../model/board";
+import { createCardFromTicket, newCardColumn } from "../model/ticketCards";
 import { BoardCardItem } from "./BoardCardItem";
 import { BoardColumnHeader } from "./BoardColumnHeader";
 import {
@@ -163,6 +167,8 @@ function BoardContent({
   const [error, setError] = useState<string | null>(null);
   const [naming, setNaming] = useState<"new" | "rename" | null>(null);
   const [addingColumn, setAddingColumn] = useState(false);
+  const [tickets, setTickets] = useState<Record<string, TicketRef>>({});
+  const [ticketCardOpen, setTicketCardOpen] = useState(false);
   const [composerColumn, setComposerColumn] = useState<string | null>(null);
   const [openCard, setOpenCard] = useState<{
     id: string;
@@ -219,9 +225,14 @@ function BoardContent({
     if (!id) return;
     const ticket = ++request.current;
     try {
-      const next = await getBoard(id);
+      const [next, linked] = await Promise.all([
+        getBoard(id),
+        // A failed ticket read leaves the cards without chips, not the board unloaded.
+        getCardTickets(id).catch(() => null),
+      ]);
       if (ticket !== request.current || openIdRef.current !== id) return;
       setDetail(next);
+      if (linked) setTickets(linked);
       setBoards(
         (list) =>
           list &&
@@ -230,7 +241,8 @@ function BoardContent({
           ),
       );
     } catch (cause) {
-      const stale = () => ticket !== request.current || openIdRef.current !== id;
+      const stale = () =>
+        ticket !== request.current || openIdRef.current !== id;
       if (stale()) return;
       // Deleting the board (here or elsewhere) also signals a change to it:
       // a board that is no longer listed is gone, not broken, so open
@@ -419,6 +431,7 @@ function BoardContent({
       card={card}
       done={columnsById.get(card.columnId)?.role === "done"}
       link={resolveLink(card, linkStates)}
+      ticket={tickets[card.id] ?? null}
       onOpen={() => setOpenCard({ id: card.id })}
       onOpenLinkedWork={openLinkedWork}
       onRename={() => setOpenCard({ id: card.id, focus: "title" })}
@@ -556,6 +569,16 @@ function BoardContent({
           </MenuButton>
         ) : null}
         <div className="flex-1" />
+        {detail ? (
+          <button
+            type="button"
+            className={BUTTON}
+            onClick={() => setTicketCardOpen(true)}
+          >
+            <Plus className="size-3.5" strokeWidth={1.75} />
+            New card from ticket…
+          </button>
+        ) : null}
         {naming === "new" ? (
           <NameInput
             label="Board name"
@@ -595,6 +618,7 @@ function BoardContent({
           card={shownCard}
           columnName={columnsById.get(shownCard.columnId)?.name ?? ""}
           link={resolveLink(shownCard, linkStates)}
+          ticket={tickets[shownCard.id] ?? null}
           linkTargets={linkTargets}
           focus={openCard?.focus}
           onClose={() => setOpenCard(null)}
@@ -603,6 +627,26 @@ function BoardContent({
             openLinkedWork(target);
           }}
           onError={setError}
+        />
+      ) : null}
+      {ticketCardOpen && detail ? (
+        <LinkSessionWorkItemDialog
+          ticketOnly
+          heading="New card from ticket"
+          sessionTitle={detail.board.name}
+          onSave={(item) => {
+            if (!item || item.kind !== "ticket") return;
+            setTicketCardOpen(false);
+            const column = newCardColumn(detail.columns);
+            if (!column) {
+              setError("Couldn't add the card: the board has no columns");
+              return;
+            }
+            createCardFromTicket(column, item.ticket).catch(
+              fail("Couldn't add the card from the ticket"),
+            );
+          }}
+          onClose={() => setTicketCardOpen(false)}
         />
       ) : null}
       {toast}

@@ -5,10 +5,14 @@ import {
   type SearchableSelectOption,
 } from "../../../shared/ui/SearchableSelect";
 import { ExternalLink, Trash2 } from "../../../shared/ui/icons";
+import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItemDialog";
+import { SessionTicketChip } from "../../sessions/ui/SessionTicketChip";
+import type { LinkedWorkItem, TicketRef } from "../../sessions/model/session";
 import {
   deleteCard,
   linkCard,
   listActivity,
+  setCardTicket,
   subscribeBoard,
   updateCard,
   type BoardActivity,
@@ -40,6 +44,7 @@ export function CardDetail({
   card,
   columnName,
   link,
+  ticket = null,
   linkTargets,
   focus,
   onClose,
@@ -49,6 +54,8 @@ export function CardDetail({
   card: BoardCard;
   columnName: string;
   link: ResolvedLink | null;
+  /** The ticket the card links to. */
+  ticket?: TicketRef | null;
   linkTargets: readonly BoardLinkTarget[];
   focus?: "title" | "link";
   onClose: () => void;
@@ -66,6 +73,11 @@ export function CardDetail({
   const onErrorRef = useRef(onError);
   useEffect(() => {
     onErrorRef.current = onError;
+  });
+  const [linkingTicket, setLinkingTicket] = useState(false);
+  const ticketRef = useRef(ticket);
+  useEffect(() => {
+    ticketRef.current = ticket;
   });
   const titleField = useRef<HTMLInputElement>(null);
   const linkRow = useRef<HTMLDivElement>(null);
@@ -155,6 +167,17 @@ export function CardDetail({
     );
   };
 
+  const changeTicket = (item: LinkedWorkItem | undefined) => {
+    // Only tickets link to a card; a refresh or a link dialog hands one over.
+    if (item && item.kind !== "ticket") return;
+    setLinkingTicket(false);
+    setCardTicket(card.id, item ? item.ticket : null).catch((error) =>
+      onError(
+        `Couldn't link a ticket to card #${card.number}: ${errorText(error)}`,
+      ),
+    );
+  };
+
   const remove = async () => {
     if (!(await confirmDeleteCard(card))) return;
     deleteCard(card.id)
@@ -174,6 +197,8 @@ export function CardDetail({
       description={columnName}
       size="md"
       onClose={() => {
+        // The ticket dialog owns Escape while it is open.
+        if (linkingTicket) return;
         saveFields();
         onClose();
       }}
@@ -237,6 +262,31 @@ export function CardDetail({
             </div>
           ) : null}
         </div>
+        <div data-card-ticket="" className="flex flex-col gap-1">
+          <span className="text-[11px] text-content/50">Ticket</span>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {ticket ? (
+              <SessionTicketChip
+                key={`${ticket.tracker}:${ticket.key}`}
+                ticket={ticket}
+                visible
+                onChange={changeTicket}
+                current={() =>
+                  ticketRef.current
+                    ? { kind: "ticket", ticket: ticketRef.current }
+                    : undefined
+                }
+              />
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setLinkingTicket(true)}
+              className="inline-flex h-7 shrink-0 items-center rounded-md border border-content/15 px-2.5 text-[12px] text-content/80 hover:border-content/30 hover:bg-content/10 hover:text-content"
+            >
+              {ticket ? "Change ticket…" : "Link ticket…"}
+            </button>
+          </div>
+        </div>
         <div className="flex flex-col gap-1">
           <span className="text-[11px] text-content/50">Activity</span>
           {activity?.rows.length ? (
@@ -267,6 +317,16 @@ export function CardDetail({
           </button>
         </div>
       </div>
+      {linkingTicket ? (
+        <LinkSessionWorkItemDialog
+          ticketOnly
+          heading={ticket ? "Edit ticket link" : "Link ticket"}
+          initial={ticket ? { kind: "ticket", ticket } : undefined}
+          sessionTitle={`Card #${card.number}`}
+          onSave={changeTicket}
+          onClose={() => setLinkingTicket(false)}
+        />
+      ) : null}
     </Modal>
   );
 }
