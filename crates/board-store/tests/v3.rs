@@ -787,3 +787,50 @@ fn column_card_count_counts_archived_separately() {
     assert_eq!(column_card_count(&conn, &columns[1].id).unwrap(), (0, 0));
     assert!(column_card_count(&conn, "missing").is_err());
 }
+
+#[test]
+fn delete_archived_card_deletes_an_archived_card() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["a", "b", "c"]);
+    archive_card(&conn, &cards[1].id).unwrap();
+
+    let returned = delete_archived_card(&conn, &cards[1].id).unwrap();
+    assert_eq!(returned, Some(board.id.clone()));
+    assert!(get_card(&conn, &cards[1].id).is_err());
+    assert!(archived_cards(&conn, &board.id).unwrap().is_empty());
+    assert_eq!(column_titles(&conn, &board.id, &columns[0].id), ["a", "c"]);
+    assert_contiguous(&conn, &board.id, &columns);
+    let tombstone = &list_activity(&conn, &board.id, None, 1).unwrap()[0];
+    assert_eq!(tombstone.kind, "deleted");
+    assert_eq!(tombstone.detail.as_deref(), Some("#2 b"));
+}
+
+#[test]
+fn delete_archived_card_leaves_a_live_card_untouched() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["a", "b"]);
+    // Archived, then restored elsewhere before the held delete ran.
+    archive_card(&conn, &cards[0].id).unwrap();
+    unarchive_card(&conn, &cards[0].id).unwrap();
+    let activity = list_activity(&conn, &board.id, None, 500).unwrap().len();
+
+    assert_eq!(delete_archived_card(&conn, &cards[0].id).unwrap(), None);
+    assert_eq!(get_card(&conn, &cards[0].id).unwrap().title, "a");
+    assert_eq!(column_titles(&conn, &board.id, &columns[0].id), ["b", "a"]);
+    assert_eq!(
+        list_activity(&conn, &board.id, None, 500).unwrap().len(),
+        activity
+    );
+}
+
+#[test]
+fn delete_archived_card_of_a_missing_card_is_a_no_op() {
+    let conn = fresh();
+    let (board, _, cards) = board_with_cards(&conn, &["a"]);
+    archive_card(&conn, &cards[0].id).unwrap();
+    delete_card(&conn, &cards[0].id).unwrap();
+
+    assert_eq!(delete_archived_card(&conn, &cards[0].id).unwrap(), None);
+    assert_eq!(delete_archived_card(&conn, "missing").unwrap(), None);
+    assert!(archived_cards(&conn, &board.id).unwrap().is_empty());
+}

@@ -20,6 +20,7 @@ import {
   archiveCard,
   archiveCards,
   columnCardCount,
+  deleteArchivedCard,
   listArchivedCards,
   moveCards,
   restoreCard,
@@ -133,6 +134,12 @@ describe("card extras wrappers", () => {
       () => restoreCard("c1", "col1", 2),
       "board_card_restore",
       { cardId: "c1", columnId: "col1", index: 2 },
+    ],
+    [
+      "deleteArchivedCard",
+      () => deleteArchivedCard("c1"),
+      "board_card_delete_archived",
+      { cardId: "c1" },
     ],
     [
       "listArchivedCards",

@@ -284,6 +284,11 @@ export function restoreCard(
   return invoke("board_card_restore", { cardId, columnId, index });
 }
 
+/** Commits a held delete: deletes the card only if it is still archived. */
+export function deleteArchivedCard(cardId: string): Promise<void> {
+  return invoke("board_card_delete_archived", { cardId });
+}
+
 export function listArchivedCards(boardId: string): Promise<BoardCard[]> {
   return invoke("board_archived_cards", { boardId });
 }

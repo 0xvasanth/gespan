@@ -736,11 +736,38 @@ pub fn link_card(
 pub fn delete_card(conn: &Connection, card_id: &str) -> Result<String, String> {
     let tx = write_tx(conn)?;
     let card = get_card(&tx, card_id)?;
-    let column = get_column(&tx, &card.column_id)?;
+    delete_card_in(&tx, &card)?;
+    tx.commit().map_err(db)?;
+    Ok(card.board_id)
+}
+
+/// Deletes the card only while it is still archived, all in one write
+/// transaction, so a card another app restored meanwhile is never deleted.
+/// Returns the owning board id when it deleted the card, `None` when the card
+/// is live again or already gone.
+pub fn delete_archived_card(conn: &Connection, card_id: &str) -> Result<Option<String>, String> {
+    let tx = write_tx(conn)?;
+    let card = match get_card(&tx, card_id) {
+        Ok(card) => card,
+        Err(error) if error == "Card not found" => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !is_archived(&tx, card_id)? {
+        return Ok(None);
+    }
+    delete_card_in(&tx, &card)?;
+    tx.commit().map_err(db)?;
+    Ok(Some(card.board_id))
+}
+
+/// Logs the tombstone, deletes the card and closes its column's gap.
+fn delete_card_in(tx: &Transaction<'_>, card: &Card) -> Result<(), String> {
+    let card_id = card.id.as_str();
+    let column = get_column(tx, &card.column_id)?;
     // The tombstone has no card_id: the card's own rows cascade away with it.
     let detail = format!("#{} {}", card.number, card.title);
     log_activity(
-        &tx,
+        tx,
         NewActivity {
             board_id: &card.board_id,
             card_id: None,
@@ -753,10 +780,8 @@ pub fn delete_card(conn: &Connection, card_id: &str) -> Result<String, String> {
     )?;
     tx.execute("DELETE FROM board_cards WHERE id = ?1", [card_id])
         .map_err(db)?;
-    let ids = column_card_ids(&tx, &card.column_id)?;
-    write_card_positions(&tx, &ids)?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+    let ids = column_card_ids(tx, &card.column_id)?;
+    write_card_positions(tx, &ids)
 }
 
 pub fn cards_for_link(

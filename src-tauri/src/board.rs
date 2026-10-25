@@ -6,11 +6,12 @@ use gespan_board_store::get_card;
 use gespan_board_store::{
     add_comment, add_subtask, archive_card, archive_cards, archived_cards, card_extras,
     cards_for_link, column_card_count, create_board, create_card, create_column, create_label,
-    delete_board, delete_card, delete_column, delete_subtask, get_board, link_card, list_activity,
-    list_boards, list_comments, list_labels, list_subtasks, move_card, move_cards, move_column,
-    record_card, rename_board, restore_card, set_card_labels, set_column_display, set_due,
-    set_priority, set_projects, toggle_subtask, unarchive_card, update_card, update_column,
-    validate_id, Activity, Board, BoardDetail, Card, CardExtras, Column, Comment, Label, Subtask,
+    delete_archived_card, delete_board, delete_card, delete_column, delete_subtask, get_board,
+    link_card, list_activity, list_boards, list_comments, list_labels, list_subtasks, move_card,
+    move_cards, move_column, record_card, rename_board, restore_card, set_card_labels,
+    set_column_display, set_due, set_priority, set_projects, toggle_subtask, unarchive_card,
+    update_card, update_column, validate_id, Activity, Board, BoardDetail, Card, CardExtras,
+    Column, Comment, Label, Subtask,
 };
 use gespan_tracker_client::tickets::TicketRef;
 use serde::Serialize;
@@ -266,6 +267,30 @@ pub fn board_card_delete(
     drop(conn);
     notify(&app, &board_id);
     Ok(())
+}
+
+/// Commits a held delete: deletes the card only while it is still archived.
+#[tauri::command(async)]
+pub fn board_card_delete_archived(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<(), String> {
+    let conn = store.lock_conn()?;
+    let board_id = card_delete_archived_inner(&conn, &card_id)?;
+    drop(conn);
+    if let Some(board_id) = board_id {
+        notify(&app, &board_id);
+    }
+    Ok(())
+}
+
+fn card_delete_archived_inner(
+    conn: &rusqlite::Connection,
+    card_id: &str,
+) -> Result<Option<String>, String> {
+    validate_id(card_id, "card")?;
+    delete_archived_card(conn, card_id)
 }
 
 #[tauri::command(async)]
@@ -1239,5 +1264,32 @@ mod tests {
         assert_eq!(value["color"], "00ff00");
         archive_card(&conn, &cards[2].id).unwrap();
         assert_eq!(column_card_count(&conn, &columns[1].id).unwrap(), (2, 1));
+    }
+
+    #[test]
+    fn delete_archived_command_deletes_only_an_archived_card() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let cards = add_cards(&conn, &columns[0].id, &["a", "b"]);
+        archive_card(&conn, &cards[0].id).unwrap();
+
+        // Live: untouched, nothing to notify.
+        assert_eq!(
+            card_delete_archived_inner(&conn, &cards[1].id).unwrap(),
+            None
+        );
+        assert_eq!(get_card(&conn, &cards[1].id).unwrap().title, "b");
+        // Archived: deleted, the board is notified.
+        assert_eq!(
+            card_delete_archived_inner(&conn, &cards[0].id).unwrap(),
+            Some(board.id.clone())
+        );
+        assert!(get_card(&conn, &cards[0].id).is_err());
+        // Gone: a no-op.
+        assert_eq!(
+            card_delete_archived_inner(&conn, &cards[0].id).unwrap(),
+            None
+        );
+        assert!(card_delete_archived_inner(&conn, "bad id!").is_err());
     }
 }

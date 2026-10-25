@@ -96,6 +96,13 @@ impl Service {
         store::restore_card(&self.conn, card_id, column_id, index).map(drop)
     }
 
+    /// Deletes the card only while it is still archived, in one write. Returns
+    /// the board id when it deleted, `None` when the card is live or gone.
+    pub fn delete_archived(&mut self, card_id: &str) -> Result<Option<String>, String> {
+        validate_id(card_id, "card")?;
+        store::delete_archived_card(&self.conn, card_id)
+    }
+
     pub fn archived(&mut self, board_id: &str) -> Result<Vec<super::Card>, String> {
         validate_id(board_id, "board")?;
         store::archived_cards(&self.conn, board_id)

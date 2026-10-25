@@ -387,6 +387,7 @@ pub fn run() {
             board::board_card_tickets,
             board::board_card_set_ticket,
             board::board_card_delete,
+            board::board_card_delete_archived,
             board::board_cards_for_link,
             board::board_activity,
             board::board_card_record,

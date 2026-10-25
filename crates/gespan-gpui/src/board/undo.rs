@@ -122,24 +122,10 @@ fn put_back(
 
 /// Carry out a held delete, but only while the card is still archived: the
 /// other app, another window or an agent may have restored it meanwhile, and
-/// a live card is never deleted. A card already gone is left alone.
+/// a live card is never deleted. A card already gone is left alone. The check
+/// and the delete are one store transaction, so nothing can slip in between.
 fn delete_if_archived(service: &mut Service, card_id: &str) -> Result<(), String> {
-    let card = match service.card(card_id) {
-        Ok(card) => card,
-        Err(error) if error == "Card not found" => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    let archived = service
-        .archived(&card.board_id)?
-        .iter()
-        .any(|archived| archived.id == card_id);
-    if !archived {
-        return Ok(());
-    }
-    match service.card_delete(card_id) {
-        Err(error) if error != "Card not found" => Err(error),
-        _ => Ok(()),
-    }
+    service.delete_archived(card_id).map(drop)
 }
 
 /// Run an inverse. Restores everything it can and returns the first error.
