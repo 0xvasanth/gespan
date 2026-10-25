@@ -95,3 +95,73 @@ describe("log schema", () => {
     expect(listed).toEqual(DENY_LIST);
   });
 });
+
+const BUNDLE = "docs/diagnostics/bundle-format.md";
+
+/** The first `json` example inside the section under `heading`. */
+const exampleIn = (md: string, heading: string): Json => {
+  const [first] = jsonBlocks(section(md, heading), "json");
+  expect(first, `"${heading}" has a json example`).toBeDefined();
+  return first;
+};
+
+const expectRequired = (md: string, heading: string, example: Json) => {
+  const required = requiredFields(md, heading);
+  expect(required.length, `"${heading}" marks some fields required`).toBeGreaterThan(0);
+  for (const field of required) {
+    expect(example, `"${heading}" example has ${field}`).toHaveProperty(field.split("."));
+  }
+};
+
+describe("bundle format", () => {
+  const md = doc(BUNDLE);
+
+  it("lays out the five bundle entries under the shared zip name", () => {
+    const layout = section(md, "Layout");
+    expect(layout).toContain("gespan-diagnostics-<app>-<version>-<timestamp>.zip");
+    for (const entry of ["report.json", "logs.jsonl", "crashes/*.json", "counters.json", "environment.json"]) {
+      expect(layout).toContain(`\`${entry}\``);
+    }
+    expect(layout).toMatch(/5 MB/);
+  });
+
+  it("gives a report.json example that is version 1 and carries every required field", () => {
+    const report = exampleIn(md, "report.json");
+    expectRequired(md, "report.json", report);
+    expect(report.bundle_version).toBe(1);
+    expect(["native", "tauri"]).toContain(report.app);
+  });
+
+  it("keeps the contact email out of anything public", () => {
+    const row = section(md, "report.json")
+      .split("\n")
+      .find((l) => l.startsWith("| `contact_email`"));
+    expect(row).toMatch(/never/i);
+    expect(row).toMatch(/public issue/i);
+  });
+
+  it("gives crash, counter and environment examples with their required fields", () => {
+    for (const heading of ["crashes/*.json", "counters.json", "environment.json"]) {
+      expectRequired(md, heading, exampleIn(md, heading));
+    }
+  });
+
+  it("counts failures by fixed error codes, never free text", () => {
+    const { counters } = exampleIn(md, "counters.json") as { counters: Json[] };
+    expect(counters.length).toBeGreaterThan(0);
+    for (const c of counters) {
+      expect(c.day).toMatch(/^\d{4}-\d\d-\d\d$/);
+      expect(c.error_kind === null || /^[a-z_]+$/.test(String(c.error_kind))).toBe(true);
+      expect(Number.isInteger(c.count)).toBe(true);
+    }
+  });
+
+  it("puts no paths, project names or repository URLs in environment.json", () => {
+    const keys = (value: unknown): string[] =>
+      value && typeof value === "object"
+        ? Object.entries(value).flatMap(([k, v]) => [k, ...keys(v)])
+        : [];
+    const env = exampleIn(md, "environment.json");
+    expect(keys(env).filter((k) => /path|name|url|repo/i.test(k))).toEqual([]);
+  });
+});
