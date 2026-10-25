@@ -9,6 +9,7 @@ publish = false
 serde.workspace = true
 serde_json.workspace = true
 gespan-core = { path = "../gespan-core" }
+gespan-redact = { path = "../gespan-redact" }
 gespan-keep-awake = { path = "../keep-awake" }
 pulldown-cmark = "0.13"
 syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
@@ -52,6 +53,9 @@ qrcode = { version = "0.14", default-features = false }
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false, features = ["test-support"] }
 tempfile = "3"
+# Reading report bundles back in tests.
+url = "2"
+zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
 # Raw SQL in board tests, to stand in for the Tauri app or a broken schema.
 rusqlite.workspace = true
 

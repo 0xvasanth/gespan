@@ -25,6 +25,7 @@ pub(crate) enum Command {
     Orchestrator,
     OpenLogs,
     CopyDiagnostics,
+    ReportIssue,
 }
 const COMMANDS: &[(Command, &str, &str)] = &[
     (Command::New, "New conversation", "⌘N"),
@@ -40,6 +41,7 @@ const COMMANDS: &[(Command, &str, &str)] = &[
     (Command::Orchestrator, "Toggle Orchestrator", ""),
     (Command::OpenLogs, "Open logs folder", ""),
     (Command::CopyDiagnostics, "Copy diagnostics", ""),
+    (Command::ReportIssue, "Report an issue", ""),
 ];
 pub(crate) enum Picked {
     File(String),

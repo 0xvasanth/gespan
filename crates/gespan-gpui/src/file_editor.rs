@@ -97,6 +97,10 @@ pub(crate) fn menus(prefs: &crate::settings::Preferences, cx: &mut App) {
             MenuItem::action("Fold All", input::FoldAll),
             MenuItem::action("Unfold All", input::UnfoldAll),
         ]),
+        Menu::new("Help").items([MenuItem::action(
+            "Report an issue…",
+            crate::report::ReportIssue,
+        )]),
     ]);
 }
 #[derive(Clone, Debug, PartialEq, gpui::Action)]
