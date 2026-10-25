@@ -73,6 +73,8 @@ impl BoardView {
                     return false;
                 }
             }
+            // A delete held by the toast is carried out before leaving.
+            self.commit_pending(cx);
             self.remember_board(&id);
             self.selected_board_id = Some(id);
             self.reset_for_board(cx);
@@ -142,6 +144,7 @@ impl BoardView {
         let Some(id) = self.open_board_id.clone() else {
             return;
         };
+        self.commit_pending(cx);
         if let Err(error) = self.service().and_then(|service| service.delete(&id)) {
             self.switcher_error(error, cx);
             return;

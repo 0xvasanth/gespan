@@ -1,7 +1,11 @@
 //! Quick edits for priority, due date and labels. The menus are built here once
 //! and used by both the task drawer and the card face. On the face they open
 //! in place, anchored to the card.
-use super::{BoardView, CardMenu, detail::Picker};
+use super::{
+    BoardView, CardMenu,
+    detail::Picker,
+    undo::{Undo, archived_label, moved_label},
+};
 use crate::popover::{Menu, MenuAction, MenuEvent, MenuItem};
 use chrono::NaiveDate;
 use gespan_core::board::extras::{Label, PRIORITIES};
@@ -137,9 +141,17 @@ impl BoardView {
             cx.notify();
             return;
         }
-        self.write(cx, |service| {
+        let label = format!("Sorted {}", self.column_name(&column_id));
+        self.commit_pending(cx);
+        if self.write(cx, |service| {
             service.move_many(&sorted, &column_id, 0, "user")
-        });
+        }) {
+            let undo = Undo::Sort {
+                column_id,
+                order: current,
+            };
+            self.push_undo(label, undo, cx);
+        }
     }
 
     /// The first column with the done role.
@@ -177,9 +189,14 @@ impl BoardView {
             cx.notify();
             return;
         }
-        self.write(cx, |service| {
+        let (places, numbers) = self.places_of(&ids);
+        let label = moved_label(&numbers, &self.column_name(&done));
+        self.commit_pending(cx);
+        if self.write(cx, |service| {
             service.move_many(&ids, &done, usize::MAX, "user")
-        });
+        }) {
+            self.push_undo(label, Undo::MoveMany(places), cx);
+        }
     }
 
     /// Archive every live card of the done column.
@@ -193,7 +210,11 @@ impl BoardView {
             cx.notify();
             return;
         }
-        self.write(cx, |service| service.archive_many(&ids));
+        let (places, numbers) = self.places_of(&ids);
+        self.commit_pending(cx);
+        if self.write(cx, |service| service.archive_many(&ids)) {
+            self.push_undo(archived_label(&numbers), Undo::Archive(places), cx);
+        }
     }
 
     /// Collapse or expand a column, keeping its colour and WIP limit.

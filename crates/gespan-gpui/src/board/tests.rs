@@ -845,27 +845,6 @@ fn a_missing_session_says_so_and_offers_no_open(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn declining_the_delete_confirm_keeps_the_card(cx: &mut TestAppContext) {
-    let f = seeded(cx, &["Keep"]);
-    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
-    click(visual, "board-card-1");
-    click(visual, "board-drawer-more");
-    click(visual, "menu-action-delete");
-    assert!(visual.has_pending_prompt());
-    visual.simulate_prompt_answer("Cancel");
-    visual.run_until_parked();
-    assert_eq!(detail(&f, visual).cards.len(), 1);
-    click(visual, "board-drawer-more");
-    click(visual, "menu-action-delete");
-    visual.simulate_prompt_answer("Delete");
-    visual.run_until_parked();
-    assert!(detail(&f, visual).cards.is_empty());
-    f.window
-        .read_with(visual, |view, _| assert!(view.card_detail.is_none()))
-        .unwrap();
-}
-
-#[gpui::test]
 fn a_failed_activity_load_says_so(cx: &mut TestAppContext) {
     let f = seeded(cx, &["History"]);
     // A database path inside a plain file can never be opened.
@@ -3063,4 +3042,381 @@ fn delete_column_is_disabled_while_archived_cards_remain(cx: &mut TestAppContext
     open_column_menu(visual, 0);
     click(visual, "board-column-delete");
     assert_eq!(detail(&f, visual).columns.len(), 3);
+}
+
+// ---- undo toasts, held deletes and the Archive view ----
+
+/// The undo toast's text, if one is showing.
+fn toast(f: &Fixture, cx: &mut impl gpui::AppContext) -> Option<String> {
+    f.window
+        .read_with(cx, |view, _| {
+            view.undo.toast.as_ref().map(|toast| toast.label.clone())
+        })
+        .unwrap()
+}
+
+fn card_exists(f: &Fixture, id: &str) -> bool {
+    Service::open(&f.db).unwrap().card(id).is_ok()
+}
+
+fn archived_ids(f: &Fixture, cx: &mut impl gpui::AppContext) -> Vec<String> {
+    let board = detail(f, cx).board.id.clone();
+    Service::open(&f.db)
+        .unwrap()
+        .archived(&board)
+        .unwrap()
+        .into_iter()
+        .map(|card| card.id)
+        .collect()
+}
+
+/// Delete card `#number` from its drawer: no prompt, the drawer closes.
+fn delete_from_drawer(f: &Fixture, visual: &mut VisualTestContext, number: usize) {
+    click(visual, selector(format!("board-card-{number}")));
+    click(visual, "board-drawer-more");
+    click(visual, "menu-action-delete");
+    assert!(!visual.has_pending_prompt(), "a held delete never prompts");
+    f.window
+        .read_with(visual, |view, _| assert!(view.card_detail.is_none()))
+        .unwrap();
+}
+
+#[gpui::test]
+fn moving_a_card_shows_undo_and_undo_moves_it_back(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+
+    // Move to… from the card menu.
+    click(visual, "board-card-menu-2");
+    click(visual, "menu-action-move-3");
+    assert_eq!(titles_in(&f, visual, "Done"), ["B"]);
+    assert_eq!(toast(&f, visual).as_deref(), Some("Moved #2 to Done"));
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-undo-toast").is_some());
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "C"]);
+    assert_eq!(toast(&f, visual), None);
+    assert_gone(visual, "board-undo-toast");
+
+    // A mouse drop.
+    let from = center(visual, "board-card-1");
+    let to = center(visual, "board-column-body-2");
+    drag(visual, from, to);
+    assert_eq!(titles_in(&f, visual, "Review"), ["A"]);
+    assert_eq!(toast(&f, visual).as_deref(), Some("Moved #1 to Review"));
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "C"]);
+
+    // A keyboard drop, reordering inside the column.
+    let c = card_id(&f, visual, "C");
+    focus_card(&f, visual, &c);
+    visual.simulate_keystrokes("space up up enter");
+    visual.run_until_parked();
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["C", "A", "B"]);
+    assert_eq!(toast(&f, visual).as_deref(), Some("Moved #3 to Backlog"));
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "C"]);
+
+    // Left alone, the toast goes after 8 seconds.
+    click(visual, "board-card-menu-1");
+    click(visual, "menu-action-move-1");
+    visual
+        .executor()
+        .advance_clock(Duration::from_millis(7_900));
+    visual.run_until_parked();
+    assert!(toast(&f, visual).is_some(), "still inside the window");
+    visual.executor().advance_clock(Duration::from_millis(200));
+    visual.run_until_parked();
+    assert_eq!(toast(&f, visual), None);
+    assert_gone(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "In Progress"), ["A"]);
+}
+
+#[gpui::test]
+fn a_bulk_move_undo_restores_every_card_position(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let done = column_id(&f, cx, "Done");
+    Service::open(&f.db)
+        .unwrap()
+        .card_create(&done, "X", "")
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 0);
+    click(visual, "menu-mark-done");
+    assert_eq!(titles_in(&f, visual, "Done"), ["X", "A", "B", "C"]);
+    assert_eq!(toast(&f, visual).as_deref(), Some("Moved 3 cards to Done"));
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "C"]);
+    assert_eq!(titles_in(&f, visual, "Done"), ["X"]);
+    let mut cards = detail(&f, visual).cards;
+    cards.sort_by_key(|c| (c.column_id.clone(), c.position));
+    for column in [column_id(&f, visual, "Backlog"), done] {
+        let positions: Vec<i64> = cards
+            .iter()
+            .filter(|c| c.column_id == column)
+            .map(|c| c.position)
+            .collect();
+        assert_eq!(positions, (0..positions.len() as i64).collect::<Vec<_>>());
+    }
+}
+
+#[gpui::test]
+fn sort_undo_restores_the_exact_previous_order(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C", "D"]);
+    set_priorities(&f, cx, &[("A", 1), ("B", 4), ("C", 0), ("D", 4)]);
+    // Sorting with a filter on still sorts, and undoes, the whole column.
+    f.window
+        .update(cx, |view, _, cx| {
+            view.filter.priorities.insert(1);
+            cx.notify();
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 0);
+    click(visual, "menu-sort-priority");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B", "D", "A", "C"]);
+    assert_eq!(toast(&f, visual).as_deref(), Some("Sorted Backlog"));
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "C", "D"]);
+}
+
+#[gpui::test]
+fn delete_hides_the_card_and_expiry_deletes_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Doomed", "Stays"]);
+    let doomed = card_id(&f, cx, "Doomed");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    delete_from_drawer(&f, visual, 1);
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["Stays"]);
+    assert_eq!(toast(&f, visual).as_deref(), Some("Deleted #1"));
+    // Held: archived, not deleted, while the toast shows.
+    assert!(card_exists(&f, &doomed));
+    assert_eq!(archived_ids(&f, visual), std::slice::from_ref(&doomed));
+    visual
+        .executor()
+        .advance_clock(Duration::from_millis(7_900));
+    visual.run_until_parked();
+    assert!(card_exists(&f, &doomed), "not before 8 seconds");
+    visual.executor().advance_clock(Duration::from_millis(200));
+    visual.run_until_parked();
+    assert!(!card_exists(&f, &doomed), "deleted once the toast expires");
+    assert_eq!(toast(&f, visual), None);
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["Stays"]);
+}
+
+#[gpui::test]
+fn undo_delete_restores_the_card_at_its_index(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let b = card_id(&f, cx, "B");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    delete_from_drawer(&f, visual, 2);
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "C"]);
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "C"]);
+    assert!(archived_ids(&f, visual).is_empty());
+    // The expired timer of the undone delete deletes nothing.
+    visual.executor().advance_clock(Duration::from_secs(10));
+    visual.run_until_parked();
+    assert!(card_exists(&f, &b));
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "C"]);
+}
+
+#[gpui::test]
+fn a_new_action_commits_the_pending_delete(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let a = card_id(&f, cx, "A");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    delete_from_drawer(&f, visual, 1);
+    assert!(card_exists(&f, &a));
+    click(visual, "board-card-menu-2");
+    click(visual, "menu-action-move-3");
+    assert!(
+        !card_exists(&f, &a),
+        "replacing the toast commits the delete"
+    );
+    assert_eq!(toast(&f, visual).as_deref(), Some("Moved #2 to Done"));
+    // Undo now only undoes the move.
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B"]);
+    assert!(!card_exists(&f, &a));
+}
+
+#[gpui::test]
+fn switching_boards_commits_a_pending_delete(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let a = card_id(&f, cx, "A");
+    let sprint = Service::open(&f.db).unwrap().create("Sprint").unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    delete_from_drawer(&f, visual, 1);
+    f.window
+        .update(visual, |view, _, cx| view.open_board(sprint.id.clone(), cx))
+        .unwrap();
+    visual.run_until_parked();
+    assert!(!card_exists(&f, &a));
+    assert_eq!(toast(&f, visual), None);
+}
+
+#[gpui::test]
+fn closing_the_window_with_a_pending_delete_keeps_the_card_archived(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let a = card_id(&f, cx, "A");
+    let board = detail(&f, cx).board.id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    delete_from_drawer(&f, visual, 1);
+    f.window
+        .update(visual, |_, window, _| window.remove_window())
+        .unwrap();
+    visual.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(10));
+    cx.run_until_parked();
+    assert!(card_exists(&f, &a), "never half-deleted");
+    let archived = Service::open(&f.db).unwrap().archived(&board).unwrap();
+    assert_eq!(archived.len(), 1, "it shows in the Archive view next time");
+}
+
+#[gpui::test]
+fn undo_after_the_card_was_deleted_elsewhere_reports_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let a = card_id(&f, cx, "A");
+    let b = card_id(&f, cx, "B");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-menu-1");
+    click(visual, "menu-action-move-3");
+    Service::open(&f.db).unwrap().card_delete(&a).unwrap();
+    click(visual, "board-undo");
+    assert_eq!(
+        toast(&f, visual).as_deref(),
+        Some("Couldn't undo: the card was deleted")
+    );
+    assert_gone(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B", "C"]);
+
+    // A bulk undo restores every card it still can.
+    open_column_menu(visual, 0);
+    click(visual, "menu-mark-done");
+    Service::open(&f.db).unwrap().card_delete(&b).unwrap();
+    click(visual, "board-undo");
+    assert_eq!(
+        toast(&f, visual).as_deref(),
+        Some("Couldn't undo: the card was deleted")
+    );
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["C"]);
+    assert!(titles_in(&f, visual, "Done").is_empty());
+    // The message goes like any toast.
+    visual.executor().advance_clock(Duration::from_secs(9));
+    visual.run_until_parked();
+    assert_eq!(toast(&f, visual), None);
+}
+
+#[gpui::test]
+fn undo_after_the_column_was_deleted_reports_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let a = card_id(&f, cx, "A");
+    let backlog = column_id(&f, cx, "Backlog");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-menu-1");
+    click(visual, "menu-action-move-3");
+    Service::open(&f.db)
+        .unwrap()
+        .column_delete(&backlog)
+        .unwrap();
+    click(visual, "board-undo");
+    assert_eq!(
+        toast(&f, visual).as_deref(),
+        Some("Couldn't undo: the column was deleted")
+    );
+    assert!(card_exists(&f, &a));
+    assert_eq!(titles_in(&f, visual, "Done"), ["A"]);
+}
+
+#[gpui::test]
+fn archive_completed_can_be_undone(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let done = column_id(&f, cx, "Done");
+    let mut service = Service::open(&f.db).unwrap();
+    for title in ["A", "B"] {
+        let id = card_id(&f, cx, title);
+        service.card_move(&id, &done, usize::MAX, "user").unwrap();
+    }
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 3);
+    click(visual, "menu-archive-done");
+    assert_eq!(toast(&f, visual).as_deref(), Some("Archived 2 cards"));
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Done"), ["A", "B"]);
+    assert!(archived_ids(&f, visual).is_empty());
+}
+
+#[gpui::test]
+fn archive_view_restores_and_deletes_forever(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let (a, b) = (card_id(&f, cx, "A"), card_id(&f, cx, "B"));
+    let mut service = Service::open(&f.db).unwrap();
+    service.archive(&a).unwrap();
+    service.archive(&b).unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-archive");
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-archive-panel").is_some());
+    // Newest first: B was archived last.
+    let listed: Vec<String> = f
+        .window
+        .read_with(visual, |view, _| {
+            view.archived_cards()
+                .iter()
+                .map(|c| c.title.clone())
+                .collect()
+        })
+        .unwrap();
+    assert_eq!(listed, ["B", "A"]);
+
+    // Restore puts B back at the end of its column.
+    click(visual, "board-archive-restore-0");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["C", "B"]);
+
+    // Delete forever asks first; Cancel keeps it.
+    click(visual, "board-archive-delete-0");
+    assert!(visual.has_pending_prompt());
+    visual.simulate_prompt_answer("Cancel");
+    visual.run_until_parked();
+    assert!(card_exists(&f, &a));
+    click(visual, "board-archive-delete-0");
+    visual.simulate_prompt_answer("Delete forever");
+    visual.run_until_parked();
+    assert!(!card_exists(&f, &a));
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-archive-empty").is_some());
+
+    // The header button closes it again.
+    click(visual, "board-archive");
+    assert_gone(visual, "board-archive-panel");
+}
+
+#[gpui::test]
+fn a_pending_delete_is_not_listed_in_the_archive_view(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "Shelved"]);
+    let shelved = card_id(&f, cx, "Shelved");
+    Service::open(&f.db).unwrap().archive(&shelved).unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    delete_from_drawer(&f, visual, 1);
+    click(visual, "board-archive");
+    let listed: Vec<String> = f
+        .window
+        .read_with(visual, |view, _| {
+            view.archived_cards()
+                .iter()
+                .map(|c| c.title.clone())
+                .collect()
+        })
+        .unwrap();
+    assert_eq!(listed, ["Shelved"]);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-archive-restore-0").is_some());
+    assert!(visual.debug_bounds("board-archive-restore-1").is_none());
+    // Undo brings it back to the board, still not into the archive.
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A"]);
 }

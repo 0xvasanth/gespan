@@ -482,7 +482,7 @@ impl BoardView {
             },
             Choice::More => {
                 if id == "delete" {
-                    self.delete_card(window, cx);
+                    self.delete_card(cx);
                 }
             }
         }
@@ -815,9 +815,9 @@ impl BoardView {
         };
         match self.done_column() {
             Some(done) if done != card.column_id => {
-                self.write_task(cx, |service| {
-                    service.card_move(&card.id, &done, usize::MAX, "user")
-                });
+                self.move_with_undo(&card.id, &done, usize::MAX, cx);
+                self.refresh_detail_lists();
+                cx.notify();
             }
             Some(_) => {}
             None => {
@@ -836,27 +836,29 @@ impl BoardView {
         }
     }
 
-    fn delete_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// A held delete: the card is archived and the drawer closes at once; the
+    /// undo toast deletes it for good when it goes, or Undo puts it back.
+    fn delete_card(&mut self, cx: &mut Context<Self>) {
         let Some(card) = self.detail_card() else {
             return;
         };
-        let answer = window.prompt(
-            gpui::PromptLevel::Warning,
-            &format!("Delete “{}”?", card.title),
-            Some("Its description, subtasks, comments and activity are removed."),
-            &["Delete", "Cancel"],
-            cx,
-        );
-        cx.spawn(async move |this, cx| {
-            if answer.await == Ok(0) {
-                let _ = this.update(cx, |this, cx| {
-                    // The drawer closes only once the task is gone.
-                    if this.write(cx, |service| service.card_delete(&card.id)) {
-                        this.card_detail = None;
-                    }
-                });
-            }
-        })
-        .detach();
+        let Some(((_, column_id, index), number)) = self.place_of(&card.id) else {
+            return;
+        };
+        // Typed edits are saved first so Undo brings them back too; a failed
+        // save keeps the drawer open with its error and deletes nothing.
+        self.close_card_detail(cx);
+        if self.card_detail.is_some() {
+            return;
+        }
+        self.commit_pending(cx);
+        if self.write(cx, |service| service.archive(&card.id)) {
+            let undo = super::undo::Undo::Delete {
+                card_id: card.id,
+                column_id,
+                index,
+            };
+            self.push_undo(format!("Deleted #{number}"), undo, cx);
+        }
     }
 }

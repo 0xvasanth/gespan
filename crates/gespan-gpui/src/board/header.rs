@@ -218,6 +218,39 @@ impl BoardView {
             .child(div().flex_1())
             .child(
                 div()
+                    .id("board-archive")
+                    .debug_selector(|| "board-archive".into())
+                    .role(Role::Button)
+                    .aria_label("Archive")
+                    .aria_toggled(if self.archive_open {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .h(px(26.))
+                    .px_2()
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(px(12.))
+                    .text_color(content(if self.archive_open { 0.9 } else { 0.6 }))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(content(0.06)))
+                    .when(self.archive_open, |d| d.bg(content(0.05)))
+                    .tab_index(0)
+                    .focus_visible(|s| s.border_1().border_color(accent_color()))
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                        if presses(event) {
+                            cx.stop_propagation();
+                            this.toggle_archive(cx);
+                        }
+                    }))
+                    .child("Archive")
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_archive(cx))),
+            )
+            .child(
+                div()
                     .id("board-new-task")
                     .debug_selector(|| "board-new-task".into())
                     .role(Role::Button)

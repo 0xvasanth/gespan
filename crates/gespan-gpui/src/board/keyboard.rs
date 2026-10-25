@@ -249,10 +249,7 @@ impl BoardView {
         });
         match resolved {
             Some((column, index)) => {
-                let card_id = drag.card_id;
-                self.write(cx, |service| {
-                    service.card_move(&card_id, &column, index, "user")
-                });
+                self.move_with_undo(&drag.card_id, &column, index, cx);
             }
             None if self.pending_reload => self.reload(cx),
             None => cx.notify(),

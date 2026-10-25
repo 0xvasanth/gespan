@@ -1,6 +1,7 @@
 //! The Board app view, over the same `board*` tables the Tauri app uses.
 //! Writes from the Tauri app (or another window) show up when the view opens,
 //! when the window becomes active, and when SQLite's `data_version` moves.
+mod archive;
 mod card;
 mod column;
 mod detail;
@@ -14,6 +15,7 @@ mod switcher;
 mod tests;
 mod tickets;
 pub(crate) mod turns;
+mod undo;
 
 use crate::{
     input::{self, Input},
@@ -191,6 +193,11 @@ pub(crate) struct BoardView {
     error: Option<String>,
     /// Why the last reload failed; cleared by the next one that succeeds.
     load_error: Option<String>,
+    /// The undo toast and any delete it is holding.
+    pub(crate) undo: undo::UndoController,
+    /// Whether the Archive view is open, and the archived cards it read.
+    archive_open: bool,
+    archived: Vec<gespan_core::board::Card>,
     /// Runs between a reload's reads and the end of the load, so a test can
     /// commit from another connection exactly there.
     #[cfg(test)]
@@ -281,6 +288,9 @@ impl BoardView {
             column_drop: None,
             error: None,
             load_error: None,
+            undo: undo::UndoController::default(),
+            archive_open: false,
+            archived: Vec::new(),
             #[cfg(test)]
             after_load_reads: None,
             _poll: poll,
@@ -395,6 +405,7 @@ impl BoardView {
                 .flatten(),
         };
         let wanted = self.selected_board_id.clone().or(remembered);
+        let archive_open = self.archive_open;
         let service = self.service()?;
         // Read the version first: a commit landing during the reads below
         // then shows up as a newer version on the next poll and reloads again.
@@ -417,6 +428,11 @@ impl BoardView {
         let extras = service.extras(&board.id)?;
         let labels = service.labels(&board.id)?;
         let card_tickets = service.board_tickets(&board.id)?;
+        let archived = if archive_open {
+            service.archived(&board.id)?
+        } else {
+            Vec::new()
+        };
         #[cfg(test)]
         if let Some(hook) = self.after_load_reads.as_mut() {
             hook();
@@ -430,6 +446,7 @@ impl BoardView {
         self.extras = extras;
         self.labels = labels;
         self.card_tickets = card_tickets;
+        self.archived = archived;
         self.links = self.resolve_links(cx)?;
         self.sync_handles(cx);
         // A selected label deleted elsewhere would hide every card unseen.
@@ -790,10 +807,7 @@ impl BoardView {
         self.drop_target = None;
         match resolved {
             Some((column, index)) => {
-                let card_id = card.card_id.clone();
-                self.write(cx, |service| {
-                    service.card_move(&card_id, &column, index, "user")
-                });
+                self.move_with_undo(&card.card_id, &column, index, cx);
             }
             None => self.end_drag(cx),
         }
@@ -837,9 +851,7 @@ impl BoardView {
 
     fn move_card_to(&mut self, card_id: String, column_id: String, cx: &mut Context<Self>) {
         self.menu = None;
-        self.write(cx, |service| {
-            service.card_move(&card_id, &column_id, usize::MAX, "user")
-        });
+        self.move_with_undo(&card_id, &column_id, usize::MAX, cx);
     }
 
     /// The card's actions in the app's keyboard menu: open it, or move it to
@@ -1220,6 +1232,8 @@ impl gpui::Render for BoardView {
         let card_detail = self.render_card_detail(cx);
         let filter = self.render_filter(cx);
         let switcher = self.render_switcher(cx);
+        let archive = self.render_archive(cx);
+        let undo_toast = self.render_undo_toast(cx);
         let board = div()
             .flex_1()
             .min_w_0()
@@ -1250,10 +1264,12 @@ impl gpui::Render for BoardView {
                     ),
             );
         root.child(board)
+            .children(archive)
             .children(card_detail)
             .children(filter)
             .children(switcher)
             .children(menu)
             .children(card_menu)
+            .children(undo_toast)
     }
 }
