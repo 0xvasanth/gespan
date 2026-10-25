@@ -1,0 +1,24 @@
+crates/gespan-core/src/diagnostics/mod.rs
+  s_d3e103518690a2::t_9cfc6d0d86ad4d 6
+  s_d3e103518690a2::t_da4f0e14c8cbda 10
+crates/gespan-core/src/diagnostics/rotation.rs
+  s_d3e103518690a2::t_beeac15ac81fd4 331
+  s_d3e103518690a2::t_003f03b8c55607 28,31-61,68-82,90-97,101,103-143,145-148,153-172,174,176
+  s_d3e103518690a2::t_9cfc6d0d86ad4d 1-27,29-30,62-67,83-89,98-100,102,144,149-152,173,175,177-330,332-379
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c96c50b193a7c6be8d4cfa54ae8a49d6da711a6d",
+  "prompts": {},
+  "sessions": {
+    "s_d3e103518690a2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34c2fa24-ecff-4a6f-9e96-30c0a62d3b0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
