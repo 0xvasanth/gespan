@@ -569,6 +569,13 @@ impl Tunnels {
         drop(old);
     }
     pub fn endpoint(&self, id: &str, target: &SshTarget) -> Result<TunnelLease, String> {
+        self.endpoint_with(id, || Tunnel::start(target, None, None))
+    }
+    fn endpoint_with(
+        &self,
+        id: &str,
+        start: impl FnOnce() -> Result<Tunnel, String>,
+    ) -> Result<TunnelLease, String> {
         let slot = self.slots().entry(id.into()).or_default().clone();
         let mut current = slot.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(tunnel) = current.tunnel.as_mut() {
@@ -586,7 +593,11 @@ impl Tunnels {
                 return Err(error.clone());
             }
         }
-        match Tunnel::start(target, None, None) {
+        let reopened = {
+            let _span = tracing::info_span!("ssh_connect", background = true).entered();
+            start().inspect_err(|error| tracing::warn!(%error, "SSH connection failed"))
+        };
+        match reopened {
             Ok(tunnel) => {
                 let endpoint = format!("http://127.0.0.1:{}", tunnel.port);
                 current.failure = None;
@@ -969,5 +980,31 @@ mod tests {
         assert_eq!(logged.len(), 1, "{logged:?}");
         assert_eq!(logged[0]["level"], "info");
         assert_eq!(logged[0]["message"], "SSH connection cancelled");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_background_reconnect_is_logged_once_per_attempt() {
+        let tunnels = Tunnels::default();
+        let target = SshTarget {
+            target: "someone@example.invalid".into(),
+            port: None,
+            remote_port: 3774,
+        };
+        let exits = || {
+            let mut command = Command::new("false");
+            command.stderr(Stdio::piped());
+            Tunnel::start_with_command(&target, None, None, command)
+        };
+        let logged = crate::diagnostics::test_capture(|| {
+            assert!(tunnels.endpoint_with("machine", exits).is_err());
+            // Within the backoff the cached failure is returned without a new attempt.
+            assert!(tunnels.endpoint_with("machine", exits).is_err());
+        });
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "warn");
+        assert_eq!(logged[0]["span"], "ssh_connect");
+        assert_eq!(logged[0]["fields"]["background"], true);
+        assert!(!logged[0].to_string().contains("example.invalid"));
     }
 }

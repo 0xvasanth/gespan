@@ -1032,3 +1032,31 @@ fn commit_files_and_diffs_include_the_root_commit() {
     assert_eq!(commit_files(dir.path(), &root).unwrap().len(), 1);
     assert!(commit_files(dir.path(), "not-a-sha").is_err());
 }
+
+#[test]
+fn a_failed_git_action_is_logged_once_with_its_name() {
+    let dir = tmp();
+    let dir = dir.path();
+    assert!(init_git_commit(dir, &[("a.txt", "alpha\n")]));
+    let mut pulled = Ok(());
+    // No upstream to pull from.
+    let logged = crate::diagnostics::test_capture(|| pulled = pull(dir));
+    assert!(pulled.is_err());
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["level"], "warn");
+    assert_eq!(logged[0]["span"], "git_action");
+    assert_eq!(logged[0]["fields"]["op"], "pull");
+    assert!(!logged[0]["fields"]["error"].as_str().unwrap().is_empty());
+}
+
+#[test]
+fn a_git_action_whose_probe_fails_logs_nothing() {
+    let dir = tmp();
+    let dir = dir.path();
+    assert!(init_git_commit(dir, &[("a.txt", "alpha\n")]));
+    std::fs::write(dir.join("new.txt"), "hello\n").unwrap();
+    // `ls-files --error-unmatch` fails for an untracked file; the discard still works.
+    let logged = crate::diagnostics::test_capture(|| discard_file(dir, "new.txt").unwrap());
+    assert!(!dir.join("new.txt").exists());
+    assert!(logged.is_empty(), "{logged:?}");
+}
