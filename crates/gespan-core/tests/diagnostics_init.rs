@@ -19,6 +19,9 @@ fn init_prunes_writes_both_apis_and_flushes() {
     })
     .unwrap();
     assert!(!stale.exists(), "startup prunes files older than 7 days");
+    // Filtered-out `log::debug!` calls in dependencies stop at `log`'s own
+    // level check instead of reaching the subscriber.
+    assert_eq!(log::max_level(), log::LevelFilter::Info);
     assert!(diagnostics::init(Config {
         log_dir: logs.clone(),
         version: "3.2.1".into(),

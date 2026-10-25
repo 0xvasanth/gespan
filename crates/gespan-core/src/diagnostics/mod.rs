@@ -20,6 +20,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_log::AsLog;
 use tracing_subscriber::layer::SubscriberExt;
 
 pub struct Config {
@@ -45,6 +46,17 @@ static STARTED: OnceLock<Config> = OnceLock::new();
 /// The non-blocking writer's guard, kept for the life of the process.
 static WRITER: Mutex<Option<WorkerGuard>> = Mutex::new(None);
 
+/// Human-readable lines, with colour only on a terminal.
+fn readable_layer<S, W>(writer: W) -> impl tracing_subscriber::Layer<S>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + 'static,
+{
+    tracing_subscriber::fmt::layer()
+        .with_writer(writer)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+}
+
 /// Starts file logging (filtered by `GESPAN_LOG`), bridges the `log` crate,
 /// and installs the panic hook. Prunes old logs first. Call it once.
 pub fn init(config: Config) -> Result<Guard, String> {
@@ -56,18 +68,21 @@ pub fn init(config: Config) -> Result<Guard, String> {
     let (writer, worker) = tracing_appender::non_blocking(file);
     let (env_filter, filter_error) = filter(std::env::var("GESPAN_LOG").ok().as_deref());
     // Development runs also print readable lines, as `eprintln!` did.
-    let stderr = (config.channel == Channel::Dev).then(|| {
-        tracing_subscriber::fmt::layer()
-            .with_writer(std::io::stderr)
-            .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
-    });
+    let stderr = (config.channel == Channel::Dev).then(|| readable_layer(std::io::stderr));
+    // `log` stops below this level itself, so filtered-out `log::debug!`
+    // calls in dependencies never reach the subscriber.
+    let log_level = env_filter
+        .max_level_hint()
+        .map_or(log::LevelFilter::Trace, |level| level.as_log());
     let subscriber = tracing_subscriber::registry()
         .with(env_filter)
         .with(json_layer(writer, &config.version))
         .with(stderr);
     tracing::subscriber::set_global_default(subscriber)
         .map_err(|error| format!("Cannot start logging: {error}"))?;
-    let bridged = tracing_log::LogTracer::init();
+    let bridged = tracing_log::LogTracer::builder()
+        .with_max_level(log_level)
+        .init();
     *WRITER.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
     install_panic_hook(crash_dir(&config.log_dir), config.version.clone());
     if let Some(error) = filter_error {
@@ -112,6 +127,26 @@ pub(crate) fn test_capture(body: impl FnOnce()) -> Vec<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readable_lines_show_a_log_record_s_own_target() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let out = json::tests::Capture::default();
+        let writer = out.clone();
+        let subscriber =
+            tracing_subscriber::registry().with(readable_layer(move || writer.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            let record = log::Record::builder()
+                .level(log::Level::Warn)
+                .target("gpui::window")
+                .args(format_args!("from log"))
+                .build();
+            tracing_log::format_trace(&record).unwrap();
+        });
+        let text = out.raw();
+        assert!(text.contains("gpui::window"), "{text}");
+        assert!(!text.contains("log.target"), "{text}");
+    }
 
     #[test]
     fn caught_panic_logs_at_warn() {
