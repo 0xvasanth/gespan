@@ -52,6 +52,9 @@ pub fn add_link(
     if !LINK_KINDS.contains(&kind) {
         return Err(format!("Unknown link kind: {kind}"));
     }
+    if is_ticket_kind(kind) {
+        return Err(TICKET_KIND_ERROR.into());
+    }
     if reference.is_empty() {
         return Err("Link id is required".into());
     }
@@ -144,6 +147,14 @@ pub fn card_links(conn: &Connection, card_id: &str) -> Result<Vec<CardLink>, Str
 }
 
 const TICKET_KINDS: [&str; 3] = ["jira", "linear", "plane"];
+/// The `board_card_links` role of a ticket link. The queries below match on
+/// it, so a plain link of the same kind is never read as a ticket.
+const TICKET_ROLE: &str = "ticket";
+pub(crate) const TICKET_KIND_ERROR: &str = "Use set_ticket for tracker tickets";
+
+pub(crate) fn is_ticket_kind(kind: &str) -> bool {
+    TICKET_KINDS.contains(&kind)
+}
 
 /// The link kind and key inside a `TicketRef` JSON; the store keeps the JSON
 /// opaque otherwise, since its snapshot fields are the caller's to shape.
@@ -169,7 +180,7 @@ pub fn ticket(conn: &Connection, card_id: &str) -> Result<Option<String>, String
     let mut statement = conn
         .prepare(
             "SELECT ref FROM board_card_links
-             WHERE card_id = ?1 AND kind IN ('jira', 'linear', 'plane')
+             WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')
              ORDER BY created_at DESC, kind LIMIT 1",
         )
         .map_err(db)?;
@@ -187,7 +198,7 @@ pub fn board_tickets(conn: &Connection, board_id: &str) -> Result<Vec<(String, S
         .prepare(
             "SELECT l.card_id, l.ref FROM board_card_links l
              JOIN board_cards c ON c.id = l.card_id
-             WHERE c.board_id = ?1 AND l.kind IN ('jira', 'linear', 'plane')
+             WHERE c.board_id = ?1 AND l.role = 'ticket' AND l.kind IN ('jira', 'linear', 'plane')
              ORDER BY l.card_id",
         )
         .map_err(db)?;
@@ -214,7 +225,7 @@ pub fn set_ticket(
         let mut statement = tx
             .prepare(
                 "SELECT kind, ref FROM board_card_links
-                 WHERE card_id = ?1 AND kind IN ('jira', 'linear', 'plane')",
+                 WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')",
             )
             .map_err(db)?;
         let rows = statement
@@ -233,7 +244,8 @@ pub fn set_ticket(
     let mut changed = false;
     for row in existing.iter().filter(|row| !same(row)) {
         tx.execute(
-            "DELETE FROM board_card_links WHERE card_id = ?1 AND kind = ?2 AND ref = ?3",
+            "DELETE FROM board_card_links
+             WHERE card_id = ?1 AND kind = ?2 AND ref = ?3 AND role = 'ticket'",
             params![card_id, row.0, row.1],
         )
         .map_err(db)?;
@@ -244,7 +256,8 @@ pub fn set_ticket(
             Some((_, old)) if old == json => {}
             Some((kind, old)) => {
                 tx.execute(
-                    "UPDATE board_card_links SET ref = ?1 WHERE card_id = ?2 AND kind = ?3 AND ref = ?4",
+                    "UPDATE board_card_links SET ref = ?1
+                     WHERE card_id = ?2 AND kind = ?3 AND ref = ?4 AND role = 'ticket'",
                     params![json, card_id, kind, old],
                 )
                 .map_err(db)?;
@@ -252,8 +265,8 @@ pub fn set_ticket(
             None => {
                 tx.execute(
                     "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
-                     VALUES (?1, ?2, ?3, 'ticket', ?4)",
-                    params![card_id, tracker, json, now_millis()],
+                     VALUES (?1, ?2, ?3, ?5, ?4)",
+                    params![card_id, tracker, json, now_millis(), TICKET_ROLE],
                 )
                 .map_err(db)?;
                 log_link(
@@ -431,6 +444,54 @@ mod tests {
         set_ticket(&conn, &card, Some(&mine)).unwrap();
         set_ticket(&conn, &elsewhere.id, Some(&json("plane", "WEB-1", None))).unwrap();
         assert_eq!(board_tickets(&conn, &board).unwrap(), [(card, mine)]);
+    }
+
+    #[test]
+    fn tracker_kinds_only_link_through_set_ticket() {
+        let (conn, _, card) = setup();
+        for kind in ["jira", "linear", "plane"] {
+            assert_eq!(
+                add_link(&conn, &card, kind, "ABC-1", Some("primary")).unwrap_err(),
+                TICKET_KIND_ERROR
+            );
+            assert_eq!(
+                crate::link_card(&conn, &card, Some(kind), Some("ABC-1")).unwrap_err(),
+                TICKET_KIND_ERROR
+            );
+        }
+        assert!(card_links(&conn, &card).unwrap().is_empty());
+        assert_eq!(crate::get_card(&conn, &card).unwrap().link_kind, None);
+    }
+
+    #[test]
+    fn ticket_queries_ignore_rows_that_are_not_ticket_links() {
+        let (conn, board, card) = setup();
+        // A row an older build or another writer left: tracker kind, plain key.
+        conn.execute(
+            "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
+             VALUES (?1, 'jira', 'ABC-1', 'primary', 1)",
+            [&card],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE board_cards SET link_kind = 'jira', link_id = 'ABC-1' WHERE id = ?1",
+            [&card],
+        )
+        .unwrap();
+        assert_eq!(ticket(&conn, &card).unwrap(), None);
+        assert!(board_tickets(&conn, &board).unwrap().is_empty());
+        let mine = json("jira", "ABC-2", None);
+        set_ticket(&conn, &card, Some(&mine)).unwrap();
+        assert_eq!(
+            ticket(&conn, &card).unwrap().as_deref(),
+            Some(mine.as_str())
+        );
+        set_ticket(&conn, &card, None).unwrap();
+        let rows: Vec<_> = card_links(&conn, &card).unwrap();
+        assert_eq!(rows.len(), 1, "the other role's row survives");
+        assert_eq!(rows[0].role.as_deref(), Some("primary"));
+        let mirror = crate::get_card(&conn, &card).unwrap();
+        assert_eq!(mirror.link_kind.as_deref(), Some("jira"));
     }
 
     #[test]

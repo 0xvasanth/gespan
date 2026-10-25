@@ -259,6 +259,7 @@ describe("CardDetail ticket link", () => {
     vi.mocked(invoke).mockImplementation(async (cmd, args) => {
       if (cmd === "board_activity") return [];
       if (cmd === "ticket_connected") return ["linear"];
+      if (cmd === "board_card_ticket") return FETCHED;
       if (cmd === "ticket_resolve") {
         const input = (args as { input: string }).input;
         return input.includes("github.com")
@@ -377,5 +378,89 @@ describe("CardDetail ticket link", () => {
     expect(props.onError).toHaveBeenCalledWith(
       "Couldn't link a ticket to card #3: database is locked",
     );
+  });
+
+  describe("a fetch that resolves late", () => {
+    let release: () => void;
+    let current: TicketRef | null;
+
+    beforeEach(() => {
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      current = FETCHED;
+      const base = vi.mocked(invoke).getMockImplementation()!;
+      vi.mocked(invoke).mockImplementation(async (cmd, args) => {
+        if (cmd === "board_card_ticket") return current;
+        if (cmd === "ticket_fetch") await gate;
+        return base(cmd, args);
+      });
+    });
+
+    it("does not re-link a ticket the user unlinked meanwhile", async () => {
+      await renderDetail({ ticket: FETCHED });
+      expect(fetches()).toHaveLength(1);
+      current = null;
+      release();
+      await settle();
+      expect(writes()).toHaveLength(0);
+    });
+
+    it("keeps a ticket the user relinked to another key meanwhile", async () => {
+      await renderDetail({ ticket: FETCHED });
+      current = { ...FETCHED, key: "ENG-8" };
+      release();
+      await settle();
+      expect(writes()).toHaveLength(0);
+    });
+
+    it("saves when the card still links the ticket", async () => {
+      await renderDetail({ ticket: FETCHED });
+      release();
+      await settle();
+      expect(writes()).toHaveLength(1);
+    });
+  });
+
+  it("retitles a card still titled with the key once a refresh succeeds", async () => {
+    const base = vi.mocked(invoke).getMockImplementation()!;
+    vi.mocked(invoke).mockImplementation(async (cmd, args) => {
+      if (cmd === "board_card_ticket") return FETCHED;
+      if (cmd === "board_get")
+        return {
+          board: { id: "b1" },
+          columns: [],
+          cards: [{ ...CARD, title: "ENG-7", body: "notes" }],
+        };
+      return base(cmd, args);
+    });
+    await renderDetail({ card: { ...CARD, title: "ENG-7" }, ticket: FETCHED });
+    await settle();
+    const updates = vi
+      .mocked(invoke)
+      .mock.calls.filter(([cmd]) => cmd === "board_card_update");
+    expect(updates).toEqual([
+      [
+        "board_card_update",
+        { cardId: "c3", title: "Fix login", body: "notes" },
+      ],
+    ]);
+  });
+
+  it("leaves a title the user changed when a refresh succeeds", async () => {
+    const base = vi.mocked(invoke).getMockImplementation()!;
+    vi.mocked(invoke).mockImplementation(async (cmd, args) => {
+      if (cmd === "board_card_ticket") return FETCHED;
+      if (cmd === "board_get")
+        return { board: { id: "b1" }, columns: [], cards: [CARD] };
+      return base(cmd, args);
+    });
+    await renderDetail({ ticket: FETCHED });
+    await settle();
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([cmd]) => cmd === "board_card_update"),
+    ).toHaveLength(0);
   });
 });

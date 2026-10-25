@@ -1977,3 +1977,29 @@ fn the_ticket_row_asks_the_shell_for_the_link_dialog(cx: &mut TestAppContext) {
     click(visual, "board-drawer-ticket");
     assert_eq!(*seen.borrow(), [format!("link-ticket:{card_id}")]);
 }
+
+#[gpui::test]
+fn a_card_face_chip_with_no_url_opens_the_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Fix login"]);
+    // Not connected: the read fails and the link keeps no url.
+    with_tickets(&f, cx, &[]);
+    let (card_id, ..) = card_ticket(&f, 1);
+    Service::open(&f.db)
+        .unwrap()
+        .set_card_ticket(&card_id, Some(&ticket("ENG-7", Some(1))))
+        .unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    f.window
+        .read_with(visual, |view, _| assert!(view.card_detail.is_none()))
+        .unwrap();
+    click(visual, "ticket-chip-card-1");
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(
+                view.card_detail.as_ref().map(|d| d.card_id.clone()),
+                Some(card_id.clone())
+            )
+        })
+        .unwrap();
+}

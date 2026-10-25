@@ -1,3 +1,4 @@
+use crate::links::TICKET_KIND_ERROR;
 use crate::{now_millis, Activity, Board, BoardDetail, Card, Column};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use uuid::Uuid;
@@ -671,6 +672,9 @@ pub fn link_card(
         (Some(kind), Some(id)) => {
             if !LINK_KINDS.contains(&kind) {
                 return Err(format!("Unknown link kind: {kind}"));
+            }
+            if crate::links::is_ticket_kind(kind) {
+                return Err(TICKET_KIND_ERROR.into());
             }
             if id.is_empty() {
                 return Err("Link id is required".into());

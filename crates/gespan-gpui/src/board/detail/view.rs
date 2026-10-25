@@ -368,8 +368,13 @@ impl BoardView {
             (None, _) => empty(),
         };
         let card_id = card.id.clone();
-        let ticket = match self.ticket_chip(format!("detail-{}", card.number), &card.id, false, cx)
-        {
+        let ticket = match self.ticket_chip(
+            format!("detail-{}", card.number),
+            &card.id,
+            false,
+            false,
+            cx,
+        ) {
             Some(chip) => div()
                 .min_w_0()
                 .flex()

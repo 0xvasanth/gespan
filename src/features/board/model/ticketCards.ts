@@ -3,6 +3,7 @@ import type { TicketRef } from "../../sessions/model/session";
 import {
   createCard,
   getBoard,
+  getCardTicket,
   setCardTicket,
   updateCard,
   type BoardColumn,
@@ -17,9 +18,42 @@ export function newCardColumn(
 }
 
 /**
+ * Saves a fetched ticket onto the card, unless the card no longer links that
+ * ticket: the user unlinked it, or linked another, while the fetch was out.
+ * The card's current link is re-read here, since the caller's copy may be
+ * stale. While the card's title is still the ticket's key, the fetched title
+ * replaces it. Returns whether anything was saved.
+ */
+export async function applyFetchedTicket(
+  card: { id: string; boardId: string },
+  requested: TicketRef,
+  filled: TicketRef,
+): Promise<boolean> {
+  const current = await getCardTicket(card.id);
+  if (
+    !current ||
+    current.tracker !== requested.tracker ||
+    current.key !== requested.key
+  ) {
+    return false;
+  }
+  await setCardTicket(card.id, filled);
+  const title = filled.title?.trim();
+  if (!title) return true;
+  const found = (await getBoard(card.boardId)).cards.find(
+    (candidate) => candidate.id === card.id,
+  );
+  if (found && found.title === requested.key) {
+    await updateCard(card.id, title, found.body);
+  }
+  return true;
+}
+
+/**
  * Makes a card from a ticket: titled with its key and linked at once, then
  * retitled from the ticket once it is fetched, unless the user has changed
- * the title meanwhile. A failed fetch leaves the key as the title.
+ * the title meanwhile. A failed fetch leaves the key as the title; a later
+ * refresh retitles it.
  */
 export async function createCardFromTicket(
   column: BoardColumn,
@@ -33,14 +67,6 @@ export async function createCardFromTicket(
   } catch {
     return card.id;
   }
-  await setCardTicket(card.id, filled);
-  const title = filled.title?.trim();
-  if (!title) return card.id;
-  const current = (await getBoard(card.boardId)).cards.find(
-    (candidate) => candidate.id === card.id,
-  );
-  if (current && current.title === ticket.key) {
-    await updateCard(card.id, title, current.body);
-  }
+  await applyFetchedTicket(card, ticket, filled);
   return card.id;
 }

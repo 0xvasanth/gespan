@@ -5,6 +5,7 @@ import {
   type SearchableSelectOption,
 } from "../../../shared/ui/SearchableSelect";
 import { ExternalLink, Trash2 } from "../../../shared/ui/icons";
+import { applyFetchedTicket } from "../model/ticketCards";
 import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItemDialog";
 import { SessionTicketChip } from "../../sessions/ui/SessionTicketChip";
 import type { LinkedWorkItem, TicketRef } from "../../sessions/model/session";
@@ -168,7 +169,7 @@ export function CardDetail({
   };
 
   const changeTicket = (item: LinkedWorkItem | undefined) => {
-    // Only tickets link to a card; a refresh or a link dialog hands one over.
+    // Only tickets link to a card; the link dialog hands one over.
     if (item && item.kind !== "ticket") return;
     setLinkingTicket(false);
     setCardTicket(card.id, item ? item.ticket : null).catch((error) =>
@@ -176,6 +177,21 @@ export function CardDetail({
         `Couldn't link a ticket to card #${card.number}: ${errorText(error)}`,
       ),
     );
+  };
+
+  // The chip hands over a fetched copy of the linked ticket, or an unlink.
+  const chipChange = (item: LinkedWorkItem | undefined) => {
+    if (item?.kind === "ticket") {
+      const requested = ticketRef.current;
+      if (!requested) return;
+      applyFetchedTicket(card, requested, item.ticket).catch((error) =>
+        onError(
+          `Couldn't save the ticket on card #${card.number}: ${errorText(error)}`,
+        ),
+      );
+    } else if (!item) {
+      changeTicket(undefined);
+    }
   };
 
   const remove = async () => {
@@ -270,7 +286,7 @@ export function CardDetail({
                 key={`${ticket.tracker}:${ticket.key}`}
                 ticket={ticket}
                 visible
-                onChange={changeTicket}
+                onChange={chipChange}
                 current={() =>
                   ticketRef.current
                     ? { kind: "ticket", ticket: ticketRef.current }

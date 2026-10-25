@@ -11,6 +11,7 @@ import {
   type BoardCard,
   type CardLinkKind,
 } from "../model/board";
+import { applyFetchedTicket } from "../model/ticketCards";
 import { ICON_BUTTON, MenuButton, MenuItem, noDrag } from "./boardControls";
 import {
   LINK_KIND_LABEL,
@@ -110,16 +111,25 @@ export function BoardCardItem({
           data-card-ticket={card.id}
           className="mt-1.5 flex min-w-0"
           {...noDrag}
+          onClick={(event) => {
+            // The chip's own controls act alone; the rest of the chip opens the card.
+            if ((event.target as Element).closest("button, [role='menu']")) {
+              event.stopPropagation();
+            }
+          }}
         >
           {/* Read on the card's drawer, not on the board: never `visible` here. */}
           <SessionTicketChip
             ticket={ticket}
             visible={false}
             onChange={(item) => {
-              if (item && item.kind !== "ticket") return;
-              void setCardTicket(card.id, item ? item.ticket : null).catch(
-                () => undefined,
-              );
+              if (item?.kind === "ticket") {
+                void applyFetchedTicket(card, ticket, item.ticket).catch(
+                  () => undefined,
+                );
+              } else if (!item) {
+                void setCardTicket(card.id, null).catch(() => undefined);
+              }
             }}
             current={() => ({ kind: "ticket", ticket })}
           />

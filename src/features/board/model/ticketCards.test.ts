@@ -7,7 +7,11 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 import type { TicketRef } from "../../sessions/model/session";
 import { resetTicketLinkCaches } from "../../sessions/model/ticketLinks";
 import type { BoardColumn } from "./board";
-import { createCardFromTicket, newCardColumn } from "./ticketCards";
+import {
+  applyFetchedTicket,
+  createCardFromTicket,
+  newCardColumn,
+} from "./ticketCards";
 
 const column = (
   id: string,
@@ -41,6 +45,10 @@ describe("newCardColumn", () => {
 describe("createCardFromTicket", () => {
   let title: string;
   let fetchFails: boolean;
+  /** What the card links by the time a fetch resolves. */
+  let linked: TicketRef | null;
+  let release: (() => void) | null;
+  let gate: Promise<void> | null;
   const calls = (name: string) =>
     invoke.mock.calls.filter(([cmd]) => cmd === name);
 
@@ -49,10 +57,15 @@ describe("createCardFromTicket", () => {
     invoke.mockReset();
     title = "ENG-7";
     fetchFails = false;
+    linked = TICKET;
+    gate = null;
+    release = null;
     invoke.mockImplementation(async (cmd: string, args: any) => {
       if (cmd === "board_card_create")
         return { id: "c1", boardId: "b1", title: args.title, body: "" };
+      if (cmd === "board_card_ticket") return linked;
       if (cmd === "ticket_fetch") {
+        await gate;
         if (fetchFails) throw "offline";
         return { ...args.ticket, title: "Fix login", status: "Todo" };
       }
@@ -100,5 +113,50 @@ describe("createCardFromTicket", () => {
     ).resolves.toBe("c1");
     expect(calls("board_card_set_ticket")).toHaveLength(1);
     expect(calls("board_card_update")).toHaveLength(0);
+  });
+
+  const holdFetch = () => {
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  };
+
+  it("keeps a card unlinked when the user unlinks it while the fetch is out", async () => {
+    holdFetch();
+    const made = createCardFromTicket(column("t", 0, "todo"), TICKET);
+    await vi.waitFor(() => expect(calls("ticket_fetch")).toHaveLength(1));
+    linked = null;
+    release!();
+    await made;
+    expect(calls("board_card_set_ticket")).toHaveLength(1);
+    expect(calls("board_card_update")).toHaveLength(0);
+  });
+
+  it("keeps the second ticket when the user relinks while the fetch is out", async () => {
+    holdFetch();
+    const made = createCardFromTicket(column("t", 0, "todo"), TICKET);
+    await vi.waitFor(() => expect(calls("ticket_fetch")).toHaveLength(1));
+    linked = { ...TICKET, key: "ENG-8" };
+    release!();
+    await made;
+    expect(calls("board_card_set_ticket")).toHaveLength(1);
+    expect(calls("board_card_update")).toHaveLength(0);
+  });
+
+  it("retitles on a later successful read of a card whose first fetch failed", async () => {
+    fetchFails = true;
+    await createCardFromTicket(column("t", 0, "todo"), TICKET);
+    expect(calls("board_card_update")).toHaveLength(0);
+    const saved = await applyFetchedTicket(
+      { id: "c1", boardId: "b1" },
+      TICKET,
+      { ...TICKET, title: "Fix login" },
+    );
+    expect(saved).toBe(true);
+    expect(calls("board_card_update")[0][1]).toEqual({
+      cardId: "c1",
+      title: "Fix login",
+      body: "notes",
+    });
   });
 });

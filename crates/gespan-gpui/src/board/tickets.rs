@@ -42,19 +42,24 @@ impl BoardView {
         place: String,
         card_id: &str,
         compact: bool,
+        opens_card: bool,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let ticket = self.card_tickets.get(card_id)?;
         let chip = TicketChip::new(ticket, self.ticket_stale(card_id, ticket));
         let url = ticket.url.clone();
+        let id = card_id.to_string();
         Some(
             chip_element(&place, &chip, compact)
                 .cursor_pointer()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |_, _, _, cx| {
+                .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
-                    if let Some(url) = &url {
-                        cx.open_url(url);
+                    match &url {
+                        Some(url) => cx.open_url(url),
+                        // Nothing to open: on the card face, the chip opens the card.
+                        None if opens_card => this.open_card_detail(id.clone(), window, cx),
+                        None => {}
                     }
                 }))
                 .into_any_element(),
