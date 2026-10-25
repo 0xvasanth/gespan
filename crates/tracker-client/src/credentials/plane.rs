@@ -1,5 +1,4 @@
-//! Inbox entry points for Plane. The client lives in `provider_boards::plane`;
-//! this file keeps the saved credential.
+//! The saved Plane connection. The client lives in `provider_boards::plane`.
 use gespan_tracker_secrets::{self as secrets, Tracker};
 use std::path::{Path, PathBuf};
 
@@ -40,7 +39,7 @@ pub fn plane_set_config(
 }
 
 /// The connected Plane client, or `None` when Plane is not set up.
-pub(crate) fn provider(app: &Path) -> Result<Option<PlaneProvider>, String> {
+pub fn provider(app: &Path) -> Result<Option<PlaneProvider>, String> {
     let Some(config) = read_config(app)? else {
         return Ok(None);
     };

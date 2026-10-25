@@ -2,7 +2,7 @@
 //! ticket, read it, comment on it and change its status. Nothing here polls:
 //! every call is one request to the tracker, and `resolve` makes none.
 use std::collections::BTreeMap;
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::{parse_ticket, TicketRef, Tracker};
-use crate::inbox;
+use crate::credentials;
 use crate::provider_boards::jira::JiraProvider;
 use crate::provider_boards::linear::LinearProvider;
 use crate::provider_boards::plane::PlaneProvider;
@@ -58,7 +58,7 @@ impl Resolved {
 
 /// Where a saved connection points.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Location {
+pub struct Location {
     pub site: String,
     pub workspace: Option<String>,
 }
@@ -106,7 +106,7 @@ impl From<ProviderError> for TicketError {
 
 /// A tracker client plus the one thing only some trackers have: per-ticket
 /// transitions that can demand fields.
-pub(crate) trait Connection: Send + Sync {
+pub trait Connection: Send + Sync {
     fn board(&self) -> &dyn BoardProvider;
 
     fn transitions(&self, _key: &str) -> ProviderResult<Option<Vec<Transition>>> {
@@ -158,7 +158,7 @@ impl Connection for PlaneProvider {
 
 pub struct Tickets {
     data_dir: PathBuf,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     injected: Option<HashMap<Tracker, Arc<dyn Connection>>>,
 }
 
@@ -166,13 +166,15 @@ impl Tickets {
     pub fn new(data_dir: PathBuf) -> Self {
         Self {
             data_dir,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             injected: None,
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_providers(
+    /// Uses these connections instead of saved credentials. For tests.
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    pub fn with_providers(
         data_dir: PathBuf,
         providers: Vec<(Tracker, Arc<dyn Connection>)>,
     ) -> Self {
@@ -323,7 +325,7 @@ impl Tickets {
     }
 
     fn connection(&self, tracker: Tracker) -> Result<Arc<dyn Connection>, TicketError> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testing"))]
         if let Some(injected) = &self.injected {
             return injected
                 .get(&tracker)
@@ -332,13 +334,13 @@ impl Tickets {
         }
         let remote = |error: String| TicketError::Remote(error);
         let connection: Option<Arc<dyn Connection>> = match tracker {
-            Tracker::Jira => inbox::jira::provider(&self.data_dir)
+            Tracker::Jira => credentials::jira::provider(&self.data_dir)
                 .map_err(remote)?
                 .map(|p| Arc::new(p) as _),
-            Tracker::Linear => inbox::linear::provider(&self.data_dir)
+            Tracker::Linear => credentials::linear::provider(&self.data_dir)
                 .map_err(remote)?
                 .map(|p| Arc::new(p) as _),
-            Tracker::Plane => inbox::plane::provider(&self.data_dir)
+            Tracker::Plane => credentials::plane::provider(&self.data_dir)
                 .map_err(remote)?
                 .map(|p| Arc::new(p) as _),
         };

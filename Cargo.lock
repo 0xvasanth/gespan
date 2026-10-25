@@ -1830,6 +1830,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "gespan-tracker-client"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "chrono",
+ "gespan-tracker-secrets",
+ "proptest",
+ "pulldown-cmark",
+ "quick-xml 0.42.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ureq",
+ "url",
+]
+
+[[package]]
 name = "gespan-tracker-secrets"
 version = "0.1.0"
 dependencies = [

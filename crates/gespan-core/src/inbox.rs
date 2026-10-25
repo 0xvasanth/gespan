@@ -9,7 +9,7 @@ mod github;
 pub mod gitlab;
 pub mod jira;
 pub mod linear;
-pub mod plane;
+pub use gespan_tracker_client::credentials::plane;
 
 use crate::{
     desktop_preferences::DesktopPreferences, session_groups::GithubWorkItem, store::Store,

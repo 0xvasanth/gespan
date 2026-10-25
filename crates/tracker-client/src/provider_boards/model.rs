@@ -10,7 +10,8 @@ pub enum ProviderKind {
     Linear,
     Jira,
     Plane,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
     Fake,
 }
 
@@ -20,7 +21,7 @@ impl ProviderKind {
             Self::Linear => "linear",
             Self::Jira => "jira",
             Self::Plane => "plane",
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             Self::Fake => "fake",
         }
     }
@@ -30,7 +31,7 @@ impl ProviderKind {
             Self::Linear => "Linear",
             Self::Jira => "Jira",
             Self::Plane => "Plane",
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             Self::Fake => "Fake",
         }
     }

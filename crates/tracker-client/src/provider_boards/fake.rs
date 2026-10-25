@@ -10,7 +10,7 @@ use super::*;
 const SYNC_BATCH: usize = 50;
 const CLOCK_START: i64 = 1_767_225_600; // 2026-01-01T00:00:00Z
 
-pub(crate) struct FakeProvider {
+pub struct FakeProvider {
     inner: Mutex<State>,
 }
 
@@ -96,8 +96,14 @@ fn decode_cursor(cursor: &SyncCursor) -> ProviderResult<Option<(i64, String)>> {
         .ok_or_else(|| ProviderError::InvalidInput(format!("Bad sync cursor {}", cursor.0)))
 }
 
+impl Default for FakeProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FakeProvider {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let state = |id: &str, name: &str, group| WorkflowState {
             id: id.into(),
             name: name.into(),
@@ -144,14 +150,14 @@ impl FakeProvider {
         }
     }
 
-    pub(crate) fn with_container(self, container: Container, states: Vec<WorkflowState>) -> Self {
+    pub fn with_container(self, container: Container, states: Vec<WorkflowState>) -> Self {
         self.lock().containers.push((container, states));
         self
     }
 
     /// Seeds an issue. The clock moves past its `updated_at`, so a later write
     /// is always newer than the seed.
-    pub(crate) fn with_issue(self, issue: RemoteIssue) -> Self {
+    pub fn with_issue(self, issue: RemoteIssue) -> Self {
         let mut state = self.lock();
         state.clock = state
             .clock
@@ -161,18 +167,18 @@ impl FakeProvider {
         self
     }
 
-    pub(crate) fn with_labels(self, container_id: &str, labels: Vec<BoardLabel>) -> Self {
+    pub fn with_labels(self, container_id: &str, labels: Vec<BoardLabel>) -> Self {
         self.lock().labels.insert(container_id.into(), labels);
         self
     }
 
-    pub(crate) fn with_members(self, container_id: &str, members: Vec<Member>) -> Self {
+    pub fn with_members(self, container_id: &str, members: Vec<Member>) -> Self {
         self.lock().members.insert(container_id.into(), members);
         self
     }
 
     /// Moving into `state_id` fails unless these fields are supplied.
-    pub(crate) fn require_fields(self, state_id: &str, fields: &[&str]) -> Self {
+    pub fn require_fields(self, state_id: &str, fields: &[&str]) -> Self {
         self.lock().required.insert(
             state_id.into(),
             fields.iter().map(|field| field.to_string()).collect(),
@@ -181,11 +187,11 @@ impl FakeProvider {
     }
 
     /// The next call to `operation` returns `error`.
-    pub(crate) fn fail_next(&self, operation: &'static str, error: ProviderError) {
+    pub fn fail_next(&self, operation: &'static str, error: ProviderError) {
         self.lock().failures.insert(operation, error);
     }
 
-    pub(crate) fn comments(&self, issue_id: &str) -> Vec<(CommentRef, String)> {
+    pub fn comments(&self, issue_id: &str) -> Vec<(CommentRef, String)> {
         self.lock()
             .comments
             .iter()
@@ -195,7 +201,7 @@ impl FakeProvider {
     }
 
     /// Any state of any container, by id.
-    pub(crate) fn state(&self, state_id: &str) -> Option<WorkflowState> {
+    pub fn state(&self, state_id: &str) -> Option<WorkflowState> {
         self.lock()
             .containers
             .iter()
@@ -451,7 +457,8 @@ impl BoardProvider for FakeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inbox::timestamp_ms;
+    // The same parse as the Inbox's `timestamp_ms`.
+    use super::instant_ms as timestamp_ms;
 
     fn issue(id: &str, state: &str, updated_at: &str) -> RemoteIssue {
         let fake = FakeProvider::new();

@@ -63,5 +63,6 @@ pub trait BoardProvider: Send + Sync {
     ) -> ProviderResult<Vec<ChangeHint>>;
 }
 
-#[cfg(test)]
-pub(crate) mod fake;
+#[cfg(any(test, feature = "testing"))]
+#[doc(hidden)]
+pub mod fake;

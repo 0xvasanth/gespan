@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::provider_boards::{ProviderKind, StateGroup};
 
 pub use parse::{parse_ticket, ParsedTicket};
-#[cfg(test)]
-pub(crate) use service::Connection;
+#[cfg(any(test, feature = "testing"))]
+#[doc(hidden)]
+pub use service::{Connection, Location};
 pub use service::{Resolved, StatusChoice, TicketError, Tickets};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

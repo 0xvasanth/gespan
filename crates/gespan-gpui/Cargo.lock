@@ -2177,6 +2177,7 @@ dependencies = [
  "flate2",
  "gespan-mobile-link",
  "gespan-redact",
+ "gespan-tracker-client",
  "gespan-tracker-secrets",
  "hostname",
  "if-addrs",
@@ -2187,9 +2188,6 @@ dependencies = [
  "log",
  "minisign-verify",
  "natpmp",
- "proptest",
- "pulldown-cmark",
- "quick-xml 0.42.0",
  "quinn",
  "rand 0.10.3",
  "regex",
@@ -2315,6 +2313,21 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "gespan-tracker-client"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "chrono",
+ "gespan-tracker-secrets",
+ "pulldown-cmark",
+ "quick-xml 0.42.0",
+ "serde",
+ "serde_json",
+ "ureq",
+ "url",
 ]
 
 [[package]]

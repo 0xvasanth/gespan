@@ -25,6 +25,7 @@ similar = "3"
 unicode-width = "0.2"
 gespan-mobile-link = { path = "../mobile-link" }
 gespan-tracker-secrets = { path = "../tracker-secrets" }
+gespan-tracker-client = { path = "../tracker-client" }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 uuid = { version = "1", features = ["v4"] }
@@ -48,8 +49,6 @@ tracing-log = { version = "0.2", default-features = false, features = ["log-trac
 # Report an issue: the scrubber and the bundle zip.
 gespan-redact = { path = "../gespan-redact" }
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
-pulldown-cmark = { version = "0.13", default-features = false }
-quick-xml = { version = "0.42", default-features = false, features = ["escape-html"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
@@ -72,6 +71,6 @@ libc = "0.2"
 
 [dev-dependencies]
 gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
-proptest = "1"
+gespan-tracker-client = { path = "../tracker-client", features = ["testing"] }
 tempfile = "3"
 gespan-redact = { path = "../gespan-redact", features = ["fixtures"] }
