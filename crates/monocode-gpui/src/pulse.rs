@@ -6,8 +6,9 @@
 //! frame per spinner, and at 30Hz or less instead of the display's 120Hz. A
 //! lease ends when its view was notified but did not paint a loop again, so
 //! a closed, scrolled-away or hidden spinner stops costing anything, and the
-//! clock parks once no lease is left. While no window is active the clock
-//! slows every loop down further.
+//! clock parks once no lease is left. While no window is visible the clock
+//! slows every loop down further; a visible window behind another app's keeps
+//! the full pace, since its loops are still on screen.
 use gpui::{
     AnyElement, App, Element, ElementId, EntityId, Global, GlobalElementId, InspectorElementId,
     IntoElement, LayoutId, Pixels, Window,
@@ -18,7 +19,7 @@ use std::{
 };
 
 const TICK: Duration = Duration::from_millis(33);
-/// An inactive app's loops tick this many times slower.
+/// A hidden app's loops tick this many times slower.
 const BACKGROUND_STRIDE: u64 = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -140,7 +141,7 @@ pub(crate) fn running(cx: &App) -> bool {
 }
 
 fn tick(cx: &mut App) -> bool {
-    let background = !app_active(cx);
+    let background = !app_visible(cx);
     let clock = cx.global_mut::<Clock>();
     clock.tick = clock.tick.wrapping_add(1);
     let tick = clock.tick;
@@ -171,10 +172,11 @@ fn tick(cx: &mut App) -> bool {
     true
 }
 
-fn app_active(cx: &mut App) -> bool {
+/// Whether any window is on screen: an inactive window can still be in view.
+fn app_visible(cx: &mut App) -> bool {
     cx.windows().into_iter().any(|window| {
         window
-            .update(cx, |_, window, _| window.is_window_active())
+            .update(cx, |_, window, _| window.is_visible())
             .unwrap_or(false)
     })
 }
@@ -292,9 +294,7 @@ mod tests {
         });
         cx.run_until_parked();
         let first = renders.get();
-        // A test window is never active, so the clock runs at its background pace.
-        cx.executor()
-            .advance_clock(TICK * BACKGROUND_STRIDE as u32 * 2);
+        cx.executor().advance_clock(TICK * 2);
         cx.run_until_parked();
         assert!(renders.get() > first, "a leased view repaints on ticks");
 
@@ -316,6 +316,30 @@ mod tests {
             "an unpainted loop releases the clock"
         );
         cx.update(|_, cx| assert!(!cx.global::<Clock>().running));
+    }
+
+    #[gpui::test]
+    fn a_visible_window_keeps_full_pace_and_a_hidden_one_slows(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(false));
+        let renders = Rc::new(Cell::new(0));
+        let (_view, cx) = cx.add_window_view(|_, _| Spinner {
+            spinning: true,
+            renders: renders.clone(),
+        });
+        cx.run_until_parked();
+        // A test window is visible but never active, like one behind another app.
+        let start = renders.get();
+        cx.executor().advance_clock(TICK * BACKGROUND_STRIDE as u32);
+        cx.run_until_parked();
+        assert_eq!(renders.get() - start, BACKGROUND_STRIDE as usize);
+
+        cx.simulate_visibility_change(gpui::WindowVisibility::Hidden);
+        cx.run_until_parked();
+        let hidden = renders.get();
+        cx.executor()
+            .advance_clock(TICK * BACKGROUND_STRIDE as u32 * 2);
+        cx.run_until_parked();
+        assert!(renders.get() - hidden <= 2, "a hidden app's loops slow down");
     }
 
     #[gpui::test]
@@ -368,7 +392,7 @@ mod tests {
             ticks: ticks.clone(),
         });
         cx.run_until_parked();
-        cx.executor().advance_clock(TICK * BACKGROUND_STRIDE as u32);
+        cx.executor().advance_clock(TICK);
         cx.run_until_parked();
         assert_eq!(ticks.get(), 1);
         view.update(cx, |stream, cx| {
