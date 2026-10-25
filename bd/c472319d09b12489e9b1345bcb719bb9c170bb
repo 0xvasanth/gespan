@@ -1,0 +1,19 @@
+docs/native/README.md
+  s_665d32631cef67::t_a719a89d4f8874 150-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bdc472319d09b12489e9b1345bcb719bb9c170bb",
+  "prompts": {},
+  "sessions": {
+    "s_665d32631cef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e452dccc-b021-4d25-9f04-4f74301df988",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
