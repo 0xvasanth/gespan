@@ -1,0 +1,28 @@
+docs/diagnostics/log-schema.md
+  s_3d70b2915bde53::t_4cdeb9dd6a1a9c 19-21,24-26,29-32
+docs/diagnostics/consent.md
+  s_3d70b2915bde53::t_4cdeb9dd6a1a9c 150-155
+src/test/diagnosticsContract.test.ts
+  s_3d70b2915bde53::t_1b0ba843435f6c 117-130,195-202,284-288,319,323,353-372
+  s_3d70b2915bde53::t_7aedc22c1b8036 373
+docs/diagnostics/intake-api.md
+  s_3d70b2915bde53::t_4cdeb9dd6a1a9c 73,78-80,92-94,102,116,121-122,169-170
+docs/diagnostics/bundle-format.md
+  s_3d70b2915bde53::t_4cdeb9dd6a1a9c 58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7875e80bffbdce7dbc66b18c9b5c814946f1e15a",
+  "prompts": {},
+  "sessions": {
+    "s_3d70b2915bde53": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "090d580c-c9c5-4007-950a-6316c24edf7d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
