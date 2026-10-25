@@ -74,8 +74,8 @@ Both apps read and write the same `boards`, `board_columns`, `board_cards`
 and `board_activity` tables, plus the shared label, project, subtask, comment
 and ticket-link tables, through the `gespan-board-store` crate;
 `crates/gespan-core/tests/shared_contracts.rs` pins the DDL, error strings and
-the `gespan.boardEnabled` key to Tauri. The earlier `board_native_*` tables
-stay in the database for one release and nothing reads them. Deleting a card
+the `gespan.boardEnabled` key to Tauri. The old `board_native_*` tables are left in place for one release; after the
+one-time copy nothing reads them. Deleting a card
 in either app removes its own rows, including which labels it carries; the
 board's label definitions stay until the board is deleted. The Board setting
 is on by default in both apps.
@@ -107,12 +107,13 @@ These runtime checks are pending; none has been run by hand yet:
   Change status, priority, due date (including "Pick a date…"), projects,
   labels (including creating one), linked work, description, subtasks and
   comments; Mark complete, copy reference and Delete.
-- Edit a board in Tauri and see the change in native within about 2 s.
-  Both apps show the same boards, tasks, labels,
-  priority, due dates, subtasks, comments and ticket links.
+- Edit a board in Tauri and see the change in native within about 2 s. Both
+  apps show the same boards, tasks, labels, priority, due dates, subtasks,
+  comments and ticket links.
 - In Tauri, the same task carries priority, due date, projects, labels,
   subtasks and comments in the docked drawer; search and filters show
-  `shown/total`, and cards drag with the keyboard (Space or Enter, Escape).
+  `shown/total`, and cards drag with the keyboard (Space lifts, arrows move,
+  Space or Enter drops, Escape cancels).
 - Send a message to a Pilot with Board on and with Board off; a Pilot-linked
   card moves when Board is on, and nothing breaks either way.
 - Link a card to a session, send a prompt, and watch the card move to In
