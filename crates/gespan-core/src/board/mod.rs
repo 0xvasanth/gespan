@@ -11,6 +11,7 @@ use gespan_board_store::{
 use rusqlite::Connection;
 use std::path::Path;
 
+use crate::tickets::TicketRef;
 pub use gespan_board_store::{Activity, Board, BoardDetail, Card, Column};
 
 pub mod auto_move;
@@ -139,6 +140,28 @@ impl Service {
         link_card(&self.conn, card_id, kind, id).map(drop)
     }
 
+    /// The ticket the card links to; a stored value that no longer parses
+    /// reads as no ticket.
+    pub fn card_ticket(&mut self, card_id: &str) -> Result<Option<TicketRef>, String> {
+        validate_id(card_id, "card")?;
+        Ok(gespan_board_store::ticket(&self.conn, card_id)?
+            .and_then(|json| serde_json::from_str(&json).ok()))
+    }
+
+    /// Links the card to a ticket (replacing any other) or, with `None`,
+    /// removes its ticket.
+    pub fn set_card_ticket(
+        &mut self,
+        card_id: &str,
+        ticket: Option<&TicketRef>,
+    ) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        let json = ticket
+            .map(|ticket| serde_json::to_string(ticket).map_err(|e| e.to_string()))
+            .transpose()?;
+        gespan_board_store::set_ticket(&self.conn, card_id, json.as_deref()).map(drop)
+    }
+
     pub fn card_delete(&mut self, card_id: &str) -> Result<(), String> {
         validate_id(card_id, "card")?;
         delete_card(&self.conn, card_id).map(drop)
@@ -184,6 +207,31 @@ impl Service {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn card_ticket_round_trips_through_the_service() {
+        use crate::tickets::Tracker;
+        let dir = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&dir.path().join("gespan.db")).unwrap();
+        let board = service.create("Work").unwrap();
+        let column = service.get(&board.id).unwrap().columns[0].id.clone();
+        let card = service.card_create(&column, "Card", "").unwrap();
+        assert_eq!(service.card_ticket(&card.id).unwrap(), None);
+        let ticket = TicketRef {
+            tracker: Tracker::Linear,
+            key: "ENG-7".into(),
+            url: Some("https://linear.app/x/issue/ENG-7".into()),
+            title: Some("Fix".into()),
+            status: None,
+            status_group: None,
+            fetched_at: Some(5),
+        };
+        service.set_card_ticket(&card.id, Some(&ticket)).unwrap();
+        assert_eq!(service.card_ticket(&card.id).unwrap(), Some(ticket));
+        service.set_card_ticket(&card.id, None).unwrap();
+        assert_eq!(service.card_ticket(&card.id).unwrap(), None);
+        assert!(service.card_ticket("bad id").is_err());
+    }
 
     #[test]
     fn a_fresh_board_database_is_opened_in_wal_mode_like_the_apps_open_it() {

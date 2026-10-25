@@ -21,7 +21,7 @@ pub use fields::{
     create_field, field_values, list_fields, set_field_value, Field, FieldValue, FIELD_KINDS,
 };
 pub use labels::{create_label, list_labels, set_card_labels, Label};
-pub use links::{add_link, card_links, remove_link, CardLink};
+pub use links::{add_link, card_links, remove_link, set_ticket, ticket, CardLink};
 pub use meta::{
     archive_card, archived_cards, card_extras, card_meta, set_due, set_estimate, set_priority,
     set_projects, set_start, unarchive_card, CardExtras, CardMeta, PRIORITIES,
