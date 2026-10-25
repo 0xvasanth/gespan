@@ -7,6 +7,8 @@
 //! shows as a `gespan-adf` / `gespan-html` code block, or as a
 //! `<span data-gespan-…>` around readable text; both are read-only.
 mod adf;
+#[cfg(test)]
+mod corpus_tests;
 mod doc;
 mod html;
 mod markdown;

@@ -1,0 +1,142 @@
+{
+  "type": "doc",
+  "version": 1,
+  "content": [
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Screenshot of the broken layout:"
+        }
+      ]
+    },
+    {
+      "type": "mediaSingle",
+      "attrs": {
+        "layout": "center",
+        "width": 66.67,
+        "widthType": "percentage"
+      },
+      "content": [
+        {
+          "type": "media",
+          "attrs": {
+            "id": "0f2c6a1e-6d1b-4c55-9f59-2b0a2f6c1a77",
+            "type": "file",
+            "collection": "contentId-10042",
+            "width": 1440,
+            "height": 900,
+            "alt": "layout.png"
+          }
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Related: "
+        },
+        {
+          "type": "inlineCard",
+          "attrs": {
+            "url": "https://x.atlassian.net/browse/PLAT-12"
+          }
+        },
+        {
+          "type": "text",
+          "text": " and "
+        },
+        {
+          "type": "text",
+          "text": "underlined note",
+          "marks": [
+            {
+              "type": "underline"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": " in "
+        },
+        {
+          "type": "text",
+          "text": "red",
+          "marks": [
+            {
+              "type": "textColor",
+              "attrs": {
+                "color": "#bf2600"
+              }
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "."
+        }
+      ]
+    },
+    {
+      "type": "expand",
+      "attrs": {
+        "title": "Raw logs"
+      },
+      "content": [
+        {
+          "type": "codeBlock",
+          "attrs": {
+            "language": "text"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "GET /boards/7 200\nPUT /boards/7 500"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "marks": [
+        {
+          "type": "alignment",
+          "attrs": {
+            "align": "center"
+          }
+        }
+      ],
+      "content": [
+        {
+          "type": "text",
+          "text": "Centered footer"
+        }
+      ]
+    },
+    {
+      "type": "taskList",
+      "attrs": {
+        "localId": "t1"
+      },
+      "content": [
+        {
+          "type": "taskItem",
+          "attrs": {
+            "localId": "t2",
+            "state": "TODO"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Attach HAR file"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
