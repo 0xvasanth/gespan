@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { recordInboxSelfActivity } from "./inboxSelfActivity";
+import { notifyTicketConnectionsChanged } from "../../sessions/model/ticketLinks";
 
 export type JiraProject = {
   id: string;
@@ -96,6 +97,7 @@ export async function saveJiraConfig(config: {
     token: config.token.trim(),
   });
   clearJiraCache();
+  notifyTicketConnectionsChanged();
   return status;
 }
 
@@ -106,6 +108,7 @@ export async function disconnectJira(): Promise<JiraStatus> {
     token: "",
   });
   clearJiraCache();
+  notifyTicketConnectionsChanged();
   return status;
 }
 

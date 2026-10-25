@@ -13653,6 +13653,7 @@ function Workspace({
     onNoteCardDismiss,
     onHandoffCardDismiss,
     onOpenLinkedWorkItem,
+    onSetLinkedWorkItem: onSetHistorySessionLinkedWorkItem,
     onArchiveSession: onArchiveHistorySession,
     onDeleteSession: onDeleteHistorySession,
     onApproval,

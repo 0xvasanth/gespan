@@ -19,6 +19,7 @@ tauri-build = { version = "2", features = [] }
 gespan-mobile-link = { path = "../crates/mobile-link" }
 gespan-keep-awake = { path = "../crates/keep-awake" }
 gespan-tracker-secrets = { path = "../crates/tracker-secrets" }
+gespan-tracker-client = { path = "../crates/tracker-client" }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = ["sync", "time"] }
 if-addrs = "0.15"
@@ -82,5 +83,6 @@ tauri-plugin-updater = "2"
 tauri-plugin-window-state = "2.4.1"
 
 [dev-dependencies]
+gespan-tracker-client = { path = "../crates/tracker-client", features = ["testing"] }
 gespan-tracker-secrets = { path = "../crates/tracker-secrets", features = ["testing"] }
 tempfile = "3"

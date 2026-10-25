@@ -43,6 +43,7 @@ import {
 import { Popover } from "../../../shared/ui/Popover";
 import { SecondaryButton } from "../../../shared/ui/SecondaryButton";
 import { JiraSettings } from "./JiraSettings";
+import { PlaneSettings } from "./PlaneSettings";
 import { GradientBlurBackground } from "./GradientBlurBackground";
 import { McpSettings } from "./McpSettings";
 import { InboxProviderMark } from "../../inbox/ui/InboxProviderMark";
@@ -1402,6 +1403,14 @@ function InboxPage({
         description="Issues assigned to you, from the teams you pick."
       >
         <LinearSettings />
+      </Group>
+
+      <Group
+        id="plane"
+        title="Plane"
+        description="Link sessions to Plane work items. Plane Cloud or self-hosted."
+      >
+        <PlaneSettings />
       </Group>
     </>
   );

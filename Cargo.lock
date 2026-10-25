@@ -1745,6 +1745,7 @@ dependencies = [
  "block2",
  "gespan-keep-awake",
  "gespan-mobile-link",
+ "gespan-tracker-client",
  "gespan-tracker-secrets",
  "hostname",
  "if-addrs",

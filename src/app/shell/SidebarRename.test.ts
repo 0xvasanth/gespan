@@ -11,6 +11,7 @@ import {
   saveSessionFolders,
 } from "../../features/sessions/model/sessionFolders";
 import { useProjectDiffStats } from "../../features/source-control/hooks/useProjectDiffStats";
+import { resolveTicket } from "../../features/sessions/model/ticketLinks";
 import { copyText } from "../../platform/tauri/clipboard";
 import {
   createPilot,
@@ -23,6 +24,12 @@ vi.mock("../../features/source-control/hooks/useProjectDiffStats", () => ({
 }));
 vi.mock("../../features/source-control/hooks/useGitFileStatuses", () => ({
   useGitFileStatuses: () => ({ files: new Map(), dirs: new Map() }),
+}));
+vi.mock("../../features/sessions/model/ticketLinks", async (original) => ({
+  ...(await original<
+    typeof import("../../features/sessions/model/ticketLinks")
+  >()),
+  resolveTicket: vi.fn(),
 }));
 vi.mock("./SidebarUpdate", () => ({ SidebarUpdateFooter: () => null }));
 vi.mock("../../features/files/ui/FileTree", () => ({
@@ -1598,11 +1605,11 @@ describe("sidebar session GitHub links", () => {
     );
     const link = Array.from(
       document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-    ).find((item) => item.textContent === "Link GitHub issue or PR…")!;
+    ).find((item) => item.textContent === "Link issue, PR or ticket…")!;
     expect(link).toBeDefined();
     act(() => link.click());
     return document.querySelector<HTMLInputElement>(
-      'input[aria-label="GitHub issue or pull request URL"]',
+      'input[aria-label="Issue, PR or ticket link or key"]',
     )!;
   }
 
@@ -1628,7 +1635,11 @@ describe("sidebar session GitHub links", () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it("keeps the dialog open when the URL is not a GitHub work item", () => {
+  it("keeps the dialog open when the input is neither GitHub nor a ticket", async () => {
+    vi.mocked(resolveTicket).mockResolvedValue({
+      kind: "error",
+      message: "Not a ticket key or link",
+    });
     props.onSetSessionLinkedWorkItem = vi.fn();
     act(() => render());
     const input = openLinkDialog();
@@ -1636,11 +1647,11 @@ describe("sidebar session GitHub links", () => {
     const submit = Array.from(document.querySelectorAll("button")).find(
       (button) => button.textContent === "Link",
     )!;
-    act(() => submit.click());
+    await act(async () => submit.click());
 
     expect(props.onSetSessionLinkedWorkItem).not.toHaveBeenCalled();
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-      "valid GitHub issue or pull request URL",
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      "Not a ticket key or link",
     );
   });
 
@@ -1663,12 +1674,12 @@ describe("sidebar session GitHub links", () => {
     );
     const edit = Array.from(
       document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-    ).find((item) => item.textContent === "Edit GitHub issue or PR link…")!;
+    ).find((item) => item.textContent === "Edit link…")!;
     act(() => edit.click());
 
     expect(
       document.querySelector<HTMLInputElement>(
-        'input[aria-label="GitHub issue or pull request URL"]',
+        'input[aria-label="Issue, PR or ticket link or key"]',
       )?.value,
     ).toBe("https://github.com/acme/widgets/pull/42");
     const remove = Array.from(document.querySelectorAll("button")).find(

@@ -57,6 +57,7 @@ mod search;
 mod session_store;
 mod skills;
 pub mod ssh_askpass;
+mod tickets;
 mod tool_detail;
 #[cfg(target_os = "macos")]
 mod trackpad_zoom;
@@ -463,6 +464,11 @@ pub fn run() {
             jira::jira_issue_details,
             jira::jira_issue_thread,
             jira::jira_issue_comment,
+            tickets::ticket_resolve,
+            tickets::ticket_fetch,
+            tickets::ticket_connected,
+            tickets::plane_status,
+            tickets::plane_set_config,
             link_preview::fetch_link_preview,
             fs::git_branches,
             fs::git_checkout,

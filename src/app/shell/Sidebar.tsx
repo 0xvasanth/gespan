@@ -203,6 +203,7 @@ import {
 import { useRailTooltip } from "./RailTooltip";
 import { useProjectMenu } from "./useProjectMenu";
 import { SessionFiltersMenu } from "../../features/sessions/ui/SessionFiltersMenu";
+import { refreshLinkedTicket, trackerLabel } from "../../features/sessions/model/ticketLinks";
 import { LinkSessionWorkItemDialog } from "../../features/sessions/ui/LinkSessionWorkItemDialog";
 import { sessionReminderPresets } from "../../features/sessions/ui/sessionReminderPresets";
 import {
@@ -719,6 +720,8 @@ function SidebarComponent({
   const [linkingSession, setLinkingSession] = useState<SessionSummary | null>(
     null,
   );
+  const latestSessions = useRef(sessions);
+  latestSessions.current = sessions;
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1550,8 +1553,8 @@ function SidebarComponent({
             kind: "item" as const,
             id: "link-work-item",
             label: menuSessions[0]?.linkedWorkItem
-              ? "Edit GitHub issue or PR link…"
-              : "Link GitHub issue or PR…",
+              ? "Edit link…"
+              : "Link issue, PR or ticket…",
           },
         ]
       : []),
@@ -3195,8 +3198,20 @@ function SidebarComponent({
             linkingSession.harness,
           )}
           onSave={(item) => {
-            onSetSessionLinkedWorkItem?.(linkingSession.id, item);
+            const sessionId = linkingSession.id;
+            onSetSessionLinkedWorkItem?.(sessionId, item);
             setLinkingSession(null);
+            // Save the bare link first, then fill in title and status.
+            if (item?.kind === "ticket" && !remoteProject) {
+              void refreshLinkedTicket({
+                ticket: item.ticket,
+                current: () =>
+                  latestSessions.current.find((s) => s.id === sessionId)
+                    ?.linkedWorkItem,
+                save: (filled) =>
+                  onSetSessionLinkedWorkItem?.(sessionId, filled),
+              }).catch(() => undefined);
+            }
           }}
           onClose={() => setLinkingSession(null)}
         />
@@ -5052,7 +5067,6 @@ export const SessionCard = memo(function SessionCard({
       className="size-1.5 shrink-0 rounded-full bg-accent"
     />
   ) : null;
-  // Ticket chips arrive with the ticket UI; only GitHub items render here.
   const workItemBadge = isGithubWorkItem(linkedWorkItem) ? (
     <button
       type="button"
@@ -5086,6 +5100,13 @@ export const SessionCard = memo(function SessionCard({
       )}
       {dense ? null : <span>#{linkedWorkItem.number}</span>}
     </button>
+  ) : linkedWorkItem?.kind === "ticket" ? (
+    <span
+      title={`${trackerLabel(linkedWorkItem.ticket.tracker)} ${linkedWorkItem.ticket.key}`}
+      className="shrink-0 text-[11px] tabular-nums text-accent"
+    >
+      {linkedWorkItem.ticket.key}
+    </span>
   ) : null;
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {

@@ -528,6 +528,12 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     keywords: "api key issues teams connect",
   },
   {
+    id: "plane",
+    section: "inbox",
+    label: "Plane",
+    keywords: "api key work items workspace self-hosted ticket connect",
+  },
+  {
     id: "show-archived",
     section: "archive",
     label: "Show archived in the sidebar",
