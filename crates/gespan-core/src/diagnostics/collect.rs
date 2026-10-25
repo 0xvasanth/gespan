@@ -275,7 +275,7 @@ fn os_version() -> Option<String> {
 pub fn locale_from(env: impl Fn(&str) -> Option<String>, apple: Option<String>) -> String {
     ["LC_ALL", "LC_MESSAGES", "LANG"]
         .into_iter()
-        .filter_map(|name| env(name))
+        .filter_map(env)
         .chain(apple)
         .find_map(|raw| bcp47(&raw))
         .unwrap_or_else(|| "und".into())

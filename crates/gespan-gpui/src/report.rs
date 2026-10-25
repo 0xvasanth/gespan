@@ -238,10 +238,10 @@ impl ReportSheet {
             "counters.json" => selection.counters = !selection.counters,
             "environment.json" => selection.environment = !selection.environment,
             _ => {
-                if let Some(file) = name.strip_prefix("crashes/") {
-                    if !selection.crashes_excluded.remove(file) {
-                        selection.crashes_excluded.insert(file.to_owned());
-                    }
+                if let Some(file) = name.strip_prefix("crashes/")
+                    && !selection.crashes_excluded.remove(file)
+                {
+                    selection.crashes_excluded.insert(file.to_owned());
                 }
             }
         }
