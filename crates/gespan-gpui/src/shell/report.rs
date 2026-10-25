@@ -76,17 +76,14 @@ impl Shell {
         });
         SheetContext {
             log_dir: diagnostics::running_log_dir(),
-            roots: diagnostics::report_roots(
-                &self.workspace.projects,
-                &self
-                    .workspace
-                    .archived_projects
-                    .iter()
-                    .cloned()
-                    .chain(self.session_summaries.values().map(|s| s.cwd.clone()))
-                    .collect::<Vec<_>>(),
-            ),
-            projects_count: self.workspace.projects.len(),
+            projects: self.workspace.projects.clone(),
+            other_folders: self
+                .workspace
+                .archived_projects
+                .iter()
+                .cloned()
+                .chain(self.session_summaries.values().map(|s| s.cwd.clone()))
+                .collect(),
             sessions_count: self.session_summaries.len(),
             version,
             channel,
@@ -433,20 +430,15 @@ mod tests {
                     .workspace
                     .archived_projects
                     .push("/work/old-secret".into());
-                let roots = shell.report_context().roots;
-                for root in [
-                    "/work/gespan",
-                    "/work/another-project",
-                    "/work/gespan-worktrees",
-                    "/work/another-project-worktrees",
-                    "/work/old-secret",
-                ] {
-                    assert!(roots.iter().any(|r| r == root), "{root} in {roots:?}");
+                let context = shell.report_context();
+                assert_eq!(context.projects, shell.workspace.projects);
+                for folder in ["/work/old-secret", "/work/gespan", "/work/another-project"] {
+                    assert!(
+                        context.other_folders.iter().any(|f| f == folder),
+                        "{folder} in {:?}",
+                        context.other_folders
+                    );
                 }
-                assert_eq!(
-                    shell.report_context().projects_count,
-                    shell.workspace.projects.len()
-                );
             })
             .unwrap();
     }

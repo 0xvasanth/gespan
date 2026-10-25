@@ -204,19 +204,40 @@ pub fn redactor_for(projects: &[String]) -> Redactor {
 
 /// Every folder a report should hide behind `<project-N>`: the projects
 /// first, then each one's sibling worktree folder, then `others` (archived
-/// projects, session folders). Relative paths and repeats are left out.
+/// projects, session folders), then every worktree found in those worktree
+/// folders, so a branch name never shows as `<project-N>/<branch>`. Relative
+/// paths and repeats are left out. Reads the disk: call it off the UI thread.
 pub fn report_roots(projects: &[String], others: &[String]) -> Vec<String> {
-    let worktrees = projects.iter().map(|project| {
-        crate::worktree_management::default_root(Path::new(project))
-            .to_string_lossy()
-            .into_owned()
-    });
+    let worktree_dirs: Vec<PathBuf> = projects
+        .iter()
+        .map(|project| crate::worktree_management::default_root(Path::new(project)))
+        .collect();
+    let found: Vec<String> = worktree_dirs
+        .iter()
+        .flat_map(|dir| {
+            let mut trees: Vec<String> = std::fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .filter(|entry| entry.path().is_dir())
+                        .map(|entry| entry.path().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            trees.sort();
+            trees
+        })
+        .collect();
+    let worktrees = worktree_dirs
+        .iter()
+        .map(|dir| dir.to_string_lossy().into_owned());
     let mut roots: Vec<String> = Vec::new();
     for root in projects
         .iter()
         .cloned()
         .chain(worktrees)
         .chain(others.iter().cloned())
+        .chain(found)
     {
         if Path::new(&root).is_absolute() && !roots.contains(&root) {
             roots.push(root);
@@ -626,24 +647,39 @@ mod tests {
         );
     }
 
+    /// A worktree with no session is still on disk; its branch name must
+    /// not reach a report as `<project-N>/fix-y`.
     #[test]
     fn worktree_and_branch_names_are_scrubbed_from_logs() {
+        let machine = tempfile::tempdir().unwrap();
+        let home = machine.path().join("alice");
+        let project = home.join("Developer/acme");
+        let worktrees = home.join("Developer/acme-worktrees");
+        for dir in [
+            &project,
+            &worktrees.join("feature-x"),
+            &worktrees.join("fix-y"),
+        ] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let p = |path: &Path| path.to_string_lossy().into_owned();
         let dir = tempfile::tempdir().unwrap();
         write_day(
             dir.path(),
             "2026-10-25",
             &[
-                r#"{"message":"git failed in /Users/alice/Developer/acme-worktrees/feature-x/src"}"#,
-                r#"{"message":"created /Users/alice/Developer/acme-worktrees/fix-y"}"#,
+                format!(
+                    r#"{{"message":"git failed in {}/src"}}"#,
+                    p(&worktrees.join("feature-x"))
+                ),
+                format!(r#"{{"message":"created {}"}}"#, p(&worktrees.join("fix-y"))),
             ]
             .join("\n"),
         );
-        let roots = report_roots(
-            &["/Users/alice/Developer/acme".into()],
-            &["/Users/alice/Developer/acme-worktrees/feature-x".into()],
-        );
+        // Only the project is known to the app; neither worktree has a session.
+        let roots = report_roots(&[p(&project)], &[]);
         let redactor = gespan_redact::Redactor::new(gespan_redact::Config {
-            home: Some("/Users/alice".into()),
+            home: Some(home.clone()),
             projects: roots.iter().map(PathBuf::from).collect(),
             secrets: Vec::new(),
         });
@@ -655,11 +691,10 @@ mod tests {
             None,
         )
         .logs;
-        assert!(
-            !logs.contains("acme") && !logs.contains("feature-x"),
-            "{logs}"
-        );
-        assert!(logs.contains("<project-3>/src"), "{logs}");
+        for name in ["acme", "feature-x", "fix-y"] {
+            assert!(!logs.contains(name), "{name} in {logs}");
+        }
+        assert!(logs.contains("/src"), "{logs}");
     }
 
     #[test]
