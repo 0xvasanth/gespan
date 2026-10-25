@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBe
 use uuid::Uuid;
 
 const MAX_NAME: usize = 200;
-const MAX_TITLE: usize = 500;
+pub(crate) const MAX_TITLE: usize = 500;
 const MAX_BODY: usize = 1_000_000;
 const MAX_ACTIVITY: usize = 500;
 

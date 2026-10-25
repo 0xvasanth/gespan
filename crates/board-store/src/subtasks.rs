@@ -141,22 +141,16 @@ pub fn move_subtask(conn: &Connection, subtask_id: &str, index: usize) -> Result
         return Err("Subtask not found".into());
     };
     let card = get_card(&tx, &subtask.card_id)?;
-    let mut ids: Vec<String> = list_subtasks(&tx, &card.id)?
-        .into_iter()
-        .map(|s| s.id)
-        .collect();
+    let current = list_subtasks(&tx, &card.id)?;
+    let contiguous = current
+        .iter()
+        .enumerate()
+        .all(|(i, s)| s.position == i as i64);
+    let mut ids: Vec<String> = current.into_iter().map(|s| s.id).collect();
     let old_index = ids.iter().position(|id| id == subtask_id);
     ids.retain(|id| id != subtask_id);
     let new_index = index.min(ids.len());
     ids.insert(new_index, subtask_id.to_string());
-    let current_positions: Vec<i64> = list_subtasks(&tx, &card.id)?
-        .iter()
-        .map(|s| s.position)
-        .collect();
-    let contiguous = current_positions
-        .iter()
-        .enumerate()
-        .all(|(i, p)| *p == i as i64);
     if old_index == Some(new_index) && contiguous {
         return Ok(card.board_id);
     }

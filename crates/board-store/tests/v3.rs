@@ -1105,7 +1105,8 @@ fn move_to_board_without_todo_column_uses_first_column() {
     let moved = move_card_to_board(&conn, &card.id, &b.id).unwrap();
     assert_eq!(moved.column_id, cols[0].id);
     assert_eq!(moved.position, 1);
-    assert_eq!(existing.position, 0);
+    assert_eq!(get_card(&conn, &existing.id).unwrap().position, 0);
+    assert_contiguous(&conn, &b.id, &cols);
 }
 
 #[test]
@@ -1180,4 +1181,62 @@ fn move_to_board_writes_activity_on_both_boards() {
     assert_eq!(src[0].detail.as_deref(), Some("moved to board Other"));
     assert_eq!(dst.len(), 1);
     assert_eq!(dst[0].detail.as_deref(), Some("moved from board Work"));
+}
+
+#[test]
+fn duplicate_of_an_archived_card_is_refused() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["Gone"]);
+    archive_card(&conn, &cards[0].id).unwrap();
+    assert_eq!(
+        duplicate_card(&conn, &cards[0].id).unwrap_err(),
+        "Card is archived"
+    );
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM board_cards"),
+        1,
+        "no copy was created"
+    );
+    assert!(column_titles(&conn, &board.id, &columns[0].id).is_empty());
+    // The number was not consumed either.
+    let next = create_card(&conn, &columns[0].id, "Next", "").unwrap();
+    assert_eq!(next.number, 2);
+}
+
+#[test]
+fn move_to_board_of_an_archived_card_is_refused_and_changes_nothing() {
+    let conn = fresh();
+    let (a, ac, b, _) = two_boards(&conn);
+    let card = create_card(&conn, &ac[0].id, "Archived", "").unwrap();
+    let other = create_card(&conn, &ac[0].id, "Other", "").unwrap();
+    let label = create_label(&conn, &a.id, "Bug", "e5534b").unwrap();
+    create_label(&conn, &b.id, "Bug", "4da3f5").unwrap();
+    set_card_labels(&conn, &card.id, std::slice::from_ref(&label.id)).unwrap();
+    add_relation(&conn, &card.id, &other.id, "relates").unwrap();
+    archive_card(&conn, &card.id).unwrap();
+    assert_eq!(
+        move_card_to_board(&conn, &card.id, &b.id).unwrap_err(),
+        "Card is archived"
+    );
+    assert_eq!(get_card(&conn, &card.id).unwrap().board_id, a.id);
+    assert_eq!(get_card(&conn, &card.id).unwrap().number, card.number);
+    assert_eq!(relation_count(&conn, &card.id), 1);
+    assert_eq!(
+        count(
+            &conn,
+            &format!(
+                "SELECT COUNT(*) FROM board_card_labels WHERE card_id = '{}' AND label_id = '{}'",
+                card.id, label.id
+            )
+        ),
+        1
+    );
+    // The target board's numbering was not touched.
+    assert_eq!(
+        count(
+            &conn,
+            &format!("SELECT card_seq FROM boards WHERE id = '{}'", b.id)
+        ),
+        0
+    );
 }

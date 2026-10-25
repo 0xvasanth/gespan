@@ -3,13 +3,12 @@
 //! one write transaction.
 use crate::ops::{
     column_card_ids, db, get_card, get_column, is_archived, log_activity, log_edit, new_id,
-    write_card_positions, write_tx, NewActivity, LIVE,
+    write_card_positions, write_tx, NewActivity, LIVE, MAX_TITLE,
 };
 use crate::{now_millis, Card};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::collections::HashMap;
 
-const MAX_TITLE: usize = 500;
 const COPY_SUFFIX: &str = " (copy)";
 
 fn next_number(tx: &Transaction<'_>, board_id: &str) -> Result<i64, String> {
@@ -393,8 +392,8 @@ pub fn move_card_to_board(
         params![board_id, column_id, number, position, now_millis(), card_id],
     )
     .map_err(db)?;
-    let mut source_ids = column_card_ids(&tx, &card.column_id)?;
-    source_ids.retain(|id| id != card_id);
+    // The card already sits on the target board, so this lists only the cards left behind.
+    let source_ids = column_card_ids(&tx, &card.column_id)?;
     write_card_positions(&tx, &source_ids)?;
 
     log_activity(
