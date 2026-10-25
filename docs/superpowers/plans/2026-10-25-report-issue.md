@@ -227,4 +227,4 @@ with "Done"; on failure an alert with the error and a "Copy report" button
 ### Final
 
 - [ ] `bun run native:check`, `bun run check` — quote the result lines.
-- [ ] Rebase on `origin/diag/68-native-tracing`, push, PR to `diag/68-native-tracing`.
+- [ ] `git rebase origin/diag/68-native-tracing`, push, and open the PR against `diag/68-native-tracing`.
