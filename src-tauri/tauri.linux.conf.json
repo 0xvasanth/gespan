@@ -25,6 +25,11 @@
     "createUpdaterArtifacts": false,
     "category": "DeveloperTool",
     "linux": {
+      "deb": {
+        "depends": [
+          "libasound2 | libasound2t64"
+        ]
+      },
       "appimage": {
         "bundleMediaFramework": false
       }
