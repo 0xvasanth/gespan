@@ -31,10 +31,26 @@ pub struct Snapshot {
     pub branches: Vec<Branch>,
     pub worktrees: Vec<Worktree>,
 }
+/// The Git subcommand in `args`, past any global options such as `-c x=y`.
+fn subcommand<'a>(args: &[&'a str]) -> &'a str {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match *arg {
+            "-c" | "-C" => {
+                args.next();
+            }
+            option if option.starts_with('-') => {}
+            subcommand => return subcommand,
+        }
+    }
+    ""
+}
+
 pub(crate) fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
     if crate::files::remote::is_remote(cwd) {
         return Err("This isn’t available for projects on another machine yet.".into());
     }
+    let _span = tracing::info_span!("git", op = subcommand(args)).entered();
     let mut command = Command::new("git");
     command
         .current_dir(cwd)
@@ -42,10 +58,14 @@ pub(crate) fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
         .env("GIT_TERMINAL_PROMPT", "0");
     crate::process::configure_child(&mut command);
     let out = command.output().map_err(|e| {
+        tracing::error!(error = %e, "could not run Git");
         metrics::failure("git.command", metrics::ErrorKind::of_spawn(&e));
         format!("Could not run Git: {e}")
     })?;
     if !out.status.success() {
+        // Callers often probe and expect a failure, so this is only `debug`;
+        // the operations they belong to log their own failures.
+        tracing::debug!(status = out.status.code(), "git exited with an error");
         metrics::failure("git.command", metrics::ErrorKind::ExitStatus);
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
     }
@@ -296,10 +316,12 @@ pub fn rename_app_branch(
 }
 
 pub fn create_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, String> {
+    let _span = tracing::info_span!("worktree_create", session_id = session).entered();
     metrics::track(
         "worktree.create",
         create_session_worktree(cwd, base, session),
     )
+    .inspect_err(|error| tracing::warn!(%error, "could not create a worktree"))
 }
 fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, String> {
     if crate::files::remote::is_remote(cwd) {
@@ -366,10 +388,12 @@ pub fn create_project_worktree(
     base: Option<&str>,
     existing: bool,
 ) -> Result<Worktree, String> {
+    let _span = tracing::info_span!("worktree_create", existing).entered();
     metrics::track(
         "worktree.create",
         create_branch_worktree(cwd, branch, base, existing),
     )
+    .inspect_err(|error| tracing::warn!(%error, "could not create a worktree"))
 }
 fn create_branch_worktree(
     cwd: &Path,
@@ -830,5 +854,61 @@ mod tests {
             "origin/remote-feature"
         );
         assert!(create_branch(&cwd, "--orphan").is_err());
+    }
+
+    #[test]
+    fn a_failing_git_command_logs_only_at_debug() {
+        let (_temp, cwd) = repo();
+        let probe = [
+            "-c",
+            "core.quotePath=false",
+            "show-ref",
+            "--verify",
+            "refs/heads/nope",
+        ];
+        let quiet = crate::diagnostics::test_capture(|| assert!(git(&cwd, &probe).is_err()));
+        assert!(quiet.is_empty(), "{quiet:?}");
+        let logged = crate::diagnostics::test_capture_with("gespan_core::git=debug", || {
+            assert!(git(&cwd, &probe).is_err());
+        });
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        let line = &logged[0];
+        assert_eq!(line["level"], "debug");
+        assert_eq!(line["span"], "git");
+        // The subcommand only: never its arguments, which can name branches or paths.
+        assert_eq!(line["fields"]["op"], "show-ref");
+        assert!(line["fields"]["status"].is_number());
+        assert!(!line.to_string().contains("refs/heads/nope"), "{line}");
+    }
+
+    #[test]
+    fn a_failed_worktree_create_is_logged_with_its_session() {
+        let (_temp, cwd) = repo();
+        let mut created = Ok(PathBuf::new());
+        let logged = crate::diagnostics::test_capture(|| {
+            created = create_worktree(&cwd, "no-such-base", 7);
+        });
+        let error = created.unwrap_err();
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "warn");
+        assert_eq!(logged[0]["span"], "worktree_create");
+        assert_eq!(logged[0]["session_id"], 7);
+        assert_eq!(logged[0]["fields"], serde_json::json!({"error": error}));
+    }
+
+    #[test]
+    fn a_failed_named_worktree_create_is_logged() {
+        let (_temp, cwd) = repo();
+        create_named_worktree(&cwd, "taken").unwrap();
+        let mut created = Ok(None);
+        let logged = crate::diagnostics::test_capture(|| {
+            created = create_named_worktree(&cwd, "taken").map(Some);
+        });
+        assert!(created.is_err());
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "warn");
+        assert_eq!(logged[0]["span"], "worktree_create");
+        assert_eq!(logged[0]["fields"]["existing"], false);
+        assert!(!logged[0].to_string().contains("taken\""), "{}", logged[0]);
     }
 }

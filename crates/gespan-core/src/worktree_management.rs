@@ -57,7 +57,9 @@ pub fn check(cwd: &Path, path: &Path) -> Result<crate::git::Worktree, String> {
     Ok(tree)
 }
 pub fn remove(cwd: &Path, path: &Path) -> Result<(), String> {
+    let _span = tracing::info_span!("worktree_remove").entered();
     crate::diagnostics::metrics::track("worktree.remove", remove_checked(cwd, path))
+        .inspect_err(|error| tracing::warn!(%error, "could not remove a worktree"))
 }
 fn remove_checked(cwd: &Path, path: &Path) -> Result<(), String> {
     let tree = check(cwd, path)?;
@@ -140,5 +142,27 @@ mod tests {
             &["worktree", "remove", "--force", path.to_str().unwrap()],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn a_refused_worktree_removal_is_logged() {
+        let dir = repo();
+        let mut removed = Ok(());
+        let logged = crate::diagnostics::test_capture(|| removed = remove(dir.path(), dir.path()));
+        assert!(removed.is_err());
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "warn");
+        assert_eq!(logged[0]["span"], "worktree_remove");
+        assert!(logged[0]["fields"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("main"));
+
+        let tree = crate::git::create_named_worktree(dir.path(), "short-lived").unwrap();
+        let quiet = crate::diagnostics::test_capture(|| {
+            remove(dir.path(), Path::new(&tree.path)).unwrap();
+        });
+        assert!(quiet.is_empty(), "{quiet:?}");
+        let _ = std::fs::remove_dir(default_root(dir.path()));
     }
 }

@@ -142,6 +142,12 @@ pub(crate) fn test_capture(body: impl FnOnce()) -> Vec<serde_json::Value> {
     json::tests::capture(None, body).lines()
 }
 
+/// [`test_capture`] with a `GESPAN_LOG`-style filter, for `debug` lines.
+#[cfg(test)]
+pub(crate) fn test_capture_with(spec: &str, body: impl FnOnce()) -> Vec<serde_json::Value> {
+    json::tests::capture(Some(spec), body).lines()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
