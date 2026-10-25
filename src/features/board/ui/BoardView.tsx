@@ -91,6 +91,7 @@ import {
 import { CardComposer } from "./CardComposer";
 import { loadBoardCardOpen } from "../../settings/model/settings";
 import { CardDetail } from "./CardDetail";
+import { NewCardModal } from "./NewCardModal";
 import { CardMoreItems, type MoreActions } from "./CardMoreMenu";
 import { KanbanBoard } from "./kanban/KanbanBoard";
 import { UndoToast } from "./UndoToast";
@@ -242,6 +243,7 @@ function BoardContent({
   // The card shown as a full page, if any; opening one follows the setting.
   const [pageCardId, setPageCardId] = useState<string | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [newCardOpen, setNewCardOpen] = useState(false);
   const showCard = (next: { id: string; focus?: "title" | "link" }) => {
     setOpenCard(next);
     setPageCardId(loadBoardCardOpen() === "page" ? next.id : null);
@@ -1033,7 +1035,27 @@ function BoardContent({
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      onKeyDown={(event) => {
+        // Cmd+N (Ctrl+N elsewhere) with focus anywhere in the board, the
+        // search box included. Shift and Alt variants stay with the app.
+        const mod = IS_MAC ? event.metaKey : event.ctrlKey;
+        if (
+          !mod ||
+          event.shiftKey ||
+          event.altKey ||
+          (IS_MAC && event.ctrlKey) ||
+          event.key.toLowerCase() !== "n" ||
+          event.nativeEvent.isComposing ||
+          !detail ||
+          ticketCardOpen
+        )
+          return;
+        event.preventDefault();
+        setNewCardOpen(true);
+      }}
+    >
       <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-stroke px-4">
         {naming === "rename" && openBoard ? (
           <NameInput
@@ -1247,6 +1269,17 @@ function BoardContent({
             );
           }}
           onClose={() => setTicketCardOpen(false)}
+        />
+      ) : null}
+      {newCardOpen && detail ? (
+        <NewCardModal
+          key={detail.board.id}
+          boardId={detail.board.id}
+          columns={detail.columns}
+          labels={labels}
+          projects={projects}
+          onClose={() => setNewCardOpen(false)}
+          onNotice={setError}
         />
       ) : null}
       {toast}

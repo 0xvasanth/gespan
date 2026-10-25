@@ -20,6 +20,7 @@ import type {
 import type { BoardLinkTarget } from "./boardFormat";
 import type { KanbanBoardProps } from "./kanban/KanbanBoard";
 import { LAYER } from "../../../shared/lib/layers";
+import { IS_MAC } from "../../../platform/tauri/platform";
 import { BoardView } from "./BoardView";
 import { Sidebar } from "../../../app/shell/Sidebar";
 import {
@@ -2515,5 +2516,101 @@ describe("BoardView full page", () => {
     act(() => cardEl("c1").click());
     await flush();
     expect(drawerEl()!.hasAttribute("data-full-page")).toBe(false);
+  });
+});
+
+describe("BoardView New card shortcut", () => {
+  const modKey = IS_MAC ? { metaKey: true } : { ctrlKey: true };
+  const dialog = () => document.querySelector('[role="dialog"]');
+  const searchBox = () =>
+    container.querySelector<HTMLInputElement>('[aria-label="Search cards"]')!;
+  const cardEl = (id: string) =>
+    container.querySelector<HTMLElement>(`[data-kanban-card="${id}"]`)!;
+
+  function keydown(target: HTMLElement, init: KeyboardEventInit) {
+    const event = new KeyboardEvent("keydown", {
+      key: "n",
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    act(() => {
+      target.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it("opens the New card modal when focus is in the board", async () => {
+    await renderBoard();
+    const event = keydown(cardEl("c1"), modKey);
+    expect(event.defaultPrevented).toBe(true);
+    expect(dialog()?.getAttribute("aria-labelledby")).toBeTruthy();
+    expect(dialog()?.textContent).toContain("New card");
+    expect(document.activeElement).toBe(
+      document.querySelector('[aria-label="Title"]'),
+    );
+  });
+
+  it("opens from the search box without typing an n", async () => {
+    await renderBoard();
+    searchBox().focus();
+    const event = keydown(searchBox(), modKey);
+    expect(event.defaultPrevented).toBe(true);
+    expect(dialog()).not.toBeNull();
+    expect(searchBox().value).toBe("");
+  });
+
+  it("does nothing outside the board", async () => {
+    await renderBoard();
+    const event = keydown(document.body, modKey);
+    expect(event.defaultPrevented).toBe(false);
+    expect(dialog()).toBeNull();
+  });
+
+  it("ignores a plain n, and Shift or Alt with the modifier (New Window)", async () => {
+    await renderBoard();
+    for (const init of [{}, { ...modKey, shiftKey: true }, { ...modKey, altKey: true }]) {
+      const event = keydown(searchBox(), init);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    expect(dialog()).toBeNull();
+  });
+
+  it("does not stack a second modal when pressed again", async () => {
+    await renderBoard();
+    keydown(cardEl("c1"), modKey);
+    keydown(document.querySelector<HTMLElement>('[aria-label="Title"]')!, modKey);
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+  });
+
+  it("creates the card in the todo column and closes", async () => {
+    await renderBoard();
+    keydown(cardEl("c1"), modKey);
+    const title = document.querySelector<HTMLInputElement>('[aria-label="Title"]')!;
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    act(() => {
+      setter.call(title, "From the shortcut");
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      title.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          ...modKey,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await flush();
+    expect(commands("board_card_create")).toHaveLength(1);
+    expect(commands("board_card_create")[0][1]).toMatchObject({
+      columnId: "backlog",
+      title: "From the shortcut",
+    });
+    expect(dialog()).toBeNull();
   });
 });

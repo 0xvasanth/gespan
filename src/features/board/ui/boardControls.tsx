@@ -56,6 +56,7 @@ export function MenuButton({
   width = 200,
   className = ICON_BUTTON,
   trigger,
+  openOnArrowDown = false,
 }: {
   label: string;
   children: (close: () => void) => ReactNode;
@@ -63,6 +64,8 @@ export function MenuButton({
   className?: string;
   /** Replaces the "…" icon on the button. */
   trigger?: ReactNode;
+  /** Down on the closed button opens the menu, as Enter and Space do. */
+  openOnArrowDown?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
@@ -79,7 +82,13 @@ export function MenuButton({
         data-menu-open={open ? "" : undefined}
         className={className}
         onPointerDown={stop}
-        onKeyDown={stop}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (openOnArrowDown && !open && event.key === "ArrowDown") {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
         onClick={(event) => {
           event.stopPropagation();
           setOpen((value) => !value);
