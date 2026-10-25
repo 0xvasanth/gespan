@@ -35,6 +35,7 @@ docs/superpowers/specs/2026-10-25-sop-roadmap-design.md
   s_9109d210ae9dd7::t_dbd59aa85a84ba 332-333
 crates/gespan-gpui/src/pilots/cards.rs
   s_9109d210ae9dd7::t_8a9f463506878b 463
+  s_9109d210ae9dd7::t_fa2bb6162e2fa2 473-474,476-477
 crates/gespan-gpui/src/pilots/host.rs
   s_9109d210ae9dd7::t_547fe32ef05248 19-20,214,492-496,502,508-514,518-523
 crates/gespan-gpui/src/pilots/panels.rs
@@ -73,6 +74,10 @@ crates/gespan-gpui/src/pilots/tests.rs
   s_9109d210ae9dd7::t_85e75c5c477b1a 4222-4232,4234-4273,4275-4282,4284-4305,4307-4383,4385-4501,4503-4510,4512-4542,4544-4553,4555-4577,4579-4681,4914
   s_b06ab57b57164e::t_8c61e2cf64e486 4085-4096
   s_9109d210ae9dd7::t_188d8d8a97a939 4233,4274,4283,4306,4384,4502,4511,4543,4554,4578
+  s_9109d210ae9dd7::t_f513b739893e44 2728-2734
+  s_9109d210ae9dd7::t_938d522a70d1a3 2704-2727,2735-2739
+  s_9109d210ae9dd7::t_77d61ad115de39 4915-4921,4924-4950
+  s_9109d210ae9dd7::t_07167182877f4a 4922-4923
 docs/superpowers/plans/2026-10-25-native-sop-roadmap.md
   s_9109d210ae9dd7::t_8b86459e49d411 1-75,77-142,146-244
   s_9109d210ae9dd7::t_b725e99e71f1eb 76
@@ -100,6 +105,8 @@ crates/gespan-gpui/src/pilots/roadmap.rs
   s_b06ab57b57164e::t_94e16f0d0d7e6e 246-247,249-265
   s_9109d210ae9dd7::t_0c5788015ad42b 551-552
   s_9109d210ae9dd7::t_ca044816d010d6 139-140,198,225-228,230,233-236,297,331-332,404,720-722,724,729,741,747,751,915-916,924-925,927-929
+  s_9109d210ae9dd7::t_a9b0f8ac6c8b5d 405-407,409-415
+  s_9109d210ae9dd7::t_07167182877f4a 408,417,421
 crates/gespan-gpui/src/pilots/mod.rs
   s_9109d210ae9dd7::t_8a9f463506878b 104-105,268,357,1100
   s_9109d210ae9dd7::t_ea20d87e93d994 18,102,356
@@ -112,12 +119,27 @@ crates/gespan-core/src/flow/runner.rs
   s_9109d210ae9dd7::t_4801251af690c1 12-13
 crates/gespan-core/src/pilot/tests.rs
   s_9109d210ae9dd7::t_ed32621da8dc95 180-196,198-207
+  s_9109d210ae9dd7::t_dd42c8fefbe0d9 197
 crates/gespan-gpui/src/flows/mod.rs
   s_9109d210ae9dd7::t_9599fa2ee46cc9 3,11-12
 crates/gespan-gpui/src/flows/run_view.rs
   s_9109d210ae9dd7::t_910ef96275bdad 66,86
 crates/gespan-gpui/src/flows/ui.rs
   s_9109d210ae9dd7::t_65579194ded5cd 16
+crates/gespan-core/src/pilot/marker.rs
+  s_9109d210ae9dd7::t_b3931d0da3935e 1-5,7-10,21-58
+  s_9109d210ae9dd7::t_a9b0f8ac6c8b5d 6,11-20
+crates/gespan-core/src/pilot/flow_notes.rs
+  s_9109d210ae9dd7::t_dd42c8fefbe0d9 403-410,414-416,420-424
+  s_9109d210ae9dd7::t_a9b0f8ac6c8b5d 238-240,242,249-250
+  s_9109d210ae9dd7::t_07167182877f4a 411-413,417-419
+crates/gespan-core/src/pilot.rs
+  s_9109d210ae9dd7::t_b3931d0da3935e 11
+  s_9109d210ae9dd7::t_a9b0f8ac6c8b5d 15,340
+crates/gespan-core/src/pilot/completions.rs
+  s_9109d210ae9dd7::t_07167182877f4a 175-177,183-188
+  s_9109d210ae9dd7::t_dd42c8fefbe0d9 171-174,178-182,189-190
+  s_9109d210ae9dd7::t_a9b0f8ac6c8b5d 54,61
 ---
 {
   "schema_version": "authorship/3.0.0",
