@@ -1,0 +1,39 @@
+src-tauri/src/jira.rs
+  s_0bbf4c1f20225e::t_5e32d6525c0ce1 926-933,936-949
+  s_0bbf4c1f20225e::t_69e85a8b905cb9 934-935
+  s_0bbf4c1f20225e::t_d704fa82bcaf34 1,885-886,890-905,915,919
+src-tauri/src/azure_devops.rs
+  s_0bbf4c1f20225e::t_5e32d6525c0ce1 2056-2076
+  s_0bbf4c1f20225e::t_d704fa82bcaf34 1,2002-2003,2007-2013,2016-2021,2031,2035
+  s_0bbf4c1f20225e::t_69e85a8b905cb9 2014-2015
+src-tauri/src/gitlab.rs
+  s_0bbf4c1f20225e::t_69e85a8b905cb9 1069-1070
+  s_0bbf4c1f20225e::t_5e32d6525c0ce1 1111-1132
+  s_0bbf4c1f20225e::t_d704fa82bcaf34 1,1057-1058,1062-1068,1071-1076,1086,1090
+src-tauri/src/linear.rs
+  s_0bbf4c1f20225e::t_69e85a8b905cb9 714-717,722-725
+  s_0bbf4c1f20225e::t_5bef3fb614e100 3
+  s_0bbf4c1f20225e::t_5e32d6525c0ce1 704-713,718-721,726-728
+  s_0bbf4c1f20225e::t_d704fa82bcaf34 1,668-669,673-684,693,697
+src-tauri/Cargo.toml
+  s_0bbf4c1f20225e::t_fb8577bc69b437 21
+  s_0bbf4c1f20225e::t_5e32d6525c0ce1 83-86
+Cargo.lock
+  s_0bbf4c1f20225e::t_efa9cdbe127586 1748,1781
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2f49031d015b0960266d4fc41d61d75c20ed67dc",
+  "prompts": {},
+  "sessions": {
+    "s_0bbf4c1f20225e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf188816-f125-4205-bd6c-ae2dc78044e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
