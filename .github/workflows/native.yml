@@ -10,6 +10,8 @@ on:
       - 'crates/gespan-gpui/**'
       - 'crates/mobile-link/**'
       - 'crates/tracker-secrets/**'
+      - 'crates/gespan-speech/**'
+      - 'crates/gespan-models/**'
       - 'vendor/gpui-pre*/**'
       - 'scripts/*native*'
       - 'scripts/native-editor/**'
