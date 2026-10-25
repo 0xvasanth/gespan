@@ -4,18 +4,38 @@
 //! the same SQL, validation and error strings.
 use serde::Serialize;
 
+mod comments;
+mod fields;
+mod labels;
+mod links;
+mod meta;
+pub mod migrate;
 mod ops;
+mod relations;
 mod schema;
+mod settings;
+mod subtasks;
 
+pub use comments::{add_comment, edit_comment, list_comments, Comment, COMMENT_AUTHORS};
+pub use fields::{
+    create_field, field_values, list_fields, set_field_value, Field, FieldValue, FIELD_KINDS,
+};
+pub use labels::{create_label, list_labels, set_card_labels, Label};
+pub use links::{add_link, card_links, remove_link, CardLink};
+pub use meta::{
+    archive_card, archived_cards, card_extras, card_meta, set_due, set_estimate, set_priority,
+    set_projects, set_start, unarchive_card, CardExtras, CardMeta, PRIORITIES,
+};
 pub use ops::{
     cards_for_link, create_board, create_card, create_column, delete_board, delete_card,
-    delete_column, get_board, link_card, list_activity, list_boards, move_card, move_column,
-    record_card, rename_board, update_card, update_column,
+    delete_column, get_board, get_card, link_card, list_activity, list_boards, move_card,
+    move_cards, move_column, record_card, rename_board, set_column_display, update_card,
+    update_column, LINK_KINDS,
 };
-// Internals the native-only extras in gespan-core build on.
-#[doc(hidden)]
-pub use ops::{clean_text, db, get_card, log_activity, new_id, write_tx, NewActivity};
-pub use schema::ensure_tables;
+pub use relations::{add_relation, card_relations, remove_relation, Relation, RELATION_KINDS};
+pub use schema::{ensure_tables, VERSION as SCHEMA_VERSION};
+pub use settings::{board_settings, set_board_settings, BoardSettings};
+pub use subtasks::{add_subtask, delete_subtask, list_subtasks, toggle_subtask, Subtask};
 
 pub fn now_millis() -> i64 {
     std::time::SystemTime::now()
@@ -52,6 +72,9 @@ pub struct Column {
     pub name: String,
     pub position: i64,
     pub role: Option<String>,
+    pub color: Option<String>,
+    pub wip_limit: Option<i64>,
+    pub collapsed: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

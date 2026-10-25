@@ -1,15 +1,12 @@
 //! The board, over the same `board*` tables the Tauri app keeps in `gespan.db`.
 //! The storage itself (tables, reads, writes, validation) is the shared
 //! `gespan-board-store` crate both apps call; this module adds the native
-//! app's `Service` handle and its extras.
+//! app's `Service` handle.
+use gespan_board_store::validate_id;
 use gespan_board_store::{
     cards_for_link, create_board, create_card, create_column, delete_board, delete_card,
     delete_column, get_board, link_card, list_activity, list_boards, move_card, move_column,
     record_card, rename_board, update_card, update_column,
-};
-// What `extras` builds on.
-use gespan_board_store::{
-    clean_text, db, get_card, log_activity, new_id, now_millis, validate_id, write_tx, NewActivity,
 };
 use rusqlite::Connection;
 use std::path::Path;
@@ -20,10 +17,11 @@ pub mod auto_move;
 pub mod extras;
 pub mod linked_turns;
 
-/// The shared board tables plus the native-only `board_native_*` extras.
+/// The shared board tables, migrated to the current version, plus the
+/// pre-v3 native tables kept for one release.
 pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     gespan_board_store::ensure_tables(conn)?;
-    extras::ensure_tables(conn)
+    extras::ensure_legacy_tables(conn)
 }
 
 /// The native app's handle on the shared board tables. Open it with the

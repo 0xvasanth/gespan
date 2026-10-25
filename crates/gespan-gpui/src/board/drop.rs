@@ -78,6 +78,9 @@ mod tests {
             name: id.into(),
             position,
             role: None,
+            color: None,
+            wip_limit: None,
+            collapsed: false,
         };
         let card = |id: &str, column_id: &str, position| Card {
             id: id.into(),

@@ -271,14 +271,14 @@ fn a_write_that_lands_while_the_board_reloads_still_appears_on_the_next_tick(
 fn a_failed_reload_shows_its_error_until_a_later_reload_succeeds(cx: &mut TestAppContext) {
     let f = with_board(cx);
     let raw = rusqlite::Connection::open(&f.db).unwrap();
-    raw.execute_batch("ALTER TABLE board_native_labels RENAME TO hidden_labels;")
+    raw.execute_batch("ALTER TABLE board_labels RENAME TO hidden_labels;")
         .unwrap();
     cx.executor().advance_clock(Duration::from_secs(2));
     cx.run_until_parked();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     visual.refresh().unwrap();
     assert!(visual.debug_bounds("board-error").is_some());
-    raw.execute_batch("ALTER TABLE hidden_labels RENAME TO board_native_labels;")
+    raw.execute_batch("ALTER TABLE hidden_labels RENAME TO board_labels;")
         .unwrap();
     visual.executor().advance_clock(Duration::from_secs(2));
     visual.run_until_parked();
@@ -1250,7 +1250,7 @@ fn a_failed_comment_read_is_reported_and_keeps_the_list_shown(cx: &mut TestAppCo
     assert!(visual.debug_bounds("board-comment-0").is_some());
     rusqlite::Connection::open(&f.db)
         .unwrap()
-        .execute_batch("ALTER TABLE board_native_comments RENAME TO hidden_comments;")
+        .execute_batch("ALTER TABLE board_comments RENAME TO hidden_comments;")
         .unwrap();
     click(visual, "board-subtask-add");
     visual.simulate_input("Next step");
@@ -1541,7 +1541,7 @@ fn a_filter_never_hides_cards_behind_a_choice_that_is_gone(cx: &mut TestAppConte
     // The label is deleted elsewhere and the project leaves the workspace.
     rusqlite::Connection::open(&f.db)
         .unwrap()
-        .execute("DELETE FROM board_native_labels", [])
+        .execute("DELETE FROM board_labels", [])
         .unwrap();
     f.window
         .update(visual, |view, _, cx| view.set_projects(Vec::new(), cx))

@@ -94,6 +94,9 @@ mod tests {
             name: id.into(),
             position,
             role: role.map(Into::into),
+            color: None,
+            wip_limit: None,
+            collapsed: false,
         }
     }
 

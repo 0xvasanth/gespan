@@ -409,7 +409,7 @@ fn board_error_strings_match_tauri() {
 }
 
 #[test]
-fn opening_the_gespan_store_then_the_board_service_creates_the_four_shared_board_tables() {
+fn opening_the_gespan_store_then_the_board_service_creates_the_shared_v3_board_tables() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gespan.db");
     drop(Store::open_gespan(&path).unwrap());
@@ -422,16 +422,117 @@ fn opening_the_gespan_store_then_the_board_service_creates_the_four_shared_board
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    // The shared tables are exactly Tauri's four; anything else the native app
-    // adds is its own, prefixed so Tauri never mistakes it for shared data.
+    // The shared tables are board-store's, which the Tauri app creates too.
+    // The pre-v3 native tables stay for one release and nothing reads them.
     let (native, shared): (Vec<_>, Vec<_>) = names
         .iter()
         .partition(|name| name.starts_with("board_native_"));
     assert_eq!(
         shared,
-        ["board_activity", "board_cards", "board_columns", "boards"]
+        [
+            "board_activity",
+            "board_card_field_values",
+            "board_card_labels",
+            "board_card_links",
+            "board_card_meta",
+            "board_card_projects",
+            "board_card_relations",
+            "board_cards",
+            "board_columns",
+            "board_comments",
+            "board_fields",
+            "board_labels",
+            "board_schema",
+            "board_settings",
+            "board_subtasks",
+            "boards",
+        ]
     );
-    assert!(!native.is_empty());
+    assert_eq!(
+        native,
+        [
+            "board_native_card_labels",
+            "board_native_comments",
+            "board_native_labels",
+            "board_native_meta",
+            "board_native_projects",
+            "board_native_subtasks",
+        ]
+    );
+    let version: i64 = conn
+        .query_row("SELECT version FROM board_schema", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, gespan_board_store::SCHEMA_VERSION);
+}
+
+/// A database board-store wrote (as the Tauri app does) opens in the native
+/// board service, which reads every v3 value back.
+#[test]
+fn a_database_written_by_board_store_opens_in_the_native_board_service() {
+    use gespan_board_store as store;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    let (board, card, label) = {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+            .unwrap();
+        store::ensure_tables(&conn).unwrap();
+        let board = store::create_board(&conn, "Shared").unwrap();
+        let column = store::get_board(&conn, &board.id).unwrap().columns[0].clone();
+        let card = store::create_card(&conn, &column.id, "Task", "").unwrap();
+        store::set_priority(&conn, &card.id, 4).unwrap();
+        let label = store::create_label(&conn, &board.id, "Bug", "e5534b").unwrap();
+        store::set_card_labels(&conn, &card.id, std::slice::from_ref(&label.id)).unwrap();
+        store::add_subtask(&conn, &card.id, "Step").unwrap();
+        store::add_comment(&conn, &card.id, "From the other app", "agent").unwrap();
+        store::link_card(&conn, &card.id, Some("session"), Some("s-1")).unwrap();
+        (board.id, card.id, label.id)
+    };
+    let mut service = gespan_core::board::Service::open(&path).unwrap();
+    assert_eq!(service.list().unwrap()[0].id, board);
+    let extras = service.extras(&board).unwrap();
+    let extras = &extras[&card];
+    assert_eq!(extras.priority, 4);
+    assert_eq!(extras.labels, [label]);
+    assert_eq!((extras.subtasks_total, extras.comments), (1, 1));
+    assert_eq!(service.comments(&card).unwrap()[0].author, "agent");
+    assert_eq!(
+        service.cards_for_link("session", "s-1").unwrap()[0].id,
+        card
+    );
+    service.set_priority(&card, 1).unwrap();
+}
+
+/// A native database from before v3 keeps every extra when the native app
+/// opens it after the upgrade.
+#[test]
+fn the_native_service_migrates_a_pre_v3_database_on_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE boards (id TEXT PRIMARY KEY, name TEXT NOT NULL, card_seq INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE board_columns (id TEXT PRIMARY KEY, board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL, role TEXT);
+             CREATE TABLE board_cards (id TEXT PRIMARY KEY, board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE, column_id TEXT NOT NULL REFERENCES board_columns(id), number INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL, link_kind TEXT, link_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (board_id, number));
+             CREATE TABLE board_activity (id TEXT PRIMARY KEY, board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE, card_id TEXT REFERENCES board_cards(id) ON DELETE CASCADE, kind TEXT NOT NULL, actor TEXT NOT NULL, from_column TEXT, to_column TEXT, detail TEXT, created_at INTEGER NOT NULL);
+             CREATE TABLE board_native_meta (card_id TEXT PRIMARY KEY REFERENCES board_cards(id) ON DELETE CASCADE, priority INTEGER NOT NULL DEFAULT 0, due_at INTEGER);
+             CREATE TABLE board_native_comments (id TEXT PRIMARY KEY, card_id TEXT NOT NULL REFERENCES board_cards(id) ON DELETE CASCADE, body TEXT NOT NULL, created_at INTEGER NOT NULL);
+             INSERT INTO boards VALUES ('b1', 'Work', 1, 1, 1);
+             INSERT INTO board_columns VALUES ('c1', 'b1', 'Backlog', 0, 'todo');
+             INSERT INTO board_cards VALUES ('k1', 'b1', 'c1', 1, 'Old', '', 0, NULL, NULL, 1, 1);
+             INSERT INTO board_native_meta VALUES ('k1', 2, 1793404800000);
+             INSERT INTO board_native_comments VALUES ('m1', 'k1', 'kept', 5);",
+        )
+        .unwrap();
+    }
+    let mut service = gespan_core::board::Service::open(&path).unwrap();
+    let extras = &service.extras("b1").unwrap()["k1"];
+    assert_eq!(
+        (extras.priority, extras.due_at, extras.comments),
+        (2, Some(1_793_404_800_000), 1)
+    );
+    assert_eq!(service.comments("k1").unwrap()[0].body, "kept");
 }
 
 #[test]

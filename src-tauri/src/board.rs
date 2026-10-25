@@ -710,4 +710,40 @@ mod tests {
         let kinds: Vec<&str> = log.iter().map(|row| row.kind.as_str()).collect();
         assert_eq!(kinds, vec!["completed", "started"]);
     }
+
+    /// A database board-store wrote, with v3 extras the Tauri UI doesn't show
+    /// yet (as the native app writes them), opens in the session store and its
+    /// board reads and writes keep working.
+    #[test]
+    fn a_database_written_by_board_store_opens_in_the_session_store() {
+        use gespan_board_store as store;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let (board, card) = {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+                .unwrap();
+            ensure_tables(&conn).unwrap();
+            let (board, columns) = board_with_columns(&conn);
+            let card = add_cards(&conn, &columns[0].id, &["Task"]).remove(0);
+            store::set_priority(&conn, &card.id, 3).unwrap();
+            let label = store::create_label(&conn, &board.id, "Bug", "e5534b").unwrap();
+            store::set_card_labels(&conn, &card.id, &[label.id]).unwrap();
+            store::add_comment(&conn, &card.id, "Native comment", "user").unwrap();
+            store::add_link(&conn, &card.id, "pr", "owner/repo#1", None).unwrap();
+            (board, card)
+        };
+        let session_store = SessionStore::open(path).unwrap();
+        let conn = session_store.lock_conn().unwrap();
+        let detail = get_board(&conn, &board.id).unwrap();
+        assert_eq!(detail.cards.len(), 1);
+        assert_eq!(store::card_meta(&conn, &card.id).unwrap().priority, 3);
+        assert_eq!(
+            cards_for_link(&conn, "pr", "owner/repo#1").unwrap().len(),
+            1
+        );
+        move_card(&conn, &card.id, &detail.columns[1].id, 0, "user").unwrap();
+        delete_card(&conn, &card.id).unwrap();
+        assert!(store::list_comments(&conn, &card.id).unwrap().is_empty());
+    }
 }
