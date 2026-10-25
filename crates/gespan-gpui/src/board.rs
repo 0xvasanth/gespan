@@ -7,6 +7,7 @@ mod detail;
 mod drop;
 mod header;
 mod keyboard;
+mod quick;
 pub(crate) mod style;
 mod switcher;
 #[cfg(test)]
@@ -71,7 +72,7 @@ enum Menu {
     Column { column_id: String, roles: bool },
 }
 
-struct CardMenu {
+pub(super) struct CardMenu {
     card_id: String,
     menu: Entity<crate::popover::Menu>,
     _events: Subscription,
@@ -180,6 +181,10 @@ pub(crate) struct BoardView {
     /// One focus handle per card, so cards are tab stops.
     pub(crate) card_focus: HashMap<String, FocusHandle>,
     card_menu: Option<CardMenu>,
+    /// One tab stop per collapsed column's strip.
+    pub(crate) collapsed_focus: HashMap<String, FocusHandle>,
+    /// `(live, archived)` card counts per column, read with each reload.
+    column_counts: HashMap<String, (usize, usize)>,
     /// The slot a dragged column would land in.
     column_drop: Option<usize>,
     /// The last write's error, or a message about a rejected edit.
@@ -271,6 +276,8 @@ impl BoardView {
             drop_target: None,
             card_focus: HashMap::new(),
             card_menu: None,
+            collapsed_focus: HashMap::new(),
+            column_counts: HashMap::new(),
             column_drop: None,
             error: None,
             load_error: None,
@@ -403,6 +410,10 @@ impl BoardView {
             service.list()?
         };
         let detail = service.get(&board.id)?;
+        let mut column_counts = HashMap::new();
+        for column in &detail.columns {
+            column_counts.insert(column.id.clone(), service.column_card_count(&column.id)?);
+        }
         let extras = service.extras(&board.id)?;
         let labels = service.labels(&board.id)?;
         let card_tickets = service.board_tickets(&board.id)?;
@@ -415,6 +426,7 @@ impl BoardView {
         self.open_board_id = Some(board.id);
         self.boards = boards;
         self.detail = Some(detail);
+        self.column_counts = column_counts;
         self.extras = extras;
         self.labels = labels;
         self.card_tickets = card_tickets;
@@ -440,8 +452,13 @@ impl BoardView {
             .retain(|id, _| detail.cards.iter().any(|card| &card.id == id));
         self.card_focus
             .retain(|id, _| detail.cards.iter().any(|card| &card.id == id));
+        self.collapsed_focus
+            .retain(|id, _| detail.columns.iter().any(|column| &column.id == id));
         for column in &detail.columns {
             self.column_anchors.entry(column.id.clone()).or_default();
+            self.collapsed_focus
+                .entry(column.id.clone())
+                .or_insert_with(|| cx.focus_handle());
         }
         for card in &detail.cards {
             self.card_anchors.entry(card.id.clone()).or_default();
@@ -487,18 +504,26 @@ impl BoardView {
         self.links.get(card_id).cloned()
     }
 
-    /// Why a column can't be deleted, or `None` when it can.
+    /// Why a column can't be deleted, or `None` when it can. Archived cards
+    /// count: the store refuses to delete a column that still holds any.
     pub(crate) fn delete_blocked(&self, column_id: &str) -> Option<String> {
-        let count = self
-            .detail
-            .as_ref()?
-            .cards
-            .iter()
-            .filter(|card| card.column_id == column_id)
-            .count();
+        let detail = self.detail.as_ref()?;
+        let (live, archived) = self
+            .column_counts
+            .get(column_id)
+            .copied()
+            .unwrap_or_else(|| {
+                let live = detail
+                    .cards
+                    .iter()
+                    .filter(|card| card.column_id == column_id)
+                    .count();
+                (live, 0)
+            });
+        let count = live + archived;
         (count > 0).then(|| {
             let plural = if count == 1 { "card" } else { "cards" };
-            format!("Column has {count} {plural}")
+            format!("Move or delete its {count} {plural} first")
         })
     }
 
@@ -560,12 +585,14 @@ impl BoardView {
             return;
         }
         let column_id = composer.column_id.clone();
-        // The composer closes only once the card exists, so a rejected title
-        // stays in the field to correct.
+        // The field is cleared only once the card exists, so a rejected title
+        // stays to correct. The composer stays open (and focused) for the next
+        // card; Escape closes it.
+        let input = composer.input.clone();
         if self.write(cx, |service| {
             service.card_create(&column_id, &title, "").map(drop)
         }) {
-            self.composer = None;
+            input.update(cx, |input, cx| input.set_text(String::new(), cx));
         }
     }
 
@@ -682,6 +709,15 @@ impl BoardView {
         if !bounds.contains(&pointer) {
             return;
         }
+        if self.is_collapsed(column_id) {
+            // A strip has no slots: a drop lands at the end of the column.
+            let target = Some((column_id.to_string(), 0));
+            if self.drop_target != target {
+                self.drop_target = target;
+                cx.notify();
+            }
+            return;
+        }
         let Some(detail) = &self.detail else {
             return;
         };
@@ -723,6 +759,9 @@ impl BoardView {
             .filter(|card| card.column_id == column_id)
             .collect();
         cards.sort_by_key(|card| card.position);
+        if self.is_collapsed(column_id) {
+            return cards.len();
+        }
         let visible: Vec<usize> = cards
             .iter()
             .enumerate()
@@ -946,8 +985,22 @@ impl BoardView {
             .map(|c| c.name.clone())
             .unwrap_or_default();
         let blocked = self.delete_blocked(&column_id);
-        let (rename_id, role_id, delete_id) = (column_id.clone(), column_id.clone(), column_id);
-        vec![
+        let done_column = self.done_column_id();
+        let is_done = done_column.as_deref() == Some(column_id.as_str());
+        let can_mark_done = done_column.is_some() && !is_done;
+        let (rename_id, role_id, delete_id) =
+            (column_id.clone(), column_id.clone(), column_id.clone());
+        let (collapse_id, priority_id, due_id) =
+            (column_id.clone(), column_id.clone(), column_id.clone());
+        let (done_id, archive_id) = (column_id.clone(), column_id);
+        let divider = || {
+            div()
+                .my(px(4.))
+                .h(px(1.))
+                .bg(content(0.08))
+                .into_any_element()
+        };
+        let mut items = vec![
             menu_row("board-column-rename".into(), "Rename")
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.start_rename(Renaming::Column(rename_id.clone()), &name, window, cx)
@@ -962,6 +1015,43 @@ impl BoardView {
                     cx.notify();
                 }))
                 .into_any_element(),
+            menu_row("menu-collapse".into(), "Collapse column")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.set_collapsed(collapse_id.clone(), true, cx)
+                }))
+                .into_any_element(),
+            divider(),
+            menu_row("menu-sort-priority".into(), "Sort by priority")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.sort_column(priority_id.clone(), quick::Sort::Priority, cx)
+                }))
+                .into_any_element(),
+            menu_row("menu-sort-due".into(), "Sort by due date")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.sort_column(due_id.clone(), quick::Sort::DueDate, cx)
+                }))
+                .into_any_element(),
+        ];
+        if can_mark_done {
+            items.push(
+                menu_row("menu-mark-done".into(), "Mark all as done")
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.mark_all_done(done_id.clone(), cx)),
+                    )
+                    .into_any_element(),
+            );
+        }
+        if is_done {
+            items.push(
+                menu_row("menu-archive-done".into(), "Archive completed")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.archive_completed(archive_id.clone(), cx)
+                    }))
+                    .into_any_element(),
+            );
+        }
+        items.push(divider());
+        items.push(
             menu_row("board-column-delete".into(), "Delete")
                 .map(|d| match blocked {
                     Some(reason) => d
@@ -977,7 +1067,8 @@ impl BoardView {
                     cx.listener(move |this, _, _, cx| this.delete_column(delete_id.clone(), cx)),
                 )
                 .into_any_element(),
-        ]
+        );
+        items
     }
 }
 

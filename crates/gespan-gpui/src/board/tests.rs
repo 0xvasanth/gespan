@@ -392,8 +392,7 @@ fn enter_adds_a_trimmed_card_and_an_empty_title_adds_nothing(cx: &mut TestAppCon
         .collect();
     assert_eq!(titles, ["Fix login"]);
 
-    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
-    click(visual, "board-add-card-0");
+    // The composer stays open; a blank title adds nothing.
     visual.simulate_input("   ");
     visual.simulate_keystrokes("enter");
     visual.run_until_parked();
@@ -440,7 +439,7 @@ fn column_delete_is_disabled_while_the_column_has_cards(cx: &mut TestAppContext)
         .read_with(visual, |view, _| {
             assert_eq!(
                 view.delete_blocked(&backlog).as_deref(),
-                Some("Column has 1 card")
+                Some("Move or delete its 1 card first")
             );
         })
         .unwrap();
@@ -2668,4 +2667,400 @@ fn a_card_face_chip_with_no_url_opens_the_card(cx: &mut TestAppContext) {
             )
         })
         .unwrap();
+}
+
+// ---- C2-2: face quick edits, column menu, collapse, quick add ----
+
+fn reload(f: &Fixture, cx: &mut TestAppContext) {
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    cx.run_until_parked();
+}
+
+fn column_id(f: &Fixture, cx: &mut impl gpui::AppContext, name: &str) -> String {
+    detail(f, cx)
+        .columns
+        .iter()
+        .find(|c| c.name == name)
+        .unwrap()
+        .id
+        .clone()
+}
+
+fn assert_gone(visual: &mut VisualTestContext, target: &'static str) {
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds(target).is_none(), "{target} is shown");
+}
+
+#[gpui::test]
+fn clicking_priority_on_the_face_sets_it_without_opening_the_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Rank me", "Plain"]);
+    let ranked = card_id(&f, cx, "Rank me");
+    let plain = card_id(&f, cx, "Plain");
+    Service::open(&f.db)
+        .unwrap()
+        .set_priority(&ranked, 2)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-priority-1");
+    click(visual, "menu-action-priority-4");
+    assert_eq!(extras_of(&f, &ranked).priority, 4);
+    // Back to none from the same glyph.
+    click(visual, "board-card-priority-1");
+    click(visual, "menu-action-priority-0");
+    assert_eq!(extras_of(&f, &ranked).priority, 0);
+    // An unprioritised card has a target of its own.
+    assert_gone(visual, "board-card-priority-2");
+    click(visual, "board-card-priority-target-2");
+    click(visual, "menu-action-priority-3");
+    assert_eq!(extras_of(&f, &plain).priority, 3);
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.card_detail.is_none(), "the face never opens the card");
+            assert!(view.card_menu.is_none());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn due_and_labels_edit_from_the_face(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Dated"]);
+    let card = card_id(&f, cx, "Dated");
+    let board = detail(&f, cx).board.id.clone();
+    let mut service = Service::open(&f.db).unwrap();
+    let bug = service.create_label(&board, "Bug", "e5534b").unwrap();
+    let docs = service.create_label(&board, "Docs", "4da3f5").unwrap();
+    service
+        .set_labels(&card, std::slice::from_ref(&bug.id))
+        .unwrap();
+    service
+        .set_due(&card, Some(gespan_core::time::now_ms() as i64))
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-due-1");
+    click(visual, "menu-action-due-tomorrow");
+    let due = extras_of(&f, &card).due_at.expect("a due date");
+    let tomorrow = chrono::Local::now().date_naive().succ_opt().unwrap();
+    assert_eq!(super::style::local_day(due), Some(tomorrow));
+
+    click(visual, "board-card-labels-1");
+    click(visual, selector(format!("menu-action-label-{}", docs.id)));
+    assert_eq!(
+        extras_of(&f, &card).labels,
+        [bug.id.clone(), docs.id.clone()]
+    );
+    click(visual, "board-card-labels-1");
+    click(visual, selector(format!("menu-action-label-{}", bug.id)));
+    assert_eq!(extras_of(&f, &card).labels, std::slice::from_ref(&docs.id));
+
+    click(visual, "board-card-due-1");
+    click(visual, "menu-action-due-clear");
+    assert_eq!(extras_of(&f, &card).due_at, None);
+    f.window
+        .read_with(visual, |view, _| assert!(view.card_detail.is_none()))
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_face_click_does_not_start_a_drag(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Steady"]);
+    let card = card_id(&f, cx, "Steady");
+    Service::open(&f.db)
+        .unwrap()
+        .set_priority(&card, 1)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    // Pressing the glyph and pulling toward another column moves nothing.
+    let from = center(visual, "board-card-priority-1");
+    let to = center(visual, "board-column-body-2");
+    drag(visual, from, to);
+    assert_eq!(column_of(&f, visual, "Steady"), "Backlog");
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(!view.dragging && view.dragged_card.is_none());
+            assert!(view.card_detail.is_none());
+        })
+        .unwrap();
+    // A plain click on it is not a drag either.
+    click(visual, "board-card-priority-1");
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(!view.dragging && view.dragged_card.is_none());
+            assert!(view.card_detail.is_none());
+            assert!(view.card_menu.is_some());
+        })
+        .unwrap();
+}
+
+fn open_column_menu(visual: &mut VisualTestContext, index: usize) {
+    click(visual, selector(format!("board-column-menu-{index}")));
+}
+
+#[gpui::test]
+fn collapse_persists_and_the_strip_accepts_a_mouse_drop(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Mover"]);
+    let review = column_id(&f, cx, "Review");
+    let mut service = Service::open(&f.db).unwrap();
+    service.card_create(&review, "Resident", "").unwrap();
+    service.card_create(&review, "Second", "").unwrap();
+    // A colour and WIP limit must survive collapsing.
+    service
+        .set_column_display(&review, Some("4da3f5"), Some(5), false)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 2);
+    click(visual, "menu-collapse");
+    let column = detail(&f, visual).columns[2].clone();
+    assert!(column.collapsed);
+    assert_eq!(column.color.as_deref(), Some("4da3f5"));
+    assert_eq!(column.wip_limit, Some(5));
+    assert_gone(visual, "board-column-body-2");
+
+    // The state is in the database, not the view.
+    let board = detail(&f, visual).board.id.clone();
+    let stored = Service::open(&f.db).unwrap().get(&board).unwrap();
+    assert!(stored.columns[2].collapsed);
+
+    let from = center(visual, "board-card-1");
+    let to = center(visual, "board-column-collapsed-2");
+    drag(visual, from, to);
+    assert_eq!(
+        titles_in(&f, visual, "Review"),
+        ["Resident", "Second", "Mover"]
+    );
+
+    click(visual, "board-column-collapsed-2");
+    let column = detail(&f, visual).columns[2].clone();
+    assert!(!column.collapsed);
+    assert_eq!(column.color.as_deref(), Some("4da3f5"));
+    assert_eq!(column.wip_limit, Some(5));
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-column-body-2").is_some());
+}
+
+#[gpui::test]
+fn enter_on_a_collapsed_strip_expands_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let review = column_id(&f, cx, "Review");
+    Service::open(&f.db)
+        .unwrap()
+        .set_column_display(&review, None, None, true)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    f.window
+        .update(visual, |view, window, cx| {
+            let handle = view.collapsed_focus.get(&review).unwrap().clone();
+            window.focus(&handle, cx);
+        })
+        .unwrap();
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert!(!detail(&f, visual).columns[2].collapsed);
+}
+
+#[gpui::test]
+fn a_keyboard_drop_onto_a_collapsed_column_lands_at_the_end(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let in_progress = column_id(&f, cx, "In Progress");
+    let review = column_id(&f, cx, "Review");
+    let mut service = Service::open(&f.db).unwrap();
+    service.card_create(&in_progress, "X", "").unwrap();
+    service.card_create(&in_progress, "Y", "").unwrap();
+    service.card_create(&review, "R", "").unwrap();
+    service
+        .set_column_display(&in_progress, None, None, true)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    let a = card_id(&f, visual, "A");
+    // Focus skips the collapsed column's hidden cards.
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("right");
+    visual.run_until_parked();
+    let r = card_id(&f, visual, "R");
+    let focused = f
+        .window
+        .update(visual, |view, window, _| {
+            view.card_focus
+                .get(&r)
+                .is_some_and(|h| h.is_focused(window))
+        })
+        .unwrap();
+    assert!(focused, "right skips the collapsed column to Review");
+
+    // Lifting A and moving one column right drops it at the end of that column.
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space right enter");
+    visual.run_until_parked();
+    assert_eq!(titles_in(&f, visual, "In Progress"), ["X", "Y", "A"]);
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B"]);
+}
+
+fn set_priorities(f: &Fixture, cx: &mut TestAppContext, priorities: &[(&str, u8)]) {
+    let mut service = Service::open(&f.db).unwrap();
+    for (title, priority) in priorities {
+        let id = card_id(f, cx, title);
+        service.set_priority(&id, *priority).unwrap();
+    }
+    reload(f, cx);
+}
+
+#[gpui::test]
+fn sort_by_priority_orders_the_whole_column_even_when_filtered(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C", "D"]);
+    set_priorities(&f, cx, &[("A", 1), ("B", 4), ("C", 0), ("D", 4)]);
+    // Only A is visible while the filter is on.
+    f.window
+        .update(cx, |view, _, cx| {
+            view.filter.priorities.insert(1);
+            cx.notify();
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 0);
+    click(visual, "menu-sort-priority");
+    // Urgent first; ties keep their order; hidden cards are sorted too.
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B", "D", "A", "C"]);
+    let positions: Vec<i64> = {
+        let mut cards = detail(&f, visual).cards;
+        cards.sort_by_key(|c| c.position);
+        cards.iter().map(|c| c.position).collect()
+    };
+    assert_eq!(positions, [0, 1, 2, 3]);
+}
+
+#[gpui::test]
+fn sort_by_due_puts_undated_last(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C", "D"]);
+    let day = 86_400_000_i64;
+    let now = gespan_core::time::now_ms() as i64;
+    let mut service = Service::open(&f.db).unwrap();
+    service
+        .set_due(&card_id(&f, cx, "B"), Some(now + 5 * day))
+        .unwrap();
+    service
+        .set_due(&card_id(&f, cx, "C"), Some(now + day))
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 0);
+    click(visual, "menu-sort-due");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["C", "B", "A", "D"]);
+}
+
+#[gpui::test]
+fn mark_all_done_moves_every_card_to_the_done_column(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 3);
+    assert_gone(visual, "menu-mark-done");
+    visual.simulate_keystrokes("escape");
+    open_column_menu(visual, 0);
+    click(visual, "menu-mark-done");
+    assert_eq!(titles_in(&f, visual, "Backlog"), Vec::<String>::new());
+    assert_eq!(titles_in(&f, visual, "Done"), ["A", "B", "C"]);
+    assert_eq!(moved_rows(&f, visual), 3);
+}
+
+#[gpui::test]
+fn mark_all_done_is_hidden_when_no_column_is_done(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let done = column_id(&f, cx, "Done");
+    Service::open(&f.db)
+        .unwrap()
+        .column_update(&done, "Done", None)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 0);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("menu-sort-priority").is_some());
+    assert_gone(visual, "menu-mark-done");
+}
+
+#[gpui::test]
+fn archive_completed_only_on_the_done_column(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let board = detail(&f, cx).board.id.clone();
+    let done = column_id(&f, cx, "Done");
+    let mut service = Service::open(&f.db).unwrap();
+    for title in ["A", "B"] {
+        let id = card_id(&f, cx, title);
+        service.card_move(&id, &done, usize::MAX, "user").unwrap();
+    }
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 0);
+    assert_gone(visual, "menu-archive-done");
+    visual.simulate_keystrokes("escape");
+    open_column_menu(visual, 3);
+    click(visual, "menu-archive-done");
+    assert!(detail(&f, visual).cards.is_empty());
+    let archived = Service::open(&f.db).unwrap().archived(&board).unwrap();
+    assert_eq!(archived.len(), 2);
+}
+
+#[gpui::test]
+fn the_composer_stays_open_after_enter(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-add-card-0");
+    visual.simulate_input("First");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    f.window
+        .read_with(visual, |view, cx| {
+            let composer = view.composer.as_ref().expect("still open");
+            assert_eq!(composer.input.read(cx).content.as_ref(), "");
+        })
+        .unwrap();
+    // Focus stayed in the field, so typing carries on without a click.
+    visual.simulate_input("Second");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["First", "Second"]);
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    f.window
+        .read_with(visual, |view, _| assert!(view.composer.is_none()))
+        .unwrap();
+}
+
+#[gpui::test]
+fn delete_column_is_disabled_while_archived_cards_remain(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Shelved", "Gone soon"]);
+    let backlog = column_id(&f, cx, "Backlog");
+    let shelved = card_id(&f, cx, "Shelved");
+    let gone = card_id(&f, cx, "Gone soon");
+    let mut service = Service::open(&f.db).unwrap();
+    service.archive(&shelved).unwrap();
+    service.card_delete(&gone).unwrap();
+    reload(&f, cx);
+    assert!(detail(&f, cx).cards.is_empty(), "no live cards remain");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 0);
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(
+                view.delete_blocked(&backlog).as_deref(),
+                Some("Move or delete its 1 card first")
+            );
+        })
+        .unwrap();
+    click(visual, "board-column-delete");
+    assert_eq!(detail(&f, visual).columns.len(), 4);
+    visual.simulate_keystrokes("escape");
+    // Once nothing live or archived is left, delete works.
+    Service::open(&f.db).unwrap().card_delete(&shelved).unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_column_menu(visual, 0);
+    click(visual, "board-column-delete");
+    assert_eq!(detail(&f, visual).columns.len(), 3);
 }

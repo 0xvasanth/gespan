@@ -29,6 +29,11 @@ impl BoardView {
         let Some(detail) = &self.detail else {
             return Vec::new();
         };
+        // A collapsed column shows no cards: focus skips it, and a lifted card
+        // dropped there lands at its end.
+        if self.is_collapsed(column_id) {
+            return Vec::new();
+        }
         let query = self.query(cx);
         let mut cards: Vec<_> = detail
             .cards

@@ -60,6 +60,9 @@ impl BoardView {
             cards.sort_by_key(|card| card.position);
             cards
         };
+        if column.collapsed {
+            return self.render_collapsed(index, column, cx);
+        }
         let done = column.role.as_deref() == Some("done");
         let anchor = self
             .column_anchors
@@ -274,7 +277,7 @@ impl BoardView {
                                 div()
                                     .text_size(px(11.))
                                     .text_color(content(0.45))
-                                    .child("Enter to add · Esc to cancel"),
+                                    .child("Enter to add · Esc to close"),
                             )
                             .into_any_element(),
                         None => div()
@@ -299,6 +302,111 @@ impl BoardView {
                             }))
                             .into_any_element(),
                     }),
+            )
+            .into_any_element()
+    }
+
+    /// A 36px strip with the name and count. It still takes dropped cards and
+    /// columns; a click, Enter or Space expands it.
+    fn render_collapsed(
+        &self,
+        index: usize,
+        column: &Column,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let target = self
+            .drop_target
+            .as_ref()
+            .is_some_and(|(target, _)| *target == column.id);
+        let column_slot = self.column_drop;
+        let last = self
+            .detail
+            .as_ref()
+            .is_some_and(|detail| index + 1 == detail.columns.len());
+        let (move_over_id, drop_over_id) = (column.id.clone(), column.id.clone());
+        let (click_id, key_id) = (column.id.clone(), column.id.clone());
+        // GPUI has no rotated text, so the name reads top to bottom.
+        let name: Vec<AnyElement> = column
+            .name
+            .chars()
+            .take(18)
+            .map(|c| div().child(c.to_string()).into_any_element())
+            .collect();
+        div()
+            .id(("board-column-collapsed", index))
+            .debug_selector(move || format!("board-column-collapsed-{index}"))
+            .role(Role::Button)
+            .aria_label(format!("Expand {}", column.name))
+            .w(px(36.))
+            .min_h(px(120.))
+            .flex_shrink_0()
+            .py(px(10.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(8.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(content(0.06))
+            .bg(content(0.02))
+            .cursor_pointer()
+            .hover(|s| s.bg(content(0.05)))
+            .when(target, |d| {
+                d.bg(accent_color().opacity(0.06))
+                    .border_color(accent_color().opacity(0.38))
+            })
+            .when(column_slot == Some(index), |d| {
+                d.border_l_2().border_color(accent_color())
+            })
+            .when(last && column_slot == Some(index + 1), |d| {
+                d.border_r_2().border_color(accent_color())
+            })
+            .when_some(self.collapsed_focus.get(&column.id), |d, focus| {
+                d.track_focus(focus).tab_index(0)
+            })
+            .focus_visible(|s| s.border_color(accent_color()))
+            .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                if !event.keystroke.modifiers.modified()
+                    && matches!(event.keystroke.key.as_str(), "enter" | "space")
+                {
+                    cx.stop_propagation();
+                    this.set_collapsed(key_id.clone(), false, cx);
+                }
+            }))
+            .on_click(
+                cx.listener(move |this, _, _, cx| this.set_collapsed(click_id.clone(), false, cx)),
+            )
+            .on_drag_move::<DraggedCard>(cx.listener(
+                move |this, event: &gpui::DragMoveEvent<DraggedCard>, _, cx| {
+                    this.card_drag_over(&move_over_id, event.bounds, event.event.position, cx)
+                },
+            ))
+            .on_drop::<DraggedCard>(cx.listener(move |this, card: &DraggedCard, _, cx| {
+                this.drop_card(card, &drop_over_id, cx)
+            }))
+            .on_drag_move::<DraggedColumn>(cx.listener(
+                move |this, event: &gpui::DragMoveEvent<DraggedColumn>, _, cx| {
+                    this.column_drag_over(index, event.bounds, event.event.position, cx)
+                },
+            ))
+            .on_drop::<DraggedColumn>(
+                cx.listener(|this, column: &DraggedColumn, _, cx| this.drop_column(column, cx)),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(content(0.4))
+                    .child(self.count_label(&column.id, cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(content(0.8))
+                    .children(name),
             )
             .into_any_element()
     }

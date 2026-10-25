@@ -3,11 +3,31 @@
 //! last change). Cards drag between steps; "…" and Enter open Move to….
 use super::{
     BoardView, DraggedCard, LinkLabel,
+    quick::Face,
     style::{due_label, label_chip, priority_glyph},
 };
 use crate::theme::*;
 use gespan_core::board::Card;
-use gpui::{AnyElement, Context, MouseButton, Role, div, prelude::*, px};
+use gpui::{AnyElement, Context, MouseButton, Role, Stateful, div, prelude::*, px};
+
+/// A control on the card face that opens a quick-edit menu. Like "…", it stops
+/// the press and the click, so it never starts a drag or opens the card.
+fn face_control(
+    control: Stateful<gpui::Div>,
+    card_id: &str,
+    face: Face,
+    cx: &mut Context<BoardView>,
+) -> Stateful<gpui::Div> {
+    let card_id = card_id.to_string();
+    control
+        .role(Role::Button)
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.open_face_menu(card_id.clone(), face, window, cx)
+        }))
+}
 
 impl BoardView {
     pub(super) fn render_card(
@@ -44,15 +64,19 @@ impl BoardView {
             .due_at
             .and_then(|at| due_label(at, now as i64))
             .map(|(text, overdue)| {
-                div()
+                let control = div()
                     .id(("board-card-due", number as u64))
                     .debug_selector(move || format!("board-card-due-{number}"))
+                    .aria_label("Change due date")
                     .flex()
                     .items_center()
                     .gap(px(3.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(content(0.08)))
                     .when(overdue && !done, |d| d.text_color(diff_foreground(false)))
                     .child(icon("calendar-03", 11.))
-                    .child(text)
+                    .child(text);
+                face_control(control, &card.id, Face::Due, cx)
             });
         let updated = gespan_core::time::relative(card.updated_at.max(0) as u64, now);
         let anchor = self.card_anchors.get(&card.id).cloned().unwrap_or_default();
@@ -116,19 +140,23 @@ impl BoardView {
             }))
             .child(anchor.probe())
             .when(!labels.is_empty(), |d| {
+                let row = div()
+                    .id(("board-card-labels", number as u64))
+                    .debug_selector(move || format!("board-card-labels-{number}"))
+                    .aria_label("Change labels")
+                    .mr(px(20.))
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(4.))
+                    .children(
+                        labels
+                            .iter()
+                            .map(|label| label_chip(&label.name, &label.color)),
+                    );
                 d.child(
                     div()
-                        .id(("board-card-labels", number as u64))
-                        .debug_selector(move || format!("board-card-labels-{number}"))
-                        .pr(px(20.))
                         .flex()
-                        .flex_wrap()
-                        .gap(px(4.))
-                        .children(
-                            labels
-                                .iter()
-                                .map(|label| label_chip(&label.name, &label.color)),
-                        ),
+                        .child(face_control(row, &card.id, Face::Labels, cx)),
                 )
             })
             .child(
@@ -201,12 +229,29 @@ impl BoardView {
                     .text_color(content(0.45))
                     .child(div().font_family("Menlo").child(format!("#{number}")))
                     .when(extras.priority > 0, |d| {
-                        d.child(
-                            div()
-                                .id(("board-card-priority", number as u64))
-                                .debug_selector(move || format!("board-card-priority-{number}"))
-                                .child(priority_glyph(extras.priority)),
-                        )
+                        let glyph = div()
+                            .id(("board-card-priority", number as u64))
+                            .debug_selector(move || format!("board-card-priority-{number}"))
+                            .aria_label("Change priority")
+                            .px(px(2.))
+                            .rounded(px(4.))
+                            .hover(|s| s.bg(content(0.08)))
+                            .child(priority_glyph(extras.priority));
+                        d.child(face_control(glyph, &card.id, Face::Priority, cx))
+                    })
+                    // A faint target, shown on hover, for a card with no priority.
+                    .when(extras.priority == 0, |d| {
+                        let target = div()
+                            .id(("board-card-priority-target", number as u64))
+                            .debug_selector(move || format!("board-card-priority-target-{number}"))
+                            .aria_label("Set priority")
+                            .px(px(2.))
+                            .rounded(px(4.))
+                            .opacity(0.)
+                            .group_hover(group.clone(), |s| s.opacity(0.6))
+                            .hover(|s| s.bg(content(0.08)))
+                            .child(priority_glyph(0));
+                        d.child(face_control(target, &card.id, Face::Priority, cx))
                     })
                     .children(due)
                     .when(extras.comments > 0, |d| {

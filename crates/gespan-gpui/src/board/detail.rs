@@ -5,7 +5,7 @@ mod view;
 #[cfg(test)]
 pub(crate) use view::SEND_HINT;
 
-use super::{BoardView, Event, style, turns};
+use super::{BoardView, Event, quick, style, turns};
 use crate::{
     input::{self, Input},
     popover::{AnchorSlot, Menu, MenuAction, MenuEvent, MenuItem},
@@ -14,7 +14,7 @@ use crate::{
 };
 use gespan_core::board::{
     Activity,
-    extras::{Comment, PRIORITIES, Subtask},
+    extras::{Comment, Subtask},
 };
 use gpui::{ClipboardItem, Context, Entity, Focusable, Subscription, Window, prelude::*};
 use std::collections::HashMap;
@@ -412,18 +412,8 @@ impl BoardView {
                         .collect()
                 })
                 .unwrap_or_default(),
-            Choice::Priority => (0..PRIORITIES.len())
-                .rev()
-                .map(|p| MenuAction::new(format!("priority-{p}"), PRIORITIES[p]).into())
-                .collect(),
-            Choice::Due => vec![
-                MenuAction::new("due-today", "Today").into(),
-                MenuAction::new("due-tomorrow", "Tomorrow").into(),
-                MenuAction::new("due-next-week", "Next week").into(),
-                MenuAction::new("due-pick", "Pick a date…").into(),
-                MenuItem::Separator,
-                MenuAction::new("due-clear", "Clear").into(),
-            ],
+            Choice::Priority => quick::priority_items(),
+            Choice::Due => quick::due_items(),
             Choice::More => vec![MenuAction::new("delete", "Delete task").danger().into()],
         };
         let menu = cx.new(|cx| Menu::new("Task", items, window, cx));
@@ -478,29 +468,18 @@ impl BoardView {
                 }
             }
             Choice::Priority => {
-                if let Some(priority) = id.strip_prefix("priority-").and_then(|p| p.parse().ok()) {
+                if let Some(priority) = quick::parse_priority(id) {
                     self.write_task(cx, |service| service.set_priority(&card_id, priority));
                 }
             }
-            Choice::Due => {
-                let today = chrono::Local::now().date_naive();
-                let day = match id {
-                    "due-today" => Some(Some(today)),
-                    // A date past chrono's range is ignored, never a clear.
-                    "due-tomorrow" => today.succ_opt().map(Some),
-                    "due-next-week" => today.checked_add_days(chrono::Days::new(7)).map(Some),
-                    "due-clear" => Some(None),
-                    _ => None,
-                };
-                match day {
-                    Some(None) => {
-                        self.write_task(cx, |service| service.set_due(&card_id, None));
-                    }
-                    Some(Some(day)) => self.set_due_day(&card_id, day, cx),
-                    None if id == "due-pick" => self.open_picker(Picker::DueDate, window, cx),
-                    None => {}
+            Choice::Due => match quick::parse_due(id, chrono::Local::now().date_naive()) {
+                Some(quick::DueChoice::Clear) => {
+                    self.write_task(cx, |service| service.set_due(&card_id, None));
                 }
-            }
+                Some(quick::DueChoice::Day(day)) => self.set_due_day(&card_id, day, cx),
+                Some(quick::DueChoice::Pick) => self.open_picker(Picker::DueDate, window, cx),
+                None => {}
+            },
             Choice::More => {
                 if id == "delete" {
                     self.delete_card(window, cx);
@@ -511,7 +490,12 @@ impl BoardView {
 
     // ---- pick lists: projects, labels, linked work, a typed date ----
 
-    fn open_picker(&mut self, picker: Picker, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_picker(
+        &mut self,
+        picker: Picker,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(detail) = &mut self.card_detail else {
             return;
         };
@@ -556,7 +540,12 @@ impl BoardView {
 
     /// Due at the start of `day`; a day the local zone skipped is an error,
     /// never a cleared due date.
-    fn set_due_day(&mut self, card_id: &str, day: chrono::NaiveDate, cx: &mut Context<Self>) {
+    pub(super) fn set_due_day(
+        &mut self,
+        card_id: &str,
+        day: chrono::NaiveDate,
+        cx: &mut Context<Self>,
+    ) {
         match style::day_start(day) {
             Some(due) => {
                 self.write_task(cx, |service| service.set_due(card_id, Some(due)));
@@ -629,13 +618,7 @@ impl BoardView {
         let Some(card) = self.detail_card() else {
             return;
         };
-        let mut labels = self.card_labels(&card.id);
-        match labels.iter().position(|l| *l == label_id) {
-            Some(index) => {
-                labels.remove(index);
-            }
-            None => labels.push(label_id),
-        }
+        let labels = quick::toggled(&self.card_labels(&card.id), &label_id);
         self.write_task(cx, |service| service.set_labels(&card.id, &labels));
     }
 
