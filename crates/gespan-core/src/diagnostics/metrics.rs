@@ -9,7 +9,7 @@ use std::{
     cell::RefCell,
     io,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Mutex, TryLockError},
     time::Duration,
 };
 
@@ -281,9 +281,11 @@ thread_local! {
     static CAPTURE: RefCell<Option<Counters>> = const { RefCell::new(None) };
 }
 
-/// Opens the process's counters. Later calls replace the file.
+/// Opens the process's counters, logging why if it cannot. Later calls
+/// replace the file.
 pub fn open(path: &Path, version: &str) -> Result<(), String> {
-    let counters = Counters::open(path, version)?;
+    let counters = Counters::open(path, version)
+        .inspect_err(|error| tracing::warn!(%error, "failure counters are off"))?;
     *COUNTERS.lock().unwrap_or_else(|e| e.into_inner()) = Some(counters);
     Ok(())
 }
@@ -324,6 +326,35 @@ fn record(name: &str, kind: Option<ErrorKind>) {
     };
     if let Err(error) = result {
         tracing::warn!(%error, "cannot update a failure counter");
+    }
+}
+
+/// Counts a crash panic, from the panic hook. It never waits for the lock:
+/// the panicking thread may be the one holding it.
+pub(super) fn record_panic() {
+    let name = "panic";
+    let kind = Some(ErrorKind::Panic);
+    let today = Utc::now().date_naive();
+    let captured = CAPTURE
+        .try_with(|capture| {
+            capture
+                .try_borrow()
+                .ok()?
+                .as_ref()
+                .map(|counters| counters.record(today, name, kind))
+        })
+        .ok()
+        .flatten();
+    if captured.is_some() {
+        return;
+    }
+    let counters = match COUNTERS.try_lock() {
+        Ok(counters) => counters,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return,
+    };
+    if let Some(counters) = counters.as_ref() {
+        let _ = counters.record(today, name, kind);
     }
 }
 
@@ -604,5 +635,55 @@ mod tests {
         let path = dir.path().join("new/gespan-native.db");
         Counters::open(&path, "1.0.0").unwrap();
         assert!(path.exists());
+    }
+
+    #[test]
+    fn gespan_db_gains_no_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("gespan.db");
+        drop(crate::store::Store::open_gespan(&shared).unwrap());
+        let schema = |path: &Path| -> Vec<(String, String)> {
+            let conn = Connection::open(path).unwrap();
+            let mut statement = conn
+                .prepare("SELECT type, name FROM sqlite_master ORDER BY type, name")
+                .unwrap();
+            let rows = statement
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            rows
+        };
+        let before = schema(&shared);
+        assert!(!before.is_empty());
+        let path = database_path(&shared);
+        let counters = Counters::open(&path, "1.0.0").unwrap();
+        counters
+            .record(day(20), "worktree.create", Some(ErrorKind::Io))
+            .unwrap();
+        drop(counters);
+        assert_eq!(schema(&shared), before);
+        assert!(!before.iter().any(|(_, name)| name == "diagnostic_counters"));
+        assert_eq!(path, dir.path().join("gespan-native.db"));
+        assert!(schema(&path)
+            .iter()
+            .any(|(_, name)| name == "diagnostic_counters"));
+    }
+
+    #[test]
+    fn crash_panics_are_counted() {
+        let ((), counts) = capture(record_panic);
+        let got: Vec<_> = counts
+            .into_iter()
+            .map(|c| (c.name, c.kind, c.count))
+            .collect();
+        assert_eq!(got, [("panic".into(), Some(ErrorKind::Panic), 1)]);
+    }
+
+    #[test]
+    fn a_held_lock_skips_the_panic_count_instead_of_blocking() {
+        // A panic raised while this thread records a count must not deadlock.
+        let _held = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
+        record_panic();
     }
 }
