@@ -10,7 +10,6 @@ pub(super) struct ChatState {
     pub(super) sending: Option<String>,
     pub(super) failed: Vec<(String, String)>,
     pub(super) external: Option<(String, bool)>,
-    pub(super) floating: std::collections::HashSet<gpui::WindowId>,
     /// ModelPicker with `hideSettings`: the model list opens on its own.
     pub(super) models: Option<(Entity<ModelList>, Vec<Subscription>)>,
     /// The setting pills' anchors, by `ComposerMenu::Setting` index.
@@ -64,11 +63,6 @@ impl Conversation {
         self.follow_ups.ready = false;
         self.follow_ups.requested = None;
         self.save_follow_ups(cx);
-    }
-    pub(crate) fn mono_floating_window(&mut self, window: &Window) {
-        self.mono_ui
-            .floating
-            .insert(window.window_handle().window_id());
     }
     pub(crate) fn mono_quote(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         if self.input.read(cx).is_composing() {

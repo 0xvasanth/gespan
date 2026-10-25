@@ -311,8 +311,10 @@ fn run_turn_using(
         }
         if let Some(source) = settings.pending_provider_switch.take() {
             // The turn's first step: the outgoing model's recap can take a while.
-            let mut transfer =
-                monocode_core::tool::ToolCall::new("provider-handoff", monocode_core::tool::HANDOFF);
+            let mut transfer = monocode_core::tool::ToolCall::new(
+                "provider-handoff",
+                monocode_core::tool::HANDOFF,
+            );
             let from = if source.model_label.is_empty() {
                 Kind::from_id(&source.from).label()
             } else {

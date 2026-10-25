@@ -695,6 +695,8 @@ pub(crate) struct Shell {
     pub(crate) git: Entity<crate::git_status::ProjectGit>,
     pub(crate) right_panel: Option<Entity<RightPanel>>,
     right_resize: Option<(Pixels, f32)>,
+    /// Either right-panel handle is hovered; both of its hairlines light up.
+    right_resize_hovered: bool,
     right_slide: Option<PaneSlide>,
     reviews: HashMap<i64, Entity<crate::review::ReviewPane>>,
     /// A review sliding in or out: its session and pane.
@@ -1032,6 +1034,7 @@ impl Shell {
             git,
             right_panel: None,
             right_resize: None,
+            right_resize_hovered: false,
             right_slide: None,
             reviews: HashMap::new(),
             review_slide: None,
@@ -4438,7 +4441,10 @@ impl Shell {
                     .top_0()
                     .bottom_0()
                     .left(px(-3.5))
-                    .child(resize_border(true, self.right_resize.is_some())),
+                    .child(resize_border(
+                        true,
+                        self.right_resize.is_some() || self.right_resize_hovered,
+                    )),
             )
             .into_any_element()
     }
@@ -4456,6 +4462,12 @@ impl Shell {
             .aria_label("Resize right sidebar")
             .w(px(6.))
             .cursor(CursorStyle::ResizeLeftRight)
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if this.right_resize_hovered != *hovered {
+                    this.right_resize_hovered = *hovered;
+                    cx.notify();
+                }
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -4741,7 +4753,10 @@ impl Shell {
                                 .w(px(1.))
                                 .h(px(16.))
                                 .bg(crate::right_panel::stroke())
-                                .when(self.right_resize.is_some(), |d| d.bg(content(0.16)))
+                                .when(
+                                    self.right_resize.is_some() || self.right_resize_hovered,
+                                    |d| d.bg(content(0.16)),
+                                )
                                 .group_hover("resize-handle", |s| s.bg(content(0.16))),
                         ),
                 )

@@ -99,3 +99,62 @@ pub(crate) fn hide(window: &Window) {
         window.orderOut(None);
     }
 }
+/// mono_chat.rs's floating panel: GPUI's pop-up is already a non-activating
+/// panel on every Space. Like Tauri's, it hides the window buttons, resizes,
+/// and floats at the status level instead of above menus.
+#[cfg(not(test))]
+pub(crate) fn floating_panel(window: &Window, resizable: bool) {
+    use objc2_app_kit::{NSWindowCollectionBehavior, NSWindowStyleMask};
+    // NSStatusWindowLevel.
+    const STATUS_LEVEL: isize = 25;
+    let Some(window) = ns_window(window) else {
+        return;
+    };
+    if resizable {
+        window.setStyleMask(window.styleMask() | NSWindowStyleMask::Resizable);
+    }
+    for kind in [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ] {
+        if let Some(button) = window.standardWindowButton(kind) {
+            button.setHidden(true);
+        }
+    }
+    window.setLevel(STATUS_LEVEL);
+    window.setCollectionBehavior(
+        NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::IgnoresCycle,
+    );
+}
+/// quick_composer.rs's `quick_composer_fit`: grow or shrink to the card in
+/// one frame update, keeping the top edge where it was so the prompt never
+/// moves while a picker opens below it.
+///
+/// Called while rendering, so the resize waits for the frame to finish: GPUI
+/// reports AppKit's new size by updating the window, which fails mid-render
+/// and would leave the enlarged panel showing a stale, unpainted frame.
+#[cfg(not(test))]
+pub(crate) fn fit_height(window: &Window, cx: &gpui::App, height: f64) {
+    let Some(window) = ns_window(window) else {
+        return;
+    };
+    if (window.frame().size.height - height).abs() < 0.5 {
+        return;
+    }
+    cx.foreground_executor()
+        .spawn(async move {
+            let mut frame = window.frame();
+            if (frame.size.height - height).abs() < 0.5 {
+                return;
+            }
+            // AppKit's origin is the bottom left.
+            frame.origin.y += frame.size.height - height;
+            frame.size.height = height;
+            window.setFrame_display(frame, true);
+            window.invalidateShadow();
+        })
+        .detach();
+}

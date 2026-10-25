@@ -830,9 +830,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_settled_lone_step_keeps_its_loader_until_the_next_one_arrives(
-        cx: &mut TestAppContext,
-    ) {
+    fn a_settled_lone_step_keeps_its_loader_until_the_next_one_arrives(cx: &mut TestAppContext) {
         let view = cx.new(|_| TranscriptView::new());
         let row = |role: &str, text: String| Row {
             role: role.into(),
@@ -848,7 +846,9 @@ mod tests {
         };
         let lone = |view: &TranscriptView| {
             view.rows.iter().find_map(|r| match &r.body {
-                Body::Tool { group: None, live, .. } => Some(*live),
+                Body::Tool {
+                    group: None, live, ..
+                } => Some(*live),
                 _ => None,
             })
         };

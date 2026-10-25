@@ -815,6 +815,12 @@ impl Conversation {
         })
         .detach();
     }
+    /// The quick composer's files, sent with its prompt.
+    pub(crate) fn quick_attach(&mut self, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
+        if !paths.is_empty() {
+            self.add_attachments(paths, cx);
+        }
+    }
     pub(crate) fn quick_submit(
         &mut self,
         prompt: String,
@@ -3291,7 +3297,7 @@ pub(crate) fn preferred_effort(provider: &str, cx: &gpui::App) -> Option<String>
     cx.try_global::<crate::settings::Preferences>()
         .and_then(|prefs| prefs.provider_efforts.get(provider).cloned())
 }
-fn effort_name(value: &str) -> String {
+pub(crate) fn effort_name(value: &str) -> String {
     match value {
         "default" => "Default",
         "none" => "None",

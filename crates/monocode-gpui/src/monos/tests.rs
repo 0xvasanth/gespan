@@ -525,15 +525,54 @@ fn overview_activity_returns_to_its_previous_tab_and_uses_the_shared_reveal(
 #[gpui::test]
 fn floating_chat_opens_after_releasing_the_manager_and_shares_the_runtime(cx: &mut TestAppContext) {
     let s = setup(cx);
-    cx.update(|cx| s.manager.update(cx, |m, cx| m.open_floating(cx)));
+    cx.update(|cx| {
+        s.manager
+            .update(cx, |m, cx| m.open_floating(s.id.clone(), cx))
+    });
     cx.run_until_parked();
-    cx.update(|cx| s.manager.update(cx, |m, cx| m.open_floating(cx)));
+    cx.update(|cx| {
+        s.manager
+            .update(cx, |m, cx| m.open_floating(s.id.clone(), cx))
+    });
     cx.run_until_parked();
     cx.update(|cx| {
         let manager = s.manager.read(cx);
         assert_eq!(manager.floating.len(), 1);
         assert_eq!(manager.chats.len(), 1);
         assert!(manager.chats.contains_key(&s.id));
+        // The panel owns the chat; the workspace draws a placeholder rather
+        // than the same transcript in a second window.
+        assert!(manager.floating_shows(&s.id, cx));
+    });
+    cx.update(|cx| {
+        s.manager
+            .update(cx, |m, cx| m.hide_floating(&s.id.clone(), cx))
+    });
+    cx.run_until_parked();
+    cx.update(|cx| assert!(!s.manager.read(cx).floating_shows(&s.id, cx)));
+}
+
+#[gpui::test]
+fn floating_chat_leaves_the_workspace_selection_alone(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let other = cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            let before = m.active.clone();
+            let id = m.create_floating(Vec::new(), cx);
+            assert_eq!(
+                m.active, before,
+                "a panel's new Mono stays out of the workspace"
+            );
+            m.open_floating(id.clone(), cx);
+            assert_eq!(m.active, before);
+            id
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let manager = s.manager.read(cx);
+        assert!(manager.floating_shows(&other, cx));
+        assert!(!manager.floating_shows(&s.id, cx));
     });
 }
 
@@ -689,15 +728,28 @@ fn sidebar_hidden_launches_still_list_in_the_mono_panel_after_a_restart(cx: &mut
     cx.update(|cx| {
         assert!(s.manager.read(cx).hidden_session(child));
         owner.update(cx, |shell, _| shell.mono_forget_session(child));
-        assert!(!owner.read(cx).mono_session_views(cx).iter().any(|v| v.id == child));
+        assert!(
+            !owner
+                .read(cx)
+                .mono_session_views(cx)
+                .iter()
+                .any(|v| v.id == child)
+        );
     });
     s.manager.update(cx, |m, cx| m.configure_chat(&s.id, cx));
     cx.run_until_parked();
     cx.update(|cx| {
         let views = owner.read(cx).mono_session_views(cx);
-        let view = views.iter().find(|v| v.id == child).expect("the launch lists again");
+        let view = views
+            .iter()
+            .find(|v| v.id == child)
+            .expect("the launch lists again");
         assert!(view.title.contains("Quiet review"), "{}", view.title);
-        assert!(owner.update(cx, |shell, cx| shell.mono_ensure_session(child, cx)).is_some());
+        assert!(
+            owner
+                .update(cx, |shell, cx| shell.mono_ensure_session(child, cx))
+                .is_some()
+        );
         assert!(s.manager.read(cx).hidden_session(child));
     });
 }
@@ -1583,7 +1635,10 @@ fn habits_and_documents_search_like_sessions(cx: &mut TestAppContext) {
             s.manager.update(cx, |m, cx| {
                 m.settings = None;
                 m.overview_tab = OverviewTab::Habits;
-                m.habits = vec![habit("digest", "Morning digest"), habit("report", "Weekly report")];
+                m.habits = vec![
+                    habit("digest", "Morning digest"),
+                    habit("report", "Weekly report"),
+                ];
                 let documents = &mut m.roster.get_mut(&s.id).unwrap().documents;
                 documents.push(document("plan", "Launch plan"));
                 documents.push(document("summary", "Release summary"));
@@ -1604,7 +1659,9 @@ fn habits_and_documents_search_like_sessions(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("mono-habit-digest").is_some());
     assert!(visual.debug_bounds("mono-habit-report").is_none());
 
-    s.manager.update(visual, |m, cx| m.select_overview(OverviewTab::Documents, cx));
+    s.manager.update(visual, |m, cx| {
+        m.select_overview(OverviewTab::Documents, cx)
+    });
     visual.run_until_parked();
     assert!(visual.debug_bounds("mono-document-plan").is_some());
     search(visual, "mono-document-search", "release");

@@ -206,7 +206,11 @@ mod tests {
                 cx,
             );
             assert_eq!(view.mono_stamp(0), Some(at(16, 7, 39)));
-            assert_eq!(view.mono_stamp(1), None, "the reply shares its prompt's day");
+            assert_eq!(
+                view.mono_stamp(1),
+                None,
+                "the reply shares its prompt's day"
+            );
             assert_eq!(view.mono_stamp(2), Some(at(17, 9, 0)));
             assert_eq!(view.mono_stamp(3), None, "same-day runs stack");
             assert_eq!(view.mono_stamp(4), Some(at(19, 9, 0)));

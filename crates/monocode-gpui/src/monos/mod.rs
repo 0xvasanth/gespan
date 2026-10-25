@@ -202,21 +202,22 @@ impl Monos {
                     if id == "quit" {
                         cx.quit();
                     } else if id == "composer" {
+                        // The composer is its own panel: the workspace window
+                        // stays where it is, as in the Tauri menu.
                         if let Some(handle) = this.parent_window {
                             let owner = this.owner.clone();
                             let app: &mut App = cx;
                             app.defer(move |cx| {
                                 let _ = handle.update(cx, |_, window, cx| {
-                                    window.activate_window();
-                                    let _ = owner.update(cx, |o, cx| o.mono_quick_compose(cx));
+                                    let _ =
+                                        owner.update(cx, |o, cx| o.mono_quick_compose(window, cx));
                                 });
                             });
                         }
                     } else if this.roster.get(id).is_some() {
-                        this.active = Some(id.into());
-                        this.ensure_chat(id, cx);
-                        this.open_floating(cx);
-                        this.changed(cx);
+                        // Only the floating chat opens; the workspace keeps
+                        // whichever Mono or session it was showing.
+                        this.open_floating(id.into(), cx);
                     }
                 });
             });
@@ -1584,8 +1585,14 @@ impl gpui::Render for Monos {
                             .into_iter()
                             .map(|view| view.update(cx, |v, cx| v.mono_attention(window, cx))),
                     )
-                    .when_some(self.chat(), |d, chat| {
-                        d.child(div().flex_1().min_h_0().child(chat))
+                    .map(|d| {
+                        if self.floating_shows(&mono.id, cx) {
+                            d.child(self.floating_placeholder(&mono, cx))
+                        } else if let Some(chat) = self.chat() {
+                            d.child(div().flex_1().min_h_0().child(chat))
+                        } else {
+                            d
+                        }
                     })
                     .when(!self.original_chrome, |d| d.child(self.topbar(&mono, cx))),
             )

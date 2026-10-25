@@ -339,7 +339,10 @@ mod tests {
         cx.executor()
             .advance_clock(TICK * BACKGROUND_STRIDE as u32 * 2);
         cx.run_until_parked();
-        assert!(renders.get() - hidden <= 2, "a hidden app's loops slow down");
+        assert!(
+            renders.get() - hidden <= 2,
+            "a hidden app's loops slow down"
+        );
     }
 
     #[gpui::test]

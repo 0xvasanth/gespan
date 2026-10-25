@@ -12,8 +12,8 @@ mod live_phase;
 mod mascot;
 mod measurements;
 mod outline;
-mod provider_switch;
 pub(crate) mod phases;
+mod provider_switch;
 mod remote_plans;
 pub(crate) mod selection;
 pub(crate) mod tasks;
@@ -3160,9 +3160,7 @@ impl TranscriptView {
                     thought_phase: None,
                 });
             }
-            let git_hidden = git_stand_in
-                .as_ref()
-                .is_some_and(|card| card.live());
+            let git_hidden = git_stand_in.as_ref().is_some_and(|card| card.live());
             if !self.mono
                 && !folded
                 && !git_hidden

@@ -434,6 +434,13 @@ impl Input {
     pub(crate) fn set_centered(&mut self, centered: bool) {
         self.centered = centered;
     }
+    pub(crate) fn set_min_height(&mut self, height: f32) {
+        self.min_height = height;
+        self.height = self.height.max(height);
+    }
+    pub(crate) fn set_max_height(&mut self, height: f32) {
+        self.max_height = height;
+    }
     pub(crate) fn set_line_height(&mut self, height: f32) {
         self.line_height = height;
     }
