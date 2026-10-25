@@ -204,6 +204,10 @@ impl Pilots {
         self.parent_window = Some(window.window_handle());
         self.sync_status(cx);
     }
+    /// The menu-bar item's Hold or Resume label follows the hold.
+    pub(crate) fn hold_changed(&mut self, cx: &mut Context<Self>) {
+        self.sync_status(cx);
+    }
     fn sync_status(&mut self, _cx: &mut Context<Self>) {
         #[cfg(all(target_os = "macos", not(test)))]
         {
@@ -218,8 +222,28 @@ impl Pilots {
             let app = std::cell::RefCell::new(_cx.to_async());
             let run = std::rc::Rc::new(move |id: &str| {
                 let _ = entity.update(&mut *app.borrow_mut(), |this, cx| {
-                    if id == "quit" {
-                        cx.quit();
+                    if id == "quit" || id == "hold" {
+                        // Both go through the window, so Hold asks first and
+                        // Quit waits for anything still finishing.
+                        if let Some(handle) = this.parent_window {
+                            let owner = this.owner.clone();
+                            let hold = id == "hold";
+                            let app: &mut App = cx;
+                            app.defer(move |cx| {
+                                let _ = handle.update(cx, |_, window, cx| {
+                                    window.activate_window();
+                                    let _ = owner.update(cx, |o, cx| {
+                                        if hold {
+                                            o.pilot_toggle_hold(window, cx)
+                                        } else {
+                                            o.pilot_request_quit(window, cx)
+                                        }
+                                    });
+                                });
+                            });
+                        } else if id == "quit" {
+                            cx.quit();
+                        }
                     } else if id == "composer" {
                         if let Some(handle) = this.parent_window {
                             let owner = this.owner.clone();
@@ -245,8 +269,9 @@ impl Pilots {
                 .iter()
                 .map(|m| (m.id.clone(), m.label()))
                 .collect::<Vec<_>>();
+            let hold = crate::quick_open::hold_label(_cx);
             if let Some(status) = &mut self.status {
-                status.update(&pilots, run);
+                status.update(&pilots, hold, run);
             }
         }
     }

@@ -14,6 +14,7 @@ pub(super) struct HoldCoordinator {
     resume: Option<ResumeQueue>,
     reasons: HashMap<i64, Reason>,
     prompting: bool,
+    details_open: bool,
     /// Mirrors the global phase for code that has no `App` at hand.
     pub(super) on_hold: bool,
 }
@@ -157,6 +158,9 @@ impl Shell {
             self.error = Some(format!("Could not save the hold: {error}"));
         }
         self.sync_keep_awake();
+        if let Some(pilots) = self.pilots.clone() {
+            pilots.update(cx, |pilots, cx| pilots.hold_changed(cx));
+        }
         self.invalidate_chrome(cx);
         cx.notify();
     }
@@ -305,6 +309,213 @@ impl Shell {
                 .and_then(|hold| hold.0.as_ref())
                 .is_some_and(|state| state.sessions.iter().any(|s| s.session == id))
     }
+    fn queued_messages(&self, state: &HoldState, cx: &App) -> usize {
+        let pilot_views = self
+            .pilots
+            .as_ref()
+            .map(|pilots| pilots.read(cx).hold_views())
+            .unwrap_or_default();
+        state
+            .sessions
+            .iter()
+            .filter_map(|held| {
+                self.sessions.get(&held.session).or_else(|| {
+                    pilot_views
+                        .iter()
+                        .map(|(view, _)| view)
+                        .find(|view| view.read(cx).summary.id == held.session)
+                })
+            })
+            .map(|view| view.read(cx).queued_count())
+            .sum()
+    }
+    /// The status-bar text for the current hold.
+    pub(super) fn hold_summary(&self, cx: &App) -> String {
+        let Some(state) = cx.try_global::<Hold>().and_then(|hold| hold.0.as_ref()) else {
+            return "Hold all".into();
+        };
+        let total = state.sessions.len();
+        if state.phase == Phase::Holding {
+            let settled = state.sessions.iter().filter(|s| s.reason.is_some()).count();
+            return format!("Holding {settled}/{total}…");
+        }
+        let sessions = if total == 1 {
+            "1 session".to_owned()
+        } else {
+            format!("{total} sessions")
+        };
+        format!(
+            "On hold · {sessions} · {} queued",
+            self.queued_messages(state, cx)
+        )
+    }
+    /// The far right of the status bar: Hold all, Holding… or On hold with Resume.
+    pub(super) fn hold_control(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let chip = |id: &'static str| {
+            div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .role(Role::Button)
+                .flex_shrink_0()
+                .h(px(22.))
+                .px(px(8.))
+                .rounded_md()
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .text_size(px(12.))
+                .text_color(content(0.6))
+                .hover(|s| s.bg(content(0.08)).text_color(content(0.9)))
+        };
+        let summary = self.hold_summary(cx);
+        let control = match crate::hold::phase(cx) {
+            None => chip("hold-control")
+                .aria_label("Hold everything (⌘⇧H)")
+                .child(icon("queue-pause", 12.))
+                .child(summary)
+                .on_click(cx.listener(|this, _, window, cx| this.toggle_hold(window, cx)))
+                .into_any_element(),
+            Some(Phase::Holding) => chip("hold-control")
+                .aria_label("Holding: show what is still finishing")
+                .child(crate::pulse::looping(
+                    "hold-spinner",
+                    std::time::Duration::from_secs(1),
+                    crate::pulse::Rate::Smooth,
+                    |delta| {
+                        icon("loader", 12.).with_transformation(gpui::Transformation::rotate(
+                            gpui::percentage(delta),
+                        ))
+                    },
+                ))
+                .child(summary)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.hold.details_open = !this.hold.details_open;
+                    cx.notify();
+                }))
+                .into_any_element(),
+            Some(Phase::OnHold) => div()
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .debug_selector(|| "hold-control".into())
+                        .flex()
+                        .items_center()
+                        .gap(px(5.))
+                        .text_size(px(12.))
+                        .text_color(content(0.6))
+                        .child(icon("queue-pause", 12.))
+                        .child(summary),
+                )
+                .child(
+                    chip("hold-resume")
+                        .aria_label("Resume everything (⌘⇧H)")
+                        .text_color(content(0.9))
+                        .child(icon("queue-play", 12.))
+                        .child("Resume")
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_hold(window, cx))),
+                )
+                .into_any_element(),
+        };
+        div()
+            .flex_shrink_0()
+            .mr(px(6.))
+            .child(control)
+            .into_any_element()
+    }
+    /// What Hold is still waiting for, each with Stop now, above the status bar.
+    pub(super) fn hold_details(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !self.hold.details_open || crate::hold::phase(cx) != Some(Phase::Holding) {
+            self.hold.details_open = false;
+            return None;
+        }
+        let viewport = window.viewport_size();
+        let width = 340f32.min(viewport.width.as_f32() - 24.);
+        let anchor = Anchor::Point(gpui::point(
+            viewport.width - px(width + 12.),
+            viewport.height - px(44.),
+        ));
+        let rows = self
+            .settling_sessions(cx)
+            .into_iter()
+            .map(|(id, title, tool)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(10.))
+                    .py(px(6.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().truncate().text_size(px(13.)).child(title))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(12.))
+                                    .text_color(content(0.5))
+                                    .child(
+                                        tool.unwrap_or_else(|| "Finishing its current step".into()),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id(("hold-stop-now", id as usize))
+                            .debug_selector(|| "hold-stop-now".into())
+                            .role(Role::Button)
+                            .aria_label("Stop now")
+                            .flex_shrink_0()
+                            .px(px(8.))
+                            .h(px(22.))
+                            .rounded_md()
+                            .flex()
+                            .items_center()
+                            .text_size(px(12.))
+                            .text_color(content(0.7))
+                            .hover(|s| s.bg(content(0.08)))
+                            .child("Stop now")
+                            .on_click(cx.listener(move |this, _, _, cx| this.stop_now(id, cx))),
+                    )
+            });
+        let owner = cx.weak_entity();
+        Some(
+            popover("hold-details", anchor)
+                .width(width)
+                .gap(0.)
+                .on_dismiss(move |_, cx| {
+                    let _ = owner.update(cx, |this, cx| {
+                        this.hold.details_open = false;
+                        cx.notify();
+                    });
+                })
+                .child(
+                    div()
+                        .debug_selector(|| "hold-details".into())
+                        .flex()
+                        .flex_col()
+                        .py(px(4.))
+                        .child(
+                            div()
+                                .px(px(10.))
+                                .py(px(4.))
+                                .text_size(px(12.))
+                                .text_color(content(0.5))
+                                .child("Still finishing. Resume is available once these stop."),
+                        )
+                        .children(rows),
+                )
+                .into_any_element(),
+        )
+    }
     /// Keep the Mac awake for agents only while some are working and Gespan is not on hold.
     pub(super) fn agents_keep_awake(&self) -> bool {
         !self.busy_sessions.is_empty() && !self.hold.on_hold
@@ -334,7 +545,7 @@ mod tests {
     }
     fn sessions(store: &Store, n: usize) -> Vec<i64> {
         (0..n)
-            .map(|i| store.create("codex", "/missing/hold").unwrap().id)
+            .map(|_| store.create("codex", "/missing/hold").unwrap().id)
             .collect()
     }
     fn load(shell: &mut Shell, id: i64, cx: &mut Context<Shell>) {
@@ -531,6 +742,96 @@ mod tests {
         cx.simulate_prompt_answer("Cancel");
         cx.run_until_parked();
         assert_eq!(phase(cx), Some(Phase::Holding));
+    }
+
+    fn click(selector: &'static str, visual: &mut gpui::VisualTestContext) {
+        visual.refresh().unwrap();
+        let bounds = visual
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is not painted"));
+        visual.simulate_click(bounds.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    }
+
+    #[gpui::test]
+    fn the_status_bar_offers_hold_all_at_its_far_right(cx: &mut TestAppContext) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        let control = visual.debug_bounds("hold-control").unwrap();
+        let width = window
+            .update(visual, |_, w, _| w.viewport_size().width.as_f32())
+            .unwrap();
+        assert!(
+            control.right().as_f32() > width - 160.,
+            "{control:?} in {width}"
+        );
+        assert!(visual.debug_bounds("hold-resume").is_none());
+        click("hold-control", visual);
+        assert!(visual.has_pending_prompt(), "Hold always asks first");
+        visual.simulate_prompt_answer("Cancel");
+    }
+
+    #[gpui::test]
+    fn holding_shows_progress_details_with_stop_now_and_no_resume(cx: &mut TestAppContext) {
+        let (window, a, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::mem::forget(rx);
+                shell.sessions[&a].update(cx, |view, _| {
+                    view.busy = true;
+                    view.controls = Some(tx);
+                });
+                shell.hold_all(cx);
+                assert_eq!(shell.hold_summary(cx), "Holding 1/2…");
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        assert!(
+            visual.debug_bounds("hold-resume").is_none(),
+            "no resume while holding"
+        );
+        click("hold-control", visual);
+        assert!(visual.debug_bounds("hold-details").is_some());
+        click("hold-stop-now", visual);
+        assert_eq!(
+            visual.update(|_, cx| crate::hold::phase(cx)),
+            Some(Phase::OnHold)
+        );
+    }
+
+    #[gpui::test]
+    fn on_hold_counts_sessions_and_queued_messages_and_offers_resume(cx: &mut TestAppContext) {
+        let (window, a, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.hold_all(cx);
+                shell.sessions[&a].update(cx, |view, cx| view.queue_for_test("later", cx));
+                assert_eq!(shell.hold_summary(cx), "On hold · 2 sessions · 1 queued");
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        click("hold-resume", visual);
+        assert_eq!(visual.update(|_, cx| crate::hold::phase(cx)), None);
+    }
+
+    #[gpui::test]
+    fn the_palette_holds_and_resumes(cx: &mut TestAppContext) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |_, _, cx| {
+                assert_eq!(crate::quick_open::hold_label(cx), "Hold everything");
+                cx.set_global(crate::hold::Hold(Some({
+                    let mut state = HoldState::new(1);
+                    state.refresh_phase();
+                    state
+                })));
+                assert_eq!(crate::quick_open::hold_label(cx), "Resume everything");
+            })
+            .unwrap();
     }
 
     #[gpui::test]

@@ -123,7 +123,8 @@ actions!(
         ToggleLayout,
         OpenSettings,
         GoToFile,
-        OpenCommandPalette
+        OpenCommandPalette,
+        ToggleHold
     ]
 );
 
@@ -187,6 +188,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
     let context = Some("Workspace");
     cx.bind_keys([
         KeyBinding::new(&format!("{modifier}-n"), NewCodex, context),
+        KeyBinding::new(&format!("{modifier}-shift-h"), ToggleHold, context),
         KeyBinding::new(&format!("{modifier}-t"), NewCodex, context),
         KeyBinding::new(&format!("{modifier}-shift-n"), NewClaude, context),
         KeyBinding::new(&format!("{modifier}-o"), OpenProject, context),
@@ -7964,6 +7966,7 @@ impl Render for Shell {
                 }),
             )
             .on_action(cx.listener(report::report_issue))
+            .on_action(cx.listener(|this, _: &ToggleHold, window, cx| this.toggle_hold(window, cx)))
             .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| {
                 this.open_quick_open(true, window, cx)
             }))
@@ -8301,6 +8304,7 @@ impl Render for Shell {
             .children(self.link_modal(window, cx))
             .children(self.action_modal(window, cx))
             .children(self.resource_modal(window, cx))
+            .children(self.hold_details(window, cx))
             .children(self.quick_open_modal(window, cx))
             .children(self.report_modal(window, cx))
             .children(self.remote_project_modal(window, cx))

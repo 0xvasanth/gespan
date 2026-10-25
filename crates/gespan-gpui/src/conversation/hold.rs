@@ -75,6 +75,13 @@ impl Conversation {
         cx.emit(SessionChanged);
         cx.notify();
     }
+    pub(crate) fn queued_count(&self) -> usize {
+        self.follow_ups.state.messages.len()
+    }
+    #[cfg(test)]
+    pub(crate) fn queue_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.enqueue_follow_up(text.into(), None, cx);
+    }
     pub(crate) fn resume_prompt(&self, reason: Reason) -> Option<String> {
         gespan_core::hold::continuation(reason).map(str::to_owned)
     }
