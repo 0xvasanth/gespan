@@ -11,10 +11,8 @@ import type { LinkedWorkItem, TicketRef } from "../../sessions/model/session";
 import {
   PRIORITIES,
   createLabel,
-  deleteCard,
   linkCard,
   listActivity,
-  moveCard,
   setCardDue,
   setCardLabels,
   setCardPriority,
@@ -42,7 +40,7 @@ import {
   useAhead,
 } from "./CardDrawerParts";
 import { DueDateInput, DueItems, PriorityItems } from "./CardPropertyMenus";
-import { confirmDeleteCard, MenuButton, MenuItem } from "./boardControls";
+import { MenuButton, MenuItem } from "./boardControls";
 import {
   activityText,
   dueChip,
@@ -78,6 +76,8 @@ export function CardDetail({
   focus,
   onClose,
   onOpenLinkedWork,
+  onMove,
+  onDelete,
   onError,
 }: {
   card: BoardCard;
@@ -95,6 +95,10 @@ export function CardDetail({
   focus?: "title" | "link";
   onClose: () => void;
   onOpenLinkedWork: (target: BoardLinkTarget) => void;
+  /** Moves the card to `index` in `columnId`, with an undo toast. */
+  onMove: (columnId: string, index: number) => void;
+  /** Deletes the card: held with an undo toast, so it never asks first. */
+  onDelete: () => void;
   onError: (message: string) => void;
 }) {
   const [title, setTitle] = useState(card.title);
@@ -267,15 +271,10 @@ export function CardDetail({
     }
   };
 
-  const remove = async () => {
-    if (!(await confirmDeleteCard(card))) return;
+  const remove = () => {
+    // A pending draft is dropped with the card, as before the hold.
     deleted.current = true;
-    deleteCard(card.id)
-      .then(onClose)
-      .catch((error) => {
-        deleted.current = false;
-        failed("delete")(error);
-      });
+    onDelete();
   };
 
   // ---- properties ----
@@ -331,7 +330,7 @@ export function CardDetail({
   };
   const moveTo = (columnId: string, cardCount: number) => {
     if (columnId === card.columnId) return;
-    moveCard(card.id, columnId, cardCount, "user").catch(failed("move"));
+    onMove(columnId, cardCount);
   };
 
   const columnName = columns.find(
@@ -652,7 +651,7 @@ export function CardDetail({
       <div className="flex h-11 shrink-0 items-center justify-end border-t border-stroke px-3">
         <button
           type="button"
-          onClick={() => void remove()}
+          onClick={remove}
           className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-red-300/90 hover:bg-red-500/15"
         >
           <Trash2 className="size-3.5" strokeWidth={1.75} />

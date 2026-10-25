@@ -24,18 +24,20 @@ export const noDrag = {
 } as const;
 
 /**
- * Asks before a card, its notes and its activity are deleted. A dialog that
- * can't open counts as "no": nothing is deleted without a yes.
+ * Asks before an archived card, its notes and its activity are deleted for
+ * good ("Delete forever" in the Archive view). A card delete on the board is
+ * held with an undo toast instead, so it never asks. A dialog that can't open
+ * counts as "no": nothing is deleted without a yes.
  */
 export function confirmDeleteCard(
   card: Pick<BoardCard, "number" | "title">,
 ): Promise<boolean> {
   return ask(
-    `Delete card #${card.number} “${card.title}”? Its notes and activity are removed.`,
+    `Delete card #${card.number} “${card.title}” forever? Its notes and activity are removed.`,
     {
-      title: "Delete card",
+      title: "Delete forever",
       kind: "warning",
-      okLabel: "Delete card",
+      okLabel: "Delete forever",
       cancelLabel: "Cancel",
     },
   ).catch(() => false);

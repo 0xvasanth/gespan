@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { OverlayNav } from "../../../app/shell/TitleBar";
 import { WindowControls } from "../../../app/shell/WindowControls";
@@ -16,23 +17,26 @@ import type { TicketRef } from "../../sessions/model/session";
 import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItemDialog";
 import { FileActionError } from "../../files/ui/FileActionError";
 import {
+  archiveCard,
   archiveCards,
   createBoard,
   createCard,
   createColumn,
   createLabel,
+  deleteArchivedCard,
   deleteBoard,
-  deleteCard,
   deleteColumn,
   getBoard,
   getCardExtras,
   getCardTickets,
+  listArchivedCards,
   listLabels,
   listBoards,
   moveCard,
   moveColumn,
   moveCards,
   renameBoard,
+  restoreCard,
   setCardDue,
   setCardLabels,
   setCardPriority,
@@ -57,15 +61,23 @@ import {
 } from "../model/boardFilter";
 import { sortedCardIds, type SortKey } from "../model/columnActions";
 import { createCardFromTicket, newCardColumn } from "../model/ticketCards";
+import {
+  archivedLabel,
+  createUndo,
+  deletedLabel,
+  movedLabel,
+  runUndo,
+  sortedLabel,
+  undoFailure,
+  type Place,
+  type UndoAction,
+  type UndoApi,
+} from "../model/undo";
+import { ArchiveView } from "./ArchiveView";
 import { BoardCardItem } from "./BoardCardItem";
 import { BoardColumnHeader } from "./BoardColumnHeader";
 import { BoardFilterMenu } from "./BoardFilter";
-import {
-  confirmDeleteCard,
-  MenuButton,
-  MenuItem,
-  NameInput,
-} from "./boardControls";
+import { MenuButton, MenuItem, NameInput } from "./boardControls";
 import {
   errorText,
   linkValue,
@@ -77,6 +89,7 @@ import {
 import { CardComposer } from "./CardComposer";
 import { CardDetail } from "./CardDetail";
 import { KanbanBoard } from "./kanban/KanbanBoard";
+import { UndoToast } from "./UndoToast";
 import {
   applyCardMove,
   applyColumnMove,
@@ -85,6 +98,19 @@ import {
 } from "./kanban/kanbanMove";
 
 export type { BoardLinkTarget, LinkRef } from "./boardFormat";
+
+/** Where a card sits now among its column's live cards, and its number. */
+function placeOf(
+  detail: BoardDetail,
+  cardId: string,
+): { place: Place; number: number } | null {
+  const card = detail.cards.find((other) => other.id === cardId);
+  if (!card) return null;
+  const index = columnCards(detail, card.columnId).findIndex(
+    (other) => other.id === cardId,
+  );
+  return { place: [card.id, card.columnId, index], number: card.number };
+}
 
 const OPEN_BOARD_KEY = "gespan:open-board";
 
@@ -209,6 +235,7 @@ function BoardContent({
     id: string;
     focus?: "title" | "link";
   } | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
 
   const detailRef = useRef(detail);
   const openIdRef = useRef(openId);
@@ -222,6 +249,35 @@ function BoardContent({
     (what: string) => (cause: unknown) =>
       setError(`${what}: ${errorText(cause)}`),
     [],
+  );
+
+  // One undo toast at a time. A held delete is committed (only if the card is
+  // still archived) when the toast expires, is replaced or the board switches.
+  const [undo] = useState(() =>
+    createUndo({
+      onCommitDelete: (cardId) =>
+        deleteArchivedCard(cardId).catch(fail("Couldn't delete the card")),
+    }),
+  );
+  const undoToast = useSyncExternalStore(undo.subscribe, undo.current);
+  // Closing the window drops the timer: a held card stays archived.
+  useEffect(() => () => undo.dispose(), [undo]);
+
+  /**
+   * Shows the toast for an action on `boardId` that just finished. If the
+   * board was switched meanwhile there is no toast, and a delete is carried
+   * out at once, as a switch does with a held one.
+   */
+  const pushUndo = useCallback(
+    (boardId: string, label: string, action: UndoAction) => {
+      if (openIdRef.current === boardId) undo.push(label, action);
+      else if (action.kind === "delete") {
+        void deleteArchivedCard(action.cardId).catch(
+          fail("Couldn't delete the card"),
+        );
+      }
+    },
+    [fail, undo],
   );
 
   const openLinkedWork = useCallback(
@@ -307,6 +363,8 @@ function BoardContent({
   }, [boards, openId]);
 
   useEffect(() => {
+    // Switching boards carries out a held delete now.
+    void undo.commitPending();
     openIdRef.current = openId;
     setDetail((current) => (current?.board.id === openId ? current : null));
     setComposerColumn(null);
@@ -319,7 +377,7 @@ function BoardContent({
     if (!openId) return;
     void refresh();
     return subscribeBoard(openId, () => void refresh());
-  }, [openId, refresh]);
+  }, [openId, refresh, undo]);
 
   const targetsByValue = useMemo(
     () =>
@@ -421,14 +479,31 @@ function BoardContent({
           ),
         };
       }
+      const from = placeOf(before, cardId);
+      const column = before.columns.find((other) => other.id === to.columnId);
+      void undo.commitPending();
       setDetail(applyCardMove(before, cardId, to));
-      moveCard(cardId, to.columnId, to.index, "user").catch((cause) => {
-        if (detailRef.current?.board.id === before.board.id) setDetail(before);
-        fail("Couldn't move the card")(cause);
-        void refresh();
-      });
+      moveCard(cardId, to.columnId, to.index, "user")
+        .then(() => {
+          if (!from || !column) return;
+          const [, fromColumn, fromIndex] = from.place;
+          if (fromColumn === to.columnId && fromIndex === to.index) return;
+          pushUndo(before.board.id, movedLabel([from.number], column.name), {
+            kind: "move",
+            cardId,
+            columnId: fromColumn,
+            index: fromIndex,
+          });
+        })
+        .catch((cause) => {
+          if (detailRef.current?.board.id === before.board.id) {
+            setDetail(before);
+          }
+          fail("Couldn't move the card")(cause);
+          void refresh();
+        });
     },
-    [fail, refresh],
+    [fail, refresh, undo, pushUndo],
   );
 
   const onColumnMove = useCallback(
@@ -468,9 +543,94 @@ function BoardContent({
       .catch(fail("Couldn't delete the board"));
   };
 
-  const removeCard = async (card: BoardCard) => {
-    if (!(await confirmDeleteCard(card))) return;
-    deleteCard(card.id).catch(fail(`Couldn't delete card #${card.number}`));
+  /**
+   * Deletes a card without asking: it is archived at once (off the board and
+   * out of the Archive view) and deleted for good when the undo toast goes.
+   */
+  const removeCard = (card: BoardCard) => {
+    const before = detailRef.current;
+    const from = before && placeOf(before, card.id);
+    if (!before || !from) return;
+    void undo.commitPending();
+    setOpenCard((open) => (open?.id === card.id ? null : open));
+    setDetail({
+      ...before,
+      cards: before.cards.filter((other) => other.id !== card.id),
+    });
+    archiveCard(card.id)
+      .then(() => {
+        const [, columnId, index] = from.place;
+        pushUndo(before.board.id, deletedLabel(card.number), {
+          kind: "delete",
+          cardId: card.id,
+          columnId,
+          index,
+        });
+      })
+      .catch((cause) => {
+        fail(`Couldn't delete card #${card.number}`)(cause);
+        void refresh();
+      });
+  };
+
+  /** A move from the card drawer: to `index` in `columnId`, with undo. */
+  const moveFromDrawer = (card: BoardCard, columnId: string, index: number) => {
+    const before = detailRef.current;
+    const from = before && placeOf(before, card.id);
+    const column = before?.columns.find((other) => other.id === columnId);
+    void undo.commitPending();
+    moveCard(card.id, columnId, index, "user")
+      .then(() => {
+        if (!before || !from || !column) return;
+        const [, fromColumn, fromIndex] = from.place;
+        pushUndo(before.board.id, movedLabel([card.number], column.name), {
+          kind: "move",
+          cardId: card.id,
+          columnId: fromColumn,
+          index: fromIndex,
+        });
+      })
+      .catch(fail(`Couldn't move card #${card.number}`));
+  };
+
+  const undoApi: UndoApi = {
+    moveCard: (cardId, columnId, index) =>
+      moveCard(cardId, columnId, index, "user"),
+    moveCards: (cardIds, columnId, index) =>
+      moveCards(cardIds, columnId, index, "user"),
+    restoreCard,
+    snapshot: async () => {
+      const id = openIdRef.current ?? "";
+      const [board, archived] = await Promise.all([
+        getBoard(id),
+        listArchivedCards(id),
+      ]);
+      return {
+        live: board.cards,
+        archivedIds: archived.map((card) => card.id),
+      };
+    },
+  };
+
+  /** Runs the toast's inverse; what couldn't be undone is said in a toast. */
+  const undoLast = () => {
+    const action = undo.undo();
+    if (!action) return;
+    runUndo(action, undoApi)
+      .catch((cause) => undo.notify(undoFailure(cause)))
+      .finally(() => void refresh());
+  };
+
+  /** Where each card sits now, and the card numbers, read from the board. */
+  const placesOf = (ids: readonly string[]) => {
+    const current = detailRef.current;
+    const found = current
+      ? ids.flatMap((id) => placeOf(current, id) ?? [])
+      : [];
+    return {
+      items: found.map((entry) => entry.place),
+      numbers: found.map((entry) => entry.number),
+    };
   };
 
   const setCollapsed = (column: BoardColumn, collapsed: boolean) =>
@@ -497,30 +657,57 @@ function BoardContent({
     const cards = wholeColumn(column.id);
     const ids = sortedCardIds(cards, extras, key);
     if (ids.every((id, index) => id === cards[index]?.id)) return;
-    moveCards(ids, column.id, 0, "user").catch(
-      fail(`Couldn't sort ${column.name}`),
-    );
+    const order = cards.map((card) => card.id);
+    void undo.commitPending();
+    moveCards(ids, column.id, 0, "user")
+      .then(() =>
+        pushUndo(column.boardId, sortedLabel(column.name), {
+          kind: "sort",
+          columnId: column.id,
+          order,
+        }),
+      )
+      .catch(fail(`Couldn't sort ${column.name}`));
   };
 
   const markAllDone = (column: BoardColumn, done: BoardColumn) => {
     const ids = wholeColumn(column.id).map((card) => card.id);
     if (!ids.length) return;
-    moveCards(ids, done.id, wholeColumn(done.id).length, "user").catch(
-      fail(`Couldn't move the cards of ${column.name} to ${done.name}`),
-    );
+    const { items, numbers } = placesOf(ids);
+    void undo.commitPending();
+    moveCards(ids, done.id, wholeColumn(done.id).length, "user")
+      .then(() =>
+        pushUndo(column.boardId, movedLabel(numbers, done.name), {
+          kind: "moveMany",
+          items,
+        }),
+      )
+      .catch(fail(`Couldn't move the cards of ${column.name} to ${done.name}`));
   };
 
   const archiveCompleted = (column: BoardColumn) => {
     const ids = wholeColumn(column.id).map((card) => card.id);
     if (!ids.length) return;
-    archiveCards(ids).catch(
-      fail(`Couldn't archive the cards of ${column.name}`),
-    );
+    const { items, numbers } = placesOf(ids);
+    void undo.commitPending();
+    archiveCards(ids)
+      .then(() =>
+        pushUndo(column.boardId, archivedLabel(numbers), {
+          kind: "archive",
+          items,
+        }),
+      )
+      .catch(fail(`Couldn't archive the cards of ${column.name}`));
   };
 
-  const toast = error ? (
-    <FileActionError message={error} onDismiss={() => setError(null)} />
-  ) : null;
+  const toast = (
+    <>
+      <UndoToast toast={undoToast} onUndo={undoLast} />
+      {error ? (
+        <FileActionError message={error} onDismiss={() => setError(null)} />
+      ) : null}
+    </>
+  );
 
   if (!boards) return toast;
 
@@ -601,11 +788,13 @@ function BoardContent({
       onOpenLinkedWork={openLinkedWork}
       onRename={() => setOpenCard({ id: card.id, focus: "title" })}
       onLink={() => setOpenCard({ id: card.id, focus: "link" })}
-      onDelete={() => void removeCard(card)}
+      onDelete={() => removeCard(card)}
     />
   );
 
   const doneColumn = detail?.columns.find((column) => column.role === "done");
+  const held = undoToast?.action?.kind === "delete" ? undoToast.action : null;
+  const heldColumn = held?.columnId ?? null;
 
   const renderColumnHeader = (column: BoardColumn, shown: number) => (
     <BoardColumnHeader
@@ -635,8 +824,13 @@ function BoardContent({
           fail("Couldn't set the column's role"),
         )
       }
+      heldCards={heldColumn === column.id ? 1 : 0}
       onDelete={() =>
-        void deleteColumn(column.id).catch(fail("Couldn't delete the column"))
+        // A delete held in this column is carried out first.
+        void undo
+          .commitPending()
+          .then(() => deleteColumn(column.id))
+          .catch(fail("Couldn't delete the column"))
       }
       onCollapse={() => setCollapsed(column, true)}
       onSort={(key) => sortColumn(column, key)}
@@ -785,6 +979,19 @@ function BoardContent({
           <button
             type="button"
             className={BUTTON}
+            aria-pressed={archiveOpen}
+            onClick={() => {
+              setOpenCard(null);
+              setArchiveOpen((open) => !open);
+            }}
+          >
+            Archive
+          </button>
+        ) : null}
+        {detail ? (
+          <button
+            type="button"
+            className={BUTTON}
             onClick={() => setTicketCardOpen(true)}
           >
             <Plus className="size-3.5" strokeWidth={1.75} />
@@ -849,6 +1056,21 @@ function BoardContent({
               setOpenCard(null);
               openLinkedWork(target);
             }}
+            onMove={(columnId, index) =>
+              moveFromDrawer(shownCard, columnId, index)
+            }
+            onDelete={() => removeCard(shownCard)}
+            onError={setError}
+          />
+        ) : archiveOpen && detail ? (
+          <ArchiveView
+            key={detail.board.id}
+            boardId={detail.board.id}
+            columnNames={
+              new Map(detail.columns.map((column) => [column.id, column.name]))
+            }
+            pendingDelete={held?.cardId ?? null}
+            onClose={() => setArchiveOpen(false)}
             onError={setError}
           />
         ) : null}

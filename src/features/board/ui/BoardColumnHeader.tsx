@@ -35,6 +35,7 @@ export function BoardColumnHeader({
   onSort,
   onMarkAllDone,
   onArchiveCompleted,
+  heldCards = 0,
 }: {
   column: BoardColumn;
   /** Every card in the column. */
@@ -53,6 +54,11 @@ export function BoardColumnHeader({
   onMarkAllDone?: () => void;
   /** Present in the done column only. */
   onArchiveCompleted?: () => void;
+  /**
+   * Archived cards here whose delete the undo toast is holding: they go
+   * before the column does, so they don't block Delete column.
+   */
+  heldCards?: number;
 }) {
   const [renaming, setRenaming] = useState(false);
   return (
@@ -181,6 +187,7 @@ export function BoardColumnHeader({
               <MenuSeparator />
               <DeleteColumnItem
                 columnId={column.id}
+                held={heldCards}
                 onSelect={() => {
                   close();
                   onDelete();
@@ -200,21 +207,26 @@ export function BoardColumnHeader({
  */
 function DeleteColumnItem({
   columnId,
+  held,
   onSelect,
 }: {
   columnId: string;
+  held: number;
   onSelect: () => void;
 }) {
   const [total, setTotal] = useState<number | "failed" | null>(null);
   useEffect(() => {
     let live = true;
     columnCardCount(columnId)
-      .then((count) => live && setTotal(count.live + count.archived))
+      .then(
+        (count) =>
+          live && setTotal(Math.max(0, count.live + count.archived - held)),
+      )
       .catch(() => live && setTotal("failed"));
     return () => {
       live = false;
     };
-  }, [columnId]);
+  }, [columnId, held]);
   const reason =
     total === "failed"
       ? "Couldn't check the column's cards"

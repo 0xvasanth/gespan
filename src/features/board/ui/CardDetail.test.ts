@@ -67,6 +67,8 @@ async function renderDetail(
     linkTargets: [],
     onClose: vi.fn(),
     onOpenLinkedWork: vi.fn(),
+    onMove: vi.fn(),
+    onDelete: vi.fn(),
     onError: vi.fn(),
     ...overrides,
   };
@@ -216,42 +218,48 @@ describe("CardDetail delete", () => {
       ),
     ].find((button) => button.textContent?.includes("Delete card"))!;
 
-  const deletes = () =>
-    vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "board_card_delete");
-
-  it("asks before deleting and keeps the card when declined", async () => {
+  it("hands the delete to the board without asking: it is held with undo", async () => {
     vi.mocked(invoke).mockResolvedValue([]);
-    vi.mocked(ask).mockResolvedValue(false);
     const props = await renderDetail();
     await act(async () => deleteButton().click());
     await settle();
-    expect(ask).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(ask).mock.calls[0][0]).toContain("#3");
-    expect(vi.mocked(ask).mock.calls[0][0]).toContain("Ship board");
-    expect(deletes()).toHaveLength(0);
-    expect(props.onClose).not.toHaveBeenCalled();
+    expect(ask).not.toHaveBeenCalled();
+    expect(props.onDelete).toHaveBeenCalledTimes(1);
+    // The drawer writes nothing itself: no delete, archive or draft save.
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([cmd]) =>
+            cmd !== "board_activity" &&
+            cmd !== "board_subtasks" &&
+            cmd !== "board_comments",
+        ),
+    ).toEqual([]);
   });
 
-  it("deletes the card and closes once confirmed", async () => {
-    vi.mocked(invoke).mockImplementation(async (cmd) =>
-      cmd === "board_activity" ? [] : undefined,
-    );
-    vi.mocked(ask).mockResolvedValue(true);
-    const props = await renderDetail();
-    await act(async () => deleteButton().click());
-    await settle();
-    expect(deletes()).toEqual([["board_card_delete", { cardId: "c3" }]]);
-    expect(props.onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not delete when the confirm dialog can't open", async () => {
+  it("drops a pending draft with the deleted card", async () => {
     vi.mocked(invoke).mockResolvedValue([]);
-    vi.mocked(ask).mockRejectedValue(new Error("dialog unavailable"));
-    const props = await renderDetail();
+    await renderDetail();
+    const title = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Title"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    act(() => {
+      setter.call(title, "Half typed");
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     await act(async () => deleteButton().click());
-    await settle();
-    expect(deletes()).toHaveLength(0);
-    expect(props.onClose).not.toHaveBeenCalled();
+    act(() => root.unmount());
+    root = createRoot(container);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([cmd]) => cmd === "board_card_update"),
+    ).toEqual([]);
   });
 });
 
@@ -614,17 +622,14 @@ describe("CardDetail drawer", () => {
     afterEach(() => vi.useRealTimers());
 
     it("moves the card to the chosen column, at the end", async () => {
-      await renderDetail();
+      const props = await renderDetail();
       await choose("Status", "Backlog");
-      expect(calls("board_card_move")).toEqual([
-        [
-          "board_card_move",
-          { cardId: "c3", columnId: "backlog", index: 2, actor: "user" },
-        ],
-      ]);
-      // Choosing the column it is already in writes nothing.
+      // The board moves it, so the move gets an undo toast.
+      expect(props.onMove).toHaveBeenCalledExactlyOnceWith("backlog", 2);
+      expect(calls("board_card_move")).toEqual([]);
+      // Choosing the column it is already in moves nothing.
       await choose("Status", "In Progress");
-      expect(calls("board_card_move")).toHaveLength(1);
+      expect(props.onMove).toHaveBeenCalledTimes(1);
     });
 
     it("sets the priority by its index", async () => {

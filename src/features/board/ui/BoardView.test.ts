@@ -19,6 +19,7 @@ import type {
 } from "../model/board";
 import type { BoardLinkTarget } from "./boardFormat";
 import type { KanbanBoardProps } from "./kanban/KanbanBoard";
+import { LAYER } from "../../../shared/lib/layers";
 import { BoardView } from "./BoardView";
 import { Sidebar } from "../../../app/shell/Sidebar";
 import {
@@ -404,37 +405,6 @@ describe("BoardView", () => {
       ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
     ].find((el) => el.textContent?.startsWith("Delete"))!;
     expect(item.disabled).toBe(true);
-  });
-
-  it("asks before deleting a card from its menu", async () => {
-    await renderBoard();
-    handlers.board_card_delete = () => undefined;
-    const deleteFromMenu = async () => {
-      const menu = columnEl("backlog").querySelector<HTMLButtonElement>(
-        'button[aria-label="Card actions for #2"]',
-      )!;
-      act(() => menu.click());
-      const item = [
-        ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-      ].find((el) => el.textContent === "Delete")!;
-      await act(async () => item.click());
-      await flush();
-    };
-
-    vi.mocked(ask).mockResolvedValue(false);
-    await deleteFromMenu();
-    expect(ask).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(ask).mock.calls[0][0]).toContain("#2");
-    expect(vi.mocked(ask).mock.calls[0][0]).toContain("Write docs");
-    expect(commands("board_card_delete")).toHaveLength(0);
-    // The menu click doesn't also open the card.
-    expect(document.querySelector("[data-card-drawer]")).toBeNull();
-
-    vi.mocked(ask).mockResolvedValue(true);
-    await deleteFromMenu();
-    expect(commands("board_card_delete")).toEqual([
-      ["board_card_delete", { cardId: "c2" }],
-    ]);
   });
 
   it("moves a card optimistically and puts it back when the move fails", async () => {
@@ -1630,5 +1600,644 @@ describe("BoardView card face, search and filters", () => {
       ]);
       expect(document.querySelector("[data-card-drawer]")).toBeNull();
     });
+  });
+});
+
+describe("BoardView undo toasts, held deletes and the Archive view", () => {
+  const OTHER = { id: "b2", name: "Releases", createdAt: 2, updatedAt: 2 };
+
+  /**
+   * A board as the backend holds it: live positions stay 0..n-1, archived
+   * cards keep their column, and every write emits board-changed.
+   */
+  function backend(detail: BoardDetail = fixture()) {
+    const columns = detail.columns.map((c) => ({ ...c }));
+    const cards = detail.cards.map((c) => ({ ...c }));
+    const archived = new Map<string, number>();
+    let clock = 0;
+    const changed = () =>
+      void Promise.resolve().then(() => emitBoardChanged("b1"));
+    const live = (columnId: string) =>
+      cards
+        .filter((c) => c.columnId === columnId && !archived.has(c.id))
+        .sort((a, b) => a.position - b.position);
+    const renumber = (columnId: string, ids: string[]) =>
+      ids.forEach((id, index) => {
+        cards.find((c) => c.id === id)!.position = index;
+      });
+    const find = (id: unknown) => {
+      const found = cards.find((c) => c.id === id);
+      if (!found) throw "Card not found";
+      return found;
+    };
+    const column = (id: unknown) => {
+      if (!columns.some((c) => c.id === id)) throw "Column not found";
+      return String(id);
+    };
+    const place = (id: string, columnId: string, index: number) => {
+      const moving = find(id);
+      const from = moving.columnId;
+      moving.columnId = columnId;
+      archived.delete(id);
+      const ids = live(columnId)
+        .map((c) => c.id)
+        .filter((other) => other !== id);
+      ids.splice(Math.min(index, ids.length), 0, id);
+      renumber(columnId, ids);
+      if (from !== columnId)
+        renumber(
+          from,
+          live(from).map((c) => c.id),
+        );
+    };
+    const archive = (id: string) => {
+      const card = find(id);
+      archived.set(id, ++clock);
+      renumber(
+        card.columnId,
+        live(card.columnId).map((c) => c.id),
+      );
+    };
+    const remove = (id: string) => {
+      const index = cards.findIndex((c) => c.id === id);
+      if (index < 0) throw "Card not found";
+      const [gone] = cards.splice(index, 1);
+      archived.delete(id);
+      renumber(
+        gone.columnId,
+        live(gone.columnId).map((c) => c.id),
+      );
+    };
+    handlers.board_list = () => [BOARD, OTHER];
+    handlers.board_get = (args) =>
+      args.boardId === "b2"
+        ? {
+            board: OTHER,
+            columns: [{ ...column_("todo2"), boardId: "b2" }],
+            cards: [],
+          }
+        : {
+            board: BOARD,
+            columns: columns.map((c) => ({ ...c })),
+            cards: cards
+              .filter((c) => !archived.has(c.id))
+              .map((c) => ({ ...c })),
+          };
+    handlers.board_card_move = (a) => {
+      find(a.cardId);
+      place(String(a.cardId), column(a.columnId), Number(a.index));
+      changed();
+    };
+    handlers.board_cards_move = (a) => {
+      const ids = a.cardIds as string[];
+      ids.forEach(find);
+      const target = column(a.columnId);
+      ids.forEach((id, offset) => place(id, target, Number(a.index) + offset));
+      changed();
+    };
+    handlers.board_card_archive = (a) => {
+      archive(String(a.cardId));
+      changed();
+    };
+    handlers.board_cards_archive = (a) => {
+      (a.cardIds as string[]).forEach(archive);
+      changed();
+    };
+    handlers.board_card_restore = (a) => {
+      find(a.cardId);
+      place(String(a.cardId), column(a.columnId), Number(a.index));
+      changed();
+    };
+    handlers.board_card_unarchive = (a) => {
+      const card = find(a.cardId);
+      place(card.id, card.columnId, Number.MAX_SAFE_INTEGER);
+      changed();
+    };
+    handlers.board_archived_cards = () =>
+      [...archived.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([id]) => ({ ...find(id) }));
+    handlers.board_card_delete = (a) => {
+      remove(String(a.cardId));
+      changed();
+    };
+    handlers.board_card_delete_archived = (a) => {
+      if (!archived.has(String(a.cardId))) return;
+      remove(String(a.cardId));
+      changed();
+    };
+    handlers.board_column_card_count = (a) => ({
+      live: live(String(a.columnId)).length,
+      archived: cards.filter(
+        (c) => c.columnId === a.columnId && archived.has(c.id),
+      ).length,
+    });
+    handlers.board_column_delete = (a) => {
+      const index = columns.findIndex((c) => c.id === a.columnId);
+      columns.splice(index, 1);
+      changed();
+    };
+    return {
+      /** Live card ids of a column, in order, as the backend holds them. */
+      ids: (columnId: string) => live(columnId).map((c) => c.id),
+      archivedIds: () => [...archived.keys()],
+      exists: (id: string) => cards.some((c) => c.id === id),
+      /** The other app or an agent changing the board. */
+      deleteElsewhere: remove,
+      archiveElsewhere: archive,
+      unarchiveElsewhere: (id: string) => place(id, find(id).columnId, 99),
+      deleteColumnElsewhere: (id: string) => {
+        columns.splice(
+          columns.findIndex((c) => c.id === id),
+          1,
+        );
+        for (const c of cards.filter((c) => c.columnId === id)) remove(c.id);
+      },
+    };
+  }
+  const column_ = (id: string) => column(id, "Todo", 0, "todo");
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const toastEl = () =>
+    document.querySelector<HTMLElement>("[data-board-undo-toast]");
+  const toastText = () => toastEl()?.querySelector("span")?.textContent ?? null;
+  const undoButton = () =>
+    [...(toastEl()?.querySelectorAll("button") ?? [])].find(
+      (b) => b.textContent === "Undo",
+    );
+  async function clickUndo() {
+    expect(undoButton(), "Undo button").toBeDefined();
+    await act(async () => undoButton()!.click());
+    await flush();
+    await flush();
+  }
+  async function advance(ms: number) {
+    await act(async () => {
+      vi.advanceTimersByTime(ms);
+    });
+    await flush();
+  }
+  async function drop(cardId: string, columnId: string, index: number) {
+    act(() => kanban.props!.onCardMove(cardId, { columnId, index }));
+    await flush();
+    await flush();
+  }
+  async function deleteFromMenu(number: number) {
+    const menu = container.querySelector<HTMLButtonElement>(
+      `button[aria-label="Card actions for #${number}"]`,
+    )!;
+    act(() => menu.click());
+    const item = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((el) => el.textContent === "Delete")!;
+    await act(async () => item.click());
+    await flush();
+    await flush();
+  }
+  async function deleteFromDrawer(id: string) {
+    act(() =>
+      container
+        .querySelector<HTMLElement>(`[data-board-card='${id}']`)!
+        .click(),
+    );
+    await flush();
+    const button = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        "[data-card-drawer] button",
+      ),
+    ].find((b) => b.textContent?.includes("Delete card"))!;
+    await act(async () => button.click());
+    await flush();
+    await flush();
+  }
+  async function columnAction(columnId: string, itemText: string) {
+    act(() =>
+      columnEl(columnId)
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label^="Column actions"]',
+        )!
+        .click(),
+    );
+    await flush();
+    const item = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]'),
+    ].find((el) => el.textContent?.trim() === itemText);
+    expect(item, itemText).toBeDefined();
+    return item!;
+  }
+  async function runColumnAction(columnId: string, itemText: string) {
+    const item = await columnAction(columnId, itemText);
+    act(() => item.click());
+    await flush();
+    await flush();
+  }
+  async function toggleArchive() {
+    const button = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Archive",
+    )!;
+    act(() => button.click());
+    await flush();
+    await flush();
+  }
+  const archiveEl = () =>
+    document.querySelector<HTMLElement>("[data-board-archive]");
+  const listed = () =>
+    [...(archiveEl()?.querySelectorAll("[data-archived-card]") ?? [])].map(
+      (el) => el.getAttribute("data-archived-card"),
+    );
+
+  it("a drop shows 'Moved #N to {column}' for 8 seconds and Undo moves it back", async () => {
+    const db = backend();
+    await renderBoard();
+    await drop("c1", "review", 0);
+    expect(db.ids("review")).toEqual(["c1"]);
+    expect(toastText()).toBe("Moved #1 to Review");
+    expect(toastEl()!.getAttribute("role")).toBe("status");
+    expect((toastEl()!.parentElement as HTMLElement).style.zIndex).toBe(
+      String(LAYER.toast),
+    );
+
+    await clickUndo();
+    expect(commands("board_card_move").at(-1)![1]).toEqual({
+      cardId: "c1",
+      columnId: "backlog",
+      index: 0,
+      actor: "user",
+    });
+    expect(db.ids("backlog")).toEqual(["c1", "c2"]);
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
+    expect(toastEl()).toBeNull();
+
+    // A reorder inside the column (the keyboard sensor's drop) is undoable too.
+    await drop("c2", "backlog", 0);
+    expect(toastText()).toBe("Moved #2 to Backlog");
+    await clickUndo();
+    expect(db.ids("backlog")).toEqual(["c1", "c2"]);
+
+    // Left alone, the toast goes after 8 seconds.
+    await drop("c3", "done", 0);
+    await advance(7_900);
+    expect(toastText()).toBe("Moved #3 to Done");
+    await advance(200);
+    expect(toastEl()).toBeNull();
+    expect(db.ids("done")).toEqual(["c3"]);
+  });
+
+  it("a drop onto the same place shows no toast", async () => {
+    backend();
+    await renderBoard();
+    await drop("c2", "backlog", 1);
+    expect(toastEl()).toBeNull();
+  });
+
+  it("mark all done undo puts every card back at its old index", async () => {
+    const base = fixture();
+    const db = backend({
+      ...base,
+      cards: [...base.cards, card("x", "done", 0, 9, "Shipped")],
+    });
+    await renderBoard();
+    await runColumnAction("backlog", "Mark all as done");
+    expect(db.ids("done")).toEqual(["x", "c1", "c2"]);
+    expect(toastText()).toBe("Moved 2 cards to Done");
+    await clickUndo();
+    // One card at a time, lowest index first, so each lands where it was.
+    expect(
+      commands("board_card_move").map(([, a]) => [
+        (a as { cardId: string }).cardId,
+        (a as { index: number }).index,
+      ]),
+    ).toEqual([
+      ["c1", 0],
+      ["c2", 1],
+    ]);
+    expect(db.ids("backlog")).toEqual(["c1", "c2"]);
+    expect(db.ids("done")).toEqual(["x"]);
+  });
+
+  it("sort undo restores the exact previous order of the whole column", async () => {
+    const db = backend();
+    handlers.board_card_extras = () => ({
+      c2: {
+        priority: 4,
+        dueAt: null,
+        projects: [],
+        labels: [],
+        subtasksDone: 0,
+        subtasksTotal: 0,
+      },
+    });
+    await renderBoard();
+    await runColumnAction("backlog", "Sort by priority");
+    expect(db.ids("backlog")).toEqual(["c2", "c1"]);
+    expect(toastText()).toBe("Sorted Backlog");
+    await clickUndo();
+    expect(commands("board_cards_move").at(-1)![1]).toEqual({
+      cardIds: ["c1", "c2"],
+      columnId: "backlog",
+      index: 0,
+      actor: "user",
+    });
+    expect(db.ids("backlog")).toEqual(["c1", "c2"]);
+  });
+
+  it("delete from the card menu never asks, hides the card and deletes it when the toast expires", async () => {
+    const db = backend();
+    await renderBoard();
+    await deleteFromMenu(2);
+    expect(ask).not.toHaveBeenCalled();
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    expect(toastText()).toBe("Deleted #2");
+    // Held: archived, not deleted, while the toast shows.
+    expect(db.archivedIds()).toEqual(["c2"]);
+    await advance(7_999);
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    expect(db.exists("c2")).toBe(true);
+    await advance(1);
+    expect(commands("board_card_delete_archived")).toEqual([
+      ["board_card_delete_archived", { cardId: "c2" }],
+    ]);
+    expect(db.exists("c2")).toBe(false);
+    expect(commands("board_card_delete")).toHaveLength(0);
+    expect(toastEl()).toBeNull();
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+  });
+
+  it("undo of a delete from the drawer restores the card at its index", async () => {
+    const db = backend();
+    await renderBoard();
+    await deleteFromDrawer("c1");
+    expect(ask).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-card-drawer]")).toBeNull();
+    expect(cardIdsIn("backlog")).toEqual(["c2"]);
+    expect(toastText()).toBe("Deleted #1");
+    await clickUndo();
+    expect(commands("board_card_restore")).toEqual([
+      ["board_card_restore", { cardId: "c1", columnId: "backlog", index: 0 }],
+    ]);
+    expect(db.ids("backlog")).toEqual(["c1", "c2"]);
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
+    // The undone delete's timer deletes nothing.
+    await advance(10_000);
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    expect(db.exists("c1")).toBe(true);
+  });
+
+  it("a new undoable action replaces the toast and commits the pending delete", async () => {
+    const db = backend();
+    await renderBoard();
+    await deleteFromMenu(1);
+    expect(db.exists("c1")).toBe(true);
+    await drop("c3", "done", 0);
+    expect(commands("board_card_delete_archived")).toEqual([
+      ["board_card_delete_archived", { cardId: "c1" }],
+    ]);
+    expect(db.exists("c1")).toBe(false);
+    expect(toastText()).toBe("Moved #3 to Done");
+    // Undo now only undoes the move.
+    await clickUndo();
+    expect(db.ids("progress")).toEqual(["c3"]);
+    expect(db.exists("c1")).toBe(false);
+    expect(commands("board_card_restore")).toHaveLength(0);
+  });
+
+  it("a held delete restored elsewhere is never deleted", async () => {
+    const db = backend();
+    await renderBoard();
+    await deleteFromMenu(1);
+    db.unarchiveElsewhere("c1");
+    await advance(8_000);
+    // The commit is the atomic store op: it leaves a live card alone.
+    expect(commands("board_card_delete_archived")).toHaveLength(1);
+    expect(db.exists("c1")).toBe(true);
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("switching boards commits a pending delete", async () => {
+    const db = backend();
+    await renderBoard();
+    await deleteFromMenu(1);
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label^="Board:"]')!
+        .click(),
+    );
+    const option = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="option"]'),
+    ].find((el) => el.textContent?.includes("Releases"))!;
+    await act(async () => option.click());
+    await flush();
+    await flush();
+    expect(commands("board_card_delete_archived")).toEqual([
+      ["board_card_delete_archived", { cardId: "c1" }],
+    ]);
+    expect(db.exists("c1")).toBe(false);
+    expect(toastEl()).toBeNull();
+  });
+
+  it("a delete that finishes after a board switch is carried out without a toast", async () => {
+    const db = backend();
+    const archive = handlers.board_card_archive;
+    let finish!: () => void;
+    handlers.board_card_archive = (a) =>
+      new Promise<void>((resolve) => {
+        finish = () => {
+          archive(a);
+          resolve();
+        };
+      });
+    await renderBoard();
+    await deleteFromMenu(1);
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label^="Board:"]')!
+        .click(),
+    );
+    const option = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="option"]'),
+    ].find((el) => el.textContent?.includes("Releases"))!;
+    await act(async () => option.click());
+    await flush();
+    await act(async () => finish());
+    await flush();
+    expect(toastEl()).toBeNull();
+    expect(commands("board_card_delete_archived")).toEqual([
+      ["board_card_delete_archived", { cardId: "c1" }],
+    ]);
+    expect(db.exists("c1")).toBe(false);
+  });
+
+  it("quitting_with_a_pending_delete_leaves_the_card_archived", async () => {
+    const db = backend();
+    await renderBoard();
+    await deleteFromMenu(1);
+    act(() => root.unmount());
+    root = createRoot(container);
+    await advance(10_000);
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    expect(commands("board_card_delete")).toHaveLength(0);
+    expect(db.exists("c1")).toBe(true);
+    expect(db.archivedIds()).toEqual(["c1"]);
+  });
+
+  it("undo after the card was deleted elsewhere says so; a bulk undo restores what it can", async () => {
+    const db = backend();
+    await renderBoard();
+    await drop("c1", "done", 0);
+    db.deleteElsewhere("c1");
+    await clickUndo();
+    expect(toastText()).toBe("Couldn't undo: the card was deleted");
+    expect(undoButton()).toBeUndefined();
+    expect(db.ids("backlog")).toEqual(["c2"]);
+
+    await drop("c2", "progress", 1);
+    await runColumnAction("progress", "Mark all as done");
+    expect(toastText()).toBe("Moved 2 cards to Done");
+    db.deleteElsewhere("c3");
+    await clickUndo();
+    expect(toastText()).toBe("Couldn't undo: the card was deleted");
+    expect(db.ids("progress")).toEqual(["c2"]);
+    expect(db.ids("done")).toEqual([]);
+    // The message goes like any toast.
+    await advance(8_000);
+    expect(toastEl()).toBeNull();
+  });
+
+  it("undo after the column was deleted elsewhere says so", async () => {
+    const db = backend();
+    await renderBoard();
+    await drop("c3", "done", 0);
+    db.deleteColumnElsewhere("progress");
+    await clickUndo();
+    expect(toastText()).toBe("Couldn't undo: the column was deleted");
+    expect(db.ids("done")).toEqual(["c3"]);
+  });
+
+  it("archive completed shows 'Archived N cards' and undo restores them in place", async () => {
+    const base = fixture();
+    const db = backend({
+      ...base,
+      cards: [
+        ...base.cards,
+        card("d1", "done", 0, 8, "Shipped"),
+        card("d2", "done", 1, 9, "Released"),
+      ],
+    });
+    await renderBoard();
+    await runColumnAction("done", "Archive completed");
+    expect(toastText()).toBe("Archived 2 cards");
+    expect(db.ids("done")).toEqual([]);
+    await clickUndo();
+    expect(commands("board_card_restore").map(([, a]) => a)).toEqual([
+      { cardId: "d1", columnId: "done", index: 0 },
+      { cardId: "d2", columnId: "done", index: 1 },
+    ]);
+    expect(db.ids("done")).toEqual(["d1", "d2"]);
+    expect(db.archivedIds()).toEqual([]);
+  });
+
+  it("the Archive view lists newest first, restores, and deletes forever after asking", async () => {
+    const db = backend();
+    db.archiveElsewhere("c2");
+    db.archiveElsewhere("c1");
+    await renderBoard();
+    await toggleArchive();
+    expect(archiveEl()!.textContent).toContain("Archive");
+    expect(listed()).toEqual(["c1", "c2"]);
+
+    // Restore puts it back at the end of its column.
+    const row = (id: string) =>
+      archiveEl()!.querySelector<HTMLElement>(`[data-archived-card='${id}']`)!;
+    const rowButton = (id: string, text: string) =>
+      [...row(id).querySelectorAll("button")].find(
+        (b) => b.textContent === text,
+      )!;
+    await act(async () => rowButton("c1", "Restore").click());
+    await flush();
+    await flush();
+    expect(commands("board_card_unarchive")).toEqual([
+      ["board_card_unarchive", { cardId: "c1" }],
+    ]);
+    expect(listed()).toEqual(["c2"]);
+
+    // Delete forever asks first; Cancel keeps it.
+    vi.mocked(ask).mockResolvedValue(false);
+    await act(async () => rowButton("c2", "Delete forever").click());
+    await flush();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ask).mock.calls[0][0]).toContain("#2");
+    expect(commands("board_card_delete")).toHaveLength(0);
+    vi.mocked(ask).mockResolvedValue(true);
+    await act(async () => rowButton("c2", "Delete forever").click());
+    await flush();
+    await flush();
+    expect(commands("board_card_delete")).toEqual([
+      ["board_card_delete", { cardId: "c2" }],
+    ]);
+    expect(archiveEl()!.textContent).toContain("No archived cards");
+
+    // The header button closes it again.
+    await toggleArchive();
+    expect(archiveEl()).toBeNull();
+  });
+
+  it("a pending delete is not listed in the Archive view", async () => {
+    const db = backend();
+    db.archiveElsewhere("c3");
+    await renderBoard();
+    await deleteFromMenu(1);
+    await toggleArchive();
+    expect(db.archivedIds().sort()).toEqual(["c1", "c3"]);
+    expect(listed()).toEqual(["c3"]);
+    // Undo brings it back to the board, still not into the archive.
+    await clickUndo();
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
+    expect(listed()).toEqual(["c3"]);
+  });
+
+  it("a held delete doesn't block deleting its column and is carried out first", async () => {
+    const db = backend({
+      ...fixture(),
+      cards: [card("only", "review", 0, 5, "Only")],
+    });
+    await renderBoard();
+    await deleteFromMenu(5);
+    const item = await columnAction("review", "Delete column");
+    await flush();
+    expect(item.disabled).toBe(false);
+    act(() => item.click());
+    await flush();
+    await flush();
+    const order = vi
+      .mocked(invoke)
+      .mock.calls.map(([cmd]) => cmd)
+      .filter(
+        (cmd) =>
+          cmd === "board_card_delete_archived" || cmd === "board_column_delete",
+      );
+    expect(order).toEqual([
+      "board_card_delete_archived",
+      "board_column_delete",
+    ]);
+    expect(db.exists("only")).toBe(false);
+  });
+
+  it("the error toast still shows beside the undo toast", async () => {
+    backend();
+    handlers.board_column_set_display = () => {
+      throw "database is locked";
+    };
+    await renderBoard();
+    await drop("c1", "done", 0);
+    // Collapsing isn't undoable, so it leaves the undo toast up.
+    await runColumnAction("backlog", "Collapse column");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "Couldn't collapse the column: database is locked",
+    );
+    expect(toastText()).toBe("Moved #1 to Done");
   });
 });
