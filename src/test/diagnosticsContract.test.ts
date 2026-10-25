@@ -85,15 +85,21 @@ describe("log schema", () => {
       expect(line.event_id).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
-      expect(typeof line.fields).toBe("object");
+      expect(line.fields).toBeTypeOf("object");
+      expect(line.fields).not.toBeNull();
     }
   });
 
-  it("never shows a deny-listed field in an example", () => {
+  it("never shows a deny-listed name in an example, at the top level or in any dotted segment", () => {
     for (const line of lines) {
-      const keys = Object.keys(line.fields as Json);
-      expect(keys.filter((k) => DENY_LIST.includes(k))).toEqual([]);
+      const keys = [...Object.keys(line), ...Object.keys(line.fields as Json)];
+      const denied = keys.filter((k) => k.split(".").some((part) => DENY_LIST.includes(part)));
+      expect(denied).toEqual([]);
     }
+  });
+
+  it("tells the scrubber to match deny-listed names in any dotted segment", () => {
+    expect(section(md, "Deny-listed fields")).toMatch(/any\s+dotted\s+segment/i);
   });
 
   it("lists exactly the deny-listed field names the scrubber drops", () => {
@@ -136,6 +142,28 @@ describe("bundle format", () => {
     expectRequired(md, "report.json", report);
     expect(report.bundle_version).toBe(1);
     expect(["native", "tauri"]).toContain(report.app);
+  });
+
+  it("says which entries each kind of report carries, and a crash send carries no logs", () => {
+    const [header, rows] = table(md, "Contents by kind");
+    const entries = header.slice(1);
+    expect(entries).toEqual(
+      ["report.json", "logs.jsonl", "crashes/*.json", "counters.json", "environment.json"].map(
+        (e) => `\`${e}\``,
+      ),
+    );
+    const kinds = rows.map((r) => r[0]);
+    expect(kinds).toEqual(["`user`", "`crash`"]);
+    const crash = Object.fromEntries(entries.map((e, i) => [e, rows[1][i + 1]]));
+    expect(crash["`report.json`"]).toMatch(/^always/i);
+    expect(crash["`crashes/*.json`"]).toMatch(/^always/i);
+    for (const e of ["`logs.jsonl`", "`counters.json`", "`environment.json`"]) {
+      expect(crash[e], e).toMatch(/^never/i);
+    }
+  });
+
+  it("names crash files so two panics in the same second cannot overwrite each other", () => {
+    expect(section(md, "crashes/*.json")).toContain("crashes/<timestamp>-<random>.json");
   });
 
   it("keeps the contact email out of anything public", () => {
@@ -216,7 +244,7 @@ describe("consent", () => {
       new Set(["`\"always\"`", "`\"ask\"`", "`\"never\"`"]),
     );
     expect(choice("Dismissed")).toEqual(choice("Ask me each time"));
-    expect(choice("No thanks")["`metrics`"]).toBe("`false`");
+    for (const row of rows) expect(row[header.indexOf("`metrics`")], row[0]).toBe("`false`");
   });
 
   it("matches the consent_version recorded in the bundle example", () => {
@@ -250,6 +278,7 @@ describe("intake API", () => {
     expect(request).not.toHaveProperty("install_id");
     expect(request).not.toHaveProperty("submission_id");
     expect(request.day).toMatch(/^\d{4}-\d\d-\d\d$/);
+    expect(request.consent_version).toBe(currentConsentVersion(doc(CONSENT)));
     for (const c of request.counters as Json[]) {
       expect(Object.keys(c).sort()).toEqual(["count", "error_kind", "name"]);
       expect(c.error_kind === null || /^[a-z_]+$/.test(String(c.error_kind))).toBe(true);
@@ -265,6 +294,14 @@ describe("intake API", () => {
     const error = exampleIn(md, "Errors") as { error: Json };
     expect(Object.keys(error.error).sort()).toEqual(["code", "message"]);
     expect(rows.map((r) => r[1])).toContain(`\`${error.error.code}\``);
+  });
+
+  it("never opens the browser fallback for a send the user did not start", () => {
+    expect(section(md, "Errors")).toMatch(/background sends[^.]*never\s+use\s+the\s+fallback/i);
+  });
+
+  it("tags error-tracker events with the report_id so a deletion request can find them", () => {
+    expect(section(md, "What the intake does with a report")).toMatch(/tagged with[^.]*`report_id`/);
   });
 });
 
@@ -294,6 +331,30 @@ describe("privacy notice", () => {
 
   it("states the same consent_version as the consent wording", () => {
     expect(currentConsentVersion(md)).toBe(currentConsentVersion(doc(CONSENT)));
+  });
+
+  it("quotes the first-run prompt exactly as consent.md words it, and says no answer turns on metrics", () => {
+    const heading = /^> \*\*(.+)\*\*$/m.exec(section(doc(CONSENT), "First-run prompt"))?.[1];
+    expect(heading).toBeTruthy();
+    const asked = section(md, "How you are asked");
+    expect(asked).toContain(`"${heading}"`);
+    expect(asked).toMatch(/none\s+of\s+the\s+answers\s+turns\s+on\s+error\s+metrics/i);
+  });
+
+  it("says what every report carries even without attached diagnostics", () => {
+    const sent = section(md, "Sent only with your consent");
+    for (const item of ["install ID", "locale", "consent choices", "app and OS versions"]) {
+      expect(sent).toContain(item);
+    }
+  });
+
+  it("prunes crash records even when they are never sent", () => {
+    const [, rows] = table(md, "How long it is kept");
+    expect(rows.find((r) => r[0] === "Crash records" && r[1] === "Your machine")?.[2]).toMatch(/7 days/);
+  });
+
+  it("gives automatic crash sends a findable report ID", () => {
+    expect(section(md, "How to have it deleted")).toContain("sent-reports.json");
   });
 
   it("names every deny-listed field as never sent", () => {

@@ -61,6 +61,9 @@ Rules for writers:
 
 Any field with one of these names is dropped entirely by the scrubber
 (`crates/gespan-redact`) before a line is shown in a report preview or sent.
+A name matches at the top level of the line, inside `fields`, and in any
+dotted segment of a flattened key, so `request.body` and `git.output` are
+dropped too.
 Logging code should use these names for anything that could hold user
 content, so it is removed automatically:
 

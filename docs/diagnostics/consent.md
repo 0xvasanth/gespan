@@ -94,13 +94,13 @@ Each answer writes the record below, with the current `consent_version` and
 
 | Choice | `crash_reports` | `metrics` | `include_logs` |
 |---|---|---|---|
-| Send crash reports automatically | `"always"` | `true` | `true` |
+| Send crash reports automatically | `"always"` | `false` | `true` |
 | Ask me each time | `"ask"` | `false` | `true` |
 | No thanks | `"never"` | `false` | `true` |
 | Dismissed (closed without a choice) | `"ask"` | `false` | `true` |
 
-"Send crash reports automatically" turns on error metrics too, because the
-prompt names failure counts. Every other answer leaves them off.
+None of the answers turns on error metrics. They stay off until the user
+turns them on in Settings, so no button sends more than its label says.
 
 ## Crash notice
 
@@ -111,12 +111,16 @@ Shown on the next launch when there are unsent crash records and
 >
 > [Send] [Don't send] [Always send]
 
+All three are `kind: "crash"` sends (see
+[bundle-format.md](bundle-format.md#contents-by-kind)).
+
 - **Send** sends the crash records this once.
 - **Don't send** deletes them.
 - **Always send** sends them and sets `crash_reports` to `"always"`.
 
 With `"always"` the records are sent without a notice. With `"never"` there
-is no notice and nothing is sent.
+is no notice, nothing is sent, crash records are left out of reports the user
+sends, and they are deleted after 7 days.
 
 ## Changing or revoking consent
 

@@ -29,6 +29,17 @@ A zip named `gespan-diagnostics-<app>-<version>-<timestamp>.zip`, for example
   line endings.
 - With "Attach diagnostics" unticked, the bundle holds only `report.json`.
 
+## Contents by kind
+
+`kind` in `report.json` says who started the send. A send from the crash
+notice ("Send" or "Always send") is a `crash` send, the same as an automatic
+one.
+
+| Kind | `report.json` | `logs.jsonl` | `crashes/*.json` | `counters.json` | `environment.json` |
+|---|---|---|---|---|---|
+| `user` | Always | If "Attach diagnostics" is ticked and logs are included | If "Attach diagnostics" is ticked, unless crash reports are set to "Never send" | If "Attach diagnostics" is ticked | If "Attach diagnostics" is ticked |
+| `crash` | Always | Never | Always: the crash records being sent | Never | Never |
+
 ## report.json
 
 | Field | Type | Required | Meaning |
@@ -86,9 +97,12 @@ A zip named `gespan-diagnostics-<app>-<version>-<timestamp>.zip`, for example
 ## crashes/*.json
 
 Written by the panic hook with a synchronous, fsync'd write, named
-`crashes/<timestamp>.json` with the same timestamp format as the zip name. A
-record leaves the local `crashes/` folder once it has been sent, or once the
-user chooses "Don't send".
+`crashes/<timestamp>-<random>.json`: the same timestamp format as the zip
+name, then 8 random hex digits, so two panics in the same second keep both
+records. A record leaves the local `crashes/` folder once it has been sent,
+once the user chooses "Don't send", or after 7 days, whichever comes first.
+The 7-day limit applies whatever the consent choice, so with "Never send"
+records don't pile up.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
@@ -173,6 +187,14 @@ repository URLs.
   "sessions_count": 57
 }
 ```
+
+## Sent reports
+
+Each app keeps `sent-reports.json` next to its logs: a list of
+`{ report_id, kind, sent_at }` for every send the intake accepted, including
+automatic crash sends, kept for 90 days to match the private storage. It is
+how a user finds the `report_id` of a send they never saw, to ask for its
+deletion. It holds nothing else.
 
 ## Versioning
 

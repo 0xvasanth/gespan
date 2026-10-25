@@ -15,6 +15,21 @@ something new, this number goes up and the app asks you again. It never
 quietly widens what it sends. The exact choices and wording are in
 [diagnostics/consent.md](diagnostics/consent.md).
 
+## How you are asked
+
+After you install Gespan, or after the update that adds this, a small sheet
+asks "Help improve Gespan?", with three answers:
+
+- **Send crash reports automatically**: crash reports are sent without
+  asking.
+- **Ask me each time** (also what closing the sheet means): after a crash,
+  Gespan asks before sending anything.
+- **No thanks**: crash reports are never sent.
+
+None of the answers turns on error metrics. Those are only turned on in
+Settings → Privacy & diagnostics. You can change any choice there at any
+time.
+
 ## What is collected
 
 ### Kept on your machine (always)
@@ -34,28 +49,45 @@ These never leave your machine unless you send a report:
 
 ### Sent only with your consent
 
-- **A report you send** (Help → Report an issue, or "Report" on an error). It
-  holds what you type (title, what happened, optional steps, optional contact
-  email) plus, if "Attach diagnostics" is ticked: app and OS versions, the
-  last 2,000 log lines or 24 hours of them, unsent crash records, the last 7
-  days of failure counters, and which provider CLIs are installed with their
-  versions and how many projects and sessions you have. You see a preview of
+- **A report you send** (Help → Report an issue, or "Report" on an error).
+  Every report holds what you type (title, what happened, optional steps,
+  optional contact email), your app and OS versions, architecture and
+  locale, your consent choices, your anonymous install ID if you have one,
+  and the IDs of the log lines the report is about. If "Attach diagnostics"
+  is ticked, it also holds the last 2,000 log lines or 24 hours of them,
+  unsent crash records (not if crash reports are set to "Never send"), the
+  last 7 days of failure counters, and which provider CLIs are installed
+  with their versions and how many projects and sessions you have. You see a preview of
   exactly what will be sent and can remove anything first. The format is in
   [diagnostics/bundle-format.md](diagnostics/bundle-format.md).
-- **Automatic crash reports**, if you chose "Always send": the crash records
-  above, with your app and OS versions.
+- **Crash reports**, if you chose "Always send" or clicked "Send" on the
+  crash notice: the crash records above, with the same app, OS, locale,
+  consent and install ID details as a report. No logs, counters or
+  environment details.
 - **Error metrics**, if you turned them on: once a day, that day's failure
   counts with the app version, OS and architecture. They carry no install ID
-  and can't be tied to you or to a report. The format is in
+  and are stored only as daily totals per version, so they aren't linked to
+  you or to a report. (Like any web request, the intake sees your IP address
+  while it receives them. It uses it for rate limiting and doesn't store it
+  with the data.) The format is in
   [diagnostics/intake-api.md](diagnostics/intake-api.md#post-v1metrics).
 
 ## What is never sent
+
+Gespan is built not to record these in its diagnostics, and scrubs what it
+does record:
 
 - Your code, file contents, diffs, prompts, transcripts, voice recordings,
   terminal output or provider responses.
 - API keys, tokens or passwords, including anything Gespan reads from the
   keychain or your accounts.
 - Your full home-directory path, project names or repository URLs.
+
+Error messages are free text, and scrubbing works by known patterns, so it
+can miss something unusual. That is why you see the exact contents of a
+report before you send it. What **you type** into a report (title and
+description) is not changed, and it is published in a public GitHub issue as
+you wrote it.
 
 Before anything is shown in a preview or sent, Gespan scrubs it **on your
 machine**: your home folder becomes `~`, project folders become
@@ -94,7 +126,8 @@ machine**: your home folder becomes `~`, project folders become
 | What | Where | Kept for |
 |---|---|---|
 | Logs | Your machine | 7 days or 50 MB in total, whichever comes first |
-| Crash records | Your machine | Until sent, or until you choose "Don't send" |
+| Crash records | Your machine | Until sent or dismissed, and at most 7 days |
+| List of sent report IDs (`sent-reports.json`) | Your machine | 90 days |
 | Failure counters | Your machine | 30 days |
 | Full reports | Private storage | 90 days, then deleted automatically |
 | Crash records and error lines | Error tracker | 90 days |
@@ -108,10 +141,12 @@ machine**: your home folder becomes `~`, project folders become
   error metrics deletes anything queued and not yet sent. Turning off both
   also deletes the anonymous install ID.
 - **Reports you sent**: every sent report shows a report ID, such as
-  `r_2026_10_7XK2M9`. Open an issue in
+  `r_2026_10_7XK2M9`. Crash reports sent automatically are listed with their
+  IDs in `sent-reports.json` in the logs folder. Open an issue in
   [0xvasanth/gespan](https://github.com/0xvasanth/gespan/issues/new) titled
-  "Delete report" with that ID. The ID identifies the report, not you. The
-  maintainers then delete the private report, its error-tracker events and
-  the report text in the matching GitHub issue.
+  "Delete report" with that ID. The ID identifies the report, not you, but
+  the request is public and shows your GitHub account. The maintainers then
+  delete the private report, its error-tracker events (tagged with the
+  report ID) and the report text in the matching GitHub issue.
 - **Error metrics** can't be deleted per person, because they are stored only
   as daily totals that no one can trace back to an install.

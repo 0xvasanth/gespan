@@ -116,6 +116,11 @@ Every error has the same body, and a fixed `code` the app can match on.
 | 429 | `rate_limited` | Too many requests from this install ID or IP. `Retry-After` says when to try again. | Queue it and retry after `Retry-After`. |
 | 5xx | `server_error` | The intake failed. | Retry up to 3 times with backoff (1 s, 4 s, 16 s), then the fallback. |
 
+Background sends (error metrics and automatic crash sends, which the user
+didn't start) never use the fallback and never show an error. On `429` or
+`5xx` they stay queued and are retried later; on any other error they are
+dropped.
+
 ```json
 {
   "error": {
@@ -129,8 +134,9 @@ Every error has the same body, and a fixed `code` the app can match on.
 
 - Stores the bundle in a **private** R2 bucket at
   `reports/<yyyy>/<mm>/<report-id>.zip`, with a 90-day lifecycle rule.
-- Forwards crash records and error lines to the Sentry-compatible error
-  tracker, tagged with the release version.
+- Forwards crash records (and, for `user` reports, the `error` lines in
+  `logs.jsonl`) to the Sentry-compatible error tracker, tagged with the
+  release version and the `report_id`, so a deletion request can find them.
 - Creates or updates a GitHub issue in `0xvasanth/gespan` through a GitHub
   App (never a personal token):
   - title `[<app>] <user title>`;
@@ -143,7 +149,8 @@ Every error has the same body, and a fixed `code` the app can match on.
     opening a new one, and raises its "affected installs" count.
 - A `kind: "user"` report always becomes an issue, because a person asked for
   help. A `kind: "crash"` report goes to the error tracker only, and becomes
-  an issue once its fingerprint passes the threshold set in the intake.
+  an issue once its fingerprint passes the threshold set in the intake (for
+  example, seen on 3 installs) or is new in a release.
 - The contact email stays in the private bundle. It is never in the issue,
   the error tracker or the intake's logs.
 
