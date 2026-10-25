@@ -37,7 +37,10 @@ pub fn filter(spec: Option<&str>) -> (EnvFilter, Option<String>) {
     let spec = spec.unwrap_or_default();
     let global = spec
         .split(',')
-        .any(|directive| directive.trim().parse::<LevelFilter>().is_ok());
+        .map(str::trim)
+        // `""` parses as ERROR, but EnvFilter skips empty pieces.
+        .filter(|directive| !directive.is_empty())
+        .any(|directive| directive.parse::<LevelFilter>().is_ok());
     let spec = if global || spec.trim().is_empty() {
         spec.to_owned()
     } else {
@@ -335,6 +338,23 @@ pub(crate) mod tests {
         });
         let messages: Vec<_> = out.lines().iter().map(|l| l["message"].clone()).collect();
         assert_eq!(messages, ["git debug", "store info", "panic"]);
+    }
+
+    #[test]
+    fn empty_pieces_are_not_a_global_level() {
+        for spec in [
+            "gespan_core::git=debug,",
+            ",gespan_core::git=debug",
+            "gespan_core::git=debug,,",
+        ] {
+            let out = capture(Some(spec), || {
+                tracing::debug!(target: "gespan_core::git", "git debug");
+                tracing::info!(target: "gespan_core::store", "store info");
+                tracing::error!(target: "gespan_core::diagnostics", kind = "panic", "panic");
+            });
+            let messages: Vec<_> = out.lines().iter().map(|l| l["message"].clone()).collect();
+            assert_eq!(messages, ["git debug", "store info", "panic"], "{spec:?}");
+        }
     }
 
     #[test]
