@@ -95,8 +95,9 @@ pub struct DailyFile<C: Clock> {
     size: u64,
     /// Bytes in the other days' files, as of the last prune.
     others: u64,
-    /// Today's share of the budget is spent; drop lines until tomorrow.
-    full: bool,
+    /// Pruning has freed all it can today, so a line that doesn't fit is
+    /// dropped without scanning the folder again.
+    pruned_out: bool,
 }
 
 impl<C: Clock> DailyFile<C> {
@@ -114,7 +115,7 @@ impl<C: Clock> DailyFile<C> {
             file,
             size,
             others: 0,
-            full: false,
+            pruned_out: false,
         };
         this.prune(0);
         Ok(this)
@@ -159,16 +160,17 @@ impl<C: Clock> Write for DailyFile<C> {
             let (file, size) = Self::open(&self.dir, today)?;
             self.file.flush()?;
             (self.day, self.file, self.size) = (today, file, size);
-            self.full = false;
+            self.pruned_out = false;
             self.prune(0);
         }
         let len = buf.len() as u64;
-        if !self.full && !self.fits(len) {
+        if !self.fits(len) && !self.pruned_out {
             self.prune(len);
-            self.full = !self.fits(len);
+            self.pruned_out = !self.fits(len);
         }
-        if self.full {
-            // Report success: a full log must not turn into write errors.
+        if !self.fits(len) {
+            // Drop only this line, and report success: a full log must not
+            // turn into write errors. Smaller lines may still fit.
             return Ok(buf.len());
         }
         self.file.write_all(buf)?;
@@ -407,6 +409,23 @@ mod tests {
             .unwrap()
             .len();
         assert_eq!(written, 60);
+    }
+
+    #[test]
+    fn one_line_too_big_is_dropped_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut file =
+            DailyFile::new(dir.path().into(), FakeClock::at(day(25)), MAX_DAYS, 100).unwrap();
+        file.write_all(&[b'a'; 60]).unwrap();
+        // Doesn't fit the 40 bytes left: dropped, but the budget isn't spent.
+        assert_eq!(file.write(&[b'b'; 50]).unwrap(), 50);
+        file.write_all(&[b'c'; 30]).unwrap();
+        let mut expected = vec![b'a'; 60];
+        expected.extend([b'c'; 30]);
+        assert_eq!(
+            std::fs::read(dir.path().join(file_name(day(25)))).unwrap(),
+            expected
+        );
     }
 
     #[test]
