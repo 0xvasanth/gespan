@@ -83,7 +83,9 @@ fn add_column_fields(tx: &Connection) -> Result<()> {
             .optional()?
             .is_some();
         if !present {
-            tx.execute_batch(&format!("ALTER TABLE board_columns ADD COLUMN {declaration}"))?;
+            tx.execute_batch(&format!(
+                "ALTER TABLE board_columns ADD COLUMN {declaration}"
+            ))?;
         }
     }
     Ok(())
@@ -223,7 +225,10 @@ mod tests {
         expected.sort();
         assert_eq!(tables, expected);
         assert_eq!(
-            strings(&conn, "SELECT CAST(version AS TEXT) FROM board_schema_migrations"),
+            strings(
+                &conn,
+                "SELECT CAST(version AS TEXT) FROM board_schema_migrations"
+            ),
             ["3"]
         );
     }
@@ -235,7 +240,10 @@ mod tests {
         let version = count(&conn, "PRAGMA schema_version");
         ensure(&conn).unwrap();
         assert_eq!(count(&conn, "PRAGMA schema_version"), version);
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"), 1);
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"),
+            1
+        );
     }
 
     #[test]
@@ -259,7 +267,10 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .unwrap();
-        assert_eq!(card, ("Ship it".into(), "session".into(), "s-1".into(), 5, 7));
+        assert_eq!(
+            card,
+            ("Ship it".into(), "session".into(), "s-1".into(), 5, 7)
+        );
     }
 
     #[test]
@@ -288,7 +299,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            strings(&conn, "SELECT role FROM board_card_links WHERE ref = 'gh:1'"),
+            strings(
+                &conn,
+                "SELECT role FROM board_card_links WHERE ref = 'gh:1'"
+            ),
             ["primary"]
         );
     }
@@ -317,7 +331,10 @@ mod tests {
         sync_primary_link(&conn, "card", None, 12).unwrap();
         assert!(primary(&conn).is_empty());
         assert_eq!(
-            count(&conn, "SELECT COUNT(*) FROM board_card_links WHERE role = 'origin'"),
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM board_card_links WHERE role = 'origin'"
+            ),
             1
         );
     }
@@ -338,7 +355,10 @@ mod tests {
         ensure(&conn).expect("orphans must not fail the open");
         assert_native_v2_migrated(&conn, &seed);
         assert_eq!(
-            strings(&conn, "SELECT CAST(position AS TEXT) FROM board_subtasks ORDER BY position"),
+            strings(
+                &conn,
+                "SELECT CAST(position AS TEXT) FROM board_subtasks ORDER BY position"
+            ),
             ["0", "1", "2"]
         );
     }
@@ -360,7 +380,10 @@ mod tests {
             ["One", "Three"]
         );
         assert_eq!(
-            count(&conn, "SELECT COUNT(*) FROM board_card_labels WHERE label_id = 'label-docs'"),
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM board_card_labels WHERE label_id = 'label-docs'"
+            ),
             0
         );
     }
@@ -378,8 +401,14 @@ mod tests {
         assert!(error.to_string().contains("boom"), "{error}");
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_meta"), 0);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_labels"), 0);
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"), 0);
-        assert!(conn.is_autocommit(), "the failed upgrade left a transaction open");
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"),
+            0
+        );
+        assert!(
+            conn.is_autocommit(),
+            "the failed upgrade left a transaction open"
+        );
         conn.execute_batch("DROP TRIGGER fail;").unwrap();
         ensure(&conn).unwrap();
         assert_native_v2_migrated(&conn, &seed);
@@ -399,7 +428,10 @@ mod tests {
             ),
             0
         );
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"), 1);
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"),
+            1
+        );
     }
 
     #[test]
@@ -432,7 +464,10 @@ mod tests {
         }
         let conn = open(&path);
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_subtasks"), 3);
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"), 1);
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM board_schema_migrations"),
+            1
+        );
         assert_native_v2_migrated(&conn, &seed);
     }
 }

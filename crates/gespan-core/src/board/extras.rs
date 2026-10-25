@@ -545,7 +545,9 @@ impl Service {
         // Close the gap so positions stay 0..n-1, as cards and columns do.
         let remaining: Vec<String> = {
             let mut statement = tx
-                .prepare("SELECT id FROM board_subtasks WHERE card_id = ?1 ORDER BY position, rowid")
+                .prepare(
+                    "SELECT id FROM board_subtasks WHERE card_id = ?1 ORDER BY position, rowid",
+                )
                 .map_err(db)?;
             let ids = statement
                 .query_map([&card_id], |r| r.get(0))
@@ -985,14 +987,22 @@ mod tests {
         let bug = service.create_label(&board, "Bug", "e5534b").unwrap();
         let (b, c) = (board.as_str(), card.as_str());
         let s = &mut service;
-        writes(s, b, c, 1, Some("priority: Medium"), |s| s.set_priority(c, 2).unwrap());
+        writes(s, b, c, 1, Some("priority: Medium"), |s| {
+            s.set_priority(c, 2).unwrap()
+        });
         writes(s, b, c, 0, None, |s| s.set_priority(c, 2).unwrap());
-        writes(s, b, c, 1, None, |s| s.set_due(c, Some(1_793_404_800_000)).unwrap());
-        writes(s, b, c, 0, None, |s| s.set_due(c, Some(1_793_404_800_000)).unwrap());
+        writes(s, b, c, 1, None, |s| {
+            s.set_due(c, Some(1_793_404_800_000)).unwrap()
+        });
+        writes(s, b, c, 0, None, |s| {
+            s.set_due(c, Some(1_793_404_800_000)).unwrap()
+        });
         writes(s, b, c, 1, Some("projects: 1"), |s| {
             s.set_projects(c, &["/a".into()]).unwrap()
         });
-        writes(s, b, c, 0, None, |s| s.set_projects(c, &["/a".into()]).unwrap());
+        writes(s, b, c, 0, None, |s| {
+            s.set_projects(c, &["/a".into()]).unwrap()
+        });
         writes(s, b, c, 1, Some("labels: Bug"), |s| {
             s.set_labels(c, std::slice::from_ref(&bug.id)).unwrap()
         });
@@ -1007,15 +1017,21 @@ mod tests {
         writes(s, b, c, 1, Some("subtask done: Write"), |s| {
             s.toggle_subtask(&subtask, true).unwrap()
         });
-        writes(s, b, c, 0, None, |s| s.toggle_subtask(&subtask, true).unwrap());
+        writes(s, b, c, 0, None, |s| {
+            s.toggle_subtask(&subtask, true).unwrap()
+        });
         writes(s, b, c, 1, Some("subtask reopened: Write"), |s| {
             s.toggle_subtask(&subtask, false).unwrap()
         });
         writes(s, b, c, 1, Some("comment added"), |s| {
             s.add_comment(c, "Looks good").unwrap();
         });
-        writes(s, b, c, 1, None, |s| s.card_update(c, "Renamed", "").unwrap());
-        writes(s, b, c, 0, None, |s| s.card_update(c, "Renamed", "").unwrap());
+        writes(s, b, c, 1, None, |s| {
+            s.card_update(c, "Renamed", "").unwrap()
+        });
+        writes(s, b, c, 0, None, |s| {
+            s.card_update(c, "Renamed", "").unwrap()
+        });
         writes(s, b, c, 1, Some("subtask removed: Write"), |s| {
             s.delete_subtask(&subtask).unwrap()
         });
@@ -1101,18 +1117,18 @@ mod tests {
     fn v3_rows(path: &std::path::Path, card: &str) -> Vec<(&'static str, i64)> {
         let conn = rusqlite::Connection::open(path).unwrap();
         V3_CARD_TABLES
-        .into_iter()
-        .map(|table| {
-            let count = conn
-                .query_row(
-                    &format!("SELECT COUNT(*) FROM {table} WHERE card_id = ?1"),
-                    [card],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            (table, count)
-        })
-        .collect()
+            .into_iter()
+            .map(|table| {
+                let count = conn
+                    .query_row(
+                        &format!("SELECT COUNT(*) FROM {table} WHERE card_id = ?1"),
+                        [card],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                (table, count)
+            })
+            .collect()
     }
 
     fn with_every_extra(service: &mut Service, board: &str, card: &str) {
@@ -1122,7 +1138,9 @@ mod tests {
         service.set_labels(card, &[label.id]).unwrap();
         service.add_subtask(card, "One").unwrap();
         service.add_comment(card, "Hi").unwrap();
-        service.card_link(card, Some("session"), Some("s-1")).unwrap();
+        service
+            .card_link(card, Some("session"), Some("s-1"))
+            .unwrap();
     }
 
     #[test]

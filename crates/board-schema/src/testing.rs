@@ -162,10 +162,7 @@ pub fn assert_native_v2_migrated(conn: &Connection, seed: &NativeV2Seed) {
                || IFNULL(archived_at, '-') || IFNULL(completed_at, '-')
              FROM board_card_meta ORDER BY card_id"
         ),
-        [
-            format!("{a}:4:{SEED_DUE_AT}:----"),
-            format!("{b}:2:-:----"),
-        ],
+        [format!("{a}:4:{SEED_DUE_AT}:----"), format!("{b}:2:-:----"),],
         "board_card_meta"
     );
     assert_eq!(
@@ -257,7 +254,11 @@ pub fn assert_native_v2_migrated(conn: &Connection, seed: &NativeV2Seed) {
         )
         .unwrap();
     assert_eq!(ghosts, 0, "orphan rows were copied");
-    assert_eq!(native_counts(conn), seed.native_counts, "board_native_* changed");
+    assert_eq!(
+        native_counts(conn),
+        seed.native_counts,
+        "board_native_* changed"
+    );
 }
 
 /// Set to `1` to rewrite the committed fixtures instead of comparing them.
@@ -277,7 +278,10 @@ pub fn dump(conn: &Connection) -> String {
             &format!("SELECT name FROM pragma_table_info('{table}') ORDER BY cid"),
         );
         let mut stmt = conn
-            .prepare(&format!("SELECT {} FROM {table} ORDER BY rowid", columns.join(", ")))
+            .prepare(&format!(
+                "SELECT {} FROM {table} ORDER BY rowid",
+                columns.join(", ")
+            ))
             .unwrap();
         let mut result = stmt.query([]).unwrap();
         while let Some(row) = result.next().unwrap() {
@@ -418,7 +422,10 @@ mod tests {
         let dump_one = dump(&one);
         assert_eq!(dump_one, dump(&two));
         assert!(dump_one.contains("1792929600000"), "{dump_one}");
-        assert!(!dump_one.contains("987654") && !dump_one.contains("1000,"), "{dump_one}");
+        assert!(
+            !dump_one.contains("987654") && !dump_one.contains("1000,"),
+            "{dump_one}"
+        );
         // The board id is reused as the card's link ref: same placeholder.
         assert!(
             dump_one.contains(
@@ -444,7 +451,14 @@ mod tests {
             .collect();
         assert_eq!(
             tables,
-            ["boards", "board_columns", "board_cards", "board_card_meta", "board_comments", "board_card_links"]
+            [
+                "boards",
+                "board_columns",
+                "board_cards",
+                "board_card_meta",
+                "board_comments",
+                "board_card_links"
+            ]
         );
     }
 
@@ -484,7 +498,9 @@ mod tests {
              INSERT INTO board_columns (id, board_id, name, position, role) VALUES ('c', 'missing', 'X', 0, NULL);",
         );
         assert!(error.is_err());
-        let boards: i64 = y.query_row("SELECT COUNT(*) FROM boards", [], |r| r.get(0)).unwrap();
+        let boards: i64 = y
+            .query_row("SELECT COUNT(*) FROM boards", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(boards, 0);
     }
 
@@ -494,8 +510,8 @@ mod tests {
         let path = dir.path().join("fixture.sql");
         std::fs::write(&path, "same\n").unwrap();
         fixture_matches(&path, "same\n");
-        let failure = std::panic::catch_unwind(|| fixture_matches(&path, "different\n"))
-            .unwrap_err();
+        let failure =
+            std::panic::catch_unwind(|| fixture_matches(&path, "different\n")).unwrap_err();
         let message = failure
             .downcast_ref::<String>()
             .cloned()

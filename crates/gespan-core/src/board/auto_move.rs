@@ -381,9 +381,18 @@ mod tests {
             column("review", 3, Some("review")),
             column("done", 4, Some("done")),
         ];
-        assert_eq!(target(&columns, "cancelled", LinkedWorkEvent::Started), None);
-        assert_eq!(target(&columns, "cancelled", LinkedWorkEvent::Completed), None);
-        assert_eq!(target(&columns, "todo", LinkedWorkEvent::Started), Some("doing"));
+        assert_eq!(
+            target(&columns, "cancelled", LinkedWorkEvent::Started),
+            None
+        );
+        assert_eq!(
+            target(&columns, "cancelled", LinkedWorkEvent::Completed),
+            None
+        );
+        assert_eq!(
+            target(&columns, "todo", LinkedWorkEvent::Started),
+            Some("doing")
+        );
     }
 
     #[test]
@@ -396,5 +405,4 @@ mod tests {
         assert_eq!(target(&columns, "done", LinkedWorkEvent::Started), None);
         assert_eq!(target(&columns, "done", LinkedWorkEvent::Completed), None);
     }
-
 }

@@ -1558,10 +1558,7 @@ mod tests {
             .iter()
             .map(|card| (card.title.clone(), card.position))
             .collect();
-        assert_eq!(
-            cards,
-            [("A".into(), 0), ("B".into(), 1), ("C".into(), 2)]
-        );
+        assert_eq!(cards, [("A".into(), 0), ("B".into(), 1), ("C".into(), 2)]);
         let a = &detail.cards[0];
         assert_eq!(
             (a.link_kind.as_deref(), a.link_id.as_deref()),
@@ -1582,7 +1579,10 @@ mod tests {
         let conn = store.lock_conn().unwrap();
         assert_eq!(count(&conn, "PRAGMA schema_version"), version);
         assert_eq!(
-            strings(&conn, "SELECT CAST(version AS TEXT) FROM board_schema_migrations"),
+            strings(
+                &conn,
+                "SELECT CAST(version AS TEXT) FROM board_schema_migrations"
+            ),
             ["3"]
         );
     }
@@ -1635,8 +1635,11 @@ mod tests {
             "board_card_field_values",
         ] {
             assert_eq!(
-                strings(&conn, &format!("SELECT DISTINCT card_id FROM {table} ORDER BY card_id")),
-                [kept.clone()],
+                strings(
+                    &conn,
+                    &format!("SELECT DISTINCT card_id FROM {table} ORDER BY card_id")
+                ),
+                std::slice::from_ref(kept),
                 "{table}"
             );
         }
@@ -1783,7 +1786,9 @@ mod tests {
         assert_eq!(
             strings(
                 &conn,
-                &format!("SELECT priority || ':' || due_at FROM board_card_meta WHERE card_id = '{id}'")
+                &format!(
+                    "SELECT priority || ':' || due_at FROM board_card_meta WHERE card_id = '{id}'"
+                )
             ),
             [format!("3:{SEED_DUE_AT}")]
         );
@@ -1808,12 +1813,14 @@ mod tests {
             ["Write test:1:0", "Ship:0:1"]
         );
         assert_eq!(
-            strings(&conn, &format!("SELECT author FROM board_comments WHERE card_id = '{id}'")),
+            strings(
+                &conn,
+                &format!("SELECT author FROM board_comments WHERE card_id = '{id}'")
+            ),
             ["user"]
         );
         // Tauri's own writes still work on Native's rows, and cascade them.
         delete_card(&conn, id).unwrap();
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_subtasks"), 0);
     }
-
 }

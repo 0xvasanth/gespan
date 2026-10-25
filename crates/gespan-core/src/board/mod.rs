@@ -1673,13 +1673,20 @@ mod tests {
         .unwrap();
         let read = get_board(&conn, &board.id).unwrap().columns;
         assert_eq!(
-            (read[0].color.as_deref(), read[0].wip_limit, read[0].collapsed),
+            (
+                read[0].color.as_deref(),
+                read[0].wip_limit,
+                read[0].collapsed
+            ),
             (None, None, false)
         );
         assert_eq!(
-            (read[1].color.as_deref(), read[1].wip_limit, read[1].collapsed),
+            (
+                read[1].color.as_deref(),
+                read[1].wip_limit,
+                read[1].collapsed
+            ),
             (Some("d73a4a"), Some(3), true)
         );
     }
-
 }

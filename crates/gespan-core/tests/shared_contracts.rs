@@ -457,21 +457,103 @@ fn opening_the_board_service_creates_exactly_the_v3_tables() {
     // The contract, written out on purpose: changing the schema means
     // changing this list and docs/board-schema.md together.
     let expected: [(&str, &[&str]); 15] = [
-        ("board_activity", &["id", "board_id", "card_id", "kind", "actor", "from_column", "to_column", "detail", "created_at"]),
-        ("board_card_field_values", &["card_id", "field_id", "value_json"]),
+        (
+            "board_activity",
+            &[
+                "id",
+                "board_id",
+                "card_id",
+                "kind",
+                "actor",
+                "from_column",
+                "to_column",
+                "detail",
+                "created_at",
+            ],
+        ),
+        (
+            "board_card_field_values",
+            &["card_id", "field_id", "value_json"],
+        ),
         ("board_card_labels", &["card_id", "label_id"]),
-        ("board_card_links", &["card_id", "kind", "ref", "role", "created_at"]),
-        ("board_card_meta", &["card_id", "priority", "due_at", "start_at", "estimate_minutes", "archived_at", "completed_at"]),
+        (
+            "board_card_links",
+            &["card_id", "kind", "ref", "role", "created_at"],
+        ),
+        (
+            "board_card_meta",
+            &[
+                "card_id",
+                "priority",
+                "due_at",
+                "start_at",
+                "estimate_minutes",
+                "archived_at",
+                "completed_at",
+            ],
+        ),
         ("board_card_projects", &["card_id", "project"]),
-        ("board_card_relations", &["card_id", "related_card_id", "kind", "created_at"]),
-        ("board_cards", &["id", "board_id", "column_id", "number", "title", "body", "position", "link_kind", "link_id", "created_at", "updated_at"]),
-        ("board_columns", &["id", "board_id", "name", "position", "role", "color", "wip_limit", "collapsed"]),
-        ("board_comments", &["id", "card_id", "body", "author", "created_at", "edited_at"]),
-        ("board_fields", &["id", "board_id", "name", "kind", "options_json", "position"]),
-        ("board_labels", &["id", "board_id", "name", "color", "position"]),
+        (
+            "board_card_relations",
+            &["card_id", "related_card_id", "kind", "created_at"],
+        ),
+        (
+            "board_cards",
+            &[
+                "id",
+                "board_id",
+                "column_id",
+                "number",
+                "title",
+                "body",
+                "position",
+                "link_kind",
+                "link_id",
+                "created_at",
+                "updated_at",
+            ],
+        ),
+        (
+            "board_columns",
+            &[
+                "id",
+                "board_id",
+                "name",
+                "position",
+                "role",
+                "color",
+                "wip_limit",
+                "collapsed",
+            ],
+        ),
+        (
+            "board_comments",
+            &["id", "card_id", "body", "author", "created_at", "edited_at"],
+        ),
+        (
+            "board_fields",
+            &["id", "board_id", "name", "kind", "options_json", "position"],
+        ),
+        (
+            "board_labels",
+            &["id", "board_id", "name", "color", "position"],
+        ),
         ("board_schema_migrations", &["version", "applied_at"]),
-        ("board_subtasks", &["id", "card_id", "title", "done", "position", "converted_card_id"]),
-        ("boards", &["id", "name", "card_seq", "created_at", "updated_at"]),
+        (
+            "board_subtasks",
+            &[
+                "id",
+                "card_id",
+                "title",
+                "done",
+                "position",
+                "converted_card_id",
+            ],
+        ),
+        (
+            "boards",
+            &["id", "name", "card_seq", "created_at", "updated_at"],
+        ),
     ];
     let tables = strings(
         "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'board%' ORDER BY name",
@@ -479,7 +561,10 @@ fn opening_the_board_service_creates_exactly_the_v3_tables() {
     let mut shared: Vec<&str> = gespan_board_schema::BOARD_TABLES.to_vec();
     shared.push("board_schema_migrations");
     shared.sort();
-    assert_eq!(tables, shared, "no board_native_* tables on a fresh database");
+    assert_eq!(
+        tables, shared,
+        "no board_native_* tables on a fresh database"
+    );
     assert_eq!(
         tables,
         expected.iter().map(|(name, _)| *name).collect::<Vec<_>>()

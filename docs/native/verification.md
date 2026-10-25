@@ -70,12 +70,15 @@ cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core
 
 ## Board — October 24, 2026
 
-The native Board shares the Tauri app's `boards`, `board_columns`,
-`board_cards` and `board_activity` tables; `crates/gespan-core/tests/shared_contracts.rs` pins the
-DDL, error strings and the `gespan.boardEnabled` key to Tauri, and checks that
-anything else is a `board_native_*` table. Task projects, labels, priority, due
-date, subtasks and comments live only in those native tables. Deleting a card
-in either app removes its own rows there, including which labels it carries;
+The native Board and the Tauri app share every board table in `gespan.db`
+through schema v3, owned by `crates/board-schema` (see
+[board schema](../board-schema.md)). `crates/gespan-core/tests/shared_contracts.rs`
+pins the table and column list, error strings and the `gespan.boardEnabled`
+key, checks that neither app writes board DDL of its own, and runs the
+cross-app fixtures. Task projects, labels, priority, due date, subtasks and
+comments live in the shared v3 tables; data from older Native builds'
+`board_native_*` tables is copied in once on the first v3 open. Deleting a
+card in either app removes its rows there, including which labels it carries;
 the board's label definitions stay until the board is deleted. The Board setting is on by default in both apps.
 Automated coverage: storage, ordering, extras and concurrent writes (core);
 auto-move and turn rules (core); the setting and app view; the one-board view
