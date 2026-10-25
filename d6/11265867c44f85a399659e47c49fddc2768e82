@@ -1,0 +1,27 @@
+src/features/sessions/dictation/useDictation.test.ts
+  s_cb714e3c395324::t_f2bb597d6e9784 43-66,387-389,391-398,400-403,405-452
+src/features/sessions/dictation/useDictation.ts
+  s_cb714e3c395324::t_50248d9b10cc0a 26-27,64-84,152,175-177,180,188,197,223-225,277,328
+src/features/sessions/ui/Composer.dictation.test.ts
+  s_cb714e3c395324::t_4a7ff6e4579b09 215-291
+src/features/sessions/ui/Composer.tsx
+  s_cb714e3c395324::t_14640e2e5b0146 457-469,1521-1526,2408
+src/features/sessions/ui/DictationBar.tsx
+  s_cb714e3c395324::t_03302713fe0ef8 153-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d611265867c44f85a399659e47c49fddc2768e82",
+  "prompts": {},
+  "sessions": {
+    "s_cb714e3c395324": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9490eb45-d269-459d-a64c-099ef06fd161",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
