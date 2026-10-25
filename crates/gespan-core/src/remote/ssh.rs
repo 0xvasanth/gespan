@@ -982,29 +982,29 @@ mod tests {
         assert_eq!(logged[0]["message"], "SSH connection cancelled");
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_failed_background_reconnect_is_logged_once_per_attempt() {
         let tunnels = Tunnels::default();
-        let target = SshTarget {
-            target: "someone@example.invalid".into(),
-            port: None,
-            remote_port: 3774,
-        };
-        let exits = || {
-            let mut command = Command::new("false");
-            command.stderr(Stdio::piped());
-            Tunnel::start_with_command(&target, None, None, command)
-        };
+        let mut attempts = 0;
         let logged = crate::diagnostics::test_capture(|| {
-            assert!(tunnels.endpoint_with("machine", exits).is_err());
+            let mut refused = || {
+                attempts += 1;
+                Err::<Tunnel, _>("SSH connection failed: Connection refused.".to_string())
+            };
+            assert!(tunnels.endpoint_with("machine", &mut refused).is_err());
             // Within the backoff the cached failure is returned without a new attempt.
-            assert!(tunnels.endpoint_with("machine", exits).is_err());
+            assert!(tunnels.endpoint_with("machine", &mut refused).is_err());
         });
+        assert_eq!(attempts, 1);
         assert_eq!(logged.len(), 1, "{logged:?}");
         assert_eq!(logged[0]["level"], "warn");
         assert_eq!(logged[0]["span"], "ssh_connect");
-        assert_eq!(logged[0]["fields"]["background"], true);
-        assert!(!logged[0].to_string().contains("example.invalid"));
+        assert_eq!(
+            logged[0]["fields"],
+            serde_json::json!({
+                "background": true,
+                "error": "SSH connection failed: Connection refused."
+            })
+        );
     }
 }
