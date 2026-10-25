@@ -1,0 +1,25 @@
+crates/gespan-redact/src/patterns.rs
+  s_430b45d89d3c54::t_2fb37213967524 3-43,47-51,56,62-69
+  s_430b45d89d3c54::t_844645645fe22e 1-2,44-46,52-55,57-61,70-190
+  s_430b45d89d3c54::t_fbffb10ed1f974 191-214
+crates/gespan-redact/src/lib.rs
+  s_430b45d89d3c54::t_b7fc734fbf7346 10,30-33,91,95-116
+  s_430b45d89d3c54::t_2fb37213967524 41-42,61-67,76-79
+  s_430b45d89d3c54::t_23293efa5f5286 117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b42c010a6f16630e4a2ed51268e71b2b2cd838ab",
+  "prompts": {},
+  "sessions": {
+    "s_430b45d89d3c54": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07486962-5f99-445f-93ca-0c706f185048",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
