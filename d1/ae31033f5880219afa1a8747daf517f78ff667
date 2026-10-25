@@ -1,0 +1,88 @@
+src/features/inbox/hooks/useInboxUnseen.ts
+  s_938a6e0c93b076::t_c6c7ab0ac29090 264
+  s_938a6e0c93b076::t_af269d36c45b36 1
+crates/gespan-core/src/session_groups.rs
+  s_938a6e0c93b076::t_8664cb03ec3a67 292-293,295,303-367,529-530,539-540,552,561,571-572
+  s_938a6e0c93b076::t_c744ab2fb8a3a0 3
+  s_938a6e0c93b076::t_8356f8375c401a 368,370,407,517-528,531-538,541-551,553-560,562-570,573-574,579
+src/app/shell/Sidebar.tsx
+  s_938a6e0c93b076::t_c6c7ab0ac29090 5055-5056
+  s_938a6e0c93b076::t_af269d36c45b36 148-151
+crates/gespan-gpui/src/shell/notifications.rs
+  s_938a6e0c93b076::t_c744ab2fb8a3a0 1258
+src/features/inbox/model/linkedSessionUpdates.ts
+  s_938a6e0c93b076::t_9104ef40d980b5 10
+  s_938a6e0c93b076::t_1153cdb7143a67 30
+  s_938a6e0c93b076::t_c6c7ab0ac29090 1-4,22,32-35,49
+src/features/sessions/data/sessionStoreLinkedWorkItem.test.ts
+  s_938a6e0c93b076::t_837c236fd877ae 3-6,43-94
+  s_938a6e0c93b076::t_f975458b9c7472 95
+src/features/sessions/ui/SessionCardPreview.tsx
+  s_938a6e0c93b076::t_c6c7ab0ac29090 132
+  s_938a6e0c93b076::t_af269d36c45b36 8
+src/features/sessions/data/sessionStore.ts
+  s_938a6e0c93b076::t_c6c7ab0ac29090 352-355
+  s_938a6e0c93b076::t_837c236fd877ae 1080-1082,1484-1485,1603-1604
+  s_938a6e0c93b076::t_af269d36c45b36 49,305-344
+  s_938a6e0c93b076::t_c3d2ffff84a544 345,1605
+crates/gespan-gpui/src/notifications/github_activity.rs
+  s_938a6e0c93b076::t_c744ab2fb8a3a0 273-275,349
+  s_938a6e0c93b076::t_55d67b41f7cbaa 4,28,357-359
+crates/gespan-gpui/src/inbox/ui.rs
+  s_938a6e0c93b076::t_e98e1076f84788 656-664
+src/features/sessions/model/sessionWorkItem.ts
+  s_938a6e0c93b076::t_9104ef40d980b5 8-12,143,154
+  s_938a6e0c93b076::t_1153cdb7143a67 165
+src/app/App.tsx
+  s_938a6e0c93b076::t_98251749eb6aed 12317-12318
+  s_938a6e0c93b076::t_c6c7ab0ac29090 4924
+  s_938a6e0c93b076::t_5c8192b8e83fe4 522,923
+  s_938a6e0c93b076::t_af269d36c45b36 531
+crates/gespan-gpui/src/shell/session_groups.rs
+  s_938a6e0c93b076::t_c744ab2fb8a3a0 1085-1089,1641,1683,2281
+  s_938a6e0c93b076::t_e98e1076f84788 7-8
+src/features/sessions/ui/LinkSessionWorkItemDialog.tsx
+  s_938a6e0c93b076::t_c6c7ab0ac29090 17-19
+src/features/inbox/ui/InboxView.tsx
+  s_938a6e0c93b076::t_9104ef40d980b5 114,393,1248
+crates/gespan-gpui/src/shell/automation_runs.rs
+  s_938a6e0c93b076::t_55d67b41f7cbaa 715
+src/features/sessions/model/session.ts
+  s_938a6e0c93b076::t_837c236fd877ae 457
+  s_938a6e0c93b076::t_c6c7ab0ac29090 465-474
+  s_938a6e0c93b076::t_16020eb1cb9cd7 422-445,452-456,458-464,475-479
+  s_938a6e0c93b076::t_e45ada6f6c3811 480
+crates/gespan-core/src/inbox.rs
+  s_938a6e0c93b076::t_c744ab2fb8a3a0 140-141
+  s_938a6e0c93b076::t_e98e1076f84788 14-16
+src/features/sessions/model/sessionWorkItem.test.ts
+  s_938a6e0c93b076::t_837c236fd877ae 1,12-13,237-282
+  s_938a6e0c93b076::t_15ec733b7915c6 283
+src/features/sessions/data/sessionHistory.ts
+  s_938a6e0c93b076::t_c6c7ab0ac29090 224-225
+  s_938a6e0c93b076::t_af269d36c45b36 10
+crates/gespan-gpui/src/shell/app_views.rs
+  s_938a6e0c93b076::t_55d67b41f7cbaa 610
+crates/gespan-core/src/store.rs
+  s_938a6e0c93b076::t_c223002b376cf2 1301,1303-1304
+crates/gespan-core/tests/shared_contracts.rs
+  s_938a6e0c93b076::t_2e731b7b0eb2be 463-478
+tests/fixtures/shared/ticket-work-item.json
+  s_938a6e0c93b076::t_58e798e573461c 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1ae31033f5880219afa1a8747daf517f78ff667",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
