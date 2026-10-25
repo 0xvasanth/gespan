@@ -113,7 +113,6 @@ fn quit(cx: &mut App) {
         .spawn(async { gespan_core::process::shutdown_all() });
     cx.spawn(async move |cx| {
         shutdown.await;
-        gespan_core::diagnostics::flush();
         cx.update(|cx| cx.quit());
     })
     .detach();
@@ -170,6 +169,16 @@ fn diagnostics_config(use_gespan: bool) -> gespan_core::diagnostics::Config {
         version: notifications::updater::version().into(),
         channel,
     }
+}
+/// Every quit reaches GPUI's shutdown, whether it starts from Quit, the
+/// menu-bar extra, the Dock or the OS; `run` never returns on macOS, so the
+/// diagnostics guard is not dropped there.
+fn flush_logs_on_quit(cx: &mut App, flush: fn()) {
+    cx.on_app_quit(move |_| {
+        flush();
+        async {}
+    })
+    .detach();
 }
 /// `std::process::exit` skips destructors, so buffered log lines are flushed
 /// first.
@@ -402,6 +411,7 @@ fn main() {
     gpui::Application::with_platform(platform)
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
+            flush_logs_on_quit(cx, gespan_core::diagnostics::flush);
             #[cfg(debug_assertions)]
             dev_reload::install(cx);
             cx.set_global(title_raster);
@@ -520,6 +530,18 @@ mod native_tests {
                         .cached(StyleRefinement::default().w_full().h(px(76.))),
                 )
         }
+    }
+    static FLUSHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    fn count_flush() {
+        FLUSHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    #[gpui::test]
+    fn every_quit_path_flushes_logs(cx: &mut TestAppContext) {
+        cx.update(|cx| flush_logs_on_quit(cx, count_flush));
+        assert_eq!(FLUSHES.load(std::sync::atomic::Ordering::SeqCst), 0);
+        // GPUI's shutdown, which menu, Dock and AppKit quits all reach.
+        cx.quit();
+        assert_eq!(FLUSHES.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
     #[test]
     fn development_data_logs_to_its_own_folder() {
