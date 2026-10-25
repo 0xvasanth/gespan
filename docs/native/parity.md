@@ -70,10 +70,9 @@ Known differences:
 | "Open cards in" setting | Board header menu (setting `board-card-open`) | Settings → General (flag `gespan.boardCardOpen`) |
 | Subtask reorder | Menu only (Move up, Move down) | Menu, plus Alt+↑ and Alt+↓ |
 | Keyboard dragging | Space lifts, arrows move, Space or Enter drops, Escape cancels | Same keys, through dnd-kit |
-| Collapsed column strip | Name stacks top to bottom | Name is not stacked |
+| Collapsed column strip | Stacks the letters one per line (first 18 characters) | Rotates the text (vertical writing mode) |
 | "Pick a date…" on a card face | Opens the drawer's date picker | Shows a date field in the menu |
 | Copy link | Copies `gespan://board/{board}/card/{card}`; the app does not open these links yet | Same; not opened yet |
-
 
 ## Platform and distribution
 
