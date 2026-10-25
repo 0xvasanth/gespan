@@ -374,6 +374,10 @@ pub fn report_roots(projects: &[String], others: &[String]) -> Vec<String> {
     );
     candidates.extend(others.iter().cloned());
     candidates.extend(found);
+    let spellings: Vec<(PathBuf, PathBuf)> = local
+        .iter()
+        .filter_map(|project| spelling(Path::new(project.as_str())))
+        .collect();
     let mut roots: Vec<String> = Vec::new();
     let mut add = |root: String| {
         if !root.is_empty() && !roots.contains(&root) {
@@ -381,17 +385,42 @@ pub fn report_roots(projects: &[String], others: &[String]) -> Vec<String> {
         }
     };
     for root in candidates {
-        if crate::files::remote::is_remote(Path::new(&root)) {
+        let path = Path::new(&root);
+        if crate::files::remote::is_remote(path) {
             add(root);
-        } else if Path::new(&root).is_absolute() {
-            let real = real_path(Path::new(&root));
-            let other = private_twin(&root);
+        // `/home/bob/acme` from another machine isn't absolute on Windows.
+        } else if path.is_absolute() || root.starts_with('/') {
+            let mut also: Vec<String> = real_path(path).into_iter().collect();
+            also.extend(private_twin(&root));
+            for (one, other) in &spellings {
+                for (from, to) in [(one, other), (other, one)] {
+                    if let Ok(rest) = path.strip_prefix(from) {
+                        also.push(to.join(rest).to_string_lossy().into_owned());
+                    }
+                }
+            }
             add(root);
-            add(real.unwrap_or_default());
-            add(other.unwrap_or_default());
+            also.into_iter().for_each(&mut add);
         }
     }
     roots
+}
+
+/// The folders where a project's own spelling and its real path part, as
+/// `(spelled, real)`: a linked parent folder, Windows' short `RUNNER~1`
+/// names, or macOS's `/var` for `/private/var`. Git reports real paths, but
+/// the app may log a worktree in the project's spelling, or the other way
+/// round.
+fn spelling(project: &Path) -> Option<(PathBuf, PathBuf)> {
+    let mut spelled = project.to_path_buf();
+    let mut real = PathBuf::from(real_path(project)?);
+    while spelled.file_name().is_some() && spelled.file_name() == real.file_name() {
+        if !(spelled.pop() && real.pop()) {
+            return None;
+        }
+    }
+    (spelled != real && spelled.file_name().is_some() && real.file_name().is_some())
+        .then_some((spelled, real))
 }
 
 /// The resolved path, without Windows' `\\?\` prefix, which logs never use.
@@ -1105,6 +1134,43 @@ mod tests {
                     p(&feature)
                 ),
                 format!(r#"{{"message":"opened {}/src/lib.rs"}}"#, p(&real)),
+            ],
+            &redactor_for(&Machine::default(), &roots),
+        );
+        assert_hidden(&logs, &["acme-repo", "feature-x"]);
+    }
+
+    /// Git reports real paths, but the app may log a worktree in the
+    /// project's own spelling: here a linked parent folder, as Windows' short
+    /// `RUNNER~1` names or macOS's `/var` for `/private/var` are.
+    #[cfg(unix)]
+    #[test]
+    fn worktrees_are_hidden_in_the_projects_own_spelling() {
+        let machine = tempfile::tempdir().unwrap();
+        let real_parent = machine.path().join("long-name");
+        let repo_dir = real_parent.join("acme-repo");
+        repo(&repo_dir);
+        let short = machine.path().join("short");
+        std::os::unix::fs::symlink(&real_parent, &short).unwrap();
+        let p = |path: &Path| path.to_string_lossy().into_owned();
+        let beside = real_parent.join("acme-repo-worktrees").join("feature-x");
+        git(
+            &repo_dir,
+            &["worktree", "add", "-q", "-b", "feature-x", &p(&beside)],
+        );
+        let project = short.join("acme-repo").join("app");
+        let roots = report_roots(&[p(&project)], &[]);
+        let spelled = short.join("acme-repo-worktrees").join("feature-x");
+        let logs = scrub_logs(
+            &[
+                format!(
+                    r#"{{"message":"git failed in {}/src/lib.rs"}}"#,
+                    p(&spelled)
+                ),
+                format!(
+                    r#"{{"message":"read {}/src/lib.rs"}}"#,
+                    p(&short.join("acme-repo"))
+                ),
             ],
             &redactor_for(&Machine::default(), &roots),
         );
