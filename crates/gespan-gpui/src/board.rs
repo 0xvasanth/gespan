@@ -537,7 +537,9 @@ impl BoardView {
                     .count();
                 (live, 0)
             });
-        let count = live + archived;
+        // A card whose delete the toast is holding goes when the column does.
+        let held = self.undo.pending_delete_column() == Some(column_id);
+        let count = live + archived - usize::from(held && archived > 0);
         (count > 0).then(|| {
             let plural = if count == 1 { "card" } else { "cards" };
             format!("Move or delete its {count} {plural} first")
@@ -666,6 +668,9 @@ impl BoardView {
             return;
         }
         self.menu = None;
+        if self.undo.pending_delete_column() == Some(column_id.as_str()) {
+            self.commit_pending(cx);
+        }
         self.write(cx, |service| service.column_delete(&column_id));
     }
 

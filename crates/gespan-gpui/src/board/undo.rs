@@ -65,6 +65,14 @@ impl UndoController {
     pub(crate) fn pending_delete(&self) -> Option<&str> {
         self.toast.as_ref()?.undo.as_ref()?.pending_delete()
     }
+
+    /// The column the held delete's card was archived from, if any.
+    pub(crate) fn pending_delete_column(&self) -> Option<&str> {
+        match self.toast.as_ref()?.undo.as_ref()? {
+            Undo::Delete { column_id, .. } => Some(column_id),
+            _ => None,
+        }
+    }
 }
 
 /// What the toast says when an undo hit a store error.
@@ -110,6 +118,28 @@ fn put_back(
         }
     }
     first
+}
+
+/// Carry out a held delete, but only while the card is still archived: the
+/// other app, another window or an agent may have restored it meanwhile, and
+/// a live card is never deleted. A card already gone is left alone.
+fn delete_if_archived(service: &mut Service, card_id: &str) -> Result<(), String> {
+    let card = match service.card(card_id) {
+        Ok(card) => card,
+        Err(error) if error == "Card not found" => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let archived = service
+        .archived(&card.board_id)?
+        .iter()
+        .any(|archived| archived.id == card_id);
+    if !archived {
+        return Ok(());
+    }
+    match service.card_delete(card_id) {
+        Err(error) if error != "Card not found" => Err(error),
+        _ => Ok(()),
+    }
 }
 
 /// Run an inverse. Restores everything it can and returns the first error.
@@ -193,11 +223,9 @@ impl BoardView {
         if let Some(card_id) = toast.undo.as_ref().and_then(Undo::pending_delete) {
             match self
                 .service()
-                .and_then(|service| service.card_delete(card_id))
+                .and_then(|service| delete_if_archived(service, card_id))
             {
-                // Already gone (deleted elsewhere, or its board was): nothing to do.
                 Ok(()) => {}
-                Err(error) if error == "Card not found" => {}
                 Err(error) => self.error = Some(error),
             }
         }

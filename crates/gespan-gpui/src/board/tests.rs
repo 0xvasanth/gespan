@@ -3353,14 +3353,16 @@ fn archive_view_restores_and_deletes_forever(cx: &mut TestAppContext) {
     let f = seeded(cx, &["A", "B", "C"]);
     let (a, b) = (card_id(&f, cx, "A"), card_id(&f, cx, "B"));
     let mut service = Service::open(&f.db).unwrap();
-    service.archive(&a).unwrap();
+    // B (#2) is archived before A (#1): the order follows archive time, not number.
     service.archive(&b).unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    service.archive(&a).unwrap();
     reload(&f, cx);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-archive");
     visual.refresh().unwrap();
     assert!(visual.debug_bounds("board-archive-panel").is_some());
-    // Newest first: B was archived last.
+    // Newest first: A was archived last.
     let listed: Vec<String> = f
         .window
         .read_with(visual, |view, _| {
@@ -3370,22 +3372,22 @@ fn archive_view_restores_and_deletes_forever(cx: &mut TestAppContext) {
                 .collect()
         })
         .unwrap();
-    assert_eq!(listed, ["B", "A"]);
+    assert_eq!(listed, ["A", "B"]);
 
-    // Restore puts B back at the end of its column.
+    // Restore puts A back at the end of its column.
     click(visual, "board-archive-restore-0");
-    assert_eq!(titles_in(&f, visual, "Backlog"), ["C", "B"]);
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["C", "A"]);
 
     // Delete forever asks first; Cancel keeps it.
     click(visual, "board-archive-delete-0");
     assert!(visual.has_pending_prompt());
     visual.simulate_prompt_answer("Cancel");
     visual.run_until_parked();
-    assert!(card_exists(&f, &a));
+    assert!(card_exists(&f, &b));
     click(visual, "board-archive-delete-0");
     visual.simulate_prompt_answer("Delete forever");
     visual.run_until_parked();
-    assert!(!card_exists(&f, &a));
+    assert!(!card_exists(&f, &b));
     visual.refresh().unwrap();
     assert!(visual.debug_bounds("board-archive-empty").is_some());
 
@@ -3419,4 +3421,53 @@ fn a_pending_delete_is_not_listed_in_the_archive_view(cx: &mut TestAppContext) {
     // Undo brings it back to the board, still not into the archive.
     click(visual, "board-undo");
     assert_eq!(titles_in(&f, visual, "Backlog"), ["A"]);
+}
+
+#[gpui::test]
+fn a_held_delete_restored_elsewhere_is_never_deleted(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let a = card_id(&f, cx, "A");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    delete_from_drawer(&f, visual, 1);
+    // The other app restores it during the window.
+    Service::open(&f.db).unwrap().unarchive(&a).unwrap();
+    visual.executor().advance_clock(Duration::from_secs(9));
+    visual.run_until_parked();
+    assert!(card_exists(&f, &a), "a live card is never hard-deleted");
+    assert!(archived_ids(&f, visual).is_empty());
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B", "A"]);
+    f.window
+        .read_with(visual, |view, _| assert!(view.error.is_none()))
+        .unwrap();
+
+    // The same holds when a new action, not expiry, commits it.
+    let b = card_id(&f, visual, "B");
+    delete_from_drawer(&f, visual, 2);
+    Service::open(&f.db).unwrap().unarchive(&b).unwrap();
+    click(visual, "board-card-menu-1");
+    click(visual, "menu-action-move-3");
+    assert!(card_exists(&f, &b));
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B"]);
+}
+
+#[gpui::test]
+fn a_held_delete_does_not_block_deleting_its_column(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Only"]);
+    let only = card_id(&f, cx, "Only");
+    let backlog = column_id(&f, cx, "Backlog");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    delete_from_drawer(&f, visual, 1);
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(view.delete_blocked(&backlog), None);
+        })
+        .unwrap();
+    open_column_menu(visual, 0);
+    click(visual, "board-column-delete");
+    assert_eq!(detail(&f, visual).columns.len(), 3);
+    assert!(
+        !card_exists(&f, &only),
+        "the held delete is carried out first"
+    );
+    assert_eq!(toast(&f, visual), None);
 }
