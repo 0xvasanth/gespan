@@ -1,0 +1,20 @@
+crates/gespan-core/src/provider_boards/linear.rs
+  s_d0bb11a8df1d3b::t_75b3b56a23b649 3,101-125,128,132,134-153,157,303-314,320
+  s_d0bb11a8df1d3b::t_96b20265307ab9 1070-1143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3be2399ad668d8f5edfa476b04711836ae52b8af",
+  "prompts": {},
+  "sessions": {
+    "s_d0bb11a8df1d3b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dbcfaf3-dd80-40dd-9425-3e8d132ef8a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+crates/gespan-core/src/provider_boards.rs
+  s_d0bb11a8df1d3b::t_52095adf2a7405 45-49
+crates/gespan-core/src/provider_boards/linear.rs
+  s_d0bb11a8df1d3b::t_04a3c20c6a43a1 790-791
+  s_d0bb11a8df1d3b::t_20203a0e97266e 916,921-922,927,933-938,942-949,951-954,1010,1016-1019,1157-1159,1166-1168,1170,1172,1178-1205,1218,1227-1234,1248,1355-1362,1368-1374,1663,1675,1681
+  s_d0bb11a8df1d3b::t_52095adf2a7405 129-131,2492-2493
+  s_d0bb11a8df1d3b::t_7eee71fc6cb76c 2109-2113,2182-2194,2198-2232,2245,2256,2258,2261-2299,2324,2349-2350,2362
+  s_d0bb11a8df1d3b::t_ec595353fe77ad 2391,2397-2401,2423-2424
+  s_d0bb11a8df1d3b::t_cc39a566aa3b7b 2425
+docs/superpowers/plans/2026-10-25-linear-writes.md
+  s_d0bb11a8df1d3b::t_34c76842629d03 136-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "38f0dbc06ade7132d95589967902826ef72c4d97",
+  "prompts": {},
+  "sessions": {
+    "s_d0bb11a8df1d3b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dbcfaf3-dd80-40dd-9425-3e8d132ef8a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
