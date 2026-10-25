@@ -162,6 +162,8 @@ fn leaf(profile: Profile) -> BoxedStrategy<Block> {
             "js extra",
             "",
             "gespan-html",
+            "gespan\\-adf",
+            "gespan&#45;html",
         ])),
         "[a-z `~\n]{0,12}",
     )

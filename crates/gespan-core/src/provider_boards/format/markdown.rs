@@ -501,12 +501,25 @@ fn render_block(block: &Block, bullet_alt: bool, ordered_alt: bool) -> Vec<Strin
 
 /// A code block's info string. A real code block whose language is a kept-content
 /// fence gets a second word, so it never reads back as kept content.
+///
+/// `\` and `&` are escaped because CommonMark decodes escapes and character
+/// references in info strings: `gespan\-html` or `gespan&#45;html` would
+/// otherwise read back as the fence itself.
 fn fenced_info(language: Option<&str>) -> String {
-    match language {
-        Some(language) if Source::from_fence(language).is_some() => format!("{language} code"),
-        Some(language) => language.to_string(),
-        None => String::new(),
+    let Some(language) = language else {
+        return String::new();
+    };
+    let mut info = String::with_capacity(language.len());
+    for c in language.chars() {
+        if matches!(c, '\\' | '&') {
+            info.push('\\');
+        }
+        info.push(c);
     }
+    if Source::from_fence(language).is_some() {
+        info.push_str(" code");
+    }
+    info
 }
 
 fn list_item(mut lines: Vec<String>, marker: &str) -> Vec<String> {
@@ -1284,6 +1297,30 @@ mod tests {
             parse("```gespan-html extra\n<b>x</b>\n```").blocks,
             vec![code("gespan-html")]
         );
+    }
+
+    #[test]
+    fn code_languages_that_decode_to_a_fence_stay_code() {
+        // CommonMark decodes escapes and entities in info strings.
+        for language in [
+            "gespan\\-html",
+            "gespan&#45;html",
+            "gespan&#x2d;adf",
+            "a\\b&amp;c",
+        ] {
+            let doc = normalize(Doc {
+                blocks: vec![Block::Code {
+                    language: Some(language.into()),
+                    code: "<b>x</b>".into(),
+                }],
+            });
+            assert_eq!(
+                round_trip(&doc),
+                doc,
+                "{language} rendered as {:?}",
+                render(&doc)
+            );
+        }
     }
 
     #[test]
