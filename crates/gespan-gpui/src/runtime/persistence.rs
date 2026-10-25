@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn turn_logs_run_inside_an_agent_session_span() {
         let (id, provider, lines) = logged_rejected_turn(false);
-        let started = line(&lines, "agent session started").expect("a start line");
+        let started = line(&lines, "agent turn started").expect("a start line");
         assert_eq!(started["level"], "info");
         assert_eq!(started["span"], "agent_session");
         assert_eq!(started["session_id"], id);
@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn stopped_turn_logs_no_failure() {
         let (_, _, lines) = logged_rejected_turn(true);
-        assert!(line(&lines, "agent session started").is_some());
+        assert!(line(&lines, "agent turn started").is_some());
         assert!(
             line(&lines, "agent turn failed").is_none(),
             "a user stop is not a failure: {lines:?}"

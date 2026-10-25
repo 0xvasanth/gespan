@@ -796,3 +796,47 @@ fn host_context_and_latest_turn_metrics_use_actual_session_fields() {
     assert_eq!(context.unwrap().window, None);
     assert!(metrics.is_none());
 }
+
+/// Runs a remote turn whose session binding is gone, so it fails at once.
+fn logged_unbound_remote_turn(cancelled: bool) -> Vec<Value> {
+    let host = Host::new(|_| None);
+    let dir = Directory::new();
+    let store = dir.store();
+    let summary = locked(&store).unwrap().create("codex", "/project").unwrap();
+    let (tx, _rx) = async_channel::bounded(8);
+    let (_control, controls) = std::sync::mpsc::channel();
+    crate::log_capture::capture(|| {
+        run_with_client(
+            host.client.clone(),
+            summary,
+            "Prompt".into(),
+            Settings::default(),
+            controls,
+            store.clone(),
+            Arc::new(AtomicBool::new(cancelled)),
+            tx,
+        )
+    })
+}
+
+#[test]
+fn failed_remote_turn_logs_the_failure() {
+    let lines = logged_unbound_remote_turn(false);
+    let failed = lines
+        .iter()
+        .find(|line| line["message"] == "agent turn failed")
+        .expect("a failure line");
+    assert_eq!(failed["level"], "warn");
+    assert_eq!(failed["fields"]["error"], "Remote session no longer exists");
+}
+
+#[test]
+fn stopped_remote_turn_logs_no_failure() {
+    let lines = logged_unbound_remote_turn(true);
+    assert!(
+        lines
+            .iter()
+            .all(|line| line["message"] != "agent turn failed"),
+        "{lines:?}"
+    );
+}

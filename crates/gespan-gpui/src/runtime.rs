@@ -88,7 +88,8 @@ pub(crate) fn run_turn(
     tx: async_channel::Sender<Update>,
 ) {
     let remote = summary.cwd.starts_with("remote://");
-    // Everything this turn logs, here and in gespan-core, names its session.
+    // Everything this thread logs during the turn, here and in gespan-core,
+    // names its session.
     let _session = tracing::info_span!(
         "agent_session",
         session_id = summary.id,
@@ -96,7 +97,7 @@ pub(crate) fn run_turn(
         remote,
     )
     .entered();
-    tracing::info!("agent session started");
+    tracing::info!("agent turn started");
     if remote {
         remote::run(summary, prompt, settings, controls, store, cancel, tx);
         return;
@@ -916,7 +917,7 @@ fn run_turn_using(
         });
     }
     if !cancelled && let Err(error) = &result {
-        tracing::warn!(%error, "agent turn failed");
+        log_turn_failure(error);
     }
     let succeeded = history_loaded && result.is_ok();
     let (start, rows, mut status) = if !history_loaded {
@@ -1013,6 +1014,21 @@ fn run_turn_using(
     });
 }
 
+/// The most of a turn error the log keeps. Provider errors carry up to 8 KB
+/// of the CLI's stderr after their first line; that stays in the transcript.
+const LOGGED_ERROR_CHARS: usize = 200;
+
+/// Logs a failed turn with the first line of its error, capped, and its
+/// full length.
+pub(crate) fn log_turn_failure(error: &str) {
+    let first = error.lines().next().unwrap_or_default();
+    let mut logged: String = first.chars().take(LOGGED_ERROR_CHARS).collect();
+    if logged.len() < first.len() {
+        logged.push('…');
+    }
+    tracing::warn!(error = %logged, error_len = error.len(), "agent turn failed");
+}
+
 /// checkpointEdits.ts's sessionEditPaths: files named by successful edit tools.
 /// Flip tools still Running at turn end to Cancelled or Failed, and forget their
 /// live elapsed. Returns the first row changed.
@@ -1088,6 +1104,30 @@ fn shlex_quote(text: &str) -> String {
 mod tests {
     use super::*;
     use gespan_core::tool::{ToolCall, ToolState, live};
+
+    #[test]
+    fn turn_failures_log_only_the_first_line_of_the_error() {
+        let error = "Provider exited before completing the turn.\nAuthorization: Bearer sk-secret";
+        let lines = crate::log_capture::capture(|| log_turn_failure(error));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["level"], "warn");
+        assert_eq!(lines[0]["message"], "agent turn failed");
+        assert_eq!(
+            lines[0]["fields"]["error"],
+            "Provider exited before completing the turn."
+        );
+        assert_eq!(lines[0]["fields"]["error_len"], error.len());
+        assert!(!lines[0].to_string().contains("sk-secret"));
+    }
+
+    #[test]
+    fn long_turn_failure_lines_are_capped_on_a_character_boundary() {
+        let error = "é".repeat(500);
+        let lines = crate::log_capture::capture(|| log_turn_failure(&error));
+        let logged = lines[0]["fields"]["error"].as_str().unwrap();
+        assert_eq!(logged, format!("{}…", "é".repeat(200)));
+        assert_eq!(lines[0]["fields"]["error_len"], error.len());
+    }
 
     fn tool_row(id: &str, state: ToolState) -> Row {
         let mut call = ToolCall::new(id, "Bash");

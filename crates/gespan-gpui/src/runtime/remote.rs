@@ -484,6 +484,7 @@ pub(crate) fn run(
             client, summary, prompt, settings, controls, store, cancel, tx,
         ),
         Err(error) => {
+            crate::runtime::log_turn_failure(&error);
             let _ = tx.send_blocking(update(error, true));
         }
     }
@@ -783,6 +784,9 @@ pub(crate) fn run_with_client(
         Ok(())
     })();
     if let Err(error) = result {
+        if !cancel.load(Ordering::Relaxed) {
+            crate::runtime::log_turn_failure(&error);
+        }
         let mut next = update(error, true);
         // Every valid snapshot was already published. An empty error patch
         // preserves any optimistic prompt awaiting a host receipt.
