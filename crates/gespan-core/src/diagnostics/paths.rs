@@ -24,7 +24,11 @@ pub(crate) fn log_dir_for(
     os: &str,
     env: impl Fn(&str) -> Option<OsString>,
 ) -> PathBuf {
-    let var = |name: &str| env(name).filter(|value| !value.is_empty()).map(PathBuf::from);
+    let var = |name: &str| {
+        env(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
     let home = || var("HOME").unwrap_or_default();
     let dev = channel == Channel::Dev;
     match os {
@@ -43,7 +47,11 @@ pub(crate) fn log_dir_for(
             .join("logs"),
         _ => var("XDG_STATE_HOME")
             .unwrap_or_else(|| home().join(".local/state"))
-            .join(if dev { "gespan-native-dev" } else { "gespan-native" })
+            .join(if dev {
+                "gespan-native-dev"
+            } else {
+                "gespan-native"
+            })
             .join("logs"),
     }
 }
