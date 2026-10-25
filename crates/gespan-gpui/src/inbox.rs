@@ -89,6 +89,7 @@ pub(crate) struct Inbox {
     connect_provider: Option<String>,
     connect_url: Entity<Input>,
     connect_email: Entity<Input>,
+    connect_workspace: Entity<Input>,
     connect_token: Entity<Input>,
     connecting: bool,
     connect_error: Option<String>,
@@ -150,6 +151,8 @@ impl Inbox {
         let comment = cx.new(Input::inbox_comment);
         let connect_url = cx.new(|cx| Input::field("Instance URL", "https://", content(0.4), cx));
         let connect_email = cx.new(|cx| Input::field("Email", "you@example.com", content(0.4), cx));
+        let connect_workspace =
+            cx.new(|cx| Input::field("Workspace", "Workspace slug", content(0.4), cx));
         let connect_token =
             cx.new(|cx| Input::field("API token", "Personal access token", content(0.4), cx));
         let diff_view = cx.new(DiffView::new);
@@ -263,6 +266,7 @@ impl Inbox {
             connect_provider: None,
             connect_url,
             connect_email,
+            connect_workspace,
             connect_token,
             connecting: false,
             connect_error: None,
@@ -784,6 +788,8 @@ impl Inbox {
             status.organization
         } else if provider == "gitlab" {
             "https://gitlab.com".into()
+        } else if provider == "plane" {
+            "https://api.plane.so".into()
         } else {
             String::new()
         };
@@ -791,6 +797,8 @@ impl Inbox {
             .update(cx, |input, cx| input.set_text(url, cx));
         self.connect_email
             .update(cx, |input, cx| input.set_text(status.email, cx));
+        self.connect_workspace
+            .update(cx, |input, cx| input.set_text(status.workspace, cx));
         self.connect_token
             .update(cx, |input, cx| input.set_text(String::new(), cx));
         self.connect_provider = Some(provider);
@@ -804,14 +812,26 @@ impl Inbox {
             return;
         };
         let url = self.connect_url.read(cx).content.to_string();
-        let email = self.connect_email.read(cx).content.to_string();
+        // Plane's workspace travels where Jira's email does.
+        let email = if provider == "plane" {
+            self.connect_workspace.read(cx).content.to_string()
+        } else {
+            self.connect_email.read(cx).content.to_string()
+        };
         let token = if disconnect {
             String::new()
         } else {
             self.connect_token.read(cx).content.to_string()
         };
         if provider != "github" && !disconnect && token.trim().is_empty() {
-            self.connect_error = Some("Enter an API token".into());
+            self.connect_error = Some(
+                if provider == "plane" {
+                    "Enter a Plane API key"
+                } else {
+                    "Enter an API token"
+                }
+                .into(),
+            );
             cx.notify();
             return;
         }

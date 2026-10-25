@@ -216,6 +216,7 @@ fn provider_mark(provider: &str) -> gpui::Svg {
     let (path, color) = match provider {
         "linear" => ("inbox-linear", content(0.8)),
         "jira" => ("inbox-jira", rgb(0x2684ff).into()),
+        "plane" => ("inbox-plane", content(0.8)),
         "gitlab" => ("inbox-gitlab", rgb(0xfc6d26).into()),
         "azuredevops" => ("inbox-azuredevops", content(0.8)),
         _ => ("inbox-github", content(0.8)),
@@ -2346,6 +2347,9 @@ impl Inbox {
             }
             "linear" => "Create a personal API key in Linear → Settings → Security & Access.",
             "jira" => "Connect your Jira Cloud site with your Atlassian email and an API token.",
+            "plane" => {
+                "Connect Plane Cloud or a self-hosted instance with a workspace slug and a personal API key. Plane links tickets to sessions; it lists no issues here."
+            }
             "gitlab" => {
                 "Connect GitLab.com or your GitLab instance with a personal access token with API access."
             }
@@ -2428,6 +2432,17 @@ impl Inbox {
                                 .border_1()
                                 .border_color(content(0.1))
                                 .child(self.connect_email.clone()),
+                        )
+                    })
+                    .when(provider == "plane", |d| {
+                        d.child(
+                            div()
+                                .px(px(10.))
+                                .py(px(8.))
+                                .rounded(px(6.))
+                                .border_1()
+                                .border_color(content(0.1))
+                                .child(self.connect_workspace.clone()),
                         )
                     })
                     .when(provider != "github", |d| {
@@ -3066,5 +3081,53 @@ mod tests {
             let bytes = crate::assets::Assets.load(name).unwrap().unwrap();
             assert!(std::str::from_utf8(&bytes).unwrap().contains("<svg"));
         }
+    }
+
+    #[gpui::test]
+    fn plane_connection_row_connects_and_disconnects(cx: &mut TestAppContext) {
+        use gespan_tracker_secrets::{self as secrets, Tracker, testing};
+        testing::use_memory_keychain();
+        let dir = tempfile::tempdir().unwrap();
+        secrets::write(
+            Tracker::Plane,
+            dir.path(),
+            r#"{"base_url":"https://plane.example.com","workspace":"acme","api_key":"k"}"#,
+        )
+        .unwrap();
+        let cwd = dir.path().to_path_buf();
+        let inbox = cx.new(|cx| {
+            let store = Arc::new(Mutex::new(
+                gespan_core::store::Store::open(std::path::Path::new(":memory:")).unwrap(),
+            ));
+            Inbox::new_inner(store, vec![], cwd, false, cx)
+        });
+        inbox.update(cx, |inbox, _| {
+            let status = inbox.service.status("plane").unwrap();
+            inbox.snapshot.connections.insert("plane".into(), status);
+        });
+        inbox.update(cx, |inbox, cx| {
+            let (connected, label) = inbox.connection_statuses()["plane"].clone();
+            assert!(connected);
+            assert_eq!(label, "https://plane.example.com");
+            inbox.open_connection("plane".into(), cx);
+            assert_eq!(
+                inbox.connect_url.read(cx).content.as_ref(),
+                "https://plane.example.com"
+            );
+            assert_eq!(inbox.connect_workspace.read(cx).content.as_ref(), "acme");
+            inbox.connect(false, cx);
+            assert_eq!(
+                inbox.connect_error.as_deref(),
+                Some("Enter a Plane API key")
+            );
+            inbox.connect(true, cx);
+        });
+        cx.run_until_parked();
+        inbox.update(cx, |inbox, _| {
+            assert!(inbox.connect_provider.is_none());
+            assert!(!inbox.snapshot.connections["plane"].connected);
+            assert!(!inbox.service.status("plane").unwrap().connected);
+        });
+        assert!(secrets::read(Tracker::Plane, dir.path()).unwrap().is_none());
     }
 }

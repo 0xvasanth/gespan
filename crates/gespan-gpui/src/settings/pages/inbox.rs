@@ -36,6 +36,13 @@ impl SettingsView {
                 "Connect your Jira Cloud site with your email and an API token.",
             ),
             (
+                "plane",
+                "Plane",
+                "Link sessions to Plane work items by key or link. Plane lists no issues in the inbox.",
+                "Connection",
+                "Connect Plane Cloud or a self-hosted instance with a workspace slug and a personal API key. Disconnect deletes the key.",
+            ),
+            (
                 "linear",
                 "Linear",
                 "Issues assigned to you, from the teams you pick.",
@@ -102,6 +109,7 @@ impl SettingsView {
                             match id {
                                 "linear" => "inbox-linear",
                                 "jira" => "inbox-jira",
+                                "plane" => "inbox-plane",
                                 "gitlab" => "inbox-gitlab",
                                 "azuredevops" => "inbox-azuredevops",
                                 _ => "inbox-github",

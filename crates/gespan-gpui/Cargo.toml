@@ -55,6 +55,8 @@ qrcode = { version = "0.14", default-features = false }
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false, features = ["test-support"] }
 tempfile = "3"
+# Seeds a saved tracker credential without touching the real keychain.
+gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
 # Reading report bundles back in tests.
 url = "2"
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
