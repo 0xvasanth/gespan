@@ -1428,13 +1428,13 @@ fn run_operation(
         && !request.settings.text_only)
         .then(lifecycle::claude_session_id);
     #[cfg(unix)]
-    if std::env::var_os("GESPAN_NATIVE_TRACE").is_some() {
+    if tracing::enabled!(tracing::Level::DEBUG) {
         unsafe {
             let mut signals = std::mem::zeroed();
             libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), &mut signals);
-            eprintln!(
-                "provider-launch sigchld_blocked={}",
-                libc::sigismember(&signals, libc::SIGCHLD)
+            tracing::debug!(
+                sigchld_blocked = libc::sigismember(&signals, libc::SIGCHLD) == 1,
+                "provider launch"
             );
         }
     }
@@ -1707,23 +1707,25 @@ fn run_operation(
                         }
                         Err(e) => return Err(format!("Invalid provider JSON: {e}")),
                     };
-                    if std::env::var_os("GESPAN_NATIVE_TRACE").is_some() {
+                    if tracing::enabled!(tracing::Level::DEBUG) {
                         let method = value["method"].as_str().unwrap_or("");
                         let item = &value["params"]["item"];
                         if !method.is_empty()
                             && !method.ends_with("Delta")
                             && !method.ends_with("/delta")
                         {
-                            eprintln!(
-                                "provider-frame method={method} type={} status={} id={} output_bytes={} keys={:?} legacy={}",
-                                item["type"],
-                                item["status"],
-                                item["id"],
-                                item["aggregatedOutput"].as_str().map_or(0, str::len),
-                                value["params"]
+                            tracing::debug!(
+                                method,
+                                item_type = %item["type"],
+                                status = %item["status"],
+                                id = %item["id"],
+                                output_bytes =
+                                    item["aggregatedOutput"].as_str().map_or(0, str::len),
+                                keys = ?value["params"]
                                     .as_object()
                                     .map(|o| o.keys().collect::<Vec<_>>()),
-                                value["params"]["msg"]["type"]
+                                legacy = %value["params"]["msg"]["type"],
+                                "provider frame"
                             );
                         }
                     }

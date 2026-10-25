@@ -1032,3 +1032,109 @@ fn commit_files_and_diffs_include_the_root_commit() {
     assert_eq!(commit_files(dir.path(), &root).unwrap().len(), 1);
     assert!(commit_files(dir.path(), "not-a-sha").is_err());
 }
+
+#[test]
+fn a_failed_git_action_is_logged_once_with_its_name() {
+    let dir = tmp();
+    let dir = dir.path();
+    assert!(init_git_commit(dir, &[("a.txt", "alpha\n")]));
+    let mut pulled = Ok(());
+    // No upstream to pull from.
+    let logged = crate::diagnostics::test_capture(|| pulled = pull(dir));
+    assert!(pulled.is_err());
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["level"], "warn");
+    assert_eq!(logged[0]["span"], "git_action");
+    assert_eq!(logged[0]["fields"]["op"], "pull");
+    assert!(!logged[0]["fields"]["error"].as_str().unwrap().is_empty());
+}
+
+#[test]
+fn a_git_action_whose_probe_fails_logs_nothing() {
+    let dir = tmp();
+    let dir = dir.path();
+    assert!(init_git_commit(dir, &[("a.txt", "alpha\n")]));
+    std::fs::write(dir.join("new.txt"), "hello\n").unwrap();
+    // `ls-files --error-unmatch` fails for an untracked file; the discard still works.
+    let logged = crate::diagnostics::test_capture(|| discard_file(dir, "new.txt").unwrap());
+    assert!(!dir.join("new.txt").exists());
+    assert!(logged.is_empty(), "{logged:?}");
+}
+
+#[test]
+fn a_logged_git_action_error_drops_url_credentials() {
+    let error = "fatal: unable to access 'https://me:ghp_secret@github.com/o/r.git/': 403\n\
+                 also ssh://git@host.example/r.git and https://github.com/o/r.git";
+    let mut returned = Ok(());
+    let logged =
+        crate::diagnostics::test_capture(|| returned = action("push", || Err(error.into())));
+    // The person sees Git's own message; only the log copy is scrubbed.
+    assert_eq!(returned.unwrap_err(), error);
+    let logged = logged[0]["fields"]["error"].as_str().unwrap();
+    assert!(
+        !logged.contains("ghp_secret") && !logged.contains("me:"),
+        "{logged}"
+    );
+    assert!(!logged.contains("git@"), "{logged}");
+    assert!(logged.contains("https://github.com/o/r.git/"), "{logged}");
+    assert!(logged.contains("ssh://host.example/r.git"), "{logged}");
+}
+
+#[test]
+fn a_silent_git_failure_names_only_the_subcommand() {
+    let dir = tmp();
+    let dir = dir.path();
+    assert!(init_git_commit(dir, &[("a.txt", "alpha\n")]));
+    std::fs::write(dir.join("a.txt"), "beta\n").unwrap();
+    git(dir, &["add", "."]);
+    // A hook that rejects the commit without printing anything.
+    let hook = dir.join(".git/hooks/pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut committed = Ok(());
+    let logged = crate::diagnostics::test_capture(|| {
+        committed = commit(dir, "Rotate the private-project key", false)
+    });
+    assert_eq!(committed.unwrap_err(), "git commit failed");
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["fields"]["op"], "commit");
+    assert_eq!(logged[0]["fields"]["error"], "git commit failed");
+    assert!(!logged[0].to_string().contains("private-project"));
+}
+
+#[test]
+fn silent_command_failures_name_the_command_not_its_arguments() {
+    assert_eq!(
+        git_failed(&["--literal-pathspecs", "add", "--", "secret/name.txt"]),
+        "git add failed"
+    );
+    assert_eq!(
+        gh_failed(&["pr", "create", "--title", "Secret title", "--base", "main"]),
+        "gh pr create failed"
+    );
+    assert_eq!(
+        gh_failed(&["repo", "view", "--json", "nameWithOwner"]),
+        "gh repo view failed"
+    );
+}
+
+#[test]
+fn a_password_with_an_at_sign_is_dropped_whole() {
+    let error = "fatal: unable to access 'https://me:pa@ss@github.com/o/r.git/': 403\n\
+                 and \"https://you:x@y@gitlab.com/g/r.git\" on github.com/o/r";
+    let logged = without_url_credentials(error);
+    assert!(
+        !logged.contains("ss@") && !logged.contains("y@"),
+        "{logged}"
+    );
+    assert!(logged.contains("'https://github.com/o/r.git/'"), "{logged}");
+    assert!(
+        logged.contains("\"https://gitlab.com/g/r.git\""),
+        "{logged}"
+    );
+    assert!(logged.ends_with("on github.com/o/r"), "{logged}");
+}
