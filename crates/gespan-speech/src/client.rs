@@ -15,8 +15,10 @@ use std::time::{Duration, Instant};
 
 use crate::protocol::{read_line, write_line, ErrorKind, Event, Request};
 
-const CRASHED: &str = "Dictation stopped unexpectedly.";
-const UNAVAILABLE: &str = "Dictation is unavailable. Restart Gespan to try again.";
+/// The message of the `Error` sent when the helper exits mid-take.
+pub const CRASHED: &str = "Dictation stopped unexpectedly.";
+/// The message of the `Error` sent once restarts have given up.
+pub const UNAVAILABLE: &str = "Dictation is unavailable. Restart Gespan to try again.";
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 /// Backoff and give-up rules for restarting the helper.
