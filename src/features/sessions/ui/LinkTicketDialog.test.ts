@@ -174,3 +174,46 @@ it("prefills an existing ticket link and can remove it", async () => {
   await act(async () => remove.click());
   expect(onSave).toHaveBeenCalledWith(undefined);
 });
+
+function pendingResolve() {
+  let release!: (value: unknown) => void;
+  resolve = () => new Promise((r) => (release = r));
+  return (value: unknown) => release(value);
+}
+
+it("drops a resolve that finishes after Cancel", async () => {
+  const finish = pendingResolve();
+  await open();
+  await type("ENG-7");
+  await submit();
+  const cancel = [...document.querySelectorAll("button")].find(
+    (b) => b.textContent === "Cancel",
+  )!;
+  await act(async () => cancel.click());
+  await act(async () => finish({ kind: "one", ticket: LINEAR }));
+  expect(onSave).not.toHaveBeenCalled();
+});
+
+it("drops a resolve that finishes after the dialog unmounted", async () => {
+  const finish = pendingResolve();
+  await open();
+  await type("ENG-7");
+  await submit();
+  await act(async () => root.render(null));
+  await act(async () => finish({ kind: "one", ticket: LINEAR }));
+  expect(onSave).not.toHaveBeenCalled();
+});
+
+it("drops a resolve for input that was edited meanwhile", async () => {
+  const finish = pendingResolve();
+  await open();
+  await type("ENG-7");
+  await submit();
+  await type("ENG-8");
+  await act(async () => finish({ kind: "one", ticket: LINEAR }));
+  expect(onSave).not.toHaveBeenCalled();
+  expect(
+    document.querySelector<HTMLButtonElement>('button[type="submit"]')!
+      .disabled,
+  ).toBe(false);
+});

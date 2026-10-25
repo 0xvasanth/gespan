@@ -10,6 +10,8 @@ import {
   useConnectedTrackers,
 } from "../model/ticketLinks";
 
+const FRESH_MS = 60_000;
+
 /**
  * The ticket a session is linked to. Refreshes when the session is opened or
  * on request, never on a timer.
@@ -53,7 +55,11 @@ export function SessionTicketChip({
   }, []);
 
   useEffect(() => {
-    if (visible) void refresh();
+    if (!visible) return;
+    const fetchedAt = latest.current.ticket.fetchedAt;
+    // Switching tabs should not hammer the tracker.
+    if (fetchedAt != null && Date.now() - fetchedAt < FRESH_MS) return;
+    void refresh();
   }, [visible, refresh]);
 
   useEffect(() => {

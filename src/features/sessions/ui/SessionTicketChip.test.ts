@@ -14,6 +14,7 @@ import type { LinkedWorkItem, TicketRef } from "../model/session";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
+const STALE_AT = Date.now() - 10 * 60_000;
 const TICKET: TicketRef = {
   tracker: "jira",
   key: "ENG-42",
@@ -21,7 +22,7 @@ const TICKET: TicketRef = {
   title: "Login fails on Safari when the password manager autofills",
   status: "In Progress",
   statusGroup: "started",
-  fetchedAt: 1,
+  fetchedAt: STALE_AT,
 };
 const FILLED: TicketRef = {
   ...TICKET,
@@ -154,6 +155,21 @@ it("refreshes once when the session is opened and saves the filled ticket", asyn
   expect(fetches()).toHaveLength(1);
   expect(onChange).toHaveBeenCalledWith({ kind: "ticket", ticket: FILLED });
   await render({ onChange });
+  expect(fetches()).toHaveLength(1);
+});
+
+it("skips the open-time refresh when the snapshot is under a minute old", async () => {
+  await render({ ticket: { ...TICKET, fetchedAt: Date.now() - 5_000 } });
+  expect(fetches()).toHaveLength(0);
+});
+
+it("explicit Refresh runs even on a fresh snapshot", async () => {
+  await render({
+    visible: false,
+    ticket: { ...TICKET, fetchedAt: Date.now() },
+  });
+  await openMenu();
+  await pick("Refresh");
   expect(fetches()).toHaveLength(1);
 });
 

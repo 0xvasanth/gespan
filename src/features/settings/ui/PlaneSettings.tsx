@@ -4,6 +4,7 @@ import { SecondaryButton } from "../../../shared/ui/SecondaryButton";
 import {
   disconnectPlane,
   PLANE_CLOUD_URL,
+  planeApiKeysUrl,
   planeStatus,
   savePlaneConfig,
   type PlaneStatus,
@@ -133,9 +134,7 @@ export function PlaneSettings() {
             </SecondaryButton>
             <button
               type="button"
-              onClick={() =>
-                void openUrl("https://app.plane.so/profile/api-tokens")
-              }
+              onClick={() => void openUrl(planeApiKeysUrl(baseUrl))}
               className="text-[12px] text-content/65 hover:text-content"
             >
               Create API key

@@ -135,3 +135,16 @@ it("keeps the form and shows the error when Plane rejects the key", async () => 
   expect(container.querySelector("form")).not.toBeNull();
   expect(connectionEvents).toBe(0);
 });
+
+it("points Create API key at the app for Plane Cloud and at the origin when self-hosted", async () => {
+  const { planeApiKeysUrl } = await import("../../inbox/model/plane");
+  expect(planeApiKeysUrl("https://api.plane.so")).toBe(
+    "https://app.plane.so/profile/api-tokens",
+  );
+  expect(planeApiKeysUrl(" https://plane.acme.dev:8443/api ")).toBe(
+    "https://plane.acme.dev:8443/profile/api-tokens",
+  );
+  expect(planeApiKeysUrl("not a url")).toBe(
+    "https://app.plane.so/profile/api-tokens",
+  );
+});

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Modal } from "../../../shared/ui/Modal";
 import type { LinkedWorkItem, TicketTracker } from "../model/session";
 import { parseGithubWorkItemUrl } from "../model/sessionWorkItem";
@@ -28,6 +28,19 @@ export function LinkSessionWorkItemDialog({
   });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Bumped whenever an in-flight resolve stops being wanted: the input
+  // changed, the dialog was cancelled or removed the link, or it unmounted.
+  const request = useRef(0);
+  useEffect(
+    () => () => {
+      request.current += 1;
+    },
+    [],
+  );
+  const cancelPending = () => {
+    request.current += 1;
+    setBusy(false);
+  };
   const [choice, setChoice] = useState<{
     key: string;
     trackers: TicketTracker[];
@@ -42,10 +55,12 @@ export function LinkSessionWorkItemDialog({
       onSave(github);
       return;
     }
+    const mine = ++request.current;
     setBusy(true);
     setChoice(null);
     try {
       const result = await resolveTicket(input);
+      if (mine !== request.current) return;
       if (result.kind === "one") {
         onSave({ kind: "ticket", ticket: result.ticket });
       } else if (result.kind === "ambiguous") {
@@ -54,9 +69,9 @@ export function LinkSessionWorkItemDialog({
         setError(result.message);
       }
     } catch (err) {
-      setError(errorMessage(err));
+      if (mine === request.current) setError(errorMessage(err));
     } finally {
-      setBusy(false);
+      if (mine === request.current) setBusy(false);
     }
   };
 
@@ -87,6 +102,7 @@ export function LinkSessionWorkItemDialog({
             spellCheck={false}
             onChange={(event) => {
               setUrl(event.target.value);
+              if (busy) cancelPending();
               if (error) setError("");
               if (choice) setChoice(null);
             }}
@@ -138,7 +154,10 @@ export function LinkSessionWorkItemDialog({
           {initial ? (
             <button
               type="button"
-              onClick={() => onSave(undefined)}
+              onClick={() => {
+                cancelPending();
+                onSave(undefined);
+              }}
               className="mr-auto rounded-md px-3 py-1.5 text-red-400 hover:bg-red-400/10 active:scale-[0.97]"
             >
               Remove link
@@ -146,7 +165,10 @@ export function LinkSessionWorkItemDialog({
           ) : null}
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => {
+              cancelPending();
+              onClose();
+            }}
             className="rounded-md px-3 py-1.5 hover:bg-content/8 active:scale-[0.97]"
           >
             Cancel

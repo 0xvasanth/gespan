@@ -9,6 +9,17 @@ export type PlaneStatus = {
 
 export const PLANE_CLOUD_URL = "https://api.plane.so";
 
+/** Where to create an API key: Plane Cloud's app, or the self-hosted origin. */
+export function planeApiKeysUrl(baseUrl: string): string {
+  try {
+    const url = new URL(baseUrl.trim());
+    const host = url.hostname === "api.plane.so" ? "app.plane.so" : url.host;
+    return `${url.protocol}//${host}/profile/api-tokens`;
+  } catch {
+    return "https://app.plane.so/profile/api-tokens";
+  }
+}
+
 export function planeStatus(): Promise<PlaneStatus> {
   return invoke<PlaneStatus>("plane_status");
 }
