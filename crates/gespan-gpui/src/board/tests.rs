@@ -1024,6 +1024,322 @@ fn a_focused_card_moves_with_the_keyboard(cx: &mut TestAppContext) {
     assert_eq!(moved.actor, "user");
 }
 
+fn focus_card(f: &Fixture, visual: &mut VisualTestContext, card: &str) {
+    f.window
+        .update(visual, |view, window, cx| {
+            let handle = view.card_focus.get(card).unwrap().clone();
+            window.focus(&handle, cx);
+        })
+        .unwrap();
+}
+
+fn card_id(f: &Fixture, cx: &mut impl gpui::AppContext, title: &str) -> String {
+    detail(f, cx)
+        .cards
+        .iter()
+        .find(|c| c.title == title)
+        .unwrap()
+        .id
+        .clone()
+}
+
+fn focused_card(f: &Fixture, visual: &mut VisualTestContext) -> Option<String> {
+    f.window
+        .update(visual, |view, window, _| {
+            view.card_focus
+                .iter()
+                .find(|(_, handle)| handle.is_focused(window))
+                .map(|(id, _)| id.clone())
+        })
+        .unwrap()
+}
+
+/// Card titles of a column in position order, read from the store.
+fn titles_in(f: &Fixture, cx: &mut impl gpui::AppContext, column: &str) -> Vec<String> {
+    let detail = detail(f, cx);
+    let id = detail
+        .columns
+        .iter()
+        .find(|c| c.name == column)
+        .unwrap()
+        .id
+        .clone();
+    let mut cards: Vec<_> = detail.cards.iter().filter(|c| c.column_id == id).collect();
+    cards.sort_by_key(|c| c.position);
+    cards.iter().map(|c| c.title.clone()).collect()
+}
+
+fn moved_rows(f: &Fixture, cx: &mut impl gpui::AppContext) -> usize {
+    let board = detail(f, cx).board.id.clone();
+    Service::open(&f.db)
+        .unwrap()
+        .activity(&board, None, 50)
+        .unwrap()
+        .iter()
+        .filter(|row| row.kind == "moved")
+        .count()
+}
+
+#[gpui::test]
+fn arrows_move_focus_between_cards_and_columns(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let in_progress = detail(&f, cx).columns[1].id.clone();
+    let (a, b, c) = (
+        card_id(&f, cx, "A"),
+        card_id(&f, cx, "B"),
+        card_id(&f, cx, "C"),
+    );
+    {
+        let mut service = Service::open(&f.db).unwrap();
+        service.card_create(&in_progress, "X", "").unwrap();
+        service.card_create(&in_progress, "Y", "").unwrap();
+    }
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let (x, y) = (card_id(&f, cx, "X"), card_id(&f, cx, "Y"));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("down");
+    assert_eq!(focused_card(&f, visual), Some(b.clone()));
+    visual.simulate_keystrokes("down down");
+    assert_eq!(
+        focused_card(&f, visual),
+        Some(c.clone()),
+        "clamped at the last card"
+    );
+    visual.simulate_keystrokes("up up up");
+    assert_eq!(
+        focused_card(&f, visual),
+        Some(a.clone()),
+        "clamped at the first card"
+    );
+    // Same index in the next column, clamped to its length.
+    visual.simulate_keystrokes("down right");
+    assert_eq!(focused_card(&f, visual), Some(y.clone()));
+    visual.simulate_keystrokes("left");
+    assert_eq!(focused_card(&f, visual), Some(b.clone()));
+    // From C (index 2) the next column has two cards: clamp to the last.
+    visual.simulate_keystrokes("down right");
+    assert_eq!(focused_card(&f, visual), Some(y));
+    visual.simulate_keystrokes("up");
+    assert_eq!(focused_card(&f, visual), Some(x.clone()));
+    visual.simulate_keystrokes("left");
+    assert_eq!(focused_card(&f, visual), Some(a), "index 0 in Backlog");
+    // The columns to the right of In Progress are empty: focus stays put.
+    visual.simulate_keystrokes("right right right");
+    assert_eq!(focused_card(&f, visual), Some(x));
+    assert_eq!(moved_rows(&f, visual), 0, "moving focus writes nothing");
+}
+
+#[gpui::test]
+fn space_lifts_arrows_move_and_space_drops_the_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let a = card_id(&f, cx, "A");
+    let board = detail(&f, cx).board.id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space");
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(
+                view.drop_target.as_ref().map(|t| t.1),
+                Some(0),
+                "line at the card"
+            );
+        })
+        .unwrap();
+    // Down once lands after B (A's own slot and the one after it are the same).
+    visual.simulate_keystrokes("down");
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(view.drop_target.as_ref().map(|t| t.1), Some(2));
+        })
+        .unwrap();
+    assert_eq!(moved_rows(&f, visual), 0, "nothing is written while lifted");
+    visual.simulate_keystrokes("space");
+    visual.run_until_parked();
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B", "A", "C"]);
+    assert_eq!(moved_rows(&f, visual), 1);
+    // Lift again, jump a column right and drop with Enter; no card actions open.
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space right enter");
+    visual.run_until_parked();
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B", "C"]);
+    assert_eq!(titles_in(&f, visual, "In Progress"), ["A"]);
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.kb_drag.is_none() && view.drop_target.is_none());
+            assert!(view.card_menu.is_none());
+        })
+        .unwrap();
+    let moved = Service::open(&f.db)
+        .unwrap()
+        .activity(&board, None, 50)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.kind == "moved")
+        .unwrap();
+    assert_eq!(moved.actor, "user");
+}
+
+#[gpui::test]
+fn dropping_a_lifted_card_where_it_started_writes_nothing(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let b = card_id(&f, cx, "B");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &b);
+    visual.simulate_keystrokes("space space");
+    visual.run_until_parked();
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B"]);
+    assert_eq!(moved_rows(&f, visual), 0);
+}
+
+#[gpui::test]
+fn escape_cancels_a_keyboard_drag_without_writing(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let a = card_id(&f, cx, "A");
+    let (seen, _subscription) = {
+        let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+        events(&f, visual)
+    };
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space down right escape");
+    visual.run_until_parked();
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B"]);
+    assert_eq!(moved_rows(&f, visual), 0);
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.kb_drag.is_none() && view.drop_target.is_none());
+        })
+        .unwrap();
+    assert!(
+        seen.borrow().is_empty(),
+        "the same Escape does not close the board"
+    );
+    // A second Escape, with nothing lifted, closes it as before.
+    visual.simulate_keystrokes("escape");
+    assert_eq!(*seen.borrow(), ["close"]);
+}
+
+#[gpui::test]
+fn a_reload_during_a_keyboard_drag_keeps_the_lifted_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let a = card_id(&f, cx, "A");
+    let backlog = detail(&f, cx).columns[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space down");
+    // Another window writes a new card while A is lifted.
+    Service::open(&f.db)
+        .unwrap()
+        .card_create(&backlog, "Fresh", "")
+        .unwrap();
+    f.window
+        .update(visual, |view, _, cx| view.reload(cx))
+        .unwrap();
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.pending_reload, "the reload waits for the drop");
+            assert!(view.kb_drag.is_some());
+            assert_eq!(view.detail.as_ref().unwrap().cards.len(), 2);
+        })
+        .unwrap();
+    visual.simulate_keystrokes("space");
+    visual.run_until_parked();
+    // A went after B; the new card kept its place at the end.
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B", "A", "Fresh"]);
+    f.window
+        .read_with(visual, |view, _| assert!(!view.pending_reload))
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_cancelled_keyboard_drag_catches_up_on_a_deferred_reload(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let a = card_id(&f, cx, "A");
+    let backlog = detail(&f, cx).columns[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space");
+    Service::open(&f.db)
+        .unwrap()
+        .card_create(&backlog, "Fresh", "")
+        .unwrap();
+    f.window
+        .update(visual, |view, _, cx| view.reload(cx))
+        .unwrap();
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(view.detail.as_ref().unwrap().cards.len(), 2);
+            assert!(!view.pending_reload);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_lifted_card_deleted_elsewhere_cancels_the_drag(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let a = card_id(&f, cx, "A");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space down");
+    Service::open(&f.db).unwrap().card_delete(&a).unwrap();
+    f.window
+        .update(visual, |view, _, cx| view.reload(cx))
+        .unwrap();
+    visual.simulate_keystrokes("space");
+    visual.run_until_parked();
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.kb_drag.is_none(), "no ghost drag over a deleted card");
+            assert!(view.drop_target.is_none());
+            assert!(!view.pending_reload);
+            assert!(view.error.is_some(), "the failed move is reported");
+        })
+        .unwrap();
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["B"]);
+}
+
+#[gpui::test]
+fn keyboard_drop_while_filtered_uses_the_full_slot(cx: &mut TestAppContext) {
+    let f = seeded(
+        cx,
+        &["Alpha one", "Beta", "Alpha two", "Gamma", "Alpha three"],
+    );
+    let one = card_id(&f, cx, "Alpha one");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    f.window
+        .update(visual, |view, _, cx| {
+            view.search
+                .update(cx, |input, cx| input.set_text("alpha".into(), cx))
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert_eq!(shown_cards(visual, &[1, 2, 3, 4, 5]), [1, 3, 5]);
+    focus_card(&f, visual, &one);
+    // Visible: one, two, three. One step down lands right before "Alpha three".
+    visual.simulate_keystrokes("space down space");
+    visual.run_until_parked();
+    assert_eq!(
+        titles_in(&f, visual, "Backlog"),
+        ["Beta", "Alpha two", "Gamma", "Alpha one", "Alpha three"]
+    );
+    // Arrow focus skips the hidden cards too.
+    let two = card_id(&f, visual, "Alpha two");
+    focus_card(&f, visual, &two);
+    visual.simulate_keystrokes("down");
+    assert_eq!(focused_card(&f, visual), Some(one));
+}
+
 fn shown_cards(visual: &mut VisualTestContext, numbers: &[i64]) -> Vec<i64> {
     visual.refresh().unwrap();
     numbers

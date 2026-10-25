@@ -6,6 +6,7 @@ mod column;
 mod detail;
 mod drop;
 mod header;
+mod keyboard;
 pub(crate) mod style;
 mod switcher;
 #[cfg(test)]
@@ -82,6 +83,15 @@ pub(crate) struct DraggedCard {
     card_id: String,
     number: i64,
     title: String,
+}
+
+/// A card lifted with Space: where Enter or Space would drop it. `slot` counts
+/// the visible cards in `column_id`, including the lifted one.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct KeyboardDrag {
+    pub card_id: String,
+    pub column_id: String,
+    pub slot: usize,
 }
 
 /// A column on the move, dragged by its header.
@@ -161,6 +171,8 @@ pub(crate) struct BoardView {
     column_anchors: HashMap<String, AnchorSlot>,
     card_anchors: HashMap<String, AnchorSlot>,
     dragged_card: Option<String>,
+    /// A card lifted from the keyboard; reloads wait for it like a mouse drag.
+    pub(crate) kb_drag: Option<KeyboardDrag>,
     /// The column and slot a dragged card would land in.
     pub(crate) drop_target: Option<(String, usize)>,
     /// One focus handle per card, so cards are tab stops.
@@ -250,6 +262,7 @@ impl BoardView {
             column_anchors: HashMap::new(),
             card_anchors: HashMap::new(),
             dragged_card: None,
+            kb_drag: None,
             drop_target: None,
             card_focus: HashMap::new(),
             card_menu: None,
@@ -287,6 +300,7 @@ impl BoardView {
     pub(crate) fn hidden(&mut self, cx: &mut Context<Self>) {
         self.forget_finished_drag(cx);
         self.visible = false;
+        self.cancel_keyboard_drag(cx);
         self.composer = None;
         self.menu = None;
         self.card_menu = None;
@@ -307,7 +321,7 @@ impl BoardView {
     /// is in progress so a reload never yanks a card out from under the pointer.
     pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
         self.forget_finished_drag(cx);
-        if self.dragging {
+        if self.dragging || self.kb_drag.is_some() {
             self.pending_reload = true;
             return;
         }
@@ -393,6 +407,8 @@ impl BoardView {
         self.filter
             .labels
             .retain(|id| labels.iter().any(|label| &label.id == id));
+        // A card lifted from the keyboard and deleted elsewhere is not lifted.
+        self.drop_lifted_card_if_gone();
         Ok(())
     }
 
@@ -619,6 +635,7 @@ impl BoardView {
     }
 
     fn begin_card_drag(&mut self, card_id: String) {
+        self.kb_drag = None;
         self.dragging = true;
         self.dragged_card = Some(card_id);
         self.menu = None;
@@ -833,6 +850,12 @@ impl BoardView {
             return;
         }
         cx.stop_propagation();
+        // A lifted card is the innermost layer: Escape puts it back, alone.
+        if self.kb_drag.is_some() {
+            self.cancel_keyboard_drag(cx);
+            cx.notify();
+            return;
+        }
         // Innermost first: transient editors and menus, then the drawer.
         if self.composer.take().is_some()
             || std::mem::take(&mut self.filter_open)

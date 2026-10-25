@@ -57,6 +57,10 @@ impl BoardView {
         let updated = gespan_core::time::relative(card.updated_at.max(0) as u64, now);
         let anchor = self.card_anchors.get(&card.id).cloned().unwrap_or_default();
         let lifted = self.dragged_card.as_ref() == Some(&card.id);
+        let held = self
+            .kb_drag
+            .as_ref()
+            .is_some_and(|drag| drag.card_id == card.id);
         let group = format!("board-card-group-{number}");
         let payload = DraggedCard {
             card_id: card.id.clone(),
@@ -81,6 +85,7 @@ impl BoardView {
             .bg(pane_fill())
             .hover(|s| s.border_color(content(0.14)))
             .when(lifted, |d| d.opacity(0.35))
+            .when(held, |d| d.border_color(accent_color()).bg(content(0.08)))
             .flex()
             .flex_col()
             .gap(px(6.))
@@ -100,9 +105,8 @@ impl BoardView {
             .on_key_down(cx.listener({
                 let id = card.id.clone();
                 move |this, event: &gpui::KeyDownEvent, window, cx| {
-                    if event.keystroke.key == "enter" {
+                    if this.card_key(&id, event, window, cx) {
                         cx.stop_propagation();
-                        this.open_card_actions(id.clone(), window, cx);
                     }
                 }
             }))
