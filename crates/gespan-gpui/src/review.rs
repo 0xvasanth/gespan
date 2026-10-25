@@ -1381,14 +1381,8 @@ impl ReviewPane {
             return;
         };
         let cwd = PathBuf::from(cwd);
-        let action = match event {
-            DiffEvent::StageFile(_) => "stage_file",
-            DiffEvent::DiscardFile(_) => "discard_file",
-            DiffEvent::StageHunk(..) => "stage_hunk",
-            DiffEvent::Comment(_) => "comment",
-        };
-        let (id, work): (SharedString, Box<dyn FnOnce() -> Result<(), String> + Send>) = match event
-        {
+        type Work = Box<dyn FnOnce() -> Result<(), String> + Send>;
+        let (action, id, work): (&str, SharedString, Work) = match event {
             DiffEvent::Comment(text) => {
                 cx.emit(ReviewEvent::Comment(text.clone()));
                 return;
@@ -1399,6 +1393,7 @@ impl ReviewPane {
                 };
                 let stage = matches!(event, DiffEvent::StageFile(_));
                 (
+                    if stage { "stage_file" } else { "discard_file" },
                     id.clone(),
                     Box::new(move || {
                         if stage {
@@ -1423,6 +1418,7 @@ impl ReviewPane {
                     return;
                 };
                 (
+                    "stage_hunk",
                     id.clone(),
                     Box::new(move || scm::stage_contents(&cwd, &relative, next.as_bytes())),
                 )

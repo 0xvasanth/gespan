@@ -87,21 +87,11 @@ pub(crate) fn run_turn(
     cancel: Arc<AtomicBool>,
     tx: async_channel::Sender<Update>,
 ) {
-    let remote = summary.cwd.starts_with("remote://");
-    // Everything this thread logs during the turn, here and in gespan-core,
-    // names its session.
-    let _session = tracing::info_span!(
-        "agent_session",
-        session_id = summary.id,
-        provider = %summary.provider,
-        remote,
-    )
-    .entered();
-    tracing::info!("agent turn started");
-    if remote {
+    if summary.cwd.starts_with("remote://") {
         remote::run(summary, prompt, settings, controls, store, cancel, tx);
         return;
     }
+    let _session = enter_turn(&summary, false);
     run_turn_using(
         TurnInput {
             summary,
@@ -114,6 +104,21 @@ pub(crate) fn run_turn(
         tx,
         provider::resolve,
     );
+}
+
+/// Enters the turn's `agent_session` span and logs its start. Everything the
+/// turn's thread logs while the span is held, here and in gespan-core, names
+/// its session. Local and remote turns both start here.
+pub(crate) fn enter_turn(summary: &Session, remote: bool) -> tracing::span::EnteredSpan {
+    let span = tracing::info_span!(
+        "agent_session",
+        session_id = summary.id,
+        provider = %summary.provider,
+        remote,
+    )
+    .entered();
+    tracing::info!("agent turn started");
+    span
 }
 
 fn run_turn_using(
@@ -1014,14 +1019,22 @@ fn run_turn_using(
     });
 }
 
-/// The most of a turn error the log keeps. Provider errors carry up to 8 KB
-/// of the CLI's stderr after their first line; that stays in the transcript.
+/// The most of a turn error the log keeps.
 const LOGGED_ERROR_CHARS: usize = 200;
 
+/// How gespan-core's provider worker starts the error for a CLI that exits
+/// mid-turn; up to 8 KB of the CLI's stderr follows after a space. The log
+/// keeps only this part; the stderr stays in the transcript.
+const PROVIDER_EXITED: &str = "Provider exited before completing the turn.";
+
 /// Logs a failed turn with the first line of its error, capped, and its
-/// full length.
+/// full length. A provider exit logs none of the provider's stderr.
 pub(crate) fn log_turn_failure(error: &str) {
-    let first = error.lines().next().unwrap_or_default();
+    let first = if error.starts_with(PROVIDER_EXITED) {
+        PROVIDER_EXITED
+    } else {
+        error.lines().next().unwrap_or_default()
+    };
     let mut logged: String = first.chars().take(LOGGED_ERROR_CHARS).collect();
     if logged.len() < first.len() {
         logged.push('…');
@@ -1118,6 +1131,26 @@ mod tests {
         );
         assert_eq!(lines[0]["fields"]["error_len"], error.len());
         assert!(!lines[0].to_string().contains("sk-secret"));
+    }
+
+    #[test]
+    fn provider_exit_failures_log_no_provider_stderr() {
+        // gespan-core joins the CLI's stderr to the message with a space.
+        let stderr = "Error: 401 Authorization: Bearer sk-secret";
+        let error = format!("{PROVIDER_EXITED} {stderr}");
+        let lines = crate::log_capture::capture(|| log_turn_failure(&error));
+        assert_eq!(lines[0]["fields"]["error"], PROVIDER_EXITED);
+        assert_eq!(lines[0]["fields"]["error_len"], error.len());
+        assert!(!lines[0].to_string().contains("sk-secret"), "{lines:?}");
+    }
+
+    #[test]
+    fn provider_exit_message_matches_the_one_gespan_core_builds() {
+        let provider = include_str!("../../gespan-core/src/provider.rs");
+        assert!(
+            provider.contains(&format!("\"{PROVIDER_EXITED} {{}}\"")),
+            "gespan-core changed its provider exit message; update PROVIDER_EXITED"
+        );
     }
 
     #[test]
