@@ -14,6 +14,9 @@ mod follow_up_tests;
 mod handoff;
 mod persistence;
 pub(crate) mod remote;
+mod ticket_context;
+#[cfg(all(test, unix))]
+mod ticket_tests;
 mod visual_discovery;
 #[cfg(all(test, unix))]
 mod visual_tests;
@@ -53,6 +56,8 @@ pub(crate) struct Update {
     /// It stays true when saving the transcript, metadata or handoff fails
     /// afterwards: the work itself is done, and `status` reports the save.
     pub(crate) succeeded: bool,
+    /// A ticket tool call was answered; the session's ticket chip may be stale.
+    pub(crate) ticket_changed: bool,
     pub(crate) finished: bool,
 }
 fn publish(
@@ -155,6 +160,9 @@ fn run_turn_using(
     let mut turn_receipt: Option<(usize, gespan_core::agent::TurnInfo)> = None;
     let mut pilot_fingerprint = None;
     let mut visual_introduction = None;
+    let mut ticket_introduction = None;
+    let mut ticket_tools = None;
+    let ticket_answered = Arc::new(AtomicBool::new(false));
     let mut prepared_handoff = None;
     let mut handoff_accepted = false;
     // SessionReview's recorded turn: its project and id, once the baseline is taken.
@@ -276,6 +284,7 @@ fn run_turn_using(
                 }
                 .into(),
                 succeeded: false,
+                ticket_changed: false,
                 finished: false,
             },
         )?;
@@ -324,6 +333,7 @@ fn run_turn_using(
                     handoff: None,
                     status: "Connecting…".into(),
                     succeeded: false,
+                    ticket_changed: false,
                     finished: false,
                 },
             )?;
@@ -378,6 +388,7 @@ fn run_turn_using(
                     handoff: Some(Some(prepared)),
                     status: "Connecting…".into(),
                     succeeded: false,
+                    ticket_changed: false,
                     finished: false,
                 },
             )?;
@@ -521,6 +532,45 @@ fn run_turn_using(
                 prompt = discovery.prepend(prompt);
             }
         }
+        // A linked ticket gets its own capability on the same terms, but only
+        // where the provider mounts MCP servers: there is no CLI fallback.
+        let ticket = summary
+            .work_item
+            .as_ref()
+            .and_then(gespan_core::session_groups::WorkItem::ticket)
+            .filter(|_| {
+                !settings.text_only
+                    && !raw_native_command
+                    && !visual_discovery::lacks_tool_servers(kind, provider_id.as_deref())
+            });
+        let data_dir = locked(&store)?.data_dir().map(std::path::Path::to_path_buf);
+        if let (Some(ticket), Some(data_dir)) = (ticket, data_dir) {
+            let may_change_status = may_change_ticket_status(&summary);
+            // Ticket tools are optional; a refused start is logged and the turn goes on.
+            if let Ok(server) = gespan_core::ticket_bridge::Server::start(
+                summary.id,
+                ticket.clone(),
+                may_change_status,
+            ) {
+                let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+                settings.environment.extend(server.environment(&executable));
+                ticket_introduction = ticket_context::TicketContext::prepare(
+                    &*locked(&store)?,
+                    summary.id,
+                    ticket,
+                    may_change_status,
+                    provider_id.as_deref(),
+                )?;
+                if let Some(introduction) = &ticket_introduction {
+                    prompt = introduction.prepend(prompt);
+                }
+                ticket_tools = Some(TicketTools {
+                    server,
+                    tickets: Arc::new(gespan_core::tickets::Tickets::new(data_dir)),
+                    answered: ticket_answered.clone(),
+                });
+            }
+        }
         if kind == Kind::Claude {
             // Seeds the provider's agent registry so a resumed sub-agent's
             // work finds the Agent call that started it in an earlier turn.
@@ -553,7 +603,11 @@ fn run_turn_using(
                     .as_ref()
                     .map(|bridge| bridge.drain())
                     .unwrap_or_default();
-                if events.is_empty() && publications.is_empty() {
+                if let Some(tools) = &ticket_tools {
+                    tools.answer_pending();
+                }
+                let ticket_changed = ticket_answered.swap(false, Ordering::Relaxed);
+                if events.is_empty() && publications.is_empty() && !ticket_changed {
                     return Ok(());
                 }
                 let mut start = transcript.rows.len();
@@ -842,6 +896,7 @@ fn run_turn_using(
                             handoff,
                             status,
                             succeeded: false,
+                            ticket_changed,
                             finished: false,
                         },
                     )
@@ -870,6 +925,12 @@ fn run_turn_using(
             && let Some(discovery) = &visual_introduction
         {
             discovery.remember(&*locked(&store)?, provider_id.as_deref())?;
+        }
+        if result.is_ok()
+            && !cancel.load(Ordering::Relaxed)
+            && let Some(introduction) = &ticket_introduction
+        {
+            introduction.remember(&*locked(&store)?, provider_id.as_deref())?;
         }
         result
     })();
@@ -1015,6 +1076,7 @@ fn run_turn_using(
         handoff,
         status,
         succeeded,
+        ticket_changed: ticket_answered.swap(false, Ordering::Relaxed),
         finished: true,
     });
 }
@@ -1026,6 +1088,39 @@ const LOGGED_ERROR_CHARS: usize = 200;
 /// mid-turn; up to 8 KB of the CLI's stderr follows after a space. The log
 /// keeps only this part; the stderr stays in the transcript.
 const PROVIDER_EXITED: &str = "Provider exited before completing the turn.";
+
+/// The per-board setting arrives with the board store; until then every
+/// session may move its ticket, the plan's default.
+fn may_change_ticket_status(_session: &Session) -> bool {
+    true
+}
+
+/// A turn's ticket capability and the service that answers its calls.
+struct TicketTools {
+    server: gespan_core::ticket_bridge::Server,
+    tickets: Arc<gespan_core::tickets::Tickets>,
+    answered: Arc<AtomicBool>,
+}
+
+impl TicketTools {
+    /// Tracker calls are network round trips, so each runs off the provider
+    /// loop; `answered` asks the view to refresh the ticket chip afterwards.
+    fn answer_pending(&self) {
+        for call in self.server.drain() {
+            let tickets = self.tickets.clone();
+            let ticket = self.server.ticket().clone();
+            let answered = self.answered.clone();
+            std::thread::spawn(move || {
+                let result = gespan_core::ticket_bridge::answer(&tickets, &ticket, &call.tool);
+                if let Err(error) = &result {
+                    tracing::warn!(%error, "ticket tool call failed");
+                }
+                let _ = call.reply.send(result);
+                answered.store(true, Ordering::Relaxed);
+            });
+        }
+    }
+}
 
 /// Logs a failed turn with the first line of its error, capped, and its
 /// full length. A provider exit logs none of the provider's stderr.

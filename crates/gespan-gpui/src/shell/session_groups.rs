@@ -3420,6 +3420,35 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_ticket_tool_call_refreshes_the_chip(cx: &mut TestAppContext) {
+        let (window, a, b) = setup(cx);
+        let fake = fake_tickets(window, cx, &[Tracker::Linear]);
+        submit_link(window, cx, a, "ENG-7");
+        assert_eq!(fake.fetch_count(), 1);
+        let emit = |id: i64, cx: &mut TestAppContext| {
+            window
+                .update(cx, |shell, _, cx| {
+                    let view = shell.sessions.get(&id).unwrap().clone();
+                    view.update(cx, |_, cx| cx.emit(crate::conversation::TicketChanged));
+                })
+                .unwrap();
+            cx.run_until_parked();
+        };
+        emit(a, cx);
+        assert_eq!(
+            fake.fetch_count(),
+            2,
+            "the agent's ticket call refreshes once"
+        );
+        emit(b, cx);
+        assert_eq!(
+            fake.fetch_count(),
+            2,
+            "a session with no ticket fetches nothing"
+        );
+    }
+
+    #[gpui::test]
     fn relinking_while_a_fetch_is_in_flight_still_fetches_the_new_ticket(cx: &mut TestAppContext) {
         let (window, a, _) = setup(cx);
         let fake = fake_tickets(window, cx, &[Tracker::Linear]);

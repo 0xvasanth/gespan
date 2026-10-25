@@ -88,6 +88,9 @@ pub(super) fn present(call: &ToolCall, fallback_cwd: Option<&str>) -> ToolPresen
     }
     let mut input = serde_json::from_str::<Value>(&call.input).unwrap_or(Value::Null);
     normalize_inputs(&mut input, 0);
+    if let Some(shown) = ticket_tool(&call.name, &input) {
+        return shown;
+    }
     let desktop = call.display.as_ref().unwrap_or(&input["__desktop"]);
     let preview = &desktop["preview"];
     let mut records = Vec::new();
@@ -272,6 +275,30 @@ pub(super) fn present(call: &ToolCall, fallback_cwd: Option<&str>) -> ToolPresen
     }
     shown.target = shown.target.lines().next().unwrap_or("").into();
     shown
+}
+/// The app's own ticket tools, as Claude (`mcp__server__tool`) and Codex
+/// (`server:tool`) name them.
+fn ticket_tool(name: &str, input: &Value) -> Option<ToolPresentation> {
+    let tool = name
+        .strip_prefix("mcp__gespan_ticket__")
+        .or_else(|| name.strip_prefix("gespan_ticket:"))?;
+    let target = string(input, &["target"]);
+    let (action, target) = match tool {
+        "ticket_get" => ("Read ticket", string(input, &["key"])),
+        "ticket_comment" => ("Comment on ticket", None),
+        "ticket_status" if target.is_some() => ("Change ticket status", target),
+        "ticket_status" => ("Ticket statuses", None),
+        _ => return None,
+    };
+    Some(ToolPresentation {
+        action: action.into(),
+        target: target.unwrap_or_default(),
+        file_path: None,
+        start_line: None,
+        command: None,
+        description: None,
+        steps: Vec::new(),
+    })
 }
 fn location(value: &Value) -> Option<&Value> {
     let locations = value.get("locations").or_else(|| value.get("location"))?;
@@ -763,6 +790,37 @@ mod tests {
         assert_eq!(
             display_path("/repository/file", Some("/repo")),
             "/repository/file"
+        );
+    }
+    #[test]
+    fn ticket_tools_have_friendly_labels() {
+        let shown = |name: &str, input: Value| {
+            let shown = call(name, input).presentation();
+            (shown.action, shown.target)
+        };
+        for prefix in ["mcp__gespan_ticket__", "gespan_ticket:"] {
+            let name = |tool: &str| format!("{prefix}{tool}");
+            assert_eq!(
+                shown(&name("ticket_comment"), json!({"body":"Fixed in abc"})),
+                ("Comment on ticket".into(), String::new())
+            );
+            assert_eq!(
+                shown(&name("ticket_get"), json!({"key":"ENG-1"})),
+                ("Read ticket".into(), "ENG-1".into())
+            );
+            assert_eq!(
+                shown(&name("ticket_status"), json!({"target":"Done"})),
+                ("Change ticket status".into(), "Done".into())
+            );
+            assert_eq!(
+                shown(&name("ticket_status"), json!({})),
+                ("Ticket statuses".into(), String::new())
+            );
+        }
+        // Another server's tool of the same name is not ours.
+        assert_eq!(
+            shown("mcp__other__ticket_get", json!({})).0,
+            "mcp__other__ticket_get"
         );
     }
     #[test]

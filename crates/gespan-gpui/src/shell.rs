@@ -1295,6 +1295,12 @@ impl Shell {
                 this.invalidate_chrome(cx);
                 cx.notify();
             }));
+        self.observations.push(cx.subscribe(
+            &view,
+            move |this, _, _: &crate::conversation::TicketChanged, cx| {
+                this.refresh_ticket(id, false, cx)
+            },
+        ));
         self.observations
             .push(cx.subscribe(&view, |this, _, transfer: &Transfer, cx| {
                 this.transfer_response(transfer.clone(), cx)
