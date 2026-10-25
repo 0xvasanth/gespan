@@ -1,0 +1,30 @@
+crates/gespan-gpui/src/board.rs
+  s_938a6e0c93b076::t_86e1fc5dcf138e 9,88-96,174-175,265,303,324,410-411,638,853-858
+crates/gespan-gpui/src/board/card.rs
+  s_938a6e0c93b076::t_fd0c58ebb3943b 60-63
+  s_938a6e0c93b076::t_86e1fc5dcf138e 88,108
+crates/gespan-gpui/src/board/keyboard.rs
+  s_938a6e0c93b076::t_86e1fc5dcf138e 1-258
+crates/gespan-gpui/src/board/tests.rs
+  s_938a6e0c93b076::t_fd0c58ebb3943b 1060-1066,1087-1091,1105-1109,1111-1115,1145-1149,1219-1222,1238-1244,1270-1276,1296-1298,1314-1317,1322-1323
+  s_938a6e0c93b076::t_c9f919ea3e3494 1121,1124,1126-1128,1329-1330,1334
+  s_938a6e0c93b076::t_de8c1cd16891b9 1027-1059,1067-1086,1092-1104,1110,1116-1120,1122-1123,1129,1131-1144,1150-1218,1223-1237,1245-1269,1277-1295,1299-1304,1307-1313,1318-1321,1324-1328,1331-1333,1335-1336,1338-1342
+  s_938a6e0c93b076::t_f0a93e1ce1e00b 1125,1130
+  s_938a6e0c93b076::t_89a008b6524205 1305-1306,1337
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "40b2a8b2e78ddd58168fc3ae28b6936c00d5ab02",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
