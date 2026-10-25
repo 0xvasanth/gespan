@@ -70,7 +70,7 @@ export function useAhead<T>(value: T, key: string) {
 }
 
 /** Loads on mount and again whenever the board is written to. */
-function useLive<T>(
+export function useLive<T>(
   boardId: string,
   load: () => Promise<T>,
   fail: (cause: unknown) => void,

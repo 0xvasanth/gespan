@@ -248,3 +248,29 @@ it("disables close-to-tray outside Windows without consulting storage", () => {
   expect(settings.loadCloseToTray()).toBe(false);
   expect(read).not.toHaveBeenCalled();
 });
+
+describe("board card open", () => {
+  it("defaults to the drawer and keeps the saved choice", () => {
+    expect(settings.loadBoardCardOpen()).toBe("drawer");
+    settings.saveBoardCardOpen("page");
+    expect(localStorage.getItem("gespan.boardCardOpen")).toBe("page");
+    expect(settings.loadBoardCardOpen()).toBe("page");
+    settings.saveBoardCardOpen("drawer");
+    expect(settings.loadBoardCardOpen()).toBe("drawer");
+  });
+
+  it("falls back to the drawer for an unknown value", () => {
+    localStorage.setItem("gespan.boardCardOpen", "sideways");
+    expect(settings.loadBoardCardOpen()).toBe("drawer");
+  });
+
+  it("tells subscribers when it changes", () => {
+    const listener = vi.fn();
+    const stop = settings.subscribeBoardCardOpen(listener);
+    settings.saveBoardCardOpen("page");
+    expect(listener).toHaveBeenCalledTimes(1);
+    stop();
+    settings.saveBoardCardOpen("drawer");
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+});

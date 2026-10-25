@@ -248,6 +248,12 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     label: "Board",
     keywords: "kanban cards columns tasks tickets track",
   },
+  {
+    id: "board-card-open",
+    section: "general",
+    label: "Open cards in",
+    keywords: "board card drawer full page expand detail",
+  },
   ...(IS_MAC
     ? [
         {
@@ -895,6 +901,46 @@ export function subscribeBoardEnabled(onStoreChange: () => void) {
   window.addEventListener(BOARD_ENABLED_CHANGE_EVENT, onStoreChange);
   return () =>
     window.removeEventListener(BOARD_ENABLED_CHANGE_EVENT, onStoreChange);
+}
+
+const BOARD_CARD_OPEN_KEY = "gespan.boardCardOpen";
+
+export type BoardCardOpen = "drawer" | "page";
+
+export const BOARD_CARD_OPEN_DEFAULT: BoardCardOpen = "drawer";
+
+/** Fired on `window` when "Open cards in" changes. */
+export const BOARD_CARD_OPEN_CHANGE_EVENT = "gespan:board-card-open-change";
+
+/** Where a board card opens: the side drawer or the whole board area. */
+export function loadBoardCardOpen(): BoardCardOpen {
+  try {
+    const raw = localStorage.getItem(BOARD_CARD_OPEN_KEY);
+    return raw === "page" || raw === "drawer" ? raw : BOARD_CARD_OPEN_DEFAULT;
+  } catch {
+    return BOARD_CARD_OPEN_DEFAULT;
+  }
+}
+
+export function saveBoardCardOpen(value: BoardCardOpen) {
+  try {
+    localStorage.setItem(BOARD_CARD_OPEN_KEY, value);
+  } catch {
+    // private mode / quota
+  }
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<BoardCardOpen>(BOARD_CARD_OPEN_CHANGE_EVENT, {
+      detail: value,
+    }),
+  );
+}
+
+export function subscribeBoardCardOpen(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(BOARD_CARD_OPEN_CHANGE_EVENT, onStoreChange);
+  return () =>
+    window.removeEventListener(BOARD_CARD_OPEN_CHANGE_EVENT, onStoreChange);
 }
 
 const PILOTS_ENABLED_KEY = "gespan.pilotsEnabled";

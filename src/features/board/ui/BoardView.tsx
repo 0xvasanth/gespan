@@ -87,6 +87,7 @@ import {
   type LinkRef,
 } from "./boardFormat";
 import { CardComposer } from "./CardComposer";
+import { loadBoardCardOpen } from "../../settings/model/settings";
 import { CardDetail } from "./CardDetail";
 import { KanbanBoard } from "./kanban/KanbanBoard";
 import { UndoToast } from "./UndoToast";
@@ -235,7 +236,13 @@ function BoardContent({
     id: string;
     focus?: "title" | "link";
   } | null>(null);
+  // The card shown as a full page, if any; opening one follows the setting.
+  const [pageCardId, setPageCardId] = useState<string | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const showCard = (next: { id: string; focus?: "title" | "link" }) => {
+    setOpenCard(next);
+    setPageCardId(loadBoardCardOpen() === "page" ? next.id : null);
+  };
 
   const detailRef = useRef(detail);
   const openIdRef = useRef(openId);
@@ -763,6 +770,8 @@ function BoardContent({
     ? detail?.cards.find((card) => card.id === openCard.id)
     : undefined;
 
+  const fullPage = !!shownCard && pageCardId === shownCard.id;
+
   const labelsOf = (cardId: string) => {
     const ids = extras[cardId]?.labels;
     return ids?.length ? labels.filter((label) => ids.includes(label.id)) : [];
@@ -802,10 +811,10 @@ function BoardContent({
           )
           .catch(fail(`Couldn't create a label for card #${card.number}`))
       }
-      onOpen={() => setOpenCard({ id: card.id })}
+      onOpen={() => showCard({ id: card.id })}
       onOpenLinkedWork={openLinkedWork}
-      onRename={() => setOpenCard({ id: card.id, focus: "title" })}
-      onLink={() => setOpenCard({ id: card.id, focus: "link" })}
+      onRename={() => showCard({ id: card.id, focus: "title" })}
+      onLink={() => showCard({ id: card.id, focus: "link" })}
       onDelete={() => removeCard(card)}
     />
   );
@@ -1036,7 +1045,7 @@ function BoardContent({
         )}
       </div>
       <div className="flex min-h-0 flex-1">
-        <div className="min-h-0 min-w-0 flex-1">
+        <div className={`min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}>
           {shownDetail ? (
             <KanbanBoard
               detail={shownDetail}
@@ -1045,7 +1054,7 @@ function BoardContent({
               renderColumnFooter={renderColumnFooter}
               onCardMove={onCardMove}
               onColumnMove={onColumnMove}
-              onCardOpen={(card) => setOpenCard({ id: card.id })}
+              onCardOpen={(card) => showCard({ id: card.id })}
               onColumnExpand={(column) => setCollapsed(column, false)}
               trailing={trailing}
             />
@@ -1068,6 +1077,15 @@ function BoardContent({
             link={resolveLink(shownCard, linkStates)}
             ticket={tickets[shownCard.id] ?? null}
             linkTargets={linkTargets}
+            boardCards={(detail?.cards ?? []).map((other) => ({
+              id: other.id,
+              number: other.number,
+              title: other.title,
+            }))}
+            fullPage={fullPage}
+            onToggleFullPage={() =>
+              setPageCardId(fullPage ? null : shownCard.id)
+            }
             focus={openCard?.focus}
             onClose={() => setOpenCard(null)}
             onOpenLinkedWork={(target) => {

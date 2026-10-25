@@ -3,7 +3,7 @@ import {
   SearchableSelect,
   type SearchableSelectOption,
 } from "../../../shared/ui/SearchableSelect";
-import { ExternalLink, Trash2 } from "../../../shared/ui/icons";
+import { ExternalLink, Maximize2, Trash2 } from "../../../shared/ui/icons";
 import { applyFetchedTicket } from "../model/ticketCards";
 import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItemDialog";
 import { SessionTicketChip } from "../../sessions/ui/SessionTicketChip";
@@ -40,7 +40,14 @@ import {
   useAhead,
 } from "./CardDrawerParts";
 import { DueDateInput, DueItems, PriorityItems } from "./CardPropertyMenus";
-import { MenuButton, MenuItem } from "./boardControls";
+import {
+  FieldsSection,
+  LinksSection,
+  RelationsSection,
+  StartAndEstimateRows,
+  type BoardCardRef,
+} from "./CardWorkSections";
+import { ICON_BUTTON, MenuButton, MenuItem } from "./boardControls";
 import {
   activityText,
   dueChip,
@@ -73,7 +80,10 @@ export function CardDetail({
   link,
   ticket = null,
   linkTargets,
+  boardCards = [],
   focus,
+  fullPage = false,
+  onToggleFullPage,
   onClose,
   onOpenLinkedWork,
   onMove,
@@ -92,7 +102,12 @@ export function CardDetail({
   /** The ticket the card links to. */
   ticket?: TicketRef | null;
   linkTargets: readonly BoardLinkTarget[];
+  /** The board's cards, for the relation picker. */
+  boardCards?: readonly BoardCardRef[];
   focus?: "title" | "link";
+  /** Fills the board area instead of docking beside it. */
+  fullPage?: boolean;
+  onToggleFullPage?: () => void;
   onClose: () => void;
   onOpenLinkedWork: (target: BoardLinkTarget) => void;
   /** Moves the card to `index` in `columnId`, with an undo toast. */
@@ -238,7 +253,9 @@ export function CardDetail({
     // The ticket dialog owns Escape while it is open.
     if (linkingTicket) return;
     saveFields();
-    onClose();
+    // Escape in the full page goes back to the drawer; the next one closes.
+    if (fullPage && onToggleFullPage) onToggleFullPage();
+    else onClose();
   };
 
   const changeLink = (value: string) => {
@@ -355,15 +372,33 @@ export function CardDetail({
           close();
         }
       }}
-      className="flex min-h-0 w-[380px] shrink-0 flex-col border-l border-stroke bg-background-base/40"
+      data-full-page={fullPage ? "" : undefined}
+      className={`flex min-h-0 flex-col bg-background-base/40 ${fullPage ? "min-w-0 flex-1" : "w-[380px] shrink-0 border-l border-stroke"}`}
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-stroke px-3">
         <span className="min-w-0 flex-1 truncate text-[12px] text-content/50">
           Card #{card.number}
         </span>
+        {onToggleFullPage ? (
+          <button
+            type="button"
+            aria-label={fullPage ? "Back to drawer" : "Open full page"}
+            aria-pressed={fullPage}
+            title={fullPage ? "Back to drawer" : "Open full page"}
+            onClick={() => {
+              saveFields();
+              onToggleFullPage();
+            }}
+            className={ICON_BUTTON}
+          >
+            <Maximize2 className="size-3.5" strokeWidth={1.75} />
+          </button>
+        ) : null}
         <CloseButton onClick={close} />
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4 pt-3">
+      <div
+        className={`flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4 pt-3 ${fullPage ? "mx-auto w-full max-w-3xl" : ""}`}
+      >
         <input
           ref={titleField}
           aria-label="Title"
@@ -439,6 +474,7 @@ export function CardDetail({
             </MenuButton>
             <DueDateInput dueAt={dueAt} onChoose={chooseDue} />
           </PropertyRow>
+          <StartAndEstimateRows card={card} onError={onError} />
           <PropertyRow name="projects" label="Projects">
             <MenuButton
               label="Projects"
@@ -574,7 +610,19 @@ export function CardDetail({
               </button>
             </div>
           </div>
+          <FieldsSection card={card} onError={onError} />
         </div>
+        <RelationsSection
+          card={card}
+          boardCards={boardCards}
+          onError={onError}
+        />
+        <LinksSection
+          card={card}
+          linkTargets={linkTargets}
+          onOpenLinkedWork={onOpenLinkedWork}
+          onError={onError}
+        />
         <label className="flex flex-col gap-1">
           <span className="text-[12px] text-content/50">Description</span>
           <textarea

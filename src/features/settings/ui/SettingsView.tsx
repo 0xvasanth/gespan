@@ -352,6 +352,7 @@ import {
   loadGridArcadeEnabled,
   loadLiveAgentsEnabled,
   loadModelControls,
+  loadBoardCardOpen,
   loadBoardEnabled,
   loadNotesEnabled,
   loadPilotsEnabled,
@@ -376,6 +377,7 @@ import {
   saveGridArcadeEnabled,
   saveLiveAgentsEnabled,
   saveModelControls,
+  saveBoardCardOpen,
   saveBoardEnabled,
   saveNotesEnabled,
   savePilotsEnabled,
@@ -396,6 +398,7 @@ import {
   type CollapsedProjectRailMode,
   type DiffViewer,
   type FileTabMode,
+  type BoardCardOpen,
   type FollowUpBehavior,
   type ModelControls,
   type SettingsSearchResult,
@@ -853,6 +856,7 @@ function GeneralPage({
     useState<NotificationPermission>(cachedNotificationPermission);
   const [notesEnabled, setNotesEnabled] = useState(loadNotesEnabled);
   const [boardEnabled, setBoardEnabled] = useState(loadBoardEnabled);
+  const [boardCardOpen, setBoardCardOpen] = useState(loadBoardCardOpen);
   const [liveAgentsEnabled, setLiveAgentsEnabled] = useState(
     loadLiveAgentsEnabled,
   );
@@ -896,6 +900,10 @@ function GeneralPage({
   const onNotesEnabled = (next: boolean) => {
     saveNotesEnabled(next);
     setNotesEnabled(next);
+  };
+  const onBoardCardOpen = (next: BoardCardOpen) => {
+    saveBoardCardOpen(next);
+    setBoardCardOpen(next);
   };
   const onBoardEnabled = (next: boolean) => {
     saveBoardEnabled(next);
@@ -1014,6 +1022,21 @@ function GeneralPage({
           description="A Kanban board for tracking work. Cards can link to sessions and Pilots, and move on their own as that work starts and finishes."
         >
           <Toggle label="Board" on={boardEnabled} onChange={onBoardEnabled} />
+        </Row>
+        <Row
+          id="board-card-open"
+          label="Open cards in"
+          description="Where a board card opens: a drawer beside the board, or a full page over it."
+        >
+          <Segmented
+            label="Open cards in"
+            value={boardCardOpen}
+            options={[
+              { value: "drawer", label: "Drawer" },
+              { value: "page", label: "Full page" },
+            ]}
+            onChange={onBoardCardOpen}
+          />
         </Row>
         {IS_MAC && (
           <Row

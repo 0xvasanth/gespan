@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PRIORITIES } from "../model/board";
-import { dayStart, dueInputValue, parseDueInput } from "./boardFormat";
+import { DATE_PICKS, datePickValue } from "../model/cardProps";
+import { dueInputValue, parseDueInput } from "./boardFormat";
 import { MenuItem, MenuSeparator } from "./boardControls";
 
 /** The priority choices of a Priority menu, current one checked. */
@@ -31,7 +32,7 @@ export function PriorityItems({
   );
 }
 
-/** The due-date presets of a Due menu, then Clear. */
+/** The date presets of a Start or Due menu, then Clear. */
 export function DueItems({
   dueAt,
   onChoose,
@@ -43,18 +44,12 @@ export function DueItems({
 }) {
   return (
     <>
-      {(
-        [
-          ["Today", 0],
-          ["Tomorrow", 1],
-          ["Next week", 7],
-        ] as const
-      ).map(([name, days]) => (
+      {DATE_PICKS.map(([name, days]) => (
         <MenuItem
           key={name}
           onSelect={() => {
             close();
-            onChoose(dayStart(days));
+            onChoose(datePickValue(days));
           }}
         >
           {name}
@@ -74,22 +69,24 @@ export function DueItems({
   );
 }
 
-/** A date field for a due date: a half-typed date waits, an emptied one clears. */
+/** A date field for a start, due or field date: a half-typed date waits, an emptied one clears. */
 export function DueDateInput({
   dueAt,
   onChoose,
   className,
+  label = "Due date",
 }: {
   dueAt: number | null;
   onChoose: (dueAt: number | null) => void;
   className?: string;
+  label?: string;
 }) {
   const [value, setValue] = useState(dueInputValue(dueAt));
   useEffect(() => setValue(dueInputValue(dueAt)), [dueAt]);
   return (
     <input
       type="date"
-      aria-label="Due date"
+      aria-label={label}
       value={value}
       onChange={(event) => {
         setValue(event.target.value);

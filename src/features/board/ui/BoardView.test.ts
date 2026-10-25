@@ -23,6 +23,7 @@ import { LAYER } from "../../../shared/lib/layers";
 import { BoardView } from "./BoardView";
 import { Sidebar } from "../../../app/shell/Sidebar";
 import {
+  saveBoardCardOpen,
   loadBoardEnabled,
   saveBoardEnabled,
   subscribeBoardEnabled,
@@ -154,6 +155,18 @@ beforeEach(() => {
     board_labels: () => [],
     board_subtasks: () => [],
     board_comments: () => [],
+    board_card_meta: () => ({
+      priority: 0,
+      dueAt: null,
+      startAt: null,
+      estimateMinutes: null,
+      archivedAt: null,
+      completedAt: null,
+    }),
+    board_fields: () => [],
+    board_card_field_values: () => [],
+    board_card_relations: () => [],
+    board_card_links: () => [],
     board_card_create: (args) =>
       card("new", String(args.columnId), 9, 9, String(args.title)),
   };
@@ -2305,5 +2318,73 @@ describe("BoardView undo toasts, held deletes and the Archive view", () => {
       "Couldn't collapse the column: database is locked",
     );
     expect(toastText()).toBe("Moved #1 to Done");
+  });
+});
+
+describe("BoardView full page", () => {
+  const cardEl = (id: string) =>
+    container.querySelector<HTMLElement>(`[data-board-card='${id}']`)!;
+  const drawerEl = () =>
+    document.querySelector<HTMLElement>("[data-card-drawer]");
+  const boardArea = () => columnEl("backlog").closest<HTMLElement>(".hidden");
+  const press = (key: string) =>
+    act(async () => {
+      drawerEl()!
+        .querySelector("input")!
+        .dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+    });
+
+  it("the toggle expands the card over the board and Escape returns to the drawer", async () => {
+    await renderBoard();
+    act(() => cardEl("c1").click());
+    await flush();
+    expect(drawerEl()!.hasAttribute("data-full-page")).toBe(false);
+    expect(boardArea()).toBeNull();
+
+    await act(async () =>
+      drawerEl()!
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Open full page"]',
+        )!
+        .click(),
+    );
+    expect(drawerEl()!.hasAttribute("data-full-page")).toBe(true);
+    expect(boardArea()).not.toBeNull();
+
+    // The first Escape goes back to the drawer, the second closes it.
+    await press("Escape");
+    expect(drawerEl()!.hasAttribute("data-full-page")).toBe(false);
+    expect(boardArea()).toBeNull();
+    await press("Escape");
+    expect(drawerEl()).toBeNull();
+  });
+
+  it("the Open cards in setting opens full page by default", async () => {
+    saveBoardCardOpen("page");
+    await renderBoard();
+    act(() => cardEl("c1").click());
+    await flush();
+    expect(drawerEl()!.hasAttribute("data-full-page")).toBe(true);
+    // Back to the drawer for this card only; the next card follows the setting.
+    await press("Escape");
+    expect(drawerEl()!.hasAttribute("data-full-page")).toBe(false);
+    await press("Escape");
+    act(() => cardEl("c2").click());
+    await flush();
+    expect(drawerEl()!.hasAttribute("data-full-page")).toBe(true);
+  });
+
+  it("opens as a drawer when the setting is Drawer", async () => {
+    saveBoardCardOpen("drawer");
+    await renderBoard();
+    act(() => cardEl("c1").click());
+    await flush();
+    expect(drawerEl()!.hasAttribute("data-full-page")).toBe(false);
   });
 });

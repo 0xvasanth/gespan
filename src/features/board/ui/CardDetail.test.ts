@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { resetTicketLinkCaches } from "../../sessions/model/ticketLinks";
 import type { TicketRef } from "../../sessions/model/session";
 import type { BoardCard, BoardLabel } from "../model/board";
@@ -15,6 +16,10 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => undefined)),
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: vi.fn(() => Promise.resolve()),
+  revealItemInDir: vi.fn(() => Promise.resolve()),
+}));
 
 const CARD: BoardCard = {
   id: "c3",
@@ -227,14 +232,18 @@ describe("CardDetail delete", () => {
     expect(props.onDelete).toHaveBeenCalledTimes(1);
     // The drawer writes nothing itself: no delete, archive or draft save.
     expect(
-      vi
-        .mocked(invoke)
-        .mock.calls.filter(
-          ([cmd]) =>
-            cmd !== "board_activity" &&
-            cmd !== "board_subtasks" &&
-            cmd !== "board_comments",
-        ),
+      vi.mocked(invoke).mock.calls.filter(
+        ([cmd]) =>
+          cmd !== "board_activity" &&
+          cmd !== "board_subtasks" &&
+          cmd !== "board_comments" &&
+          // Reads of the card's meta, fields, relations and links.
+          cmd !== "board_card_meta" &&
+          cmd !== "board_fields" &&
+          cmd !== "board_card_field_values" &&
+          cmd !== "board_card_relations" &&
+          cmd !== "board_card_links",
+      ),
     ).toEqual([]);
   });
 
@@ -604,6 +613,8 @@ describe("CardDetail drawer", () => {
       "status",
       "priority",
       "due",
+      "start",
+      "estimate",
       "projects",
       "labels",
       "linked",
@@ -1069,5 +1080,444 @@ describe("CardDetail drawer", () => {
       expect(calls("board_card_update")).toHaveLength(0);
       expect(field("Title").value).toBe("Ship board");
     });
+  });
+});
+
+describe("CardDetail dates, estimate, relations, fields and links", () => {
+  type Answers = Record<string, unknown>;
+  let answers: Answers;
+  const META = {
+    priority: 0,
+    dueAt: null,
+    startAt: null,
+    estimateMinutes: null,
+    archivedAt: null,
+    completedAt: null,
+  };
+  const OTHERS = [
+    { id: "c3", number: 3, title: "Ship board" },
+    { id: "c7", number: 7, title: "Fix login" },
+    { id: "c9", number: 9, title: "Write docs" },
+  ];
+  const writes = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(
+        ([cmd]) =>
+          /_(add|remove|set|set_start|set_estimate)$/.test(String(cmd)) ||
+          cmd === "board_field_value_set",
+      );
+
+  beforeEach(() => {
+    answers = {
+      board_activity: [],
+      board_subtasks: [],
+      board_comments: [],
+      board_card_meta: META,
+      board_fields: [],
+      board_card_field_values: [],
+      board_card_relations: [],
+      board_card_links: [],
+    };
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      const answer = answers[String(cmd)];
+      if (answer instanceof Error) throw answer.message;
+      return answer;
+    });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 25, 15, 30));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const blur = (el: HTMLElement) =>
+    act(async () => {
+      el.focus();
+      el.blur();
+    });
+  const commit = async (el: HTMLInputElement, value: string) => {
+    await act(async () => el.focus());
+    await typeInto(el, value);
+    await blur(el);
+    await settle();
+  };
+
+  it("start date and due date quick picks include In 2 weeks", async () => {
+    await renderDetail();
+    await choose("Start", "In 2 weeks");
+    await choose("Due", "In 2 weeks");
+    await choose("Start", "Tomorrow");
+    expect(calls("board_card_set_start").map(([, a]) => a)).toEqual([
+      { cardId: "c3", startAt: new Date(2026, 10, 8).getTime() },
+      { cardId: "c3", startAt: new Date(2026, 9, 26).getTime() },
+    ]);
+    expect(calls("board_card_set_due")[0][1]).toEqual({
+      cardId: "c3",
+      dueAt: new Date(2026, 10, 8).getTime(),
+    });
+  });
+
+  it("shows, picks and clears the start date", async () => {
+    answers.board_card_meta = {
+      ...META,
+      startAt: new Date(2026, 10, 2).getTime(),
+    };
+    await renderDetail();
+    expect(
+      drawer().querySelector('[data-property="start"]')!.textContent,
+    ).toContain("Nov 2, 2026");
+    await typeInto(field("Start date"), "2026-12-31");
+    await typeInto(field("Start date"), "");
+    expect(calls("board_card_set_start").map(([, a]) => a)).toEqual([
+      { cardId: "c3", startAt: new Date(2026, 11, 31).getTime() },
+      { cardId: "c3", startAt: null },
+    ]);
+  });
+
+  it("estimate parses hours and minutes and shows them as 1h 30m", async () => {
+    await renderDetail();
+    await commit(field("Estimate"), "1.5h");
+    expect(calls("board_card_set_estimate")).toEqual([
+      ["board_card_set_estimate", { cardId: "c3", minutes: 90 }],
+    ]);
+    expect(field("Estimate").value).toBe("1h 30m");
+  });
+
+  it("shows a saved estimate formatted and clears it when emptied", async () => {
+    answers.board_card_meta = { ...META, estimateMinutes: 120 };
+    await renderDetail();
+    expect(field("Estimate").value).toBe("2h");
+    await commit(field("Estimate"), "");
+    expect(calls("board_card_set_estimate")).toEqual([
+      ["board_card_set_estimate", { cardId: "c3", minutes: null }],
+    ]);
+  });
+
+  it("rejects a bad estimate inline and writes nothing", async () => {
+    await renderDetail();
+    for (const bad of ["0", "-5", "soon"]) {
+      await commit(field("Estimate"), bad);
+      expect(drawer().querySelector('[role="alert"]')).not.toBeNull();
+    }
+    expect(calls("board_card_set_estimate")).toEqual([]);
+  });
+
+  describe("relations", () => {
+    const pick = async (menuName: string, query: string, card: string) => {
+      await openMenu("Add relation");
+      await act(async () => menuItem(menuName).click());
+      await typeInto(
+        drawer().querySelector<HTMLInputElement>(
+          "[data-relation-picker] input",
+        )!,
+        query,
+      );
+      const row = [
+        ...drawer().querySelectorAll<HTMLElement>(
+          "[data-relation-picker] li button",
+        ),
+      ].find((b) => b.textContent?.includes(card))!;
+      await act(async () => row.click());
+      await settle();
+    };
+
+    it("blocks and blocked by write the right direction", async () => {
+      await renderDetail({ boardCards: OTHERS });
+      await pick("Blocks", "login", "#7");
+      await pick("Blocked by", "docs", "#9");
+      await pick("Relates to", "#7", "#7");
+      expect(calls("board_relation_add").map(([, a]) => a)).toEqual([
+        { cardId: "c3", relatedCardId: "c7", kind: "blocks" },
+        { cardId: "c9", relatedCardId: "c3", kind: "blocks" },
+        { cardId: "c3", relatedCardId: "c7", kind: "relates" },
+      ]);
+    });
+
+    it("the picker lists other cards only, by #N and title", async () => {
+      await renderDetail({ boardCards: OTHERS });
+      await openMenu("Add relation");
+      await act(async () => menuItem("Blocks").click());
+      const items = [
+        ...drawer().querySelectorAll("[data-relation-picker] li"),
+      ].map((li) => li.textContent);
+      expect(items).toEqual(["#7 Fix login", "#9 Write docs"]);
+    });
+
+    it("a cycle shows the store's refusal inline and writes nothing else", async () => {
+      answers.board_relation_add = new Error("That would create a cycle");
+      await renderDetail({ boardCards: OTHERS });
+      await pick("Blocks", "", "#7");
+      expect(drawer().querySelector('[role="alert"]')!.textContent).toBe(
+        "That would create a cycle",
+      );
+      // Still picking, nothing listed as related, no other write.
+      expect(drawer().querySelector("[data-relation-picker]")).not.toBeNull();
+      expect(drawer().querySelector("[data-relation-group]")).toBeNull();
+      expect(writes().map(([cmd]) => cmd)).toEqual(["board_relation_add"]);
+    });
+
+    it("groups relations as Blocks, Blocked by and Relates to, each removable", async () => {
+      answers.board_card_relations = [
+        { cardId: "c3", relatedCardId: "c7", kind: "blocks" },
+        { cardId: "c9", relatedCardId: "c3", kind: "blocks" },
+        { cardId: "c7", relatedCardId: "c3", kind: "relates" },
+      ];
+      await renderDetail({ boardCards: OTHERS });
+      const group = (id: string) =>
+        drawer().querySelector(`[data-relation-group="${id}"]`)!.textContent;
+      expect(group("blocks")).toContain("#7 Fix login");
+      expect(group("blocked-by")).toContain("#9 Write docs");
+      expect(group("relates")).toContain("#7 Fix login");
+      await act(async () =>
+        drawer()
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="Remove Blocked by #9"]',
+          )!
+          .click(),
+      );
+      expect(calls("board_relation_remove")).toEqual([
+        [
+          "board_relation_remove",
+          { cardId: "c9", relatedCardId: "c3", kind: "blocks" },
+        ],
+      ]);
+    });
+  });
+
+  describe("custom fields", () => {
+    const fieldDef = (
+      id: string,
+      name: string,
+      kind: string,
+      options = null,
+    ) => ({
+      id,
+      boardId: "b1",
+      name,
+      kind,
+      optionsJson: options as string | null,
+      position: 0,
+    });
+    const fieldCalls = () => calls("board_field_value_set").map(([, a]) => a);
+
+    beforeEach(() => {
+      answers.board_fields = [
+        fieldDef("f1", "Owner", "text"),
+        fieldDef("f2", "Points", "number"),
+        fieldDef("f3", "Ship", "date"),
+        fieldDef("f4", "Size", "select", '["S","M","L"]'),
+        fieldDef("f5", "Risky", "checkbox"),
+      ];
+    });
+
+    it("edits by kind with the right JSON encoding", async () => {
+      await renderDetail();
+      await commit(field("Owner"), " Vasanth ");
+      await commit(field("Points"), "2.5");
+      await typeInto(field("Ship date"), "2026-11-02");
+      await act(async () => {
+        const select = field("Size") as unknown as HTMLSelectElement;
+        Object.getOwnPropertyDescriptor(
+          HTMLSelectElement.prototype,
+          "value",
+        )!.set!.call(select, "M");
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await act(async () => field("Risky").click());
+      expect(fieldCalls()).toEqual([
+        { cardId: "c3", fieldId: "f1", valueJson: '"Vasanth"' },
+        { cardId: "c3", fieldId: "f2", valueJson: "2.5" },
+        {
+          cardId: "c3",
+          fieldId: "f3",
+          valueJson: String(new Date(2026, 10, 2).getTime()),
+        },
+        { cardId: "c3", fieldId: "f4", valueJson: '"M"' },
+        { cardId: "c3", fieldId: "f5", valueJson: "true" },
+      ]);
+    });
+
+    it("shows stored values and clears them with null", async () => {
+      answers.board_card_field_values = [
+        { cardId: "c3", fieldId: "f1", valueJson: '"Vasanth"' },
+        { cardId: "c3", fieldId: "f2", valueJson: "4" },
+        { cardId: "c3", fieldId: "f4", valueJson: '"L"' },
+        { cardId: "c3", fieldId: "f5", valueJson: "true" },
+      ];
+      await renderDetail();
+      expect(field("Owner").value).toBe("Vasanth");
+      expect(field("Points").value).toBe("4");
+      expect((field("Size") as unknown as HTMLSelectElement).value).toBe("L");
+      expect(field("Risky").checked).toBe(true);
+      await commit(field("Owner"), "");
+      await act(async () => field("Risky").click());
+      expect(fieldCalls()).toEqual([
+        { cardId: "c3", fieldId: "f1", valueJson: null },
+        { cardId: "c3", fieldId: "f5", valueJson: "false" },
+      ]);
+    });
+
+    it("a non-numeric number shows an error and writes nothing", async () => {
+      await renderDetail();
+      await commit(field("Points"), "lots");
+      expect(drawer().querySelector('[role="alert"]')!.textContent).toContain(
+        "not a number",
+      );
+      expect(fieldCalls()).toEqual([]);
+    });
+  });
+
+  describe("links", () => {
+    const link = (kind: string, reference: string, role: string | null) => ({
+      cardId: "c3",
+      kind,
+      reference,
+      role,
+      createdAt: 1,
+    });
+    const addVia = async (menuName: string, value: string) => {
+      await openMenu("Add link");
+      await act(async () => menuItem(menuName).click());
+      const input = drawer().querySelector<HTMLInputElement>(
+        '[data-section="links"] input',
+      )!;
+      await typeInto(input, value);
+      await act(async () =>
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      );
+      await settle();
+    };
+
+    it("adds a PR URL and rejects one that is not http or https", async () => {
+      await renderDetail();
+      await addVia("PR URL", "github.com/a/b/pull/1");
+      expect(drawer().querySelector('[role="alert"]')).not.toBeNull();
+      expect(calls("board_link_add")).toEqual([]);
+      await addVia("PR URL", "https://github.com/a/b/pull/1");
+      expect(calls("board_link_add")).toEqual([
+        [
+          "board_link_add",
+          {
+            cardId: "c3",
+            kind: "pr",
+            reference: "https://github.com/a/b/pull/1",
+            role: null,
+          },
+        ],
+      ]);
+    });
+
+    it("adds a worktree path", async () => {
+      await renderDetail();
+      await addVia("Worktree path", " /work/tree ");
+      expect(calls("board_link_add")[0][1]).toEqual({
+        cardId: "c3",
+        kind: "worktree",
+        reference: "/work/tree",
+        role: null,
+      });
+    });
+
+    it("offers existing sessions and Pilots, not ones already linked", async () => {
+      answers.board_card_links = [link("session", "s1", null)];
+      await renderDetail({
+        linkTargets: [
+          { kind: "session", id: "s1", label: "Linked one" },
+          { kind: "session", id: "s2", label: "Fresh one" },
+          { kind: "pilot", id: "p1", label: "Pilot one" },
+        ],
+      });
+      await openMenu("Add link");
+      await act(async () => menuItem("Session").click());
+      await act(async () =>
+        drawer()
+          .querySelector<HTMLButtonElement>(
+            '[data-section="links"] button[aria-label^="Session:"]',
+          )!
+          .click(),
+      );
+      const text = document.body.textContent!;
+      expect(text).toContain("Fresh one");
+      expect(text).not.toContain("Pilot one");
+    });
+
+    it("lists links with Open and Remove, and hides the primary one", async () => {
+      answers.board_card_links = [
+        link("session", "s0", "primary"),
+        link("pr", "https://github.com/a/b/pull/1", null),
+        link("worktree", "/work/tree", null),
+      ];
+      await renderDetail();
+      const rows = [...drawer().querySelectorAll("[data-link]")].map((el) =>
+        el.getAttribute("data-link"),
+      );
+      expect(rows).toEqual(["pr", "worktree"]);
+      await act(async () =>
+        drawer()
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="Open PR link"]',
+          )!
+          .click(),
+      );
+      expect(openUrl).toHaveBeenCalledWith("https://github.com/a/b/pull/1");
+      await act(async () =>
+        drawer()
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="Remove PR link"]',
+          )!
+          .click(),
+      );
+      expect(calls("board_link_remove")).toEqual([
+        [
+          "board_link_remove",
+          {
+            cardId: "c3",
+            kind: "pr",
+            reference: "https://github.com/a/b/pull/1",
+          },
+        ],
+      ]);
+    });
+  });
+});
+
+describe("CardDetail full page", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockImplementation(async (cmd) =>
+      cmd === "board_card_meta" ? {} : [],
+    );
+  });
+
+  it("toggles from the top bar, and Escape goes back to the drawer before closing", async () => {
+    const onToggleFullPage = vi.fn();
+    const props = await renderDetail({ fullPage: true, onToggleFullPage });
+    expect(drawer().hasAttribute("data-full-page")).toBe(true);
+    await pressKey(drawer().querySelector("input")!, "Escape");
+    expect(onToggleFullPage).toHaveBeenCalledTimes(1);
+    expect(props.onClose).not.toHaveBeenCalled();
+    await act(async () =>
+      drawer()
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Back to drawer"]',
+        )!
+        .click(),
+    );
+    expect(onToggleFullPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes on Escape when it is the drawer", async () => {
+    const onToggleFullPage = vi.fn();
+    const props = await renderDetail({ onToggleFullPage });
+    expect(
+      drawer().querySelector('button[aria-label="Open full page"]'),
+    ).not.toBeNull();
+    await pressKey(drawer().querySelector("input")!, "Escape");
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+    expect(onToggleFullPage).not.toHaveBeenCalled();
   });
 });
