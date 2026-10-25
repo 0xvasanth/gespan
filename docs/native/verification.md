@@ -74,11 +74,11 @@ Both apps read and write the same `boards`, `board_columns`, `board_cards`
 and `board_activity` tables, plus the shared label, project, subtask, comment
 and ticket-link tables, through the `gespan-board-store` crate;
 `crates/gespan-core/tests/shared_contracts.rs` pins the DDL, error strings and
-the `gespan.boardEnabled` key to Tauri. The old `board_native_*` tables are left in place for one release; after the
-one-time copy nothing reads them. Deleting a card
-in either app removes its own rows, including which labels it carries; the
-board's label definitions stay until the board is deleted. The Board setting
-is on by default in both apps.
+the `gespan.boardEnabled` key to Tauri. The old `board_native_*` tables are
+left in place for one release; after the one-time copy nothing reads them.
+Deleting a card in either app removes its own rows, including which labels it
+carries; the board's label definitions stay until the board is deleted. The
+Board setting is on by default in both apps.
 Automated coverage: storage, ordering, extras and concurrent writes (core);
 auto-move and turn rules (core); the setting and app view; the board switcher,
 search and filters; card and step styling; drag and drop, keyboard dragging and
