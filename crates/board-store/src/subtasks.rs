@@ -131,3 +131,51 @@ pub fn delete_subtask(conn: &Connection, subtask_id: &str) -> Result<Option<Stri
     tx.commit().map_err(db)?;
     Ok(Some(card.board_id))
 }
+
+/// Moves a subtask to `index` among its card's subtasks (clamped to the end)
+/// and rewrites positions to 0..n-1. Moving to where it already is changes
+/// nothing and logs nothing. Returns the owning board id.
+pub fn move_subtask(conn: &Connection, subtask_id: &str, index: usize) -> Result<String, String> {
+    let tx = write_tx(conn)?;
+    let Some(subtask) = get_subtask(&tx, subtask_id)? else {
+        return Err("Subtask not found".into());
+    };
+    let card = get_card(&tx, &subtask.card_id)?;
+    let mut ids: Vec<String> = list_subtasks(&tx, &card.id)?
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    let old_index = ids.iter().position(|id| id == subtask_id);
+    ids.retain(|id| id != subtask_id);
+    let new_index = index.min(ids.len());
+    ids.insert(new_index, subtask_id.to_string());
+    let current_positions: Vec<i64> = list_subtasks(&tx, &card.id)?
+        .iter()
+        .map(|s| s.position)
+        .collect();
+    let contiguous = current_positions
+        .iter()
+        .enumerate()
+        .all(|(i, p)| *p == i as i64);
+    if old_index == Some(new_index) && contiguous {
+        return Ok(card.board_id);
+    }
+    for (position, id) in ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE board_subtasks SET position = ?1 WHERE id = ?2",
+            params![position as i64, id],
+        )
+        .map_err(db)?;
+    }
+    if old_index != Some(new_index) {
+        touch(&tx, &card.id)?;
+        log_edit(
+            &tx,
+            &card.board_id,
+            &card.id,
+            &format!("subtask moved: {}", subtask.title),
+        )?;
+    }
+    tx.commit().map_err(db)?;
+    Ok(card.board_id)
+}

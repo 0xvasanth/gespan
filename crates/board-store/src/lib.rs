@@ -4,6 +4,7 @@
 //! the same SQL, validation and error strings.
 use serde::Serialize;
 
+mod card_ops;
 mod comments;
 mod fields;
 mod labels;
@@ -16,6 +17,7 @@ mod schema;
 mod settings;
 mod subtasks;
 
+pub use card_ops::{convert_subtask, duplicate_card, move_card_to_board};
 pub use comments::{add_comment, edit_comment, list_comments, Comment, COMMENT_AUTHORS};
 pub use fields::{
     create_field, field_values, list_fields, set_field_value, Field, FieldValue, FIELD_KINDS,
@@ -36,7 +38,9 @@ pub use ops::{
 pub use relations::{add_relation, card_relations, remove_relation, Relation, RELATION_KINDS};
 pub use schema::{ensure_tables, VERSION as SCHEMA_VERSION};
 pub use settings::{board_settings, set_board_settings, BoardSettings};
-pub use subtasks::{add_subtask, delete_subtask, list_subtasks, toggle_subtask, Subtask};
+pub use subtasks::{
+    add_subtask, delete_subtask, list_subtasks, move_subtask, toggle_subtask, Subtask,
+};
 
 pub fn now_millis() -> i64 {
     std::time::SystemTime::now()

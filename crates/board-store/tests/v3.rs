@@ -834,3 +834,350 @@ fn delete_archived_card_of_a_missing_card_is_a_no_op() {
     assert_eq!(delete_archived_card(&conn, "missing").unwrap(), None);
     assert!(archived_cards(&conn, &board.id).unwrap().is_empty());
 }
+
+// ---- C3-1: subtask reorder and convert, duplicate, move to board ----
+
+fn subtask_titles(conn: &Connection, card: &str) -> Vec<(String, i64)> {
+    list_subtasks(conn, card)
+        .unwrap()
+        .into_iter()
+        .map(|s| (s.title, s.position))
+        .collect()
+}
+
+fn relation_count(conn: &Connection, card: &str) -> usize {
+    card_relations(conn, card).unwrap().len()
+}
+
+#[test]
+fn move_subtask_reorders_and_stays_contiguous() {
+    let conn = fresh();
+    let (board, _, cards) = board_with_cards(&conn, &["Parent"]);
+    let card = &cards[0].id;
+    let a = add_subtask(&conn, card, "A").unwrap();
+    add_subtask(&conn, card, "B").unwrap();
+    add_subtask(&conn, card, "C").unwrap();
+    assert_eq!(move_subtask(&conn, &a.id, 2).unwrap(), board.id);
+    assert_eq!(
+        subtask_titles(&conn, card),
+        vec![("B".into(), 0), ("C".into(), 1), ("A".into(), 2)]
+    );
+    assert_eq!(
+        last_detail(&conn, &board.id, card).as_deref(),
+        Some("subtask moved: A")
+    );
+    // Index past the end clamps to the end: no change, no activity.
+    let before = activity_count(&conn, &board.id, card);
+    move_subtask(&conn, &a.id, 99).unwrap();
+    assert_eq!(activity_count(&conn, &board.id, card), before);
+    // Move to the front.
+    move_subtask(&conn, &a.id, 0).unwrap();
+    assert_eq!(
+        subtask_titles(&conn, card),
+        vec![("A".into(), 0), ("B".into(), 1), ("C".into(), 2)]
+    );
+    assert_eq!(activity_count(&conn, &board.id, card), before + 1);
+    assert!(move_subtask(&conn, "missing", 0).is_err());
+}
+
+#[test]
+fn convert_subtask_creates_card_after_parent_relates_and_removes_subtask() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["P1", "Parent", "P3"]);
+    let parent = &cards[1];
+    add_subtask(&conn, &parent.id, "Keep").unwrap();
+    let sub = add_subtask(&conn, &parent.id, "Ship it").unwrap();
+    add_subtask(&conn, &parent.id, "Also keep").unwrap();
+    let card = convert_subtask(&conn, &sub.id).unwrap();
+    assert_eq!(card.title, "Ship it");
+    assert_eq!(card.number, 4);
+    assert_eq!(card.column_id, columns[0].id);
+    assert_eq!(
+        column_titles(&conn, &board.id, &columns[0].id),
+        ["P1", "Parent", "Ship it", "P3"]
+    );
+    assert_contiguous(&conn, &board.id, &columns);
+    assert_eq!(
+        card_relations(&conn, &parent.id).unwrap(),
+        vec![Relation {
+            card_id: parent.id.clone(),
+            related_card_id: card.id.clone(),
+            kind: "relates".into()
+        }]
+    );
+    assert_eq!(
+        subtask_titles(&conn, &parent.id),
+        vec![("Keep".into(), 0), ("Also keep".into(), 1)]
+    );
+    assert_eq!(
+        last_detail(&conn, &board.id, &parent.id).as_deref(),
+        Some("subtask converted: Ship it → #4")
+    );
+    // One row on the parent for the change (plus the earlier adds/created).
+    assert_eq!(activity_count(&conn, &board.id, &parent.id), 1 + 3 + 1);
+}
+
+#[test]
+fn convert_subtask_at_column_end() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["First", "Last"]);
+    let sub = add_subtask(&conn, &cards[1].id, "Tail").unwrap();
+    convert_subtask(&conn, &sub.id).unwrap();
+    assert_eq!(
+        column_titles(&conn, &board.id, &columns[0].id),
+        ["First", "Last", "Tail"]
+    );
+    assert_contiguous(&conn, &board.id, &columns);
+    // Parent at the start.
+    let sub = add_subtask(&conn, &cards[0].id, "Head").unwrap();
+    convert_subtask(&conn, &sub.id).unwrap();
+    assert_eq!(
+        column_titles(&conn, &board.id, &columns[0].id),
+        ["First", "Head", "Last", "Tail"]
+    );
+    assert_contiguous(&conn, &board.id, &columns);
+}
+
+#[test]
+fn convert_missing_subtask_errors() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["Parent"]);
+    let sub = add_subtask(&conn, &cards[0].id, "Gone").unwrap();
+    delete_subtask(&conn, &sub.id).unwrap();
+    assert_eq!(
+        convert_subtask(&conn, &sub.id).unwrap_err(),
+        "Subtask not found"
+    );
+    // Nothing was written.
+    assert_eq!(column_titles(&conn, &board.id, &columns[0].id), ["Parent"]);
+    assert_eq!(relation_count(&conn, &cards[0].id), 0);
+    // An archived parent is refused too, and keeps its subtask.
+    let sub = add_subtask(&conn, &cards[0].id, "Stay").unwrap();
+    archive_card(&conn, &cards[0].id).unwrap();
+    assert_eq!(
+        convert_subtask(&conn, &sub.id).unwrap_err(),
+        "Card is archived"
+    );
+    assert_eq!(subtask_titles(&conn, &cards[0].id).len(), 1);
+}
+
+fn rich_card(conn: &Connection) -> (Board, Vec<Column>, Vec<Card>, Label, Field) {
+    let (board, columns, cards) = board_with_cards(conn, &["Orig", "Next"]);
+    let id = &cards[0].id;
+    update_card(conn, id, "Orig", "the body").unwrap();
+    let label = create_label(conn, &board.id, "Bug", "e5534b").unwrap();
+    set_card_labels(conn, id, std::slice::from_ref(&label.id)).unwrap();
+    set_projects(conn, id, &["/a".to_string(), "/b".to_string()]).unwrap();
+    set_priority(conn, id, 3).unwrap();
+    set_due(conn, id, Some(DUE)).unwrap();
+    set_start(conn, id, Some(DUE - 86_400_000)).unwrap();
+    set_estimate(conn, id, Some(90)).unwrap();
+    let field = create_field(conn, &board.id, "Points", "number", None).unwrap();
+    set_field_value(conn, id, &field.id, Some("5")).unwrap();
+    let sub = add_subtask(conn, id, "Step one").unwrap();
+    toggle_subtask(conn, &sub.id, true).unwrap();
+    add_subtask(conn, id, "Step two").unwrap();
+    add_link(conn, id, "pr", "https://example.com/pr/1", None).unwrap();
+    add_comment(conn, id, "hello", "user").unwrap();
+    add_relation(conn, id, &cards[1].id, "relates").unwrap();
+    (board, columns, cards, label, field)
+}
+
+#[test]
+fn duplicate_copies_meta_labels_projects_subtasks_fields_not_links() {
+    let conn = fresh();
+    let (board, _, cards, label, field) = rich_card(&conn);
+    let copy = duplicate_card(&conn, &cards[0].id).unwrap();
+    assert_eq!(copy.title, "Orig (copy)");
+    assert_eq!(copy.body, "the body");
+    assert_eq!(copy.board_id, board.id);
+    assert_eq!(copy.number, 3);
+    let meta = card_meta(&conn, &copy.id).unwrap();
+    assert_eq!(meta.priority, 3);
+    assert_eq!(meta.due_at, Some(DUE));
+    assert_eq!(meta.start_at, Some(DUE - 86_400_000));
+    assert_eq!(meta.estimate_minutes, Some(90));
+    let extras = card_extras(&conn, &board.id).unwrap();
+    let e = &extras[&copy.id];
+    assert_eq!(e.labels, vec![label.id.clone()]);
+    assert_eq!(e.projects, vec!["/a".to_string(), "/b".to_string()]);
+    let values = field_values(&conn, &copy.id).unwrap();
+    assert_eq!(values.len(), 1);
+    assert_eq!(values[0].field_id, field.id);
+    assert_eq!(values[0].value_json, "5");
+    // Not copied.
+    assert!(card_links(&conn, &copy.id).unwrap().is_empty());
+    assert!(list_comments(&conn, &copy.id).unwrap().is_empty());
+    assert_eq!(relation_count(&conn, &copy.id), 0);
+    assert!(copy.link_kind.is_none());
+    // The original is untouched.
+    assert_eq!(card_links(&conn, &cards[0].id).unwrap().len(), 1);
+    assert_eq!(relation_count(&conn, &cards[0].id), 1);
+    assert_eq!(subtask_titles(&conn, &cards[0].id).len(), 2);
+}
+
+#[test]
+fn duplicate_resets_subtasks_and_places_after_original() {
+    let conn = fresh();
+    let (board, columns, cards, _, _) = rich_card(&conn);
+    let copy = duplicate_card(&conn, &cards[0].id).unwrap();
+    let subs = list_subtasks(&conn, &copy.id).unwrap();
+    assert_eq!(
+        subs.iter()
+            .map(|s| (s.title.as_str(), s.done, s.position))
+            .collect::<Vec<_>>(),
+        vec![("Step one", false, 0), ("Step two", false, 1)]
+    );
+    // The original's first subtask is still done.
+    assert!(list_subtasks(&conn, &cards[0].id).unwrap()[0].done);
+    assert_eq!(
+        column_titles(&conn, &board.id, &columns[0].id),
+        ["Orig", "Orig (copy)", "Next"]
+    );
+    assert_contiguous(&conn, &board.id, &columns);
+    let log = list_activity(&conn, &board.id, Some(&copy.id), 10).unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].kind, "created");
+    assert_eq!(log[0].detail.as_deref(), Some("duplicated from #1"));
+    // A card without a meta row duplicates cleanly, and a long title is trimmed to fit.
+    let long = "x".repeat(500);
+    let c = create_card(&conn, &columns[1].id, &long, "").unwrap();
+    let copy = duplicate_card(&conn, &c.id).unwrap();
+    assert_eq!(copy.title.chars().count(), 500);
+    assert!(copy.title.ends_with(" (copy)"));
+    assert_eq!(card_meta(&conn, &copy.id).unwrap(), CardMeta::default());
+}
+
+fn two_boards(conn: &Connection) -> (Board, Vec<Column>, Board, Vec<Column>) {
+    let (a, ac, _) = board_with_cards(conn, &[]);
+    let b = create_board(conn, "Other").unwrap();
+    let bc = get_board(conn, &b.id).unwrap().columns;
+    (a, ac, b, bc)
+}
+
+#[test]
+fn move_to_board_maps_labels_case_insensitively_and_drops_unknown() {
+    let conn = fresh();
+    let (a, ac, b, bc) = two_boards(&conn);
+    let card = create_card(&conn, &ac[0].id, "Mover", "").unwrap();
+    let bug = create_label(&conn, &a.id, "Bug", "e5534b").unwrap();
+    let only = create_label(&conn, &a.id, "OnlyHere", "000000").unwrap();
+    set_card_labels(&conn, &card.id, &[bug.id.clone(), only.id]).unwrap();
+    let target_bug = create_label(&conn, &b.id, "bUG", "4da3f5").unwrap();
+    let points_a = create_field(&conn, &a.id, "Points", "number", None).unwrap();
+    let notes_a = create_field(&conn, &a.id, "Notes", "text", None).unwrap();
+    let lone_a = create_field(&conn, &a.id, "Lone", "text", None).unwrap();
+    set_field_value(&conn, &card.id, &points_a.id, Some("3")).unwrap();
+    set_field_value(&conn, &card.id, &notes_a.id, Some("\"hi\"")).unwrap();
+    set_field_value(&conn, &card.id, &lone_a.id, Some("\"x\"")).unwrap();
+    let points_b = create_field(&conn, &b.id, "points", "number", None).unwrap();
+    // Same name, different kind: dropped.
+    create_field(&conn, &b.id, "Notes", "checkbox", None).unwrap();
+    let moved = move_card_to_board(&conn, &card.id, &b.id).unwrap();
+    assert_eq!(moved.board_id, b.id);
+    assert_eq!(moved.column_id, bc[0].id);
+    let extras = card_extras(&conn, &b.id).unwrap();
+    assert_eq!(extras[&card.id].labels, vec![target_bug.id]);
+    let values = field_values(&conn, &card.id).unwrap();
+    assert_eq!(values.len(), 1);
+    assert_eq!(values[0].field_id, points_b.id);
+    assert_eq!(values[0].value_json, "3");
+    // No leftovers pointing at the old board.
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT COUNT(*) FROM board_card_labels cl JOIN board_labels l ON l.id = cl.label_id
+             JOIN board_cards c ON c.id = cl.card_id WHERE l.board_id <> c.board_id"
+        ),
+        0
+    );
+}
+
+#[test]
+fn move_to_board_without_todo_column_uses_first_column() {
+    let conn = fresh();
+    let (_, ac, b, bc) = two_boards(&conn);
+    update_column(&conn, &bc[0].id, "Backlog", None).unwrap();
+    let cols = get_board(&conn, &b.id).unwrap().columns;
+    assert!(cols.iter().all(|c| c.role.as_deref() != Some("todo")));
+    let existing = create_card(&conn, &cols[0].id, "Already", "").unwrap();
+    let card = create_card(&conn, &ac[0].id, "Mover", "").unwrap();
+    let moved = move_card_to_board(&conn, &card.id, &b.id).unwrap();
+    assert_eq!(moved.column_id, cols[0].id);
+    assert_eq!(moved.position, 1);
+    assert_eq!(existing.position, 0);
+}
+
+#[test]
+fn move_to_board_prefers_todo_over_an_earlier_column() {
+    let conn = fresh();
+    let (_, ac, b, bc) = two_boards(&conn);
+    // Put the todo column second by moving the first column behind it.
+    move_column(&conn, &bc[0].id, 1).unwrap();
+    let card = create_card(&conn, &ac[0].id, "Mover", "").unwrap();
+    let moved = move_card_to_board(&conn, &card.id, &b.id).unwrap();
+    assert_eq!(moved.column_id, bc[0].id);
+}
+
+#[test]
+fn move_to_board_gets_a_new_number_and_drops_relations() {
+    let conn = fresh();
+    let (a, ac, b, bc) = two_boards(&conn);
+    let first = create_card(&conn, &ac[0].id, "One", "").unwrap();
+    let mover = create_card(&conn, &ac[0].id, "Mover", "keep body").unwrap();
+    let third = create_card(&conn, &ac[0].id, "Three", "").unwrap();
+    create_card(&conn, &bc[0].id, "T1", "").unwrap();
+    create_card(&conn, &bc[0].id, "T2", "").unwrap();
+    add_relation(&conn, &mover.id, &first.id, "blocks").unwrap();
+    add_relation(&conn, &third.id, &mover.id, "relates").unwrap();
+    add_link(&conn, &mover.id, "pr", "https://example.com/pr/9", None).unwrap();
+    add_comment(&conn, &mover.id, "note", "agent").unwrap();
+    add_subtask(&conn, &mover.id, "sub").unwrap();
+    set_priority(&conn, &mover.id, 2).unwrap();
+    set_projects(&conn, &mover.id, &["/p".to_string()]).unwrap();
+    let moved = move_card_to_board(&conn, &mover.id, &b.id).unwrap();
+    assert_eq!(moved.number, 3);
+    assert_eq!(moved.position, 2);
+    assert_eq!(moved.body, "keep body");
+    assert_eq!(relation_count(&conn, &mover.id), 0);
+    assert_eq!(relation_count(&conn, &first.id), 0);
+    assert_eq!(relation_count(&conn, &third.id), 0);
+    assert_eq!(card_links(&conn, &mover.id).unwrap().len(), 1);
+    assert_eq!(list_comments(&conn, &mover.id).unwrap().len(), 1);
+    assert_eq!(list_subtasks(&conn, &mover.id).unwrap().len(), 1);
+    assert_eq!(card_meta(&conn, &mover.id).unwrap().priority, 2);
+    assert_eq!(
+        card_extras(&conn, &b.id).unwrap()[&mover.id].projects,
+        ["/p"]
+    );
+    // The source board's numbering carries on and its column closes the gap.
+    assert_eq!(column_titles(&conn, &a.id, &ac[0].id), ["One", "Three"]);
+    assert_contiguous(&conn, &a.id, &ac);
+    assert_contiguous(&conn, &b.id, &bc);
+    let next = create_card(&conn, &ac[0].id, "Four", "").unwrap();
+    assert_eq!(next.number, 4);
+    // Errors write nothing.
+    assert_eq!(
+        move_card_to_board(&conn, &mover.id, &b.id).unwrap_err(),
+        "Card is already on this board"
+    );
+    assert_eq!(
+        move_card_to_board(&conn, &first.id, "nope").unwrap_err(),
+        "Board not found"
+    );
+    assert_eq!(get_card(&conn, &first.id).unwrap().board_id, a.id);
+}
+
+#[test]
+fn move_to_board_writes_activity_on_both_boards() {
+    let conn = fresh();
+    let (a, ac, b, _) = two_boards(&conn);
+    let card = create_card(&conn, &ac[0].id, "Mover", "").unwrap();
+    move_card_to_board(&conn, &card.id, &b.id).unwrap();
+    let src = list_activity(&conn, &a.id, Some(&card.id), 10).unwrap();
+    let dst = list_activity(&conn, &b.id, Some(&card.id), 10).unwrap();
+    assert_eq!(src.len(), 2); // created, then moved to board
+    assert_eq!(src[0].detail.as_deref(), Some("moved to board Other"));
+    assert_eq!(dst.len(), 1);
+    assert_eq!(dst[0].detail.as_deref(), Some("moved from board Work"));
+}
