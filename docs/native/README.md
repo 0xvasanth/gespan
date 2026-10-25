@@ -76,7 +76,7 @@ Development stores `monocode.db` under:
 Release builds open `com.monocode.desktop/monocode.db` under macOS Application
 Support, Linux's XDG data directory, or Windows' `%APPDATA%`. The app uses the
 existing desktop schema and session IDs. GPUI preferences are saved beside the
-database in `monocode.db.gpui.json`.
+database in `monocode.db.gpui.sqlite3`.
 
 Supported desktop preferences and workspace state are read from the installed
 app's webview localStorage on macOS and Linux. The Windows WebView2 reader is

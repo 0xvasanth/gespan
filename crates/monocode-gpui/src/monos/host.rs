@@ -37,6 +37,25 @@ fn fingerprint(call: &Call) -> String {
     files::content_hash(&format!("{}:{}", call.action, call.input))
 }
 impl Monos {
+    fn app_caller(&self, call: &Call) -> Result<Mono, String> {
+        let mono = self
+            .roster
+            .of_session(call.session)
+            .or_else(|| {
+                self.running
+                    .get(&call.session)
+                    .and_then(|r| self.roster.get(&r.mono))
+            })
+            .cloned()
+            .ok_or("This Mono no longer owns an active app capability")?;
+        if call.action.starts_with("habits.")
+            && call.action != "habits.list"
+            && self.running.contains_key(&call.session)
+        {
+            return Err("A habit run cannot schedule more runs".into());
+        }
+        Ok(mono)
+    }
     fn finish_call(&mut self, call: Call, result: Result<Value, String>, cx: &mut Context<Self>) {
         let key = (call.session, call.request_id.clone());
         self.app_pending.remove(&key);
@@ -144,50 +163,13 @@ impl Monos {
         })
         .detach();
     }
-    pub(super) fn app_call(&mut self, call: Call, window: &mut Window, cx: &mut Context<Self>) {
-        let mono = self
-            .roster
-            .of_session(call.session)
-            .or_else(|| {
-                self.running
-                    .get(&call.session)
-                    .and_then(|r| self.roster.get(&r.mono))
-            })
-            .cloned();
-        let Some(mono) = mono else {
-            let _ = call.reply.send(Err(
-                "This Mono no longer owns an active app capability".into()
-            ));
-            return;
-        };
-        if call.action.starts_with("habits.")
-            && call.action != "habits.list"
-            && self.running.contains_key(&call.session)
-        {
-            let _ = call
-                .reply
-                .send(Err("A habit run cannot schedule more runs".into()));
+    pub(super) fn app_call(&mut self, call: Call, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Err(error) = self.app_caller(&call) {
+            let _ = call.reply.send(Err(error));
             return;
         }
         if let Err(error) = mono::api::validate(&call.action, &call.input) {
             let _ = call.reply.send(Err(error));
-            return;
-        }
-        let receipt_key = format!(
-            "mono-app-receipt:{}:{}",
-            call.session,
-            files::content_hash(&call.request_id)
-        );
-        let stored = locked(&self.store)
-            .ok()
-            .and_then(|db| db.setting(&receipt_key).ok().flatten())
-            .and_then(|s| serde_json::from_str::<(String, Result<Value, String>)>(&s).ok());
-        if let Some((hash, result)) = stored {
-            let _ = call.reply.send(if hash == fingerprint(&call) {
-                result
-            } else {
-                Err("Request ID was already used with different input".into())
-            });
             return;
         }
         let key = (call.session, call.request_id.clone());
@@ -199,12 +181,71 @@ impl Monos {
             });
             return;
         }
-        if !self.app_pending.insert(key) {
+        if !self.app_pending.insert(key.clone()) {
             let _ = call.reply.send(Err(
                 "Request is still running; retry with the same request ID".into(),
             ));
             return;
         }
+        let receipt_key = format!(
+            "mono-app-receipt:{}:{}",
+            call.session,
+            files::content_hash(&call.request_id)
+        );
+        let store = self.store.clone();
+        let lookup = cx.background_executor().spawn(async move {
+            locked(&store)?
+                .setting(&receipt_key)?
+                .map(|raw| {
+                    serde_json::from_str::<(String, Result<Value, String>)>(&raw)
+                        .map_err(|error| error.to_string())
+                })
+                .transpose()
+        });
+        cx.spawn(async move |this, cx| {
+            let stored = lookup.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                // Capabilities may have been revoked while storage was busy.
+                let mono = match this.app_caller(&call) {
+                    Ok(mono) => mono,
+                    Err(error) => {
+                        this.app_pending.remove(&key);
+                        let _ = call.reply.send(Err(error));
+                        return;
+                    }
+                };
+                match stored {
+                    Ok(None) => {
+                        this.app_call_ready(call, mono, window, cx);
+                    }
+                    Ok(Some((hash, result))) => {
+                        this.app_pending.remove(&key);
+                        let _ = call.reply.send(if hash == fingerprint(&call) {
+                            result
+                        } else {
+                            Err("Request ID was already used with different input".into())
+                        });
+                    }
+                    Err(error) => {
+                        this.app_pending.remove(&key);
+                        // A failed read is not a missing receipt: replaying the
+                        // action could repeat a mutation that already committed.
+                        let _ = call
+                            .reply
+                            .send(Err(format!("Could not read app result: {error}")));
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+    fn app_call_ready(
+        &mut self,
+        call: Call,
+        mono: Mono,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !call.input.is_object() {
             self.finish_call(call, Err("Input must be a JSON object".into()), cx);
             return;
@@ -325,11 +366,13 @@ impl Monos {
                             &models,
                         )?;
                         settings.revision = 0;
-                        let db = locked(&store)?;
-                        let mut summary = db.create(&provider, &project)?;
+                        let mut summary = locked(&store)?.create(&provider, &project)?;
                         app::launch_checkout(&input, &project, summary.id, &mut settings)?;
                         summary.title = app::optional_text(&input, "title", 160)?
                             .unwrap_or_else(|| prompt.chars().take(160).collect());
+                        // Worktree creation can run git; do not hold the
+                        // application store lock while that command runs.
+                        let db = locked(&store)?;
                         db.title(summary.id, &summary.title)?;
                         db.configure_agent(summary.id, &provider, &settings)?;
                         db.prepare_app_prompt(summary.id, &request, &prompt)?;

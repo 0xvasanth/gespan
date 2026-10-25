@@ -31,6 +31,8 @@ mod git_cache;
 mod git_graph;
 mod git_picker;
 mod git_status;
+#[cfg(target_os = "macos")]
+mod hang_watchdog;
 mod history;
 mod image_lightbox;
 mod image_memory;
@@ -400,6 +402,8 @@ fn main() {
             image_memory::init(cx);
             #[cfg(target_os = "macos")]
             memory_log::start(cx);
+            #[cfg(target_os = "macos")]
+            hang_watchdog::start(database.with_file_name("gpui-hangs"), cx);
             input::bind(cx);
             image_lightbox::bind(cx);
             composer_completion::bind(cx);

@@ -3,6 +3,7 @@
 mod accounts;
 pub(super) mod blocks;
 mod edit;
+mod settings;
 #[cfg(test)]
 mod tests;
 mod window;
@@ -27,7 +28,7 @@ pub(super) struct Shared {
     columns: HashSet<String>,
     ids: RefCell<HashMap<i64, String>>,
     extras: RefCell<BTreeMap<String, String>>,
-    extras_path: Option<PathBuf>,
+    extras_db: Option<Connection>,
     snapshots: RefCell<HashMap<i64, HistoryRevision>>,
     /// The first block sequence of each indexed Mono's row numbering.
     windows: RefCell<HashMap<i64, i64>>,
@@ -137,29 +138,6 @@ pub(super) fn has_table(conn: &Connection, table: &str) -> Result<bool, String> 
         |r| r.get(0),
     ))
 }
-fn atomic_json(path: &Path, value: &impl serde::Serialize) -> Result<(), String> {
-    let temporary = path.with_extension(format!("{}.tmp", crate::mono::new_id()));
-    let result = (|| {
-        use std::io::Write;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary).map_err(|e| e.to_string())?;
-        file.write_all(encode(value)?.as_bytes())
-            .map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        std::fs::rename(&temporary, path).map_err(|e| e.to_string())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(temporary);
-    }
-    result
-}
-
 /// Turn keys are row offsets, including invisible document/card metadata rows.
 /// Never substitute the session's current model for missing historical provenance.
 pub(super) fn project_turns(
@@ -288,17 +266,7 @@ impl Store {
                 ));
             }
         }
-        let extras_path = (!memory).then(|| {
-            path.with_file_name(format!(
-                "{}.gpui.json",
-                path.file_name().unwrap_or_default().to_string_lossy()
-            ))
-        });
-        let extras = match extras_path.as_ref().map(std::fs::read_to_string) {
-            Some(Ok(raw)) => parse(&raw)?,
-            Some(Err(e)) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
-            _ => BTreeMap::new(),
-        };
+        let (extras, extras_db) = settings::open(path, read_only)?;
         let store = Self {
             conn,
             path: path.into(),
@@ -306,7 +274,7 @@ impl Store {
                 columns,
                 ids: RefCell::new(HashMap::new()),
                 extras: RefCell::new(extras),
-                extras_path,
+                extras_db,
                 snapshots: RefCell::new(HashMap::new()),
                 windows: RefCell::new(HashMap::new()),
                 queues: RefCell::new(HashMap::new()),
@@ -490,12 +458,22 @@ impl Store {
     pub(super) fn shared_save_setting(&self, key: &str, value: &str) -> Result<(), String> {
         self.shared_writable()?;
         let shared = self.shared.as_ref().unwrap();
-        let mut next = shared.extras.borrow().clone();
-        next.insert(key.into(), value.into());
-        if let Some(path) = &shared.extras_path {
-            atomic_json(path, &next)?;
+        if shared
+            .extras
+            .borrow()
+            .get(key)
+            .is_some_and(|old| old == value)
+        {
+            return Ok(());
         }
-        *shared.extras.borrow_mut() = next;
+        if let Some(conn) = &shared.extras_db {
+            sql(conn.execute(
+                "INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![key, value],
+            ))?;
+        }
+        // Publish only committed values. A failed save must remain retryable.
+        shared.extras.borrow_mut().insert(key.into(), value.into());
         Ok(())
     }
     pub(super) fn shared_sessions(&self) -> Result<Vec<Session>, String> {
