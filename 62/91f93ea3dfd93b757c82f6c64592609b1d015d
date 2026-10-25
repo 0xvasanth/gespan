@@ -1,0 +1,21 @@
+crates/tracker-secrets/tests/store.rs
+  s_0bbf4c1f20225e::t_be0c829d14ba7a 246-286
+crates/tracker-secrets/src/lib.rs
+  s_0bbf4c1f20225e::t_d1e7fcff3aa5d4 76,84,103-104,136-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6291f93ea3dfd93b757c82f6c64592609b1d015d",
+  "prompts": {},
+  "sessions": {
+    "s_0bbf4c1f20225e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf188816-f125-4205-bd6c-ae2dc78044e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
