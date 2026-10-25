@@ -169,11 +169,10 @@ impl DesktopPreferences {
         // The LevelDB reader asserts on malformed table footers and other corrupt
         // input. Keep the database and its iterators inside the unwind boundary:
         // a best-effort copy must fail like an I/O error, not terminate startup.
-        std::panic::catch_unwind(|| Self::open_chromium_localstorage(staging.path()))
-            .unwrap_or_else(|payload| {
-                crate::diagnostics::log_caught_panic("WebView2 localStorage", &*payload);
-                Err("WebView2 localStorage is damaged or incomplete".into())
-            })
+        crate::diagnostics::catch_unwind("WebView2 localStorage", || {
+            Self::open_chromium_localstorage(staging.path())
+        })
+        .unwrap_or_else(|_| Err("WebView2 localStorage is damaged or incomplete".into()))
     }
 
     #[cfg(any(windows, test))]

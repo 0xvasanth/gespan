@@ -4,9 +4,29 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{
     any::Any,
+    cell::Cell,
     io::{self, Write},
     path::{Path, PathBuf},
 };
+
+thread_local! {
+    /// How many `diagnostics::catch_unwind` calls this thread is inside.
+    static CATCHING: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Runs `f` with this thread's panics marked as expected, so the hook writes
+/// no crash file for them. The caller catches and logs them.
+pub(super) fn expecting_panics<T>(f: impl FnOnce() -> T) -> T {
+    struct Depth;
+    impl Drop for Depth {
+        fn drop(&mut self) {
+            CATCHING.with(|depth| depth.set(depth.get() - 1));
+        }
+    }
+    CATCHING.with(|depth| depth.set(depth.get() + 1));
+    let _depth = Depth;
+    f()
+}
 
 pub fn panic_message(payload: &(dyn Any + Send)) -> String {
     if let Some(text) = payload.downcast_ref::<&str>() {
@@ -57,6 +77,11 @@ pub fn write_crash(crash_dir: &Path, record: &Value, at: DateTime<Utc>) -> io::R
 pub fn install_panic_hook(crash_dir: PathBuf, version: String) {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // A panic a `diagnostics::catch_unwind` recovers from is not a crash.
+        if CATCHING.try_with(Cell::get).unwrap_or(0) > 0 {
+            previous(info);
+            return;
+        }
         let message = panic_message(info.payload());
         let location = info
             .location()
@@ -84,7 +109,7 @@ pub fn install_panic_hook(crash_dir: PathBuf, version: String) {
             kind = "panic",
             location = %location,
             thread = %thread,
-            crash_file = ?crash_file.as_ref().ok(),
+            crash_file = crash_file.as_ref().ok().map(|p| p.display().to_string()),
             crash_error = crash_file.as_ref().err().map(|e| e.to_string()),
             "panic: {message}"
         );

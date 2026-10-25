@@ -15,6 +15,7 @@ pub use rotation::{file_name, prune, Clock, DailyFile, SystemClock, MAX_BYTES, M
 
 use std::{
     any::Any,
+    panic::UnwindSafe,
     path::PathBuf,
     sync::{Mutex, OnceLock},
 };
@@ -87,8 +88,18 @@ pub fn flush() {
     drop(worker);
 }
 
-/// For `catch_unwind` sites: what was caught is logged at `warn`, not dropped.
-pub fn log_caught_panic(what: &str, payload: &(dyn Any + Send)) {
+/// `std::panic::catch_unwind` for code that is expected to panic on bad input.
+/// The panic is logged at `warn` and returned as its message; it is not a
+/// crash, so the panic hook writes no crash file for it.
+pub fn catch_unwind<T>(what: &str, f: impl FnOnce() -> T + UnwindSafe) -> Result<T, String> {
+    panic::expecting_panics(|| std::panic::catch_unwind(f)).map_err(|payload| {
+        log_caught_panic(what, &*payload);
+        panic_message(&*payload)
+    })
+}
+
+/// What was caught is logged at `warn`, not dropped.
+fn log_caught_panic(what: &str, payload: &(dyn Any + Send)) {
     tracing::warn!(what, panic = %panic_message(payload), "caught a panic");
 }
 
