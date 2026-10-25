@@ -18,12 +18,15 @@ export class HoldGate {
   /** The provider answered and is only waiting on background work. */
   private yielded = false;
   private settled: HoldPoint | null = null;
+  /** The turn has shown activity, so its prompt reached the agent. */
+  private seen = false;
 
   request(): void {
     this.requested = true;
   }
 
   observe(event: HarnessEvent): void {
+    this.seen = true;
     switch (event.type) {
       case "tool.started":
         if (event.status && FINISHED.has(event.status)) return;
@@ -62,6 +65,9 @@ export class HoldGate {
     let point: Exclude<HoldPoint, "interrupted">;
     if (awaitingInput) {
       point = "awaitingInput";
+    } else if (!this.seen) {
+      // Stopping a turn that is still starting would drop the user's prompt.
+      return null;
     } else if ([...this.running].some((id) => !this.background.has(id))) {
       return null;
     } else if (this.yielded) {

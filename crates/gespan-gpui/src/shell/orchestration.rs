@@ -122,6 +122,8 @@ impl Shell {
         self.schedule_orchestration(lead, cx);
     }
     pub(super) fn orchestration_session_changed(&mut self, id: i64, cx: &mut Context<Self>) {
+        // A held worker hasn't finished; its outcome comes after Resume.
+        let held = self.session_held(id, self.sessions.get(&id).map(|v| v.read(cx)), cx);
         let leads: Vec<_> = self
             .orchestrations
             .iter()
@@ -136,8 +138,7 @@ impl Shell {
                         && let Some(view) = self.sessions.get(&id)
                     {
                         let view = view.read(cx);
-                        // A held worker hasn't finished; its outcome comes after Resume.
-                        if !view.busy && view.held.is_none() && !view.hold_requested {
+                        if !view.busy && !held {
                             let (success, report) = view.external_outcome(cx);
                             task.report = report;
                             task.state = if success { State::Done } else { State::Failed };

@@ -37,6 +37,11 @@ impl Gate {
     pub(super) fn request(&mut self) {
         self.requested = true;
     }
+    /// Resume: the turn goes on, and nothing it does now is a reason to stop.
+    pub(super) fn release(&mut self) {
+        self.requested = false;
+        self.settled = None;
+    }
     pub(super) fn observe(&mut self, event: &Event) {
         match event {
             Event::Tool(tool) if tool.state == ToolState::Running => {
@@ -160,6 +165,22 @@ mod tests {
         // The agent woke itself after the background result.
         gate.observe(&Event::Text("Server is up".into()));
         assert_eq!(gate.decide(false), Some(Action::Interrupt));
+    }
+
+    #[test]
+    fn release_disarms_a_settled_hold_so_resumed_work_is_not_interrupted() {
+        let mut gate = Gate::default();
+        gate.request();
+        assert_eq!(
+            gate.decide(true),
+            Some(Action::Settle(HoldPoint::AwaitingInput))
+        );
+        gate.release();
+        // The user approves after Resume; the command runs and the agent replies.
+        gate.observe(&tool("c1", ToolState::Running));
+        gate.observe(&tool("c1", ToolState::Completed));
+        gate.observe(&Event::Text("Done".into()));
+        assert_eq!(gate.decide(false), None);
     }
 
     #[test]

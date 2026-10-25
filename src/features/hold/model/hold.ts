@@ -131,6 +131,9 @@ export class ResumeQueue {
   isRunning(sessionId: string): boolean {
     return this.running.has(sessionId);
   }
+  runningIds(): string[] {
+    return [...this.running];
+  }
   done(): boolean {
     return this.running.size === 0 && this.stages.every((s) => s.length === 0);
   }

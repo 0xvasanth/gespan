@@ -772,7 +772,7 @@ pub(crate) fn run_with_client(
                         next["reply"] = reply(question, answers);
                     }
                     // Remote sessions run on another machine and are not held.
-                    Decision::KeepOpen | Decision::Hold => continue,
+                    Decision::KeepOpen | Decision::Hold | Decision::Release => continue,
                     Decision::Steer(_) => {
                         return Err("Steering is not supported by this remote host".into());
                     }

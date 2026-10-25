@@ -27,8 +27,15 @@ describe("HoldGate", () => {
     expect(gate.decide(false)).toBeNull();
   });
 
+  it("waits for the turn to show activity before interrupting it", () => {
+    const gate = new HoldGate();
+    gate.request();
+    expect(gate.decide(false)).toBeNull();
+  });
+
   it("interrupts a streaming turn at once", () => {
     const gate = new HoldGate();
+    gate.observe({ type: "message.delta", text: "x" });
     gate.request();
     expect(gate.decide(false)).toEqual({ kind: "interrupt" });
     expect(gate.decide(false)).toBeNull();

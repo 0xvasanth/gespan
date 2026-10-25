@@ -1224,10 +1224,6 @@ function Workspace({
     },
   });
   const holdRef = useRef(holdApi.hold);
-  /** Settlements of turns that were held, delivered when the session really stops. */
-  const heldSettlements = useRef(
-    new Map<string, NonNullable<SubmitOptions["onSettled"]>>(),
-  );
   const onStopRef = useRef<(id: string) => void>(() => undefined);
   const onSubmitRef = useRef<(...args: Parameters<Submit>) => boolean>(
     () => false,
@@ -7676,6 +7672,7 @@ function Workspace({
                   : "queue"
                 : (options?.followUpBehavior ?? loadFollowUpBehavior());
         if (followUpBehavior === "queue") {
+          if (held) holdRef.current.noteQueued(sessionId, isPilotSession(sessionId));
           setSessions((prev) =>
             prev.map((s) =>
               s.id === sessionId
@@ -8798,14 +8795,12 @@ function Workspace({
           // that really ends after Resume.
           const settle = options?.onSettled;
           if (settle && holdRef.current.isSessionHeld(sessionId)) {
-            heldSettlements.current.set(sessionId, settle);
+            holdRef.current.deferSettlement<ControlOutcome>(sessionId, (later) =>
+              settle(later ?? outcome),
+            );
           } else {
             settle?.(outcome);
-            const waiting = heldSettlements.current.get(sessionId);
-            if (waiting && !holdRef.current.isSessionHeld(sessionId)) {
-              heldSettlements.current.delete(sessionId);
-              waiting(outcome);
-            }
+            holdRef.current.turnEnded(sessionId, outcome);
           }
         });
       return true;
@@ -8891,6 +8886,8 @@ function Workspace({
   decidePilotBlockRef.current = decidePilotBlock;
 
   usePilotHabits({
+    held: () => holdRef.current.isHeld(),
+    heldSince: () => holdRef.current.heldSince(),
     sessions: () => sessionsRef.current,
     open: async (id) => (await ensureOpenSession(id)) ?? undefined,
     add: (session) => {
@@ -8961,7 +8958,7 @@ function Workspace({
       for (const relay of dropRelays(runId))
         decidePilotBlock(relay.pilotId, relay.blockId, "cancelled");
     },
-  }, holdApi.phase === null);
+  });
 
   const automationSessionReservations = useRef(new Set<string>());
   const automationRecoveryRef = useRef<Promise<void> | null>(null);

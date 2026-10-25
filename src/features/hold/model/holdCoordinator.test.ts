@@ -93,7 +93,11 @@ describe("HoldCoordinator", () => {
   it("resumes workers before Pilot chats, three at a time, with continuations", async () => {
     const list = ["1", "2", "3", "4"].map((id) => session(id, true));
     const fake = host([...list, session("p", true, true)]);
+    // Like App: a session that is idle and no longer held drops out of the list.
+    const all = fake.list;
+    fake.sessions = () => all.filter((s) => s.busy || hold.isSessionHeld(s.id));
     const hold = new HoldCoordinator(fake);
+    for (const s of all) hold.observe(s.id, delta);
     await hold.toggle();
     for (const s of fake.list) s.busy = false;
     hold.sync();
@@ -109,6 +113,50 @@ describe("HoldCoordinator", () => {
     hold.sync();
     expect(fake.resumed.map(([id]) => id)).toEqual(["1", "2", "3", "4", "p"]);
     expect(loadHold()).toBeNull();
+  });
+
+  it("is on hold at once when nothing is running", async () => {
+    const hold = new HoldCoordinator(host([]));
+    await hold.toggle();
+    expect(hold.phase()).toBe("onHold");
+  });
+
+  it("does not interrupt a turn that has shown nothing yet", async () => {
+    const fake = host([session("a", true)]);
+    const hold = new HoldCoordinator(fake);
+    await hold.toggle();
+    expect(fake.held).toEqual([]);
+    hold.observe("a", delta);
+    expect(fake.held).toEqual(["a"]);
+  });
+
+  it("tracks a session that queues a message while held and releases it on Resume", async () => {
+    const fake = host([]);
+    const hold = new HoldCoordinator(fake);
+    await hold.toggle();
+    fake.list.push({ ...session("late"), queued: 1 });
+    hold.noteQueued("late", false);
+    expect(hold.summary()).toBe("On hold · 1 session · 1 queued");
+    await hold.toggle();
+    expect(fake.resumed).toEqual([["late", null]]);
+  });
+
+  it("delivers a held turn's settlement after Resume", async () => {
+    const fake = host([session("idle"), session("worker", true)]);
+    const hold = new HoldCoordinator(fake);
+    hold.observe("worker", delta);
+    await hold.toggle();
+    fake.list[1].busy = false;
+    hold.sync();
+    const delivered: [string, string][] = [];
+    hold.deferSettlement("idle", (o) => delivered.push(["idle", o ?? "original"]));
+    hold.deferSettlement("worker", (o) => delivered.push(["worker", o ?? "original"]));
+    await hold.toggle();
+    // Nothing more runs in the idle session: its own outcome stands.
+    expect(delivered).toEqual([["idle", "original"]]);
+    // The worker continues; its real outcome is the continuation's.
+    hold.turnEnded("worker", "completed");
+    expect(delivered).toEqual([["idle", "original"], ["worker", "completed"]]);
   });
 
   it("idle sessions resume by releasing their queue only", async () => {

@@ -88,6 +88,8 @@ impl Shell {
             state.track(view.read(cx).summary.id, *pilot_chat);
             self.watch_hold(view, cx);
         }
+        // With nothing to wait for, Gespan is on hold at once.
+        state.refresh_phase();
         cx.set_global(Hold(Some(state)));
         for (view, _) in &views {
             view.update(cx, |view, cx| view.hold(cx));
@@ -119,7 +121,10 @@ impl Shell {
         self.hold.subscriptions.push(cx.subscribe(
             view,
             move |this, view, _: &SessionChanged, cx| {
-                if !view.read(cx).busy {
+                if view.read(cx).busy {
+                    // Its resumed turn began: from here it reports as usual.
+                    this.hold.reasons.remove(&id);
+                } else {
                     this.resumed_session_settled(id, cx);
                 }
             },
@@ -224,6 +229,14 @@ impl Shell {
             )
             .collect();
         let plan = gespan_core::hold::resume_plan(&state, |id| known.contains(&id));
+        // Sessions opened or started during the hold weren't tracked; their
+        // held messages go out now too.
+        let tracked: HashSet<i64> = state.sessions.iter().map(|s| s.session).collect();
+        for (view, _) in self.hold_views(cx) {
+            if !tracked.contains(&view.read(cx).summary.id) && view.read(cx).queued_count() > 0 {
+                view.update(cx, |view, cx| view.resume_from_hold(Reason::Idle, cx));
+            }
+        }
         self.hold.resume = Some(ResumeQueue::new(plan));
         if let Some(pilots) = self.pilots.clone() {
             let now = gespan_core::time::now_ms();
@@ -252,15 +265,26 @@ impl Shell {
                 break;
             }
             for id in next {
-                let reason = self.hold.reasons.remove(&id).unwrap_or(Reason::Idle);
-                let started = self.hold_view(id, cx).is_some_and(|view| {
+                let reason = self.hold.reasons.get(&id).copied().unwrap_or(Reason::Idle);
+                let sent = self.hold_view(id, cx).is_some_and(|view| {
                     self.watch_hold(&view, cx);
-                    view.update(cx, |view, cx| view.resume_from_hold(reason, cx));
-                    view.read(cx).busy
+                    view.update(cx, |view, cx| view.resume_from_hold(reason, cx))
                 });
-                if !started && let Some(queue) = self.hold.resume.as_mut() {
-                    queue.finished(id);
+                // A turn that was left waiting simply goes on; it holds no slot.
+                let waiting = matches!(reason, Reason::AwaitingInput | Reason::Background);
+                if !sent || waiting {
+                    self.hold.reasons.remove(&id);
+                    if let Some(queue) = self.hold.resume.as_mut() {
+                        queue.finished(id);
+                    }
+                } else if self
+                    .hold_view(id, cx)
+                    .is_some_and(|view| view.read(cx).busy)
+                {
+                    self.hold.reasons.remove(&id);
                 }
+                // Otherwise it stays held until its turn begins (history may
+                // still be loading), so nothing reports it finished early.
             }
         }
         if self.hold.resume.as_ref().is_some_and(ResumeQueue::done) {
@@ -269,6 +293,9 @@ impl Shell {
         }
     }
     fn resumed_session_settled(&mut self, id: i64, cx: &mut Context<Self>) {
+        if self.hold.reasons.contains_key(&id) {
+            return;
+        }
         let Some(queue) = self.hold.resume.as_mut() else {
             return;
         };
@@ -599,8 +626,11 @@ mod tests {
         assert_eq!(saved(window, cx).unwrap().phase, Phase::Holding);
         window
             .update(cx, |shell, _, cx| {
-                shell.sessions[&ids[0]]
-                    .update(cx, |view, cx| view.hold_point(HoldPoint::Interrupted, cx));
+                shell.sessions[&ids[0]].update(cx, |view, cx| {
+                    view.hold_point(HoldPoint::Interrupted, cx);
+                    view.busy = false;
+                    view.hold_turn_finished(cx);
+                });
             })
             .unwrap();
         cx.run_until_parked();
@@ -614,6 +644,137 @@ mod tests {
             .collect();
         assert!(reasons.contains(&(ids[0], Some(Reason::Interrupted))));
         assert!(reasons.contains(&(ids[1], Some(Reason::Idle))));
+    }
+
+    #[gpui::test]
+    fn holding_with_nothing_running_is_on_hold_at_once(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
+        window
+            .update(cx, |shell, _, cx| shell.hold_all(cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(phase(cx), Some(Phase::OnHold));
+    }
+
+    #[gpui::test]
+    fn sessions_resumed_while_still_waiting_do_not_hold_resume_slots(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let ids = sessions(&store, 4);
+        let window = shell(store, cx);
+        window
+            .update(cx, |shell, _, cx| {
+                for &id in &ids {
+                    load(shell, id, cx);
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::mem::forget(rx);
+                    shell.sessions[&id].update(cx, |view, _| {
+                        view.summary.provider = "fixture".into();
+                        view.busy = true;
+                        view.controls = Some(tx);
+                    });
+                }
+                shell.hold_all(cx);
+                for &id in &ids {
+                    shell.sessions[&id]
+                        .update(cx, |view, cx| view.hold_point(HoldPoint::Background, cx));
+                }
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(phase(cx), Some(Phase::OnHold));
+        window
+            .update(cx, |shell, _, cx| {
+                shell.resume_all(cx);
+                assert!(
+                    shell.hold.resume.is_none(),
+                    "every waiting session counts as resumed"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_session_stays_held_until_its_resumed_turn_begins(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let ids = sessions(&store, 1);
+        let window = shell(store, cx);
+        window
+            .update(cx, |shell, _, cx| {
+                load(shell, ids[0], cx);
+                shell.sessions[&ids[0]].update(cx, |view, _| {
+                    view.summary.provider = "fixture".into();
+                    view.hold_history_for_test();
+                });
+                // As after a restart: the turn needs a continuation.
+                cx.set_global(Hold(Some({
+                    let mut state = HoldState::new(1);
+                    state.track(ids[0], false);
+                    state.settle(ids[0], Reason::Restarted, 2, None, vec![]);
+                    state.refresh_phase();
+                    state
+                })));
+                shell.resume_all(cx);
+                let view = shell.sessions[&ids[0]].clone();
+                assert!(!view.read(cx).busy, "history is still loading");
+                assert!(
+                    shell.session_held(ids[0], Some(view.read(cx)), cx),
+                    "not finished: its continuation hasn't started"
+                );
+                view.update(cx, |view, cx| {
+                    view.busy = true;
+                    cx.emit(SessionChanged);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                let view = shell.sessions[&ids[0]].clone();
+                assert!(!shell.session_held(ids[0], Some(view.read(cx)), cx));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn messages_queued_in_untracked_sessions_are_released_on_resume(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let ids = sessions(&store, 1);
+        let window = shell(store, cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.hold_all(cx);
+                // Opened during the hold, so Hold never tracked it.
+                load(shell, ids[0], cx);
+                shell.sessions[&ids[0]].update(cx, |view, cx| {
+                    view.summary.provider = "fixture".into();
+                    view.load(cx);
+                });
+            })
+            .unwrap();
+        // Its history finishes loading while still held.
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&ids[0]]
+                    .update(cx, |view, cx| view.queue_for_test("after lunch", cx));
+            })
+            .unwrap();
+        // Saved, and blocked by the hold.
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| shell.resume_all(cx))
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                let view = shell.sessions[&ids[0]].read(cx);
+                assert!(
+                    !view.held_queue_waiting(),
+                    "the held message is released on Resume"
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -723,6 +884,64 @@ mod tests {
         let restored = saved(window, cx).unwrap();
         assert_eq!(restored.sessions[0].reason, Some(Reason::Restarted));
         assert_eq!(restored.sessions[1].reason, Some(Reason::Idle));
+    }
+
+    #[gpui::test]
+    fn quit_anyway_still_asks_about_unsaved_files(cx: &mut TestAppContext) {
+        use gpui::EntityInputHandler;
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let path = std::env::temp_dir().join(format!("gespan-hold-quit-{}.rs", std::process::id()));
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        let (window, a, _) = crate::shell::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |shell, w, cx| {
+                shell.open(a, w, cx);
+                shell.open_review(
+                    crate::review::ReviewTab::File {
+                        cwd: "/tmp".into(),
+                        path: path.to_string_lossy().into_owned(),
+                    },
+                    w,
+                    cx,
+                );
+            })
+            .unwrap();
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, w, cx| {
+                let pane = shell.reviews[&a].clone();
+                pane.update(cx, |pane, cx| {
+                    pane.navigate_file(1, 4, cx);
+                    let editor = pane.active_editor().unwrap();
+                    let input = editor.read(cx).input.clone();
+                    input.update(cx, |i, cx| i.replace_text_in_range(None, " edited", w, cx));
+                });
+            })
+            .unwrap();
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, w, cx| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::mem::forget(rx);
+                shell.sessions[&a].update(cx, |view, _| {
+                    view.busy = true;
+                    view.controls = Some(tx);
+                });
+                shell.hold_all(cx);
+                assert!(shell.unsaved_files(cx));
+                shell.request_quit(w, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.simulate_prompt_answer("Quit Anyway");
+        visual.run_until_parked();
+        assert!(
+            visual.has_pending_prompt(),
+            "unsaved edits are asked about next"
+        );
+        visual.simulate_prompt_answer("Cancel");
+        let _ = std::fs::remove_file(path);
     }
 
     #[gpui::test]

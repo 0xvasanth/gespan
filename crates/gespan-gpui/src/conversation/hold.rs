@@ -38,17 +38,32 @@ impl Conversation {
     }
     /// The provider loop reported where the held turn came to rest.
     pub(crate) fn hold_point(&mut self, point: HoldPoint, cx: &mut Context<Self>) {
+        // After Resume the turn was released; a late report means nothing.
+        if !crate::hold::active(cx) {
+            return;
+        }
         let reason = match point {
-            HoldPoint::Interrupted => Reason::Interrupted,
+            // Interrupted settles once the turn has drained, so Resume can
+            // never start a second turn over the one still ending.
+            HoldPoint::Interrupted => {
+                self.hold_interrupted = true;
+                return;
+            }
             HoldPoint::AwaitingInput => Reason::AwaitingInput,
             HoldPoint::Background => Reason::Background,
         };
         self.settle_hold(reason, cx);
     }
-    /// A held turn that ended on its own, before any safe point, is simply idle.
-    pub(super) fn hold_turn_finished(&mut self, cx: &mut Context<Self>) {
-        if self.hold_requested && self.held.is_none() {
-            self.settle_hold(Reason::Idle, cx);
+    /// The held turn ended: interrupted at its safe point, or on its own.
+    pub(crate) fn hold_turn_finished(&mut self, cx: &mut Context<Self>) {
+        let interrupted = std::mem::take(&mut self.hold_interrupted);
+        if self.hold_requested && self.held.is_none() && crate::hold::active(cx) {
+            let reason = if interrupted {
+                Reason::Interrupted
+            } else {
+                Reason::Idle
+            };
+            self.settle_hold(reason, cx);
         }
     }
     /// Stop now: the user chose to end the command still running.
@@ -75,21 +90,40 @@ impl Conversation {
         cx.emit(SessionChanged);
         cx.notify();
     }
+    /// Queued messages sitting idle: nothing is sending them.
+    #[cfg(test)]
+    pub(crate) fn held_queue_waiting(&self) -> bool {
+        !self.follow_ups.state.messages.is_empty()
+            && !self.busy
+            && self.follow_ups.sending.is_none()
+    }
     pub(crate) fn queued_count(&self) -> usize {
         self.follow_ups.state.messages.len()
     }
     #[cfg(test)]
     pub(crate) fn queue_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.loaded = true;
         self.enqueue_follow_up(text.into(), None, cx);
     }
     pub(crate) fn resume_prompt(&self, reason: Reason) -> Option<String> {
         gespan_core::hold::continuation(reason).map(str::to_owned)
     }
     /// Continues a held session: its continuation first, then its queue.
-    pub(crate) fn resume_from_hold(&mut self, reason: Reason, cx: &mut Context<Self>) {
+    /// Returns whether anything was sent.
+    pub(crate) fn resume_from_hold(&mut self, reason: Reason, cx: &mut Context<Self>) -> bool {
         self.held = None;
         self.hold_requested = false;
-        if let Some(prompt) = self.resume_prompt(reason) {
+        self.hold_interrupted = false;
+        // A turn left waiting (an approval, background work) goes on.
+        if self.busy
+            && let Some(controls) = &self.controls
+        {
+            let _ = controls.send(Control {
+                id: String::new(),
+                decision: Decision::Release,
+            });
+        }
+        let sent = if let Some(prompt) = self.resume_prompt(reason) {
             if self.follow_ups.state.messages.is_empty() {
                 self.launch_prompt(prompt, cx);
             } else {
@@ -97,12 +131,15 @@ impl Conversation {
                 self.follow_ups.state.paused = true;
                 self.resume_queue(cx);
             }
+            true
         } else {
             self.follow_ups.state.paused = false;
             self.pump_follow_ups(cx);
-        }
+            !self.follow_ups.state.messages.is_empty()
+        };
         cx.emit(SessionChanged);
         cx.notify();
+        sent
     }
 }
 
@@ -230,20 +267,70 @@ mod tests {
     fn safe_point_marks_session_held_and_reports_it(cx: &mut TestAppContext) {
         let window = conversation(cx);
         let seen = changes(window, cx);
+        hold_app(cx);
         window
             .update(cx, |view, _, cx| {
                 view.busy = true;
-                view.hold_point(HoldPoint::Interrupted, cx);
-                assert_eq!(view.held, Some(Reason::Interrupted));
+                view.hold_point(HoldPoint::Background, cx);
+                assert_eq!(view.held, Some(Reason::Background));
             })
             .unwrap();
         cx.run_until_parked();
         let seen = seen.lock().unwrap();
-        assert_eq!(seen[0].reason, Reason::Interrupted);
+        assert_eq!(seen[0].reason, Reason::Background);
         assert_eq!(
             seen[0].session,
             window.root(cx).unwrap().read_with(cx, |v, _| v.summary.id)
         );
+    }
+
+    #[gpui::test]
+    fn an_interrupt_settles_only_once_the_turn_has_ended(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        hold_app(cx);
+        let (tx, rx) = std::sync::mpsc::channel();
+        window
+            .update(cx, |view, _, cx| {
+                view.busy = true;
+                view.controls = Some(tx);
+                view.hold(cx);
+                view.hold_point(HoldPoint::Interrupted, cx);
+                assert_eq!(view.held, None, "the turn is still draining");
+                view.busy = false;
+                view.hold_turn_finished(cx);
+                assert_eq!(view.held, Some(Reason::Interrupted));
+            })
+            .unwrap();
+        drop(rx);
+    }
+
+    #[gpui::test]
+    fn resume_releases_a_turn_left_waiting(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        let (tx, rx) = std::sync::mpsc::channel();
+        window
+            .update(cx, |view, _, cx| {
+                view.busy = true;
+                view.controls = Some(tx);
+                view.held = Some(Reason::AwaitingInput);
+                view.resume_from_hold(Reason::AwaitingInput, cx);
+                assert_eq!(view.held, None);
+            })
+            .unwrap();
+        assert!(matches!(rx.try_recv().unwrap().decision, Decision::Release));
+    }
+
+    #[gpui::test]
+    fn a_safe_point_reported_after_resume_is_ignored(cx: &mut TestAppContext) {
+        let window = conversation(cx);
+        window
+            .update(cx, |view, _, cx| {
+                view.busy = true;
+                view.hold_point(HoldPoint::Interrupted, cx);
+                view.hold_point(HoldPoint::Background, cx);
+                assert_eq!(view.held, None);
+            })
+            .unwrap();
     }
 
     #[gpui::test]

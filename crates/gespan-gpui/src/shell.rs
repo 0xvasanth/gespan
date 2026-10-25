@@ -1784,16 +1784,20 @@ impl Shell {
             );
             cx.spawn_in(window, async move |this, cx| {
                 let answer = answer.await;
-                let _ = this.update(cx, |this, cx| {
+                let _ = this.update_in(cx, |this, window, cx| {
                     this.quit_prompted = false;
                     if matches!(answer, Ok(0)) {
-                        crate::quit(cx);
+                        // Unsaved edits are still asked about.
+                        this.quit_unless_unsaved(window, cx);
                     }
                 });
             })
             .detach();
             return;
         }
+        self.quit_unless_unsaved(window, cx);
+    }
+    fn quit_unless_unsaved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.unsaved_files(cx) {
             crate::quit(cx);
             return;

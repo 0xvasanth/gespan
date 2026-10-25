@@ -219,6 +219,8 @@ pub(crate) struct Conversation {
     pub(crate) held: Option<gespan_core::hold::Reason>,
     /// Hold was sent to the running turn and its safe point is pending.
     pub(crate) hold_requested: bool,
+    /// The held turn was interrupted and is draining.
+    hold_interrupted: bool,
     branch: Option<String>,
     git: Option<gespan_core::git::Snapshot>,
     git_picker: Option<Entity<GitPicker>>,
@@ -649,6 +651,7 @@ impl Conversation {
             controls: None,
             held: None,
             hold_requested: false,
+            hold_interrupted: false,
             branch: git.as_ref().and_then(|s| s.current.clone()),
             git,
             git_picker: None,

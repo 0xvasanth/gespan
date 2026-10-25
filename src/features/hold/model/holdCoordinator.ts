@@ -55,6 +55,10 @@ export class HoldCoordinator {
   private queue: ResumeQueue | null = null;
   private reasons = new Map<string, HoldReason>();
   private prompting = false;
+  /** When the last hold began, once it has been resumed. */
+  private lastHoldSince: number | undefined;
+  /** Settlements of held turns, delivered once the session really stops. */
+  private deferred = new Map<string, (later?: unknown) => void>();
 
   constructor(private host: HoldHost) {
     const saved = loadHold();
@@ -100,7 +104,8 @@ export class HoldCoordinator {
     const sessions = this.host.sessions();
     let state = newHold(now);
     for (const s of sessions) state = track(state, s.id, s.pilotChat);
-    this.state = state;
+    // With nothing to wait for, Gespan is on hold at once.
+    this.state = sessions.length === 0 ? { ...state, phase: "onHold" } : state;
     for (const s of sessions) {
       if (!s.busy) {
         this.settle(s.id, "idle");
@@ -119,9 +124,43 @@ export class HoldCoordinator {
     if (session && this.unsettled(sessionId)) this.evaluate(session);
   }
 
+  /** A session queued a message while held: it resumes with the rest. */
+  noteQueued(sessionId: string, pilotChat: boolean): void {
+    if (!this.state || this.state.sessions.some((s) => s.sessionId === sessionId)) {
+      return;
+    }
+    this.state = settle(
+      track(this.state, sessionId, pilotChat),
+      sessionId,
+      "idle",
+      Date.now(),
+    );
+    this.save();
+  }
+
+  /** Hold a turn's settlement until the session really stops after Resume. */
+  deferSettlement<T>(sessionId: string, deliver: (later?: T) => void): void {
+    this.deferred.set(sessionId, deliver as (later?: unknown) => void);
+  }
+
+  /** A turn ended outside the hold: deliver a settlement it was holding back. */
+  turnEnded<T>(sessionId: string, outcome: T): void {
+    if (this.isSessionHeld(sessionId)) return;
+    const deliver = this.deferred.get(sessionId);
+    if (!deliver) return;
+    this.deferred.delete(sessionId);
+    deliver(outcome);
+  }
+
   /** Session state changed: settle finished turns, refill the resume queue. */
   sync(): void {
-    for (const s of this.host.sessions()) {
+    const sessions = this.host.sessions();
+    // A resumed session whose turn ended may drop out of the host's list.
+    const present = new Set(sessions.map((s) => s.id));
+    for (const id of this.queue?.runningIds() ?? []) {
+      if (!present.has(id)) this.finishResumed(id);
+    }
+    for (const s of sessions) {
       if (s.busy) {
         if (this.unsettled(s.id)) this.evaluate(s);
         continue;
@@ -131,10 +170,7 @@ export class HoldCoordinator {
         this.settle(s.id, this.interrupted.has(s.id) ? "interrupted" : "idle");
         this.save();
       }
-      if (this.queue?.isRunning(s.id)) {
-        this.queue.finished(s.id);
-        this.pump();
-      }
+      if (this.queue?.isRunning(s.id)) this.finishResumed(s.id);
     }
   }
 
@@ -150,6 +186,7 @@ export class HoldCoordinator {
     if (state?.phase !== "onHold") return;
     // Lift the hold first: resumed turns and schedulers may start work again.
     this.state = null;
+    this.lastHoldSince = state.since;
     this.reasons = new Map(
       state.sessions.flatMap((s) => (s.reason ? [[s.sessionId, s.reason]] : [])),
     );
@@ -157,6 +194,11 @@ export class HoldCoordinator {
     this.queue = new ResumeQueue(resumePlan(state, (id) => known.has(id)));
     this.save();
     this.pump();
+  }
+
+  /** Start of the last hold, so schedulers can catch up what came due. */
+  heldSince(): number | undefined {
+    return this.lastHoldSince;
   }
 
   /** The status-bar text. */
@@ -182,6 +224,11 @@ export class HoldCoordinator {
     return (this.state?.sessions ?? [])
       .filter((s) => s.reason === null)
       .map((s) => s.sessionId);
+  }
+
+  private finishResumed(sessionId: string): void {
+    this.queue?.finished(sessionId);
+    this.pump();
   }
 
   private gate(sessionId: string): HoldGate {
@@ -225,7 +272,13 @@ export class HoldCoordinator {
         const reason = this.reasons.get(id) ?? "idle";
         this.reasons.delete(id);
         this.interrupted.delete(id);
-        if (!this.host.resume(id, continuation(reason))) queue.finished(id);
+        if (!this.host.resume(id, continuation(reason))) {
+          queue.finished(id);
+          // Nothing more runs there: the held turn's own outcome stands.
+          const deliver = this.deferred.get(id);
+          this.deferred.delete(id);
+          deliver?.();
+        }
       }
     }
     if (queue.done()) this.queue = null;

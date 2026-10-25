@@ -445,6 +445,8 @@ pub(super) fn run(
                         queue.push_back(message);
                     } else if matches!(control.decision, Decision::Hold) {
                         gate.request();
+                    } else if matches!(control.decision, Decision::Release) {
+                        gate.release();
                     } else {
                         let events = state.respond(&client, control)?;
                         if !events.is_empty() {

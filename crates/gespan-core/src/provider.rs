@@ -1687,6 +1687,10 @@ fn run_operation(
                                 gate.request();
                                 protocol.holding = true;
                             }
+                            Decision::Release => {
+                                gate.release();
+                                protocol.holding = false;
+                            }
                             _ => protocol.respond(control, &mut stdin)?,
                         }
                     }
@@ -1702,7 +1706,10 @@ fn run_operation(
                     pending.push(Event::Ready);
                 }
                 let awaiting = !protocol.approvals.is_empty() || !protocol.questions.is_empty();
-                match gate.decide(awaiting) {
+                let decision = (awaiting || protocol.prompt_delivered())
+                    .then(|| gate.decide(awaiting))
+                    .flatten();
+                match decision {
                     Some(hold::Action::Interrupt) => {
                         interrupted = true;
                         held = true;

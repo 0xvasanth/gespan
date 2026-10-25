@@ -362,6 +362,35 @@ it("stops and records a habit that is still running after one hour", async () =>
   }
 });
 
+it("does not time out a habit run while everything is on hold", async () => {
+  vi.useFakeTimers();
+  const hold = deferred();
+  const host = setup("PR review complete.");
+  let held = true;
+  (host as { held?: () => boolean }).held = () => held;
+  host.run.mockImplementationOnce(async () => {
+    await hold.promise;
+    return { status: "completed", text: "PR review complete." };
+  });
+  try {
+    // The run was already going when Hold started.
+    held = false;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_000);
+    });
+    expect(host.run).toHaveBeenCalledTimes(1);
+    held = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3 * 60 * 60 * 1000);
+    });
+    expect(host.remove).not.toHaveBeenCalled();
+    expect(stored[0].lastError).toBeUndefined();
+  } finally {
+    await act(async () => hold.resolve());
+    vi.useRealTimers();
+  }
+});
+
 it(
   "puts an approval the run still asks for to the user, once",
   { timeout: 15_000 },

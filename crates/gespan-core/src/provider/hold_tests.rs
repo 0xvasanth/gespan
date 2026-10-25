@@ -46,8 +46,14 @@ while True:
     elif v.get('id') == 2:
         send({'id': 2, 'result': {'thread': {'id': 'thread1'}}})
     elif v.get('id') == 3:
+        if MODE == 'slowstart':
+            import time
+            time.sleep(0.3)
         send({'id': 3, 'result': {'turn': {'id': 'turn1'}}})
         break
+if MODE == 'slowstart':
+    # The turn has not started yet; Hold must wait for it instead of dropping the prompt.
+    pass
 if MODE == 'tool':
     child = subprocess.Popen(['sleep', '30'])
     open('child.pid', 'w').write(str(child.pid))
@@ -306,4 +312,27 @@ fn held_process_is_parked_not_killed() {
         libc::kill(pid, libc::SIGKILL);
     }
     assert!(alive, "Hold must not kill the agent's process group");
+}
+
+#[test]
+fn hold_before_the_turn_starts_waits_for_the_prompt_to_be_delivered() {
+    let (tmp, request) = agent(Kind::Codex, "slowstart");
+    let (tx, rx) = mpsc::channel();
+    tx.send(Control {
+        id: String::new(),
+        decision: Decision::Hold,
+    })
+    .unwrap();
+    let result = run_with_controls(request, Arc::new(AtomicBool::new(false)), Some(rx), |_| {
+        Ok(())
+    });
+    assert_eq!(result, Err("Held".into()));
+    let log = stdin_log(&tmp);
+    let start = log
+        .find("turn/start")
+        .expect("the prompt must reach the agent");
+    let interrupt = log
+        .find("turn/interrupt")
+        .expect("then the turn is interrupted");
+    assert!(start < interrupt, "{log}");
 }
