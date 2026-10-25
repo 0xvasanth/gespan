@@ -146,6 +146,7 @@ impl BoardView {
         if self.dragging {
             return;
         }
+        self.cancel_keyboard_drag(cx);
         self.close_card_detail(cx);
         if self.card_detail.is_some() {
             // The open task's edits could not be saved; it stays open.

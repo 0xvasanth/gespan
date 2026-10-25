@@ -85,7 +85,7 @@ impl BoardView {
                 self.open_card_actions(card_id.to_string(), window, cx);
                 true
             }
-            "space" => self.lift_card(card_id, cx),
+            "space" => self.lift_card(card_id, window, cx),
             _ => match arrow(key) {
                 Some(direction) => {
                     self.move_card_focus(card_id, direction, window, cx);
@@ -131,7 +131,7 @@ impl BoardView {
         }
     }
 
-    fn lift_card(&mut self, card_id: &str, cx: &mut Context<Self>) -> bool {
+    fn lift_card(&mut self, card_id: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(column_id) = self.column_of_card(card_id) else {
             return false;
         };
@@ -141,6 +141,13 @@ impl BoardView {
             .position(|id| id == card_id)
             .unwrap_or(0);
         self.menu = None;
+        // Focus moving off the card (a click elsewhere) abandons the lift.
+        self.kb_blur = self.card_focus.get(card_id).cloned().map(|handle| {
+            cx.on_blur(&handle, window, |this, _, cx| {
+                this.cancel_keyboard_drag(cx);
+                cx.notify();
+            })
+        });
         self.drop_target = Some((column_id.clone(), slot));
         self.kb_drag = Some(KeyboardDrag {
             card_id: card_id.to_string(),
@@ -215,6 +222,7 @@ impl BoardView {
     /// Escape, or the view leaving the screen: put the card back, write
     /// nothing, and catch up on a reload that waited.
     pub(super) fn cancel_keyboard_drag(&mut self, cx: &mut Context<Self>) {
+        self.kb_blur = None;
         if self.kb_drag.take().is_none() {
             return;
         }
@@ -224,21 +232,11 @@ impl BoardView {
         }
     }
 
-    pub(super) fn drop_lifted_card_if_gone(&mut self) {
-        let gone = match (&self.kb_drag, &self.detail) {
-            (Some(drag), Some(detail)) => !detail.cards.iter().any(|c| c.id == drag.card_id),
-            _ => false,
-        };
-        if gone {
-            self.kb_drag = None;
-            self.drop_target = None;
-        }
-    }
-
     fn drop_keyboard_card(&mut self, cx: &mut Context<Self>) {
         let Some(drag) = self.kb_drag.take() else {
             return;
         };
+        self.kb_blur = None;
         self.drop_target = None;
         let slot = self.full_slot(&drag.column_id, drag.slot, cx);
         let resolved = self.detail.as_ref().and_then(|detail| {

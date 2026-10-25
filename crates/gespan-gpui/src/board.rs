@@ -173,6 +173,8 @@ pub(crate) struct BoardView {
     dragged_card: Option<String>,
     /// A card lifted from the keyboard; reloads wait for it like a mouse drag.
     pub(crate) kb_drag: Option<KeyboardDrag>,
+    /// Ends the lift when focus leaves the lifted card.
+    kb_blur: Option<Subscription>,
     /// The column and slot a dragged card would land in.
     pub(crate) drop_target: Option<(String, usize)>,
     /// One focus handle per card, so cards are tab stops.
@@ -217,7 +219,9 @@ impl BoardView {
         let search = cx.new(|cx| Input::field("Search tasks", "Search tasks", content(0.4), cx));
         let searching = cx.observe(&search, |_, _, cx| cx.notify());
         let activation = cx.observe_window_activation(window, |this, window, cx| {
-            if window.is_window_active() && this.visible {
+            if !window.is_window_active() {
+                this.cancel_keyboard_drag(cx);
+            } else if this.visible {
                 this.reload(cx);
             }
         });
@@ -263,6 +267,7 @@ impl BoardView {
             card_anchors: HashMap::new(),
             dragged_card: None,
             kb_drag: None,
+            kb_blur: None,
             drop_target: None,
             card_focus: HashMap::new(),
             card_menu: None,
@@ -342,6 +347,19 @@ impl BoardView {
             self.reload(cx);
             return;
         }
+        let lifted = self.kb_drag.as_ref().map(|drag| drag.card_id.clone());
+        if let (Some(card_id), Some(board_id)) = (lifted, self.open_board_id.clone()) {
+            // Reloads wait for a lift, but a lifted card deleted elsewhere ends it.
+            let gone = self
+                .service()
+                .and_then(|service| service.get(&board_id))
+                .is_ok_and(|detail| !detail.cards.iter().any(|card| card.id == card_id));
+            if gone {
+                self.cancel_keyboard_drag(cx);
+                self.reload(cx);
+                return;
+            }
+        }
         let Ok(service) = self.service() else {
             return;
         };
@@ -407,8 +425,6 @@ impl BoardView {
         self.filter
             .labels
             .retain(|id| labels.iter().any(|label| &label.id == id));
-        // A card lifted from the keyboard and deleted elsewhere is not lifted.
-        self.drop_lifted_card_if_gone();
         Ok(())
     }
 

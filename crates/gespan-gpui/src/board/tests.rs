@@ -1171,6 +1171,10 @@ fn space_lifts_arrows_move_and_space_drops_the_card(cx: &mut TestAppContext) {
         .read_with(visual, |view, _| {
             assert!(view.kb_drag.is_none() && view.drop_target.is_none());
             assert!(view.card_menu.is_none());
+            assert!(
+                view.card_detail.is_none(),
+                "dropping never opens the drawer"
+            );
         })
         .unwrap();
     let moved = Service::open(&f.db)
@@ -1285,7 +1289,7 @@ fn a_cancelled_keyboard_drag_catches_up_on_a_deferred_reload(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-fn a_lifted_card_deleted_elsewhere_cancels_the_drag(cx: &mut TestAppContext) {
+fn a_lifted_card_deleted_elsewhere_cancels_the_drag_on_the_next_poll(cx: &mut TestAppContext) {
     let f = seeded(cx, &["A", "B"]);
     let a = card_id(&f, cx, "A");
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
@@ -1294,19 +1298,111 @@ fn a_lifted_card_deleted_elsewhere_cancels_the_drag(cx: &mut TestAppContext) {
     visual.simulate_keystrokes("space down");
     Service::open(&f.db).unwrap().card_delete(&a).unwrap();
     f.window
-        .update(visual, |view, _, cx| view.reload(cx))
+        .update(visual, |view, _, cx| view.poll(cx))
         .unwrap();
-    visual.simulate_keystrokes("space");
     visual.run_until_parked();
     f.window
         .read_with(visual, |view, _| {
             assert!(view.kb_drag.is_none(), "no ghost drag over a deleted card");
             assert!(view.drop_target.is_none());
             assert!(!view.pending_reload);
-            assert!(view.error.is_some(), "the failed move is reported");
+            assert!(view.error.is_none(), "cancelled, not a failed move");
+            assert_eq!(view.detail.as_ref().unwrap().cards.len(), 1, "reloaded");
         })
         .unwrap();
-    assert_eq!(titles_in(&f, visual, "Backlog"), ["B"]);
+}
+
+#[gpui::test]
+fn clicking_another_card_cancels_a_lift_and_applies_the_deferred_reload(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let a = card_id(&f, cx, "A");
+    let backlog = detail(&f, cx).columns[0].id.clone();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space down");
+    Service::open(&f.db)
+        .unwrap()
+        .card_create(&backlog, "Fresh", "")
+        .unwrap();
+    f.window
+        .update(visual, |view, _, cx| view.reload(cx))
+        .unwrap();
+    click(visual, "board-card-2");
+    visual.run_until_parked();
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.kb_drag.is_none() && view.drop_target.is_none());
+            assert!(!view.pending_reload);
+            assert_eq!(view.detail.as_ref().unwrap().cards.len(), 3);
+        })
+        .unwrap();
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "Fresh"]);
+    assert_eq!(moved_rows(&f, visual), 0);
+}
+
+#[gpui::test]
+fn focus_leaving_the_lifted_card_cancels_the_lift(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let (a, b) = (card_id(&f, cx, "A"), card_id(&f, cx, "B"));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    visual.update(|window, _| window.activate_window());
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space");
+    focus_card(&f, visual, &b);
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.kb_drag.is_none() && view.drop_target.is_none());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn opening_the_drawer_cancels_a_lift(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let a = card_id(&f, cx, "A");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space");
+    f.window
+        .update(visual, |view, window, cx| {
+            view.open_card_detail(a.clone(), window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.card_detail.is_some());
+            assert!(view.kb_drag.is_none() && view.drop_target.is_none());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn deactivating_the_window_cancels_a_lift(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let a = card_id(&f, cx, "A");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    visual.update(|window, _| window.activate_window());
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("space");
+    visual.deactivate_window();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.kb_drag.is_none() && view.drop_target.is_none());
+        })
+        .unwrap();
 }
 
 #[gpui::test]
