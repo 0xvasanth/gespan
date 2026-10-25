@@ -2,12 +2,17 @@
 //! crash files from the panic hook, and the local "Open logs folder" and
 //! "Copy diagnostics" actions. Nothing here touches the network.
 mod actions;
+mod bundle;
 mod json;
 mod panic;
 mod paths;
 mod rotation;
 
 pub use actions::{open_logs_folder, summary, summary_for};
+pub use bundle::{
+    build, default_consent, Bundle, Destination, Entry, Report, Selection, Sources, Stamp, System,
+    MAX_BUNDLE_BYTES,
+};
 pub use json::{filter, json_layer, JsonLayer};
 pub use panic::{install_panic_hook, panic_message, write_crash};
 pub use paths::{crash_dir, log_dir, Channel};
