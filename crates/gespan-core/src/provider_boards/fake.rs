@@ -84,11 +84,15 @@ fn encode_cursor((ms, id): &(i64, String)) -> SyncCursor {
     SyncCursor(format!("{ms}|{id}"))
 }
 
-fn decode_cursor(cursor: &SyncCursor) -> ProviderResult<(i64, String)> {
+/// `None` for the empty cursor a first sync of an empty container returns.
+fn decode_cursor(cursor: &SyncCursor) -> ProviderResult<Option<(i64, String)>> {
+    if cursor.0.is_empty() {
+        return Ok(None);
+    }
     cursor
         .0
         .split_once('|')
-        .and_then(|(ms, id)| Some((ms.parse().ok()?, id.to_string())))
+        .and_then(|(ms, id)| Some(Some((ms.parse().ok()?, id.to_string()))))
         .ok_or_else(|| ProviderError::InvalidInput(format!("Bad sync cursor {}", cursor.0)))
 }
 
@@ -258,7 +262,10 @@ impl BoardProvider for FakeProvider {
             })
             .filter(|issue| filter.include_closed || !issue.state.group.is_closed())
             .collect();
-        matching.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.id.cmp(&b.id)));
+        matching.sort_by(|a, b| {
+            let (a_ms, b_ms) = (instant_ms(&a.updated_at), instant_ms(&b.updated_at));
+            b_ms.cmp(&a_ms).then(a.id.cmp(&b.id))
+        });
         let limit = filter.limit.max(1) as usize;
         let items: Vec<RemoteIssue> = matching
             .iter()
@@ -398,7 +405,7 @@ impl BoardProvider for FakeProvider {
     ) -> ProviderResult<SyncBatch> {
         let state = self.enter("sync_since")?;
         state.container(container_id)?;
-        let after = cursor.map(decode_cursor).transpose()?;
+        let after = cursor.map(decode_cursor).transpose()?.flatten();
         let mut changed: Vec<&RemoteIssue> = state
             .issues
             .values()
@@ -790,5 +797,39 @@ mod tests {
         assert_eq!(fake.list_members("C1").unwrap()[0].name, "Ada");
         assert_eq!(fake.list_containers().unwrap()[0].id, "C1");
         assert!(fake.list_labels("C9").is_err());
+    }
+
+    #[test]
+    fn empty_container_cursor_can_be_resumed() {
+        let fake = FakeProvider::new();
+        let first = fake.sync_since("C1", None).unwrap();
+        assert!(first.changes.is_empty());
+        let again = fake.sync_since("C1", Some(&first.next_cursor)).unwrap();
+        assert!(again.changes.is_empty());
+        let fake = fake.with_issue(issue("a", "todo", "2026-01-01T00:00:00Z"));
+        let later = fake.sync_since("C1", Some(&again.next_cursor)).unwrap();
+        assert_eq!(ids(&later.changes), ["a"]);
+        assert!(matches!(
+            fake.sync_since("C1", Some(&SyncCursor("garbage".into()))),
+            Err(ProviderError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn list_issues_orders_newest_first_by_instant() {
+        let fake = FakeProvider::new()
+            .with_issue(issue("whole", "todo", "2026-01-01T00:00:00Z"))
+            .with_issue(issue("half", "todo", "2026-01-01T00:00:00.500Z"))
+            .with_issue(issue("offset", "todo", "2026-01-01T00:00:01+00:00"));
+        let page = fake
+            .list_issues(
+                &IssueFilter {
+                    limit: 10,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(ids(&page.items), ["offset", "half", "whole"]);
     }
 }

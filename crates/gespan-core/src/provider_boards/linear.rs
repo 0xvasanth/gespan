@@ -546,11 +546,32 @@ fn comment_input(id: &str, body: &str, parent_id: &str) -> Result<Value, String>
     Ok(Value::Object(input))
 }
 
+// The Inbox has always accepted a success with no comment, showing no link.
 fn parse_linear_comment_create(data: &Value) -> Result<String, String> {
-    parse_comment_ref(data).map(|comment| comment.url)
+    let payload = comment_payload(data)?;
+    Ok(payload
+        .get("comment")
+        .and_then(|comment| string_field(comment, "url"))
+        .unwrap_or_default())
 }
 
+/// Boards need the comment's id, so a success without one is a failure.
 fn parse_comment_ref(data: &Value) -> Result<CommentRef, String> {
+    let comment = comment_payload(data)?
+        .get("comment")
+        .filter(|comment| comment.is_object())
+        .ok_or_else(|| "Linear did not return a comment".to_string())?;
+    let id = string_field(comment, "id").unwrap_or_default();
+    if id.is_empty() {
+        return Err("Linear did not return a comment".into());
+    }
+    Ok(CommentRef {
+        id,
+        url: string_field(comment, "url").unwrap_or_default(),
+    })
+}
+
+fn comment_payload(data: &Value) -> Result<&Value, String> {
     let payload = data
         .get("commentCreate")
         .ok_or_else(|| "Linear did not return a comment".to_string())?;
@@ -561,16 +582,7 @@ fn parse_comment_ref(data: &Value) -> Result<CommentRef, String> {
     if !success {
         return Err("Could not post Linear comment".into());
     }
-    let comment = payload.get("comment");
-    let field = |key| {
-        comment
-            .and_then(|comment| string_field(comment, key))
-            .unwrap_or_default()
-    };
-    Ok(CommentRef {
-        id: field("id"),
-        url: field("url"),
-    })
+    Ok(payload)
 }
 
 fn valid_linear_id(id: &str) -> bool {
@@ -867,11 +879,16 @@ fn parse_issue_page(data: &Value) -> Result<Page<RemoteIssue>, String> {
         .pointer("/pageInfo/hasNextPage")
         .and_then(Value::as_bool)
         == Some(true);
-    let next_cursor = issues
+    let cursor = issues
         .pointer("/pageInfo/endCursor")
         .and_then(Value::as_str)
-        .filter(|cursor| more && !cursor.is_empty())
-        .map(str::to_string);
+        .filter(|cursor| !cursor.is_empty());
+    let next_cursor = match (more, cursor) {
+        (false, _) => None,
+        (true, Some(cursor)) => Some(cursor.to_string()),
+        // Same rule as `follow_pages`: more pages with no way to reach them.
+        (true, None) => return Err("Linear pagination did not advance".into()),
+    };
     Ok(Page { items, next_cursor })
 }
 
@@ -1329,5 +1346,30 @@ mod tests {
         invalid(linear.comment("abc", "  ", None).map(drop));
         invalid(linear.comment("abc", "Hi", Some("x y")).map(drop));
         assert_eq!(linear.kind(), ProviderKind::Linear);
+    }
+
+    #[test]
+    fn issue_page_with_more_but_no_cursor_is_an_error() {
+        for cursor in [Value::Null, json!("")] {
+            let data = json!({ "issues": {
+                "pageInfo": { "hasNextPage": true, "endCursor": cursor },
+                "nodes": [issue_node()]
+            }});
+            assert_eq!(
+                parse_issue_page(&data).unwrap_err(),
+                "Linear pagination did not advance"
+            );
+        }
+    }
+
+    #[test]
+    fn comment_without_a_comment_object_is_a_failure_for_boards() {
+        let empty = json!({ "commentCreate": { "success": true, "comment": null } });
+        assert_eq!(
+            parse_comment_ref(&empty).unwrap_err(),
+            "Linear did not return a comment"
+        );
+        // The Inbox keeps its old behaviour: success with no URL.
+        assert_eq!(parse_linear_comment_create(&empty).unwrap(), "");
     }
 }

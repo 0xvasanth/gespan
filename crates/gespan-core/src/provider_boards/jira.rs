@@ -19,6 +19,8 @@ const ISSUE_FIELDS: [&str; 6] = [
 
 const MAX_PAGE: u32 = 100;
 const USER_PAGE: usize = 100;
+// 5,000 assignable users; beyond that a broken pager is likelier than a real team.
+const MAX_USER_PAGES: usize = 50;
 
 /// The `jira-config.json` file format.
 #[derive(Serialize, Deserialize, Clone)]
@@ -197,6 +199,11 @@ impl JiraProvider {
 
     pub fn post_comment(&self, key: &str, body: &str) -> Result<CommentRef, String> {
         let (key, body) = validate_comment(key, body)?;
+        self.send_comment(key, body)
+    }
+
+    /// Posts an already validated comment.
+    fn send_comment(&self, key: &str, body: &str) -> Result<CommentRef, String> {
         let data = self.post(
             &format!("/rest/api/3/issue/{key}/comment"),
             &json!({ "body": text_to_adf(body) }),
@@ -942,10 +949,8 @@ fn fetch_jira_labels(
     }
 }
 
+/// Any Jira user, active or not: an issue keeps a deactivated assignee.
 fn parse_jira_member(node: &Value) -> Option<Member> {
-    if node.get("active").and_then(Value::as_bool) == Some(false) {
-        return None;
-    }
     let id = string_field(node, "accountId").filter(|id| !id.is_empty())?;
     let (name, avatar_url) = person_fields(Some(node));
     Some(Member {
@@ -962,6 +967,8 @@ fn fetch_assignable_users(
     mut fetch: impl FnMut(u64) -> Result<Value, String>,
 ) -> Result<Vec<Member>, String> {
     let mut start = 0;
+    let mut pages = 0;
+    let mut previous: Vec<Value> = Vec::new();
     let mut members = Vec::new();
     loop {
         let data = fetch(start)?;
@@ -971,7 +978,21 @@ fn fetch_assignable_users(
         if users.is_empty() {
             return Ok(members);
         }
-        members.extend(users.iter().filter_map(parse_jira_member));
+        if users == &previous {
+            return Err("Jira user pagination did not advance".into());
+        }
+        pages += 1;
+        if pages > MAX_USER_PAGES {
+            return Err("Jira returned too many pages of users".into());
+        }
+        // Deactivated users can't be assigned new work.
+        members.extend(
+            users
+                .iter()
+                .filter(|user| user.get("active").and_then(Value::as_bool) != Some(false))
+                .filter_map(parse_jira_member),
+        );
+        previous = users.clone();
         start += USER_PAGE as u64;
     }
 }
@@ -1139,8 +1160,8 @@ impl BoardProvider for JiraProvider {
                 "Jira comments cannot be replies".into(),
             ));
         }
-        validate_comment(issue_id, body).map_err(ProviderError::InvalidInput)?;
-        Ok(self.post_comment(issue_id, body)?)
+        let (key, body) = validate_comment(issue_id, body).map_err(ProviderError::InvalidInput)?;
+        Ok(self.send_comment(key, body)?)
     }
 
     fn sync_since(&self, _: &str, _: Option<&SyncCursor>) -> ProviderResult<SyncBatch> {
@@ -1535,5 +1556,56 @@ mod tests {
         invalid(jira.list_states("ENG/../x").map(drop));
         invalid(jira.list_members("").map(drop));
         assert_eq!(jira.kind(), ProviderKind::Jira);
+    }
+
+    #[test]
+    fn deactivated_assignees_stay_on_the_issue() {
+        let mut node = issue_node();
+        node["fields"]["assignee"]["active"] = json!(false);
+        let issue = parse_remote_jira_issue(&node, SITE).unwrap();
+        assert_eq!(issue.assignees.len(), 1);
+        assert_eq!(issue.assignees[0].id, "acc-1");
+    }
+
+    #[test]
+    fn user_paging_stops_when_the_server_ignores_start_at() {
+        let user = |id: &str| json!({ "accountId": id, "displayName": id, "active": true });
+        let same = json!([user("a"), user("b")]);
+        let mut calls = 0;
+        let error = fetch_assignable_users(|_| {
+            calls += 1;
+            assert!(calls < 5, "user paging looped");
+            Ok(same.clone())
+        })
+        .unwrap_err();
+        assert_eq!(error, "Jira user pagination did not advance");
+    }
+
+    #[test]
+    fn user_paging_is_capped() {
+        let mut calls = 0;
+        let error = fetch_assignable_users(|start| {
+            calls += 1;
+            assert!(calls <= MAX_USER_PAGES + 1, "user paging was not capped");
+            Ok(json!([{ "accountId": format!("u{start}"), "active": true }]))
+        })
+        .unwrap_err();
+        assert_eq!(error, "Jira returned too many pages of users");
+    }
+
+    #[test]
+    fn comment_validation_maps_to_invalid_input_once() {
+        // Validation errors keep their Inbox wording but surface as InvalidInput.
+        let jira = provider();
+        assert_eq!(
+            jira.comment("ENG-1", " ", None),
+            Err(ProviderError::InvalidInput(
+                "Comment cannot be empty".into()
+            ))
+        );
+        assert_eq!(
+            jira.comment("ENG 1", "Hi", None),
+            Err(ProviderError::InvalidInput("Missing Jira issue".into()))
+        );
     }
 }
