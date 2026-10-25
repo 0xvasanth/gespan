@@ -1,0 +1,64 @@
+src/features/settings/ui/DictationSettings.test.ts
+  s_cb714e3c395324::t_f65837a4fbfb81 1-175
+  s_cb714e3c395324::t_6d369ce6b06248 176-189
+src/features/sessions/dictation/insertDictation.test.ts
+  s_cb714e3c395324::t_9692172788712f 1-97,99,102,105-112
+  s_cb714e3c395324::t_46a2812e313a83 98,100-101,103-104
+src/features/sessions/ui/DictationBar.tsx
+  s_cb714e3c395324::t_bc0f0bbbf5b54c 1-153
+  s_cb714e3c395324::t_e4549cb5ce7d6c 154-155
+src/features/sessions/dictation/prefs.ts
+  s_cb714e3c395324::t_20160846ff4d32 1-61
+src/features/sessions/ui/Composer.dictation.test.ts
+  s_cb714e3c395324::t_3eb2c3d96b1ab2 1-207
+  s_cb714e3c395324::t_49ed42d634240e 208-215
+src/features/sessions/dictation/useDictation.ts
+  s_cb714e3c395324::t_c8ac311822fdc7 1-308
+  s_cb714e3c395324::t_d246e6d2af0c81 309-312
+src/features/settings/ui/DictationSettings.tsx
+  s_cb714e3c395324::t_f0ae63f201fc54 1-298
+src/features/sessions/dictation/insertDictation.ts
+  s_cb714e3c395324::t_1962d0f82a269b 1-20
+  s_cb714e3c395324::t_901eba312ac74e 21-25
+src/features/sessions/dictation/useDictation.test.ts
+  s_cb714e3c395324::t_ac78fd3cfb6bc6 1-359
+  s_cb714e3c395324::t_1ba7f282939a8d 360-369
+src/app/shell/SettingsRail.tsx
+  s_cb714e3c395324::t_fb6021d658bb34 12,29
+src/features/files/ui/FilePreviewSearch.test.ts
+  s_cb714e3c395324::t_6cde2da0d82ae5 70,86-87
+src/features/sessions/dictation/shortcut.test.ts
+  s_cb714e3c395324::t_3b41cd00639b96 1-60
+src/features/sessions/dictation/shortcut.ts
+  s_cb714e3c395324::t_c44ebf5293e1f5 1-23
+src/features/sessions/ui/Composer.tsx
+  s_cb714e3c395324::t_737d8e9a6414da 8,84,123-125,135,447-460,1511-1523,2123-2129,2179-2183,2387-2405
+src/features/settings/model/appShortcuts.test.ts
+  s_cb714e3c395324::t_499dd4ec04511c 71,75-76,86,89
+src/features/settings/model/settings.test.ts
+  s_cb714e3c395324::t_c4559e02d65da8 212,214,219,227,235,239,302,312,315,627
+src/features/settings/model/settings.ts
+  s_cb714e3c395324::t_a397fb0414fe29 25,88-95,404-421,1246-1250
+src/features/settings/ui/SettingsView.test.ts
+  s_cb714e3c395324::t_3a1be319ce0efe 1006-1007,1017,1019
+src/features/settings/ui/SettingsView.tsx
+  s_cb714e3c395324::t_242b7c4ba2120e 45,662
+src/shared/ui/icons.tsx
+  s_cb714e3c395324::t_86b84fb2837140 77,246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "684ab1ac9d74dee8f1164c2987b108279af1f078",
+  "prompts": {},
+  "sessions": {
+    "s_cb714e3c395324": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9490eb45-d269-459d-a64c-099ef06fd161",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
