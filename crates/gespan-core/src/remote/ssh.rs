@@ -991,6 +991,36 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_connect_is_logged_and_counted_once_and_a_cancel_is_neither() {
+        use crate::diagnostics::metrics::{capture, ErrorKind};
+        let job = Job::new();
+        let (logged, counts) = capture(|| {
+            crate::diagnostics::test_capture(|| job.complete(|| Err("Permission denied".into())))
+        });
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "warn");
+        let counts: Vec<_> = counts
+            .into_iter()
+            .map(|c| (c.name, c.kind, c.count))
+            .collect();
+        assert_eq!(
+            counts,
+            [("remote.ssh_connect".into(), Some(ErrorKind::Auth), 1)]
+        );
+
+        let job = Job::new();
+        job.cancel();
+        let (logged, counts) = capture(|| {
+            crate::diagnostics::test_capture(|| {
+                job.complete(|| unreachable!("a cancelled job does not save its machine"))
+            })
+        });
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert_eq!(logged[0]["level"], "info");
+        assert!(counts.is_empty(), "{counts:?}");
+    }
+
+    #[test]
     fn a_failed_background_reconnect_is_logged_once_per_attempt() {
         let tunnels = Tunnels::default();
         let mut attempts = 0;

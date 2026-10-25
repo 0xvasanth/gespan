@@ -897,6 +897,42 @@ mod tests {
     }
 
     #[test]
+    fn one_failed_worktree_create_is_logged_once_and_counted_once() {
+        let (_temp, cwd) = repo();
+        let ((created, logged), counts) = capture(|| {
+            let mut created = Ok(PathBuf::new());
+            let logged = crate::diagnostics::test_capture(|| {
+                created = create_worktree(&cwd, "no-such-base", 7);
+            });
+            (created, logged)
+        });
+        assert!(created.is_err());
+        let warned: Vec<_> = logged
+            .iter()
+            .filter(|line| line["level"] == "warn")
+            .collect();
+        assert_eq!(warned.len(), 1, "{logged:?}");
+        assert_eq!(warned[0]["span"], "worktree_create");
+        let creates: Vec<_> = counted(counts)
+            .into_iter()
+            .filter(|(name, _, _)| name == "worktree.create")
+            .collect();
+        assert_eq!(creates.len(), 1, "{creates:?}");
+        assert!(creates[0].1.is_some() && creates[0].2 == 1, "{creates:?}");
+
+        let ((tree, logged), counts) = capture(|| {
+            let mut tree = None;
+            let logged = crate::diagnostics::test_capture(|| {
+                tree = Some(create_named_worktree(&cwd, "both-sides"));
+            });
+            (tree.unwrap(), logged)
+        });
+        tree.unwrap();
+        assert!(logged.is_empty(), "{logged:?}");
+        assert!(counted(counts).contains(&("worktree.create".into(), None, 1)));
+    }
+
+    #[test]
     fn a_failed_named_worktree_create_is_logged() {
         let (_temp, cwd) = repo();
         create_named_worktree(&cwd, "taken").unwrap();
