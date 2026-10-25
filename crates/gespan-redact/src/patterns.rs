@@ -2,7 +2,7 @@
 
 use std::sync::LazyLock;
 
-use regex::Regex;
+use regex::{Captures, Regex};
 
 use crate::{EMAIL, REDACTED};
 
@@ -22,30 +22,81 @@ static TOKENS: LazyLock<Regex> = LazyLock::new(|| {
     .expect("token pattern")
 });
 
-/// `password=…`, `GITHUB_TOKEN="…"`, `?access_token=…`. The value is quoted
+/// A PEM private key, or what is left of one when the text is cut short.
+static PRIVATE_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?s:.*?)(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)",
+    )
+    .expect("private key pattern")
+});
+
+/// Words that make a key secret. [`is_secret_key`] has the final say.
+const MARKERS: &str = "password|passwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|credential|authorization|cookie";
+
+/// `password=…`, `GITHUB_TOKEN = "…"`, `?access_token=…`. The value is quoted
 /// (JSON-escaped quotes too, and it may span lines) or runs to whitespace,
-/// `&`, `;` or `,`.
+/// `&`, `;` or `,`; an unclosed quote still counts.
 static KEY_VALUE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(concat!(
-        r"(?i)\b([A-Za-z0-9_-]*(?:password|passwd|token|secret|api[_-]?key))=",
-        r#"(?:\\"[^"]*?\\"|"[^"]*"|'[^']*'|[^\s&;,"']+)"#,
+    Regex::new(&format!(
+        r#"(?i)\b([A-Za-z0-9_-]*(?:{MARKERS})[A-Za-z0-9_-]*)[ \t]*=[ \t]*(?:\\"[^"]*?\\"|"[^"]*"|'[^']*'|["']?[^\s&;,"']+|["'])"#
     ))
     .expect("key=value pattern")
+});
+
+/// `"token": "…"` inside text, plain or JSON-escaped (`\"token\":\"…\"`).
+static JSON_PAIR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r#"(?i)(\\?")([A-Za-z0-9_-]*(?:{MARKERS})[A-Za-z0-9_-]*)(\\?"\s*:\s*)(\\"[^"]*?\\"|"(?:[^"\\]|\\.)*"|[^\s,}}\]]+)"#
+    ))
+    .expect("JSON pair pattern")
+});
+
+/// The password in `scheme://user:password@host`.
+static URL_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)[^\s/@]+@").expect("URL password pattern")
 });
 
 static BEARER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}").expect("bearer pattern")
 });
 
+/// Case-sensitive, as sent in headers, so the word "basic" in prose survives.
+static BASIC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b(Basic\s+)[A-Za-z0-9+/=]{8,}").expect("basic pattern"));
+
 static EMAILS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\w.%+'-]+@[\w-]+(?:\.[\w-]+)*\.\w{2,}").expect("email pattern"));
 
-/// `sk-…`, `ghp_…`, `xoxb-…`, `AKIA…`, JWTs, `Bearer …` and secret-named
-/// `key=value` pairs become `<redacted>`; the key or `Bearer` stays.
+/// Private keys, `sk-…`, `ghp_…`, `xoxb-…`, `AKIA…`, JWTs, secret-named
+/// `key=value` and JSON pairs, URL passwords, `Bearer …` and `Basic …` all
+/// become `<redacted>`; the key, scheme or user stays.
 pub(crate) fn redact_tokens(input: &str) -> String {
-    let out = TOKENS.replace_all(input, REDACTED);
-    let out = KEY_VALUE.replace_all(&out, format!("${{1}}={REDACTED}"));
-    BEARER
+    let out = PRIVATE_KEY.replace_all(input, REDACTED);
+    let out = TOKENS.replace_all(&out, REDACTED);
+    let out = JSON_PAIR.replace_all(&out, |caps: &Captures| {
+        if !is_secret_key(&caps[2]) {
+            return caps[0].to_string();
+        }
+        let quote = if caps[4].starts_with('\\') {
+            "\\\""
+        } else {
+            "\""
+        };
+        format!(
+            "{}{}{}{quote}{REDACTED}{quote}",
+            &caps[1], &caps[2], &caps[3]
+        )
+    });
+    let out = KEY_VALUE.replace_all(&out, |caps: &Captures| {
+        if is_secret_key(&caps[1]) {
+            format!("{}={REDACTED}", &caps[1])
+        } else {
+            caps[0].to_string()
+        }
+    });
+    let out = URL_PASSWORD.replace_all(&out, format!("${{1}}{REDACTED}@"));
+    let out = BEARER.replace_all(&out, format!("${{1}}{REDACTED}"));
+    BASIC
         .replace_all(&out, format!("${{1}}{REDACTED}"))
         .into_owned()
 }
@@ -55,17 +106,33 @@ pub(crate) fn redact_emails(input: &str) -> String {
     EMAILS.replace_all(input, EMAIL).into_owned()
 }
 
-/// A key whose value is a secret: anything ending in `password`, `passwd`,
-/// `token`, `secret` or `api_key`, in any case.
+/// A key whose value is a secret: one that mentions a password, secret,
+/// token, API/private/access key, credential, authorization or cookie, in
+/// any case and spelling (`apiKey`, `API-KEY`). Token counters
+/// (`tokens_used`, `token_count`) are not secrets.
 pub(crate) fn is_secret_key(key: &str) -> bool {
     let key: String = key
         .chars()
-        .filter(|c| *c != '_' && *c != '-')
+        .filter(char::is_ascii_alphanumeric)
         .collect::<String>()
         .to_ascii_lowercase();
-    ["password", "passwd", "token", "secret", "apikey"]
-        .iter()
-        .any(|suffix| key.ends_with(suffix))
+    if key.contains("tokens") || key.ends_with("count") {
+        return false;
+    }
+    [
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "apikey",
+        "privatekey",
+        "accesskey",
+        "credential",
+        "authorization",
+        "cookie",
+    ]
+    .iter()
+    .any(|marker| key.contains(marker))
 }
 
 #[cfg(test)]
@@ -158,7 +225,8 @@ mod tests {
 
     #[test]
     fn empty_secret_values_are_left_alone() {
-        assert_eq!(redact_tokens("token= missing"), "token= missing");
+        assert_eq!(redact_tokens("token="), "token=");
+        assert_eq!(redact_tokens("password=\n"), "password=\n");
     }
 
     #[test]
@@ -198,17 +266,92 @@ mod tests {
             "apiKey",
             "api-key",
             "passwd",
+            "secret_key",
+            "AWS_SECRET_ACCESS_KEY",
+            "private_key",
+            "Authorization",
+            "cookie",
+            "credentials",
+            "password_hint",
+            "refresh_token_v2",
         ] {
             assert!(is_secret_key(key), "{key}");
         }
         for key in [
             "tokens_used",
-            "password_hint",
-            "secretary",
-            "id",
             "token_count",
+            "max_tokens",
+            "id",
+            "key",
+            "sort_key",
+            "session_id",
         ] {
             assert!(!is_secret_key(key), "{key}");
         }
+    }
+
+    #[test]
+    fn secret_key_values_with_spaces_or_any_marker_position() {
+        assert_eq!(
+            redact_tokens("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG region=us"),
+            "AWS_SECRET_ACCESS_KEY=<redacted> region=us"
+        );
+        assert_eq!(
+            redact_tokens("password = hunter22 ok"),
+            "password=<redacted> ok"
+        );
+        assert_eq!(
+            redact_tokens("tokens_used=5 sort_key=name"),
+            "tokens_used=5 sort_key=name"
+        );
+        assert_eq!(redact_tokens("msg=x token=abc"), "msg=x token=<redacted>");
+    }
+
+    #[test]
+    fn unclosed_quote_still_redacts_the_value() {
+        assert_eq!(redact_tokens("password=\"abc"), "password=<redacted>");
+    }
+
+    #[test]
+    fn json_pairs_inside_text() {
+        assert_eq!(
+            redact_tokens(r#"resp {"access_token":"abc","n":1}"#),
+            r#"resp {"access_token":"<redacted>","n":1}"#
+        );
+        assert_eq!(
+            redact_tokens(r#"{"api_key": 42, "token" : "a\"b", "tokens_used": 5}"#),
+            r#"{"api_key": "<redacted>", "token" : "<redacted>", "tokens_used": 5}"#
+        );
+        // A JSON log line embedded, escaped, in another JSON string.
+        assert_eq!(
+            redact_tokens(r#"{"msg":"{\"password\":\"p w\"}"}"#),
+            r#"{"msg":"{\"password\":\"<redacted>\"}"}"#
+        );
+    }
+
+    #[test]
+    fn url_passwords() {
+        assert_eq!(
+            redact_tokens("fatal: https://alice:hunter2@github.com/acme/app.git"),
+            "fatal: https://alice:<redacted>@github.com/acme/app.git"
+        );
+        assert_eq!(
+            redact_tokens("ssh://git@github.com/x"),
+            "ssh://git@github.com/x"
+        );
+    }
+
+    #[test]
+    fn basic_auth_and_private_keys() {
+        assert_eq!(
+            redact_tokens("Authorization: Basic dXNlcjpwYXNz"),
+            "Authorization: Basic <redacted>"
+        );
+        assert_eq!(
+            redact_tokens(
+                "key:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\nAAAA\n-----END OPENSSH PRIVATE KEY-----\ndone"
+            ),
+            "key:\n<redacted>\ndone"
+        );
     }
 }

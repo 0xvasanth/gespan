@@ -6,6 +6,8 @@
 //! `<project-N>`, keeping the path inside it; emails become `<email>`; tokens
 //! and known secrets become `<redacted>`; deny-listed JSON fields are dropped.
 
+#[cfg(feature = "fixtures")]
+pub mod fixtures;
 mod paths;
 mod patterns;
 mod value;
@@ -60,26 +62,51 @@ impl Redactor {
                 .as_deref()
                 .and_then(|home| PathRule::new(home, HOME.to_string())),
         );
+        // Each secret as written, JSON-escaped and percent-encoded.
         let mut secrets: Vec<String> = config
             .secrets
-            .into_iter()
+            .iter()
             .filter(|secret| secret.chars().count() >= 8)
+            .flat_map(|secret| {
+                [
+                    secret.clone(),
+                    json_escaped(secret),
+                    percent_encoded(secret),
+                ]
+            })
             .collect();
         secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+        secrets.dedup();
         Self { paths, secrets }
     }
 
     /// Scrubs free text: a log message, a panic, a stack trace.
     pub fn redact_text(&self, input: &str) -> String {
         let mut out = input.to_string();
-        for rule in &self.paths {
-            out = rule.apply(&out);
-        }
         for secret in &self.secrets {
             out = out.replace(secret.as_str(), REDACTED);
         }
+        for rule in &self.paths {
+            out = rule.apply(&out);
+        }
         patterns::redact_emails(&patterns::redact_tokens(&out))
     }
+}
+
+fn json_escaped(text: &str) -> String {
+    let quoted = serde_json::to_string(text).expect("a string serializes");
+    quoted[1..quoted.len() - 1].to_string()
+}
+
+fn percent_encoded(text: &str) -> String {
+    text.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -103,6 +130,24 @@ mod tests {
         assert_eq!(
             r.redact_text("login hunter2hunter2 failed for abcd"),
             "login <redacted> failed for abcd"
+        );
+    }
+
+    #[test]
+    fn known_secrets_are_replaced_before_paths_and_in_encoded_forms() {
+        let r = Redactor::new(Config {
+            home: Some("/Users/alice".into()),
+            secrets: vec!["x9/Users/alice/k".into(), "p@ss w0rd\"x".into()],
+            ..Config::default()
+        });
+        assert_eq!(r.redact_text("pw x9/Users/alice/k"), "pw <redacted>");
+        assert_eq!(
+            r.redact_text(r#"{"v":"p@ss w0rd\"x"}"#),
+            r#"{"v":"<redacted>"}"#
+        );
+        assert_eq!(
+            r.redact_text("?pw=p%40ss%20w0rd%22x&a=1"),
+            "?pw=<redacted>&a=1"
         );
     }
 

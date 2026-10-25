@@ -23,7 +23,10 @@ impl Redactor {
     /// scrubs every remaining key and string with [`Redactor::redact_text`].
     pub fn redact_value(&self, value: Value) -> Value {
         match value {
-            Value::String(text) => Value::String(self.redact_text(&text)),
+            Value::String(text) => match embedded_json(&text) {
+                Some(inner) => Value::String(self.redact_value(inner).to_string()),
+                None => Value::String(self.redact_text(&text)),
+            },
             Value::Array(items) => Value::Array(
                 items
                     .into_iter()
@@ -47,6 +50,18 @@ impl Redactor {
             other => other,
         }
     }
+}
+
+/// A string that is itself a JSON object or array, such as a response body
+/// logged as text, so its fields get the same treatment.
+fn embedded_json(text: &str) -> Option<Value> {
+    let trimmed = text.trim_start();
+    if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
+        return None;
+    }
+    serde_json::from_str(text)
+        .ok()
+        .filter(|value: &Value| value.is_object() || value.is_array())
 }
 
 fn is_denied(key: &str) -> bool {
@@ -113,6 +128,15 @@ mod tests {
         assert_eq!(
             redactor().redact_value(input),
             json!({"~/notes.md": "seen by <email>", "list": ["~/a", "Bearer <redacted>"]})
+        );
+    }
+
+    #[test]
+    fn json_inside_a_string_is_scrubbed_as_json() {
+        let input = json!({"response": "{\"prompt\":\"hi\",\"ok\":true}", "note": "{not json"});
+        assert_eq!(
+            redactor().redact_value(input),
+            json!({"response": "{\"ok\":true}", "note": "{not json"})
         );
     }
 

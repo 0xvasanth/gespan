@@ -101,8 +101,21 @@
 
 - [ ] `cargo test -p gespan-redact`, `cargo clippy -p gespan-redact --all-targets --all-features -- -D warnings`, `bun run check`, `env ZDOTDIR=$(mktemp -d) bun run native:check`. Quote result lines in the PR.
 
+## Rulings during the build
+
+An automated security review of the first commits, plus the shared fixtures, turned up gaps. Each fix below was test-driven:
+
+- **Secret keys match anywhere in the name, not only at the end.** A key is secret if it mentions `password`, `passwd`, `secret`, `token`, `api key`, `private key`, `access key`, `credential`, `authorization` or `cookie`, ignoring case and punctuation. Before this, `AWS_SECRET_ACCESS_KEY=` leaked (a fixture caught it). Token counters (`tokens_used`, `token_count`) are excluded. Cost if wrong: harmless debug values like `password_hint` get redacted.
+- **`key = value` allows spaces around `=`.** So `token= missing` now redacts `missing`; a bare `token=` with no value is still left alone. For a scrubber, over-redacting is the safer failure.
+- **An unclosed quote still redacts** (`password="abc` from a truncated line).
+- **JSON pairs inside text** (`"access_token":"…"`, also JSON-escaped) are redacted. Without this, a response body logged as a message leaks.
+- **JSON strings that are themselves JSON objects or arrays** are parsed and scrubbed as JSON, so deny-listed fields inside them are dropped too.
+- **Known secrets run first**, before the path rules, and also match their JSON-escaped and percent-encoded forms.
+- **Added beyond #67's list:** URL passwords (`https://user:pw@host`), `Basic` auth (case-sensitive), and PEM private-key blocks, including a block cut off mid-way. They fall under the #45 rule "tokens and keys → `<redacted>`" and are cheap to add.
+- **Declined:** `token: value` with a colon and no quotes. It is too common in prose ("token: missing"), and real headers are covered by `Bearer`/`Basic`.
+
 ## Follow-ups (out of scope)
 
 - Wiring into `src-tauri` and `gespan-core` (#72, #81, #124).
 - `docs/diagnostics/scrubbing.md` (#66) should link to `crates/gespan-redact/fixtures/`.
-- PEM private-key blocks and `Basic` auth are not in #67's pattern list.
+- Cookie header values (`Cookie: a=b`) and Windows UNC paths (`\\server\share`) are not covered.
