@@ -16,6 +16,7 @@ type Key = (String, String);
 
 static VALUES: Mutex<Option<HashMap<Key, Vec<u8>>>> = Mutex::new(None);
 static FAILING: Mutex<Option<HashSet<Key>>> = Mutex::new(None);
+static UNREADABLE: Mutex<Option<HashSet<Key>>> = Mutex::new(None);
 static INSTALL: Once = Once::new();
 
 /// Routes every `keyring::Entry` in this process to the in-memory store.
@@ -43,6 +44,20 @@ pub fn fail_writes(tracker: Tracker, data_dir: &Path, fail: bool) {
         failing.insert(key(tracker, data_dir));
     } else {
         failing.remove(&key(tracker, data_dir));
+    }
+}
+
+/// Makes keychain reads for this tracker and data directory fail, as a locked
+/// keychain, a denied access prompt or a missing Secret Service does.
+pub fn fail_reads(tracker: Tracker, data_dir: &Path, fail: bool) {
+    let mut unreadable = UNREADABLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let unreadable = unreadable.get_or_insert_with(HashSet::new);
+    if fail {
+        unreadable.insert(key(tracker, data_dir));
+    } else {
+        unreadable.remove(&key(tracker, data_dir));
     }
 }
 
@@ -90,6 +105,12 @@ impl CredentialApi for MemoryCredential {
         Ok(())
     }
     fn get_secret(&self) -> keyring::Result<Vec<u8>> {
+        let unreadable = UNREADABLE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if unreadable.as_ref().is_some_and(|set| set.contains(&self.0)) {
+            return Err(keyring::Error::NoStorageAccess("keychain is locked".into()));
+        }
         let values = VALUES
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());

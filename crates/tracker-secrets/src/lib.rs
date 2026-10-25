@@ -13,6 +13,8 @@ pub mod testing;
 
 pub const SERVICE: &str = "dev.gespan.trackers";
 
+const KEYCHAIN_HINT: &str = "Check that the keychain is unlocked and Gespan may use it; on Linux, a Secret Service such as GNOME Keyring or KWallet must be running.";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tracker {
     Linear,
@@ -55,13 +57,18 @@ impl Tracker {
     }
 }
 
+/// The apps build the data directory in different ways (Tauri's path API,
+/// Native's environment lookups or a `--gespan-db` argument), so the account
+/// uses the resolved directory: two spellings of one directory share an entry.
 pub fn account(tracker: Tracker, data_dir: &Path) -> String {
-    format!("{}:{}", tracker.key(), data_dir.display())
+    let resolved = fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+    format!("{}:{}", tracker.key(), resolved.display())
 }
 
 /// The saved secret. An old file is moved into the keychain on first read; if
-/// the keychain refuses it, the file stays and its value is still returned, so
-/// a locked keychain never disconnects a tracker or loses its secret.
+/// the keychain cannot be read or refuses the write, the file stays and its
+/// value is still returned, so a locked keychain never disconnects a tracker
+/// that has not migrated yet, or loses its secret.
 pub fn read(tracker: Tracker, data_dir: &Path) -> Result<Option<String>, String> {
     let entry = entry(tracker, data_dir)?;
     match entry.get_password() {
@@ -78,19 +85,24 @@ pub fn read(tracker: Tracker, data_dir: &Path) -> Result<Option<String>, String>
             }
             Ok(Some(value))
         }
-        // Keychain errors can quote what they were handed; report only which
-        // tracker failed.
-        Err(_) => Err(format!(
-            "Could not read the {} credentials from the keychain",
-            tracker.label()
-        )),
+        // A locked or unavailable keychain: an unmigrated file still serves,
+        // and stays until the keychain can take it.
+        Err(_) => match read_legacy_file(tracker, data_dir)? {
+            Some(value) => Ok(Some(value)),
+            // Keychain errors can quote what they were handed; report only
+            // which tracker failed.
+            None => Err(format!(
+                "Could not read the {} credentials from the keychain. {KEYCHAIN_HINT}",
+                tracker.label()
+            )),
+        },
     }
 }
 
 pub fn write(tracker: Tracker, data_dir: &Path, value: &str) -> Result<(), String> {
     entry(tracker, data_dir)?.set_password(value).map_err(|_| {
         format!(
-            "Could not save the {} credentials to the keychain",
+            "Could not save the {} credentials to the keychain. {KEYCHAIN_HINT}",
             tracker.label()
         )
     })?;

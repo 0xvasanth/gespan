@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The project is now called **Gespan**. The app, its crates, the mobile module and every in-app string use the new name. Bundle identifiers are now `dev.gespan.desktop` and `dev.gespan.mobile`, the URL scheme is `gespan://`, and environment variables use the `GESPAN_` prefix.
 - App data, storage keys and keychain entries moved with the new identifier. Settings and sessions saved by earlier builds are not carried over.
+- Linear, Jira, GitLab and Azure DevOps credentials are now kept in the OS keychain instead of files in the app data folder, and both desktop apps share them. A saved credentials file is moved into the keychain the first time it is read, then deleted. On Linux this needs a running Secret Service such as GNOME Keyring or KWallet.
 
 ## [0.16.0] - 2026-10-19
 
