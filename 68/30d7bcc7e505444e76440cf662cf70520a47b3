@@ -1,0 +1,46 @@
+src/features/board/model/board.ts
+  s_938a6e0c93b076::t_fdc3592a60c00f 3,149-167
+  s_938a6e0c93b076::t_0e2cbfc5e52ecf 168
+src/features/board/ui/BoardCardItem.tsx
+  s_938a6e0c93b076::t_b0892d144d1fa2 9-13
+  s_938a6e0c93b076::t_415026150771af 7-8,76,87,108-127
+src/features/sessions/ui/LinkSessionWorkItemDialog.tsx
+  s_938a6e0c93b076::t_4a52f5a9db13cf 15-16,22-25,59,97,103,107,110-114,137-139
+  s_938a6e0c93b076::t_b0892d144d1fa2 86,104-106
+src/features/board/model/ticketCards.test.ts
+  s_938a6e0c93b076::t_b0892d144d1fa2 1-104
+src-tauri/src/lib.rs
+  s_938a6e0c93b076::t_8c42946c6c36d6 386-388
+src/features/board/ui/CardDetail.tsx
+  s_938a6e0c93b076::t_415026150771af 270
+  s_938a6e0c93b076::t_2d8d528c6c3704 8-10,15,47,57-58,77-81,170-180,200-201,265-269,271-289,320-329
+src/features/board/model/ticketCards.ts
+  s_938a6e0c93b076::t_fdc3592a60c00f 1-46
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_b0892d144d1fa2 244-245
+  s_938a6e0c93b076::t_9dd234364a9e8f 15-16,26,39,170-171,228-232,235,434,572-581,621,632-649
+  s_938a6e0c93b076::t_604fb3a3206317 650-651
+src/features/board/ui/CardDetail.test.ts
+  s_938a6e0c93b076::t_b0892d144d1fa2 7-8,150-154,231-273,279-309,313-380
+  s_938a6e0c93b076::t_4ff8b15136decb 274-278
+  s_938a6e0c93b076::t_aed4d5abb9b1e6 310-312
+  s_938a6e0c93b076::t_0f62ebaae29800 381
+src-tauri/src/board.rs
+  s_938a6e0c93b076::t_8c42946c6c36d6 11-12,205-251,766-787
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6830d7bcc7e505444e76440cf662cf70520a47b3",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
