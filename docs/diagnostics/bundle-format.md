@@ -58,8 +58,8 @@ one.
 | `title` | string | yes | The user's title. For a crash send, generated from the panic message. |
 | `description` | string | yes | "What happened?". Empty for a crash send. |
 | `steps` | string | no | "Steps to reproduce". Omitted when empty. |
-| `contact_email` | string | no | Optional, entered by the user. Kept in the private bundle only and never put in the public issue. |
-| `install_id` | string | no | The anonymous install ID, if the user has opted in to anything (see [consent.md](consent.md#anonymous-install-id)). Omitted otherwise. |
+| `contact_email` | string | no | Optional, entered by the user. Kept in the private bundle only and never put in the public issue. Left out of a fallback bundle (see [intake-api.md](intake-api.md#fallback-when-the-intake-cant-be-reached)), which the user attaches to a public issue. |
+| `install_id` | string | no | The anonymous install ID, if the user has opted in to anything (see [consent.md](consent.md#anonymous-install-id)). Omitted otherwise. Left out of a fallback bundle, so a public attachment can't link an install's reports. |
 | `event_ids` | array of strings | yes | `event_id`s of the log lines this report is about (from an error toast's "Report" action). May be empty. |
 | `consent` | object | yes | The consent record at the time of sending, as defined in [consent.md](consent.md#consent-record). |
 | `consent.consent_version` | number | yes | Which version of the consent wording the user agreed to. |

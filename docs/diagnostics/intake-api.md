@@ -158,7 +158,10 @@ dropped.
 
 With no `GESPAN_REPORTS_URL`, a `401`, or retries used up, "Report an issue":
 
-1. saves the scrubbed bundle zip to the Downloads folder and reveals it;
+1. rebuilds the bundle with `report.json` written without `contact_email` and
+   `install_id` (the report sheet hides the contact email field in this
+   mode), shows that bundle in the preview, then saves the zip to the
+   Downloads folder and reveals it;
 2. opens
    `https://github.com/0xvasanth/gespan/issues/new?template=bug_report.yml&title=…&version=…&os=…&os-version=…&what-happened=…`
    with the bug report form's field ids as query parameters, asking the user

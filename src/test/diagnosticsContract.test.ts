@@ -308,6 +308,20 @@ describe("intake API", () => {
     expect(rows.map((r) => r[1])).toContain(`\`${error.error.code}\``);
   });
 
+  it("strips the contact email and install ID from a bundle the fallback makes public", () => {
+    const fallback = section(md, "Fallback when the intake can't be reached");
+    expect(fallback).toMatch(/without\s+`contact_email`\s+and\s+`install_id`/);
+    const row = (name: string) =>
+      section(doc(BUNDLE), "report.json")
+        .split("\n")
+        .find((l) => l.startsWith(`| \`${name}\``));
+    for (const name of ["contact_email", "install_id"]) {
+      expect(row(name), name).toMatch(/left\s+out\s+of\s+a\s+fallback\s+bundle/i);
+    }
+    const privacyFallback = /\*\*Fallback\*\*[^]*?(?=\n- \*\*|\n## )/.exec(doc(PRIVACY))?.[0];
+    expect(privacyFallback).toMatch(/without\s+your\s+contact\s+email\s+or\s+install\s+ID/i);
+  });
+
   it("never opens the browser fallback for a send the user did not start", () => {
     expect(section(md, "Errors")).toMatch(/background sends[^.]*never\s+use\s+the\s+fallback/i);
   });

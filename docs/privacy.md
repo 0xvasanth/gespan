@@ -119,7 +119,9 @@ machine**: your home folder becomes `~`, project folders become
 - **Fallback**: if the intake can't be reached, Gespan saves the report as a
   zip in your Downloads folder and opens GitHub's new-issue page for you to
   attach it. In that case the zip you attach is public, and you need a GitHub
-  account. The report sheet tells you this before you go ahead.
+  account. The report sheet tells you this before you go ahead. The zip is
+  built without your contact email or install ID, and you see its contents
+  before it is saved.
 
 ## How long it is kept
 
