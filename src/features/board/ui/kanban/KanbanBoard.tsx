@@ -63,6 +63,8 @@ export type KanbanBoardProps = {
   onColumnMove: (columnId: string, index: number) => void;
   /** Enter on a focused card; Space picks it up. */
   onCardOpen?: (card: BoardCard) => void;
+  /** Click or Enter on a collapsed column's strip. */
+  onColumnExpand?: (column: BoardColumn) => void;
   /** Rendered after the last column inside the scroller (the add-column button). */
   trailing?: ReactNode;
 };
@@ -113,6 +115,7 @@ export function KanbanBoard({
   onCardMove,
   onColumnMove,
   onCardOpen,
+  onColumnExpand,
   trailing,
 }: KanbanBoardProps) {
   const reducedMotion = useReducedMotion();
@@ -251,6 +254,7 @@ export function KanbanBoard({
               onCardOpen={drag ? undefined : onCardOpen}
               renderColumnHeader={renderColumnHeader}
               renderColumnFooter={renderColumnFooter}
+              onExpand={onColumnExpand}
             />
           ))}
         </SortableContext>

@@ -41,22 +41,15 @@ import {
   toggled,
   useAhead,
 } from "./CardDrawerParts";
-import {
-  confirmDeleteCard,
-  MenuButton,
-  MenuItem,
-  MenuSeparator,
-} from "./boardControls";
+import { DueDateInput, DueItems, PriorityItems } from "./CardPropertyMenus";
+import { confirmDeleteCard, MenuButton, MenuItem } from "./boardControls";
 import {
   activityText,
-  dayStart,
   dueChip,
-  dueInputValue,
   errorText,
   LINK_KIND_LABEL,
   linkValue,
   nextLabelColor,
-  parseDueInput,
   parseLinkValue,
   type BoardLinkTarget,
   type ResolvedLink,
@@ -341,9 +334,6 @@ export function CardDetail({
     moveCard(card.id, columnId, cardCount, "user").catch(failed("move"));
   };
 
-  const [dueInput, setDueInput] = useState(dueInputValue(dueAt));
-  useEffect(() => setDueInput(dueInputValue(dueAt)), [dueAt]);
-
   const columnName = columns.find(
     (column) => column.id === card.columnId,
   )?.name;
@@ -425,20 +415,13 @@ export function CardDetail({
                 </span>
               }
             >
-              {(closeMenu) =>
-                PRIORITIES.map((name, index) => (
-                  <MenuItem
-                    key={name}
-                    checked={index === priority}
-                    onSelect={() => {
-                      closeMenu();
-                      choosePriority(index);
-                    }}
-                  >
-                    {name}
-                  </MenuItem>
-                ))
-              }
+              {(closeMenu) => (
+                <PriorityItems
+                  priority={priority}
+                  onChoose={choosePriority}
+                  close={closeMenu}
+                />
+              )}
             </MenuButton>
           </PropertyRow>
           <PropertyRow name="due" label="Due">
@@ -448,50 +431,14 @@ export function CardDetail({
               trigger={<span className="truncate">{due?.text ?? "None"}</span>}
             >
               {(closeMenu) => (
-                <>
-                  {(
-                    [
-                      ["Today", 0],
-                      ["Tomorrow", 1],
-                      ["Next week", 7],
-                    ] as const
-                  ).map(([name, days]) => (
-                    <MenuItem
-                      key={name}
-                      onSelect={() => {
-                        closeMenu();
-                        chooseDue(dayStart(days));
-                      }}
-                    >
-                      {name}
-                    </MenuItem>
-                  ))}
-                  <MenuSeparator />
-                  <MenuItem
-                    disabled={dueAt === null}
-                    onSelect={() => {
-                      closeMenu();
-                      chooseDue(null);
-                    }}
-                  >
-                    Clear
-                  </MenuItem>
-                </>
+                <DueItems
+                  dueAt={dueAt}
+                  onChoose={chooseDue}
+                  close={closeMenu}
+                />
               )}
             </MenuButton>
-            <input
-              type="date"
-              aria-label="Due date"
-              value={dueInput}
-              onChange={(event) => {
-                setDueInput(event.target.value);
-                const next = parseDueInput(event.target.value);
-                // A half-typed date waits; an emptied one clears.
-                if (next !== null) chooseDue(next);
-                else if (event.target.value === "") chooseDue(null);
-              }}
-              className="h-7 rounded-md border border-stroke bg-background-base px-2 text-[12px] text-content/80 outline-none focus:border-accent/60"
-            />
+            <DueDateInput dueAt={dueAt} onChoose={chooseDue} />
           </PropertyRow>
           <PropertyRow name="projects" label="Projects">
             <MenuButton

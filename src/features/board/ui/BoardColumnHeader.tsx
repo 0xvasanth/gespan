@@ -1,6 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus } from "../../../shared/ui/icons";
-import type { BoardColumn, ColumnRole } from "../model/board";
+import {
+  columnCardCount,
+  type BoardColumn,
+  type ColumnRole,
+} from "../model/board";
+import type { SortKey } from "../model/columnActions";
 import {
   ICON_BUTTON,
   MenuButton,
@@ -26,6 +31,10 @@ export function BoardColumnHeader({
   onRename,
   onSetRole,
   onDelete,
+  onCollapse,
+  onSort,
+  onMarkAllDone,
+  onArchiveCompleted,
 }: {
   column: BoardColumn;
   /** Every card in the column. */
@@ -38,9 +47,14 @@ export function BoardColumnHeader({
   onRename: (name: string) => void;
   onSetRole: (role: ColumnRole | null) => void;
   onDelete: () => void;
+  onCollapse: () => void;
+  onSort: (key: SortKey) => void;
+  /** Absent in the done column, and when the board has none. */
+  onMarkAllDone?: () => void;
+  /** Present in the done column only. */
+  onArchiveCompleted?: () => void;
 }) {
   const [renaming, setRenaming] = useState(false);
-  const plural = count === 1 ? "card" : "cards";
   return (
     <>
       <ColumnRoleIcon role={column.role} className="shrink-0" />
@@ -94,6 +108,55 @@ export function BoardColumnHeader({
               >
                 Rename
               </MenuItem>
+              <MenuItem
+                onSelect={() => {
+                  close();
+                  onCollapse();
+                }}
+              >
+                Collapse column
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem
+                disabled={count < 2}
+                onSelect={() => {
+                  close();
+                  onSort("priority");
+                }}
+              >
+                Sort by priority
+              </MenuItem>
+              <MenuItem
+                disabled={count < 2}
+                onSelect={() => {
+                  close();
+                  onSort("due");
+                }}
+              >
+                Sort by due date
+              </MenuItem>
+              {onMarkAllDone ? (
+                <MenuItem
+                  disabled={count === 0}
+                  onSelect={() => {
+                    close();
+                    onMarkAllDone();
+                  }}
+                >
+                  Mark all as done
+                </MenuItem>
+              ) : null}
+              {onArchiveCompleted ? (
+                <MenuItem
+                  disabled={count === 0}
+                  onSelect={() => {
+                    close();
+                    onArchiveCompleted();
+                  }}
+                >
+                  Archive completed
+                </MenuItem>
+              ) : null}
               <MenuSeparator />
               <MenuLabel>Role</MenuLabel>
               {[...ROLES, null].map((role) => (
@@ -116,21 +179,51 @@ export function BoardColumnHeader({
                 </MenuItem>
               ))}
               <MenuSeparator />
-              <MenuItem
-                danger
-                disabled={count > 0}
-                title={count > 0 ? `Column has ${count} ${plural}` : undefined}
+              <DeleteColumnItem
+                columnId={column.id}
                 onSelect={() => {
                   close();
                   onDelete();
                 }}
-              >
-                Delete column
-              </MenuItem>
+              />
             </>
           )}
         </MenuButton>
       </div>
     </>
+  );
+}
+
+/**
+ * "Delete column", allowed only when the column holds no cards, live or
+ * archived. Mounted when the menu opens, so the count is read then.
+ */
+function DeleteColumnItem({
+  columnId,
+  onSelect,
+}: {
+  columnId: string;
+  onSelect: () => void;
+}) {
+  const [total, setTotal] = useState<number | "failed" | null>(null);
+  useEffect(() => {
+    let live = true;
+    columnCardCount(columnId)
+      .then((count) => live && setTotal(count.live + count.archived))
+      .catch(() => live && setTotal("failed"));
+    return () => {
+      live = false;
+    };
+  }, [columnId]);
+  const reason =
+    total === "failed"
+      ? "Couldn't check the column's cards"
+      : typeof total === "number" && total > 0
+        ? `Move or delete its ${total} ${total === 1 ? "card" : "cards"} first`
+        : undefined;
+  return (
+    <MenuItem danger disabled={total !== 0} title={reason} onSelect={onSelect}>
+      Delete column
+    </MenuItem>
   );
 }

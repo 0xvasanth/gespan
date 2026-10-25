@@ -337,27 +337,73 @@ describe("BoardView", () => {
     expect(dialog?.textContent).toContain("Card #1");
   });
 
-  it("disables Delete column while the column holds cards", async () => {
+  it("disables Delete column unless the column has no live or archived cards", async () => {
+    const counts: Record<string, { live: number; archived: number }> = {
+      backlog: { live: 2, archived: 0 },
+      progress: { live: 0, archived: 1 },
+      review: { live: 0, archived: 0 },
+      done: { live: 0, archived: 3 },
+    };
+    handlers.board_column_card_count = (args) => counts[String(args.columnId)];
     await renderBoard();
-    const deleteItem = (columnId: string) => {
+    const deleteItem = async (columnId: string) => {
       const menuButton = columnEl(columnId).querySelector<HTMLButtonElement>(
         'button[aria-label^="Column actions"]',
       )!;
       act(() => menuButton.click());
+      await flush();
       const item = [
         ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
       ].find((el) => el.textContent?.startsWith("Delete"))!;
       return item;
     };
-    const blocked = deleteItem("backlog");
-    expect(blocked.disabled).toBe(true);
-    expect(blocked.getAttribute("title")).toBe("Column has 2 cards");
-    press(blocked, "Escape");
-    act(() => document.body.dispatchEvent(new PointerEvent("pointerdown")));
-    await flush();
+    const closeMenu = async (item: HTMLElement) => {
+      press(item, "Escape");
+      act(() => document.body.dispatchEvent(new PointerEvent("pointerdown")));
+      await flush();
+    };
+    const live = await deleteItem("backlog");
+    expect(live.disabled).toBe(true);
+    expect(live.getAttribute("title")).toBe("Move or delete its 2 cards first");
+    await closeMenu(live);
 
-    const open = deleteItem("review");
+    // Archived cards count too, and one card is singular.
+    const archivedOne = await deleteItem("progress");
+    expect(archivedOne.disabled).toBe(true);
+    expect(archivedOne.getAttribute("title")).toBe(
+      "Move or delete its 1 card first",
+    );
+    await closeMenu(archivedOne);
+
+    const archived = await deleteItem("done");
+    expect(archived.disabled).toBe(true);
+    expect(archived.getAttribute("title")).toBe(
+      "Move or delete its 3 cards first",
+    );
+    await closeMenu(archived);
+
+    const open = await deleteItem("review");
     expect(open.disabled).toBe(false);
+    expect(open.getAttribute("title")).toBeNull();
+  });
+
+  it("keeps Delete column disabled when the card count can't be read", async () => {
+    handlers.board_column_card_count = () => {
+      throw new Error("boom");
+    };
+    await renderBoard();
+    act(() =>
+      columnEl("review")
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label^="Column actions"]',
+        )!
+        .click(),
+    );
+    await flush();
+    const item = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((el) => el.textContent?.startsWith("Delete"))!;
+    expect(item.disabled).toBe(true);
   });
 
   it("asks before deleting a card from its menu", async () => {
@@ -1291,5 +1337,298 @@ describe("BoardView card face, search and filters", () => {
     };
     await renderBoard();
     expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
+  });
+
+  // ---- quick edits and the column menu ----
+  async function columnAction(columnId: string, itemText: string) {
+    act(() =>
+      columnEl(columnId)
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label^="Column actions"]',
+        )!
+        .click(),
+    );
+    await flush();
+    const item = [
+      ...document.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
+    ].find((el) => el.textContent?.trim() === itemText);
+    return item;
+  }
+  async function runColumnAction(columnId: string, itemText: string) {
+    const item = await columnAction(columnId, itemText);
+    expect(item, itemText).toBeDefined();
+    act(() => item!.click());
+    await flush();
+  }
+  const menuTexts = () =>
+    [...document.querySelectorAll('[role^="menuitem"]')].map((el) =>
+      el.textContent?.trim(),
+    );
+
+  it("collapses a column with its current colour and WIP limit", async () => {
+    five();
+    const base = (handlers.board_get as () => BoardDetail)();
+    handlers.board_get = () => ({
+      ...base,
+      columns: base.columns.map((c) =>
+        c.id === "backlog" ? { ...c, color: "a371f7", wipLimit: 5 } : c,
+      ),
+    });
+    handlers.board_column_set_display = () => undefined;
+    await renderBoard();
+    await runColumnAction("backlog", "Collapse column");
+    expect(commands("board_column_set_display")).toEqual([
+      [
+        "board_column_set_display",
+        { columnId: "backlog", color: "a371f7", wipLimit: 5, collapsed: true },
+      ],
+    ]);
+  });
+
+  it("shows a collapsed column as a strip and expands it on click", async () => {
+    five();
+    const base = (handlers.board_get as () => BoardDetail)();
+    handlers.board_get = () => ({
+      ...base,
+      columns: base.columns.map((c) =>
+        c.id === "backlog"
+          ? { ...c, color: "a371f7", wipLimit: 5, collapsed: true }
+          : c,
+      ),
+    });
+    handlers.board_column_set_display = () => undefined;
+    await renderBoard();
+    expect(columnEl("backlog").hasAttribute("data-column-collapsed")).toBe(
+      true,
+    );
+    expect(cardIdsIn("backlog")).toEqual([]);
+    act(() =>
+      columnEl("backlog").querySelector<HTMLButtonElement>("button")!.click(),
+    );
+    await flush();
+    expect(commands("board_column_set_display")[0][1]).toEqual({
+      columnId: "backlog",
+      color: "a371f7",
+      wipLimit: 5,
+      collapsed: false,
+    });
+  });
+
+  it("drops a card onto a collapsed column at its end", async () => {
+    handlers.board_get = () => ({
+      board: BOARD,
+      columns: [
+        column("backlog", "Backlog", 0, "todo"),
+        { ...column("progress", "In Progress", 1, "doing"), collapsed: true },
+      ],
+      cards: [
+        card("c1", "backlog", 0, 1, "One"),
+        card("c2", "progress", 0, 2, "Two"),
+        card("c3", "progress", 1, 3, "Three"),
+      ],
+    });
+    handlers.board_card_move = () => undefined;
+    await renderBoard();
+    act(() =>
+      kanban.props!.onCardMove("c1", { columnId: "progress", index: 2 }),
+    );
+    await flush();
+    expect(commands("board_card_move")[0][1]).toMatchObject({
+      cardId: "c1",
+      columnId: "progress",
+      index: 2,
+    });
+  });
+
+  it("sorts the whole column by priority while a search hides some cards", async () => {
+    five();
+    handlers.board_cards_move = () => undefined;
+    await renderBoard();
+    search("alpha");
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c3", "c5"]);
+    await runColumnAction("backlog", "Sort by priority");
+    // c1 is High, c2 and c4 Low (keeping their order), c3 and c5 None.
+    expect(commands("board_cards_move")).toEqual([
+      [
+        "board_cards_move",
+        {
+          cardIds: ["c1", "c2", "c4", "c3", "c5"],
+          columnId: "backlog",
+          index: 0,
+          actor: "user",
+        },
+      ],
+    ]);
+  });
+
+  it("sorts by due date with the soonest first and undated last", async () => {
+    five();
+    handlers.board_card_extras = () => ({
+      c3: extras({ dueAt: 2_000 }),
+      c5: extras({ dueAt: 1_000 }),
+    });
+    handlers.board_cards_move = () => undefined;
+    await renderBoard();
+    await runColumnAction("backlog", "Sort by due date");
+    expect(commands("board_cards_move")[0][1]).toMatchObject({
+      cardIds: ["c5", "c3", "c1", "c2", "c4"],
+      columnId: "backlog",
+      index: 0,
+    });
+  });
+
+  it("doesn't write when a sort would change nothing", async () => {
+    five();
+    handlers.board_cards_move = () => undefined;
+    await renderBoard();
+    // No card has a due date: the order is already the sorted one.
+    await runColumnAction("backlog", "Sort by due date");
+    expect(commands("board_cards_move")).toHaveLength(0);
+  });
+
+  it("marks every card of a column done, including hidden ones, at the end of Done", async () => {
+    five();
+    const base = (handlers.board_get as () => BoardDetail)();
+    handlers.board_get = () => ({
+      ...base,
+      cards: [...base.cards, card("d1", "done", 0, 9, "Shipped")],
+    });
+    handlers.board_cards_move = () => undefined;
+    await renderBoard();
+    search("alpha");
+    await runColumnAction("backlog", "Mark all as done");
+    expect(commands("board_cards_move")).toEqual([
+      [
+        "board_cards_move",
+        {
+          cardIds: ["c1", "c2", "c3", "c4", "c5"],
+          columnId: "done",
+          index: 1,
+          actor: "user",
+        },
+      ],
+    ]);
+  });
+
+  it("hides Mark all as done in the done column and when no column is done", async () => {
+    five();
+    await renderBoard();
+    expect(await columnAction("done", "Mark all as done")).toBeUndefined();
+    expect(menuTexts()).toContain("Archive completed");
+    press(document.querySelector<HTMLElement>('[role="menu"]')!, "Escape");
+    act(() => document.body.dispatchEvent(new PointerEvent("pointerdown")));
+    await flush();
+    expect(await columnAction("backlog", "Mark all as done")).toBeDefined();
+    expect(menuTexts()).not.toContain("Archive completed");
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    handlers.board_get = () => ({
+      board: BOARD,
+      columns: [column("backlog", "Backlog", 0, "todo")],
+      cards: [card("c1", "backlog", 0, 1, "One")],
+    });
+    await renderBoard();
+    expect(await columnAction("backlog", "Mark all as done")).toBeUndefined();
+  });
+
+  it("archives the completed cards of the done column only", async () => {
+    five();
+    const base = (handlers.board_get as () => BoardDetail)();
+    handlers.board_get = () => ({
+      ...base,
+      cards: [
+        ...base.cards,
+        card("d1", "done", 0, 8, "Shipped"),
+        card("d2", "done", 1, 9, "Released"),
+      ],
+    });
+    handlers.board_cards_archive = () => undefined;
+    await renderBoard();
+    await runColumnAction("done", "Archive completed");
+    expect(commands("board_cards_archive")).toEqual([
+      ["board_cards_archive", { cardIds: ["d1", "d2"] }],
+    ]);
+  });
+
+  describe("face quick edits", () => {
+    const face = (id: string) =>
+      columnEl("backlog").querySelector<HTMLElement>(
+        `[data-board-card='${id}']`,
+      )!;
+    const trigger = (id: string, name: string) =>
+      face(id).querySelector<HTMLButtonElement>(
+        `button[aria-label^="${name}"]`,
+      )!;
+    async function chooseOnFace(id: string, name: string, itemText: string) {
+      act(() => trigger(id, name).click());
+      const item = [
+        ...document.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
+      ].find((el) => el.textContent?.trim() === itemText)!;
+      expect(item, itemText).toBeDefined();
+      act(() => item.click());
+      await flush();
+    }
+
+    it("sets the priority from the face without opening the card", async () => {
+      five();
+      handlers.board_card_set_priority = () => undefined;
+      await renderBoard();
+      await chooseOnFace("c1", "Priority of #1", "Urgent");
+      expect(commands("board_card_set_priority")).toEqual([
+        ["board_card_set_priority", { cardId: "c1", priority: 4 }],
+      ]);
+      expect(document.querySelector("[data-card-drawer]")).toBeNull();
+    });
+
+    it("sets the priority of an unprioritised card from its hover target", async () => {
+      five();
+      handlers.board_card_set_priority = () => undefined;
+      await renderBoard();
+      expect(
+        face("c3").querySelector("[data-card-priority-target]"),
+      ).not.toBeNull();
+      expect(
+        face("c1").querySelector("[data-card-priority-target]"),
+      ).toBeNull();
+      await chooseOnFace("c3", "Priority of #3", "Medium");
+      expect(commands("board_card_set_priority")[0][1]).toEqual({
+        cardId: "c3",
+        priority: 2,
+      });
+      expect(document.querySelector("[data-card-drawer]")).toBeNull();
+    });
+
+    it("sets and clears the due date from the face", async () => {
+      five();
+      handlers.board_card_extras = () => ({
+        c1: extras({ dueAt: tomorrow() }),
+      });
+      handlers.board_card_set_due = () => undefined;
+      await renderBoard();
+      await chooseOnFace("c1", "Due date of #1", "Clear");
+      expect(commands("board_card_set_due")).toEqual([
+        ["board_card_set_due", { cardId: "c1", dueAt: null }],
+      ]);
+      await chooseOnFace("c1", "Due date of #1", "Tomorrow");
+      expect(commands("board_card_set_due")[1][1]).toEqual({
+        cardId: "c1",
+        dueAt: tomorrow(),
+      });
+      expect(document.querySelector("[data-card-drawer]")).toBeNull();
+    });
+
+    it("toggles a label from the face, keeping the card's other labels", async () => {
+      five();
+      handlers.board_labels = () => [label("l1", "Bug"), label("l2", "Docs")];
+      handlers.board_card_extras = () => ({ c1: extras({ labels: ["l1"] }) });
+      handlers.board_card_set_labels = () => undefined;
+      await renderBoard();
+      await chooseOnFace("c1", "Labels of #1", "Docs");
+      expect(commands("board_card_set_labels")).toEqual([
+        ["board_card_set_labels", { cardId: "c1", labelIds: ["l1", "l2"] }],
+      ]);
+      expect(document.querySelector("[data-card-drawer]")).toBeNull();
+    });
   });
 });

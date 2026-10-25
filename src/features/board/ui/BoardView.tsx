@@ -16,9 +16,11 @@ import type { TicketRef } from "../../sessions/model/session";
 import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItemDialog";
 import { FileActionError } from "../../files/ui/FileActionError";
 import {
+  archiveCards,
   createBoard,
   createCard,
   createColumn,
+  createLabel,
   deleteBoard,
   deleteCard,
   deleteColumn,
@@ -29,7 +31,12 @@ import {
   listBoards,
   moveCard,
   moveColumn,
+  moveCards,
   renameBoard,
+  setCardDue,
+  setCardLabels,
+  setCardPriority,
+  setColumnDisplay,
   subscribeBoard,
   updateColumn,
   type Board,
@@ -48,6 +55,7 @@ import {
   pruneFilter,
   type BoardFilter,
 } from "../model/boardFilter";
+import { sortedCardIds, type SortKey } from "../model/columnActions";
 import { createCardFromTicket, newCardColumn } from "../model/ticketCards";
 import { BoardCardItem } from "./BoardCardItem";
 import { BoardColumnHeader } from "./BoardColumnHeader";
@@ -61,6 +69,7 @@ import {
 import {
   errorText,
   linkValue,
+  nextLabelColor,
   resolveLink,
   type BoardLinkTarget,
   type LinkRef,
@@ -464,6 +473,51 @@ function BoardContent({
     deleteCard(card.id).catch(fail(`Couldn't delete card #${card.number}`));
   };
 
+  const setCollapsed = (column: BoardColumn, collapsed: boolean) =>
+    void setColumnDisplay(
+      column.id,
+      column.color,
+      column.wipLimit,
+      collapsed,
+    ).catch(
+      fail(
+        collapsed
+          ? "Couldn't collapse the column"
+          : "Couldn't expand the column",
+      ),
+    );
+
+  /** Every live card of a column, in order: filters and search don't narrow it. */
+  const wholeColumn = (columnId: string) => {
+    const current = detailRef.current;
+    return current ? columnCards(current, columnId) : [];
+  };
+
+  const sortColumn = (column: BoardColumn, key: SortKey) => {
+    const cards = wholeColumn(column.id);
+    const ids = sortedCardIds(cards, extras, key);
+    if (ids.every((id, index) => id === cards[index]?.id)) return;
+    moveCards(ids, column.id, 0, "user").catch(
+      fail(`Couldn't sort ${column.name}`),
+    );
+  };
+
+  const markAllDone = (column: BoardColumn, done: BoardColumn) => {
+    const ids = wholeColumn(column.id).map((card) => card.id);
+    if (!ids.length) return;
+    moveCards(ids, done.id, wholeColumn(done.id).length, "user").catch(
+      fail(`Couldn't move the cards of ${column.name} to ${done.name}`),
+    );
+  };
+
+  const archiveCompleted = (column: BoardColumn) => {
+    const ids = wholeColumn(column.id).map((card) => card.id);
+    if (!ids.length) return;
+    archiveCards(ids).catch(
+      fail(`Couldn't archive the cards of ${column.name}`),
+    );
+  };
+
   const toast = error ? (
     <FileActionError message={error} onDismiss={() => setError(null)} />
   ) : null;
@@ -517,6 +571,32 @@ function BoardContent({
       ticket={tickets[card.id] ?? null}
       extras={extras[card.id]}
       labels={labelsOf(card.id)}
+      allLabels={labels}
+      onSetPriority={(priority) =>
+        void setCardPriority(card.id, priority).catch(
+          fail(`Couldn't set the priority of card #${card.number}`),
+        )
+      }
+      onSetDue={(dueAt) =>
+        void setCardDue(card.id, dueAt).catch(
+          fail(`Couldn't set the due date of card #${card.number}`),
+        )
+      }
+      onSetLabels={(ids) =>
+        void setCardLabels(card.id, ids).catch(
+          fail(`Couldn't set the labels of card #${card.number}`),
+        )
+      }
+      onCreateLabel={(name) =>
+        void createLabel(card.boardId, name, nextLabelColor(labels.length))
+          .then((created) =>
+            setCardLabels(card.id, [
+              ...(extras[card.id]?.labels ?? []),
+              created.id,
+            ]),
+          )
+          .catch(fail(`Couldn't create a label for card #${card.number}`))
+      }
       onOpen={() => setOpenCard({ id: card.id })}
       onOpenLinkedWork={openLinkedWork}
       onRename={() => setOpenCard({ id: card.id, focus: "title" })}
@@ -524,6 +604,8 @@ function BoardContent({
       onDelete={() => void removeCard(card)}
     />
   );
+
+  const doneColumn = detail?.columns.find((column) => column.role === "done");
 
   const renderColumnHeader = (column: BoardColumn, shown: number) => (
     <BoardColumnHeader
@@ -555,6 +637,16 @@ function BoardContent({
       }
       onDelete={() =>
         void deleteColumn(column.id).catch(fail("Couldn't delete the column"))
+      }
+      onCollapse={() => setCollapsed(column, true)}
+      onSort={(key) => sortColumn(column, key)}
+      onMarkAllDone={
+        doneColumn && doneColumn.id !== column.id
+          ? () => markAllDone(column, doneColumn)
+          : undefined
+      }
+      onArchiveCompleted={
+        column.role === "done" ? () => archiveCompleted(column) : undefined
       }
     />
   );
@@ -729,6 +821,7 @@ function BoardContent({
               onCardMove={onCardMove}
               onColumnMove={onColumnMove}
               onCardOpen={(card) => setOpenCard({ id: card.id })}
+              onColumnExpand={(column) => setCollapsed(column, false)}
               trailing={trailing}
             />
           ) : null}

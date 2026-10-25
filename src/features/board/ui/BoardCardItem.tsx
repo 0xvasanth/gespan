@@ -16,6 +16,8 @@ import {
 } from "../model/board";
 import { applyFetchedTicket } from "../model/ticketCards";
 import { ICON_BUTTON, MenuButton, MenuItem, noDrag } from "./boardControls";
+import { LabelPicker, toggled } from "./CardDrawerParts";
+import { DueDateInput, DueItems, PriorityItems } from "./CardPropertyMenus";
 import {
   dueChip,
   LINK_KIND_LABEL,
@@ -43,30 +45,110 @@ const DUE_TONE: Record<DueTone, string> = {
   later: "text-content/60",
 };
 
-/** Priority, due date and subtask progress, when the card has any. */
-function CardExtrasRow({ extras }: { extras: CardExtras }) {
+const EMPTY_EXTRAS: CardExtras = {
+  priority: 0,
+  dueAt: null,
+  projects: [],
+  labels: [],
+  subtasksDone: 0,
+  subtasksTotal: 0,
+  comments: 0,
+};
+
+const HOVER_ONLY =
+  "opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 has-[[data-menu-open]]:opacity-100";
+const FACE_TRIGGER =
+  "inline-flex shrink-0 items-center rounded px-0.5 hover:bg-content/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60";
+
+/**
+ * Priority, due date and subtask progress. Priority and due are quick-edit
+ * menus; an unprioritised card shows a faint priority target on hover.
+ */
+function CardExtrasRow({
+  number,
+  extras,
+  onSetPriority,
+  onSetDue,
+}: {
+  number: number;
+  extras: CardExtras;
+  onSetPriority: (priority: number) => void;
+  onSetDue: (dueAt: number | null) => void;
+}) {
   const due = extras.dueAt === null ? null : dueChip(extras.dueAt);
   const priority = PRIORITIES[extras.priority] ?? PRIORITIES[0];
-  if (!extras.priority && !due && !extras.subtasksTotal && !extras.comments) {
-    return null;
-  }
   return (
     <>
       {extras.priority ? (
-        <span
-          data-card-priority={extras.priority}
-          className={`shrink-0 ${extras.priority >= 4 ? "text-red-400" : "text-content/70"}`}
+        <MenuButton
+          label={`Priority of #${number}`}
+          width={160}
+          className={FACE_TRIGGER}
+          trigger={
+            <span
+              data-card-priority={extras.priority}
+              className={
+                extras.priority >= 4 ? "text-red-400" : "text-content/70"
+              }
+            >
+              {priority}
+            </span>
+          }
         >
-          {priority}
+          {(close) => (
+            <PriorityItems
+              priority={extras.priority}
+              onChoose={onSetPriority}
+              close={close}
+            />
+          )}
+        </MenuButton>
+      ) : (
+        <span data-card-priority-target="" className={HOVER_ONLY}>
+          <MenuButton
+            label={`Priority of #${number}`}
+            width={160}
+            className={`${FACE_TRIGGER} text-content/35 hover:text-content/70`}
+            trigger="Priority"
+          >
+            {(close) => (
+              <PriorityItems
+                priority={0}
+                onChoose={onSetPriority}
+                close={close}
+              />
+            )}
+          </MenuButton>
         </span>
-      ) : null}
+      )}
       {due ? (
-        <span
-          data-card-due={due.tone}
-          className={`shrink-0 ${DUE_TONE[due.tone]}`}
+        <MenuButton
+          label={`Due date of #${number}`}
+          width={200}
+          className={FACE_TRIGGER}
+          trigger={
+            <span data-card-due={due.tone} className={DUE_TONE[due.tone]}>
+              {due.text}
+            </span>
+          }
         >
-          {due.text}
-        </span>
+          {(close) => (
+            <>
+              <DueItems
+                dueAt={extras.dueAt}
+                onChoose={onSetDue}
+                close={close}
+              />
+              <div className="px-1 pt-1">
+                <DueDateInput
+                  dueAt={extras.dueAt}
+                  onChoose={onSetDue}
+                  className="h-7 w-full rounded-md border border-stroke bg-background-base px-2 text-[12px] text-content/80 outline-none focus:border-accent/60"
+                />
+              </div>
+            </>
+          )}
+        </MenuButton>
       ) : null}
       {extras.subtasksTotal ? (
         <span
@@ -135,6 +217,11 @@ export function BoardCardItem({
   ticket = null,
   extras,
   labels = [],
+  allLabels = [],
+  onSetPriority,
+  onSetDue,
+  onSetLabels,
+  onCreateLabel,
   onOpen,
   onOpenLinkedWork,
   onRename,
@@ -149,6 +236,12 @@ export function BoardCardItem({
   extras?: CardExtras;
   /** The card's labels, in the board's order. */
   labels?: readonly BoardLabel[];
+  /** Every label of the board, for the label quick edit. */
+  allLabels?: readonly BoardLabel[];
+  onSetPriority: (priority: number) => void;
+  onSetDue: (dueAt: number | null) => void;
+  onSetLabels: (labelIds: string[]) => void;
+  onCreateLabel: (name: string) => void;
   onOpen: () => void;
   onOpenLinkedWork: (target: BoardLinkTarget) => void;
   onRename: () => void;
@@ -199,27 +292,54 @@ export function BoardCardItem({
         </div>
       ) : null}
       {labels.length ? (
-        <div data-card-labels="" className="mt-1.5 flex flex-wrap gap-1">
-          {labels.map((label) => (
-            <span
-              key={label.id}
-              className="inline-flex max-w-full items-center gap-1 rounded-full border border-stroke px-1.5 text-[11px] leading-4 text-content/70"
-            >
+        <div data-card-labels="" className="mt-1.5 flex">
+          <MenuButton
+            label={`Labels of #${card.number}`}
+            width={240}
+            className="flex min-w-0 flex-wrap gap-1 rounded-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            trigger={labels.map((label) => (
               <span
-                aria-hidden
-                className="size-1.5 shrink-0 rounded-full"
-                style={{ backgroundColor: `#${label.color}` }}
+                key={label.id}
+                className="inline-flex max-w-full items-center gap-1 rounded-full border border-stroke px-1.5 text-[11px] leading-4 text-content/70 hover:border-selection-strong"
+              >
+                <span
+                  aria-hidden
+                  className="size-1.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: `#${label.color}` }}
+                />
+                <span className="truncate">{label.name}</span>
+              </span>
+            ))}
+          >
+            {(close) => (
+              <LabelPicker
+                labels={allLabels}
+                selected={labels.map((label) => label.id)}
+                onToggle={(id) =>
+                  onSetLabels(
+                    toggled(
+                      labels.map((label) => label.id),
+                      id,
+                    ),
+                  )
+                }
+                onCreate={onCreateLabel}
+                close={close}
               />
-              <span className="truncate">{label.name}</span>
-            </span>
-          ))}
+            )}
+          </MenuButton>
         </div>
       ) : null}
       <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
         <span className="shrink-0 font-mono text-content/45">
           #{card.number}
         </span>
-        {extras ? <CardExtrasRow extras={extras} /> : null}
+        <CardExtrasRow
+          number={card.number}
+          extras={extras ?? EMPTY_EXTRAS}
+          onSetPriority={onSetPriority}
+          onSetDue={onSetDue}
+        />
         {link ? <LinkChip link={link} /> : null}
         <span className="ml-auto shrink-0 text-content/45">
           {relativeTime(card.updatedAt)}
