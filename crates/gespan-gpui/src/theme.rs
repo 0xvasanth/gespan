@@ -296,8 +296,9 @@ pub(crate) fn icon(path: &'static str, side: f32) -> Svg {
         .text_color(content(0.5))
         .flex_shrink_0()
 }
-pub(crate) fn provider_icon(provider: &str, side: f32) -> Div {
-    let (path, monochrome, scale) = match provider {
+/// Asset path, whether it follows the theme colour, and its size scale.
+fn provider_mark(provider: &str) -> (&'static str, bool, f32) {
+    match provider {
         "claude" => ("claude.svg", false, 1.),
         "cursor" => ("cursor.svg", true, 1.),
         "grok" => ("grok.svg", true, 1.),
@@ -308,8 +309,12 @@ pub(crate) fn provider_icon(provider: &str, side: f32) -> Div {
         "fx" => ("fx.svg", true, 1.),
         "hermes" => ("hermes.svg", true, 0.72),
         "devin" => ("devin.svg", true, 0.88),
+        "kiro" => ("kiro.svg", true, 0.72),
         _ => ("codex.svg", false, 1.),
-    };
+    }
+}
+pub(crate) fn provider_icon(provider: &str, side: f32) -> Div {
+    let (path, monochrome, scale) = provider_mark(provider);
     // Like React's currentColor / CSS masks, GPUI's SVG mask follows the theme.
     // Image rendering preserves brand colors but has no inherited currentColor.
     let mark = if monochrome {
@@ -470,6 +475,28 @@ pub(crate) fn diff_background(add: bool, gutter: bool) -> Hsla {
 #[cfg(test)]
 mod composer_tests {
     use super::*;
+
+    #[test]
+    fn kiro_has_its_own_monochrome_icon() {
+        use gpui::AssetSource;
+        let (path, monochrome, scale) = provider_mark("kiro");
+        assert_ne!(
+            path,
+            provider_mark("unknown").0,
+            "kiro must not use the codex fallback"
+        );
+        assert_eq!(path, "kiro.svg");
+        assert!(monochrome, "the ghost follows the theme colour");
+        assert!(scale > 0. && scale <= 1.);
+        let bytes = crate::assets::Assets
+            .load(path)
+            .unwrap()
+            .expect("embedded kiro.svg");
+        assert!(String::from_utf8_lossy(&bytes).contains("<svg"));
+        // Every other provider keeps its own mark.
+        assert_eq!(provider_mark("hermes").0, "hermes.svg");
+        assert_eq!(provider_mark("devin").0, "devin.svg");
+    }
 
     #[test]
     fn composer_surface_matches_react_dark_ink_and_solid_light_background() {

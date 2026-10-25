@@ -1,8 +1,9 @@
-//! ACP lifecycle shared by Cursor, Grok, OpenCode, Antigravity, fx, Hermes and Devin.
+//! ACP lifecycle shared by Cursor, Grok, OpenCode, Antigravity, fx, Hermes, Devin and Kiro.
 //! Mirrors the ACP adapters in src/integrations/harness/providers. Providers own
 //! filesystem/terminal access; we never claim client capabilities we cannot serve.
 use super::*;
 use std::collections::VecDeque;
+use std::sync::OnceLock;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Stage {
@@ -46,9 +47,58 @@ pub(super) struct State {
     notices: Vec<Event>,
     stale_model: Option<String>,
     mode: Option<&'static str>,
+    /// The agent answered or timed out a request, so it did not just exit.
+    rpc_failed: bool,
+    /// `initialize` advertised `promptCapabilities.image`.
+    image_prompts: bool,
 }
 
-pub(super) fn configure(command: &mut Command, request: &Request) -> Result<(), String> {
+pub(super) const KIRO_AUTH_HELP: &str = "Run `kiro-cli login` (check with `kiro-cli whoami`).";
+/// Kiro's V3 engine is selected explicitly; a CLI that predates it rejects the
+/// flag and exits, and only then is a bare `acp` launched instead.
+const KIRO_LAUNCH: [&[&str]; 2] = [&["acp", "--agent-engine=v3"], &["acp"]];
+
+#[cfg(test)]
+thread_local! {
+    /// Lets process tests reach a request deadline without waiting for it.
+    pub(super) static DEADLINE_OVERRIDE: std::cell::Cell<Option<Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// An explicit sign-in failure on Kiro's stderr, or `None`. Kiro logs ordinary
+/// progress there, so debug, info and warning lines never count, and a bare
+/// word like `login` is not enough.
+pub(super) fn kiro_stderr_auth(line: &str) -> Option<&str> {
+    static NOISE: OnceLock<regex::Regex> = OnceLock::new();
+    static AUTH: OnceLock<regex::Regex> = OnceLock::new();
+    let detail = line.trim();
+    let noise = NOISE.get_or_init(|| {
+        regex::Regex::new(r"(?i)\[(?:debug|info|warn(?:ing)?)\]|^(?:debug|info|warn)\b").unwrap()
+    });
+    let auth = AUTH.get_or_init(|| {
+        regex::Regex::new(r"(?i)not logged in|login required|please (?:log ?in|sign ?in)|(?:authentication|auth) (?:required|failed|expired)|unauthori[sz]ed|(?:token|session|credentials?) (?:has )?expired|invalid (?:token|credentials?)").unwrap()
+    });
+    (!detail.is_empty() && !noise.is_match(detail) && auth.is_match(detail)).then_some(detail)
+}
+/// Whether a Kiro error reads as a sign-in problem.
+fn kiro_auth_detail(detail: &str) -> bool {
+    static DETAIL: OnceLock<regex::Regex> = OnceLock::new();
+    DETAIL
+        .get_or_init(|| {
+            regex::Regex::new(
+                r"(?i)not logged in|log ?in|sign ?in|auth|credential|token|api key|unauthori[sz]ed",
+            )
+            .unwrap()
+        })
+        .is_match(detail)
+}
+
+/// `fallback` launches Kiro without the V3 engine flag.
+pub(super) fn configure(
+    command: &mut Command,
+    request: &Request,
+    fallback: bool,
+) -> Result<(), String> {
     let settings = &request.settings;
     match request.kind {
         Kind::Antigravity => {
@@ -89,6 +139,9 @@ pub(super) fn configure(command: &mut Command, request: &Request) -> Result<(), 
                 command.args(["--model", model]);
             }
         }
+        Kind::Kiro => {
+            command.args(KIRO_LAUNCH[usize::from(fallback)]);
+        }
         _ => {
             command.arg("acp");
         }
@@ -101,7 +154,10 @@ impl Protocol {
         self.acp.cancelling = true;
         self.acp.deadline = None;
         self.acp.background.clear();
-        if matches!(self.request.kind, Kind::Antigravity | Kind::Devin) {
+        if matches!(
+            self.request.kind,
+            Kind::Antigravity | Kind::Devin | Kind::Kiro
+        ) {
             for (_, (wire, _, _)) in self.approvals.drain() {
                 write_json(
                     stdin,
@@ -165,6 +221,17 @@ impl Protocol {
         Ok(std::mem::take(&mut self.acp.notices))
     }
 
+    /// Still waiting for the answer to `initialize`, with no RPC failure: a
+    /// failed launch then means the process exited.
+    pub(super) fn acp_initializing(&self) -> bool {
+        self.request.kind.is_acp() && self.acp.stage == Stage::Initialize && !self.acp.rpc_failed
+    }
+
+    /// Still starting: the prompt has not been sent yet.
+    pub(super) fn acp_starting(&self) -> bool {
+        !matches!(self.acp.stage, Stage::Prompt | Stage::Background)
+    }
+
     pub(super) fn acp_active_session(&self) -> Option<&str> {
         (matches!(self.acp.stage, Stage::Prompt | Stage::Background)
             && !self.acp.session.is_empty())
@@ -186,7 +253,7 @@ impl Protocol {
             match (self.request.kind, stage) {
                 (Kind::Devin, Stage::ThoughtProbe) => Some(5),
                 (Kind::Cursor | Kind::Grok | Kind::Antigravity, _) => Some(12),
-                (Kind::Hermes, _) => Some(20),
+                (Kind::Hermes | Kind::Kiro, _) => Some(20),
                 (Kind::Devin, _) => Some(30),
                 _ => None,
             }
@@ -194,7 +261,7 @@ impl Protocol {
             match (self.request.kind, stage) {
                 (Kind::Cursor, _) => None,
                 (Kind::Grok | Kind::Fx | Kind::Antigravity, Stage::Initialize) => Some(12),
-                (Kind::Hermes | Kind::Devin, Stage::Initialize) => Some(20),
+                (Kind::Hermes | Kind::Devin | Kind::Kiro, Stage::Initialize) => Some(20),
                 (Kind::Grok, Stage::Authenticate) => Some(15),
                 (Kind::Devin, Stage::Authenticate) => {
                     Some(if params["_meta"]["api_key"].is_string() {
@@ -206,14 +273,17 @@ impl Protocol {
                 (Kind::Devin, Stage::New) if self.probe => Some(30),
                 (_, Stage::New | Stage::Load | Stage::Resume) => Some(45),
                 (Kind::Grok | Kind::Fx | Kind::Antigravity, Stage::Configure) => Some(15),
-                (Kind::Hermes | Kind::Devin, Stage::Configure) => Some(20),
+                (Kind::Hermes | Kind::Devin | Kind::Kiro, Stage::Configure) => Some(20),
                 (_, Stage::Prompt) => Some(30 * 60),
                 (Kind::Devin, Stage::ThoughtProbe) => Some(5),
                 (Kind::Devin, Stage::DeleteProbe) => Some(30),
                 _ => None,
             }
         };
-        self.acp.deadline = seconds.map(|seconds| Instant::now() + Duration::from_secs(seconds));
+        let wait = seconds.map(Duration::from_secs);
+        #[cfg(test)]
+        let wait = wait.map(|wait| DEADLINE_OVERRIDE.with(|o| o.get()).unwrap_or(wait));
+        self.acp.deadline = wait.map(|wait| Instant::now() + wait);
         write_json(
             stdin,
             json!({"jsonrpc":"2.0","id":self.acp.sequence,"method":method,"params":params}),
@@ -309,10 +379,28 @@ impl Protocol {
             self.acp_send(
                 Stage::Prompt,
                 "session/prompt",
-                json!({"sessionId":self.acp.session,"prompt":self.request.acp_content()?}),
+                json!({"sessionId":self.acp.session,"prompt":self.acp_prompt()?}),
                 stdin,
             )
         }
+    }
+    /// Kiro gets images only when it advertised them; otherwise the path is
+    /// sent as text for its own tools to read.
+    fn acp_prompt(&self) -> Result<Value, String> {
+        if self.request.kind != Kind::Kiro || self.acp.image_prompts {
+            return self.request.acp_content();
+        }
+        let mut blocks = vec![json!({"type":"text","text":self.request.prompt})];
+        for path in &self.request.settings.attachments {
+            if crate::composer::image_mime(path).is_some() {
+                let path = serde_json::to_string(&path.display().to_string())
+                    .map_err(|e| e.to_string())?;
+                blocks.push(
+                    json!({"type":"text","text":format!("Attached image (read from disk): {path}")}),
+                );
+            }
+        }
+        Ok(json!(blocks))
     }
     fn acp_options(&mut self, setup: &Value) -> Result<(), String> {
         let kind = self.request.kind;
@@ -397,10 +485,11 @@ impl Protocol {
         if let Some(model) = selected_model
             .as_ref()
             .filter(|model| {
-                !matches!(kind, Kind::Hermes | Kind::Devin) || model.as_str() != "default"
+                !matches!(kind, Kind::Hermes | Kind::Devin | Kind::Kiro)
+                    || model.as_str() != "default"
             })
             .filter(|model| {
-                !matches!(kind, Kind::Hermes | Kind::Grok)
+                !matches!(kind, Kind::Hermes | Kind::Grok | Kind::Kiro)
                     || setup["models"]["currentModelId"].as_str() != Some(model.as_str())
             })
         {
@@ -448,7 +537,8 @@ impl Protocol {
     fn acp_settings(&mut self, setup: &Value) {
         let kind = self.request.kind;
         let settings = &self.request.settings;
-        if kind == Kind::Hermes {
+        // Hermes and Kiro take only the model; Tauri sends them no other control.
+        if matches!(kind, Kind::Hermes | Kind::Kiro) {
             return;
         }
         let mut selected = settings.model_settings.clone();
@@ -536,6 +626,7 @@ impl Protocol {
     ) -> Result<(), String> {
         let kind = self.request.kind;
         let detail = error["message"].as_str().unwrap_or("RPC request failed");
+        self.acp.rpc_failed = true;
         if self.acp.cancelling {
             self.done = true;
             return Ok(());
@@ -564,7 +655,7 @@ impl Protocol {
                     || lower.contains("no such session")
                     || (lower.contains("session") && lower.contains("not found"));
                 let replace = match kind {
-                    Kind::Cursor | Kind::Grok | Kind::Fx | Kind::Hermes => true,
+                    Kind::Cursor | Kind::Grok | Kind::Fx | Kind::Hermes | Kind::Kiro => true,
                     Kind::Antigravity => !timed_out,
                     Kind::Devin => !timed_out && devin_missing,
                     _ => false,
@@ -609,7 +700,16 @@ impl Protocol {
             }
             _ => {}
         }
-        // A JSON-RPC failure is not evidence that the user needs to log in.
+        // A JSON-RPC failure is not evidence that the user needs to log in,
+        // except for Kiro, which reports signed-out errors as RPC failures.
+        if kind == Kind::Kiro {
+            if kiro_auth_detail(detail) {
+                return Err(format!("{}: {detail} {KIRO_AUTH_HELP}", kind.label()));
+            }
+            if timed_out && self.acp.stage != Stage::Prompt {
+                return Err(format!("{} did not start. {KIRO_AUTH_HELP}", kind.label()));
+            }
+        }
         Err(format!("{}: {detail}", kind.label()))
     }
     pub(super) fn acp_frame(
@@ -766,6 +866,8 @@ impl Protocol {
         };
         match self.acp.stage {
             Stage::Initialize => {
+                self.acp.image_prompts =
+                    result["agentCapabilities"]["promptCapabilities"]["image"] == true;
                 if self.probe && self.request.kind == Kind::Cursor {
                     self.acp_send(
                         Stage::ListModels,
@@ -1638,6 +1740,308 @@ mod tests {
             .iter()
             .any(|p| p["configId"] == "fast" && p["type"].is_null() && p["value"] == "false"));
     }
+    fn launch_args(request: &Request, fallback: bool) -> Vec<String> {
+        let mut command = Command::new("unused");
+        configure(&mut command, request, fallback).unwrap();
+        command
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+    fn lines(out: &mut Vec<u8>) -> Vec<Value> {
+        String::from_utf8(std::mem::take(out))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+    /// Runs `session/new` with `setup` and returns every request sent before the prompt.
+    fn kiro_controls(model: &str, setup: Value) -> Vec<Value> {
+        let mut p = protocol(Kind::Kiro);
+        p.request.model = Some(model.into());
+        let mut out = Vec::new();
+        p.acp_session(&mut out).unwrap();
+        let new = last(&mut out);
+        let mut result = setup;
+        result["sessionId"] = "s".into();
+        p.frame(json!({"id":new["id"],"result":result}), &mut out)
+            .unwrap();
+        let mut sent = Vec::new();
+        loop {
+            let request = last(&mut out);
+            if request["method"] == "session/prompt" {
+                return sent;
+            }
+            sent.push(request.clone());
+            p.frame(json!({"id":request["id"],"result":{}}), &mut out)
+                .unwrap();
+        }
+    }
+    #[test]
+    fn kiro_launches_the_v3_engine_and_falls_back_to_plain_acp() {
+        let p = protocol(Kind::Kiro);
+        assert_eq!(launch_args(&p.request, false), ["acp", "--agent-engine=v3"]);
+        assert_eq!(launch_args(&p.request, true), ["acp"]);
+        // The fallback flag belongs to Kiro alone.
+        let hermes = protocol(Kind::Hermes);
+        assert_eq!(launch_args(&hermes.request, true), ["acp"]);
+    }
+    #[test]
+    fn kiro_uses_hermes_request_deadlines() {
+        let mut out = Vec::new();
+        for (stage, probe, seconds) in [
+            (Stage::Initialize, false, 20),
+            (Stage::Configure, false, 20),
+            (Stage::New, false, 45),
+            (Stage::Load, false, 45),
+            (Stage::Prompt, false, 30 * 60),
+            (Stage::Initialize, true, 20),
+            (Stage::New, true, 20),
+        ] {
+            let mut p = protocol(Kind::Kiro);
+            p.probe = probe;
+            p.acp_send(stage, "x", json!({}), &mut out).unwrap();
+            let left = p.acp.deadline.unwrap() - Instant::now();
+            assert!(
+                left <= Duration::from_secs(seconds)
+                    && left > Duration::from_secs(seconds) - Duration::from_secs(2),
+                "{} {left:?}",
+                if probe { "probe" } else { "turn" }
+            );
+        }
+    }
+    #[test]
+    fn kiro_replaces_a_missing_session_on_load() {
+        let mut p = protocol(Kind::Kiro);
+        p.request.provider_id = Some("saved".into());
+        let mut out = Vec::new();
+        p.acp_session(&mut out).unwrap();
+        let load = last(&mut out);
+        assert_eq!(load["method"], "session/load");
+        assert_eq!(load["params"]["sessionId"], "saved");
+        // History replayed by session/load never renders.
+        assert!(p.frame(json!({"method":"session/update","params":{"sessionId":"saved","update":{"sessionUpdate":"agent_message_chunk","content":{"text":"Old"}}}}),&mut out).unwrap().is_empty());
+        p.frame(
+            json!({"id":load["id"],"error":{"code":-32603,"message":"Session not found"}}),
+            &mut out,
+        )
+        .unwrap();
+        let replacement = last(&mut out);
+        assert_eq!(replacement["method"], "session/new");
+        let events = p
+            .frame(
+                json!({"id":replacement["id"],"result":{"sessionId":"fresh"}}),
+                &mut out,
+            )
+            .unwrap();
+        assert!(events.contains(&Event::SessionId("fresh".into())));
+        assert_eq!(last(&mut out)["method"], "session/prompt");
+    }
+    #[test]
+    fn kiro_cancel_answers_pending_approvals_cancelled() {
+        let mut p = protocol(Kind::Kiro);
+        p.request.settings.access = AccessMode::Supervised;
+        p.acp.stage = Stage::Prompt;
+        p.acp.session = "s".into();
+        let mut out = Vec::new();
+        let events = p.frame(json!({"id":7,"method":"session/request_permission","params":{"sessionId":"s","toolCall":{"toolCallId":"t","kind":"execute","title":"ls"},"options":[{"kind":"allow_once","optionId":"yes"},{"kind":"reject_once","optionId":"no"}]}}),&mut out).unwrap();
+        assert!(matches!(events.as_slice(), [Event::Approval(_)]));
+        assert!(out.is_empty());
+        p.acp_cancel(&mut out).unwrap();
+        let sent = lines(&mut out);
+        assert_eq!(
+            sent[0],
+            json!({"jsonrpc":"2.0","id":7,"result":{"outcome":{"outcome":"cancelled"}}})
+        );
+        assert_eq!(sent[1]["method"], "session/cancel");
+        assert_eq!(sent[1]["params"]["sessionId"], "s");
+        assert_eq!(sent.len(), 2, "the approval is answered exactly once");
+        assert!(p.approvals.is_empty());
+        assert!(p.done, "native cancel does not wait for Kiro to settle");
+    }
+    #[test]
+    fn kiro_default_model_sends_no_model_change() {
+        for setup in [
+            json!({"configOptions":[{"id":"model","category":"model","currentValue":"auto","options":[{"value":"auto"},{"value":"claude-sonnet-4.5"}]}]}),
+            json!({"models":{"currentModelId":"auto","availableModels":[{"modelId":"auto"}]}}),
+        ] {
+            assert_eq!(kiro_controls("default", setup.clone()), Vec::<Value>::new());
+        }
+    }
+    #[test]
+    fn kiro_selects_models_through_config_options_then_set_model() {
+        let sent = kiro_controls(
+            "claude-sonnet-4.5",
+            json!({"configOptions":[{"id":"model","category":"model","currentValue":"auto"}],"models":{"currentModelId":"auto"}}),
+        );
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0]["method"], "session/set_config_option");
+        assert_eq!(sent[0]["params"]["configId"], "model");
+        assert_eq!(sent[0]["params"]["value"], "claude-sonnet-4.5");
+        // A model option is found by category when its id is not `model`.
+        let sent = kiro_controls(
+            "claude-sonnet-4.5",
+            json!({"configOptions":[{"id":"llm","category":"model","currentValue":"auto"}]}),
+        );
+        assert_eq!(sent[0]["method"], "session/set_config_option");
+        assert_eq!(sent[0]["params"]["configId"], "llm");
+        // Without a model option, the legacy method selects the model.
+        let sent = kiro_controls(
+            "claude-sonnet-4.5",
+            json!({"models":{"currentModelId":"auto","availableModels":[{"modelId":"auto"},{"modelId":"claude-sonnet-4.5"}]}}),
+        );
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0]["method"], "session/set_model");
+        assert_eq!(sent[0]["params"]["modelId"], "claude-sonnet-4.5");
+        // The model already running is not selected again.
+        let sent = kiro_controls(
+            "claude-sonnet-4.5",
+            json!({"models":{"currentModelId":"claude-sonnet-4.5"}}),
+        );
+        assert_eq!(sent, Vec::<Value>::new());
+    }
+    #[test]
+    fn kiro_sends_only_the_model_and_no_effort_thinking_or_fast_controls() {
+        let mut p = protocol(Kind::Kiro);
+        p.request.model = Some("claude-sonnet-4.5".into());
+        p.request.settings.effort = Some("high".into());
+        p.request.settings.thinking = Some(true);
+        p.request.settings.fast = true;
+        p.request
+            .settings
+            .model_settings
+            .insert("context".into(), "1m".into());
+        let mut out = Vec::new();
+        p.acp_session(&mut out).unwrap();
+        let new = last(&mut out);
+        p.frame(json!({"id":new["id"],"result":{"sessionId":"s","configOptions":[{"id":"model","category":"model","currentValue":"auto"},{"id":"effort","category":"thought_level"},{"id":"thinking","type":"boolean"},{"id":"fast","type":"boolean"},{"id":"context"}]}}), &mut out).unwrap();
+        let mut sent = Vec::new();
+        loop {
+            let request = last(&mut out);
+            if request["method"] == "session/prompt" {
+                break;
+            }
+            sent.push(request["params"].clone());
+            p.frame(json!({"id":request["id"],"result":{}}), &mut out)
+                .unwrap();
+        }
+        assert_eq!(
+            sent,
+            [json!({"sessionId":"s","configId":"model","value":"claude-sonnet-4.5"})]
+        );
+    }
+    #[test]
+    fn kiro_stderr_only_counts_explicit_sign_in_failures() {
+        for line in [
+            "Error: not logged in",
+            "  authentication required  ",
+            "Your session has expired",
+            "401 Unauthorized",
+            "invalid credentials",
+        ] {
+            assert_eq!(kiro_stderr_auth(line), Some(line.trim()), "{line}");
+        }
+        for line in [
+            "",
+            "[debug] not logged in, refreshing",
+            "[WARN] token expired, refreshing",
+            "INFO auth failed for cached profile",
+            "warn: login required for telemetry",
+            "Starting login service",
+            "Loaded 3 tools",
+        ] {
+            assert_eq!(kiro_stderr_auth(line), None, "{line}");
+        }
+    }
+    #[test]
+    fn kiro_startup_failures_carry_the_login_help() {
+        let help = "Run `kiro-cli login` (check with `kiro-cli whoami`).";
+        let mut p = protocol(Kind::Kiro);
+        let mut out = Vec::new();
+        p.acp_session(&mut out).unwrap();
+        let new = last(&mut out);
+        let error = p
+            .frame(
+                json!({"id":new["id"],"error":{"code":-32000,"message":"Not logged in"}}),
+                &mut out,
+            )
+            .unwrap_err();
+        assert_eq!(error, format!("Kiro CLI: Not logged in {help}"));
+
+        let mut p = protocol(Kind::Kiro);
+        p.acp_start(&mut out).unwrap();
+        p.acp.deadline = Some(Instant::now());
+        let error = p.acp_tick(&mut out).unwrap_err();
+        assert_eq!(error, format!("Kiro CLI did not start. {help}"));
+
+        // A failed turn keeps Kiro's wording, with the hint only for sign-in.
+        let mut p = protocol(Kind::Kiro);
+        p.acp.stage = Stage::Prompt;
+        p.acp.sequence = 4;
+        let error = p
+            .frame(
+                json!({"id":4,"error":{"message":"Rate limit exceeded"}}),
+                &mut out,
+            )
+            .unwrap_err();
+        assert_eq!(error, "Kiro CLI: Rate limit exceeded");
+        let error = p
+            .frame(
+                json!({"id":4,"error":{"message":"Your token has expired"}}),
+                &mut out,
+            )
+            .unwrap_err();
+        assert_eq!(error, format!("Kiro CLI: Your token has expired {help}"));
+
+        // Other providers keep reporting a JSON-RPC failure verbatim.
+        let mut p = protocol(Kind::Hermes);
+        p.acp.stage = Stage::Prompt;
+        p.acp.sequence = 4;
+        let error = p
+            .frame(
+                json!({"id":4,"error":{"message":"Not logged in"}}),
+                &mut out,
+            )
+            .unwrap_err();
+        assert_eq!(error, "Hermes Agent: Not logged in");
+    }
+    #[test]
+    fn kiro_sends_image_paths_as_text_without_image_capability() {
+        let temp = tempfile::tempdir().unwrap();
+        let image = temp.path().join("shot.png");
+        std::fs::write(&image, [137, 80, 78, 71]).unwrap();
+        for (kind, capable, image_block) in [
+            (Kind::Kiro, false, false),
+            (Kind::Kiro, true, true),
+            (Kind::Hermes, false, true),
+        ] {
+            let mut p = protocol(kind);
+            p.request.settings.attachments.push(image.clone());
+            let mut out = Vec::new();
+            p.acp_start(&mut out).unwrap();
+            let init = last(&mut out);
+            p.frame(json!({"id":init["id"],"result":{"agentCapabilities":{"promptCapabilities":{"image":capable}}}}), &mut out).unwrap();
+            let new = last(&mut out);
+            p.frame(json!({"id":new["id"],"result":{"sessionId":"s"}}), &mut out)
+                .unwrap();
+            let mut prompt = last(&mut out);
+            while prompt["method"] != "session/prompt" {
+                p.frame(json!({"id":prompt["id"],"result":{}}), &mut out)
+                    .unwrap();
+                prompt = last(&mut out);
+            }
+            let blocks = prompt["params"]["prompt"].as_array().unwrap();
+            assert_eq!(blocks[0]["text"], "Hello");
+            if image_block {
+                assert_eq!(blocks[1]["type"], "image");
+            } else {
+                assert_eq!(
+                    blocks[1],
+                    json!({"type":"text","text":format!("Attached image (read from disk): {:?}", image.display().to_string())})
+                );
+            }
+        }
+    }
     #[test]
     fn cursor_planning_denies_execution_without_requiring_a_session_mode() {
         for (access, plan) in [
@@ -1647,13 +2051,7 @@ mod tests {
             let mut p = protocol(Kind::Cursor);
             p.request.settings.access = access;
             p.request.settings.plan = plan;
-            let mut command = Command::new("unused");
-            configure(&mut command, &p.request).unwrap();
-            let args: Vec<_> = command
-                .get_args()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect();
-            assert_eq!(args, vec!["acp"]);
+            assert_eq!(launch_args(&p.request, false), vec!["acp"]);
             p.acp.session = "saved".into();
             p.acp_options(&json!({})).unwrap();
             p.acp_options(&json!({"modes":{"availableModes":[{"id":"agent"},{"id":"plan"}]}}))

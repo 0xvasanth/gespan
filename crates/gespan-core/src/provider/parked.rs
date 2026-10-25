@@ -42,6 +42,8 @@ pub(super) struct Wire {
     pub stdin: Input,
     pub rx: mpsc::Receiver<Result<Vec<u8>, String>>,
     pub tail: Arc<Mutex<Vec<u8>>>,
+    /// Kiro's first sign-in failure on stderr; see `acp::kiro_stderr_auth`.
+    pub auth: Arc<Mutex<Option<String>>>,
     reader: Option<thread::JoinHandle<()>>,
     stderr_reader: Option<thread::JoinHandle<()>>,
     writer: Option<thread::JoinHandle<()>>,
@@ -111,17 +113,47 @@ impl Wire {
         });
         let tail = Arc::new(Mutex::new(Vec::new()));
         let stderr_tail = tail.clone();
+        let auth = Arc::new(Mutex::new(None));
+        let stderr_auth = (request.kind == Kind::Kiro).then(|| auth.clone());
         let stderr_reader = thread::spawn(move || {
             let mut reader = BufReader::new(stderr);
             let mut chunk = [0; 4096];
+            let mut line = Vec::new();
             while let Ok(n) = reader.read(&mut chunk) {
                 if n == 0 {
                     break;
+                }
+                if let Some(auth) = &stderr_auth {
+                    for &byte in &chunk[..n] {
+                        if byte != b'\n' {
+                            // One line never needs more than the whole tail.
+                            if line.len() < 8192 {
+                                line.push(byte);
+                            }
+                            continue;
+                        }
+                        let text = String::from_utf8_lossy(&line);
+                        if let Some(detail) = super::acp::kiro_stderr_auth(&text) {
+                            auth.lock()
+                                .unwrap()
+                                .get_or_insert_with(|| detail.to_owned());
+                        }
+                        line.clear();
+                    }
                 }
                 let mut tail = stderr_tail.lock().unwrap();
                 tail.extend_from_slice(&chunk[..n]);
                 let excess = tail.len().saturating_sub(8192);
                 tail.drain(..excess);
+            }
+            // The last line may end at exit without a newline.
+            if let Some(auth) = &stderr_auth {
+                if let Some(detail) = super::acp::kiro_stderr_auth(&String::from_utf8_lossy(&line))
+                {
+                    auth.lock()
+                        .unwrap()
+                        .get_or_insert_with(|| detail.to_owned());
+                }
             }
         });
         Ok(Self {
@@ -131,12 +163,19 @@ impl Wire {
             },
             rx,
             tail,
+            auth,
             reader: Some(reader),
             stderr_reader: Some(stderr_reader),
             writer: Some(writer),
             _registration: registration,
             _account: account,
         })
+    }
+    /// Whether stderr reached its end, so nothing more can be learned from it.
+    pub fn stderr_closed(&self) -> bool {
+        self.stderr_reader
+            .as_ref()
+            .is_none_or(thread::JoinHandle::is_finished)
     }
 }
 impl Drop for Wire {
