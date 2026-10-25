@@ -1,0 +1,34 @@
+crates/gespan-core/src/diagnostics/mod.rs
+  s_3d47a55f2b4496::t_7021c956d68b8a 21,23
+  s_3d47a55f2b4496::t_b1c82772c69cab 22
+docs/privacy.md
+  s_3d47a55f2b4496::t_fd93aa0c08c5a9 88-91
+crates/gespan-core/src/diagnostics/collect.rs
+  s_3d47a55f2b4496::t_b1c82772c69cab 245-251,289-291,628-631,1012-1019,1053-1060,1067-1070,1089-1097,1103-1106
+  s_3d47a55f2b4496::t_9294bac4722087 617-627,632-640,642-643,651-661,671,678
+  s_3d47a55f2b4496::t_9de11eee61ef35 388,391,402-413
+  s_3d47a55f2b4496::t_9564aab788d208 926-1011,1020-1052,1061-1066,1071-1088,1098-1102,1107-1129
+  s_3d47a55f2b4496::t_ea0356880e5f3a 193-244,252-280,286-288,292-307,309-311,316-324,326-336,338-340,342-344,362-376,378-379,382-386,389-390,392,416-420
+  s_3d47a55f2b4496::t_2361d952da1a84 856-871
+  s_3d47a55f2b4496::t_8f4040e375fb7e 281-285
+  s_3d47a55f2b4496::t_6596e7900712ab 341,387,397-401,414-415,421,905-911
+  s_3d47a55f2b4496::t_d981ac2f0d8304 422
+docs/diagnostics/bundle-format.md
+  s_3d47a55f2b4496::t_fd93aa0c08c5a9 58-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77ab5e5e496c5860d54d0710e15d60507be98bd5",
+  "prompts": {},
+  "sessions": {
+    "s_3d47a55f2b4496": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "961cc245-23d5-4ea2-b4c0-c6bfe9e79e6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
