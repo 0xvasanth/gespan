@@ -117,11 +117,26 @@ impl AudioSource for FakeSource {
 struct FakeEngine {
     fixed: Option<&'static str>,
     delay: Duration,
+    /// Zero-based indices of `transcribe` calls that fail.
+    fail_on: Vec<usize>,
+    calls: Arc<AtomicUsize>,
+}
+
+#[derive(Clone, Default)]
+struct EngineCfg {
+    fixed: Option<&'static str>,
+    delay: Duration,
+    fail_on: Vec<usize>,
+    calls: Arc<AtomicUsize>,
 }
 
 impl SpeechEngine for FakeEngine {
     fn transcribe(&mut self, samples: &[f32], _terms: &[String]) -> Result<String, EngineError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
         thread::sleep(self.delay);
+        if self.fail_on.contains(&call) {
+            return Err(EngineError::Transcribe("scripted failure".into()));
+        }
         Ok(match self.fixed {
             Some(text) => text.to_string(),
             None => format!("{} samples", samples.len()),
@@ -141,6 +156,18 @@ fn spawn(
     delay: Duration,
     limits: HelperLimits,
 ) -> Harness {
+    spawn_with(
+        source,
+        EngineCfg {
+            fixed,
+            delay,
+            ..EngineCfg::default()
+        },
+        limits,
+    )
+}
+
+fn spawn_with(source: FakeSource, cfg: EngineCfg, limits: HelperLimits) -> Harness {
     let (tx, rx) = channel();
     let out = SharedBuf::default();
     let writer = out.clone();
@@ -152,7 +179,14 @@ fn spawn(
         run_helper_with(
             input,
             writer,
-            |_dir| Ok(Box::new(FakeEngine { fixed, delay }) as Box<dyn SpeechEngine>),
+            |_dir| {
+                Ok(Box::new(FakeEngine {
+                    fixed: cfg.fixed,
+                    delay: cfg.delay,
+                    fail_on: cfg.fail_on.clone(),
+                    calls: cfg.calls.clone(),
+                }) as Box<dyn SpeechEngine>)
+            },
             Box::new(source),
             limits,
         )
@@ -375,24 +409,43 @@ fn cancel_discards_audio() {
     h.wait(|e| matches!(e, Event::Listening));
     h.send(&Request::Cancel);
     h.wait(|e| matches!(e, Event::Cancelled));
-    // A fresh dictation starts from an empty buffer.
+    assert_eq!(state.open.load(Ordering::SeqCst), 0, "mic closed by cancel");
+    // Nothing was decoded or emitted for the cancelled take, and a Stop
+    // afterwards has no take to finish.
+    h.send(&Request::Stop);
+    thread::sleep(Duration::from_millis(150));
+    let (events, _) = h.finish();
+    let kinds: Vec<_> = events
+        .iter()
+        .filter(|e| !matches!(e, Event::Level { .. }))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            &Event::Ready,
+            &Event::Loaded,
+            &Event::Listening,
+            &Event::Cancelled
+        ]
+    );
+}
+
+#[test]
+fn a_take_after_cancel_holds_only_its_own_audio() {
+    let (source, _) = FakeSource::new(vec![chunk(1600); 3], Duration::from_millis(5));
+    let h = spawn(source, None, Duration::ZERO, limits(10_000, 10_000));
+    h.load();
+    h.send(&start(&[]));
+    h.wait(|e| matches!(e, Event::Listening));
+    h.send(&Request::Cancel);
+    h.wait(|e| matches!(e, Event::Cancelled));
     h.send(&start(&[]));
     h.send(&Request::Stop);
-    let finals: Vec<_> = {
-        h.wait(|e| matches!(e, Event::Final { .. }));
-        h.events()
-            .into_iter()
-            .filter(|e| matches!(e, Event::Final { .. }))
-            .collect()
-    };
-    assert_eq!(finals.len(), 1, "the cancelled take produced no Final");
-    let Event::Final { text, .. } = &finals[0] else {
+    let Event::Final { text, .. } = h.wait(|e| matches!(e, Event::Final { .. })) else {
         unreachable!()
     };
     let n: usize = text.split(' ').next().unwrap().parse().unwrap();
-    assert!(n <= 4800, "second take holds only its own audio, got {n}");
-    let (_, _) = h.finish();
-    assert_eq!(state.open.load(Ordering::SeqCst), 0);
+    assert!(n <= 4800, "got {n}");
 }
 
 #[test]
@@ -452,20 +505,26 @@ fn denied_microphone_reports_system_settings_hint() {
     );
     // The failed start must not leave the helper stuck in "listening".
     h.send(&start(&[]));
-    let errors = h
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    while h
         .events()
         .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                Event::Error {
-                    kind: ErrorKind::Busy,
-                    ..
-                }
-            )
+        .filter(|e| matches!(e, Event::Error { .. }))
+        .count()
+        < 2
+    {
+        assert!(Instant::now() < deadline, "second error never arrived");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let errors: Vec<_> = h
+        .events()
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Error { kind, .. } => Some(kind),
+            _ => None,
         })
-        .count();
-    assert_eq!(errors, 0);
+        .collect();
+    assert_eq!(errors, vec![ErrorKind::MicrophoneDenied; 2]);
 }
 
 #[test]
@@ -567,4 +626,186 @@ fn cancel_during_a_partial_drops_the_late_partial() {
             .any(|e| matches!(e, Event::Partial { .. } | Event::Final { .. })),
         "got {events:?}"
     );
+}
+
+#[test]
+fn start_racing_capped_finish_does_not_deadlock() {
+    // 50 ms cap, 5 ms chunks; hammer Start across many cap/finish cycles.
+    let chunks = vec![chunk(80); 200];
+    let (source, state) = FakeSource::new(chunks, Duration::from_millis(5));
+    let h = spawn(source, None, Duration::from_millis(3), limits(50, 10_000));
+    h.load();
+    for _ in 0..300 {
+        h.send(&start(&[]));
+        thread::sleep(Duration::from_millis(1));
+    }
+    h.send(&Request::Shutdown);
+    let Harness { handle, out, .. } = h;
+    let (done_tx, done_rx) = channel();
+    thread::spawn(move || {
+        let _ = done_tx.send(handle.join());
+    });
+    let joined = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("helper must answer Shutdown within 2 s");
+    assert!(joined.unwrap().is_ok());
+    assert_eq!(state.open.load(Ordering::SeqCst), 0);
+    // Every Final is capped (nobody sent Stop) and none precedes its Listening.
+    let bytes = out.0.lock().unwrap().clone();
+    let mut reader = BufReader::new(&bytes[..]);
+    let mut listening = 0usize;
+    let mut finals = 0usize;
+    while let Some(e) = read_line::<Event>(&mut reader).unwrap() {
+        match e {
+            Event::Listening => listening += 1,
+            Event::Final { capped, .. } => {
+                assert!(capped);
+                finals += 1;
+                assert!(finals <= listening, "final before its Listening");
+            }
+            _ => {}
+        }
+    }
+    assert!(finals >= 1, "the race never exercised a capped finish");
+}
+
+#[test]
+fn capped_final_precedes_next_listening() {
+    let (source, _) = FakeSource::new(vec![chunk(400); 20], Duration::from_millis(5));
+    // Cap 100 ms (1600 samples); the final decode takes 300 ms.
+    let h = spawn(
+        source,
+        None,
+        Duration::from_millis(300),
+        limits(100, 10_000),
+    );
+    h.load();
+    h.send(&start(&[]));
+    h.wait(|e| matches!(e, Event::Listening));
+    thread::sleep(Duration::from_millis(100));
+    // The take has capped and its final is still decoding.
+    h.send(&start(&[]));
+    let busy = h.wait(|e| matches!(e, Event::Error { .. }));
+    assert!(matches!(
+        busy,
+        Event::Error {
+            kind: ErrorKind::Busy,
+            ..
+        }
+    ));
+    h.wait(|e| matches!(e, Event::Final { .. }));
+    h.send(&start(&[]));
+    thread::sleep(Duration::from_millis(50));
+    h.send(&Request::Cancel);
+    h.wait(|e| matches!(e, Event::Cancelled));
+    let (events, _) = h.finish();
+    let sequence: Vec<_> = events
+        .into_iter()
+        .filter(|e| !matches!(e, Event::Level { .. } | Event::Partial { .. }))
+        .collect();
+    assert_eq!(sequence.len(), 7, "{sequence:?}");
+    assert_eq!(sequence[2], Event::Listening);
+    assert!(matches!(
+        sequence[3],
+        Event::Error {
+            kind: ErrorKind::Busy,
+            ..
+        }
+    ));
+    assert!(matches!(sequence[4], Event::Final { capped: true, .. }));
+    assert_eq!(sequence[5], Event::Listening);
+    assert_eq!(sequence[6], Event::Cancelled);
+}
+
+#[test]
+fn cancel_during_final_decode_suppresses_final() {
+    let (source, _) = FakeSource::new(vec![chunk(1600)], Duration::ZERO);
+    let h = spawn(
+        source,
+        None,
+        Duration::from_millis(400),
+        limits(10_000, 10_000),
+    );
+    h.load();
+    h.send(&start(&[]));
+    h.wait(|e| matches!(e, Event::Listening));
+    h.send(&Request::Stop);
+    thread::sleep(Duration::from_millis(100));
+    let sent = Instant::now();
+    h.send(&Request::Cancel);
+    h.wait(|e| matches!(e, Event::Cancelled));
+    assert!(
+        sent.elapsed() < Duration::from_millis(250),
+        "cancel was read while the final decode ran"
+    );
+    // The take is over, so a new one can start while the old decode finishes.
+    h.send(&start(&[]));
+    thread::sleep(Duration::from_millis(500));
+    let (events, _) = h.finish();
+    assert!(
+        !events.iter().any(|e| matches!(e, Event::Final { .. })),
+        "got {events:?}"
+    );
+    assert_eq!(events.iter().filter(|e| **e == Event::Listening).count(), 2);
+}
+
+#[test]
+fn failed_partial_still_produces_final() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let cfg = EngineCfg {
+        fail_on: vec![0],
+        calls: calls.clone(),
+        ..EngineCfg::default()
+    };
+    let (source, _) = FakeSource::new(vec![chunk(1600)], Duration::ZERO);
+    let h = spawn_with(source, cfg, limits(10_000, 20));
+    h.load();
+    h.send(&start(&[]));
+    let deadline = Instant::now() + Duration::from_millis(1000);
+    while calls.load(Ordering::SeqCst) < 1 {
+        assert!(Instant::now() < deadline, "partial decode never ran");
+        thread::sleep(Duration::from_millis(5));
+    }
+    h.send(&Request::Stop);
+    assert_eq!(
+        h.wait(|e| matches!(e, Event::Final { .. })),
+        Event::Final {
+            text: "1600 samples".into(),
+            capped: false
+        }
+    );
+    let (events, _) = h.finish();
+    assert!(!events.iter().any(|e| matches!(e, Event::Error { .. })));
+    assert!(!events.iter().any(|e| matches!(e, Event::Partial { .. })));
+}
+
+#[test]
+fn failed_final_reports_engine_error_and_closes_mic() {
+    let cfg = EngineCfg {
+        fail_on: vec![0],
+        ..EngineCfg::default()
+    };
+    let (source, state) = FakeSource::new(vec![chunk(1600)], Duration::ZERO);
+    let h = spawn_with(source, cfg, limits(10_000, 10_000));
+    h.load();
+    h.send(&start(&[]));
+    h.wait(|e| matches!(e, Event::Listening));
+    h.send(&Request::Stop);
+    let Event::Error { kind, .. } = h.wait(|e| matches!(e, Event::Error { .. })) else {
+        unreachable!()
+    };
+    assert_eq!(kind, ErrorKind::Engine);
+    assert_eq!(state.open.load(Ordering::SeqCst), 0);
+    // The helper is usable again.
+    h.send(&start(&[]));
+    h.send(&Request::Stop);
+    h.wait(|e| matches!(e, Event::Final { .. }));
+    let (events, _) = h.finish();
+    assert!(!events.iter().any(|e| matches!(
+        e,
+        Event::Error {
+            kind: ErrorKind::Busy,
+            ..
+        }
+    )));
 }

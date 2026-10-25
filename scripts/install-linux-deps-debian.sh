@@ -35,6 +35,7 @@ ${SUDO[@]+"${SUDO[@]}"} env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NETWOR
   build-essential \
   curl \
   file \
+  libasound2-dev \
   libayatana-appindicator3-dev \
   libgtk-3-dev \
   libssl-dev \

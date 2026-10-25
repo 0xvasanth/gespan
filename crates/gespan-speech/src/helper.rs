@@ -1,19 +1,23 @@
 //! The speech helper's request loop: model loading, microphone sessions,
 //! periodic partials and the final transcript.
 //!
-//! Threads: the caller's thread reads requests and handles `Stop`. Each
-//! dictation also gets one worker thread that re-decodes for partials and
-//! finishes the take when the recording cap is reached. The audio source calls
-//! the sink on its own thread. All three share [`Shared`]; the `engine` mutex
-//! serialises decodes, so a `Stop` that arrives mid-partial waits for it, and
-//! the session `gen` counter makes a partial that finishes after a `Stop` or
-//! `Cancel` drop itself instead of being emitted.
+//! Threads: the caller's thread only reads requests. Each dictation gets one
+//! worker thread that re-decodes for partials and, at the recording cap, runs
+//! the final decode itself; a `Stop` runs its final decode on a short-lived
+//! thread. The audio source calls the sink on its own thread. They share
+//! [`Shared`]; the `engine` mutex serialises decodes, so a `Stop` that arrives
+//! mid-partial waits for it. The session `gen` counter makes a partial that
+//! finishes after a `Stop` or `Cancel` drop itself, and `cancel_epoch` does the
+//! same for a final. The session lock is never held across a call into the
+//! audio source, because stopping a source waits for its sink, which takes
+//! that lock. `finishing` keeps `Start` and `Load` busy until the previous
+//! take's `Final` is out.
 
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::capture::{AudioSource, CaptureError, Sink, TARGET_RATE};
@@ -54,8 +58,18 @@ struct Session {
     /// Bumped by `Cancel` only; a final that finishes after it is dropped.
     cancel_epoch: u64,
     capped: bool,
+    /// Set once `Listening` is out, so no `Level` precedes it.
+    announced: bool,
+    /// Id (the take's `gen` after finishing) of a final decode still running.
+    finishing: Option<u64>,
     buffer: Vec<f32>,
     terms: Vec<String>,
+}
+
+impl Session {
+    fn is_busy(&self) -> bool {
+        self.active || self.finishing.is_some()
+    }
 }
 
 struct Shared {
@@ -121,7 +135,6 @@ pub fn run_helper_with(
         limits,
         cap_samples: (limits.max_recording.as_secs_f64() * f64::from(TARGET_RATE)) as usize,
     });
-    let mut workers: Vec<JoinHandle<()>> = Vec::new();
 
     shared.emit(&Event::Ready);
     let result = loop {
@@ -137,23 +150,16 @@ pub fn run_helper_with(
         };
         match request {
             Request::Load { model_dir, .. } => load(&shared, &make_engine, &model_dir),
-            Request::Start { terms } => {
-                workers.retain(|w| !w.is_finished());
-                if let Some(worker) = start(&shared, terms) {
-                    workers.push(worker);
-                }
-            }
-            Request::Stop => finish(&shared, None, false),
+            Request::Start { terms } => start(&shared, terms),
+            Request::Stop => stop(&shared),
             Request::Cancel => cancel(&shared),
             Request::Shutdown => break Ok(()),
         }
     };
 
-    // Release the microphone and let any worker finish before exiting.
+    // Release the microphone. Worker threads are left to wind down: they
+    // emit nothing once the take is abandoned.
     abandon(&shared);
-    for worker in workers {
-        let _ = worker.join();
-    }
     match result {
         Ok(()) if shared.broken.load(Ordering::SeqCst) => {
             Err(io::Error::from(io::ErrorKind::BrokenPipe))
@@ -167,7 +173,7 @@ fn load(
     make_engine: &impl Fn(&Path) -> Result<Box<dyn SpeechEngine>, EngineError>,
     model_dir: &Path,
 ) {
-    if shared.session().active {
+    if shared.session().is_busy() {
         return shared.error(ErrorKind::Busy, "Dictation is already running.");
     }
     if !model_dir.is_dir() {
@@ -186,39 +192,52 @@ fn load(
     }
 }
 
-/// Begins a take. Returns the worker thread when listening started.
-fn start(shared: &Arc<Shared>, terms: Vec<String>) -> Option<JoinHandle<()>> {
-    // Held across `source.start` so Listening precedes any Level.
-    let mut session = shared.session();
-    if session.active {
-        shared.error(ErrorKind::Busy, "Dictation is already running.");
-        return None;
-    }
-    if !session.loaded {
-        shared.error(
-            ErrorKind::ModelMissing,
-            "The speech model isn't downloaded yet.",
-        );
-        return None;
-    }
-    session.gen += 1;
-    let gen = session.gen;
-    session.active = true;
-    session.capped = false;
-    session.buffer.clear();
-    session.terms = terms;
+/// Begins a take and spawns its worker.
+fn start(shared: &Arc<Shared>, terms: Vec<String>) {
+    let gen = {
+        let mut session = shared.session();
+        if session.is_busy() {
+            return shared.error(ErrorKind::Busy, "Dictation is already running.");
+        }
+        if !session.loaded {
+            return shared.error(
+                ErrorKind::ModelMissing,
+                "The speech model isn't downloaded yet.",
+            );
+        }
+        session.gen += 1;
+        session.active = true;
+        session.announced = false;
+        session.capped = false;
+        session.buffer.clear();
+        session.terms = terms;
+        session.gen
+    };
 
+    // The session lock is not held here: the source's thread calls the sink,
+    // which takes it.
     let started = shared.source().start(sink(shared.clone(), gen));
     match started {
         Ok(()) => {
-            shared.emit(&Event::Listening);
-            drop(session);
+            {
+                let mut session = shared.session();
+                if session.gen != gen {
+                    return;
+                }
+                session.announced = true;
+                shared.emit(&Event::Listening);
+            }
             let shared = shared.clone();
-            Some(thread::spawn(move || worker(&shared, gen)))
+            thread::spawn(move || worker(&shared, gen));
         }
         Err(err) => {
-            session.active = false;
-            session.gen += 1;
+            {
+                let mut session = shared.session();
+                if session.gen == gen {
+                    session.active = false;
+                    session.gen += 1;
+                }
+            }
             let (kind, message) = match err {
                 CaptureError::NoInputDevice => {
                     (ErrorKind::NoInputDevice, "No microphone was found.")
@@ -229,7 +248,6 @@ fn start(shared: &Arc<Shared>, terms: Vec<String>) -> Option<JoinHandle<()>> {
                 ),
             };
             shared.error(kind, message);
-            None
         }
     }
 }
@@ -249,7 +267,7 @@ fn sink(shared: Arc<Shared>, gen: u64) -> Sink {
         if take < chunk.len() || session.buffer.len() >= shared.cap_samples {
             session.capped = true;
         }
-        if last_level.is_none_or(|at| at.elapsed() >= LEVEL_INTERVAL) {
+        if session.announced && last_level.is_none_or(|at| at.elapsed() >= LEVEL_INTERVAL) {
             last_level = Some(Instant::now());
             shared.emit(&Event::Level { rms: rms(chunk) });
         }
@@ -284,7 +302,11 @@ fn worker(shared: &Shared, gen: u64) {
             (session.capped, session.buffer.len())
         };
         if capped {
-            return finish(shared, Some(gen), true);
+            if let Some(job) = begin_finish(shared, Some(gen)) {
+                stop_source(shared);
+                decode_final(shared, job, true);
+            }
+            return;
         }
         if len <= decoded_len || last_decode.elapsed() < shared.limits.partial_interval {
             continue;
@@ -315,30 +337,61 @@ fn worker(shared: &Shared, gen: u64) {
     }
 }
 
-/// Ends the take: stops the microphone, decodes the whole buffer once and
-/// sends the `Final`. `expect_gen` restricts it to one specific take.
-fn finish(shared: &Shared, expect_gen: Option<u64>, capped: bool) {
-    let (samples, terms, epoch) = {
-        let mut session = shared.session();
-        if !session.active || expect_gen.is_some_and(|g| g != session.gen) {
-            return;
-        }
-        session.active = false;
-        session.gen += 1;
-        (
-            std::mem::take(&mut session.buffer),
-            std::mem::take(&mut session.terms),
-            session.cancel_epoch,
-        )
+/// A take that has ended and is waiting for its final decode.
+struct FinalJob {
+    id: u64,
+    epoch: u64,
+    samples: Vec<f32>,
+    terms: Vec<String>,
+}
+
+/// Marks the take as ended (and `finishing`) and hands out its audio.
+/// `expect_gen` restricts it to one specific take.
+fn begin_finish(shared: &Shared, expect_gen: Option<u64>) -> Option<FinalJob> {
+    let mut session = shared.session();
+    if !session.active || expect_gen.is_some_and(|g| g != session.gen) {
+        return None;
+    }
+    session.active = false;
+    session.gen += 1;
+    session.finishing = Some(session.gen);
+    Some(FinalJob {
+        id: session.gen,
+        epoch: session.cancel_epoch,
+        samples: std::mem::take(&mut session.buffer),
+        terms: std::mem::take(&mut session.terms),
+    })
+}
+
+/// Stops the microphone unless a newer take has already claimed the source.
+fn stop_source(shared: &Shared) {
+    let mut source = shared.source();
+    if !shared.session().active {
+        source.stop();
+    }
+}
+
+/// `Stop`: ends the take, releases the microphone, and decodes the final off
+/// the request-reading thread.
+fn stop(shared: &Arc<Shared>) {
+    let Some(job) = begin_finish(shared, None) else {
+        return;
     };
-    shared.source().stop();
+    stop_source(shared);
+    let shared = shared.clone();
+    thread::spawn(move || decode_final(&shared, job, false));
+}
+
+/// Decodes the whole buffer once and sends the `Final`, unless a `Cancel`
+/// arrived meanwhile.
+fn decode_final(shared: &Shared, job: FinalJob, capped: bool) {
     let decoded = shared
         .engine()
         .as_mut()
-        .map(|engine| engine.transcribe(&samples, &terms));
+        .map(|engine| engine.transcribe(&job.samples, &job.terms));
     let event = match decoded {
         Some(Ok(raw)) => Event::Final {
-            text: postprocess(&raw, &terms).trim().to_string(),
+            text: postprocess(&raw, &job.terms).trim().to_string(),
             capped,
         },
         Some(Err(_)) => Event::Error {
@@ -350,9 +403,12 @@ fn finish(shared: &Shared, expect_gen: Option<u64>, capped: bool) {
             message: "The speech model isn't downloaded yet.".to_string(),
         },
     };
-    let session = shared.session();
-    if session.cancel_epoch == epoch {
+    let mut session = shared.session();
+    if session.cancel_epoch == job.epoch {
         shared.emit(&event);
+    }
+    if session.finishing == Some(job.id) {
+        session.finishing = None;
     }
 }
 
@@ -362,11 +418,13 @@ fn cancel(shared: &Shared) {
         session.active = false;
         session.gen += 1;
         session.cancel_epoch += 1;
+        session.finishing = None;
         session.buffer.clear();
         session.terms.clear();
-        shared.emit(&Event::Cancelled);
     }
-    shared.source().stop();
+    // Cancelled means the microphone is already off.
+    stop_source(shared);
+    shared.emit(&Event::Cancelled);
 }
 
 /// Drops any live take silently and releases the microphone.
@@ -376,9 +434,10 @@ fn abandon(shared: &Shared) {
         session.active = false;
         session.gen += 1;
         session.cancel_epoch += 1;
+        session.finishing = None;
         session.buffer.clear();
     }
-    shared.source().stop();
+    stop_source(shared);
 }
 
 /// Entry point for the apps' `speech-helper` subcommand: speaks the protocol
