@@ -32,12 +32,13 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let restore = self
-            .report
-            .open
-            .take()
-            .and_then(|open| open.restore)
-            .or_else(|| window.focused(cx));
+        if let Some(open) = &self.report.open {
+            // Another entry point while the sheet is up: keep what the user
+            // has typed rather than start over.
+            window.focus(&open.sheet.focus_handle(cx), cx);
+            return;
+        }
+        let restore = window.focused(cx);
         self.close_menu(cx);
         let context = self.report_context();
         let sheet = cx.new(|cx| ReportSheet::new(prefill, context, cx));
@@ -83,7 +84,13 @@ impl Shell {
                 .iter()
                 .cloned()
                 .chain(self.session_summaries.values().map(|s| s.cwd.clone()))
+                .chain(self.session_worktrees.values().flatten().cloned())
                 .collect(),
+            machine: report_machine(
+                locked(&self.store)
+                    .ok()
+                    .and_then(|store| store.data_dir().map(std::path::Path::to_path_buf)),
+            ),
             sessions_count: self.session_summaries.len(),
             version,
             channel,
@@ -291,6 +298,17 @@ fn test_facts() -> Option<Facts> {
     None
 }
 
+/// Tests never read the keychain or this machine's sign-ins.
+#[cfg(test)]
+fn report_machine(_: Option<PathBuf>) -> diagnostics::Machine {
+    diagnostics::Machine::default()
+}
+
+#[cfg(not(test))]
+fn report_machine(data_dir: Option<PathBuf>) -> diagnostics::Machine {
+    diagnostics::Machine::this(data_dir)
+}
+
 /// The Help menu's and the palette's entry.
 pub(super) fn report_issue(
     this: &mut Shell,
@@ -340,6 +358,40 @@ mod tests {
         visual.run_until_parked();
         window
             .update(visual, |shell, _, _| assert!(shell.report.open.is_none()))
+            .unwrap();
+    }
+
+    /// Help > Report an issue… still works while the sheet is up; it must
+    /// not replace the sheet and lose what the user typed.
+    #[gpui::test]
+    fn reporting_again_keeps_the_open_sheet(cx: &mut TestAppContext) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |shell, window, cx| {
+                shell.open_report(Prefill::default(), window, cx);
+                let open = shell.report.open.as_ref().unwrap();
+                let title = open.sheet.read(cx).title.clone();
+                title.update(cx, |input, cx| input.set_text("Half-written".into(), cx));
+            })
+            .unwrap();
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, window, cx| {
+                let first = shell.report.open.as_ref().unwrap().sheet.entity_id();
+                shell.open_report(
+                    Prefill {
+                        title: "Crash in src/a.rs:12".into(),
+                        event_ids: Vec::new(),
+                    },
+                    window,
+                    cx,
+                );
+                let open = shell.report.open.as_ref().unwrap();
+                assert_eq!(open.sheet.entity_id(), first, "the same sheet");
+                assert_eq!(sheet_title(shell, cx), "Half-written");
+                assert!(open.sheet.focus_handle(cx).contains_focused(window, cx));
+            })
             .unwrap();
     }
 
@@ -430,9 +482,20 @@ mod tests {
                     .workspace
                     .archived_projects
                     .push("/work/old-secret".into());
+                // A worktree session runs in its agent settings' folder, not
+                // its summary's.
+                let id = *shell.session_summaries.keys().next().unwrap();
+                shell
+                    .session_worktrees
+                    .insert(id, Some("/elsewhere/acme-wt/fix-y".into()));
                 let context = shell.report_context();
                 assert_eq!(context.projects, shell.workspace.projects);
-                for folder in ["/work/old-secret", "/work/gespan", "/work/another-project"] {
+                for folder in [
+                    "/work/old-secret",
+                    "/work/gespan",
+                    "/work/another-project",
+                    "/elsewhere/acme-wt/fix-y",
+                ] {
                     assert!(
                         context.other_folders.iter().any(|f| f == folder),
                         "{folder} in {:?}",

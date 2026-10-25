@@ -55,9 +55,9 @@ one.
 | `os_version` | string | yes | For example `"15.1"`. |
 | `arch` | string | yes | `"aarch64"` or `"x86_64"`. |
 | `locale` | string | yes | BCP 47 tag, for example `"en-GB"`. |
-| `title` | string | yes | The user's title. For a crash send, `Crash in <file>:<line>` from the crash record's `location`, never the panic message, because nobody previews a crash send's title before it becomes public. |
-| `description` | string | yes | "What happened?". Empty for a crash send. |
-| `steps` | string | no | "Steps to reproduce". Omitted when empty. |
+| `title` | string | yes | The user's title, scrubbed like every other text in the bundle. For a crash send, `Crash in <file>:<line>` from the crash record's `location`, never the panic message, because nobody previews a crash send's title before it becomes public. |
+| `description` | string | yes | "What happened?", scrubbed. Empty for a crash send. |
+| `steps` | string | no | "Steps to reproduce", scrubbed. Omitted when empty. |
 | `contact_email` | string | no | Optional, entered by the user. Kept in the private bundle only and never put in the public issue. Left out of a fallback bundle (see [intake-api.md](intake-api.md#fallback-when-the-intake-cant-be-reached)), which the user attaches to a public issue. |
 | `install_id` | string | no | The anonymous install ID, if the user has opted in to anything (see [consent.md](consent.md#anonymous-install-id)). Omitted otherwise. Left out of a fallback bundle, so a public attachment can't link an install's reports. |
 | `event_ids` | array of strings | yes | `event_id`s of the log lines this report is about (from an error toast's "Report" action). May be empty. |

@@ -30,6 +30,8 @@ pub(crate) const PUBLIC_WARNING: &str = "Gespan never sends this by itself. Both
 const REPORT_JSON: &str = "report.json";
 const PREVIEW_LINE: f32 = 17.;
 const PREVIEW_HEIGHT: f32 = 220.;
+/// Typing settles this long before the zip is rebuilt.
+const REBUILD_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// What an entry point already knows: an error toast's text and the
 /// `event_id`s logged just before it, or a crash's location.
@@ -51,9 +53,11 @@ pub(crate) struct SheetContext {
     /// `None` until diagnostics have started: then there are no logs to add.
     pub log_dir: Option<PathBuf>,
     pub projects: Vec<String>,
-    /// More folders to hide behind `<project-N>`: archived projects and
-    /// session folders.
+    /// More folders to hide behind `<project-N>`: archived projects,
+    /// session folders and session worktree folders.
     pub other_folders: Vec<String>,
+    /// Where the scrubber reads this machine's known secrets.
+    pub machine: diagnostics::Machine,
     pub sessions_count: usize,
     pub version: String,
     pub channel: Channel,
@@ -106,8 +110,12 @@ pub(crate) struct ReportSheet {
     destination: Destination,
     reveal: Reveal,
     gathered: Option<Arc<Gathered>>,
-    /// The rebuild in flight; replacing it cancels the older one.
+    /// The rebuild waiting or in flight; replacing it cancels the older one
+    /// if it hasn't started.
     building: Option<gpui::Task<()>>,
+    /// Finished builds, so tests can tell a settled rebuild from many.
+    #[cfg(test)]
+    pub(crate) builds: usize,
     bundle: Option<Bundle>,
     shown: Option<String>,
     /// The shown entry's lines, split once per bundle.
@@ -152,12 +160,17 @@ impl ReportSheet {
         });
         let changes = [&title, &description, &steps, &email]
             .into_iter()
-            .map(|input| cx.subscribe(input, |this, _, _: &input::Changed, cx| this.rebuild(cx)))
+            .map(|input| {
+                cx.subscribe(input, |this, _, _: &input::Changed, cx| {
+                    this.rebuild_after(REBUILD_DELAY, cx)
+                })
+            })
             .collect();
         let SheetContext {
             log_dir,
             projects,
             other_folders,
+            machine,
             sessions_count,
             version,
             channel,
@@ -171,8 +184,11 @@ impl ReportSheet {
             cx.background_executor().spawn(async move {
                 gather(
                     log_dir,
-                    projects,
-                    other_folders,
+                    Hidden {
+                        projects,
+                        other_folders,
+                        machine,
+                    },
                     sessions_count,
                     &version,
                     channel,
@@ -204,6 +220,8 @@ impl ReportSheet {
             reveal,
             gathered: None,
             building: None,
+            #[cfg(test)]
+            builds: 0,
             bundle: None,
             shown: None,
             shown_lines: Arc::default(),
@@ -296,9 +314,14 @@ impl ReportSheet {
         }
     }
 
-    /// Rebuilds the zip in the background: deflating the log tail on every
-    /// keystroke would stall typing.
     fn rebuild(&mut self, cx: &mut Context<Self>) {
+        self.rebuild_after(std::time::Duration::ZERO, cx);
+    }
+
+    /// Rebuilds the zip in the background, once `delay` has passed without
+    /// another change: deflating the log tail on every keystroke would stall
+    /// typing. Save stays off until it's done.
+    fn rebuild_after(&mut self, delay: std::time::Duration, cx: &mut Context<Self>) {
         let Some(gathered) = self.gathered.clone() else {
             return;
         };
@@ -306,22 +329,31 @@ impl ReportSheet {
         let selection = self.selection.clone();
         let destination = self.destination;
         let stamp = self.stamp.clone();
-        let build = cx.background_executor().spawn(async move {
-            diagnostics::build(
-                &report,
-                &gathered.system,
-                &gathered.sources,
-                &selection,
-                destination,
-                &gathered.redactor,
-                &stamp,
-                diagnostics::MAX_BUNDLE_BYTES,
-            )
-        });
         self.building = Some(cx.spawn(async move |this, cx| {
-            let built = build.await;
+            if !delay.is_zero() {
+                cx.background_executor().timer(delay).await;
+            }
+            let built = cx
+                .background_executor()
+                .spawn(async move {
+                    diagnostics::build(
+                        &report,
+                        &gathered.system,
+                        &gathered.sources,
+                        &selection,
+                        destination,
+                        &gathered.redactor,
+                        &stamp,
+                        diagnostics::MAX_BUNDLE_BYTES,
+                    )
+                })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 this.building = None;
+                #[cfg(test)]
+                {
+                    this.builds += 1;
+                }
                 match built {
                     Ok(bundle) => {
                         this.bundle = Some(bundle);
@@ -458,11 +490,17 @@ fn row(name: &str, included: bool) -> Row {
     }
 }
 
+/// What the scrubber hides: these folders and this machine's secrets.
+struct Hidden {
+    projects: Vec<String>,
+    other_folders: Vec<String>,
+    machine: diagnostics::Machine,
+}
+
 /// Reads and scrubs everything a report can attach. Runs off the UI thread.
 fn gather(
     log_dir: Option<PathBuf>,
-    projects: Vec<String>,
-    other_folders: Vec<String>,
+    hidden: Hidden,
     sessions_count: usize,
     version: &str,
     channel: Channel,
@@ -477,10 +515,13 @@ fn gather(
     };
     let environment = Environment {
         providers,
-        projects_count: projects.len(),
+        projects_count: hidden.projects.len(),
         sessions_count,
     };
-    let redactor = diagnostics::redactor_for(&diagnostics::report_roots(&projects, &other_folders));
+    let redactor = diagnostics::redactor_for(
+        &hidden.machine,
+        &diagnostics::report_roots(&hidden.projects, &hidden.other_folders),
+    );
     let sources = match &log_dir {
         Some(dir) => {
             diagnostics::collect(dir, &redactor, chrono::Utc::now(), Some(environment), None)
@@ -904,6 +945,7 @@ mod tests {
             log_dir: Some(f.logs.clone()),
             projects: vec!["/Users/alice/code".into()],
             other_folders: Vec::new(),
+            machine: diagnostics::Machine::default(),
             sessions_count: 3,
             version: "0.1.0".into(),
             channel: Channel::Release,
@@ -943,7 +985,40 @@ mod tests {
                 .description
                 .update(cx, |input, cx| input.set_text(what.into(), cx));
         });
+        settle(cx);
+    }
+
+    /// Lets typing settle and the rebuild finish.
+    fn settle(cx: &mut TestAppContext) {
+        cx.executor().advance_clock(REBUILD_DELAY);
         cx.run_until_parked();
+    }
+
+    /// Each keystroke used to deflate the whole log tail again; typing now
+    /// settles first, and a keystroke cancels the build it supersedes.
+    #[gpui::test]
+    fn typing_quickly_builds_the_zip_once(cx: &mut TestAppContext) {
+        let f = fixture();
+        let sheet = sheet(&f, Destination::Fallback, cx);
+        type_into(&sheet, cx, "W", "x");
+        let before = sheet.read_with(cx, |sheet, _| sheet.builds);
+        for title in ["Wo", "Wor", "Work"] {
+            sheet.update(cx, |sheet, cx| {
+                sheet
+                    .title
+                    .update(cx, |input, cx| input.set_text(title.into(), cx));
+            });
+            cx.run_until_parked();
+        }
+        sheet.read_with(cx, |sheet, _| {
+            assert_eq!(sheet.builds, before, "nothing built while typing");
+            assert_eq!(sheet.bundle().unwrap().report()["title"], "W");
+        });
+        settle(cx);
+        sheet.read_with(cx, |sheet, _| {
+            assert_eq!(sheet.builds, before + 1);
+            assert_eq!(sheet.bundle().unwrap().report()["title"], "Work");
+        });
     }
 
     #[gpui::test]
@@ -1010,7 +1085,7 @@ mod tests {
         sheet.read_with(cx, |sheet, _| {
             assert_eq!(sheet.bundle().unwrap().report()["title"], "Before")
         });
-        cx.run_until_parked();
+        settle(cx);
         sheet.read_with(cx, |sheet, _| {
             assert_eq!(sheet.bundle().unwrap().report()["title"], "After")
         });

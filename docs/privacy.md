@@ -85,9 +85,10 @@ does record:
 
 Error messages are free text, and scrubbing works by known patterns, so it
 can miss something unusual. That is why you see the exact contents of a
-report before you send it. What **you type** into a report (title and
-description) is not changed, and it is published in a public GitHub issue as
-you wrote it.
+report before you send it. What **you type** into a report (title, what
+happened and steps) is scrubbed the same way, so a pasted path, token or
+email address is hidden, but everything else stays as you wrote it, and it is
+published in a public GitHub issue. The preview shows it after scrubbing.
 
 Before anything is shown in a preview or sent, Gespan scrubs it **on your
 machine**: your home folder becomes `~`, project folders become
