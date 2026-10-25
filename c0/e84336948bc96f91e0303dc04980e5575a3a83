@@ -1,0 +1,23 @@
+crates/gespan-core/src/remote/ssh.rs
+  s_723f23b667816d::t_6f225a676c595a 994-1022
+  s_723f23b667816d::t_78554b3ff5d028 993
+crates/gespan-core/src/git.rs
+  s_723f23b667816d::t_6f225a676c595a 900-934
+  s_723f23b667816d::t_8f77554c731725 899
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c0e84336948bc96f91e0303dc04980e5575a3a83",
+  "prompts": {},
+  "sessions": {
+    "s_723f23b667816d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09d88fd0-1ba2-46bd-ab5c-dc747e3a6767",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
