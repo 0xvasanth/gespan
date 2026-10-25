@@ -56,6 +56,7 @@ fn serve_files(files: Vec<Vec<u8>>) -> TestServer {
             body: files[i].clone(),
             cut_at: None,
             ignore_range: false,
+            redirect: None,
         }
     })
 }
@@ -102,6 +103,7 @@ fn resumes_from_partial() {
         body: served.clone(),
         cut_at: (nth == 0).then_some(40_000),
         ignore_range: false,
+        redirect: None,
     });
     let spec = spec(vec![server.base.clone()], &[&a]);
     let tmp = tempfile::tempdir().unwrap();
@@ -135,6 +137,7 @@ fn corrupt_file_redownloads() {
         body: if nth == 0 { bad.clone() } else { good.clone() },
         cut_at: None,
         ignore_range: false,
+        redirect: None,
     });
     let spec = spec(vec![server.base.clone()], &[&a]);
     let tmp = tempfile::tempdir().unwrap();
@@ -159,6 +162,7 @@ fn persistent_checksum_mismatch_errors() {
         body: bad.clone(),
         cut_at: None,
         ignore_range: false,
+        redirect: None,
     });
     let spec = spec(vec![server.base.clone()], &[&a]);
     let tmp = tempfile::tempdir().unwrap();
@@ -221,6 +225,7 @@ fn mirror_resumes_the_partial_left_by_the_primary() {
         body: primary_body.clone(),
         cut_at: Some(30_000),
         ignore_range: false,
+        redirect: None,
     });
     let mirror = serve_files(vec![a.clone()]);
     let spec = spec(vec![primary.base.clone(), mirror.base.clone()], &[&a]);
@@ -241,6 +246,7 @@ fn server_ignoring_range_restarts_cleanly() {
         body: served.clone(),
         cut_at: None,
         ignore_range: true,
+        redirect: None,
     });
     let spec = spec(vec![server.base.clone()], &[&a]);
     let tmp = tempfile::tempdir().unwrap();
@@ -325,4 +331,34 @@ fn delete_removes_model_dir() {
     assert!(!store.dir(spec).exists());
     assert_eq!(store.status(spec), ModelStatus::Missing);
     store.delete(spec).unwrap(); // deleting a missing model is fine
+}
+
+#[test]
+fn resume_survives_redirect() {
+    let a = body(100_000, 15);
+    let served = a.clone();
+    // Like Hugging Face: the public path 302s to a CDN path that does the serving.
+    let server = TestServer::start(move |path, nth| Reply {
+        body: served.clone(),
+        cut_at: (path.starts_with("/cdn/") && nth == 0).then_some(40_000),
+        ignore_range: false,
+        redirect: (!path.starts_with("/cdn/")).then(|| format!("/cdn{path}")),
+    });
+    let spec = spec(vec![server.base.clone()], &[&a]);
+    let tmp = tempfile::tempdir().unwrap();
+    let store = store(&tmp);
+
+    let first = store.download(spec, &CancelToken::new(), |_| {});
+    assert!(matches!(first, Err(DownloadError::Network(_))), "{first:?}");
+    store.download(spec, &CancelToken::new(), |_| {}).unwrap();
+
+    assert_eq!(store.status(spec), ModelStatus::Ready);
+    assert_eq!(fs::read(store.dir(spec).join("a.bin")).unwrap(), a);
+    let cdn: Vec<_> = server
+        .recorded()
+        .into_iter()
+        .filter(|r| r.path.starts_with("/cdn/"))
+        .collect();
+    assert_eq!(cdn.len(), 2);
+    assert_eq!(cdn[1].range.as_deref(), Some("bytes=40000-"));
 }

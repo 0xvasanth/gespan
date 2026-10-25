@@ -19,6 +19,8 @@ pub struct Reply {
     pub cut_at: Option<usize>,
     /// Answer `200` with the whole body even when a `Range` was sent.
     pub ignore_range: bool,
+    /// Answer `302` with this `Location` instead of a body.
+    pub redirect: Option<String>,
 }
 
 pub struct TestServer {
@@ -89,6 +91,13 @@ fn serve(
     };
 
     let reply = handler(&path, nth);
+    if let Some(location) = &reply.redirect {
+        let out = format!(
+            "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        let _ = stream.write_all(out.as_bytes());
+        return;
+    }
     let total = reply.body.len();
     let start = range
         .as_deref()
