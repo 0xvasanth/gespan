@@ -113,6 +113,7 @@ fn quit(cx: &mut App) {
         .spawn(async { gespan_core::process::shutdown_all() });
     cx.spawn(async move |cx| {
         shutdown.await;
+        gespan_core::diagnostics::flush();
         cx.update(|cx| cx.quit());
     })
     .detach();
@@ -156,9 +157,29 @@ fn plist_data_mode(plist: &str) -> Option<bool> {
         _ => None,
     }
 }
+/// Development data logs apart from release data, like its database.
+fn diagnostics_config(use_gespan: bool) -> gespan_core::diagnostics::Config {
+    use gespan_core::diagnostics::{Channel, Config, log_dir};
+    let channel = if use_gespan {
+        Channel::Release
+    } else {
+        Channel::Dev
+    };
+    Config {
+        log_dir: log_dir(channel),
+        version: notifications::updater::version().into(),
+        channel,
+    }
+}
+/// `std::process::exit` skips destructors, so buffered log lines are flushed
+/// first.
+fn exit(code: i32) -> ! {
+    gespan_core::diagnostics::flush();
+    std::process::exit(code)
+}
 fn main() {
     if let Some(code) = gespan_core::remote::ssh_askpass::maybe_run() {
-        std::process::exit(code);
+        exit(code);
     }
     let cli_args: Vec<_> = std::env::args().skip(1).collect();
     if cli_args
@@ -171,7 +192,7 @@ fn main() {
     if cli_args.first().is_some_and(|a| a == "visual-mcp") {
         if let Err(error) = gespan_core::visual_bridge::mcp_stdio() {
             eprintln!("{error}");
-            std::process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -180,12 +201,12 @@ fn main() {
             Ok(value) => {
                 println!("{value}");
                 if value.get("ok") == Some(&serde_json::Value::Bool(false)) {
-                    std::process::exit(1);
+                    exit(1);
                 }
             }
             Err(error) => {
                 println!("{}", serde_json::json!({"ok":false,"error":error}));
-                std::process::exit(1);
+                exit(1);
             }
         }
         return;
@@ -195,12 +216,12 @@ fn main() {
             Ok(value) => {
                 println!("{value}");
                 if value.get("ok") == Some(&serde_json::Value::Bool(false)) {
-                    std::process::exit(1);
+                    exit(1);
                 }
             }
             Err(error) => {
                 println!("{}", serde_json::json!({"ok":false,"error":error}));
-                std::process::exit(1);
+                exit(1);
             }
         }
         return;
@@ -239,14 +260,18 @@ fn main() {
             }
             _ => {
                 eprintln!("Unknown option: {arg}");
-                std::process::exit(2);
+                exit(2);
             }
         }
     }
     if use_gespan && (fixture || chat_fixture || visual_fixture) {
         eprintln!("Fixtures require --dev-data; they cannot be written into your Gespan database.");
-        std::process::exit(2);
+        exit(2);
     }
+    // Kept for the life of the process; exit paths flush through `exit`.
+    let _diagnostics = gespan_core::diagnostics::init(diagnostics_config(use_gespan))
+        .inspect_err(|error| eprintln!("{error}"))
+        .ok();
     let cwd = cwd
         .canonicalize()
         .unwrap_or(cwd)
@@ -267,7 +292,7 @@ fn main() {
         eprintln!(
             "The isolated development directory points at the desktop database. Choose a separate GESPAN_NATIVE_DATA_DIR."
         );
-        std::process::exit(2);
+        exit(2);
     }
     let mut db = if check_data {
         Store::read_gespan(&database)
@@ -276,7 +301,7 @@ fn main() {
     }
     .unwrap_or_else(|error| {
         eprintln!("Cannot open {}: {error}", database.display());
-        std::process::exit(1);
+        exit(1);
     });
     if check_data {
         match db.sessions() {
@@ -287,7 +312,7 @@ fn main() {
             ),
             Err(error) => {
                 eprintln!("{error}");
-                std::process::exit(1);
+                exit(1);
             }
         }
         return;
@@ -495,6 +520,21 @@ mod native_tests {
                         .cached(StyleRefinement::default().w_full().h(px(76.))),
                 )
         }
+    }
+    #[test]
+    fn development_data_logs_to_its_own_folder() {
+        use gespan_core::diagnostics::Channel;
+        let release = diagnostics_config(true);
+        let dev = diagnostics_config(false);
+        assert_eq!(release.channel, Channel::Release);
+        assert_eq!(dev.channel, Channel::Dev);
+        assert_eq!(
+            release.log_dir,
+            gespan_core::diagnostics::log_dir(Channel::Release)
+        );
+        assert_eq!(dev.log_dir, gespan_core::diagnostics::log_dir(Channel::Dev));
+        assert_ne!(release.log_dir, dev.log_dir);
+        assert_eq!(release.version, notifications::updater::version());
     }
     #[test]
     fn bundle_plist_selects_the_data_mode() {

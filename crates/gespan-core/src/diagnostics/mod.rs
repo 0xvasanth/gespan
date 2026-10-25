@@ -55,8 +55,11 @@ pub fn init(config: Config) -> Result<Guard, String> {
     let (writer, worker) = tracing_appender::non_blocking(file);
     let (env_filter, filter_error) = filter(std::env::var("GESPAN_LOG").ok().as_deref());
     // Development runs also print readable lines, as `eprintln!` did.
-    let stderr = (config.channel == Channel::Dev)
-        .then(|| tracing_subscriber::fmt::layer().with_writer(std::io::stderr));
+    let stderr = (config.channel == Channel::Dev).then(|| {
+        tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+    });
     let subscriber = tracing_subscriber::registry()
         .with(env_filter)
         .with(json_layer(writer, &config.version))
@@ -72,11 +75,7 @@ pub fn init(config: Config) -> Result<Guard, String> {
     if let Err(error) = bridged {
         tracing::warn!(%error, "log crate messages are not captured");
     }
-    tracing::info!(
-        version = %config.version,
-        channel = ?config.channel,
-        "diagnostics started"
-    );
+    tracing::info!(channel = ?config.channel, "diagnostics started");
     let _ = STARTED.set(config);
     Ok(Guard(()))
 }
