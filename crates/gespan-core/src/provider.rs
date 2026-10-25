@@ -1595,7 +1595,7 @@ fn run_operation(
             parked::discard_session(&request);
         }
         (
-            parked::Wire::spawn(&mut command, &request, !probe && !command_probe)?,
+            parked::Wire::spawn(&mut command, &request, eligible)?,
             Protocol::new(request),
             false,
         )
@@ -1855,7 +1855,8 @@ fn run_operation(
         stop_confirmed = true;
     }
     if let (Err(error), false) = (&result, cancel.load(Ordering::Relaxed)) {
-        if !probe && !command_probe {
+        // Conversation turns only: not probes or background text work.
+        if eligible {
             crate::diagnostics::metrics::failure(
                 "agent.turn_error",
                 crate::diagnostics::metrics::ErrorKind::of_message(error),
@@ -1982,6 +1983,38 @@ mod tests {
                 )
             });
             assert!(result.is_err());
+            assert!(counts.is_empty(), "{:?}", counted(counts));
+        }
+
+        #[test]
+        fn background_text_requests_are_not_starts_or_turn_errors() {
+            let dir = tempfile::tempdir().unwrap();
+            let request = agent(dir.path(), Kind::Claude, "exit 3");
+            let (result, counts) = capture(|| run_text(request, Arc::new(AtomicBool::new(false))));
+            assert!(result.is_err());
+            assert!(counts.is_empty(), "{:?}", counted(counts));
+        }
+
+        #[test]
+        fn a_stopped_opencode_start_is_not_a_failure() {
+            let dir = tempfile::tempdir().unwrap();
+            let request = agent(
+                dir.path(),
+                Kind::OpenCode,
+                "touch \"$0.started\"; exec sleep 5",
+            );
+            let marker = request.binary.with_extension("started");
+            let cancel = Arc::new(AtomicBool::new(false));
+            let stop = cancel.clone();
+            let stopper = std::thread::spawn(move || {
+                while !marker.exists() {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                stop.store(true, Ordering::Relaxed);
+            });
+            let (result, counts) = capture(|| run(request, cancel, |_| Ok(())));
+            stopper.join().unwrap();
+            assert_eq!(result, Err("Stopped".into()));
             assert!(counts.is_empty(), "{:?}", counted(counts));
         }
 

@@ -9,8 +9,8 @@ use std::{
     cell::RefCell,
     io,
     path::{Path, PathBuf},
-    sync::{Mutex, TryLockError},
-    time::Duration,
+    sync::{Mutex, MutexGuard, TryLockError},
+    time::{Duration, Instant},
 };
 
 /// Why an operation failed, as a short fixed code. Never the error text, so
@@ -64,17 +64,25 @@ impl ErrorKind {
 
     /// Sorts an error message into a kind. The message is read, never kept.
     pub fn of_message(message: &str) -> Self {
+        // Whole words only: `fix-timeout`, `src/network.rs` or `abc4013f`
+        // inside a message are names, not causes.
         let message = message.to_lowercase();
-        let has = |needles: &[&str]| needles.iter().any(|n| message.contains(n));
-        // Status codes only as whole words, not inside hashes, paths or ports.
-        let status = |codes: &[&str]| {
-            message
-                .split(|c: char| !c.is_ascii_alphanumeric())
-                .any(|word| codes.contains(&word))
+        let words: Vec<&str> = message
+            .split(|c: char| !(c.is_alphanumeric() || "-_/\\.".contains(c)))
+            .map(|word| word.trim_end_matches('.'))
+            .filter(|word| !word.is_empty())
+            .collect();
+        let has = |phrases: &[&str]| {
+            phrases.iter().any(|phrase| {
+                let phrase: Vec<&str> = phrase.split(' ').collect();
+                words
+                    .windows(phrase.len())
+                    .any(|window| window == phrase.as_slice())
+            })
         };
         if has(&["timed out", "timeout"]) {
             Self::Timeout
-        } else if has(&["(os error 13)"]) {
+        } else if has(&["os error 13"]) {
             // A file the OS refused to open, not a sign-in problem.
             Self::Io
         } else if has(&[
@@ -82,8 +90,9 @@ impl ErrorKind {
             "unauthorized",
             "forbidden",
             "authentication",
-        ]) || status(&["401", "403"])
-        {
+            "401",
+            "403",
+        ]) {
             Self::Auth
         } else if has(&[
             "could not resolve",
@@ -111,20 +120,6 @@ impl ErrorKind {
         match error.kind() {
             io::ErrorKind::NotFound => Self::NotFound,
             _ => Self::SpawnFailed,
-        }
-    }
-}
-
-impl From<&io::Error> for ErrorKind {
-    fn from(error: &io::Error) -> Self {
-        match error.kind() {
-            io::ErrorKind::NotFound => Self::NotFound,
-            io::ErrorKind::PermissionDenied => Self::Auth,
-            io::ErrorKind::TimedOut => Self::Timeout,
-            io::ErrorKind::ConnectionRefused
-            | io::ErrorKind::ConnectionReset
-            | io::ErrorKind::ConnectionAborted => Self::Network,
-            _ => Self::Io,
         }
     }
 }
@@ -339,8 +334,8 @@ fn record(name: &str, kind: Option<ErrorKind>) {
     }
 }
 
-/// Counts a crash panic, from the panic hook. It never waits for the lock:
-/// the panicking thread may be the one holding it.
+/// Counts a crash panic, from the panic hook. It waits only briefly for the
+/// lock: the panicking thread may be the one holding it.
 pub(super) fn record_panic() {
     let name = "panic";
     let kind = Some(ErrorKind::Panic);
@@ -358,13 +353,25 @@ pub(super) fn record_panic() {
     if captured.is_some() {
         return;
     }
-    let counters = match COUNTERS.try_lock() {
-        Ok(counters) => counters,
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        Err(TryLockError::WouldBlock) => return,
+    let Some(counters) = lock_briefly(&COUNTERS, Duration::from_millis(100)) else {
+        return;
     };
     if let Some(counters) = counters.as_ref() {
         let _ = counters.record(today, name, kind);
+    }
+}
+
+/// The lock, or `None` once `wait` has passed without another holder letting
+/// go; never blocks on a lock this thread may hold itself.
+fn lock_briefly<T>(lock: &Mutex<T>, wait: Duration) -> Option<MutexGuard<'_, T>> {
+    let deadline = Instant::now() + wait;
+    loop {
+        match lock.try_lock() {
+            Ok(guard) => return Some(guard),
+            Err(TryLockError::Poisoned(poisoned)) => return Some(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) if Instant::now() >= deadline => return None,
+            Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(1)),
+        }
     }
 }
 
@@ -571,6 +578,18 @@ mod tests {
             ),
             ("listening on port 14010", ErrorKind::Other),
             ("server returned status 403", ErrorKind::Auth),
+            (
+                "a branch named 'fix-timeout' already exists",
+                ErrorKind::Other,
+            ),
+            (
+                "pathspec 'src/network.rs' did not match any files",
+                ErrorKind::Other,
+            ),
+            ("'/work/forbidden-city' already exists", ErrorKind::Other),
+            ("could not open notfound_handler.rs", ErrorKind::Other),
+            ("Error: request timed out.", ErrorKind::Timeout),
+            ("Network is unreachable", ErrorKind::Network),
             ("boom", ErrorKind::Other),
             ("", ErrorKind::Other),
         ] {
@@ -584,12 +603,6 @@ mod tests {
         let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
         assert_eq!(ErrorKind::of_spawn(&missing), ErrorKind::NotFound);
         assert_eq!(ErrorKind::of_spawn(&denied), ErrorKind::SpawnFailed);
-        assert_eq!(ErrorKind::from(&denied), ErrorKind::Auth);
-        assert_eq!(
-            ErrorKind::from(&std::io::Error::from(std::io::ErrorKind::TimedOut)),
-            ErrorKind::Timeout
-        );
-        assert_eq!(ErrorKind::from(&std::io::Error::other("x")), ErrorKind::Io);
     }
 
     #[test]
@@ -702,6 +715,31 @@ mod tests {
             .map(|c| (c.name, c.kind, c.count))
             .collect();
         assert_eq!(got, [("panic".into(), Some(ErrorKind::Panic), 1)]);
+    }
+
+    #[test]
+    fn the_panic_count_waits_briefly_for_another_thread_s_lock() {
+        let lock = std::sync::Arc::new(Mutex::new(0));
+        let held = lock.lock().unwrap();
+        let other = lock.clone();
+        let waiter = std::thread::spawn(move || {
+            lock_briefly(&other, Duration::from_secs(5)).map(|mut n| {
+                *n += 1;
+            })
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        drop(held);
+        assert!(waiter.join().unwrap().is_some());
+        assert_eq!(*lock.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn the_panic_count_gives_up_on_a_lock_that_stays_held() {
+        let lock = Mutex::new(0);
+        let _held = lock.lock().unwrap();
+        let started = std::time::Instant::now();
+        assert!(lock_briefly(&lock, Duration::from_millis(50)).is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

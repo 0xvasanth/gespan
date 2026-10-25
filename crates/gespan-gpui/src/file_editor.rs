@@ -651,19 +651,15 @@ impl FileEditor {
             }
             let source = text.clone();
             let base = original.clone();
+            // Only QuickJS failures count: the native path runs per edit, and
+            // its one failure, a missing grammar, is `editor.syntax_grammar`.
+            let quickjs = syntax.is_none();
             let work = cx.background_executor().spawn(async move {
-                use gespan_core::diagnostics::metrics;
                 match syntax {
                     Some(syntax) => {
                         crate::editor_syntax::analyze(&syntax, &path, &source, base.as_deref())
                     }
-                    // Failures only, and only here: the native path runs per
-                    // edit, and its one failure, a missing grammar, is
-                    // counted once as `editor.syntax_grammar`.
-                    None => crate::editor_analysis::analyze(&path, &source, base.as_deref())
-                        .inspect_err(|e| {
-                            metrics::failure("editor.analysis", metrics::ErrorKind::of_message(e))
-                        }),
+                    None => crate::editor_analysis::analyze(&path, &source, base.as_deref()),
                 }
             });
             let result = work.await;
@@ -673,7 +669,17 @@ impl FileEditor {
                         Ok(analysis) => this
                             .input
                             .update(cx, |input, cx| input.set_editor_analysis(analysis, cx)),
-                        Err(error) => eprintln!("gespan: editor analysis failed: {error}"),
+                        Err(error) => {
+                            // Counted once per current result, not for stale ones.
+                            if quickjs {
+                                use gespan_core::diagnostics::metrics;
+                                metrics::failure(
+                                    "editor.analysis",
+                                    metrics::ErrorKind::of_message(&error),
+                                );
+                            }
+                            eprintln!("gespan: editor analysis failed: {error}");
+                        }
                     }
                 }
             });

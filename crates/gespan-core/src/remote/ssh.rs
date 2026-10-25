@@ -89,10 +89,11 @@ impl Job {
     }
     pub fn complete(&self, action: impl FnOnce() -> Result<crate::remote::Machine, String>) {
         let mut inner = self.inner.lock().unwrap();
+        // Counted once it is saved; a cancelled connection is not a failure.
         let result = if self.cancelled.load(Ordering::Relaxed) {
             Err("Connection cancelled".into())
         } else {
-            action()
+            crate::diagnostics::metrics::track("remote.ssh_connect", action())
         };
         inner.view.done = true;
         inner.view.prompt = None;
@@ -658,6 +659,39 @@ pub fn device_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connections_are_counted_when_they_finish_but_not_when_cancelled() {
+        use crate::diagnostics::metrics::{capture, ErrorKind};
+        let machine = || crate::remote::Machine {
+            id: "m".into(),
+            name: "Build box".into(),
+            endpoint: "ssh://build".into(),
+            environment_id: "env".into(),
+            ssh: None,
+        };
+        let kinds = |action: &dyn Fn(&Job)| {
+            let job = Job::new();
+            let ((), counts) = capture(|| action(&job));
+            counts
+                .into_iter()
+                .map(|c| (c.name, c.kind))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kinds(&|job| job.complete(|| Err("Connection store is locked".into()))),
+            [("remote.ssh_connect".into(), Some(ErrorKind::Other))]
+        );
+        assert_eq!(
+            kinds(&|job| job.complete(|| Ok(machine()))),
+            [("remote.ssh_connect".into(), None)]
+        );
+        assert!(kinds(&|job| {
+            job.cancel();
+            job.complete(|| Err("Operation timed out".into()));
+        })
+        .is_empty());
+    }
 
     #[test]
     fn stale_requests_cannot_invalidate_a_newer_tunnel() {
