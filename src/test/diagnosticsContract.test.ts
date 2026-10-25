@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // The diagnostics contract lives in Markdown, and both apps (Native and Tauri)
@@ -265,5 +265,68 @@ describe("intake API", () => {
     const error = exampleIn(md, "Errors") as { error: Json };
     expect(Object.keys(error.error).sort()).toEqual(["code", "message"]);
     expect(rows.map((r) => r[1])).toContain(`\`${error.error.code}\``);
+  });
+});
+
+const PRIVACY = "docs/privacy.md";
+const CONTRACT_DOCS = [LOG_SCHEMA, BUNDLE, CONSENT, INTAKE, PRIVACY];
+
+/** GitHub's anchor for a heading: lowercase, punctuation dropped, spaces to dashes. */
+const slug = (heading: string) =>
+  heading
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N} _-]/gu, "")
+    .replaceAll(" ", "-");
+
+describe("privacy notice", () => {
+  const md = doc(PRIVACY);
+
+  it("answers what is collected, where it goes, how long it is kept and how to delete it", () => {
+    for (const heading of [
+      "What is collected",
+      "Where it goes",
+      "How long it is kept",
+      "How to have it deleted",
+    ]) {
+      expect(section(md, heading).trim(), heading).not.toBe("");
+    }
+  });
+
+  it("states the same consent_version as the consent wording", () => {
+    expect(currentConsentVersion(md)).toBe(currentConsentVersion(doc(CONSENT)));
+  });
+
+  it("names every deny-listed field as never sent", () => {
+    const never = section(md, "What is never sent");
+    for (const field of DENY_LIST) expect(never).toContain(`\`${field}\``);
+  });
+
+  it("gives the retention limits the contract sets", () => {
+    const kept = section(md, "How long it is kept");
+    for (const limit of ["7 days", "50 MB", "90 days"]) expect(kept).toContain(limit);
+  });
+
+  it("links to each diagnostics contract document", () => {
+    for (const path of [LOG_SCHEMA, BUNDLE, CONSENT, INTAKE]) {
+      expect(md).toContain(`](${path.replace("docs/", "")}`);
+    }
+  });
+});
+
+describe("contract documents link to each other correctly", () => {
+  it.each(CONTRACT_DOCS)("every relative link and anchor in %s resolves", (from) => {
+    const links = [...doc(from).matchAll(/\]\(([^)\s]+)\)/g)]
+      .map((m) => m[1])
+      .filter((href) => !/^[a-z]+:/.test(href));
+    expect(links.length).toBeGreaterThan(0);
+    for (const href of links) {
+      const [file, anchor] = href.split("#");
+      const target = file ? join(dirname(from), file) : from;
+      expect(existsSync(join(root, target)), `${from} → ${href}`).toBe(true);
+      if (anchor) {
+        const anchors = [...doc(target).matchAll(/^#+ (.+)$/gm)].map((m) => slug(m[1]));
+        expect(anchors, `${from} → ${href}`).toContain(anchor);
+      }
+    }
   });
 });
