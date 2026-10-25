@@ -7,15 +7,20 @@ import {
 import type { TicketRef } from "../../sessions/model/session";
 import { SessionTicketChip } from "../../sessions/ui/SessionTicketChip";
 import {
+  PRIORITIES,
   setCardTicket,
   type BoardCard,
+  type BoardLabel,
+  type CardExtras,
   type CardLinkKind,
 } from "../model/board";
 import { applyFetchedTicket } from "../model/ticketCards";
 import { ICON_BUTTON, MenuButton, MenuItem, noDrag } from "./boardControls";
 import {
+  dueChip,
   LINK_KIND_LABEL,
   relativeTime,
+  type DueTone,
   type BoardLinkTarget,
   type ResolvedLink,
 } from "./boardFormat";
@@ -31,6 +36,59 @@ const DOT: Record<NonNullable<BoardLinkTarget["status"]>, string> = {
   completed: "bg-diff-add",
   failed: "bg-diff-del-fg",
 };
+
+const DUE_TONE: Record<DueTone, string> = {
+  overdue: "text-red-400",
+  soon: "text-amber-400",
+  later: "text-content/60",
+};
+
+/** Priority, due date and subtask progress, when the card has any. */
+function CardExtrasRow({ extras }: { extras: CardExtras }) {
+  const due = extras.dueAt === null ? null : dueChip(extras.dueAt);
+  const priority = PRIORITIES[extras.priority] ?? PRIORITIES[0];
+  if (!extras.priority && !due && !extras.subtasksTotal && !extras.comments) {
+    return null;
+  }
+  return (
+    <>
+      {extras.priority ? (
+        <span
+          data-card-priority={extras.priority}
+          className={`shrink-0 ${extras.priority >= 4 ? "text-red-400" : "text-content/70"}`}
+        >
+          {priority}
+        </span>
+      ) : null}
+      {due ? (
+        <span
+          data-card-due={due.tone}
+          className={`shrink-0 ${DUE_TONE[due.tone]}`}
+        >
+          {due.text}
+        </span>
+      ) : null}
+      {extras.subtasksTotal ? (
+        <span
+          data-card-subtasks=""
+          title="Subtasks done"
+          className="shrink-0 tabular-nums text-content/60"
+        >
+          {extras.subtasksDone}/{extras.subtasksTotal}
+        </span>
+      ) : null}
+      {extras.comments ? (
+        <span
+          data-card-comments=""
+          title="Comments"
+          className="shrink-0 tabular-nums text-content/60"
+        >
+          {extras.comments} {extras.comments === 1 ? "comment" : "comments"}
+        </span>
+      ) : null}
+    </>
+  );
+}
 
 /** `full` drops the card's 140px label cap, for roomier places. */
 export function LinkChip({
@@ -75,6 +133,8 @@ export function BoardCardItem({
   done,
   link,
   ticket = null,
+  extras,
+  labels = [],
   onOpen,
   onOpenLinkedWork,
   onRename,
@@ -86,6 +146,9 @@ export function BoardCardItem({
   done: boolean;
   link: ResolvedLink | null;
   ticket?: TicketRef | null;
+  extras?: CardExtras;
+  /** The card's labels, in the board's order. */
+  labels?: readonly BoardLabel[];
   onOpen: () => void;
   onOpenLinkedWork: (target: BoardLinkTarget) => void;
   onRename: () => void;
@@ -135,10 +198,28 @@ export function BoardCardItem({
           />
         </div>
       ) : null}
-      <div className="mt-1.5 flex min-w-0 items-center gap-2 text-[11px]">
+      {labels.length ? (
+        <div data-card-labels="" className="mt-1.5 flex flex-wrap gap-1">
+          {labels.map((label) => (
+            <span
+              key={label.id}
+              className="inline-flex max-w-full items-center gap-1 rounded-full border border-stroke px-1.5 text-[11px] leading-4 text-content/70"
+            >
+              <span
+                aria-hidden
+                className="size-1.5 shrink-0 rounded-full"
+                style={{ backgroundColor: `#${label.color}` }}
+              />
+              <span className="truncate">{label.name}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
         <span className="shrink-0 font-mono text-content/45">
           #{card.number}
         </span>
+        {extras ? <CardExtrasRow extras={extras} /> : null}
         {link ? <LinkChip link={link} /> : null}
         <span className="ml-auto shrink-0 text-content/45">
           {relativeTime(card.updatedAt)}

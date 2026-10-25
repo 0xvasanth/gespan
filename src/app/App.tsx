@@ -13993,6 +13993,18 @@ function Workspace({
     // The Pilot roster is read through its snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardShown, busySessionKey, history, pilotsEnabled, pilotRail, pilotsSnap]);
+  const boardProjects = useMemo(
+    () =>
+      boardShown
+        ? projectRailItems(recents, normalizeProjectPath(projectCwd)).map(
+            (project) => ({
+              path: project.path,
+              name: projectName(project.path),
+            }),
+          )
+        : [],
+    [boardShown, recents, projectCwd],
+  );
   // `history` only holds projects visited this run, so the board asks for
   // the rest by id; a session the store doesn't return was deleted.
   const lookupBoardLinkTargets = useCallback(
@@ -14879,6 +14891,7 @@ function Workspace({
                         linkTargets={boardLinkTargets}
                         onOpenLinkedWork={onOpenBoardLinkedWork}
                         lookupLinkTargets={lookupBoardLinkTargets}
+                        projects={boardProjects}
                       />
                     </AppViewSurface>
                   ) : null}

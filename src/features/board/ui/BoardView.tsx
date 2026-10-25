@@ -10,7 +10,7 @@ import {
 import { OverlayNav } from "../../../app/shell/TitleBar";
 import { WindowControls } from "../../../app/shell/WindowControls";
 import { IS_MAC } from "../../../platform/tauri/platform";
-import { Kanban, Plus } from "../../../shared/ui/icons";
+import { Kanban, Plus, Search } from "../../../shared/ui/icons";
 import { SearchableSelect } from "../../../shared/ui/SearchableSelect";
 import type { TicketRef } from "../../sessions/model/session";
 import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItemDialog";
@@ -23,7 +23,9 @@ import {
   deleteCard,
   deleteColumn,
   getBoard,
+  getCardExtras,
   getCardTickets,
+  listLabels,
   listBoards,
   moveCard,
   moveColumn,
@@ -34,11 +36,22 @@ import {
   type BoardCard,
   type BoardColumn,
   type BoardDetail,
+  type BoardLabel,
+  type CardExtras,
   type ColumnRole,
 } from "../model/board";
+import {
+  EMPTY_FILTER,
+  filterCount,
+  fullIndex,
+  matchesCard,
+  pruneFilter,
+  type BoardFilter,
+} from "../model/boardFilter";
 import { createCardFromTicket, newCardColumn } from "../model/ticketCards";
 import { BoardCardItem } from "./BoardCardItem";
 import { BoardColumnHeader } from "./BoardColumnHeader";
+import { BoardFilterMenu } from "./BoardFilter";
 import {
   confirmDeleteCard,
   MenuButton,
@@ -58,6 +71,7 @@ import { KanbanBoard } from "./kanban/KanbanBoard";
 import {
   applyCardMove,
   applyColumnMove,
+  columnCards,
   type DropTarget,
 } from "./kanban/kanbanMove";
 
@@ -107,6 +121,8 @@ type Props = {
    * projects not loaded this run, say). Work it doesn't return is gone.
    */
   lookupLinkTargets: (links: LinkRef[]) => Promise<BoardLinkTarget[]>;
+  /** The workspace's projects, for the filter. */
+  projects: readonly { path: string; name: string }[];
 };
 
 export function BoardView({
@@ -118,6 +134,7 @@ export function BoardView({
   linkTargets,
   onOpenLinkedWork,
   lookupLinkTargets,
+  projects,
 }: Props) {
   return (
     <div
@@ -151,6 +168,7 @@ export function BoardView({
         linkTargets={linkTargets}
         onOpenLinkedWork={onOpenLinkedWork}
         lookupLinkTargets={lookupLinkTargets}
+        projects={projects}
       />
     </div>
   );
@@ -160,7 +178,11 @@ function BoardContent({
   linkTargets,
   onOpenLinkedWork,
   lookupLinkTargets,
-}: Pick<Props, "linkTargets" | "onOpenLinkedWork" | "lookupLinkTargets">) {
+  projects,
+}: Pick<
+  Props,
+  "linkTargets" | "onOpenLinkedWork" | "lookupLinkTargets" | "projects"
+>) {
   const [boards, setBoards] = useState<Board[] | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<BoardDetail | null>(null);
@@ -168,6 +190,10 @@ function BoardContent({
   const [naming, setNaming] = useState<"new" | "rename" | null>(null);
   const [addingColumn, setAddingColumn] = useState(false);
   const [tickets, setTickets] = useState<Record<string, TicketRef>>({});
+  const [extras, setExtras] = useState<Record<string, CardExtras>>({});
+  const [labels, setLabels] = useState<BoardLabel[]>([]);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<BoardFilter>(EMPTY_FILTER);
   const [ticketCardOpen, setTicketCardOpen] = useState(false);
   const [composerColumn, setComposerColumn] = useState<string | null>(null);
   const [openCard, setOpenCard] = useState<{
@@ -225,14 +251,19 @@ function BoardContent({
     if (!id) return;
     const ticket = ++request.current;
     try {
-      const [next, linked] = await Promise.all([
+      const [next, linked, cardExtras, boardLabels] = await Promise.all([
         getBoard(id),
         // A failed ticket read leaves the cards without chips, not the board unloaded.
         getCardTickets(id).catch(() => null),
+        // Likewise for the card details and labels: the cards show without them.
+        getCardExtras(id).catch(() => null),
+        listLabels(id).catch(() => null),
       ]);
       if (ticket !== request.current || openIdRef.current !== id) return;
       setDetail(next);
       if (linked) setTickets(linked);
+      if (cardExtras) setExtras(cardExtras);
+      if (boardLabels) setLabels(boardLabels);
       setBoards(
         (list) =>
           list &&
@@ -271,6 +302,11 @@ function BoardContent({
     setDetail((current) => (current?.board.id === openId ? current : null));
     setComposerColumn(null);
     setOpenCard(null);
+    // Labels belong to a board: its filter and details don't carry over.
+    setExtras({});
+    setLabels([]);
+    setFilter(EMPTY_FILTER);
+    setQuery("");
     if (!openId) return;
     void refresh();
     return subscribeBoard(openId, () => void refresh());
@@ -330,10 +366,52 @@ function BoardContent({
     return states;
   }, [lookedUp, targetsByValue]);
 
+  // A label or project that is gone leaves the filter, so it can't hide
+  // every card behind a choice nobody can see or undo.
+  const activeFilter = useMemo(
+    () => pruneFilter(filter, labels, projects),
+    [filter, labels, projects],
+  );
+  const narrowing = query.trim() !== "" || filterCount(activeFilter) > 0;
+  const matches = useCallback(
+    (card: BoardCard) =>
+      matchesCard(card, extras[card.id], query, activeFilter),
+    [extras, query, activeFilter],
+  );
+  // The board shows only matching cards. Its drop indexes count those, so
+  // `onCardMove` maps them back to places among all the column's cards.
+  const shownDetail = useMemo(
+    () =>
+      detail && narrowing
+        ? { ...detail, cards: detail.cards.filter(matches) }
+        : detail,
+    [detail, narrowing, matches],
+  );
+  const matchesRef = useRef(matches);
+  const narrowingRef = useRef(narrowing);
+  useLayoutEffect(() => {
+    matchesRef.current = matches;
+    narrowingRef.current = narrowing;
+  });
+
   const onCardMove = useCallback(
-    (cardId: string, to: DropTarget) => {
+    (cardId: string, shown: DropTarget) => {
       const before = detailRef.current;
       if (!before) return;
+      let to = shown;
+      if (narrowingRef.current) {
+        const others = columnCards(before, shown.columnId).filter(
+          (card) => card.id !== cardId,
+        );
+        to = {
+          columnId: shown.columnId,
+          index: fullIndex(
+            others.map((card) => card.id),
+            others.filter(matchesRef.current).map((card) => card.id),
+            shown.index,
+          ),
+        };
+      }
       setDetail(applyCardMove(before, cardId, to));
       moveCard(cardId, to.columnId, to.index, "user").catch((cause) => {
         if (detailRef.current?.board.id === before.board.id) setDetail(before);
@@ -426,12 +504,19 @@ function BoardContent({
     ? detail?.cards.find((card) => card.id === openCard.id)
     : undefined;
 
+  const labelsOf = (cardId: string) => {
+    const ids = extras[cardId]?.labels;
+    return ids?.length ? labels.filter((label) => ids.includes(label.id)) : [];
+  };
+
   const renderCard = (card: BoardCard) => (
     <BoardCardItem
       card={card}
       done={columnsById.get(card.columnId)?.role === "done"}
       link={resolveLink(card, linkStates)}
       ticket={tickets[card.id] ?? null}
+      extras={extras[card.id]}
+      labels={labelsOf(card.id)}
       onOpen={() => setOpenCard({ id: card.id })}
       onOpenLinkedWork={openLinkedWork}
       onRename={() => setOpenCard({ id: card.id, focus: "title" })}
@@ -440,10 +525,16 @@ function BoardContent({
     />
   );
 
-  const renderColumnHeader = (column: BoardColumn, count: number) => (
+  const renderColumnHeader = (column: BoardColumn, shown: number) => (
     <BoardColumnHeader
       column={column}
-      count={count}
+      count={
+        narrowing
+          ? (detail?.cards.filter((card) => card.columnId === column.id)
+              .length ?? shown)
+          : shown
+      }
+      shown={narrowing ? shown : undefined}
       takenRoles={
         new Set(
           (detail?.columns ?? [])
@@ -568,6 +659,35 @@ function BoardContent({
             )}
           </MenuButton>
         ) : null}
+        {detail ? (
+          <>
+            <label className="relative ml-2 flex items-center">
+              <Search
+                className="pointer-events-none absolute left-2 size-3.5 text-content/45"
+                strokeWidth={1.75}
+              />
+              <input
+                aria-label="Search cards"
+                placeholder="Search cards"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && query) {
+                    event.preventDefault();
+                    setQuery("");
+                  }
+                }}
+                className="h-7 w-44 rounded-md border border-stroke bg-background-base pl-7 pr-2 text-[12px] text-content outline-none placeholder:text-content/40 focus:border-accent/60"
+              />
+            </label>
+            <BoardFilterMenu
+              filter={activeFilter}
+              labels={labels}
+              projects={projects}
+              onChange={setFilter}
+            />
+          </>
+        ) : null}
         <div className="flex-1" />
         {detail ? (
           <button
@@ -599,9 +719,9 @@ function BoardContent({
         )}
       </div>
       <div className="min-h-0 flex-1">
-        {detail ? (
+        {shownDetail ? (
           <KanbanBoard
-            detail={detail}
+            detail={shownDetail}
             renderCard={renderCard}
             renderColumnHeader={renderColumnHeader}
             renderColumnFooter={renderColumnFooter}

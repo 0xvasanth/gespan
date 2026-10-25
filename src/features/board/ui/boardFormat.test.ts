@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { BoardActivity } from "../model/board";
 import {
   activityText,
+  dueChip,
   linkValue,
   parseLinkValue,
   relativeTime,
@@ -160,5 +161,45 @@ describe("sessionLinkTarget", () => {
     });
     expect(sessionLinkTarget({ ...session, draft: true }).unlisted).toBe(true);
     expect(sessionLinkTarget(session).unlisted).toBeUndefined();
+  });
+});
+
+describe("dueChip", () => {
+  const now = new Date(2026, 9, 25, 15, 30).getTime();
+  const at = (y: number, m: number, d: number) => new Date(y, m, d).getTime();
+
+  it("colours by how close the local day is", () => {
+    expect(dueChip(at(2026, 9, 24), now)).toEqual({
+      text: "Yesterday",
+      tone: "overdue",
+    });
+    expect(dueChip(at(2026, 9, 25), now)).toEqual({
+      text: "Today",
+      tone: "soon",
+    });
+    expect(dueChip(at(2026, 9, 26), now)).toEqual({
+      text: "Tomorrow",
+      tone: "soon",
+    });
+    expect(dueChip(at(2026, 9, 28), now).tone).toBe("later");
+  });
+
+  it("a due date earlier today is not overdue", () => {
+    expect(dueChip(new Date(2026, 9, 25, 0, 0).getTime(), now).tone).toBe(
+      "soon",
+    );
+  });
+
+  it("names the weekday within a week, then the date", () => {
+    expect(dueChip(at(2026, 9, 28), now).text).toBe("Wed");
+    expect(dueChip(at(2026, 10, 3), now)).toEqual({
+      text: "Nov 3",
+      tone: "later",
+    });
+    expect(dueChip(at(2027, 0, 5), now).text).toBe("Jan 5, 2027");
+    expect(dueChip(at(2026, 8, 1), now)).toEqual({
+      text: "Sep 1",
+      tone: "overdue",
+    });
   });
 });

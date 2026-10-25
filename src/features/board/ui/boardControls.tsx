@@ -47,17 +47,20 @@ export const ICON_BUTTON =
 const MENU_ITEM =
   "flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] text-content/85 hover:bg-content/8 hover:text-content disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent";
 
-/** A "…" button with its menu. `children` gets a `close` callback. */
+/** A "…" button (or `trigger`) with its menu. `children` gets a `close` callback. */
 export function MenuButton({
   label,
   children,
   width = 200,
   className = ICON_BUTTON,
+  trigger,
 }: {
   label: string;
   children: (close: () => void) => ReactNode;
   width?: number;
   className?: string;
+  /** Replaces the "…" icon on the button. */
+  trigger?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
@@ -80,7 +83,7 @@ export function MenuButton({
           setOpen((value) => !value);
         }}
       >
-        <MoreHorizontal className="size-3.5" strokeWidth={1.75} />
+        {trigger ?? <MoreHorizontal className="size-3.5" strokeWidth={1.75} />}
       </button>
       {open ? (
         <Popover

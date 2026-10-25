@@ -11,6 +11,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import type {
   BoardCard,
+  BoardLabel,
+  CardExtras,
   BoardColumn,
   BoardDetail,
   ColumnRole,
@@ -73,7 +75,16 @@ function column(
   position: number,
   role: ColumnRole | null,
 ): BoardColumn {
-  return { id, boardId: "b1", name, position, role };
+  return {
+    id,
+    boardId: "b1",
+    name,
+    position,
+    role,
+    color: null,
+    wipLimit: null,
+    collapsed: false,
+  };
 }
 
 function card(
@@ -138,6 +149,8 @@ beforeEach(() => {
     board_list: () => [BOARD],
     board_get: () => fixture(),
     board_activity: () => [],
+    board_card_extras: () => ({}),
+    board_labels: () => [],
     board_card_create: (args) =>
       card("new", String(args.columnId), 9, 9, String(args.title)),
   };
@@ -174,6 +187,7 @@ async function renderBoard(
     linkTargets: [],
     onOpenLinkedWork: vi.fn(() => Promise.resolve()),
     lookupLinkTargets: vi.fn(async () => []),
+    projects: [],
     ...overrides,
   };
   await act(async () => {
@@ -636,7 +650,11 @@ describe("BoardView linked work", () => {
   it("looks up links the app hasn't loaded, and marks only deleted ones missing", async () => {
     handlers.board_get = () => {
       const detail = fixture();
-      detail.cards[0] = { ...detail.cards[0], linkKind: "session", linkId: "s1" };
+      detail.cards[0] = {
+        ...detail.cards[0],
+        linkKind: "session",
+        linkId: "s1",
+      };
       detail.cards[1] = {
         ...detail.cards[1],
         linkKind: "session",
@@ -836,5 +854,276 @@ describe("Board sidebar entry", () => {
 
     await act(async () => saveBoardEnabled(true));
     expect(boardEntry()).toBeDefined();
+  });
+});
+
+describe("BoardView card face, search and filters", () => {
+  const extras = (over: Partial<CardExtras> = {}): CardExtras => ({
+    priority: 0,
+    dueAt: null,
+    projects: [],
+    labels: [],
+    subtasksDone: 0,
+    subtasksTotal: 0,
+    comments: 0,
+    ...over,
+  });
+  const label = (id: string, name: string): BoardLabel => ({
+    id,
+    boardId: "b1",
+    name,
+    color: "e5484d",
+    position: 0,
+  });
+  const tomorrow = () => {
+    const now = new Date();
+    return new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1,
+    ).getTime();
+  };
+
+  /** Five cards in one column: titles tell search apart, #2 and #4 are low priority. */
+  function five() {
+    const titles = [
+      "Alpha one",
+      "Beta two",
+      "Alpha three",
+      "Beta four",
+      "Alpha five",
+    ];
+    handlers.board_get = () => ({
+      board: BOARD,
+      columns: [
+        column("backlog", "Backlog", 0, "todo"),
+        column("done", "Done", 1, "done"),
+      ],
+      cards: titles.map((title, i) =>
+        card(`c${i + 1}`, "backlog", i, i + 1, title),
+      ),
+    });
+    handlers.board_card_extras = () => ({
+      c2: extras({ priority: 1 }),
+      c4: extras({ priority: 1 }),
+      c1: extras({ priority: 3, labels: ["l1"] }),
+    });
+    handlers.board_labels = () => [label("l1", "Bug")];
+  }
+
+  const countOf = (id: string) =>
+    columnEl(id).querySelector("[data-column-count]")?.textContent;
+
+  function search(value: string) {
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search cards"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    act(() => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function pick(menuLabel: string, itemText: string) {
+    const trigger = container.querySelector<HTMLButtonElement>(
+      `button[aria-label="${menuLabel}"]`,
+    )!;
+    if (trigger.getAttribute("aria-expanded") !== "true") {
+      act(() => trigger.click());
+    }
+    const item = [
+      ...document.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
+    ].find((el) => el.textContent?.trim() === itemText)!;
+    expect(item, itemText).toBeDefined();
+    act(() => item.click());
+    await flush();
+  }
+
+  it("card_face_shows_priority_due_labels_and_subtask_progress", async () => {
+    handlers.board_card_extras = () => ({
+      c1: extras({
+        priority: 3,
+        dueAt: tomorrow(),
+        labels: ["l1"],
+        subtasksDone: 1,
+        subtasksTotal: 3,
+      }),
+    });
+    handlers.board_labels = () => [label("l1", "Bug")];
+    await renderBoard();
+    const face = columnEl("backlog").querySelector("[data-board-card='c1']")!;
+    expect(face.textContent).toContain("High");
+    expect(face.querySelector("[data-card-due]")?.textContent).toBe("Tomorrow");
+    expect(face.textContent).toContain("Bug");
+    expect(face.textContent).toContain("1/3");
+    // A card with no extras shows none of it.
+    const plain = columnEl("backlog").querySelector("[data-board-card='c2']")!;
+    expect(plain.querySelector("[data-card-due]")).toBeNull();
+    expect(plain.textContent).not.toContain("High");
+  });
+
+  it("colours an overdue due date apart from a later one", async () => {
+    const day = 86_400_000;
+    handlers.board_card_extras = () => ({
+      c1: extras({ dueAt: Date.now() - 3 * day }),
+      c2: extras({ dueAt: Date.now() + 20 * day }),
+    });
+    await renderBoard();
+    const tone = (id: string) =>
+      columnEl("backlog")
+        .querySelector(`[data-board-card='${id}'] [data-card-due]`)
+        ?.getAttribute("data-card-due");
+    expect(tone("c1")).toBe("overdue");
+    expect(tone("c2")).toBe("later");
+  });
+
+  it("search_and_filter_show_shown_over_total_counts", async () => {
+    five();
+    await renderBoard();
+    expect(countOf("backlog")).toBe("5");
+    search("alpha");
+    expect(countOf("backlog")).toBe("3/5");
+    expect(countOf("done")).toBe("0/0");
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c3", "c5"]);
+    search("#2");
+    expect(cardIdsIn("backlog")).toEqual(["c2"]);
+    search("");
+    expect(countOf("backlog")).toBe("5");
+
+    await pick("Filter", "Low");
+    expect(countOf("backlog")).toBe("2/5");
+    expect(cardIdsIn("backlog")).toEqual(["c2", "c4"]);
+    expect(container.querySelector("[data-filter-count]")?.textContent).toBe(
+      "1",
+    );
+    // Search and filter narrow together.
+    search("beta two");
+    expect(cardIdsIn("backlog")).toEqual(["c2"]);
+    search("");
+    await pick("Filter", "Clear");
+    expect(countOf("backlog")).toBe("5");
+    expect(container.querySelector("[data-filter-count]")).toBeNull();
+  });
+
+  it("drop_while_filtered_lands_between_the_right_cards", async () => {
+    five();
+    handlers.board_card_move = () => undefined;
+    await renderBoard();
+    search("alpha"); // shows #1, #3, #5; hides #2 and #4
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c3", "c5"]);
+
+    // #5 dropped after visible #3 (visible index 2 once #5 is lifted).
+    act(() =>
+      kanban.props!.onCardMove("c5", { columnId: "backlog", index: 2 }),
+    );
+    await flush();
+    expect(commands("board_card_move").at(-1)![1]).toMatchObject({
+      cardId: "c5",
+      columnId: "backlog",
+      index: 3,
+    });
+    await act(async () => emitBoardChanged("b1"));
+    await flush();
+
+    // #3 dropped before visible #1: the very top.
+    act(() =>
+      kanban.props!.onCardMove("c3", { columnId: "backlog", index: 0 }),
+    );
+    await flush();
+    expect(commands("board_card_move").at(-1)![1]).toMatchObject({
+      cardId: "c3",
+      index: 0,
+    });
+    await act(async () => emitBoardChanged("b1"));
+    await flush();
+
+    // #1 dropped before visible #5: ahead of #5, after the hidden #4.
+    act(() =>
+      kanban.props!.onCardMove("c1", { columnId: "backlog", index: 1 }),
+    );
+    await flush();
+    expect(commands("board_card_move").at(-1)![1]).toMatchObject({
+      cardId: "c1",
+      index: 3,
+    });
+
+    // Into a column whose cards are all hidden: its end.
+    act(() => kanban.props!.onCardMove("c1", { columnId: "done", index: 0 }));
+    await flush();
+    expect(commands("board_card_move").at(-1)![1]).toMatchObject({
+      columnId: "done",
+      index: 0,
+    });
+  });
+
+  it("drops into a column with hidden cards after the last visible one", async () => {
+    five();
+    handlers.board_get = () => ({
+      board: BOARD,
+      columns: [
+        column("backlog", "Backlog", 0, "todo"),
+        column("done", "Done", 1, "done"),
+      ],
+      cards: [
+        card("c1", "backlog", 0, 1, "Alpha one"),
+        card("d1", "done", 0, 6, "Alpha six"),
+        card("d2", "done", 1, 7, "Beta seven"),
+      ],
+    });
+    handlers.board_card_move = () => undefined;
+    await renderBoard();
+    search("alpha");
+    act(() => kanban.props!.onCardMove("c1", { columnId: "done", index: 1 }));
+    await flush();
+    // Visible: d1 only, so index 1 is after d1, ahead of hidden d2.
+    expect(commands("board_card_move").at(-1)![1]).toMatchObject({
+      columnId: "done",
+      index: 1,
+    });
+  });
+
+  it("a_deleted_label_in_the_filter_is_dropped", async () => {
+    five();
+    await renderBoard();
+    await pick("Filter", "Bug");
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+
+    // Another window deletes the label: the filter lets go instead of hiding every card.
+    handlers.board_labels = () => [];
+    await act(async () => emitBoardChanged("b1"));
+    await flush();
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c3", "c4", "c5"]);
+    expect(countOf("backlog")).toBe("5");
+    expect(container.querySelector("[data-filter-count]")).toBeNull();
+  });
+
+  it("filters by project from the projects prop", async () => {
+    five();
+    handlers.board_card_extras = () => ({
+      c1: extras({ projects: ["/work/api"] }),
+      c3: extras({ projects: ["/work/web"] }),
+    });
+    await renderBoard({
+      projects: [
+        { path: "/work/api", name: "api" },
+        { path: "/work/web", name: "web" },
+      ],
+    });
+    await pick("Filter", "api");
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    await pick("Filter", "web");
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c3"]);
+  });
+
+  it("keeps the board when extras fail to load", async () => {
+    handlers.board_card_extras = () => {
+      throw new Error("boom");
+    };
+    await renderBoard();
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2"]);
   });
 });

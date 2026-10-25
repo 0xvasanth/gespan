@@ -20,6 +20,7 @@ import { ColumnRoleIcon } from "./kanban/ColumnRoleIcon";
 export function BoardColumnHeader({
   column,
   count,
+  shown,
   takenRoles,
   onAddCard,
   onRename,
@@ -27,7 +28,10 @@ export function BoardColumnHeader({
   onDelete,
 }: {
   column: BoardColumn;
+  /** Every card in the column. */
   count: number;
+  /** Cards a search or filter leaves showing; set only while one is active. */
+  shown?: number;
   /** Roles held by the board's other columns. */
   takenRoles: ReadonlySet<ColumnRole>;
   onAddCard: () => void;
@@ -63,7 +67,7 @@ export function BoardColumnHeader({
         data-column-count=""
         className="shrink-0 text-[12px] tabular-nums text-content/45"
       >
-        {count}
+        {shown === undefined ? count : `${shown}/${count}`}
       </span>
       <div className="ml-auto flex items-center opacity-0 group-hover/column-header:opacity-100 focus-within:opacity-100 has-[[data-menu-open]]:opacity-100">
         <button

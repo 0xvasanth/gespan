@@ -151,3 +151,50 @@ function activityAction(row: BoardActivity): string {
 export function activityText(row: BoardActivity, now = Date.now()): string {
   return `${activityAction(row)} · ${row.actor} · ${relativeTime(row.createdAt, now)}`;
 }
+
+export type DueTone = "overdue" | "soon" | "later";
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/**
+ * A due date as a card shows it, like Native: "Today", "Tomorrow",
+ * "Yesterday", a weekday within the week, else the date. Days are local;
+ * before today is overdue, today and tomorrow are soon.
+ */
+export function dueChip(
+  dueAt: number,
+  now = Date.now(),
+): { text: string; tone: DueTone } {
+  const due = new Date(dueAt);
+  const today = new Date(now);
+  const day = (date: Date) =>
+    Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const days = Math.round((day(due) - day(today)) / 86_400_000);
+  const tone: DueTone = days < 0 ? "overdue" : days <= 1 ? "soon" : "later";
+  if (days === 0) return { text: "Today", tone };
+  if (days === 1) return { text: "Tomorrow", tone };
+  if (days === -1) return { text: "Yesterday", tone };
+  if (days >= 2 && days <= 6) return { text: WEEKDAYS[due.getDay()], tone };
+  const date = `${MONTHS[due.getMonth()]} ${due.getDate()}`;
+  return {
+    text:
+      due.getFullYear() === today.getFullYear()
+        ? date
+        : `${date}, ${due.getFullYear()}`,
+    tone,
+  };
+}
