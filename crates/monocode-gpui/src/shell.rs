@@ -1803,7 +1803,11 @@ impl Shell {
         window.defer(cx, move |window, cx| {
             window.set_content_zoom(zoom, cx);
             #[cfg(target_os = "macos")]
-            crate::traffic_lights::pin(window, crate::theme::TITLE_BAR_HEIGHT);
+            {
+                let height = crate::theme::TITLE_BAR_HEIGHT;
+                window.set_traffic_light_position(crate::traffic_lights::position(zoom, height));
+                crate::traffic_lights::pin(window, height);
+            }
         });
     }
     /// The native stand-in for the web app's Reload: restart the process.
