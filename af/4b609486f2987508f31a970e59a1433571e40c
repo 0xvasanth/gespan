@@ -1,0 +1,26 @@
+docs/diagnostics/bundle-format.md
+  s_3d70b2915bde53::t_e6774793695eda 61-62
+src/test/diagnosticsContract.test.ts
+  s_3d70b2915bde53::t_c5aae3de717762 321-322
+  s_3d70b2915bde53::t_86e3cde2421e5c 311-320,323-324
+docs/diagnostics/intake-api.md
+  s_3d70b2915bde53::t_e6774793695eda 161-164
+docs/privacy.md
+  s_3d70b2915bde53::t_cbb56a597cebeb 122-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af4b609486f2987508f31a970e59a1433571e40c",
+  "prompts": {},
+  "sessions": {
+    "s_3d70b2915bde53": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "090d580c-c9c5-4007-950a-6316c24edf7d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
