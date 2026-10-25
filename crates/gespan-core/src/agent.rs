@@ -227,6 +227,8 @@ pub enum Decision {
     Deny,
     Answer(Vec<Vec<String>>),
     KeepOpen,
+    /// Stop the turn at its next safe point: never mid-command, never denying.
+    Hold,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct QuestionOption {
