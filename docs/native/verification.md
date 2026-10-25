@@ -146,6 +146,41 @@ These runtime checks are pending; none has been run by hand yet:
   subtasks and comments in the docked drawer; search and filters show
   `shown/total`, and cards drag with the keyboard (Space lifts, arrows move,
   Space or Enter drops, Escape cancels).
+- Card detail: toggle Full page in the drawer's top bar (Escape or the toggle
+  goes back). Set "Open cards in" to Full page (Native: board header menu;
+  Tauri: Settings → General), click a card, and it opens full page; set it back
+  to Drawer.
+- Dates: set start and due with each quick pick (Today, Tomorrow, Next week,
+  In 2 weeks), pick one with the date input, and Clear.
+- Estimate: enter `90`, `90m`, `1h`, `1h 30m` and `1.5h`; each shows as `1h 30m`
+  style text. `0` and text that is not a duration are refused.
+- Relations: add Blocked by, Blocks and Relates to from the picker (cards show
+  as `#N Title`). Making a cycle (A blocks B, then B blocks A) shows the
+  refusal and writes nothing.
+- Custom fields: a board that already has text, number, date, select and
+  checkbox fields shows them in the drawer; edit each and reopen the card.
+- Links: add a session, a Pilot, a PR URL and a worktree path; Open and Remove
+  each. The ticket keeps its own row.
+- Markdown toolbar: bold, italic, heading, bulleted and numbered list, link and
+  code on a selection, on several lines and on an empty selection; the cursor
+  lands between the markers, and the saved description is plain Markdown.
+- Subtasks: Move up and Move down from the subtask menu (in Tauri also
+  Alt+↑ and Alt+↓); the first has no Move up and the last no Move down.
+  Convert to card puts a new card right after the parent, linked with Relates
+  to, and removes the subtask.
+- Comments show "You" for yours and "Agent" for an agent's, with different
+  avatars.
+- More menu: from the drawer's "…", a card's right-click and "More…" in the
+  card's "…" menu. Check Open, Status…, Priority…, Labels…, Move to board…,
+  Copy link, Copy `#N title`, Duplicate, Archive and Delete. Duplicate adds
+  "{title} (copy)" after the original without links, comments or relations.
+  Move to board… lands in the other board's first To do column. Archive and
+  Delete show the Undo toast. Copy link copies a `gespan://board/…/card/…`
+  link; the app does not open it yet.
+- New card: press ⌘N (Ctrl+N) with focus on the board, including in the search
+  box; the modal opens and no "n" is typed. A title is required; ⌘↵ creates,
+  Escape closes. With Create more on, the modal stays open with the title
+  cleared and the other fields kept.
 - Send a message to a Pilot with Board on and with Board off; a Pilot-linked
   card moves when Board is on, and nothing breaks either way.
 - Link a card to a session, send a prompt, and watch the card move to In

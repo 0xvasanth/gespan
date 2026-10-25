@@ -41,11 +41,39 @@ approval for every edit. Native Supervised mode does not add that guarantee.
 | Inbox | Runtime/visual checks, inline video, linked-update notices and richer CI evidence/repair progress |
 | Notes | Runtime/visual checks and composer note-card presentation |
 | Automations | Scheduler, provider and recovery checks; current implementation has source review only |
-| Board | Runtime/visual checks in `bun run native:dev` and the Tauri app (see [verification](verification.md#board--october-24-2026)). Both apps read and write the same board tables, so boards, tasks and their projects, labels, priority, due date, subtasks, comments and ticket links show in both. Both have a board switcher. Native adds keyboard dragging (Space lifts, arrows move, Space or Enter drops, Escape cancels) alongside the "Move to…" menu; Tauri has search, filters with `shown/total` counts and a docked task drawer, and drags with the keyboard through dnd-kit. Changes from the Tauri app arrive in Native on open, on window focus or within about 2 s. Both have quick edits on the card face (click priority, due or labels; neither drags nor opens the card), a column menu (Collapse column, Sort by priority, Sort by due date, Mark all as done, and Archive completed on the done column), collapsed columns that stay drop targets, quick add that stays open after Enter, an 8 s Undo toast for moves, bulk moves, sorts, archives and deletes, held deletes (the card is archived at once and deleted when the toast expires; if the app quits first it stays in the Archive), an Archive view (newest first, Restore, Delete forever) and Delete column only when the column has no live or archived cards. Differences: Native's collapsed strip stacks the name top to bottom; Native's "Pick a date…" on a card face opens the drawer's date picker, while Tauri shows a date field in the menu |
+| Board | Runtime/visual checks in `bun run native:dev` and the Tauri app (see [verification](verification.md#board--october-24-2026)). Both apps read and write the same board tables, so boards, cards and everything on them show in both. Details and known differences are listed under the table in [Board details](#board-details) |
 | Pilots | Existing-data checks, HTML accessibility, floating-document interactions and durable orchestration recovery |
 | Remote connections | Real-machine installation/update, existing-data restoration and cross-platform checks; the existing host's feature limits still apply |
 | Integrations | Completion/approval notifications, sounds and Dock badges; Quick Composer attachments/shortcut checks, MCP/skills checks and remaining app-control endpoints. macOS reminder delivery and click routing passed on Oct 22 |
 | Shared data | Concurrent Tauri/native use with active scheduled tasks or phone connections remains unverified and deferred |
+
+### Board details
+
+Shared by both apps:
+
+- Board switcher, quick edits on the card face (priority, due, labels), column menu, collapsed columns, quick add, Undo toast (8 s) for moves, sorts, archives and deletes, held deletes, Archive view, and Delete column only when the column is empty.
+- Card detail drawer with a Full page toggle (Escape or the toggle goes back to the drawer) and an "Open cards in: Drawer / Full page" setting.
+- Start and due dates with quick picks (Today, Tomorrow, Next week, In 2 weeks, Clear) and a date input.
+- Estimate, entered as `90`, `90m`, `1h`, `1h 30m` or `1.5h` and shown as `1h 30m`.
+- Relations: Blocked by, Blocks and Relates to, with cycles refused.
+- Values for a board's existing custom fields (text, number, date, select, checkbox). Managing the fields themselves is not built yet.
+- A links list (session, pilot, PR URL, worktree path).
+- A Markdown toolbar (bold, italic, heading, bulleted and numbered list, link, code); the stored text stays plain Markdown.
+- Subtask reorder and Convert to card; comment authors shown as You or Agent.
+- A More menu with Open, Status…, Priority…, Labels…, Move to board…, Copy link, Copy `#N title`, Duplicate, Archive and Delete. It opens from the drawer's "…", from a card's right-click, and from "More…" in the card's "…" menu.
+- A New card modal on ⌘N (Ctrl+N) with Create more and ⌘↵ to submit.
+
+Known differences:
+
+| Area | Native | Tauri |
+|---|---|---|
+| "Open cards in" setting | Board header menu (setting `board-card-open`) | Settings → General (flag `gespan.boardCardOpen`) |
+| Subtask reorder | Menu only (Move up, Move down) | Menu, plus Alt+↑ and Alt+↓ |
+| Keyboard dragging | Space lifts, arrows move, Space or Enter drops, Escape cancels | Same keys, through dnd-kit |
+| Collapsed column strip | Name stacks top to bottom | Name is not stacked |
+| "Pick a date…" on a card face | Opens the drawer's date picker | Shows a date field in the menu |
+| Copy link | Copies `gespan://board/{board}/card/{card}`; the app does not open these links yet | Same; not opened yet |
+
 
 ## Platform and distribution
 
