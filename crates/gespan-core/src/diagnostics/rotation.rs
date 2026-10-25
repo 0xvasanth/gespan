@@ -30,7 +30,7 @@ pub fn file_name(day: NaiveDate) -> String {
 
 /// Our daily files in `dir`, oldest first. Anything else there (crash files,
 /// `.DS_Store`, other names) is never touched.
-fn scan(dir: &Path) -> io::Result<Vec<(NaiveDate, PathBuf, u64)>> {
+pub(super) fn scan(dir: &Path) -> io::Result<Vec<(NaiveDate, PathBuf, u64)>> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
