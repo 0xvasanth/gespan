@@ -1,12 +1,10 @@
 //! Linear over its GraphQL API. Shared by the Inbox and the board sync.
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{json, Value};
-
-use crate::inbox::timestamp_ms;
 
 use super::{
     Account, BoardLabel, BoardProvider, ChangeHint, CommentRef, Container, IssueDraft, IssueFilter,
@@ -17,8 +15,6 @@ use super::{
 const LINEAR_API: &str = "https://api.linear.app/graphql";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_PAGE: u32 = 100;
-/// Issues per `sync_since` window.
-const SYNC_BATCH: u32 = 50;
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -126,15 +122,10 @@ impl LinearTransport for HttpTransport {
     }
 }
 
-/// A Linear connection. Reads and writes go through one transport. Keep one
-/// value (or its clones) per connection: they share the record of our own
-/// writes that `sync_since` leaves out.
+/// A Linear connection. Reads and writes go through one transport.
 #[derive(Clone)]
 pub struct LinearProvider {
     transport: Arc<dyn LinearTransport>,
-    /// `issue id → updatedAt (ms)` our own latest write left on each issue,
-    /// so `sync_since` doesn't hand our writes back as remote changes.
-    own_writes: Arc<Mutex<HashMap<String, i64>>>,
 }
 
 impl LinearProvider {
@@ -154,10 +145,7 @@ impl LinearProvider {
     }
 
     fn from_transport(transport: Arc<dyn LinearTransport>) -> Self {
-        Self {
-            transport,
-            own_writes: Arc::default(),
-        }
+        Self { transport }
     }
 
     #[cfg(test)]
@@ -773,22 +761,6 @@ const BOARD_ISSUE_QUERY: &str = concat!(
     board_issue_fields!(),
     " } }"
 );
-const SYNC_ISSUES_QUERY: &str = concat!(
-    "query BoardSync($last: Int!, $filter: IssueFilter) { ",
-    "issues(last: $last, filter: $filter, orderBy: updatedAt) { ",
-    "pageInfo { hasPreviousPage } nodes { ",
-    board_issue_fields!(),
-    " } } }"
-);
-const SYNC_INSTANT_QUERY: &str = concat!(
-    "query BoardSyncInstant($first: Int!, $after: String, $filter: IssueFilter) { ",
-    "issues(first: $first, after: $after, filter: $filter, orderBy: updatedAt) { ",
-    "pageInfo { hasNextPage endCursor } nodes { ",
-    board_issue_fields!(),
-    " } } }"
-);
-const SYNC_PROBE_QUERY: &str =
-    "query BoardSyncProbe($filter: IssueFilter) { issues(first: 1, filter: $filter) { nodes { id } } }";
 const ISSUE_CREATE_MUTATION: &str = concat!(
     "mutation BoardIssueCreate($input: IssueCreateInput!) { ",
     "issueCreate(input: $input) { success issue { ",
@@ -904,61 +876,6 @@ fn parse_issue_payload(data: &Value, field: &str, verb: &str) -> Result<RemoteIs
         .get("issue")
         .and_then(parse_remote_issue)
         .ok_or_else(|| "Linear did not return the issue".to_string())
-}
-
-/// An empty cursor means "from the start", like an absent one.
-fn decode_sync_cursor(cursor: &SyncCursor) -> ProviderResult<Option<i64>> {
-    let raw = cursor.0.trim();
-    if raw.is_empty() {
-        return Ok(None);
-    }
-    match raw.parse::<i64>() {
-        Ok(ms) if ms >= 0 && chrono::DateTime::from_timestamp_millis(ms).is_some() => Ok(Some(ms)),
-        _ => invalid(&format!("Bad Linear sync cursor {raw}")),
-    }
-}
-
-/// The rows of a `last:` window, as Linear sent them, with their
-/// `updatedAt` instants, and whether Linear says newer issues lie beyond it.
-fn parse_sync_window(data: &Value) -> Result<(Vec<(i64, RemoteIssue)>, bool), String> {
-    let issues = data
-        .get("issues")
-        .ok_or_else(|| "Linear did not return issues".to_string())?;
-    let rows = issues
-        .get("nodes")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "Linear did not return issues".to_string())?
-        .iter()
-        .filter_map(parse_remote_issue)
-        .map(|issue| match timestamp_ms(&issue.updated_at) {
-            0 => Err("Linear returned an issue without an update time".to_string()),
-            ms => Ok((ms, issue)),
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let has_previous = issues
-        .pointer("/pageInfo/hasPreviousPage")
-        .and_then(Value::as_bool)
-        == Some(true);
-    Ok((rows, has_previous))
-}
-
-/// `last:` is only the oldest end if the list runs newest first. If a page
-/// says otherwise, stop rather than skip issues.
-fn check_newest_first(rows: &[(i64, RemoteIssue)]) -> Result<(), String> {
-    if rows.is_empty() {
-        return Err("Linear pagination did not advance".into());
-    }
-    if rows.windows(2).any(|pair| pair[0].0 < pair[1].0) {
-        return Err("Linear returned issues out of order".into());
-    }
-    Ok(())
-}
-
-/// Linear's timestamp form, for example `2026-03-01T10:00:00.000Z`.
-fn iso_millis(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .unwrap_or_default()
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 fn not_supported<T>(operation: &'static str) -> ProviderResult<T> {
@@ -1143,98 +1060,6 @@ fn board_issue_variables(filter: &IssueFilter, cursor: Option<&str>) -> Provider
 }
 
 impl LinearProvider {
-    fn record_write(&self, issue: RemoteIssue) -> RemoteIssue {
-        let ms = timestamp_ms(&issue.updated_at);
-        if ms > 0 {
-            self.own_writes
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .insert(issue.id.clone(), ms);
-        }
-        issue
-    }
-
-    /// Drops rows that are exactly what our own last write left, also when a
-    /// caller replays an older cursor. A later edit by anyone else has a newer
-    /// `updatedAt`, gets through, and retires the entry.
-    fn drop_own_writes(&self, rows: Vec<(i64, RemoteIssue)>) -> Vec<RemoteIssue> {
-        let mut own = self
-            .own_writes
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        rows.into_iter()
-            .filter(|(ms, issue)| match own.get(&issue.id) {
-                Some(written) if written == ms => false,
-                Some(written) if written < ms => {
-                    own.remove(&issue.id);
-                    true
-                }
-                _ => true,
-            })
-            .map(|(_, issue)| issue)
-            .collect()
-    }
-
-    /// Proves a `last:` page really is the oldest end of the window: nothing
-    /// in the window is older than its oldest row.
-    fn check_nothing_older(&self, window: &Value, oldest: i64) -> ProviderResult<()> {
-        let mut filter = window.clone();
-        filter["updatedAt"]["lt"] = json!(iso_millis(oldest));
-        let data = self.graphql(SYNC_PROBE_QUERY, json!({ "filter": filter }))?;
-        let skipped = data
-            .pointer("/issues/nodes")
-            .and_then(Value::as_array)
-            .ok_or_else(|| "Linear did not return issues".to_string())?;
-        if skipped.is_empty() {
-            Ok(())
-        } else {
-            Err(ProviderError::Remote(
-                "Linear skipped older issues while syncing".into(),
-            ))
-        }
-    }
-
-    /// Every issue in `team` updated at exactly `ms`, sorted by id. `seen` are
-    /// the rows at that instant already on the page; the full read must
-    /// include them.
-    fn sync_instant(
-        &self,
-        team: &str,
-        ms: i64,
-        seen: &[(i64, RemoteIssue)],
-    ) -> ProviderResult<Vec<(i64, RemoteIssue)>> {
-        let filter = json!({
-            "team": { "id": { "eq": team } },
-            "updatedAt": { "eq": iso_millis(ms) },
-        });
-        let nodes = follow_pages(
-            |after| {
-                self.graphql(
-                    SYNC_INSTANT_QUERY,
-                    json!({ "first": MAX_PAGE, "after": after, "filter": filter }),
-                )
-            },
-            "/issues",
-            "Linear did not return issues",
-        )?;
-        let mut rows: Vec<(i64, RemoteIssue)> = nodes
-            .iter()
-            .filter_map(parse_remote_issue)
-            .map(|issue| (ms, issue))
-            .collect();
-        rows.sort_by(|a, b| a.1.id.cmp(&b.1.id));
-        rows.dedup_by(|a, b| a.1.id == b.1.id);
-        let complete = seen
-            .iter()
-            .all(|(_, issue)| rows.iter().any(|(_, row)| row.id == issue.id));
-        if !complete {
-            return Err(ProviderError::Remote(
-                "Linear returned an incomplete set of issues".into(),
-            ));
-        }
-        Ok(rows)
-    }
-
     fn team_nodes(
         &self,
         query: &str,
@@ -1308,19 +1133,19 @@ impl BoardProvider for LinearProvider {
     fn create_issue(&self, container_id: &str, draft: &IssueDraft) -> ProviderResult<RemoteIssue> {
         let variables = create_variables(container_id, draft)?;
         let data = self.graphql(ISSUE_CREATE_MUTATION, variables)?;
-        Ok(self.record_write(parse_issue_payload(&data, "issueCreate", "create")?))
+        Ok(parse_issue_payload(&data, "issueCreate", "create")?)
     }
 
     fn update_issue(&self, id: &str, patch: &IssuePatch) -> ProviderResult<RemoteIssue> {
         let variables = update_variables(id, patch)?;
         let data = self.graphql(ISSUE_UPDATE_MUTATION, variables)?;
-        Ok(self.record_write(parse_issue_payload(&data, "issueUpdate", "update")?))
+        Ok(parse_issue_payload(&data, "issueUpdate", "update")?)
     }
 
     fn move_issue(&self, id: &str, target: &MoveTarget) -> ProviderResult<RemoteIssue> {
         let variables = move_variables(id, target)?;
         let data = self.graphql(ISSUE_UPDATE_MUTATION, variables)?;
-        Ok(self.record_write(parse_issue_payload(&data, "issueUpdate", "update")?))
+        Ok(parse_issue_payload(&data, "issueUpdate", "update")?)
     }
 
     fn comment(
@@ -1335,53 +1160,8 @@ impl BoardProvider for LinearProvider {
         Ok(parse_comment_ref(&data)?)
     }
 
-    /// Oldest first, by `updatedAt`. Our own writes are left out, but the
-    /// cursor still moves past them.
-    fn sync_since(
-        &self,
-        container_id: &str,
-        cursor: Option<&SyncCursor>,
-    ) -> ProviderResult<SyncBatch> {
-        let team = require_id(container_id, "team")?;
-        let after = cursor.map(decode_sync_cursor).transpose()?.flatten();
-        let mut filter = json!({ "team": { "id": { "eq": team } } });
-        if let Some(ms) = after {
-            filter["updatedAt"] = json!({ "gt": iso_millis(ms) });
-        }
-        let data = self.graphql(
-            SYNC_ISSUES_QUERY,
-            json!({ "last": SYNC_BATCH, "filter": filter }),
-        )?;
-        let (mut rows, has_previous) = parse_sync_window(&data)?;
-        // A full page counts as "more" even if Linear says otherwise.
-        let more = has_previous || rows.len() >= SYNC_BATCH as usize;
-        if more {
-            check_newest_first(&rows)?;
-            let oldest = rows.last().map(|row| row.0).unwrap_or_default();
-            self.check_nothing_older(&filter, oldest)?;
-        }
-        rows.sort_by(|a, b| (a.0, &a.1.id).cmp(&(b.0, &b.1.id)));
-        if more {
-            // The newest instant on the page may continue past it: leave it
-            // for the next call, unless it fills the page.
-            let boundary = rows.last().map(|row| row.0).unwrap_or_default();
-            let (older, crowded): (Vec<_>, Vec<_>) =
-                rows.into_iter().partition(|row| row.0 < boundary);
-            rows = if older.is_empty() {
-                self.sync_instant(&team, boundary, &crowded)?
-            } else {
-                older
-            };
-        }
-        let next_cursor = match rows.last() {
-            Some((ms, _)) => SyncCursor(ms.to_string()),
-            None => cursor.cloned().unwrap_or_default(),
-        };
-        Ok(SyncBatch {
-            changes: self.drop_own_writes(rows),
-            next_cursor,
-            has_more: more,
-        })
+    fn sync_since(&self, _: &str, _: Option<&SyncCursor>) -> ProviderResult<SyncBatch> {
+        not_supported("sync_since")
     }
 
     fn parse_webhook(&self, _: &[(String, String)], _: &[u8]) -> ProviderResult<Vec<ChangeHint>> {
@@ -1774,6 +1554,19 @@ pub(super) mod tests {
         ));
     }
 
+    #[test]
+    fn delta_sync_is_not_supported() {
+        let (linear, transport) = scripted(vec![]);
+        assert!(matches!(
+            linear.sync_since("t1", None),
+            Err(ProviderError::NotSupported {
+                provider: ProviderKind::Linear,
+                operation: "sync_since",
+            })
+        ));
+        assert!(transport.requests().is_empty());
+    }
+
     fn mutation_reply(field: &str, issue: Value) -> Result<Value, String> {
         Ok(json!({ field: { "success": true, "issue": issue } }))
     }
@@ -2034,6 +1827,24 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn get_issue_accepts_an_identifier() {
+        let mut node = issue_node();
+        node["identifier"] = json!("ENG-42");
+        let (linear, transport) = scripted(vec![Ok(json!({ "issue": node }))]);
+        let issue = linear.get_issue(" ENG-42 ").unwrap();
+        assert_eq!(issue.key, "ENG-42");
+        let requests = transport.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].1, json!({ "id": "ENG-42" }));
+        // An unknown identifier comes back as `issue: null`.
+        let (linear, _) = scripted(vec![Ok(json!({ "issue": null }))]);
+        assert!(matches!(
+            linear.get_issue("ENG-9999"),
+            Err(ProviderError::Remote(_))
+        ));
+    }
+
+    #[test]
     fn malformed_ids_are_rejected_before_any_request() {
         let linear = LinearProvider::new("lin_api_unused");
         let invalid = |result: ProviderResult<()>| {
@@ -2074,433 +1885,5 @@ pub(super) mod tests {
         );
         // The Inbox keeps its old behaviour: success with no URL.
         assert_eq!(parse_linear_comment_create(&empty).unwrap(), "");
-    }
-}
-
-#[cfg(test)]
-mod sync_tests {
-    use std::sync::Mutex;
-
-    use super::tests::scripted;
-    use super::*;
-    use crate::inbox::timestamp_ms;
-    use crate::provider_boards::fake::FakeProvider;
-
-    fn node(id: &str, updated_at: &str) -> Value {
-        json!({
-            "id": id,
-            "identifier": id.to_uppercase(),
-            "title": format!("Issue {id}"),
-            "url": format!("https://linear.app/x/issue/{id}"),
-            "updatedAt": updated_at,
-            "description": "Body",
-            "state": { "id": "s1", "name": "Todo", "type": "unstarted" },
-            "team": { "id": "t1" },
-            "labels": { "nodes": [] },
-            "assignee": null
-        })
-    }
-
-    /// A `last:` page, newest first as Linear's `orderBy: updatedAt` returns it.
-    fn window(nodes: Vec<Value>, more: bool) -> Result<Value, String> {
-        Ok(json!({ "issues": { "pageInfo": { "hasPreviousPage": more }, "nodes": nodes } }))
-    }
-
-    /// The check that nothing older than a `last:` page was skipped.
-    fn probe(nodes: Vec<Value>) -> Result<Value, String> {
-        Ok(json!({ "issues": { "nodes": nodes } }))
-    }
-
-    fn at(second: u32) -> String {
-        format!("2026-03-01T10:00:{second:02}.000Z")
-    }
-
-    fn cursor_at(second: u32) -> SyncCursor {
-        SyncCursor(timestamp_ms(&at(second)).to_string())
-    }
-
-    fn ids(batch: &SyncBatch) -> Vec<&str> {
-        batch
-            .changes
-            .iter()
-            .map(|issue| issue.id.as_str())
-            .collect()
-    }
-
-    fn team_filter() -> Value {
-        json!({ "team": { "id": { "eq": "t1" } } })
-    }
-
-    #[test]
-    fn sync_from_start_has_no_updated_filter_and_returns_oldest_first() {
-        let (linear, transport) = scripted(vec![window(
-            vec![node("b", &at(2)), node("a", &at(1))],
-            false,
-        )]);
-        let batch = linear.sync_since("t1", None).unwrap();
-        assert_eq!(ids(&batch), ["a", "b"]);
-        assert!(!batch.has_more);
-        assert_eq!(batch.next_cursor, cursor_at(2));
-        assert_eq!(batch.changes[0].description.as_deref(), Some("Body"));
-        assert_eq!(batch.changes[0].state.group, StateGroup::Unstarted);
-        assert_eq!(
-            transport.requests(),
-            [(
-                SYNC_ISSUES_QUERY.to_string(),
-                json!({ "last": 50, "filter": team_filter() })
-            )]
-        );
-    }
-
-    #[test]
-    fn sync_resumes_with_updated_at_gt_the_watermark() {
-        let (linear, transport) = scripted(vec![window(vec![node("c", &at(3))], false)]);
-        let batch = linear.sync_since("t1", Some(&cursor_at(0))).unwrap();
-        assert_eq!(ids(&batch), ["c"]);
-        let mut filter = team_filter();
-        filter["updatedAt"] = json!({ "gt": "2026-03-01T10:00:00.000Z" });
-        assert_eq!(
-            transport.requests()[0].1,
-            json!({ "last": 50, "filter": filter })
-        );
-    }
-
-    #[test]
-    fn sync_with_no_changes_keeps_the_cursor() {
-        let (linear, _) = scripted(vec![window(vec![], false), window(vec![], false)]);
-        let quiet = linear.sync_since("t1", Some(&cursor_at(4))).unwrap();
-        assert!(quiet.changes.is_empty());
-        assert!(!quiet.has_more);
-        assert_eq!(quiet.next_cursor, cursor_at(4));
-        let empty_team = linear.sync_since("t1", None).unwrap();
-        assert_eq!(empty_team.next_cursor, SyncCursor::default());
-    }
-
-    #[test]
-    fn sync_holds_back_the_boundary_instant() {
-        // Other issues at second 3 may sit just past this page.
-        let (linear, transport) = scripted(vec![
-            window(
-                vec![
-                    node("d", &at(3)),
-                    node("c", &at(3)),
-                    node("b", &at(2)),
-                    node("a", &at(1)),
-                ],
-                true,
-            ),
-            probe(vec![]),
-        ]);
-        let batch = linear.sync_since("t1", Some(&cursor_at(0))).unwrap();
-        assert_eq!(ids(&batch), ["a", "b"]);
-        assert!(batch.has_more);
-        assert_eq!(batch.next_cursor, cursor_at(2));
-        let mut filter = team_filter();
-        filter["updatedAt"] = json!({ "gt": at(0), "lt": at(1) });
-        assert_eq!(
-            transport.requests()[1],
-            (SYNC_PROBE_QUERY.to_string(), json!({ "filter": filter }))
-        );
-    }
-
-    #[test]
-    fn sync_rejects_a_page_that_skipped_older_issues() {
-        // A "newest first" page that is really the newest end of the list.
-        let (linear, _) = scripted(vec![
-            window(vec![node("b", &at(4)), node("a", &at(3))], true),
-            probe(vec![json!({ "id": "older" })]),
-        ]);
-        assert_eq!(
-            linear.sync_since("t1", None),
-            Err(ProviderError::Remote(
-                "Linear skipped older issues while syncing".into()
-            ))
-        );
-    }
-
-    #[test]
-    fn a_full_window_is_treated_as_having_more() {
-        // Linear says there is nothing more, but the page is full.
-        let nodes: Vec<Value> = (0..50u32)
-            .rev()
-            .map(|second| node(&format!("i{second:02}"), &at(second)))
-            .collect();
-        let (linear, _) = scripted(vec![window(nodes, false), probe(vec![])]);
-        let batch = linear.sync_since("t1", None).unwrap();
-        assert_eq!(batch.changes.len(), 49);
-        assert!(batch.has_more);
-        assert_eq!(batch.next_cursor, cursor_at(48));
-    }
-
-    #[test]
-    fn sync_reads_a_crowded_instant_in_full() {
-        let page = |nodes: Vec<Value>, next: Option<&str>| {
-            Ok(json!({ "issues": {
-                "pageInfo": { "hasNextPage": next.is_some(), "endCursor": next },
-                "nodes": nodes
-            }}))
-        };
-        let (linear, transport) = scripted(vec![
-            window(vec![node("y", &at(5)), node("x", &at(5))], true),
-            probe(vec![]),
-            page(vec![node("z", &at(5)), node("x", &at(5))], Some("e1")),
-            page(vec![node("y", &at(5))], None),
-        ]);
-        let batch = linear.sync_since("t1", Some(&cursor_at(1))).unwrap();
-        assert_eq!(ids(&batch), ["x", "y", "z"]);
-        assert!(batch.has_more);
-        assert_eq!(batch.next_cursor, cursor_at(5));
-        let mut filter = team_filter();
-        filter["updatedAt"] = json!({ "eq": at(5) });
-        let sent = transport.requests();
-        assert_eq!(sent[2].0, SYNC_INSTANT_QUERY);
-        assert_eq!(
-            sent[2].1,
-            json!({ "first": 100, "after": null, "filter": filter })
-        );
-        assert_eq!(sent[3].1["after"], "e1");
-    }
-
-    #[test]
-    fn a_crowded_instant_read_must_cover_the_page() {
-        let (linear, _) = scripted(vec![
-            window(vec![node("y", &at(5)), node("x", &at(5))], true),
-            probe(vec![]),
-            Ok(json!({ "issues": {
-                "pageInfo": { "hasNextPage": false, "endCursor": null },
-                "nodes": [node("x", &at(5))]
-            }})),
-            window(vec![node("y", &at(5)), node("x", &at(5))], true),
-            probe(vec![]),
-            Ok(json!({ "issues": null })),
-        ]);
-        assert_eq!(
-            linear.sync_since("t1", None),
-            Err(ProviderError::Remote(
-                "Linear returned an incomplete set of issues".into()
-            ))
-        );
-        assert_eq!(
-            linear.sync_since("t1", None),
-            Err(ProviderError::Remote("Linear did not return issues".into()))
-        );
-    }
-
-    #[test]
-    fn sync_rows_without_an_update_time_are_an_error() {
-        let mut bad = node("a", &at(1));
-        bad.as_object_mut().unwrap().remove("updatedAt");
-        let (linear, _) = scripted(vec![window(vec![bad], false)]);
-        assert_eq!(
-            linear.sync_since("t1", None),
-            Err(ProviderError::Remote(
-                "Linear returned an issue without an update time".into()
-            ))
-        );
-    }
-
-    #[test]
-    fn sync_rejects_an_out_of_order_page() {
-        let ascending = || vec![node("a", &at(1)), node("b", &at(2))];
-        let (linear, _) = scripted(vec![window(ascending(), true), window(ascending(), false)]);
-        assert_eq!(
-            linear.sync_since("t1", None),
-            Err(ProviderError::Remote(
-                "Linear returned issues out of order".into()
-            ))
-        );
-        // A complete window can come back in any order.
-        assert_eq!(ids(&linear.sync_since("t1", None).unwrap()), ["a", "b"]);
-    }
-
-    #[test]
-    fn sync_cursor_empty_means_start_and_garbage_is_rejected() {
-        let (linear, transport) = scripted(vec![window(vec![node("a", &at(1))], false)]);
-        let batch = linear
-            .sync_since("t1", Some(&SyncCursor(String::new())))
-            .unwrap();
-        assert_eq!(ids(&batch), ["a"]);
-        assert_eq!(transport.requests()[0].1["filter"], team_filter());
-        for bad in ["abc", "12|x", "-1", "1.5", "99999999999999999"] {
-            assert!(
-                matches!(
-                    linear.sync_since("t1", Some(&SyncCursor(bad.into()))),
-                    Err(ProviderError::InvalidInput(_))
-                ),
-                "{bad}"
-            );
-        }
-        assert!(matches!(
-            linear.sync_since("t 1", None),
-            Err(ProviderError::InvalidInput(_))
-        ));
-        assert_eq!(transport.requests().len(), 1);
-    }
-
-    #[test]
-    fn sync_drops_echoes_of_our_own_writes_only() {
-        let (linear, _) = scripted(vec![
-            Ok(json!({ "issueUpdate": { "success": true, "issue": node("mine", &at(7)) } })),
-            // Same instant written differently: still our write.
-            window(
-                vec![node("mine", "2026-03-01T10:00:07Z"), node("theirs", &at(6))],
-                false,
-            ),
-            // A replay from the same cursor still leaves our write out.
-            window(vec![node("mine", &at(7))], false),
-            window(vec![node("mine", &at(9))], false),
-        ]);
-        let target = MoveTarget {
-            state_id: "s1".into(),
-            ..Default::default()
-        };
-        linear.move_issue("mine", &target).unwrap();
-        let batch = linear.sync_since("t1", None).unwrap();
-        assert_eq!(ids(&batch), ["theirs"]);
-        // The cursor still moves past our own write.
-        assert_eq!(batch.next_cursor, cursor_at(7));
-        assert!(linear.sync_since("t1", None).unwrap().changes.is_empty());
-        let later = linear.sync_since("t1", Some(&batch.next_cursor)).unwrap();
-        assert_eq!(ids(&later), ["mine"]);
-    }
-
-    /// Answers the sync queries the way Linear's API does, over an in-memory
-    /// team: newest first, `last:` takes the oldest end, `first:` pages forward.
-    /// Issues that share an instant come back in no particular order.
-    struct Simulator {
-        issues: Mutex<Vec<(String, i64)>>,
-    }
-
-    impl Simulator {
-        fn touch(&self, id: &str, ms: i64) {
-            let mut issues = self.issues.lock().unwrap();
-            issues.retain(|(other, _)| other != id);
-            issues.push((id.to_string(), ms));
-        }
-    }
-
-    fn iso(ms: i64) -> String {
-        iso_millis(ms)
-    }
-
-    impl LinearTransport for Simulator {
-        fn execute(&self, query: &str, variables: Value) -> Result<Value, String> {
-            let filter = &variables["filter"];
-            assert_eq!(filter["team"]["id"]["eq"], "C1");
-            let bound = |op: &str| filter["updatedAt"][op].as_str().map(timestamp_ms);
-            let (gt, eq, lt) = (bound("gt"), bound("eq"), bound("lt"));
-            let mut list: Vec<(String, i64)> = self
-                .issues
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|(_, ms)| {
-                    gt.is_none_or(|gt| *ms > gt)
-                        && eq.is_none_or(|eq| *ms == eq)
-                        && lt.is_none_or(|lt| *ms < lt)
-                })
-                .cloned()
-                .collect();
-            // Newest first; ties in a scrambled order.
-            list.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.chars().rev().cmp(b.0.chars().rev())));
-            let render = |rows: &[(String, i64)]| -> Vec<Value> {
-                rows.iter()
-                    .map(|(id, ms)| {
-                        let mut row = node(id, &iso(*ms));
-                        row["team"]["id"] = json!("C1");
-                        row
-                    })
-                    .collect()
-            };
-            if query == SYNC_ISSUES_QUERY {
-                let last = variables["last"].as_u64().unwrap() as usize;
-                let start = list.len().saturating_sub(last);
-                return Ok(json!({ "issues": {
-                    "pageInfo": { "hasPreviousPage": start > 0 },
-                    "nodes": render(&list[start..]),
-                }}));
-            }
-            if query == SYNC_PROBE_QUERY {
-                return Ok(json!({ "issues": { "nodes": render(&list[..list.len().min(1)]) } }));
-            }
-            assert_eq!(query, SYNC_INSTANT_QUERY);
-            let first = variables["first"].as_u64().unwrap() as usize;
-            let offset: usize = variables["after"]
-                .as_str()
-                .map_or(0, |a| a.parse().unwrap());
-            let end = (offset + first).min(list.len());
-            Ok(json!({ "issues": {
-                "pageInfo": { "hasNextPage": end < list.len(), "endCursor": end.to_string() },
-                "nodes": render(&list[offset..end]),
-            }}))
-        }
-    }
-
-    /// Runs `sync_since` until `has_more` is false, returning every id in
-    /// delivery order and the final cursor.
-    fn drain(
-        provider: &dyn BoardProvider,
-        cursor: Option<SyncCursor>,
-    ) -> (Vec<String>, SyncCursor) {
-        let mut cursor = cursor;
-        let mut seen = Vec::new();
-        for _ in 0..100 {
-            let batch = provider.sync_since("C1", cursor.as_ref()).unwrap();
-            seen.extend(batch.changes.iter().map(|issue| issue.id.clone()));
-            cursor = Some(batch.next_cursor);
-            if !batch.has_more {
-                return (seen, cursor.unwrap());
-            }
-        }
-        panic!("sync never finished");
-    }
-
-    #[test]
-    fn sync_contract_matches_the_fake() {
-        // 130 issues: 60 share one instant (a bulk edit), the rest are spread
-        // out, some two to a second, so pages split instants.
-        let base = timestamp_ms("2026-01-01T00:00:00Z");
-        let mut seeds: Vec<(String, i64)> = (0..60)
-            .map(|i| (format!("bulk{i:02}"), base + 40_000))
-            .collect();
-        seeds.extend((0..70).map(|i| (format!("solo{i:02}"), base + (i / 2) * 1_000)));
-        let simulator = Arc::new(Simulator {
-            issues: Mutex::new(seeds.clone()),
-        });
-        let linear = LinearProvider::with_transport(simulator.clone());
-        let mut fake = FakeProvider::new();
-        let todo = fake.state("todo").unwrap();
-        for (id, ms) in &seeds {
-            fake = fake.with_issue(RemoteIssue {
-                id: id.clone(),
-                container_id: "C1".into(),
-                updated_at: iso(*ms),
-                state: todo.clone(),
-                ..Default::default()
-            });
-        }
-
-        let (linear_ids, linear_cursor) = drain(&linear, None);
-        let (fake_ids, fake_cursor) = drain(&fake, None);
-        assert_eq!(linear_ids.len(), 130, "every issue exactly once");
-        assert_eq!(linear_ids, fake_ids, "same oldest-first order as the fake");
-
-        // Resuming a drained cursor finds nothing new on either side.
-        assert!(drain(&linear, Some(linear_cursor.clone())).0.is_empty());
-        assert!(drain(&fake, Some(fake_cursor.clone())).0.is_empty());
-
-        // Someone else edits one issue: both report just that one. (Our own
-        // writes differ on purpose: Linear leaves them out, the fake doesn't.)
-        simulator.touch("solo03", base + 90_000);
-        fake.move_issue(
-            "solo03",
-            &MoveTarget {
-                state_id: "doing".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(drain(&linear, Some(linear_cursor)).0, ["solo03"]);
-        assert_eq!(drain(&fake, Some(fake_cursor)).0, ["solo03"]);
     }
 }
