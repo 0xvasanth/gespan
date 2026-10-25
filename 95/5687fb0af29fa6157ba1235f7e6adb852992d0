@@ -1,0 +1,40 @@
+crates/gespan-core/src/diagnostics/metrics.rs
+  s_665d32631cef67::t_9e28d6a6db1400 301-304,308
+  s_665d32631cef67::t_06641036449613 581,588-592
+crates/gespan-core/src/provider.rs
+  s_665d32631cef67::t_e0ee47822a843b 1941-1946,1950-1952,1959-1962
+  s_665d32631cef67::t_11e621e74060c5 1857-1863,1890-1923,1928,1933-1940,1947-1949,1953-1958,1963-1983
+  s_665d32631cef67::t_5733be3df5fe4f 1924-1927,1929-1932
+crates/gespan-core/src/git.rs
+  s_665d32631cef67::t_e4f87ab53bb80f 4,299-302,470-476
+  s_665d32631cef67::t_2f2e76763db961 44-47,49,52-55,303-304,368-374
+  s_665d32631cef67::t_06641036449613 468-469,477-525
+  s_665d32631cef67::t_e0973662a800cf 375-378
+crates/gespan-core/src/worktree_management.rs
+  s_665d32631cef67::t_e4f87ab53bb80f 60-62
+  s_665d32631cef67::t_06641036449613 103-122
+crates/gespan-core/src/remote.rs
+  s_665d32631cef67::t_0b282e5dc6500d 637
+crates/gespan-core/src/provider/parked.rs
+  s_665d32631cef67::t_e4f87ab53bb80f 4,53,55,62,542-545
+  s_665d32631cef67::t_06641036449613 523-541,546-558
+crates/gespan-core/src/provider/opencode.rs
+  s_665d32631cef67::t_5733be3df5fe4f 4,11-12,386-388
+  s_665d32631cef67::t_11e621e74060c5 382,384,402
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "955687fb0af29fa6157ba1235f7e6adb852992d0",
+  "prompts": {},
+  "sessions": {
+    "s_665d32631cef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e452dccc-b021-4d25-9f04-4f74301df988",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
