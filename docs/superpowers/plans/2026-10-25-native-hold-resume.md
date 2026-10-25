@@ -341,3 +341,128 @@ The menu-bar item and the app-menu item first bring the main window forward and 
 - [ ] **Step 5: Check restart.** Quit (⌘Q) while On hold, then relaunch. Expected: still On hold, with the same queued messages and nothing running.
 - [ ] **Step 6: Check Resume.** Press Resume. Expected: sessions continue in order (workers, then the Delivery Pilot), queued messages are sent, and the Pilot gets no false completion.
 - [ ] **Step 7: Open the PR.** Push `feat/session-handoff` and open a PR that closes #173 with a test summary. No attribution lines.
+
+---
+
+# Part 2: the desktop app (Tauri + React), same PR
+
+The behaviour, copy, placement, confirmation and "no undo while Holding" rule are identical to Part 1. In the desktop app, turns run in TypeScript adapters (`src/integrations/harness/providers/<id>/`, interface `HarnessAdapter` in `src/integrations/harness/core/registry.ts:53`); Rust (`src-tauri/src/harness.rs`) only spawns and kills processes. The Hold logic therefore lives in TypeScript, with Vitest tests next to the code (`src/**/*.test.ts`), run with `bunx vitest run <file>`.
+
+**Desktop constraints:**
+- **Bun only:** `bun run`, `bunx vitest run`, `bunx tsc --noEmit`.
+- **Persistence:** the hold state is saved under the localStorage key `gespan:hold` (JSON), next to the other `gespan:` keys, behind try/catch like the existing preference helpers.
+- **Native commands:** any new Tauri command must be registered in `src-tauri/src/lib.rs` `generate_handler!`, because `src/test/invokeCommands.test.ts` checks this.
+- **Restarts:** the auto-continue on launch (`canAutoContinue`, `src/features/sessions/model/inFlight.ts:116`, and the effect at `App.tsx:10616`) must not fire while held.
+
+### Task 8: Desktop hold model and gate (`src/features/hold/model/`)
+
+**Files:**
+- Create: `src/features/hold/model/hold.ts` (+ `hold.test.ts`)
+- Create: `src/features/hold/model/holdGate.ts` (+ `holdGate.test.ts`)
+
+**Interfaces (Produces):**
+```ts
+export type HoldPhase = "holding" | "onHold";
+export type HoldReason = "idle" | "interrupted" | "awaitingInput" | "background" | "restarted";
+export type HeldSession = { sessionId: string; reason: HoldReason | null; heldAt: number; lastTool?: string; background: string[]; pilotChat: boolean };
+export type HoldState = { phase: HoldPhase; since: number; sessions: HeldSession[] };
+export function newHold(now: number): HoldState;
+export function track(state: HoldState, sessionId: string, pilotChat: boolean): HoldState;
+export function settle(state: HoldState, sessionId: string, reason: HoldReason, now: number, lastTool?: string, background?: string[]): HoldState; // also flips phase to onHold when all settled
+export function afterRestart(state: HoldState): HoldState;
+export function continuation(reason: HoldReason): string | null; // CONTINUE_PROMPT for interrupted|restarted
+export function resumePlan(state: HoldState, exists: (id: string) => boolean): string[][];
+export function loadHold(): HoldState | null; export function saveHold(state: HoldState | null): void; // localStorage "gespan:hold"
+// holdGate.ts — same rule as Native provider/hold.rs
+export type HoldAction = { kind: "interrupt" } | { kind: "settle"; point: "interrupted" | "awaitingInput" | "background" };
+export class HoldGate { request(): void; observe(event: HarnessEvent): void; decide(awaitingInput: boolean): HoldAction | null; }
+```
+The gate observes these `HarnessEvent`s:
+- `tool.started`: running; it counts as foreground unless its id is in the background set.
+- `tool.updated` with `completed` or `failed`: not running.
+- `background.updated`: sets the background set; a non-empty list means the agent has yielded.
+- `message.delta` and `reasoning.delta`: the agent woke up.
+
+- [ ] **Step 1: Write the failing tests.** Mirror Task 1 and Task 2's gate tests one for one: settled to onHold; dedupe; afterRestart; continuation; resumePlan with Pilot chats last and unknown ids skipped; storage round-trip and clear (`spyOnStorage` from `src/test/`); and the gate's six cases.
+- [ ] **Step 2: Run them and confirm they fail.** Run `bunx vitest run src/features/hold`. Expected: FAIL (module not found).
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run again.** Same command. Expected: PASS.
+- [ ] **Step 5: Commit.** `git commit -m "Add the desktop Hold model and safe-point gate"`
+
+### Task 9: Soft interrupt in every desktop adapter
+
+**Files:**
+- Modify: `src/integrations/harness/core/registry.ts` (add `holdTurn?(sessionId: string): Promise<boolean>` to `HarnessAdapter`, and the export `holdHarnessTurn(harness, sessionId)` next to `cancelHarnessTurn`, line ~382)
+- Modify: the providers:
+  - `claude/claude.ts`: send only `{subtype:"interrupt"}`; no deny, no `stop_task`;
+  - `codex/codex.ts`: send only `turn/interrupt`, without `clearServerRequests`;
+  - `cursor/cursor.ts`, plus the ACP siblings grok, kiro, hermes, devin, fx and antigravity: `session/cancel`;
+  - `pi/piFamily.ts`: `abort`;
+  - `opencode/opencode.ts`: interrupt or abort.
+- Test: each adapter's existing `*.test.ts`.
+
+`holdTurn` returns whether an interrupt was sent. It never calls `stopSession`, never kills the child, and never resolves approvals.
+
+- [ ] **Step 1: Write the failing tests.** Per adapter, add `hold_turn_sends_only_the_interrupt`, using that adapter's existing fake-child test harness. The written frames contain the interrupt and contain no deny or decline, no `stop_task`, and no kill call.
+- [ ] **Step 2: Run them and confirm they fail.** Run `bunx vitest run src/integrations/harness`. Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run again.** Same command. Expected: PASS, and the existing tests are still green.
+- [ ] **Step 5: Commit.** `git commit -m "Interrupt a desktop turn softly for Hold"`
+
+### Task 10: Hold coordinator hook and App wiring
+
+**Files:**
+- Create: `src/features/hold/model/useHold.ts` (+ `useHold.test.ts`). This is the coordinator:
+  - `hold` state;
+  - `requestHold()`, which opens the confirmation;
+  - `confirmHold()`;
+  - `observe(sessionId, event)`;
+  - `turnSettled(sessionId, held)`;
+  - `resume()`, staged with at most 3 at once;
+  - `isHeld()`.
+- Modify: `src/app/App.tsx`. Keep the wiring thin and call into the hook:
+  - `applyTurnEvent` (around line 8247): call `hold.observe`. When `decide` returns interrupt, call `holdHarnessTurn` without bumping `turnGen`. When it returns settle, record the reason.
+  - `submitSession` (line 7253): while held, queue the message (`queueStatus: "paused"`, never steer).
+  - Automations interval (around line 9306): skip `claimDueAutomations` while held.
+  - `usePilotHabits(host, !held)` (line 8810).
+  - Orchestrator `pump()`: return early while held, through the host binding at line 10940.
+  - The `handleAgentApp` `sessions.start` and `sessions.send` paths: queue instead of submitting.
+  - Mobile `session.start` and `conversation.send`: queue.
+  - Auto-continue on launch: suppressed while held.
+  - `hasWorkingAgent` (`src/features/settings/model/keepAwake.ts:66`): returns false while on hold.
+  - Pilot completion: a worker that is held doesn't report "cancelled", and it's watched again when it resumes (`pilotSessionCompletion.ts:134`).
+- Test: `useHold.test.ts`, which drives the hook with fake sessions and a fake adapter:
+  - `confirm_then_settle_reaches_on_hold`;
+  - `cancelled_confirmation_changes_nothing`;
+  - `toggle_ignored_while_holding`;
+  - `queued_while_held_is_not_steered`;
+  - `restart_restores_hold_and_suppresses_auto_continue`;
+  - `resume_order_and_limit`;
+  - `automations_and_habits_gated`;
+  - `held_worker_does_not_report_completion`.
+
+- [ ] **Step 1: Write the failing tests.** Steps 2–5 follow the same pattern as the other tasks. Commit with `git commit -m "Coordinate Hold in the desktop app"`.
+
+### Task 11: Desktop placement (status bar, confirmation, menu, shortcut, palette)
+
+**Files:**
+- Create: `src/features/hold/ui/HoldControl.tsx` (+ test), which renders the three states with the copy from Task 6.
+- Create: `src/features/hold/ui/HoldDetails.tsx`, a popover listing the settling sessions with **Stop now**.
+- Create: `src/features/hold/ui/ConfirmHold.tsx`, built on `Modal` with the same copy as Task 4.
+- Modify: `src/app/shell/UsageFooter.tsx:157` (the right-side `ml-auto` slot: render `HoldControl` last).
+- Modify: `src/features/settings/model/appShortcuts.ts:13` (`hold`: `Mod+Shift+H`); `App.tsx` keydown (around line 13258) calls `requestHold` or `resume`.
+- Modify: `src/features/files/ui/FilePicker.tsx:40` `ACTIONS` (`hold`, labelled "Hold everything" or "Resume everything"), plus `onRunAction` in App.
+- Modify: `src-tauri/src/menu.rs` (a "Hold Everything" item with `CmdOrCtrl+Shift+H` that emits `hold_toggle`) and `src-tauri/src/pilot_chat/menu_bar.rs` `ACTIONS` (the menu-bar item); App listens for `hold_toggle`.
+- Test: `HoldControl.test.ts` (happy-dom):
+  - `idle_shows_hold_all`;
+  - `holding_shows_progress_and_no_resume`;
+  - `on_hold_shows_counts_and_resume`.
+  
+  `ConfirmHold.test.ts`: the copy and Cancel. `menu.rs` test: the item exists with its accelerator.
+
+- [ ] **Steps 1–5:** follow the same pattern. Commit with `git commit -m "Add the desktop Hold control, confirmation, menu and shortcut"`.
+
+### Task 12: Desktop verification
+
+- [ ] **Step 1: Run the checks.** Run `bun run test`, `bunx tsc --noEmit`, and `cargo test -p gespan-desktop`, or the src-tauri crate's name. Expected: all pass.
+- [ ] **Step 2: Repeat Task 7's manual checks.** Run `bun run tauri dev` and go through steps 3–6 of Task 7 in the desktop app.
