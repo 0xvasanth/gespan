@@ -67,9 +67,20 @@ impl Shell {
                         })
                         .detach();
                     }
-                    Command::CopyDiagnostics => cx.write_to_clipboard(ClipboardItem::new_string(
-                        gespan_core::diagnostics::summary(),
-                    )),
+                    Command::CopyDiagnostics => {
+                        // It scans the log and crash folders: keep that off
+                        // the UI thread.
+                        let summary = cx
+                            .background_executor()
+                            .spawn(async { gespan_core::diagnostics::summary() });
+                        cx.spawn(async move |_, cx| {
+                            let summary = summary.await;
+                            cx.update(|cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(summary))
+                            })
+                        })
+                        .detach();
+                    }
                     Command::Plan | Command::Operator | Command::Orchestrator => {
                         if let Some(view) =
                             this.workspace.active.and_then(|id| this.sessions.get(&id))
