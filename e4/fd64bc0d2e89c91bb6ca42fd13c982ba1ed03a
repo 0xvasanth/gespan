@@ -1,0 +1,57 @@
+crates/gespan-gpui/src/quick_open.rs
+  s_938a6e0c93b076::t_030d2733256667 26-27,44-49,185
+  s_9109d210ae9dd7::t_cd6945e598c612 186-189
+crates/gespan-gpui/src/shell/session_groups.rs
+  s_938a6e0c93b076::t_718ba49a9dfb08 109-110,1841
+  s_938a6e0c93b076::t_0233d352ee12aa 2877-2880,2886-2996,3003-3009,3011,3014-3035,3038-3060,3065-3072,3074-3217
+  s_938a6e0c93b076::t_3f5d809e517bea 6,12,108,112-113,569,571,576-584,678-679,681-687,1219-1222,1765-1766,1781-1784,1786,1789-1794,1799-1807,1817,1828,1840,1842,1846-1870,1872-1873,1875-1881,1883-1943,1950-1952,1957-1962,1965-1995,1997-2027
+  s_938a6e0c93b076::t_8f6aea498aa1c7 2881-2885,3061-3064,3073
+  s_938a6e0c93b076::t_71d3c76ef8a515 3010,3012-3013
+  s_938a6e0c93b076::t_4c090378e75c20 111
+  s_938a6e0c93b076::t_030d2733256667 1767-1780
+  s_938a6e0c93b076::t_eeec9b0774ab33 118-225,2038-2040,2093,2108,2134-2138,2141-2165,2169-2179,2192-2196,3218
+  s_938a6e0c93b076::t_b51eea46373c1e 680,1963-1964,1996,2034-2037
+  s_938a6e0c93b076::t_135fc0eaad8de4 2166-2168,3036-3037
+  s_938a6e0c93b076::t_bdeec8519fb5f5 2997-3002
+  s_9109d210ae9dd7::t_45a821f54f4b26 2032-2033,2876,3219-3261
+crates/gespan-gpui/src/shell.rs
+  s_938a6e0c93b076::t_23d0f2a7a54d15 3795,4067,4070,4077,4151-4153
+  s_938a6e0c93b076::t_8143036ea9693c 587-593,774-775,947-950
+crates/gespan-gpui/src/conversation.rs
+  s_938a6e0c93b076::t_23d0f2a7a54d15 335-340
+crates/gespan-gpui/src/tickets.rs
+  s_938a6e0c93b076::t_8143036ea9693c 1-19
+  s_938a6e0c93b076::t_718ba49a9dfb08 35,43,88-90
+  s_938a6e0c93b076::t_0233d352ee12aa 20-34,36-42,44-87,91-102
+crates/gespan-gpui/src/shell/quick_open.rs
+  s_938a6e0c93b076::t_030d2733256667 56-57
+  s_938a6e0c93b076::t_718ba49a9dfb08 154,353
+  s_938a6e0c93b076::t_d60c3223fb85c7 155-165,167-179,182,184-190,194-205,207-211,215,220-223,225,227,229,231,237-239,244-248,252-274,276,279,285,287,292-295,298-304,306,309-352
+  s_9109d210ae9dd7::t_651995ced52755 354-359
+crates/gespan-gpui/src/main.rs
+  s_9109d210ae9dd7::t_c0c19b13b7ba21 85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e4fd64bc0d2e89c91bb6ca42fd13c982ba1ed03a",
+  "prompts": {},
+  "sessions": {
+    "s_9109d210ae9dd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e503b86a-2c19-41ca-afb0-2dd716b90349",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
