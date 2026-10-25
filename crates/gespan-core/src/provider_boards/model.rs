@@ -194,6 +194,25 @@ pub struct MoveTarget {
     pub required_fields: BTreeMap<String, serde_json::Value>,
 }
 
+/// A Jira workflow move: the status it leads to and the fields its screen demands.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transition {
+    pub id: String,
+    pub name: String,
+    pub to: WorkflowState,
+    pub required_fields: Vec<RequiredField>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequiredField {
+    pub key: String,
+    pub name: String,
+    pub schema_type: String,
+    pub allowed: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CommentRef {

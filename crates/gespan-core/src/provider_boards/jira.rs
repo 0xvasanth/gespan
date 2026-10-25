@@ -1,14 +1,16 @@
 //! Jira Cloud over REST v3. Shared by the Inbox and the board sync.
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use super::format::{adf_to_markdown, markdown_to_adf};
 use super::{
     Account, BoardLabel, BoardProvider, ChangeHint, CommentRef, Container, IssueDraft, IssueFilter,
     IssuePatch, Member, MoveTarget, Page, ProviderError, ProviderKind, ProviderResult, RemoteIssue,
-    StateGroup, SyncBatch, SyncCursor, WorkflowState,
+    RequiredField, StateGroup, SyncBatch, SyncCursor, Transition, WorkflowState,
 };
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
@@ -110,10 +112,32 @@ pub struct JiraIssueThread {
     pub head_ref_name: String,
 }
 
+/// Sends Jira REST requests and returns the parsed JSON body (`null` when the
+/// reply is empty). Swapped out in tests.
+pub trait JiraTransport: Send + Sync {
+    fn get(&self, path: &str) -> Result<Value, String>;
+    fn post(&self, path: &str, body: Value) -> Result<Value, String>;
+}
+
+struct HttpTransport {
+    config: JiraConfig,
+}
+
+impl JiraTransport for HttpTransport {
+    fn get(&self, path: &str) -> Result<Value, String> {
+        jira_get(&self.config, path)
+    }
+
+    fn post(&self, path: &str, body: Value) -> Result<Value, String> {
+        jira_post(&self.config, path, &body)
+    }
+}
+
 /// A Jira Cloud site, authenticated with an Atlassian email and API token.
 #[derive(Clone)]
 pub struct JiraProvider {
     config: JiraConfig,
+    transport: Arc<dyn JiraTransport>,
 }
 
 impl JiraProvider {
@@ -122,17 +146,23 @@ impl JiraProvider {
         if email.is_empty() || !email.contains('@') {
             return Err("Enter the email address of your Atlassian account".into());
         }
-        Ok(Self {
-            config: JiraConfig {
-                site: normalize_jira_site(site)?,
-                email,
-                token: token.trim().to_string(),
-            },
-        })
+        Ok(Self::from_config(JiraConfig {
+            site: normalize_jira_site(site)?,
+            email,
+            token: token.trim().to_string(),
+        }))
     }
 
     pub(crate) fn from_config(config: JiraConfig) -> Self {
-        Self { config }
+        let transport = Arc::new(HttpTransport {
+            config: config.clone(),
+        });
+        Self { config, transport }
+    }
+
+    #[cfg(test)]
+    fn with_transport(config: JiraConfig, transport: Arc<dyn JiraTransport>) -> Self {
+        Self { config, transport }
     }
 
     pub(crate) fn config(&self) -> &JiraConfig {
@@ -144,11 +174,11 @@ impl JiraProvider {
     }
 
     fn get(&self, path: &str) -> Result<Value, String> {
-        jira_get(&self.config, path)
+        self.transport.get(path)
     }
 
-    fn post(&self, path: &str, body: &Value) -> Result<Value, String> {
-        jira_post(&self.config, path, body)
+    fn post(&self, path: &str, body: Value) -> Result<Value, String> {
+        self.transport.post(path, body)
     }
 
     /// Proves the credentials work.
@@ -175,9 +205,18 @@ impl JiraProvider {
         let jql = issue_jql(assigned_to_me, state, project_ids);
         let data = self.post(
             "/rest/api/3/search/jql",
-            &json!({ "jql": jql, "maxResults": limit, "fields": ISSUE_FIELDS }),
+            json!({ "jql": jql, "maxResults": limit, "fields": ISSUE_FIELDS }),
         )?;
         parse_jira_issues(&data, self.site())
+    }
+
+    /// The moves open from the issue's current status, with the fields each one demands.
+    pub fn transitions(&self, key: &str) -> ProviderResult<Vec<Transition>> {
+        let key = require_issue_key(key).map_err(ProviderError::InvalidInput)?;
+        let data = self.get(&format!(
+            "/rest/api/3/issue/{key}/transitions?expand=transitions.fields"
+        ))?;
+        Ok(parse_transitions(&data)?)
     }
 
     pub fn issue_details(&self, key: &str) -> Result<JiraIssueDetails, String> {
@@ -206,7 +245,7 @@ impl JiraProvider {
     fn send_comment(&self, key: &str, body: &str) -> Result<CommentRef, String> {
         let data = self.post(
             &format!("/rest/api/3/issue/{key}/comment"),
-            &json!({ "body": text_to_adf(body) }),
+            json!({ "body": markdown_to_adf(body) }),
         )?;
         let id = string_field(&data, "id").unwrap_or_default();
         if id.is_empty() {
@@ -301,6 +340,10 @@ fn read_jira_response(result: Result<ureq::Response, ureq::Error>) -> Result<Val
         .map_err(|_| "Jira returned an unreadable response".to_string())?;
     if !(200..300).contains(&status) {
         return Err(jira_http_error(status, &body));
+    }
+    // Transitions answer 204 with no body.
+    if body.trim().is_empty() {
+        return Ok(Value::Null);
     }
     serde_json::from_str(&body).map_err(|_| "Jira returned invalid JSON".to_string())
 }
@@ -570,7 +613,7 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
         .map(|text| text.trim().to_string())
 }
 
-// ---- Atlassian Document Format ----
+// ---- Rich text ----
 
 /// Descriptions and comments arrive as ADF (v3) or plain text; the Inbox renders markdown.
 fn rich_text(value: Option<&Value>) -> String {
@@ -579,242 +622,6 @@ fn rich_text(value: Option<&Value>) -> String {
         Some(doc @ Value::Object(_)) => adf_to_markdown(doc),
         _ => String::new(),
     }
-}
-
-fn adf_to_markdown(doc: &Value) -> String {
-    let mut blocks = Vec::new();
-    for node in children(doc) {
-        let block = adf_block(node, "");
-        if !block.trim().is_empty() {
-            blocks.push(block);
-        }
-    }
-    blocks.join("\n\n").trim().to_string()
-}
-
-fn children(node: &Value) -> &[Value] {
-    node.get("content")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-}
-
-fn node_type(node: &Value) -> &str {
-    node.get("type").and_then(Value::as_str).unwrap_or_default()
-}
-
-fn attr<'a>(node: &'a Value, name: &str) -> Option<&'a Value> {
-    node.pointer(&format!("/attrs/{name}"))
-}
-
-fn attr_str<'a>(node: &'a Value, name: &str) -> &'a str {
-    attr(node, name).and_then(Value::as_str).unwrap_or_default()
-}
-
-fn adf_block(node: &Value, indent: &str) -> String {
-    match node_type(node) {
-        "paragraph" => adf_inline(children(node)),
-        "heading" => {
-            let level = attr(node, "level")
-                .and_then(Value::as_u64)
-                .unwrap_or(1)
-                .clamp(1, 6) as usize;
-            format!("{} {}", "#".repeat(level), adf_inline(children(node)))
-        }
-        "bulletList" => adf_list(node, indent, None),
-        "orderedList" => {
-            let start = attr(node, "order").and_then(Value::as_u64).unwrap_or(1);
-            adf_list(node, indent, Some(start))
-        }
-        "codeBlock" => {
-            let code: String = children(node)
-                .iter()
-                .filter_map(|child| child.get("text").and_then(Value::as_str))
-                .collect();
-            format!("```{}\n{}\n```", attr_str(node, "language"), code)
-        }
-        "blockquote" | "panel" => adf_blocks(children(node), indent)
-            .lines()
-            .map(|line| format!("> {line}"))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        "rule" => "---".into(),
-        "table" => adf_table(node),
-        "mediaSingle" | "mediaGroup" | "media" => String::new(),
-        _ => {
-            if children(node).is_empty() {
-                adf_inline(std::slice::from_ref(node))
-            } else {
-                adf_blocks(children(node), indent)
-            }
-        }
-    }
-}
-
-fn adf_blocks(nodes: &[Value], indent: &str) -> String {
-    nodes
-        .iter()
-        .map(|node| adf_block(node, indent))
-        .filter(|block| !block.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-fn adf_list(node: &Value, indent: &str, start: Option<u64>) -> String {
-    let mut lines = Vec::new();
-    for (index, item) in children(node).iter().enumerate() {
-        let marker = match start {
-            Some(start) => format!("{}. ", start + index as u64),
-            None => "- ".into(),
-        };
-        let nested = format!("{indent}{}", " ".repeat(marker.len()));
-        let mut first = true;
-        for child in children(item) {
-            let text = adf_block(child, &nested);
-            if text.trim().is_empty() {
-                continue;
-            }
-            if matches!(node_type(child), "bulletList" | "orderedList") {
-                lines.push(text);
-            } else if first {
-                lines.push(format!(
-                    "{indent}{marker}{}",
-                    text.replace('\n', &format!("\n{nested}"))
-                ));
-                first = false;
-            } else {
-                lines.push(format!(
-                    "{nested}{}",
-                    text.replace('\n', &format!("\n{nested}"))
-                ));
-            }
-        }
-    }
-    lines.join("\n")
-}
-
-fn adf_table(node: &Value) -> String {
-    let rows: Vec<Vec<String>> = children(node)
-        .iter()
-        .map(|row| {
-            children(row)
-                .iter()
-                .map(|cell| {
-                    adf_blocks(children(cell), "")
-                        .replace('\n', " ")
-                        .replace('|', "\\|")
-                })
-                .collect()
-        })
-        .filter(|row: &Vec<String>| !row.is_empty())
-        .collect();
-    let Some(width) = rows.iter().map(Vec::len).max() else {
-        return String::new();
-    };
-    let line = |cells: &[String]| {
-        let mut padded = cells.to_vec();
-        padded.resize(width, String::new());
-        format!("| {} |", padded.join(" | "))
-    };
-    let mut lines = vec![line(&rows[0]), format!("|{}", " --- |".repeat(width))];
-    lines.extend(rows[1..].iter().map(|row| line(row)));
-    lines.join("\n")
-}
-
-fn adf_inline(nodes: &[Value]) -> String {
-    let mut out = String::new();
-    for node in nodes {
-        match node_type(node) {
-            "text" => out.push_str(&adf_marked_text(node)),
-            "hardBreak" => out.push('\n'),
-            "mention" => {
-                let text = attr_str(node, "text");
-                if text.starts_with('@') {
-                    out.push_str(text);
-                } else if !text.is_empty() {
-                    out.push('@');
-                    out.push_str(text);
-                }
-            }
-            "emoji" => {
-                let text = attr_str(node, "text");
-                out.push_str(if text.is_empty() {
-                    attr_str(node, "shortName")
-                } else {
-                    text
-                });
-            }
-            "inlineCard" | "blockCard" | "embedCard" => {
-                let url = attr_str(node, "url");
-                if !url.is_empty() {
-                    out.push_str(&format!("<{url}>"));
-                }
-            }
-            "status" => out.push_str(&format!("`{}`", attr_str(node, "text"))),
-            "date" => {}
-            _ => out.push_str(&adf_inline(children(node))),
-        }
-    }
-    out
-}
-
-fn adf_marked_text(node: &Value) -> String {
-    let mut text = node
-        .get("text")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    if text.is_empty() {
-        return text;
-    }
-    let marks = node
-        .get("marks")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    if marks.iter().any(|mark| node_type(mark) == "code") {
-        return format!("`{text}`");
-    }
-    for mark in marks {
-        text = match node_type(mark) {
-            "strong" => format!("**{text}**"),
-            "em" => format!("_{text}_"),
-            "strike" => format!("~~{text}~~"),
-            "link" => {
-                let href = attr_str(mark, "href");
-                if href.is_empty() {
-                    text
-                } else {
-                    format!("[{text}]({href})")
-                }
-            }
-            _ => text,
-        };
-    }
-    text
-}
-
-/// Posts plain text as ADF: blank lines split paragraphs, single newlines become hard breaks.
-fn text_to_adf(text: &str) -> Value {
-    let paragraphs: Vec<Value> = text
-        .replace("\r\n", "\n")
-        .split("\n\n")
-        .map(str::trim)
-        .filter(|paragraph| !paragraph.is_empty())
-        .map(|paragraph| {
-            let mut content = Vec::new();
-            for (index, line) in paragraph.lines().enumerate() {
-                if index > 0 {
-                    content.push(json!({ "type": "hardBreak" }));
-                }
-                if !line.is_empty() {
-                    content.push(json!({ "type": "text", "text": line }));
-                }
-            }
-            json!({ "type": "paragraph", "content": content })
-        })
-        .collect();
-    json!({ "type": "doc", "version": 1, "content": paragraphs })
 }
 
 // ---- Config storage ----
@@ -997,6 +804,102 @@ fn fetch_assignable_users(
     }
 }
 
+fn parse_transitions(data: &Value) -> Result<Vec<Transition>, String> {
+    let list = data
+        .get("transitions")
+        .unwrap_or(data)
+        .as_array()
+        .ok_or_else(|| "Jira did not return transitions".to_string())?;
+    Ok(list
+        .iter()
+        .filter_map(|node| {
+            let id = string_field(node, "id").filter(|id| !id.is_empty())?;
+            let mut required_fields: Vec<RequiredField> = node
+                .get("fields")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+                .filter(|(_, field)| field.get("required").and_then(Value::as_bool) == Some(true))
+                .map(|(key, field)| RequiredField {
+                    key: key.clone(),
+                    name: string_field(field, "name").unwrap_or_else(|| key.clone()),
+                    schema_type: field
+                        .pointer("/schema/type")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    allowed: field
+                        .get("allowedValues")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|value| {
+                            ["name", "value", "id"]
+                                .iter()
+                                .find_map(|k| string_field(value, k))
+                        })
+                        .collect(),
+                })
+                .collect();
+            required_fields.sort_by(|a, b| a.key.cmp(&b.key));
+            Some(Transition {
+                name: string_field(node, "name").unwrap_or_default(),
+                to: parse_status(node.get("to")),
+                required_fields,
+                id,
+            })
+        })
+        .collect())
+}
+
+/// `state_id` is a transition id, or the id or name of the status to reach.
+fn pick_transition<'a>(
+    transitions: &'a [Transition],
+    target: &MoveTarget,
+) -> ProviderResult<&'a Transition> {
+    let wanted = target.state_id.trim();
+    let found = transitions
+        .iter()
+        .find(|t| t.id == wanted)
+        .or_else(|| transitions.iter().find(|t| t.to.id == wanted))
+        .or_else(|| {
+            transitions
+                .iter()
+                .find(|t| t.to.name.eq_ignore_ascii_case(wanted))
+        });
+    let Some(transition) = found else {
+        let available: Vec<String> = transitions.iter().map(|t| t.to.name.clone()).collect();
+        return Err(ProviderError::InvalidInput(format!(
+            "No transition to \"{wanted}\". Available targets: {}",
+            if available.is_empty() {
+                "none".into()
+            } else {
+                available.join(", ")
+            }
+        )));
+    };
+    let missing: Vec<String> = transition
+        .required_fields
+        .iter()
+        .filter(|field| !target.required_fields.contains_key(&field.key))
+        .map(|field| {
+            if field.allowed.is_empty() {
+                field.name.clone()
+            } else {
+                format!("{} (one of: {})", field.name, field.allowed.join(", "))
+            }
+        })
+        .collect();
+    if !missing.is_empty() {
+        return Err(ProviderError::InvalidInput(format!(
+            "Moving to \"{}\" requires: {}",
+            transition.to.name,
+            missing.join("; ")
+        )));
+    }
+    Ok(transition)
+}
+
 fn parse_remote_jira_issue(node: &Value, site: &str) -> Option<RemoteIssue> {
     let id = string_field(node, "id").filter(|id| !id.is_empty())?;
     let key = string_field(node, "key").filter(|key| !key.is_empty())?;
@@ -1123,7 +1026,7 @@ impl BoardProvider for JiraProvider {
         cursor: Option<&str>,
     ) -> ProviderResult<Page<RemoteIssue>> {
         let body = board_search_body(filter, cursor)?;
-        let data = self.post("/rest/api/3/search/jql", &body)?;
+        let data = self.post("/rest/api/3/search/jql", body)?;
         Ok(parse_search_page(&data, self.site())?)
     }
 
@@ -1145,8 +1048,16 @@ impl BoardProvider for JiraProvider {
         not_supported("update_issue")
     }
 
-    fn move_issue(&self, _: &str, _: &MoveTarget) -> ProviderResult<RemoteIssue> {
-        not_supported("move_issue")
+    fn move_issue(&self, id: &str, target: &MoveTarget) -> ProviderResult<RemoteIssue> {
+        let key = require_issue_key(id).map_err(ProviderError::InvalidInput)?;
+        let transitions = self.transitions(key)?;
+        let transition = pick_transition(&transitions, target)?;
+        let mut body = json!({ "transition": { "id": transition.id } });
+        if !target.required_fields.is_empty() {
+            body["fields"] = json!(target.required_fields);
+        }
+        self.post(&format!("/rest/api/3/issue/{key}/transitions"), body)?;
+        self.get_issue(key)
     }
 
     fn comment(
@@ -1296,21 +1207,6 @@ mod tests {
         );
         assert_eq!(rich_text(Some(&json!("  plain  "))), "plain");
         assert_eq!(rich_text(None), "");
-    }
-
-    #[test]
-    fn text_to_adf_splits_paragraphs_and_breaks() {
-        assert_eq!(
-            text_to_adf("one\r\ntwo\n\nthree"),
-            json!({ "type": "doc", "version": 1, "content": [
-                { "type": "paragraph", "content": [
-                    { "type": "text", "text": "one" },
-                    { "type": "hardBreak" },
-                    { "type": "text", "text": "two" }
-                ]},
-                { "type": "paragraph", "content": [{ "type": "text", "text": "three" }] }
-            ]})
-        );
     }
 
     #[test]
@@ -1532,10 +1428,6 @@ mod tests {
             jira.update_issue("ENG-1", &IssuePatch::default()).map(drop),
             "update_issue",
         );
-        unsupported(
-            jira.move_issue("ENG-1", &MoveTarget::default()).map(drop),
-            "move_issue",
-        );
         unsupported(jira.sync_since("100", None).map(drop), "sync_since");
         unsupported(jira.parse_webhook(&[], b"{}").map(drop), "parse_webhook");
     }
@@ -1607,5 +1499,265 @@ mod tests {
             jira.comment("ENG 1", "Hi", None),
             Err(ProviderError::InvalidInput("Missing Jira issue".into()))
         );
+    }
+
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    use super::super::format;
+
+    struct Scripted {
+        replies: Mutex<VecDeque<Result<Value, String>>>,
+        requests: Mutex<Vec<(&'static str, String, Value)>>,
+    }
+
+    impl Scripted {
+        fn record(&self, method: &'static str, path: &str, body: Value) -> Result<Value, String> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push((method, path.to_string(), body));
+            self.replies
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("an unscripted Jira request")
+        }
+
+        fn requests(&self) -> Vec<(&'static str, String, Value)> {
+            self.requests.lock().unwrap().clone()
+        }
+
+        fn posts(&self) -> Vec<(String, Value)> {
+            self.requests()
+                .into_iter()
+                .filter(|(method, ..)| *method == "POST")
+                .map(|(_, path, body)| (path, body))
+                .collect()
+        }
+    }
+
+    impl JiraTransport for Scripted {
+        fn get(&self, path: &str) -> Result<Value, String> {
+            self.record("GET", path, Value::Null)
+        }
+
+        fn post(&self, path: &str, body: Value) -> Result<Value, String> {
+            self.record("POST", path, body)
+        }
+    }
+
+    fn scripted(replies: Vec<Result<Value, String>>) -> (JiraProvider, Arc<Scripted>) {
+        let transport = Arc::new(Scripted {
+            replies: Mutex::new(replies.into()),
+            requests: Mutex::default(),
+        });
+        let config = JiraConfig {
+            site: SITE.into(),
+            email: "ada@example.com".into(),
+            token: "token".into(),
+        };
+        (
+            JiraProvider::with_transport(config, transport.clone()),
+            transport,
+        )
+    }
+
+    fn start_transition(fields: Value) -> Value {
+        json!({ "transitions": [{
+            "id": "31", "name": "Start",
+            "to": { "id": "3", "name": "In Progress", "statusCategory": { "key": "indeterminate" } },
+            "fields": fields
+        }]})
+    }
+
+    fn resolution_field() -> Value {
+        json!({ "resolution": {
+            "required": true, "name": "Resolution",
+            "schema": { "type": "resolution" },
+            "allowedValues": [{ "name": "Done" }]
+        }})
+    }
+
+    #[test]
+    fn comment_sends_markdown_as_adf() {
+        let markdown = "# H\n\n- a\n\n```rs\nx\n```\n\n[l](https://x)";
+        let (jira, transport) = scripted(vec![Ok(json!({ "id": "9001" }))]);
+        let posted = jira.comment("ABC-1", markdown, None).unwrap();
+        assert_eq!(posted.id, "9001");
+        let posts = transport.posts();
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].0, "/rest/api/3/issue/ABC-1/comment");
+        assert_eq!(posts[0].1["body"], format::markdown_to_adf(markdown));
+        assert_eq!(posts[0].1["body"]["type"], "doc");
+        assert_eq!(posts[0].1["body"]["content"][0]["type"], "heading");
+    }
+
+    #[test]
+    fn get_issue_description_uses_shared_converter() {
+        let adf = json!({ "type": "doc", "version": 1, "content": [
+            { "type": "table", "content": [
+                { "type": "tableRow", "content": [
+                    { "type": "tableHeader", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "A" }] }] }
+                ]},
+                { "type": "tableRow", "content": [
+                    { "type": "tableCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "1" }] }] }
+                ]}
+            ]}
+        ]});
+        let mut node = issue_node();
+        node["fields"]["description"] = adf.clone();
+        let (jira, _) = scripted(vec![Ok(node)]);
+        let issue = jira.get_issue("ENG-42").unwrap();
+        assert_eq!(issue.description, Some(format::adf_to_markdown(&adf)));
+        assert!(!issue.description.unwrap().is_empty());
+    }
+
+    #[test]
+    fn move_by_target_status_name_posts_the_matching_transition() {
+        let mut moved = issue_node();
+        moved["key"] = json!("ABC-1");
+        let (jira, transport) = scripted(vec![
+            Ok(start_transition(json!({}))),
+            Ok(Value::Null),
+            Ok(moved),
+        ]);
+        let issue = jira
+            .move_issue(
+                "ABC-1",
+                &MoveTarget {
+                    state_id: "in progress".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let requests = transport.requests();
+        assert_eq!(
+            requests[0].1,
+            "/rest/api/3/issue/ABC-1/transitions?expand=transitions.fields"
+        );
+        assert_eq!(
+            transport.posts(),
+            [(
+                "/rest/api/3/issue/ABC-1/transitions".to_string(),
+                json!({ "transition": { "id": "31" } })
+            )]
+        );
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[2].0, "GET");
+        assert_eq!(issue.state.group, StateGroup::Started);
+    }
+
+    #[test]
+    fn move_matches_transition_id_then_status_id() {
+        for wanted in ["31", "3"] {
+            let (jira, transport) = scripted(vec![
+                Ok(start_transition(json!({}))),
+                Ok(Value::Null),
+                Ok(issue_node()),
+            ]);
+            jira.move_issue(
+                "ABC-1",
+                &MoveTarget {
+                    state_id: wanted.into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                transport.posts()[0].1,
+                json!({ "transition": { "id": "31" } })
+            );
+        }
+    }
+
+    #[test]
+    fn transition_with_required_fields_does_not_post() {
+        let (jira, transport) = scripted(vec![Ok(start_transition(resolution_field()))]);
+        let error = jira
+            .move_issue(
+                "ABC-1",
+                &MoveTarget {
+                    state_id: "In Progress".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        let ProviderError::InvalidInput(message) = error else {
+            panic!("expected InvalidInput, got {error:?}");
+        };
+        assert!(message.contains("Resolution"), "{message}");
+        assert!(message.contains("Done"), "{message}");
+        assert!(transport.posts().is_empty());
+    }
+
+    #[test]
+    fn required_fields_supplied_are_sent() {
+        let (jira, transport) = scripted(vec![
+            Ok(start_transition(resolution_field())),
+            Ok(Value::Null),
+            Ok(issue_node()),
+        ]);
+        let mut required_fields = std::collections::BTreeMap::new();
+        required_fields.insert("resolution".to_string(), json!({ "name": "Done" }));
+        jira.move_issue(
+            "ABC-1",
+            &MoveTarget {
+                state_id: "In Progress".into(),
+                required_fields,
+            },
+        )
+        .unwrap();
+        let body = &transport.posts()[0].1;
+        assert_eq!(body["transition"]["id"], "31");
+        assert_eq!(body["fields"], json!({ "resolution": { "name": "Done" } }));
+    }
+
+    #[test]
+    fn unknown_target_lists_choices() {
+        let (jira, transport) = scripted(vec![Ok(start_transition(json!({})))]);
+        let error = jira
+            .move_issue(
+                "ABC-1",
+                &MoveTarget {
+                    state_id: "Shipped".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        let ProviderError::InvalidInput(message) = error else {
+            panic!("expected InvalidInput, got {error:?}");
+        };
+        assert!(message.contains("Shipped"), "{message}");
+        assert!(message.contains("In Progress"), "{message}");
+        assert!(transport.posts().is_empty());
+    }
+
+    #[test]
+    fn transitions_expose_required_fields() {
+        let (jira, _) = scripted(vec![Ok(start_transition(json!({
+            "resolution": resolution_field()["resolution"].clone(),
+            "comment": { "required": false, "name": "Comment" }
+        })))]);
+        let transitions = jira.transitions("ABC-1").unwrap();
+        assert_eq!(transitions.len(), 1);
+        assert_eq!(transitions[0].to.group, StateGroup::Started);
+        assert_eq!(
+            transitions[0].required_fields,
+            [RequiredField {
+                key: "resolution".into(),
+                name: "Resolution".into(),
+                schema_type: "resolution".into(),
+                allowed: vec!["Done".into()],
+            }]
+        );
+    }
+
+    #[test]
+    fn move_rejects_a_malformed_key_before_any_request() {
+        let (jira, transport) = scripted(vec![]);
+        let result = jira.move_issue("../x", &MoveTarget::default());
+        assert!(matches!(result, Err(ProviderError::InvalidInput(_))));
+        assert!(transport.requests().is_empty());
     }
 }
