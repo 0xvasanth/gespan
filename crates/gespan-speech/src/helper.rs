@@ -176,6 +176,10 @@ fn load(
     if shared.session().is_busy() {
         return shared.error(ErrorKind::Busy, "Dictation is already running.");
     }
+    // A failed load must not leave the previous model usable: the apps send
+    // `Start` right after `Load`, and it would open the mic on the old model.
+    shared.session().loaded = false;
+    *shared.engine() = None;
     if !model_dir.is_dir() {
         return shared.error(
             ErrorKind::ModelMissing,

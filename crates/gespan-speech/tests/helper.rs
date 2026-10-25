@@ -128,6 +128,9 @@ struct EngineCfg {
     delay: Duration,
     fail_on: Vec<usize>,
     calls: Arc<AtomicUsize>,
+    /// Zero-based indices of engine loads that fail.
+    load_fail_on: Vec<usize>,
+    loads: Arc<AtomicUsize>,
 }
 
 impl SpeechEngine for FakeEngine {
@@ -180,6 +183,10 @@ fn spawn_with(source: FakeSource, cfg: EngineCfg, limits: HelperLimits) -> Harne
             input,
             writer,
             |_dir| {
+                let load = cfg.loads.fetch_add(1, Ordering::SeqCst);
+                if cfg.load_fail_on.contains(&load) {
+                    return Err(EngineError::Load("scripted failure".into()));
+                }
                 Ok(Box::new(FakeEngine {
                     fixed: cfg.fixed,
                     delay: cfg.delay,
@@ -304,6 +311,65 @@ fn load_of_a_missing_directory_is_model_missing() {
         unreachable!()
     };
     assert_eq!(kind, ErrorKind::ModelMissing);
+}
+
+fn kinds(events: &[Event]) -> Vec<ErrorKind> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Error { kind, .. } => Some(kind.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn failed_reload_does_not_start_on_the_previous_model() {
+    let (source, state) = FakeSource::new(vec![chunk(160)], Duration::ZERO);
+    let h = spawn_with(
+        source,
+        EngineCfg {
+            load_fail_on: vec![1],
+            ..EngineCfg::default()
+        },
+        limits(10_000, 10_000),
+    );
+    h.load();
+    h.send(&Request::Load {
+        model_dir: std::env::temp_dir(),
+        model_id: "other".into(),
+    });
+    h.wait(|e| matches!(e, Event::Error { .. }));
+    h.send(&start(&[]));
+    h.wait(|_| kinds(&h.events()).len() == 2);
+    let (events, _) = h.finish();
+    assert_eq!(
+        kinds(&events),
+        vec![ErrorKind::ModelLoad, ErrorKind::ModelMissing]
+    );
+    assert!(!events.contains(&Event::Listening));
+    assert_eq!(state.starts.load(Ordering::SeqCst), 0, "mic never opened");
+}
+
+#[test]
+fn reload_of_a_missing_directory_forgets_the_previous_model() {
+    let (source, state) = FakeSource::new(vec![chunk(160)], Duration::ZERO);
+    let h = spawn(source, None, Duration::ZERO, limits(10_000, 10_000));
+    h.load();
+    h.send(&Request::Load {
+        model_dir: PathBuf::from("/definitely/not/here"),
+        model_id: "other".into(),
+    });
+    h.wait(|e| matches!(e, Event::Error { .. }));
+    h.send(&start(&[]));
+    h.wait(|_| kinds(&h.events()).len() == 2);
+    let (events, _) = h.finish();
+    assert_eq!(
+        kinds(&events),
+        vec![ErrorKind::ModelMissing, ErrorKind::ModelMissing]
+    );
+    assert!(!events.contains(&Event::Listening));
+    assert_eq!(state.starts.load(Ordering::SeqCst), 0, "mic never opened");
 }
 
 #[test]
