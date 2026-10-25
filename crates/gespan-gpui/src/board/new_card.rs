@@ -16,8 +16,8 @@ use crate::{
 use chrono::NaiveDate;
 use gespan_core::board::{Service, extras::PRIORITIES};
 use gpui::{
-    AnyElement, App, Context, Entity, Focusable, FontWeight, KeyBinding, Role, SharedString,
-    Subscription, Toggled, Window, actions, div, prelude::*, px,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Role,
+    SharedString, Subscription, Toggled, Window, actions, div, prelude::*, px,
 };
 use std::collections::HashMap;
 
@@ -68,6 +68,10 @@ pub(super) struct NewCard {
     pub title_missing: bool,
     pub error: Option<String>,
     anchors: HashMap<Property, AnchorSlot>,
+    /// Tab stops after the two text fields, in order.
+    pub focus: HashMap<Property, FocusHandle>,
+    pub more_focus: FocusHandle,
+    pub create_focus: FocusHandle,
     menu: Option<OpenMenu>,
     _subscriptions: Vec<Subscription>,
 }
@@ -145,10 +149,14 @@ impl BoardView {
         self.filter_open = false;
         self.open_in_open = false;
         self.switcher = None;
+        self.archive_open = false;
         let title = cx.new(|cx| Input::field("Title", "Card title", content(0.4), cx));
         let description =
             cx.new(|cx| Input::multiline_field("Description", "Add a description…", cx));
         let date = cx.new(|cx| Input::field("Due date", "YYYY-MM-DD", content(0.4), cx));
+        for field in [&title, &description, &date] {
+            field.update(cx, |input, _| input.tab_stop());
+        }
         let subscriptions = vec![
             cx.subscribe_in(
                 &title,
@@ -190,6 +198,18 @@ impl BoardView {
             title_missing: false,
             error: None,
             anchors: HashMap::new(),
+            focus: [
+                Property::Column,
+                Property::Priority,
+                Property::Due,
+                Property::Labels,
+                Property::Projects,
+            ]
+            .into_iter()
+            .map(|property| (property, cx.focus_handle().tab_stop(true)))
+            .collect(),
+            more_focus: cx.focus_handle().tab_stop(true),
+            create_focus: cx.focus_handle().tab_stop(true),
             menu: None,
             _subscriptions: subscriptions,
         });
@@ -318,6 +338,13 @@ impl BoardView {
         }
     }
 
+    fn toggle_create_more(&mut self, cx: &mut Context<Self>) {
+        if let Some(form) = &mut self.new_card {
+            form.create_more = !form.create_more;
+            cx.notify();
+        }
+    }
+
     fn open_new_card_menu(
         &mut self,
         property: Property,
@@ -437,15 +464,16 @@ impl BoardView {
                 }
             }
             Property::Due => match quick::parse_due(id, chrono::Local::now().date_naive()) {
-                Some(DueChoice::Day(day)) => {
-                    form.due = Some(day);
+                Some(choice @ (DueChoice::Day(_) | DueChoice::Clear)) => {
+                    form.due = match choice {
+                        DueChoice::Day(day) => Some(day),
+                        _ => None,
+                    };
                     form.typing_date = false;
                     form.error = None;
-                }
-                Some(DueChoice::Clear) => {
-                    form.due = None;
-                    form.typing_date = false;
-                    form.error = None;
+                    // Text typed before the pick must not come back later.
+                    let date = form.date.clone();
+                    date.update(cx, |input, cx| input.set_text(String::new(), cx));
                 }
                 Some(DueChoice::Pick) => {
                     form.typing_date = true;
@@ -541,6 +569,19 @@ impl BoardView {
                 .text_color(content(if set { 0.9 } else { 0.55 }))
                 .cursor_pointer()
                 .hover(|s| s.bg(content(0.06)))
+                .when_some(form.focus.get(&property), |d, focus| {
+                    d.track_focus(focus)
+                        .tab_index(0)
+                        .focus_visible(|s| s.border_color(accent_color()))
+                })
+                .on_key_down(
+                    cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space" | "down") {
+                            cx.stop_propagation();
+                            this.open_new_card_menu(property, window, cx);
+                        }
+                    }),
+                )
                 .child(label)
                 .child(anchor(property).probe())
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -560,10 +601,20 @@ impl BoardView {
             .text_size(px(12.))
             .text_color(content(0.7))
             .cursor_pointer()
-            .on_click(cx.listener(|this, _, _, cx| {
-                if let Some(form) = &mut this.new_card {
-                    form.create_more = !form.create_more;
-                    cx.notify();
+            .track_focus(&form.more_focus)
+            .tab_index(0)
+            .focus_visible(|s| s.text_color(content(1.)))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "space" {
+                    cx.stop_propagation();
+                    this.toggle_create_more(cx);
+                }
+            }))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.toggle_create_more(cx);
+                // A click leaves the cursor where the user was typing.
+                if let Some(form) = &this.new_card {
+                    window.focus(&form.title.focus_handle(cx), cx);
                 }
             }))
             .child(
@@ -700,6 +751,20 @@ impl BoardView {
                                     .debug_selector(|| "new-card-create".into())
                                     .font_weight(FontWeight::MEDIUM)
                                     .cursor_pointer()
+                                    .track_focus(&form.create_focus)
+                                    .tab_index(0)
+                                    .focus_visible(|s| s.border_1().border_color(accent_color()))
+                                    .on_key_down(cx.listener(
+                                        |this, event: &gpui::KeyDownEvent, window, cx| {
+                                            if matches!(
+                                                event.keystroke.key.as_str(),
+                                                "enter" | "space"
+                                            ) {
+                                                cx.stop_propagation();
+                                                this.submit_new_card(window, cx);
+                                            }
+                                        },
+                                    ))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.submit_new_card(window, cx)
                                     })),

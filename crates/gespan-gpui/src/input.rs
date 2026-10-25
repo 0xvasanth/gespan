@@ -239,6 +239,10 @@ impl Focusable for Input {
 }
 impl Input {
     /// Keep authentication text out of drawing, accessibility and clipboard.
+    /// Make this field a stop for Tab and Shift-Tab (fields are not by default).
+    pub(crate) fn tab_stop(&mut self) {
+        self.focus = self.focus.clone().tab_stop(true);
+    }
     pub(crate) fn set_secret(&mut self, secret: bool) {
         self.secret = secret;
     }

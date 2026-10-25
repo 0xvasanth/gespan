@@ -4590,3 +4590,161 @@ fn a_failed_setter_keeps_the_created_card_and_says_so(cx: &mut TestAppContext) {
     // A retry would need a new title: the modal never re-sends the old card.
     assert_eq!(new_card_text(&f, visual).0, "");
 }
+
+fn new_card_focused(f: &Fixture, visual: &mut VisualTestContext) -> Option<&'static str> {
+    f.window
+        .update(visual, |view, window, cx| {
+            let form = view.new_card.as_ref()?;
+            let named = [
+                ("column", new_card::Property::Column),
+                ("priority", new_card::Property::Priority),
+                ("due", new_card::Property::Due),
+                ("labels", new_card::Property::Labels),
+                ("projects", new_card::Property::Projects),
+            ];
+            for (name, property) in named {
+                if form.focus[&property].is_focused(window) {
+                    return Some(name);
+                }
+            }
+            if form.more_focus.is_focused(window) {
+                return Some("more");
+            }
+            if form.create_focus.is_focused(window) {
+                return Some("create");
+            }
+            if form.description.focus_handle(cx).is_focused(window) {
+                return Some("description");
+            }
+            form.title
+                .focus_handle(cx)
+                .is_focused(window)
+                .then_some("title")
+        })
+        .unwrap()
+}
+
+/// What the shell's Tab binding does: move focus along the tab order.
+fn tab(visual: &mut VisualTestContext, steps: i32) {
+    for _ in 0..steps.abs() {
+        visual.update(|window, cx| {
+            if steps > 0 {
+                window.focus_next(cx)
+            } else {
+                window.focus_prev(cx)
+            }
+        });
+    }
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+}
+
+#[gpui::test]
+fn the_modal_is_reachable_by_keyboard_in_order(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_modal(&f, visual);
+    let mut seen = vec![new_card_focused(&f, visual).unwrap()];
+    for _ in 0..8 {
+        tab(visual, 1);
+        visual.refresh().unwrap();
+        seen.push(new_card_focused(&f, visual).unwrap_or("elsewhere"));
+    }
+    assert_eq!(
+        seen[..8],
+        [
+            "title",
+            "description",
+            "column",
+            "priority",
+            "due",
+            "labels",
+            "projects",
+            "more"
+        ]
+    );
+    assert_eq!(seen[8], "create");
+    // Back to Column: Enter opens its menu, a pick sets it, focus returns.
+    tab(visual, -6);
+    assert_eq!(new_card_focused(&f, visual), Some("column"));
+    visual.simulate_keystrokes("enter");
+    visual.refresh().unwrap();
+    assert!(shown(visual, "menu-action-column-2"));
+    click(visual, "menu-action-column-2");
+    assert_eq!(new_card_focused(&f, visual), Some("column"));
+    let third = detail(&f, visual).columns[2].id.clone();
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(view.new_card.as_ref().unwrap().column_id, third)
+        })
+        .unwrap();
+    // Down opens a pill's menu too; Space toggles Create more.
+    tab(visual, 1);
+    visual.simulate_keystrokes("down");
+    visual.refresh().unwrap();
+    assert!(shown(visual, "menu-action-priority-3"));
+    visual.simulate_keystrokes("escape");
+    tab(visual, 4);
+    assert_eq!(new_card_focused(&f, visual), Some("more"));
+    visual.simulate_keystrokes("space");
+    let on = |visual: &mut VisualTestContext| {
+        f.window
+            .read_with(visual, |view, _| {
+                view.new_card.as_ref().unwrap().create_more
+            })
+            .unwrap()
+    };
+    assert!(on(visual));
+    visual.simulate_keystrokes("space");
+    assert!(!on(visual));
+    assert!(modal_open(&f, visual), "Escape on a menu closed the modal");
+}
+
+#[gpui::test]
+fn a_quick_pick_drops_a_half_typed_date(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_modal(&f, visual);
+    pick(visual, "new-card-due", "menu-action-due-pick");
+    visual.simulate_input("2026-1");
+    pick(visual, "new-card-due", "menu-action-due-today");
+    f.window
+        .read_with(visual, |view, cx| {
+            let form = view.new_card.as_ref().unwrap();
+            assert_eq!(form.date.read(cx).content.to_string(), "");
+            assert!(!form.typing_date);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn opening_the_modal_closes_the_archive_view(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    f.window
+        .update(visual, |view, _, cx| view.toggle_archive(cx))
+        .unwrap();
+    open_modal(&f, visual);
+    f.window
+        .read_with(visual, |view, _| assert!(!view.archive_open))
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_rapid_double_submit_makes_one_card(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_modal(&f, visual);
+    visual.simulate_input("Once");
+    visual.simulate_keystrokes(&format!("{MOD}-enter {MOD}-enter"));
+    visual.run_until_parked();
+    assert_eq!(cards_titled(&f, "Once").len(), 1);
+    // With Create more the second press meets an empty title.
+    open_modal(&f, visual);
+    click(visual, "new-card-more");
+    visual.simulate_input("Twice");
+    visual.simulate_keystrokes(&format!("{MOD}-enter {MOD}-enter"));
+    visual.run_until_parked();
+    assert_eq!(cards_titled(&f, "Twice").len(), 1);
+    assert_eq!(card_count(&f), 2);
+}
