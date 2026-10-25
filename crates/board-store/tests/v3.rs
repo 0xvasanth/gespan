@@ -621,3 +621,169 @@ fn deleting_a_card_takes_every_v3_row_with_it() {
     }
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_card_relations"), 0);
 }
+
+fn column_titles(conn: &Connection, board: &str, column: &str) -> Vec<String> {
+    live_positions(conn, board, column)
+        .into_iter()
+        .map(|(title, _)| title)
+        .collect()
+}
+
+#[test]
+fn restore_card_puts_the_card_back_at_its_old_index() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["a", "b", "c", "d"]);
+    archive_card(&conn, &cards[1].id).unwrap();
+
+    let returned = restore_card(&conn, &cards[1].id, &columns[0].id, 1).unwrap();
+    assert_eq!(returned, board.id);
+    assert_eq!(
+        column_titles(&conn, &board.id, &columns[0].id),
+        ["a", "b", "c", "d"]
+    );
+    assert_contiguous(&conn, &board.id, &columns);
+    assert!(archived_cards(&conn, &board.id).unwrap().is_empty());
+
+    // An index past the end is clamped to the end.
+    archive_card(&conn, &cards[0].id).unwrap();
+    restore_card(&conn, &cards[0].id, &columns[0].id, 99).unwrap();
+    assert_eq!(
+        column_titles(&conn, &board.id, &columns[0].id),
+        ["b", "c", "d", "a"]
+    );
+    assert_contiguous(&conn, &board.id, &columns);
+}
+
+#[test]
+fn restore_card_logs_unarchived_and_moves_only_when_the_column_differs() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["a", "b"]);
+    let id = &cards[0].id;
+    let kinds = |conn: &Connection| -> Vec<String> {
+        list_activity(conn, &board.id, Some(id), 50)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.kind)
+            .collect()
+    };
+    archive_card(&conn, id).unwrap();
+    let before = kinds(&conn).len();
+    restore_card(&conn, id, &columns[0].id, 0).unwrap();
+    let after = kinds(&conn);
+    assert_eq!(after.len(), before + 1);
+    assert!(!after.contains(&"moved".to_string()));
+
+    archive_card(&conn, id).unwrap();
+    let before = kinds(&conn).len();
+    restore_card(&conn, id, &columns[1].id, 0).unwrap();
+    assert_eq!(kinds(&conn).len(), before + 2);
+    assert!(kinds(&conn).contains(&"moved".to_string()));
+}
+
+#[test]
+fn restore_card_into_another_column() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["a", "b", "c"]);
+    create_card(&conn, &columns[1].id, "x", "").unwrap();
+    create_card(&conn, &columns[1].id, "y", "").unwrap();
+    archive_card(&conn, &cards[1].id).unwrap();
+
+    restore_card(&conn, &cards[1].id, &columns[1].id, 1).unwrap();
+    assert_eq!(column_titles(&conn, &board.id, &columns[0].id), ["a", "c"]);
+    assert_eq!(
+        column_titles(&conn, &board.id, &columns[1].id),
+        ["x", "b", "y"]
+    );
+    assert_eq!(
+        get_card(&conn, &cards[1].id).unwrap().column_id,
+        columns[1].id
+    );
+    assert_contiguous(&conn, &board.id, &columns);
+}
+
+#[test]
+fn restore_card_after_its_column_was_deleted_errors() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["a", "b"]);
+    let spare = create_column(&conn, &board.id, "Spare", None).unwrap();
+    archive_card(&conn, &cards[0].id).unwrap();
+    delete_column(&conn, &spare.id).unwrap();
+
+    let err = restore_card(&conn, &cards[0].id, &spare.id, 0).unwrap_err();
+    assert_eq!(err, "Column not on this board");
+    // Nothing changed: the card is still archived.
+    assert_eq!(archived_cards(&conn, &board.id).unwrap().len(), 1);
+    assert_eq!(column_titles(&conn, &board.id, &columns[0].id), ["b"]);
+
+    assert_eq!(
+        restore_card(&conn, "no-such-card", &columns[0].id, 0).unwrap_err(),
+        "Card not found"
+    );
+    // A column from another board is also refused.
+    let other = create_board(&conn, "Other").unwrap();
+    let foreign = get_board(&conn, &other.id).unwrap().columns;
+    assert_eq!(
+        restore_card(&conn, &cards[0].id, &foreign[0].id, 0).unwrap_err(),
+        "Column not on this board"
+    );
+}
+
+#[test]
+fn archive_cards_is_one_transaction_and_keeps_positions_contiguous() {
+    let conn = fresh();
+    let (board, columns, cards) = board_with_cards(&conn, &["a", "b", "c", "d", "e"]);
+    let doing = create_card(&conn, &columns[1].id, "x", "").unwrap();
+    let doing2 = create_card(&conn, &columns[1].id, "y", "").unwrap();
+    archive_card(&conn, &cards[4].id).unwrap();
+    let before_e = activity_count(&conn, &board.id, &cards[4].id);
+
+    let ids = vec![
+        cards[1].id.clone(),
+        cards[3].id.clone(),
+        doing.id.clone(),
+        cards[4].id.clone(), // already archived: no change, no row
+        cards[1].id.clone(), // duplicate
+    ];
+    assert_eq!(archive_cards(&conn, &ids).unwrap(), board.id);
+    assert_eq!(column_titles(&conn, &board.id, &columns[0].id), ["a", "c"]);
+    assert_eq!(column_titles(&conn, &board.id, &columns[1].id), ["y"]);
+    assert_contiguous(&conn, &board.id, &columns);
+    assert_eq!(archived_cards(&conn, &board.id).unwrap().len(), 4);
+    assert_eq!(activity_count(&conn, &board.id, &cards[4].id), before_e);
+    for id in [&cards[1].id, &cards[3].id, &doing.id] {
+        let rows = list_activity(&conn, &board.id, Some(id), 50).unwrap();
+        assert_eq!(
+            rows.iter()
+                .filter(|a| a.detail.as_deref() == Some("archived"))
+                .count(),
+            1
+        );
+    }
+
+    // A failing id rolls the whole batch back.
+    let bad = vec![cards[0].id.clone(), "no-such-card".to_string()];
+    assert!(archive_cards(&conn, &bad).is_err());
+    assert_eq!(column_titles(&conn, &board.id, &columns[0].id), ["a", "c"]);
+
+    // Cards from two boards are refused, also without partial effects.
+    let other = create_board(&conn, "Other").unwrap();
+    let other_cols = get_board(&conn, &other.id).unwrap().columns;
+    let foreign = create_card(&conn, &other_cols[0].id, "z", "").unwrap();
+    let mixed = vec![cards[0].id.clone(), foreign.id.clone()];
+    assert!(archive_cards(&conn, &mixed).is_err());
+    assert_eq!(column_titles(&conn, &board.id, &columns[0].id), ["a", "c"]);
+    assert_eq!(column_titles(&conn, &board.id, &columns[1].id), ["y"]);
+    let _ = doing2;
+}
+
+#[test]
+fn column_card_count_counts_archived_separately() {
+    let conn = fresh();
+    let (_board, columns, cards) = board_with_cards(&conn, &["a", "b", "c"]);
+    assert_eq!(column_card_count(&conn, &columns[0].id).unwrap(), (3, 0));
+    archive_card(&conn, &cards[0].id).unwrap();
+    archive_card(&conn, &cards[2].id).unwrap();
+    assert_eq!(column_card_count(&conn, &columns[0].id).unwrap(), (1, 2));
+    assert_eq!(column_card_count(&conn, &columns[1].id).unwrap(), (0, 0));
+    assert!(column_card_count(&conn, "missing").is_err());
+}

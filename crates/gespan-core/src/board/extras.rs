@@ -72,6 +72,68 @@ impl Service {
         store::card_extras(&self.conn, board_id)
     }
 
+    pub fn archive(&mut self, card_id: &str) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::archive_card(&self.conn, card_id).map(drop)
+    }
+
+    pub fn archive_many(&mut self, card_ids: &[String]) -> Result<(), String> {
+        for id in card_ids {
+            validate_id(id, "card")?;
+        }
+        store::archive_cards(&self.conn, card_ids).map(drop)
+    }
+
+    pub fn unarchive(&mut self, card_id: &str) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        store::unarchive_card(&self.conn, card_id).map(drop)
+    }
+
+    /// Unarchives the card and places it at `index` in `column_id`.
+    pub fn restore(&mut self, card_id: &str, column_id: &str, index: usize) -> Result<(), String> {
+        validate_id(card_id, "card")?;
+        validate_id(column_id, "column")?;
+        store::restore_card(&self.conn, card_id, column_id, index).map(drop)
+    }
+
+    pub fn archived(&mut self, board_id: &str) -> Result<Vec<super::Card>, String> {
+        validate_id(board_id, "board")?;
+        store::archived_cards(&self.conn, board_id)
+    }
+
+    pub fn move_many(
+        &mut self,
+        card_ids: &[String],
+        column_id: &str,
+        index: usize,
+        actor: &str,
+    ) -> Result<(), String> {
+        for id in card_ids {
+            validate_id(id, "card")?;
+        }
+        validate_id(column_id, "column")?;
+        store::move_cards(&self.conn, card_ids, column_id, index, actor).map(drop)
+    }
+
+    /// Overwrites colour, WIP limit and collapsed together; pass the current
+    /// colour and limit back to change only `collapsed`.
+    pub fn set_column_display(
+        &mut self,
+        column_id: &str,
+        color: Option<&str>,
+        wip_limit: Option<i64>,
+        collapsed: bool,
+    ) -> Result<(), String> {
+        validate_id(column_id, "column")?;
+        store::set_column_display(&self.conn, column_id, color, wip_limit, collapsed).map(drop)
+    }
+
+    /// `(live, archived)` card counts of a column.
+    pub fn column_card_count(&mut self, column_id: &str) -> Result<(usize, usize), String> {
+        validate_id(column_id, "column")?;
+        store::column_card_count(&self.conn, column_id)
+    }
+
     pub fn set_priority(&mut self, card_id: &str, priority: u8) -> Result<(), String> {
         validate_id(card_id, "card")?;
         store::set_priority(&self.conn, card_id, priority).map(drop)
@@ -160,6 +222,52 @@ mod tests {
         service.activity(board, Some(card), 1).unwrap()[0]
             .detail
             .clone()
+    }
+
+    #[test]
+    fn archive_restore_and_bulk_operations_go_through_the_service() {
+        let (_dir, mut service, _) = service();
+        let board = service.default_board().unwrap();
+        let columns = service.get(&board.id).unwrap().columns;
+        let ids: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|t| service.card_create(&columns[0].id, t, "").unwrap().id)
+            .collect();
+
+        service.archive_many(&ids[..2]).unwrap();
+        assert_eq!(service.column_card_count(&columns[0].id).unwrap(), (1, 2));
+        assert_eq!(service.archived(&board.id).unwrap().len(), 2);
+        assert!(service.column_card_count(&columns[0].id).is_ok());
+
+        service.restore(&ids[1], &columns[1].id, 0).unwrap();
+        service.unarchive(&ids[0]).unwrap();
+        service.archive(&ids[2]).unwrap();
+        assert_eq!(service.archived(&board.id).unwrap().len(), 1);
+
+        service
+            .move_many(&ids[..2], &columns[1].id, 0, "user")
+            .unwrap();
+        let detail = service.get(&board.id).unwrap();
+        let in_doing: Vec<&str> = detail
+            .cards
+            .iter()
+            .filter(|c| c.column_id == columns[1].id)
+            .map(|c| c.id.as_str())
+            .collect();
+        assert_eq!(in_doing, [ids[0].as_str(), ids[1].as_str()]);
+
+        service
+            .set_column_display(&columns[1].id, Some("ff0000"), Some(3), true)
+            .unwrap();
+        let col = &service.get(&board.id).unwrap().columns[1];
+        assert_eq!(
+            (col.color.as_deref(), col.wip_limit, col.collapsed),
+            (Some("ff0000"), Some(3), true)
+        );
+
+        assert!(service.archive("bad id!").is_err());
+        assert!(service.archive_many(&["bad id!".to_string()]).is_err());
+        assert!(service.restore(&ids[2], "bad id!", 0).is_err());
     }
 
     #[test]

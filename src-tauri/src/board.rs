@@ -4,14 +4,16 @@
 use gespan_board_store::ensure_tables;
 use gespan_board_store::get_card;
 use gespan_board_store::{
-    add_comment, add_subtask, card_extras, cards_for_link, create_board, create_card,
-    create_column, create_label, delete_board, delete_card, delete_column, delete_subtask,
-    get_board, link_card, list_activity, list_boards, list_comments, list_labels, list_subtasks,
-    move_card, move_column, record_card, rename_board, set_card_labels, set_due, set_priority,
-    set_projects, toggle_subtask, update_card, update_column, validate_id, Activity, Board,
-    BoardDetail, Card, CardExtras, Column, Comment, Label, Subtask,
+    add_comment, add_subtask, archive_card, archive_cards, archived_cards, card_extras,
+    cards_for_link, column_card_count, create_board, create_card, create_column, create_label,
+    delete_board, delete_card, delete_column, delete_subtask, get_board, link_card, list_activity,
+    list_boards, list_comments, list_labels, list_subtasks, move_card, move_cards, move_column,
+    record_card, rename_board, restore_card, set_card_labels, set_column_display, set_due,
+    set_priority, set_projects, toggle_subtask, unarchive_card, update_card, update_column,
+    validate_id, Activity, Board, BoardDetail, Card, CardExtras, Column, Comment, Label, Subtask,
 };
 use gespan_tracker_client::tickets::TicketRef;
+use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, State};
 
@@ -322,6 +324,132 @@ fn subtask_delete_inner(
 ) -> Result<Option<String>, String> {
     validate_id(subtask_id, "subtask")?;
     delete_subtask(conn, subtask_id)
+}
+
+/// A column's live and archived card counts.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct ColumnCount {
+    pub live: usize,
+    pub archived: usize,
+}
+
+#[tauri::command(async)]
+pub fn board_card_archive(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = archive_card(&conn, &card_id)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_cards_archive(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_ids: Vec<String>,
+) -> Result<(), String> {
+    for id in &card_ids {
+        validate_id(id, "card")?;
+    }
+    let conn = store.lock_conn()?;
+    let board_id = archive_cards(&conn, &card_ids)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_card_unarchive(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = unarchive_card(&conn, &card_id)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_card_restore(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    column_id: String,
+    index: usize,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    validate_id(&column_id, "column")?;
+    let conn = store.lock_conn()?;
+    let board_id = restore_card(&conn, &card_id, &column_id, index)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_archived_cards(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<Vec<Card>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    archived_cards(&conn, &board_id)
+}
+
+#[tauri::command(async)]
+pub fn board_cards_move(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_ids: Vec<String>,
+    column_id: String,
+    index: usize,
+    actor: String,
+) -> Result<(), String> {
+    for id in &card_ids {
+        validate_id(id, "card")?;
+    }
+    validate_id(&column_id, "column")?;
+    let conn = store.lock_conn()?;
+    let board_id = move_cards(&conn, &card_ids, &column_id, index, &actor)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_column_set_display(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    column_id: String,
+    color: Option<String>,
+    wip_limit: Option<i64>,
+    collapsed: bool,
+) -> Result<(), String> {
+    validate_id(&column_id, "column")?;
+    let conn = store.lock_conn()?;
+    let board_id = set_column_display(&conn, &column_id, color.as_deref(), wip_limit, collapsed)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_column_card_count(
+    store: State<'_, SessionStore>,
+    column_id: String,
+) -> Result<ColumnCount, String> {
+    validate_id(&column_id, "column")?;
+    let conn = store.lock_conn()?;
+    let (live, archived) = column_card_count(&conn, &column_id)?;
+    Ok(ColumnCount { live, archived })
 }
 
 #[tauri::command(async)]
@@ -1070,5 +1198,46 @@ mod tests {
         );
         assert!(list_subtasks(&conn, &card.id).unwrap().is_empty());
         assert!(subtask_delete_inner(&conn, "bad id!").is_err());
+    }
+
+    #[test]
+    fn archive_restore_and_display_commands_round_trip() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let cards = add_cards(&conn, &columns[0].id, &["a", "b", "c"]);
+
+        archive_cards(&conn, &[cards[0].id.clone(), cards[1].id.clone()]).unwrap();
+        let (live, archived) = column_card_count(&conn, &columns[0].id).unwrap();
+        let json = serde_json::to_value(ColumnCount { live, archived }).unwrap();
+        assert_eq!(json, serde_json::json!({ "live": 1, "archived": 2 }));
+
+        let listed = serde_json::to_value(archived_cards(&conn, &board.id).unwrap()).unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 2);
+        assert!(listed[0].get("columnId").is_some());
+
+        restore_card(&conn, &cards[1].id, &columns[1].id, 0).unwrap();
+        unarchive_card(&conn, &cards[0].id).unwrap();
+        assert_eq!(titles(&conn, &columns[0].id), ["c", "a"]);
+        assert_eq!(titles(&conn, &columns[1].id), ["b"]);
+
+        move_cards(
+            &conn,
+            &[cards[2].id.clone(), cards[0].id.clone()],
+            &columns[1].id,
+            0,
+            "user",
+        )
+        .unwrap();
+        assert_eq!(titles(&conn, &columns[1].id), ["c", "a", "b"]);
+        assert!(move_cards(&conn, &[cards[0].id.clone()], &columns[1].id, 0, "robot").is_err());
+
+        set_column_display(&conn, &columns[1].id, Some("00ff00"), Some(4), true).unwrap();
+        let col = &get_board(&conn, &board.id).unwrap().columns[1];
+        let value = serde_json::to_value(col).unwrap();
+        assert_eq!(value["wipLimit"], 4);
+        assert_eq!(value["collapsed"], true);
+        assert_eq!(value["color"], "00ff00");
+        archive_card(&conn, &cards[2].id).unwrap();
+        assert_eq!(column_card_count(&conn, &columns[1].id).unwrap(), (2, 1));
     }
 }

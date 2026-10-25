@@ -1,8 +1,8 @@
 //! Per-card properties in `board_card_meta` and `board_card_projects`, archive,
 //! and the per-card summary the board face shows.
 use crate::ops::{
-    card_from_row, column_card_ids, db, get_card, is_archived, log_edit, touch,
-    write_card_positions, write_tx, LIVE,
+    card_from_row, column_card_ids, db, get_card, get_column, is_archived, log_activity, log_edit,
+    touch, write_card_positions, write_tx, NewActivity, LIVE,
 };
 use crate::{now_millis, Card};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -266,6 +266,126 @@ pub fn unarchive_card(conn: &Connection, card_id: &str) -> Result<String, String
     log_edit(&tx, &card.board_id, card_id, "unarchived")?;
     tx.commit().map_err(db)?;
     Ok(card.board_id)
+}
+
+/// Archives several cards in one transaction. Each column closes its gap once
+/// and every card that changed gets an "archived" row; cards already archived
+/// are skipped. All cards must be on one board. Returns that board id.
+pub fn archive_cards(conn: &Connection, card_ids: &[String]) -> Result<String, String> {
+    let tx = write_tx(conn)?;
+    let mut cards: Vec<Card> = Vec::new();
+    for card_id in card_ids {
+        if cards.iter().any(|card| &card.id == card_id) {
+            continue;
+        }
+        let card = get_card(&tx, card_id)?;
+        if cards
+            .first()
+            .is_some_and(|first| first.board_id != card.board_id)
+        {
+            return Err("Cards are not on one board".into());
+        }
+        cards.push(card);
+    }
+    let Some(board_id) = cards.first().map(|card| card.board_id.clone()) else {
+        return Err("No cards to archive".into());
+    };
+    let mut columns: Vec<String> = Vec::new();
+    for card in &cards {
+        if is_archived(&tx, &card.id)? {
+            continue;
+        }
+        write_meta(&tx, &card.id, "archived_at", Some(now_millis()))?;
+        touch(&tx, &card.id)?;
+        log_edit(&tx, &board_id, &card.id, "archived")?;
+        if !columns.contains(&card.column_id) {
+            columns.push(card.column_id.clone());
+        }
+    }
+    for column_id in &columns {
+        let ids = column_card_ids(&tx, column_id)?;
+        write_card_positions(&tx, &ids)?;
+    }
+    tx.commit().map_err(db)?;
+    Ok(board_id)
+}
+
+/// Unarchives a card and places it at `index` (clamped) in `column_id`, in one
+/// transaction. Logs "unarchived", plus "moved" when the column differs from
+/// the one the card was archived from. Returns the owning board id.
+pub fn restore_card(
+    conn: &Connection,
+    card_id: &str,
+    column_id: &str,
+    index: usize,
+) -> Result<String, String> {
+    let tx = write_tx(conn)?;
+    let card = get_card(&tx, card_id)?;
+    let target = match get_column(&tx, column_id) {
+        Ok(column) if column.board_id == card.board_id => column,
+        _ => return Err("Column not on this board".into()),
+    };
+    let source = get_column(&tx, &card.column_id)?;
+    let was_archived = is_archived(&tx, card_id)?;
+    let same_column = card.column_id == column_id;
+    if was_archived {
+        write_meta(&tx, card_id, "archived_at", None)?;
+    }
+    if !same_column {
+        tx.execute(
+            "UPDATE board_cards SET column_id = ?1 WHERE id = ?2",
+            params![column_id, card_id],
+        )
+        .map_err(db)?;
+        let source_ids = column_card_ids(&tx, &card.column_id)?;
+        write_card_positions(&tx, &source_ids)?;
+    }
+    let mut ids = column_card_ids(&tx, column_id)?;
+    ids.retain(|id| id != card_id);
+    let at = index.min(ids.len());
+    ids.insert(at, card_id.to_string());
+    write_card_positions(&tx, &ids)?;
+    touch(&tx, card_id)?;
+    if was_archived {
+        log_edit(&tx, &card.board_id, card_id, "unarchived")?;
+    }
+    if !same_column {
+        log_activity(
+            &tx,
+            NewActivity {
+                board_id: &card.board_id,
+                card_id: Some(card_id),
+                kind: "moved",
+                actor: "user",
+                from_column: Some(&source.name),
+                to_column: Some(&target.name),
+                detail: None,
+            },
+        )?;
+    }
+    tx.commit().map_err(db)?;
+    Ok(card.board_id)
+}
+
+/// A column's `(live, archived)` card counts.
+pub fn column_card_count(conn: &Connection, column_id: &str) -> Result<(usize, usize), String> {
+    get_column(conn, column_id)?;
+    let archived: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM board_cards c JOIN board_card_meta m ON m.card_id = c.id
+             WHERE c.column_id = ?1 AND m.archived_at IS NOT NULL",
+            [column_id],
+            |row| row.get(0),
+        )
+        .map_err(db)?;
+    let total: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM board_cards WHERE column_id = ?1",
+            [column_id],
+            |row| row.get(0),
+        )
+        .map_err(db)?;
+    Ok(((total - archived) as usize, archived as usize))
 }
 
 /// A board's archived cards, most recently archived first.

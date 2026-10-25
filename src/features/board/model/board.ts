@@ -263,6 +263,61 @@ export function getCardExtras(
   return invoke<Record<string, CardExtras>>("board_card_extras", { boardId });
 }
 
+export function archiveCard(cardId: string): Promise<void> {
+  return invoke("board_card_archive", { cardId });
+}
+
+export function archiveCards(cardIds: string[]): Promise<void> {
+  return invoke("board_cards_archive", { cardIds });
+}
+
+export function unarchiveCard(cardId: string): Promise<void> {
+  return invoke("board_card_unarchive", { cardId });
+}
+
+/** Unarchives the card and places it at `index` in `columnId`. */
+export function restoreCard(
+  cardId: string,
+  columnId: string,
+  index: number,
+): Promise<void> {
+  return invoke("board_card_restore", { cardId, columnId, index });
+}
+
+export function listArchivedCards(boardId: string): Promise<BoardCard[]> {
+  return invoke("board_archived_cards", { boardId });
+}
+
+export function moveCards(
+  cardIds: string[],
+  columnId: string,
+  index: number,
+  actor: BoardActor = "user",
+): Promise<void> {
+  return invoke("board_cards_move", { cardIds, columnId, index, actor });
+}
+
+/** Overwrites all three; pass the current colour and limit to change only `collapsed`. */
+export function setColumnDisplay(
+  columnId: string,
+  color: string | null,
+  wipLimit: number | null,
+  collapsed: boolean,
+): Promise<void> {
+  return invoke("board_column_set_display", {
+    columnId,
+    color,
+    wipLimit,
+    collapsed,
+  });
+}
+
+export function columnCardCount(
+  columnId: string,
+): Promise<{ live: number; archived: number }> {
+  return invoke("board_column_card_count", { columnId });
+}
+
 export function setCardPriority(
   cardId: string,
   priority: number,

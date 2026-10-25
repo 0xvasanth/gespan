@@ -23,8 +23,9 @@ pub use fields::{
 pub use labels::{create_label, list_labels, set_card_labels, Label};
 pub use links::{add_link, board_tickets, card_links, remove_link, set_ticket, ticket, CardLink};
 pub use meta::{
-    archive_card, archived_cards, card_extras, card_meta, set_due, set_estimate, set_priority,
-    set_projects, set_start, unarchive_card, CardExtras, CardMeta, PRIORITIES,
+    archive_card, archive_cards, archived_cards, card_extras, card_meta, column_card_count,
+    restore_card, set_due, set_estimate, set_priority, set_projects, set_start, unarchive_card,
+    CardExtras, CardMeta, PRIORITIES,
 };
 pub use ops::{
     cards_for_link, create_board, create_card, create_column, delete_board, delete_card,
