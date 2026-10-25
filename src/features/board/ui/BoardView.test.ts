@@ -2,6 +2,7 @@
 import {
   act,
   createElement,
+  StrictMode,
   useSyncExternalStore,
   type ComponentProps,
 } from "react";
@@ -2717,5 +2718,28 @@ describe("BoardView New card shortcut", () => {
     expect(container.contains(document.activeElement)).toBe(true);
     keydown(document.activeElement as HTMLElement, modKey);
     expect(dialog()).not.toBeNull();
+  });
+
+  it("under StrictMode keeps focus in the Title field, and still returns it on Escape", async () => {
+    const props: ComponentProps<typeof BoardView> = {
+      onClose: vi.fn(),
+      linkTargets: [],
+      onOpenLinkedWork: vi.fn(() => Promise.resolve()),
+      lookupLinkTargets: vi.fn(async () => []),
+      projects: [],
+    };
+    await act(async () => {
+      root.render(
+        createElement(StrictMode, null, createElement(BoardView, props)),
+      );
+    });
+    await flush();
+    searchBox().focus();
+    keydown(searchBox(), modKey);
+    await flush();
+    expect(document.activeElement).toBe(modalTitle());
+    press(modalTitle(), "Escape");
+    expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(searchBox());
   });
 });

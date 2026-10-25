@@ -23,9 +23,13 @@ import {
 } from "./CardDrawerParts";
 
 /** The column a new card starts in: the first `todo` column, else the first. */
-export function defaultColumnId(columns: readonly BoardColumn[]): string | null {
+export function defaultColumnId(
+  columns: readonly BoardColumn[],
+): string | null {
   const ordered = [...columns].sort((a, b) => a.position - b.position);
-  return (ordered.find((column) => column.role === "todo") ?? ordered[0])?.id ?? null;
+  return (
+    (ordered.find((column) => column.role === "todo") ?? ordered[0])?.id ?? null
+  );
 }
 
 type Draft = {
@@ -101,14 +105,14 @@ export function NewCardModal({
   const opener = useRef<Element | null>(document.activeElement);
   const fallback = useRef(returnFocusTo);
   fallback.current = returnFocusTo;
-  useEffect(
-    () => () => {
-      const before = opener.current;
-      if (before instanceof HTMLElement && before.isConnected) before.focus();
-      else fallback.current?.()?.focus();
-    },
-    [],
-  );
+  // Only a real close restores it: an effect cleanup would also run in
+  // StrictMode's simulated unmount and pull focus off the Title field.
+  const close = () => {
+    const before = opener.current;
+    if (before instanceof HTMLElement && before.isConnected) before.focus();
+    else fallback.current?.()?.focus();
+    onClose();
+  };
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [columnId, setColumnId] = useState(
@@ -132,6 +136,9 @@ export function NewCardModal({
       mounted.current = false;
     };
   }, []);
+
+  const closeRef = useRef(close);
+  closeRef.current = close;
 
   const submit = async () => {
     if (busy.current) return;
@@ -166,11 +173,12 @@ export function NewCardModal({
         setError(message);
         titleField.current?.focus();
       } else {
-        onClose();
+        closeRef.current();
         if (message) onNotice(message);
       }
     } catch (cause) {
-      if (mounted.current) setError(`Couldn't add the card: ${errorText(cause)}`);
+      if (mounted.current)
+        setError(`Couldn't add the card: ${errorText(cause)}`);
     } finally {
       busy.current = false;
     }
@@ -203,7 +211,7 @@ export function NewCardModal({
   );
 
   return (
-    <Modal title="New card" size="md" hideClose onClose={onClose}>
+    <Modal title="New card" size="md" hideClose onClose={close}>
       <form
         className="flex flex-col gap-3 px-4 pb-4 pt-2"
         onSubmit={(event) => event.preventDefault()}
@@ -334,7 +342,11 @@ export function NewCardModal({
                   selected={labelIds}
                   onToggle={(id) => setLabelIds((ids) => toggled(ids, id))}
                   onCreate={(name) =>
-                    void createLabel(boardId, name, nextLabelColor(labels.length))
+                    void createLabel(
+                      boardId,
+                      name,
+                      nextLabelColor(labels.length),
+                    )
                       .then((created) =>
                         setLabelIds((ids) => [...ids, created.id]),
                       )
