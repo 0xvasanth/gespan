@@ -64,6 +64,14 @@ pub fn clear(log_dir: &Path, kinds: &[Kind]) -> io::Result<usize> {
     Ok(removed)
 }
 
+/// [`clear`] for consent changes: a queue that cannot be emptied is logged,
+/// since nothing else would notice.
+pub fn revoke(log_dir: &Path, kinds: &[Kind]) {
+    if let Err(error) = clear(log_dir, kinds) {
+        tracing::warn!(%error, ?kinds, "could not empty the diagnostics send queue");
+    }
+}
+
 /// Sends what `consent` allows, deleting each file once it is sent. A
 /// failed send stays queued. Returns how many were sent.
 pub fn drain(log_dir: &Path, consent: &Consent, transport: &mut dyn Transport) -> usize {
@@ -201,6 +209,25 @@ mod tests {
         assert!(metrics.exists() && record.exists());
         assert_eq!(clear(dir.path(), &Kind::ALL).unwrap(), 1);
         assert!(!metrics.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn revoke_logs_a_queue_it_cannot_empty() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let queued = queue(dir.path(), Kind::Crash, "a.json");
+        let folder = queue_dir(dir.path(), Kind::Crash);
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let lines = crate::diagnostics::test_capture(|| revoke(dir.path(), &[Kind::Crash]));
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(queued.exists());
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["level"], "warn");
+        assert_eq!(
+            lines[0]["message"],
+            "could not empty the diagnostics send queue"
+        );
     }
 
     #[test]

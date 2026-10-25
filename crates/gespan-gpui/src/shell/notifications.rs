@@ -908,6 +908,7 @@ impl Shell {
         self.sync_error_toast();
         let report_error = self.report_error_button(cx);
         let crash_notice = self.crash_notice(cx);
+        let consent_prompt = self.consent_prompt(cx);
         let state = &self.notification_state;
         let pilot_error = self.pilots.as_ref().and_then(|pilots| {
             pilots
@@ -948,6 +949,7 @@ impl Shell {
                 ))
             })
             .children(crash_notice)
+            .children(consent_prompt)
             .when_some(pilot_error, |stack, (pilots, message)| {
                 stack.child(errors::card(
                     "pilot-error",

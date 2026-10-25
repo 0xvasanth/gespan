@@ -86,6 +86,8 @@ pub(crate) struct Preferences {
     pub show_archived: bool,
     // Keybindings: a changed shortcut, or `None` for a disabled one.
     pub keybindings: HashMap<String, Option<String>>,
+    /// The diagnostics consent record and install ID (`docs/diagnostics/consent.md`).
+    pub diagnostics: gespan_core::diagnostics::ConsentState,
 }
 
 pub(crate) const UI_SCALE_PERCENTS: [u32; 16] = [
@@ -161,6 +163,7 @@ impl Default for Preferences {
             pilot_menu_bar_icon: true,
             show_archived: false,
             keybindings: HashMap::new(),
+            diagnostics: Default::default(),
         }
     }
 }
@@ -239,5 +242,33 @@ mod keep_awake_tests {
         let saved: Preferences =
             serde_json::from_str(r#"{"keep_awake":"agents_running"}"#).unwrap();
         assert_eq!(Mode::parse(&saved.keep_awake), Some(Mode::AgentsRunning));
+    }
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::Preferences;
+    use gespan_core::diagnostics::{CONSENT_VERSION, CrashReports};
+
+    #[test]
+    fn old_preferences_load_without_a_record() {
+        let old: Preferences = serde_json::from_str(r#"{"idle_agents":2}"#).unwrap();
+        assert_eq!(old.diagnostics.record, None);
+        assert_eq!(old.diagnostics.install_id, None);
+        assert!(old.diagnostics.needs_prompt());
+    }
+
+    #[test]
+    fn the_record_round_trips_through_saved_preferences() {
+        let mut prefs = Preferences::default();
+        prefs.diagnostics.answer(
+            gespan_core::diagnostics::Answer::Never,
+            "2026-10-25T09:00:00.000Z",
+        );
+        let saved = serde_json::to_string(&prefs).unwrap();
+        let loaded: Preferences = serde_json::from_str(&saved).unwrap();
+        let record = loaded.diagnostics.record.expect("kept");
+        assert_eq!(record.crash_reports, CrashReports::Never);
+        assert_eq!(record.consent_version, CONSENT_VERSION);
     }
 }

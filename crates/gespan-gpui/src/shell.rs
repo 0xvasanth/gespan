@@ -7,6 +7,7 @@ mod classic_sidebar;
 #[cfg(test)]
 mod classic_surface_tests;
 mod classic_surfaces;
+mod consent;
 mod file_panes;
 mod flow_runs;
 #[cfg(test)]
@@ -515,6 +516,7 @@ pub(crate) struct Shell {
     pilots: Option<Entity<crate::pilots::Pilots>>,
     quick_open: Option<quick_open::Open>,
     report: report::ReportState,
+    consent: consent::PromptState,
     image_lightbox: Option<(Entity<crate::image_lightbox::ImageLightbox>, Subscription)>,
     app_bridge: Option<gespan_core::pilot::bridge::Server>,
     mobile: mobile_host::Mobile,
@@ -878,6 +880,7 @@ impl Shell {
             pilots: None,
             quick_open: None,
             report: Default::default(),
+            consent: Default::default(),
             image_lightbox: None,
             app_bridge: None,
             mobile: mobile_host::Mobile::default(),

@@ -9,6 +9,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// new; a lower stored version asks again.
 pub const CONSENT_VERSION: u32 = 1;
 
+/// The privacy notice the prompt and Settings link to.
+pub const PRIVACY_NOTICE: &str = "https://github.com/0xvasanth/gespan/blob/main/docs/privacy.md";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CrashReports {

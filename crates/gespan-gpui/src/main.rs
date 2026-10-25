@@ -488,6 +488,7 @@ fn main() {
                     shell.update(cx, |shell, cx| {
                         shell.focus_active(window, cx);
                         shell.check_crash_notice(cx);
+                        shell.check_consent_prompt(cx);
                     });
                     #[cfg(target_os = "macos")]
                     {
