@@ -1,0 +1,25 @@
+crates/gespan-speech/Cargo.toml
+  s_cb714e3c395324::t_6682bd10bb1841 11-12
+crates/gespan-speech/src/lib.rs
+  s_cb714e3c395324::t_bf5968fa85da8c 1-3,6
+crates/gespan-speech/src/protocol.rs
+  s_cb714e3c395324::t_988a6e01ab0a23 1-88
+crates/gespan-speech/tests/protocol.rs
+  s_cb714e3c395324::t_5fe26b568b9e1f 1-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34c33fc5964115312acf746cd7c2fa9d792daaa8",
+  "prompts": {},
+  "sessions": {
+    "s_cb714e3c395324": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9490eb45-d269-459d-a64c-099ef06fd161",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
