@@ -293,8 +293,8 @@ fn tag_at(html: &str, at: usize) -> Option<Token> {
                 });
             }
             b'/' => i += 1,
-            // Markup only has `<` inside quoted values; anywhere else this
-            // `<` was text, or the tag would swallow the one after it.
+            // A `<` inside a tag means it was text, or the tag would swallow
+            // the one after it (quoted values are checked the same way).
             b'<' => return None,
             _ => {
                 let start = i;
@@ -317,6 +317,12 @@ fn tag_at(html: &str, at: usize) -> Option<Token> {
                     match bytes.get(i)? {
                         quote @ (b'"' | b'\'') => {
                             let close = rest[i + 1..].find(*quote as char)?;
+                            // Serializers escape `<` in values. A raw one
+                            // means this isn't a tag, and stopping here keeps
+                            // every attempt short of the next `<`.
+                            if rest[i + 1..i + 1 + close].contains('<') {
+                                return None;
+                            }
                             value = decode_html_entities(&rest[i + 1..i + 1 + close]);
                             i += close + 2;
                         }
@@ -962,9 +968,11 @@ mod tests {
             ("plain text", "plain text"),
             ("<p>a <b<c d</p>", "a \\<b\\<c d"),
             ("<p>x <i a=<y z</i></p>", "x \\<i a=\\<y z"),
+            // Serializers escape `<` in attribute values; a raw one means
+            // this isn't a tag, which also keeps the scan linear.
             (
                 "<p>q <a title=\"<b>\" href=\"u\">t</a></p>",
-                "q [t](u \"<b>\")",
+                "q \\<a title=\"**\" href=\"u\"\\>t**",
             ),
         ];
         for (html, markdown) in cases {
@@ -1074,6 +1082,24 @@ mod tests {
         let started = std::time::Instant::now();
         let doc = parse(&html);
         assert_eq!(doc.blocks.len(), 60_000);
+        assert!(
+            started.elapsed().as_secs() < 5,
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn unclosed_quoted_attributes_parse_in_linear_time() {
+        // Every `<` sits inside a quoted value, and no `>` closes the tag.
+        let html = format!("<p>x <a {}</p>", "c=\"<a \" ".repeat(40_000));
+        let started = std::time::Instant::now();
+        let markdown = plane_html_to_markdown(&html);
+        assert!(
+            markdown.starts_with("x \\<a c=\"\\<a \""),
+            "{}",
+            &markdown[..40]
+        );
         assert!(
             started.elapsed().as_secs() < 5,
             "took {:?}",
