@@ -24,6 +24,7 @@ webpki-roots = "1.0.11"
 similar = "3"
 unicode-width = "0.2"
 gespan-mobile-link = { path = "../mobile-link" }
+gespan-tracker-secrets = { path = "../tracker-secrets" }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 uuid = { version = "1", features = ["v4"] }
@@ -59,4 +60,5 @@ keyring = { version = "3.6", default-features = false, features = ["linux-native
 libc = "0.2"
 
 [dev-dependencies]
+gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
 tempfile = "3"

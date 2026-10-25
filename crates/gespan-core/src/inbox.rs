@@ -1,5 +1,5 @@
 //! Native Inbox services. Provider adapters preserve the Tauri API's requests,
-//! validation, response parsers and credential file formats.
+//! validation, response parsers and saved credential formats.
 mod avatar;
 mod media;
 pub use media::png as media_png;
@@ -992,6 +992,128 @@ fn run_command(
         Err(format!("{program} returned no output"))
     } else {
         Ok(stdout)
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::*;
+    use gespan_tracker_secrets::{testing, Tracker};
+    use std::fs;
+
+    fn data_dir() -> tempfile::TempDir {
+        testing::use_memory_keychain();
+        tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn linear_status_migrates_the_saved_token_file() {
+        let dir = data_dir();
+        fs::write(dir.path().join("linear-token"), "lin_api_saved\n").unwrap();
+
+        assert!(linear::linear_status(dir.path().into()).unwrap().connected);
+        assert!(!dir.path().join("linear-token").exists());
+        assert_eq!(
+            testing::stored(Tracker::Linear, dir.path()).as_deref(),
+            Some("lin_api_saved\n")
+        );
+        assert!(linear::linear_status(dir.path().into()).unwrap().connected);
+    }
+
+    #[test]
+    fn jira_status_migrates_the_saved_config_file() {
+        let dir = data_dir();
+        let saved =
+            r#"{"site":"https://acme.atlassian.net","email":"me@acme.dev","token":"jira-secret"}"#;
+        fs::write(dir.path().join("jira-config.json"), saved).unwrap();
+
+        let status = jira::jira_status(dir.path().into()).unwrap();
+
+        assert!(status.connected);
+        assert_eq!(status.site, "https://acme.atlassian.net");
+        assert_eq!(status.email, "me@acme.dev");
+        assert!(!dir.path().join("jira-config.json").exists());
+        assert_eq!(
+            testing::stored(Tracker::Jira, dir.path()).as_deref(),
+            Some(saved)
+        );
+    }
+
+    #[test]
+    fn gitlab_status_migrates_the_saved_config_file() {
+        let dir = data_dir();
+        let saved = r#"{"url":"https://gitlab.acme.dev","token":"glpat-secret"}"#;
+        fs::write(dir.path().join("gitlab-config.json"), saved).unwrap();
+
+        let status = gitlab::gitlab_status(dir.path().into()).unwrap();
+
+        assert!(status.connected);
+        assert_eq!(status.url, "https://gitlab.acme.dev");
+        assert!(!dir.path().join("gitlab-config.json").exists());
+        assert_eq!(
+            testing::stored(Tracker::Gitlab, dir.path()).as_deref(),
+            Some(saved)
+        );
+    }
+
+    #[test]
+    fn azure_devops_status_migrates_the_saved_config_file() {
+        let dir = data_dir();
+        let saved = r#"{"url":"https://dev.azure.com/acme","token":"ado-secret"}"#;
+        fs::write(dir.path().join("azure-devops-config.json"), saved).unwrap();
+
+        let status = azure_devops::azure_devops_status(dir.path().into()).unwrap();
+
+        assert!(status.connected);
+        assert_eq!(status.url, "https://dev.azure.com/acme");
+        assert!(!dir.path().join("azure-devops-config.json").exists());
+        assert_eq!(
+            testing::stored(Tracker::AzureDevOps, dir.path()).as_deref(),
+            Some(saved)
+        );
+    }
+
+    #[test]
+    fn disconnect_clears_the_keychain_entry() {
+        let dir = data_dir();
+        gespan_tracker_secrets::write(Tracker::Linear, dir.path(), "lin_api_saved").unwrap();
+
+        let status = linear::linear_set_token(dir.path().into(), " ".into()).unwrap();
+
+        assert!(!status.connected);
+        assert_eq!(testing::stored(Tracker::Linear, dir.path()), None);
+        assert!(!linear::linear_status(dir.path().into()).unwrap().connected);
+    }
+
+    #[test]
+    fn disconnecting_jira_also_removes_an_unmigrated_file() {
+        let dir = data_dir();
+        fs::write(dir.path().join("jira-config.json"), "{}").unwrap();
+
+        let status = jira::jira_set_config(
+            dir.path().into(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
+
+        assert!(!status.connected);
+        assert!(!dir.path().join("jira-config.json").exists());
+    }
+
+    #[test]
+    fn invalid_saved_config_is_reported_without_its_contents() {
+        let dir = data_dir();
+        fs::write(
+            dir.path().join("gitlab-config.json"),
+            "not json glpat-secret",
+        )
+        .unwrap();
+
+        let error = gitlab::gitlab_status(dir.path().into()).err().unwrap();
+
+        assert_eq!(error, "GitLab settings are invalid");
     }
 }
 
