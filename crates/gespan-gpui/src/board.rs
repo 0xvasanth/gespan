@@ -8,6 +8,7 @@ mod detail;
 mod drop;
 mod header;
 mod keyboard;
+mod markdown_toolbar;
 mod quick;
 pub(crate) mod style;
 mod switcher;
@@ -76,6 +77,8 @@ enum Menu {
 
 pub(super) struct CardMenu {
     card_id: String,
+    /// Where the menu opens when it isn't under the card's own "…".
+    anchor: Option<Anchor>,
     menu: Entity<crate::popover::Menu>,
     _events: Subscription,
 }
@@ -926,6 +929,7 @@ impl BoardView {
         );
         self.card_menu = Some(CardMenu {
             card_id,
+            anchor: None,
             menu,
             _events: events,
         });
@@ -1244,12 +1248,15 @@ impl gpui::Render for BoardView {
             .collect();
         let menu = self.render_menu(cx);
         let card_menu = self.card_menu.as_ref().map(|open| {
-            let anchor = self
-                .card_anchors
-                .get(&open.card_id)
-                .cloned()
-                .unwrap_or_default();
-            crate::popover::menu_popover(&open.menu, Anchor::Slot(anchor), cx)
+            let anchor = open.anchor.clone().unwrap_or_else(|| {
+                Anchor::Slot(
+                    self.card_anchors
+                        .get(&open.card_id)
+                        .cloned()
+                        .unwrap_or_default(),
+                )
+            });
+            crate::popover::menu_popover(&open.menu, anchor, cx)
         });
         let mut card_detail = self.render_card_detail(cx);
         let filter = self.render_filter(cx);

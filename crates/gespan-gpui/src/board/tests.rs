@@ -3783,3 +3783,339 @@ fn links_list_adds_a_pr_url_and_removes_a_link(cx: &mut TestAppContext) {
         [("worktree".to_string(), "/tmp/work".to_string())]
     );
 }
+
+// ---- C3-4: Markdown toolbar, subtasks, comment authors, More menu ----
+
+fn description_state(
+    f: &Fixture,
+    cx: &mut impl gpui::AppContext,
+) -> (String, std::ops::Range<usize>) {
+    f.window
+        .read_with(cx, |view, cx| {
+            view.card_detail.as_ref().unwrap().description_state(cx)
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn the_markdown_toolbar_formats_the_selection_and_saves_with_the_description(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    retype(
+        visual,
+        "board-drawer-description",
+        "make it loud\nsecond line",
+    );
+    for key in [
+        "bold", "italic", "heading", "bullets", "numbered", "link", "code",
+    ] {
+        assert!(
+            shown(visual, selector(format!("board-md-{key}"))),
+            "no {key} button"
+        );
+    }
+    // Bold on a selection wraps it and selects the inside.
+    f.window
+        .update(visual, |view, _, cx| view.select_description(8..12, cx))
+        .unwrap();
+    click(visual, "board-md-bold");
+    assert_eq!(
+        description_state(&f, visual),
+        ("make it **loud**\nsecond line".to_string(), 10..14)
+    );
+    // Bulleted list on a selection across both lines.
+    f.window
+        .update(visual, |view, _, cx| view.select_description(0..29, cx))
+        .unwrap();
+    click(visual, "board-md-bullets");
+    assert_eq!(
+        description_state(&f, visual).0,
+        "- make it **loud**\n- second line"
+    );
+    // An empty selection puts the cursor between the markers.
+    f.window
+        .update(visual, |view, _, cx| view.select_description(0..0, cx))
+        .unwrap();
+    click(visual, "board-md-italic");
+    assert_eq!(description_state(&f, visual).1, 1..1);
+    // Nothing is written until the description's usual save point.
+    assert_eq!(detail(&f, visual).cards[0].body, "");
+    click(visual, "board-drawer-close");
+    assert_eq!(
+        detail(&f, visual).cards[0].body,
+        "__- make it **loud**\n- second line"
+    );
+}
+
+#[gpui::test]
+fn the_toolbar_wraps_a_selection_at_the_end_of_the_text(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    retype(visual, "board-drawer-description", "see docs");
+    f.window
+        .update(visual, |view, _, cx| view.select_description(4..8, cx))
+        .unwrap();
+    click(visual, "board-md-link");
+    assert_eq!(
+        description_state(&f, visual),
+        ("see [docs](url)".to_string(), 11..14)
+    );
+}
+
+fn add_subtasks(f: &Fixture, card: &str, titles: &[&str]) -> Vec<String> {
+    let mut service = Service::open(&f.db).unwrap();
+    titles
+        .iter()
+        .map(|title| service.add_subtask(card, title).unwrap().id)
+        .collect()
+}
+
+fn subtask_titles(f: &Fixture, card: &str) -> Vec<String> {
+    Service::open(&f.db)
+        .unwrap()
+        .subtasks(card)
+        .unwrap()
+        .into_iter()
+        .map(|s| s.title)
+        .collect()
+}
+
+#[gpui::test]
+fn subtasks_reorder_with_move_up_down(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = card_id(&f, cx, "Task");
+    let ids = add_subtasks(&f, &card, &["one", "two", "three"]);
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    // The first has no Move up, the last no Move down.
+    click(visual, "board-subtask-menu-0");
+    assert!(!shown(
+        visual,
+        selector(format!("menu-action-subtask-up-{}", ids[0]))
+    ));
+    assert!(shown(
+        visual,
+        selector(format!("menu-action-subtask-down-{}", ids[0]))
+    ));
+    click(
+        visual,
+        selector(format!("menu-action-subtask-down-{}", ids[0])),
+    );
+    assert_eq!(subtask_titles(&f, &card), ["two", "one", "three"]);
+    click(visual, "board-subtask-menu-2");
+    assert!(!shown(
+        visual,
+        selector(format!("menu-action-subtask-down-{}", ids[2]))
+    ));
+    click(
+        visual,
+        selector(format!("menu-action-subtask-up-{}", ids[2])),
+    );
+    assert_eq!(subtask_titles(&f, &card), ["two", "three", "one"]);
+}
+
+#[gpui::test]
+fn convert_subtask_creates_a_card_and_removes_the_subtask(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Parent", "Other"]);
+    let card = card_id(&f, cx, "Parent");
+    let ids = add_subtasks(&f, &card, &["Ship it", "Keep"]);
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-subtask-menu-0");
+    click(
+        visual,
+        selector(format!("menu-action-subtask-convert-{}", ids[0])),
+    );
+    assert_eq!(subtask_titles(&f, &card), ["Keep"]);
+    let titles: Vec<String> = detail(&f, visual)
+        .cards
+        .iter()
+        .filter(|c| c.column_id == detail(&f, visual).columns[0].id)
+        .map(|c| c.title.clone())
+        .collect();
+    assert_eq!(titles, ["Parent", "Ship it", "Other"]);
+    let new = card_id(&f, visual, "Ship it");
+    assert_eq!(
+        relations_of(&f, &card),
+        [(card.clone(), new, "relates".to_string())]
+    );
+    // The drawer lists what is left.
+    assert!(!shown(visual, "board-subtask-1"));
+}
+
+#[gpui::test]
+fn agent_comments_show_agent(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = card_id(&f, cx, "Task");
+    {
+        let mut service = Service::open(&f.db).unwrap();
+        service.add_comment(&card, "from me").unwrap();
+        service.add_agent_comment(&card, "from the bot").unwrap();
+    }
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    assert!(shown(visual, "board-comment-avatar-0"));
+    assert!(shown(visual, "board-comment-avatar-1"));
+    assert!(shown(visual, "board-comment-author-1"));
+    assert_eq!(super::detail::comment_author("user"), ("You", "Y", false));
+    assert_eq!(super::detail::comment_author("agent"), ("Agent", "A", true));
+    // Distinct avatars: the author and the initial both differ.
+    assert_ne!(
+        super::detail::comment_author("user"),
+        super::detail::comment_author("agent")
+    );
+}
+
+const MORE_ORDER: [&str; 10] = [
+    "open",
+    "status",
+    "priority",
+    "labels",
+    "move-board",
+    "copy-link",
+    "copy-ref",
+    "duplicate",
+    "archive",
+    "delete",
+];
+
+fn assert_more_menu_in_order(visual: &mut VisualTestContext) {
+    visual.refresh().unwrap();
+    let ys: Vec<_> = MORE_ORDER
+        .iter()
+        .map(|id| {
+            visual
+                .debug_bounds(selector(format!("menu-action-{id}")))
+                .unwrap_or_else(|| panic!("no {id} item"))
+                .origin
+                .y
+        })
+        .collect();
+    assert!(ys.windows(2).all(|w| w[0] < w[1]), "{ys:?}");
+}
+
+#[gpui::test]
+fn more_menu_items_in_order(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-more");
+    assert_more_menu_in_order(visual);
+}
+
+fn right_click(visual: &mut VisualTestContext, target: &'static str) {
+    visual.refresh().unwrap();
+    let at = visual.debug_bounds(target).unwrap().center();
+    visual.simulate_mouse_down(at, gpui::MouseButton::Right, Default::default());
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+}
+
+#[gpui::test]
+fn right_click_on_a_card_opens_the_more_menu(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    right_click(visual, "board-card-1");
+    assert_more_menu_in_order(visual);
+    // It opened a menu, not the drawer.
+    f.window
+        .read_with(visual, |view, _| assert!(view.card_detail.is_none()))
+        .unwrap();
+    // Status… from the face opens the drawer on that card's status menu.
+    click(visual, "menu-action-status");
+    assert!(shown(visual, "board-drawer"));
+    let step = detail(&f, visual).columns[1].id.clone();
+    assert!(shown(
+        visual,
+        selector(format!("menu-action-status-{step}"))
+    ));
+}
+
+#[gpui::test]
+fn move_to_board_from_more_menu(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task", "Stay"]);
+    let first = open_id(&f, cx);
+    let sprint = Service::open(&f.db).unwrap().create("Sprint").unwrap();
+    reload(&f, cx);
+    let card = card_id(&f, cx, "Task");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    right_click(visual, "board-card-1");
+    click(visual, "menu-action-move-board");
+    // Only the other boards are listed.
+    assert!(shown(
+        visual,
+        selector(format!("menu-action-to-board-{}", sprint.id))
+    ));
+    assert!(!shown(
+        visual,
+        selector(format!("menu-action-to-board-{first}"))
+    ));
+    click(
+        visual,
+        selector(format!("menu-action-to-board-{}", sprint.id)),
+    );
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["Stay"]);
+    assert_eq!(
+        Service::open(&f.db).unwrap().card(&card).unwrap().board_id,
+        sprint.id
+    );
+    assert!(toast(&f, visual).unwrap().starts_with("Moved #1 to Sprint"));
+}
+
+#[gpui::test]
+fn move_to_board_with_no_other_board_says_so(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    right_click(visual, "board-card-1");
+    click(visual, "menu-action-move-board");
+    assert!(shown(visual, "menu-action-no-boards"));
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["Task"]);
+}
+
+#[gpui::test]
+fn copy_link_and_copy_reference_write_the_clipboard(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Fix the bug"]);
+    let card = card_id(&f, cx, "Fix the bug");
+    let board = open_id(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    right_click(visual, "board-card-1");
+    click(visual, "menu-action-copy-link");
+    let copied = visual.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()));
+    assert_eq!(
+        copied.as_deref(),
+        Some(format!("gespan://board/{board}/card/{card}").as_str())
+    );
+    right_click(visual, "board-card-1");
+    click(visual, "menu-action-copy-ref");
+    let copied = visual.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()));
+    assert_eq!(copied.as_deref(), Some("#1 Fix the bug"));
+}
+
+#[gpui::test]
+fn archive_and_delete_from_more_menu_show_undo(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let (a, b) = (card_id(&f, cx, "A"), card_id(&f, cx, "B"));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    right_click(visual, "board-card-1");
+    click(visual, "menu-action-archive");
+    assert_eq!(archived_ids(&f, visual), std::slice::from_ref(&a));
+    assert_eq!(toast(&f, visual).as_deref(), Some("Archived #1"));
+    click(visual, "board-undo");
+    assert!(archived_ids(&f, visual).is_empty());
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B"]);
+    // Delete is held: archived at once, gone when the toast goes.
+    right_click(visual, "board-card-2");
+    click(visual, "menu-action-delete");
+    assert_eq!(toast(&f, visual).as_deref(), Some("Deleted #2"));
+    assert_eq!(archived_ids(&f, visual), std::slice::from_ref(&b));
+    click(visual, "board-undo");
+    assert!(archived_ids(&f, visual).is_empty());
+    assert!(card_exists(&f, &b));
+}

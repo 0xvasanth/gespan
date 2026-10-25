@@ -1,9 +1,10 @@
 //! The task drawer, laid out like gr8r's: a top bar of actions, the title, a
 //! grid of properties, the description, subtasks, then Comments and Activity.
 //! It docks beside the board instead of covering it.
+mod more;
 mod view;
 #[cfg(test)]
-pub(crate) use view::SEND_HINT;
+pub(crate) use view::{SEND_HINT, comment_author};
 
 use super::{BoardView, Event, quick, style, turns};
 use crate::{
@@ -61,7 +62,8 @@ enum Choice {
     Priority,
     Due,
     Start,
-    More,
+    /// A subtask's menu, by its index in the list.
+    Subtask(usize),
     /// A date field's quick picks, by field index.
     FieldDate(usize),
     FieldSelect(usize),
@@ -134,6 +136,13 @@ impl CardDetail {
                 .as_ref()
                 .map(|input| input.read(cx).content.to_string()),
         )
+    }
+
+    /// The description's text and selection.
+    #[cfg(test)]
+    pub(crate) fn description_state(&self, cx: &gpui::App) -> (String, std::ops::Range<usize>) {
+        let input = self.body.read(cx);
+        (input.content.to_string(), input.selected_range())
     }
 
     /// What assistive tech calls the description and comment fields.
@@ -332,7 +341,7 @@ impl BoardView {
         }
     }
 
-    fn card(&self, card_id: &str) -> Option<&gespan_core::board::Card> {
+    pub(super) fn card(&self, card_id: &str) -> Option<&gespan_core::board::Card> {
         self.detail
             .as_ref()?
             .cards
@@ -401,7 +410,15 @@ impl BoardView {
             rows
         }));
         match subtasks {
-            Ok(subtasks) => detail.subtasks = subtasks,
+            Ok(subtasks) => {
+                for index in 0..subtasks.len() {
+                    detail
+                        .anchors
+                        .entry(format!("subtask-{index}"))
+                        .or_default();
+                }
+                detail.subtasks = subtasks
+            }
             Err(error) => failed = Some(error),
         }
         match comments {
@@ -486,6 +503,20 @@ impl BoardView {
         }
     }
 
+    /// Select a range of the description, as dragging over it would.
+    #[cfg(test)]
+    pub(crate) fn select_description(
+        &mut self,
+        range: std::ops::Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(detail) = &self.card_detail {
+            detail
+                .body
+                .update(cx, |input, cx| input.select_range(range, cx));
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn card_detail_title(&self, cx: &gpui::App) -> Option<String> {
         let detail = self.card_detail.as_ref()?;
@@ -547,7 +578,35 @@ impl BoardView {
                 MenuAction::new("link-pr", "PR URL…").into(),
                 MenuAction::new("link-worktree", "Worktree path…").into(),
             ],
-            Choice::More => vec![MenuAction::new("delete", "Delete task").danger().into()],
+            Choice::Subtask(index) => {
+                let Some(detail) = &self.card_detail else {
+                    return;
+                };
+                let Some(subtask) = detail.subtasks.get(index) else {
+                    return;
+                };
+                let last = detail.subtasks.len() - 1;
+                // Named by id, so a reload that reorders the list while the
+                // menu is open cannot change which subtask is picked.
+                let id = &subtask.id;
+                let mut items: Vec<MenuItem> = Vec::new();
+                if index > 0 {
+                    items.push(MenuAction::new(format!("subtask-up-{id}"), "Move up").into());
+                }
+                if index < last {
+                    items.push(MenuAction::new(format!("subtask-down-{id}"), "Move down").into());
+                }
+                items.push(
+                    MenuAction::new(format!("subtask-convert-{id}"), "Convert to card").into(),
+                );
+                items.push(MenuItem::Separator);
+                items.push(
+                    MenuAction::new(format!("subtask-delete-{id}"), "Delete subtask")
+                        .danger()
+                        .into(),
+                );
+                items
+            }
         };
         let menu = cx.new(|cx| Menu::new("Task", items, window, cx));
         let card_id = card.id.clone();
@@ -658,9 +717,15 @@ impl BoardView {
                 "link-worktree" => self.open_picker(Picker::WorktreePath, window, cx),
                 _ => {}
             },
-            Choice::More => {
-                if id == "delete" {
-                    self.delete_card(cx);
+            Choice::Subtask(_) => {
+                if let Some(subtask) = id.strip_prefix("subtask-up-") {
+                    self.shift_subtask(subtask, -1, cx);
+                } else if let Some(subtask) = id.strip_prefix("subtask-down-") {
+                    self.shift_subtask(subtask, 1, cx);
+                } else if let Some(subtask) = id.strip_prefix("subtask-convert-") {
+                    self.convert_subtask(subtask.to_string(), cx);
+                } else if let Some(subtask) = id.strip_prefix("subtask-delete-") {
+                    self.delete_subtask(subtask.to_string(), cx);
                 }
             }
         }
@@ -1177,6 +1242,57 @@ impl BoardView {
         self.write_task(cx, |service| service.delete_subtask(&subtask_id));
     }
 
+    /// Move a subtask one place up (`-1`) or down (`1`). A subtask that is
+    /// already at that end, or is gone, is left alone.
+    fn shift_subtask(&mut self, subtask_id: &str, by: isize, cx: &mut Context<Self>) {
+        let Some(detail) = &self.card_detail else {
+            return;
+        };
+        let Some(index) = detail.subtasks.iter().position(|s| s.id == subtask_id) else {
+            return;
+        };
+        let Some(target) = index
+            .checked_add_signed(by)
+            .filter(|target| *target < detail.subtasks.len())
+        else {
+            return;
+        };
+        let subtask_id = subtask_id.to_string();
+        self.write_task(cx, |service| service.move_subtask(&subtask_id, target));
+    }
+
+    /// Turn a subtask into a card of its own, right after this one.
+    fn convert_subtask(&mut self, subtask_id: String, cx: &mut Context<Self>) {
+        self.write_task(cx, |service| service.convert_subtask(&subtask_id).map(drop));
+    }
+
+    // ---- description toolbar ----
+
+    /// Apply a Markdown toolbar button to the description's selection. The
+    /// text saves on the same blur and close path as any other edit.
+    fn format_description(
+        &mut self,
+        format: super::markdown_toolbar::Format,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(detail) = &self.card_detail else {
+            return;
+        };
+        let body = detail.body.clone();
+        let (text, selection) = {
+            let input = body.read(cx);
+            (input.content.to_string(), input.selected_range())
+        };
+        let (text, selection) = super::markdown_toolbar::apply(format, &text, selection);
+        body.update(cx, |input, cx| {
+            input.set_text(text, cx);
+            input.select_range(selection, cx);
+        });
+        window.focus(&body.focus_handle(cx), cx);
+        cx.notify();
+    }
+
     fn send_comment(&mut self, cx: &mut Context<Self>) {
         let Some(card) = self.detail_card() else {
             return;
@@ -1242,10 +1358,24 @@ impl BoardView {
         }
     }
 
+    /// Close the drawer when it shows `card_id`, saving its edits. False when
+    /// that save failed and the drawer stays open with its error.
+    fn close_detail_for(&mut self, card_id: &str, cx: &mut Context<Self>) -> bool {
+        if self
+            .card_detail
+            .as_ref()
+            .is_some_and(|detail| detail.card_id == card_id)
+        {
+            self.close_card_detail(cx);
+            return self.card_detail.is_none();
+        }
+        true
+    }
+
     /// A held delete: the card is archived and the drawer closes at once; the
     /// undo toast deletes it for good when it goes, or Undo puts it back.
-    fn delete_card(&mut self, cx: &mut Context<Self>) {
-        let Some(card) = self.detail_card() else {
+    fn delete_card(&mut self, card_id: &str, cx: &mut Context<Self>) {
+        let Some(card) = self.card(card_id).cloned() else {
             return;
         };
         let Some(((_, column_id, index), number)) = self.place_of(&card.id) else {
@@ -1253,8 +1383,7 @@ impl BoardView {
         };
         // Typed edits are saved first so Undo brings them back too; a failed
         // save keeps the drawer open with its error and deletes nothing.
-        self.close_card_detail(cx);
-        if self.card_detail.is_some() {
+        if !self.close_detail_for(&card.id, cx) {
             return;
         }
         self.commit_pending(cx);

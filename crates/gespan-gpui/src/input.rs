@@ -459,6 +459,10 @@ impl Input {
         input.max_height = input.min_height;
         input
     }
+    /// The selected byte range, clamped to the current text.
+    pub(crate) fn selected_range(&self) -> Range<usize> {
+        self.clip_range(self.selection.clone())
+    }
     pub(crate) fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
         self.manual_scroll = false;
         self.reveal_pending = self.reveal_in_parent;

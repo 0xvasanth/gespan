@@ -427,6 +427,7 @@ impl BoardView {
         );
         self.card_menu = Some(CardMenu {
             card_id,
+            anchor: None,
             menu,
             _events: events,
         });

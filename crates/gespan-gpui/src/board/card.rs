@@ -6,9 +6,9 @@ use super::{
     quick::Face,
     style::{due_label, label_chip, priority_glyph},
 };
-use crate::theme::*;
+use crate::{popover::Anchor, theme::*};
 use gespan_core::board::Card;
-use gpui::{AnyElement, Context, MouseButton, Role, Stateful, div, prelude::*, px};
+use gpui::{AnyElement, Context, MouseButton, MouseDownEvent, Role, Stateful, div, prelude::*, px};
 
 /// A control on the card face that opens a quick-edit menu. Like "…", it stops
 /// the press and the click, so it never starts a drag or opens the card.
@@ -138,6 +138,16 @@ impl BoardView {
                 let id = card.id.clone();
                 move |this, _, window, cx| this.open_card_detail(id.clone(), window, cx)
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener({
+                    let id = card.id.clone();
+                    move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.open_more_menu(id.clone(), Anchor::Point(event.position), window, cx)
+                    }
+                }),
+            )
             .child(anchor.probe())
             .when(!labels.is_empty(), |d| {
                 let row = div()

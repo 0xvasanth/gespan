@@ -1,5 +1,6 @@
 //! How the task drawer looks: gr8r's top bar, property grid, description,
 //! subtasks and Comments/Activity tabs, in the board's quiet type scale.
+use super::super::markdown_toolbar::Format;
 use super::{CardDetail, Choice, Picker, RelationKind, Tab, activity_text};
 use crate::{
     board::{
@@ -24,6 +25,16 @@ pub(crate) const SEND_HINT: &str = if cfg!(target_os = "macos") {
 } else {
     "Ctrl+Enter"
 };
+
+/// Who wrote a comment: the name, the avatar's initial, and whether it is an
+/// agent. Anything but `user` was written by an agent.
+pub(crate) fn comment_author(author: &str) -> (&'static str, &'static str, bool) {
+    if author == "user" {
+        ("You", "Y", false)
+    } else {
+        ("Agent", "A", true)
+    }
+}
 
 fn section(label: impl Into<SharedString>) -> gpui::Div {
     div()
@@ -75,7 +86,7 @@ impl BoardView {
                 Choice::Priority => "priority".to_string(),
                 Choice::Due => "due".to_string(),
                 Choice::Start => "start".to_string(),
-                Choice::More => "more".to_string(),
+                Choice::Subtask(index) => format!("subtask-{index}"),
                 Choice::FieldDate(index) | Choice::FieldSelect(index) => format!("field-{index}"),
                 Choice::LinkAdd => "links-add".to_string(),
             };
@@ -145,9 +156,18 @@ impl BoardView {
                     .hover(|s| s.bg(content(0.06)))
                     .child(anchor("more").probe())
                     .child(icon("more-horizontal", 13.).text_color(content(0.6)))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_choice(Choice::More, window, cx)
-                    })),
+                    .on_click({
+                        let anchor = anchor("more");
+                        let card_id = card.id.clone();
+                        cx.listener(move |this, _, window, cx| {
+                            this.open_more_menu(
+                                card_id.clone(),
+                                Anchor::Slot(anchor.clone()),
+                                window,
+                                cx,
+                            )
+                        })
+                    }),
             )
             .child(
                 icon_button("board-drawer-close", "Close", "close")
@@ -183,6 +203,7 @@ impl BoardView {
                             .flex_col()
                             .gap_2()
                             .child(section("Description"))
+                            .child(self.render_markdown_toolbar(cx))
                             .child(
                                 div()
                                     .id("board-drawer-description")
@@ -1043,6 +1064,45 @@ impl BoardView {
             })
     }
 
+    fn render_markdown_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("board-md-toolbar")
+            .debug_selector(|| "board-md-toolbar".into())
+            .role(Role::Toolbar)
+            .aria_label("Formatting")
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .children(Format::ALL.into_iter().map(|format| {
+                let key = format!("board-md-{}", format.key());
+                div()
+                    .id(SharedString::from(key.clone()))
+                    .debug_selector(move || key.clone())
+                    .role(Role::Button)
+                    .aria_label(format.label())
+                    .h(px(24.))
+                    .min_w(px(24.))
+                    .px(px(6.))
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px(12.))
+                    .text_color(content(0.6))
+                    .when(format == Format::Bold, |d| d.font_weight(FontWeight::BOLD))
+                    .when(format == Format::Italic, |d| d.italic())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(content(0.08)))
+                    .child(format.glyph())
+                    // Keep the press from taking focus (and saving) before the
+                    // transform reads the description's selection.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.format_description(format, window, cx)
+                    }))
+            }))
+    }
+
     fn render_subtasks(&self, detail: &CardDetail, cx: &mut Context<Self>) -> impl IntoElement {
         let total = detail.subtasks.len();
         let done = detail.subtasks.iter().filter(|s| s.done).count();
@@ -1142,6 +1202,39 @@ impl BoardView {
                     )
                     .child(
                         div()
+                            .id(SharedString::from(format!("board-subtask-menu-{index}")))
+                            .debug_selector({
+                                let selector = format!("board-subtask-menu-{index}");
+                                move || selector.clone()
+                            })
+                            .relative()
+                            .role(Role::Button)
+                            .aria_label("Subtask options")
+                            .size(px(20.))
+                            .rounded_md()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .opacity(0.)
+                            .group_hover(group.clone(), |s| s.opacity(1.))
+                            .hover(|s| s.bg(content(0.08)))
+                            .child(
+                                detail
+                                    .anchors
+                                    .get(&format!("subtask-{index}"))
+                                    .cloned()
+                                    .unwrap_or_default()
+                                    .probe(),
+                            )
+                            .child(icon("more-horizontal", 12.).text_color(content(0.5)))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.open_choice(Choice::Subtask(index), window, cx)
+                            })),
+                    )
+                    .child(
+                        div()
                             .id(SharedString::from(format!("board-subtask-delete-{index}")))
                             .debug_selector({
                                 let selector = format!("board-subtask-delete-{index}");
@@ -1224,6 +1317,7 @@ impl BoardView {
                         )
                     })
                     .children(detail.comments.iter().enumerate().map(|(index, comment)| {
+                        let (name, initial, agent) = comment_author(&comment.author);
                         div()
                             .id(SharedString::from(format!("board-comment-{index}")))
                             .debug_selector({
@@ -1234,15 +1328,23 @@ impl BoardView {
                             .gap_2()
                             .child(
                                 div()
+                                    .id(SharedString::from(format!("board-comment-avatar-{index}")))
+                                    .debug_selector({
+                                        let selector = format!("board-comment-avatar-{index}");
+                                        move || selector.clone()
+                                    })
                                     .size(px(22.))
                                     .flex_shrink_0()
                                     .rounded_full()
-                                    .bg(content(0.1))
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .text_size(px(10.))
-                                    .child("Y"),
+                                    .font_weight(FontWeight::MEDIUM)
+                                    // An agent wears the accent; you stay neutral.
+                                    .when(agent, |d| d.bg(accent_color()).text_color(white(0.95)))
+                                    .when(!agent, |d| d.bg(content(0.1)))
+                                    .child(initial),
                             )
                             .child(
                                 div()
@@ -1257,7 +1359,17 @@ impl BoardView {
                                             .gap_2()
                                             .text_size(px(12.))
                                             .child(
-                                                div().font_weight(FontWeight::MEDIUM).child("You"),
+                                                div()
+                                                    .id(SharedString::from(format!(
+                                                        "board-comment-author-{index}"
+                                                    )))
+                                                    .debug_selector({
+                                                        let selector =
+                                                            format!("board-comment-author-{index}");
+                                                        move || selector.clone()
+                                                    })
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(name),
                                             )
                                             .child(div().text_color(content(0.4)).child(
                                                 gespan_core::time::relative(

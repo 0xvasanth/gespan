@@ -176,7 +176,7 @@ impl BoardView {
         self.show_toast(label, Some(undo), cx);
     }
 
-    fn show_toast(&mut self, label: String, undo: Option<Undo>, cx: &mut Context<Self>) {
+    pub(crate) fn show_toast(&mut self, label: String, undo: Option<Undo>, cx: &mut Context<Self>) {
         self.undo.generation += 1;
         let generation = self.undo.generation;
         self.undo.toast = Some(Toast { label, undo });
