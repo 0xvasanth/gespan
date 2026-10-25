@@ -180,6 +180,25 @@ pub fn ticket(conn: &Connection, card_id: &str) -> Result<Option<String>, String
     }
 }
 
+/// Every ticket link on the board as (card id, `TicketRef` JSON), for the
+/// card faces.
+pub fn board_tickets(conn: &Connection, board_id: &str) -> Result<Vec<(String, String)>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT l.card_id, l.ref FROM board_card_links l
+             JOIN board_cards c ON c.id = l.card_id
+             WHERE c.board_id = ?1 AND l.kind IN ('jira', 'linear', 'plane')
+             ORDER BY l.card_id",
+        )
+        .map_err(db)?;
+    let rows = statement
+        .query_map([board_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(db)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db);
+    rows
+}
+
 /// Sets, replaces (`Some`) or removes (`None`) the card's one ticket link.
 /// Re-saving the same tracker and key only refreshes the stored snapshot: no
 /// activity row and no `updated_at` bump. Returns the owning board id.
@@ -393,6 +412,25 @@ mod tests {
         }
         assert!(set_ticket(&conn, "missing", Some(&json("jira", "A-1", None))).is_err());
         assert_eq!(ticket(&conn, &card).unwrap(), None);
+    }
+
+    #[test]
+    fn board_tickets_lists_only_this_boards_ticket_links() {
+        let (conn, board, card) = setup();
+        let column = crate::get_board(&conn, &board).unwrap().columns[0]
+            .id
+            .clone();
+        let plain = create_card(&conn, &column, "No ticket", "").unwrap();
+        add_link(&conn, &plain.id, "session", "s-1", None).unwrap();
+        let other = create_board(&conn, "Other").unwrap();
+        let other_column = crate::get_board(&conn, &other.id).unwrap().columns[0]
+            .id
+            .clone();
+        let elsewhere = create_card(&conn, &other_column, "Elsewhere", "").unwrap();
+        let mine = json("jira", "ABC-1", None);
+        set_ticket(&conn, &card, Some(&mine)).unwrap();
+        set_ticket(&conn, &elsewhere.id, Some(&json("plane", "WEB-1", None))).unwrap();
+        assert_eq!(board_tickets(&conn, &board).unwrap(), [(card, mine)]);
     }
 
     #[test]

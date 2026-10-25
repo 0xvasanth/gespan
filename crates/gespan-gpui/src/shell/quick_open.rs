@@ -55,6 +55,7 @@ impl Shell {
                     Command::Layout => window.dispatch_action(Box::new(ToggleLayout), cx),
                     Command::LinkTicket => this.link_ticket_to_active_session(window, cx),
                     Command::NewSessionFromTicket => this.open_new_ticket_dialog(window, cx),
+                    Command::NewCardFromTicket => this.open_new_card_ticket_dialog(window, cx),
                     Command::OpenLogs => {
                         let open = cx
                             .background_executor()
@@ -151,6 +152,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shell::session_groups::CardTarget;
     use crate::tickets::fakes::FakeTickets;
     use gespan_core::{session_groups::WorkItem, tickets::Tracker};
     use gpui::{TestAppContext, WindowHandle};
@@ -449,6 +451,10 @@ mod tests {
                     labels.contains(&"New session from ticket…".to_string()),
                     "{labels:?}"
                 );
+                assert!(
+                    labels.contains(&"New card from ticket…".to_string()),
+                    "{labels:?}"
+                );
             })
             .unwrap();
     }
@@ -471,6 +477,171 @@ mod tests {
                 assert_eq!(shell.link_dialog.as_ref().unwrap().id, Some(a));
             })
             .unwrap();
+    }
+
+    fn board_cards(
+        cx: &mut TestAppContext,
+        window: WindowHandle<Shell>,
+    ) -> Vec<(String, Option<String>)> {
+        window
+            .update(cx, |shell, _, cx| {
+                let board = shell.board.as_ref().expect("the board is open").read(cx);
+                let detail = board.detail.as_ref().expect("a board is loaded");
+                detail
+                    .cards
+                    .iter()
+                    .map(|card| {
+                        (
+                            card.title.clone(),
+                            board.card_ticket(&card.id).map(|t| t.key.clone()),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn palette_new_card_from_ticket_creates_a_linked_card_on_the_board(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::shell::bind_keys(cx);
+            crate::input::bind(cx);
+            crate::popover::bind(cx);
+        });
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, _| shell.workspace.preferences.board = true)
+            .unwrap();
+        let fake = palette_pick(cx, window, ">new card from", &[Tracker::Linear]);
+        window
+            .update(cx, |shell, _, cx| {
+                let dialog = shell.link_dialog.as_ref().expect("the ticket dialog opens");
+                assert_eq!(dialog.card, Some(CardTarget::New));
+                assert_eq!(dialog.id, None);
+                dialog
+                    .input
+                    .update(cx, |input, cx| input.set_text("ENG-7".into(), cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, w, cx| shell.save_link(true, w, cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            board_cards(cx, window),
+            [("Fix login".to_string(), Some("ENG-7".to_string()))]
+        );
+        assert_eq!(fake.fetch_count(), 1);
+        window
+            .update(cx, |shell, _, _| assert!(shell.link_dialog.is_none()))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn palette_new_card_from_ticket_refuses_a_github_url_and_creates_nothing(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::shell::bind_keys(cx);
+            crate::input::bind(cx);
+            crate::popover::bind(cx);
+        });
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, _| shell.workspace.preferences.board = true)
+            .unwrap();
+        palette_pick(cx, window, ">new card from", &[Tracker::Linear]);
+        window
+            .update(cx, |shell, _, cx| {
+                shell
+                    .link_dialog
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .update(cx, |input, cx| {
+                        input.set_text("https://github.com/acme/app/pull/3".into(), cx)
+                    });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, w, cx| shell.save_link(true, w, cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert!(board_cards(cx, window).is_empty());
+        window
+            .update(cx, |shell, _, _| {
+                assert!(shell.link_dialog.as_ref().unwrap().error.is_some());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn the_drawers_ticket_row_edits_and_removes_the_cards_link_through_the_dialog(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::shell::bind_keys(cx);
+            crate::input::bind(cx);
+            crate::popover::bind(cx);
+        });
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let fake = Arc::new(FakeTickets::new(&[Tracker::Linear]));
+        window
+            .update(cx, |shell, w, cx| {
+                shell.tickets = fake.clone();
+                shell.workspace.preferences.board = true;
+                shell.open_board(w, cx);
+            })
+            .unwrap();
+        let ticket = |key: &str| gespan_core::tickets::TicketRef {
+            tracker: Tracker::Linear,
+            key: key.into(),
+            url: None,
+            title: None,
+            status: None,
+            status_group: None,
+            fetched_at: None,
+        };
+        let card_id = window
+            .update(cx, |shell, _, cx| {
+                shell.board.as_ref().unwrap().update(cx, |board, cx| {
+                    board.set_tickets(fake.clone());
+                    board.create_card_from_ticket(ticket("ENG-7"), cx).unwrap()
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, w, cx| {
+                shell.open_card_ticket_dialog(CardTarget::Card(card_id.clone()), w, cx);
+                let dialog = shell.link_dialog.as_ref().unwrap();
+                assert!(dialog.editing);
+                assert_eq!(dialog.input.read(cx).content, "https://tracker.test/ENG-7");
+                dialog
+                    .input
+                    .update(cx, |input, cx| input.set_text("ENG-9".into(), cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, w, cx| shell.save_link(true, w, cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            board_cards(cx, window),
+            [("Fix login".to_string(), Some("ENG-9".to_string()))],
+            "the new ticket replaces the old and the fetched title stays"
+        );
+        window
+            .update(cx, |shell, w, cx| {
+                shell.open_card_ticket_dialog(CardTarget::Card(card_id.clone()), w, cx);
+                shell.save_link(false, w, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(board_cards(cx, window), [("Fix login".to_string(), None)]);
     }
 
     #[gpui::test]

@@ -274,6 +274,11 @@ impl Shell {
                 |this, _, event: &board::Event, window, cx| match event {
                     board::Event::Close => this.close_app_view(window, cx),
                     board::Event::OpenSession(id) => this.open(*id, window, cx),
+                    board::Event::LinkTicket(card_id) => this.open_card_ticket_dialog(
+                        super::session_groups::CardTarget::Card(card_id.clone()),
+                        window,
+                        cx,
+                    ),
                     board::Event::OpenPilot(id) => {
                         if let Some(pilots) = this.pilots.clone() {
                             pilots.update(cx, |pilots, cx| pilots.open(id, window, cx));
@@ -281,6 +286,8 @@ impl Shell {
                     }
                 },
             ));
+            let backend = self.tickets.clone();
+            view.update(cx, |board, _| board.set_tickets(backend));
             self.board = Some(view);
         }
         self.show_app_view(AppView::Board, window, cx);

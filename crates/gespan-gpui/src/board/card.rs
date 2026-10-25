@@ -184,6 +184,10 @@ impl BoardView {
                         ),
                 )
             })
+            .when_some(
+                self.ticket_chip(format!("card-{number}"), &card.id, false, cx),
+                |d, chip| d.child(div().flex().min_w_0().child(chip)),
+            )
             .child(
                 div()
                     .flex()

@@ -367,6 +367,44 @@ impl BoardView {
                 .into_any_element(),
             (None, _) => empty(),
         };
+        let card_id = card.id.clone();
+        let ticket = match self.ticket_chip(format!("detail-{}", card.number), &card.id, false, cx)
+        {
+            Some(chip) => div()
+                .min_w_0()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(6.))
+                .child(chip)
+                .child(
+                    quiet_button("board-ticket-refresh", "Refresh")
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener({
+                            let card_id = card_id.clone();
+                            move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.refresh_card_ticket(&card_id, true, true, cx)
+                            }
+                        })),
+                )
+                .child(
+                    quiet_button("board-ticket-unlink", "Unlink")
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener({
+                            let card_id = card_id.clone();
+                            move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.unlink_ticket(&card_id, cx)
+                            }
+                        })),
+                )
+                .into_any_element(),
+            None => div()
+                .text_color(content(0.35))
+                .child("Link a ticket…")
+                .into_any_element(),
+        };
         let picker = detail.picker;
         div()
             .flex()
@@ -428,6 +466,13 @@ impl BoardView {
             .when(picker == Some(Picker::Link), |d| {
                 d.child(self.render_picker(detail, Picker::Link, card, cx))
             })
+            .child(
+                row("ticket", "link-01", "Ticket")
+                    .child(value(ticket))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(crate::board::Event::LinkTicket(card_id.clone()))
+                    })),
+            )
     }
 
     fn render_picker(

@@ -5,8 +5,8 @@
 use gespan_board_store::validate_id;
 use gespan_board_store::{
     cards_for_link, create_board, create_card, create_column, delete_board, delete_card,
-    delete_column, get_board, link_card, list_activity, list_boards, move_card, move_column,
-    record_card, rename_board, update_card, update_column,
+    delete_column, get_board, get_card, link_card, list_activity, list_boards, move_card,
+    move_column, record_card, rename_board, update_card, update_column,
 };
 use rusqlite::Connection;
 use std::path::Path;
@@ -160,6 +160,23 @@ impl Service {
             .map(|ticket| serde_json::to_string(ticket).map_err(|e| e.to_string()))
             .transpose()?;
         gespan_board_store::set_ticket(&self.conn, card_id, json.as_deref()).map(drop)
+    }
+
+    /// Every card on the board that links a ticket, by card id.
+    pub fn board_tickets(
+        &mut self,
+        board_id: &str,
+    ) -> Result<std::collections::HashMap<String, TicketRef>, String> {
+        validate_id(board_id, "board")?;
+        Ok(gespan_board_store::board_tickets(&self.conn, board_id)?
+            .into_iter()
+            .filter_map(|(card, json)| Some((card, serde_json::from_str(&json).ok()?)))
+            .collect())
+    }
+
+    pub fn card(&mut self, card_id: &str) -> Result<Card, String> {
+        validate_id(card_id, "card")?;
+        get_card(&self.conn, card_id)
     }
 
     pub fn card_delete(&mut self, card_id: &str) -> Result<(), String> {

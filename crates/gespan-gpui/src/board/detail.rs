@@ -210,7 +210,7 @@ impl BoardView {
             comment,
             choice: None,
             anchors: [
-                "status", "priority", "due", "projects", "labels", "linked", "more",
+                "status", "priority", "due", "projects", "labels", "linked", "ticket", "more",
             ]
             .into_iter()
             .map(|key| (key, AnchorSlot::default()))
@@ -219,6 +219,10 @@ impl BoardView {
         });
         self.refresh_detail_lists();
         self.menu = None;
+        if self.card_tickets.contains_key(&card.id) {
+            self.load_connected_trackers(cx);
+            self.refresh_card_ticket(&card.id, false, false, cx);
+        }
         cx.notify();
     }
 

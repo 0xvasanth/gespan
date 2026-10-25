@@ -9,6 +9,7 @@ mod header;
 pub(crate) mod style;
 #[cfg(test)]
 mod tests;
+mod tickets;
 pub(crate) mod turns;
 
 use crate::{
@@ -16,18 +17,23 @@ use crate::{
     popover::{Anchor, AnchorSlot, popover},
     runtime::{Database, locked},
     theme::*,
+    tickets::TicketBackend,
 };
-use gespan_core::board::{
-    BoardDetail, Service,
-    extras::{CardExtras, Label},
+use gespan_core::{
+    board::{
+        BoardDetail, Service,
+        extras::{CardExtras, Label},
+    },
+    tickets::{TicketRef, Tracker},
 };
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, Role,
     SharedString, Subscription, Task, Window, div, prelude::*, px,
 };
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     path::PathBuf,
+    sync::Arc,
     time::Duration,
 };
 
@@ -43,6 +49,8 @@ pub(crate) enum Event {
     Close,
     OpenSession(i64),
     OpenPilot(String),
+    /// The drawer asks to link (or edit the link of) this card's ticket.
+    LinkTicket(String),
 }
 
 /// What a card's link chip says about the work it points at.
@@ -113,6 +121,16 @@ pub(crate) struct BoardView {
     pub(crate) pending_reload: bool,
     pub(crate) last_data_version: i64,
     links: HashMap<String, LinkLabel>,
+    /// The ticket each linked card shows a chip for.
+    card_tickets: HashMap<String, TicketRef>,
+    ticket_backend: Option<Arc<dyn TicketBackend>>,
+    /// Trackers with saved credentials, once read.
+    connected_trackers: Option<HashSet<Tracker>>,
+    /// Cards whose last ticket read found the tracker disconnected.
+    stale_tickets: HashSet<String>,
+    /// The newest ticket read per card: (sequence, tracker, key).
+    ticket_requests: HashMap<String, (u64, Tracker, String)>,
+    ticket_sequence: u64,
     pub(crate) composer: Option<Composer>,
     pub(crate) card_detail: Option<detail::CardDetail>,
     menu: Option<Menu>,
@@ -195,6 +213,12 @@ impl BoardView {
             pending_reload: false,
             last_data_version: 0,
             links: HashMap::new(),
+            card_tickets: HashMap::new(),
+            ticket_backend: None,
+            connected_trackers: None,
+            stale_tickets: HashSet::new(),
+            ticket_requests: HashMap::new(),
+            ticket_sequence: 0,
             composer: None,
             card_detail: None,
             menu: None,
@@ -317,6 +341,7 @@ impl BoardView {
         let detail = service.get(&board.id)?;
         let extras = service.extras(&board.id)?;
         let labels = service.labels(&board.id)?;
+        let card_tickets = service.board_tickets(&board.id)?;
         #[cfg(test)]
         if let Some(hook) = self.after_load_reads.as_mut() {
             hook();
@@ -326,6 +351,7 @@ impl BoardView {
         self.detail = Some(detail);
         self.extras = extras;
         self.labels = labels;
+        self.card_tickets = card_tickets;
         self.links = self.resolve_links(cx)?;
         self.sync_handles(cx);
         // A selected label deleted elsewhere would hide every card unseen.

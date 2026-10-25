@@ -540,6 +540,7 @@ fn events(
                 Event::Close => "close".to_string(),
                 Event::OpenSession(id) => format!("session:{id}"),
                 Event::OpenPilot(id) => format!("pilot:{id}"),
+                Event::LinkTicket(id) => format!("link-ticket:{id}"),
             })
         })
     });
@@ -1663,4 +1664,316 @@ fn a_link_to_an_archived_session_still_shows_its_title(cx: &mut TestAppContext) 
             );
         })
         .unwrap();
+}
+
+// ---- ticket links ----
+
+use crate::tickets::fakes::FakeTickets;
+use gespan_core::tickets::{TicketRef, Tracker};
+
+fn ticket(key: &str, fetched_at: Option<i64>) -> TicketRef {
+    TicketRef {
+        tracker: Tracker::Linear,
+        key: key.into(),
+        url: None,
+        title: None,
+        status: None,
+        status_group: None,
+        fetched_at,
+    }
+}
+
+fn with_tickets(f: &Fixture, cx: &mut TestAppContext, connected: &[Tracker]) -> Arc<FakeTickets> {
+    let fake = Arc::new(FakeTickets::new(connected));
+    let backend = fake.clone();
+    f.window
+        .update(cx, |view, _, _| view.set_tickets(backend))
+        .unwrap();
+    fake
+}
+
+fn card_ticket(f: &Fixture, number: usize) -> (String, Option<TicketRef>, String) {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    let card = service
+        .get(&board.id)
+        .unwrap()
+        .cards
+        .into_iter()
+        .find(|card| card.number as usize == number)
+        .unwrap();
+    (
+        card.id.clone(),
+        service.card_ticket(&card.id).unwrap(),
+        card.title,
+    )
+}
+
+#[gpui::test]
+fn card_detail_links_a_ticket_and_shows_chip(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Fix login"]);
+    let fake = with_tickets(&f, cx, &[Tracker::Linear]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    let (card_id, ..) = card_ticket(&f, 1);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("ticket-chip-detail-1").is_none());
+    f.window
+        .update(visual, |view, _, cx| {
+            view.link_ticket(&card_id, ticket("ENG-7", None), cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    // Linked at once, then read: the chip carries the fetched title and status,
+    // in the drawer and on the card.
+    let (_, saved, _) = card_ticket(&f, 1);
+    let saved = saved.expect("the link is stored");
+    assert_eq!(
+        (saved.tracker, saved.key.as_str()),
+        (Tracker::Linear, "ENG-7")
+    );
+    assert_eq!(saved.title.as_deref(), Some("Fix login"));
+    assert_eq!(saved.status.as_deref(), Some("In Progress"));
+    assert_eq!(fake.fetch_count(), 1);
+    for place in ["detail-1", "card-1"] {
+        for part in ["", "title-", "status-"] {
+            assert!(
+                visual
+                    .debug_bounds(selector(format!("ticket-chip-{part}{place}")))
+                    .is_some(),
+                "{part}{place}"
+            );
+        }
+        assert!(
+            visual
+                .debug_bounds(selector(format!("ticket-chip-stale-{place}")))
+                .is_none()
+        );
+    }
+    let log = gespan_core::board::Service::open(&f.db)
+        .unwrap()
+        .activity(&card_ticket_board(&f), Some(&card_id), 10)
+        .unwrap();
+    assert_eq!(
+        log.iter()
+            .filter(|row| row.detail.as_deref() == Some("ticket: ENG-7"))
+            .count(),
+        1,
+        "the refresh is not another link"
+    );
+}
+
+fn card_ticket_board(f: &Fixture) -> String {
+    Service::open(&f.db).unwrap().default_board().unwrap().id
+}
+
+#[gpui::test]
+fn unlinking_removes_the_chip_and_the_stored_link(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Fix login"]);
+    with_tickets(&f, cx, &[Tracker::Linear]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let (card_id, ..) = card_ticket(&f, 1);
+    f.window
+        .update(visual, |view, _, cx| {
+            view.link_ticket(&card_id, ticket("ENG-7", None), cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    f.window
+        .update(visual, |view, window, cx| {
+            view.open_card_detail(card_id.clone(), window, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    click(visual, "board-ticket-unlink");
+    assert_eq!(card_ticket(&f, 1).1, None);
+    assert!(visual.debug_bounds("ticket-chip-card-1").is_none());
+    assert!(visual.debug_bounds("ticket-chip-detail-1").is_none());
+}
+
+#[gpui::test]
+fn the_chip_refreshes_when_the_drawer_opens_but_not_within_a_minute_or_on_a_timer(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded(cx, &["Fix login"]);
+    let fake = with_tickets(&f, cx, &[Tracker::Linear]);
+    let (card_id, ..) = card_ticket(&f, 1);
+    let now = gespan_core::time::now_ms() as i64;
+    // Linked a few seconds ago: opening the drawer reads nothing.
+    Service::open(&f.db)
+        .unwrap()
+        .set_card_ticket(&card_id, Some(&ticket("ENG-7", Some(now - 5_000))))
+        .unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(30));
+    cx.run_until_parked();
+    assert_eq!(fake.fetch_count(), 0, "the board loading reads nothing");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    assert_eq!(fake.fetch_count(), 0, "a fresh read is not repeated");
+    // The explicit Refresh always runs.
+    click(visual, "board-ticket-refresh");
+    assert_eq!(fake.fetch_count(), 1);
+    // A stale snapshot is read when the drawer opens.
+    Service::open(&f.db)
+        .unwrap()
+        .set_card_ticket(&card_id, Some(&ticket("ENG-7", Some(now - 10 * 60_000))))
+        .unwrap();
+    f.window
+        .update(visual, |view, _, cx| {
+            view.reload(cx);
+            assert!(view.close_card_detail(cx));
+        })
+        .unwrap();
+    visual.run_until_parked();
+    click(visual, "board-card-1");
+    assert_eq!(fake.fetch_count(), 2);
+    cx.executor().advance_clock(Duration::from_secs(600));
+    cx.run_until_parked();
+    assert_eq!(fake.fetch_count(), 2, "never on a timer");
+}
+
+#[gpui::test]
+fn a_disconnected_tracker_marks_the_chip_stale(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Fix login"]);
+    with_tickets(&f, cx, &[]);
+    let (card_id, ..) = card_ticket(&f, 1);
+    let mut stored = ticket("ENG-7", Some(1));
+    stored.title = Some("Cached".into());
+    Service::open(&f.db)
+        .unwrap()
+        .set_card_ticket(&card_id, Some(&stored))
+        .unwrap();
+    f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("ticket-chip-stale-detail-1").is_some());
+    assert!(visual.debug_bounds("ticket-chip-stale-card-1").is_some());
+    assert_eq!(
+        card_ticket(&f, 1).1.unwrap().title.as_deref(),
+        Some("Cached"),
+        "a failed read keeps the cached snapshot"
+    );
+}
+
+#[gpui::test]
+fn new_card_from_ticket_links_and_titles_it(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let fake = with_tickets(&f, cx, &[Tracker::Linear]);
+    let todo = detail(&f, cx)
+        .columns
+        .iter()
+        .find(|column| column.role.as_deref() == Some("todo"))
+        .unwrap()
+        .id
+        .clone();
+    let id = f
+        .window
+        .update(cx, |view, _, cx| {
+            view.create_card_from_ticket(ticket("ENG-7", None), cx)
+        })
+        .unwrap()
+        .expect("the card is created");
+    cx.run_until_parked();
+    let board = detail(&f, cx);
+    let card = board.cards.iter().find(|card| card.id == id).unwrap();
+    assert_eq!(card.column_id, todo, "the first To do step takes it");
+    assert_eq!(
+        card.title, "Fix login",
+        "the fetched title replaces the key"
+    );
+    let (_, linked, _) = card_ticket(&f, card.number as usize);
+    assert_eq!(linked.unwrap().key, "ENG-7");
+    assert_eq!(fake.fetch_count(), 1);
+}
+
+#[gpui::test]
+fn new_card_from_ticket_keeps_the_key_title_when_the_fetch_fails(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let fake = with_tickets(&f, cx, &[Tracker::Linear]);
+    *fake.offline.lock().unwrap() = true;
+    f.window
+        .update(cx, |view, _, cx| {
+            view.create_card_from_ticket(ticket("ENG-7", None), cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let (_, linked, title) = card_ticket(&f, 1);
+    assert_eq!(title, "ENG-7");
+    assert_eq!(linked.unwrap().title, None);
+}
+
+#[gpui::test]
+fn new_card_from_ticket_uses_the_first_step_when_none_is_to_do(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    with_tickets(&f, cx, &[Tracker::Linear]);
+    let columns = detail(&f, cx).columns;
+    let mut service = Service::open(&f.db).unwrap();
+    // Rename the To do step's role away, and put another step first.
+    service
+        .column_update(&columns[0].id, &columns[0].name, None)
+        .unwrap();
+    f.window
+        .update(cx, |view, _, cx| {
+            view.create_card_from_ticket(ticket("ENG-7", None), cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let board = detail(&f, cx);
+    assert_eq!(board.cards[0].column_id, board.columns[0].id);
+}
+
+#[gpui::test]
+fn a_title_the_user_changed_is_not_replaced_by_the_ticket(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["My own wording"]);
+    with_tickets(&f, cx, &[Tracker::Linear]);
+    let (card_id, ..) = card_ticket(&f, 1);
+    f.window
+        .update(cx, |view, _, cx| {
+            view.link_ticket(&card_id, ticket("ENG-7", None), cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let (_, linked, title) = card_ticket(&f, 1);
+    assert_eq!(title, "My own wording");
+    assert_eq!(linked.unwrap().title.as_deref(), Some("Fix login"));
+}
+
+#[gpui::test]
+fn relinking_to_another_ticket_replaces_the_first(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Fix login"]);
+    with_tickets(&f, cx, &[Tracker::Linear]);
+    let (card_id, ..) = card_ticket(&f, 1);
+    for key in ["ENG-7", "ENG-8"] {
+        f.window
+            .update(cx, |view, _, cx| {
+                view.link_ticket(&card_id, ticket(key, None), cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+    assert_eq!(card_ticket(&f, 1).1.unwrap().key, "ENG-8");
+    let links: i64 = rusqlite::Connection::open(&f.db)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM board_card_links WHERE card_id = ?1",
+            [&card_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(links, 1);
+}
+
+#[gpui::test]
+fn the_ticket_row_asks_the_shell_for_the_link_dialog(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Fix login"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let (seen, _subscription) = events(&f, visual);
+    let (card_id, ..) = card_ticket(&f, 1);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-ticket");
+    assert_eq!(*seen.borrow(), [format!("link-ticket:{card_id}")]);
 }

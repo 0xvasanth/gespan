@@ -1,9 +1,13 @@
 //! Sidebar.tsx's session actions: pins, renames, GitHub links, reminders,
 //! folders and deletion, and the grouped list they shape.
 use super::*;
+#[cfg(test)]
+use crate::ticket_chip::{GROUP_UNKNOWN, group_tone};
+use crate::ticket_chip::{TicketChip, chip_element};
 use chrono::{Local, NaiveDateTime, TimeZone};
+#[cfg(test)]
+use gespan_core::provider_boards::StateGroup;
 use gespan_core::{
-    provider_boards::StateGroup,
     session_groups::{
         Entry, Groups, WorkItem, build_list, format_reminder, navigation_ids,
         parse_github_work_item, reminder_at, reminder_presets,
@@ -104,9 +108,19 @@ pub(super) struct Renaming {
     input: Entity<input::Input>,
     _events: Vec<Subscription>,
 }
+/// What a ticket-only link dialog is for, when it is for a board card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum CardTarget {
+    /// The card with this id takes the ticket.
+    Card(String),
+    /// "New card from ticket": the ticket becomes a new card.
+    New,
+}
 pub(super) struct LinkDialog {
-    /// `None` is "New session from ticket": the dialog only takes a ticket.
+    /// `None` is "New session from ticket" (or a card's ticket, see `card`):
+    /// the dialog only takes a ticket.
     pub(super) id: Option<i64>,
+    pub(super) card: Option<CardTarget>,
     pub(super) input: Entity<input::Input>,
     pub(super) error: Option<SharedString>,
     /// A bare key several connected trackers could own: ask which.
@@ -115,77 +129,12 @@ pub(super) struct LinkDialog {
     checking: bool,
     /// Bumped when the text changes, so a stale resolve is ignored.
     request: u64,
-    editing: bool,
+    pub(super) editing: bool,
     _events: Vec<Subscription>,
 }
 
-/// What the ticket chip shows, apart from how it is drawn.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct TicketChip {
-    pub(super) tracker: Tracker,
-    pub(super) key: String,
-    pub(super) title: Option<String>,
-    pub(super) status: Option<String>,
-    pub(super) tone: u32,
-    pub(super) stale: bool,
-}
-impl TicketChip {
-    pub(super) fn new(ticket: &TicketRef, stale: bool) -> Self {
-        Self {
-            tracker: ticket.tracker,
-            key: ticket.key.clone(),
-            title: ticket.title.clone().filter(|title| !title.is_empty()),
-            status: ticket.status.clone().filter(|status| !status.is_empty()),
-            tone: ticket.status_group.map_or(GROUP_UNKNOWN, group_tone),
-            stale,
-        }
-    }
-}
-impl TicketChip {
-    pub(super) fn stale_hint(&self) -> String {
-        format!(
-            "{} is disconnected. Reconnect in Settings.",
-            self.tracker.label()
-        )
-    }
-}
-struct HintTooltip(SharedString);
-impl Render for HintTooltip {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let mut background = shell_fill();
-        background.a = 1.;
-        div()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(background)
-            .border_1()
-            .border_color(content(0.12))
-            .text_size(px(11.))
-            .text_color(content(0.85))
-            .child(self.0.clone())
-    }
-}
-const GROUP_UNKNOWN: u32 = 0x8a8a8a;
-fn group_tone(group: StateGroup) -> u32 {
-    match group {
-        StateGroup::Started => ACCENT,
-        StateGroup::Completed => 0x4ade80,
-        StateGroup::Cancelled => 0xf87171,
-        StateGroup::Triage | StateGroup::Backlog | StateGroup::Unstarted | StateGroup::Unknown => {
-            GROUP_UNKNOWN
-        }
-    }
-}
-fn tracker_icon(tracker: Tracker) -> &'static str {
-    match tracker {
-        Tracker::Jira => "inbox-jira",
-        Tracker::Linear => "inbox-linear",
-        Tracker::Plane => "inbox-plane",
-    }
-}
-/// SessionCard's linked ticket: tracker, key, title and a status pill.
-/// The row's own menu carries Open, Refresh and Unlink; a click opens the ticket.
+/// SessionCard's linked ticket. The row's own menu carries Open, Refresh and
+/// Unlink; a click opens the ticket.
 fn ticket_chip(
     id: i64,
     chip: TicketChip,
@@ -193,59 +142,7 @@ fn ticket_chip(
     compact: bool,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let tone = gpui::Hsla::from(rgb(chip.tone));
-    div()
-        .id(("ticket-chip", id as usize))
-        .debug_selector(move || format!("ticket-chip-{id}"))
-        .role(Role::Link)
-        .aria_label(format!("Open {} in {}", chip.key, chip.tracker.label()))
-        .min_w_0()
-        .flex()
-        .items_center()
-        .gap(px(4.))
-        .px(px(2.))
-        .rounded_sm()
-        .text_size(px(11.))
-        .text_color(rgb(ACCENT))
-        .child(icon(tracker_icon(chip.tracker), 12.).text_color(rgb(ACCENT)))
-        .child(div().flex_shrink_0().child(chip.key.clone()))
-        .when(!compact, |d| {
-            d.when_some(chip.title.clone(), |d, title| {
-                d.child(
-                    div()
-                        .debug_selector(move || format!("ticket-chip-title-{id}"))
-                        .min_w_0()
-                        .max_w(px(120.))
-                        .truncate()
-                        .text_color(content(0.6))
-                        .child(title),
-                )
-            })
-            .when_some(chip.status.clone(), |d, status| {
-                d.child(
-                    div()
-                        .debug_selector(move || format!("ticket-chip-status-{id}"))
-                        .flex_shrink_0()
-                        .px(px(5.))
-                        .rounded_full()
-                        .bg(tone.opacity(0.15))
-                        .text_color(tone)
-                        .child(status),
-                )
-            })
-        })
-        .when(chip.stale, |d| {
-            let hint = SharedString::from(chip.stale_hint());
-            d.child(
-                div()
-                    .id(("ticket-stale", id as usize))
-                    .debug_selector(move || format!("ticket-chip-stale-{id}"))
-                    .aria_label(hint.clone())
-                    .tooltip(move |_, cx| cx.new(|_| HintTooltip(hint.clone())).into())
-                    .flex_shrink_0()
-                    .child(icon("clock", 11.).text_color(content(0.45))),
-            )
-        })
+    chip_element(&id.to_string(), &chip, compact)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |_, _, _, cx| {
             cx.stop_propagation();
@@ -1800,7 +1697,16 @@ impl Shell {
     }
 
     fn open_link_dialog(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_link_target(Some(id), window, cx);
+        self.open_link_target(Some(id), None, window, cx);
+    }
+    /// A board card's "Link ticket…" and the palette's "New card from ticket…".
+    pub(super) fn open_card_ticket_dialog(
+        &mut self,
+        target: CardTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_link_target(None, Some(target), window, cx);
     }
     /// The palette's "Link ticket…": the session in view takes the link.
     pub(super) fn link_ticket_to_active_session(
@@ -1816,12 +1722,39 @@ impl Shell {
             }
         }
     }
-    pub(super) fn open_new_ticket_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_link_target(None, window, cx);
+    /// The palette's "New card from ticket…": opens the Board, then asks for
+    /// the ticket.
+    pub(super) fn open_new_card_ticket_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_board(window, cx);
+        if self.board.is_none() {
+            self.error = Some("Turn on the Board in Settings to add cards".into());
+            cx.notify();
+            return;
+        }
+        self.open_card_ticket_dialog(CardTarget::New, window, cx);
     }
-    fn open_link_target(&mut self, id: Option<i64>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_new_ticket_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_link_target(None, None, window, cx);
+    }
+    fn open_link_target(
+        &mut self,
+        id: Option<i64>,
+        card: Option<CardTarget>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.close_preview(cx);
-        let initial = id.and_then(|id| self.session_metadata(id, cx).summary.work_item.clone());
+        let initial = match &card {
+            Some(CardTarget::Card(card_id)) => self.card_ticket(card_id, cx).map(Box::new),
+            Some(CardTarget::New) => None,
+            None => None,
+        }
+        .map(WorkItem::Ticket)
+        .or_else(|| id.and_then(|id| self.session_metadata(id, cx).summary.work_item.clone()));
         let input = cx.new(|cx| {
             input::Input::field(
                 "Issue, PR or ticket",
@@ -1863,6 +1796,7 @@ impl Shell {
         window.focus(&input.read(cx).focus_handle(cx), cx);
         self.link_dialog = Some(LinkDialog {
             id,
+            card,
             input,
             error: None,
             choices: None,
@@ -1885,9 +1819,13 @@ impl Shell {
             return;
         };
         let id = dialog.id;
+        let card = dialog.card.clone();
         if !keep {
             if let Some(id) = id {
                 self.set_work_item(id, None, cx);
+            }
+            if let Some(CardTarget::Card(card_id)) = card {
+                self.with_board(cx, |board, cx| board.unlink_ticket(&card_id, cx));
             }
             self.close_link_dialog(window, cx);
             return;
@@ -1919,7 +1857,7 @@ impl Shell {
         cx.spawn_in(window, async move |this, cx| {
             let resolved = work.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.link_resolved(request, id, &text, resolved, window, cx)
+                this.link_resolved(request, (id, card), &text, resolved, window, cx)
             });
         })
         .detach();
@@ -1927,7 +1865,7 @@ impl Shell {
     fn link_resolved(
         &mut self,
         request: u64,
-        id: Option<i64>,
+        (id, card): (Option<i64>, Option<CardTarget>),
         text: &str,
         resolved: Resolved,
         window: &mut Window,
@@ -1940,18 +1878,27 @@ impl Shell {
         let error = match resolved {
             Resolved::One(mut ticket) => {
                 // Saving the same ticket again keeps what was already fetched.
-                if let Some(WorkItem::Ticket(current)) =
-                    id.and_then(|id| self.session_metadata(id, cx).summary.work_item.clone())
+                let current = match &card {
+                    Some(CardTarget::Card(card_id)) => self.card_ticket(card_id, cx),
+                    Some(CardTarget::New) => None,
+                    None => match id
+                        .and_then(|id| self.session_metadata(id, cx).summary.work_item.clone())
+                    {
+                        Some(WorkItem::Ticket(current)) => Some(*current),
+                        _ => None,
+                    },
+                };
+                if let Some(current) = current
                     && current.tracker == ticket.tracker
                     && current.key == ticket.key
                 {
                     ticket = TicketRef {
                         url: ticket.url.or(current.url.clone()),
-                        ..*current
+                        ..current
                     };
                 }
                 self.close_link_dialog(window, cx);
-                return self.finish_ticket_link(id, ticket, cx);
+                return self.finish_ticket_link(id, card, ticket, cx);
             }
             Resolved::Ambiguous(trackers) => {
                 if let Some(dialog) = &mut self.link_dialog {
@@ -1984,12 +1931,14 @@ impl Shell {
             return;
         };
         let id = dialog.id;
+        let card = dialog.card.clone();
         let Some(parsed) = parse_ticket(dialog.input.read(cx).content.trim()) else {
             return;
         };
         self.close_link_dialog(window, cx);
         self.finish_ticket_link(
             id,
+            card,
             TicketRef {
                 tracker,
                 key: parsed.key,
@@ -2002,11 +1951,45 @@ impl Shell {
             cx,
         );
     }
-    fn finish_ticket_link(&mut self, id: Option<i64>, ticket: TicketRef, cx: &mut Context<Self>) {
-        match id {
-            Some(id) => self.link_ticket(id, ticket, cx),
-            None => self.create_session_target(self.default_kind(), false, None, Some(ticket), cx),
+    fn finish_ticket_link(
+        &mut self,
+        id: Option<i64>,
+        card: Option<CardTarget>,
+        ticket: TicketRef,
+        cx: &mut Context<Self>,
+    ) {
+        match (card, id) {
+            (Some(CardTarget::Card(card_id)), _) => {
+                self.with_board(cx, |board, cx| board.link_ticket(&card_id, ticket, cx));
+            }
+            (Some(CardTarget::New), _) => {
+                self.with_board(cx, |board, cx| {
+                    board.create_card_from_ticket(ticket, cx);
+                });
+            }
+            (None, Some(id)) => self.link_ticket(id, ticket, cx),
+            (None, None) => {
+                self.create_session_target(self.default_kind(), false, None, Some(ticket), cx)
+            }
         }
+    }
+    /// The Board view, handed the shell's ticket backend first so the card's
+    /// chip is read through the same one the session chips use.
+    fn with_board<R>(
+        &mut self,
+        cx: &mut Context<Self>,
+        run: impl FnOnce(&mut crate::board::BoardView, &mut Context<crate::board::BoardView>) -> R,
+    ) -> Option<R> {
+        let board = self.board.clone()?;
+        let backend = self.tickets.clone();
+        Some(board.update(cx, |board, cx| {
+            board.set_tickets(backend);
+            run(board, cx)
+        }))
+    }
+    fn card_ticket(&mut self, card_id: &str, cx: &mut Context<Self>) -> Option<TicketRef> {
+        let board = self.board.clone()?;
+        board.read(cx).card_ticket(card_id).cloned()
     }
     /// Saves the link at once, with no network; the title and status follow.
     fn link_ticket(&mut self, id: i64, ticket: TicketRef, cx: &mut Context<Self>) {
@@ -2181,10 +2164,13 @@ impl Shell {
     /// LinkSessionWorkItemDialog, centred over the window.
     pub(super) fn link_modal(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dialog = self.link_dialog.as_ref()?;
-        let heading = match (dialog.id, dialog.editing) {
-            (None, _) => "New session from ticket",
-            (Some(_), true) => "Edit link",
-            (Some(_), false) => "Link issue, PR or ticket",
+        let heading = match (dialog.id, &dialog.card, dialog.editing) {
+            (_, Some(CardTarget::New), _) => "New card from ticket",
+            (_, Some(CardTarget::Card(_)), true) => "Edit ticket link",
+            (_, Some(CardTarget::Card(_)), false) => "Link ticket",
+            (None, ..) => "New session from ticket",
+            (Some(_), _, true) => "Edit link",
+            (Some(_), _, false) => "Link issue, PR or ticket",
         };
         let title = dialog
             .id
