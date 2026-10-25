@@ -27,11 +27,23 @@ where
     }
 }
 
-/// The `GESPAN_LOG` filter. A value that does not parse falls back to `info`
-/// and returns the parse error, so a typo never turns logging off.
+/// The `GESPAN_LOG` filter. Unless it sets a global level of its own (`warn`,
+/// `debug`, …), everything else stays at `info`: `gespan_core::git=debug`
+/// raises git without silencing the rest, panics included. A value that does
+/// not parse falls back to `info` and returns the parse error, so a typo
+/// never turns logging off.
 pub fn filter(spec: Option<&str>) -> (EnvFilter, Option<String>) {
     let builder = || EnvFilter::builder().with_default_directive(LevelFilter::INFO.into());
-    match builder().parse(spec.unwrap_or_default()) {
+    let spec = spec.unwrap_or_default();
+    let global = spec
+        .split(',')
+        .any(|directive| directive.trim().parse::<LevelFilter>().is_ok());
+    let spec = if global || spec.trim().is_empty() {
+        spec.to_owned()
+    } else {
+        format!("info,{spec}")
+    };
+    match builder().parse(&spec) {
         Ok(filter) => (filter, None),
         Err(error) => (builder().parse_lossy(""), Some(error.to_string())),
     }
@@ -311,6 +323,34 @@ pub(crate) mod tests {
         });
         let messages: Vec<_> = out.lines().iter().map(|l| l["message"].clone()).collect();
         assert_eq!(messages, ["git debug", "store info"]);
+    }
+
+    #[test]
+    fn a_target_only_filter_keeps_info_elsewhere() {
+        let out = capture(Some("gespan_core::git=debug"), || {
+            tracing::debug!(target: "gespan_core::git", "git debug");
+            tracing::debug!(target: "gespan_core::store", "store debug");
+            tracing::info!(target: "gespan_core::store", "store info");
+            tracing::error!(target: "gespan_core::diagnostics", kind = "panic", "panic");
+        });
+        let messages: Vec<_> = out.lines().iter().map(|l| l["message"].clone()).collect();
+        assert_eq!(messages, ["git debug", "store info", "panic"]);
+    }
+
+    #[test]
+    fn an_explicit_global_level_is_kept() {
+        let out = capture(Some("warn,gespan_core::git=debug"), || {
+            tracing::debug!(target: "gespan_core::git", "git debug");
+            tracing::info!(target: "gespan_core::store", "store info");
+            tracing::warn!(target: "gespan_core::store", "store warn");
+        });
+        let messages: Vec<_> = out.lines().iter().map(|l| l["message"].clone()).collect();
+        assert_eq!(messages, ["git debug", "store warn"]);
+        let quiet = capture(Some("error"), || {
+            tracing::warn!("hidden");
+            tracing::error!("shown");
+        });
+        assert_eq!(quiet.lines().len(), 1);
     }
 
     #[test]
