@@ -1,0 +1,21 @@
+docs/superpowers/plans/2026-10-25-desktop-dictation.md
+  s_cb714e3c395324::t_01d6ae4b624409 116
+  s_cb714e3c395324::t_7cc58d3c8a89be 1-115,117-280,282-372
+  s_cb714e3c395324::t_cd13dd0829eba2 281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3cf7b6164b973eaac9a54d6198e45017e09eefbd",
+  "prompts": {},
+  "sessions": {
+    "s_cb714e3c395324": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9490eb45-d269-459d-a64c-099ef06fd161",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
