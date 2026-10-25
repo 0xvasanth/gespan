@@ -1,6 +1,7 @@
 //! External boards (Linear, Jira, and later Plane) behind one `BoardProvider`
 //! trait, so the board sync engine and the Inbox share a single client per
 //! tracker. Calls block on HTTP: run them on a worker, never on the UI thread.
+pub mod jira;
 pub mod linear;
 mod model;
 
