@@ -853,6 +853,10 @@ mod tests {
             })
         };
         view.update(cx, |view, cx| {
+            // Inspect the handoff state without waiting for paced prose, and
+            // keep the work expanded so the settled tool row remains visible.
+            view.smooth_reveal = false;
+            view.work_folds.insert(1, true);
             view.streaming(true, cx);
             view.patch(
                 0,
@@ -873,8 +877,16 @@ mod tests {
             );
 
             view.patch(1, vec![step("first", ToolState::Completed)], cx);
+            view.patch(2, vec![row("assistant", String::new())], cx);
+            assert_eq!(lone(view), Some(true), "an empty answer keeps the wait");
+
             view.patch(2, vec![row("assistant", "Done".into())], cx);
             assert_eq!(lone(view), Some(false), "an answer after it ends the wait");
+
+            cx.set_reduce_motion(true);
+            view.work_folds.insert(1, false);
+            view.rebuild(1, cx);
+            assert_eq!(lone(view), None, "collapsed work hides the settled step");
         });
     }
 }
