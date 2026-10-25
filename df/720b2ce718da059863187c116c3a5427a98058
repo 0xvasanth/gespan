@@ -1,0 +1,25 @@
+crates/gespan-speech/src/bin/fake-speech-helper.rs
+  s_cb714e3c395324::t_12df3758b89184 1-57
+crates/gespan-speech/src/client.rs
+  s_cb714e3c395324::t_583c2afe70460e 1-387
+crates/gespan-speech/src/lib.rs
+  s_cb714e3c395324::t_3ef89323ce8a40 6,15
+crates/gespan-speech/tests/client.rs
+  s_cb714e3c395324::t_87daa108919928 1-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df720b2ce718da059863187c116c3a5427a98058",
+  "prompts": {},
+  "sessions": {
+    "s_cb714e3c395324": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9490eb45-d269-459d-a64c-099ef06fd161",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
