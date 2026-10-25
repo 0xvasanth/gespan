@@ -1,0 +1,22 @@
+docs/diagnostics/consent.md
+  s_3d70b2915bde53::t_a5e4a5cebe3a72 1-148
+src/test/diagnosticsContract.test.ts
+  s_3d70b2915bde53::t_afb74b87c02c5d 40-41,47-52,174-225
+  s_3d70b2915bde53::t_0b8720d65b7901 226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6308dfca47ed7d3edbc1a1a3a46df99cb8a9555b",
+  "prompts": {},
+  "sessions": {
+    "s_3d70b2915bde53": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "090d580c-c9c5-4007-950a-6316c24edf7d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
