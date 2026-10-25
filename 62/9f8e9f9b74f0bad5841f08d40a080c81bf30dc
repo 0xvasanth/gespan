@@ -1,0 +1,29 @@
+src/features/board/model/board.ts
+  s_938a6e0c93b076::t_ed2bc014ceb191 25-27,222-334
+src/features/board/model/board.test.ts
+  s_938a6e0c93b076::t_ed2bc014ceb191 99-128,130-184,187-193
+  s_938a6e0c93b076::t_2e926040b67f8f 8-26,91-98,129,185-186,194
+  s_938a6e0c93b076::t_63c1deba67f3f3 195
+src-tauri/src/lib.rs
+  s_938a6e0c93b076::t_37237a280a5973 393-405
+src-tauri/src/board.rs
+  s_938a6e0c93b076::t_614d51a92e4ec4 1017-1073
+  s_938a6e0c93b076::t_37237a280a5973 3-5,7-12,310-502
+  s_938a6e0c93b076::t_1b0b512bdc72eb 503
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "629f8e9f9b74f0bad5841f08d40a080c81bf30dc",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
