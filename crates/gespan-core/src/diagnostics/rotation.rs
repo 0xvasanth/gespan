@@ -46,7 +46,9 @@ pub(super) fn scan(dir: &Path) -> io::Result<Vec<(NaiveDate, PathBuf, u64)>> {
         else {
             continue;
         };
-        let Ok(metadata) = entry.metadata() else {
+        // Not `entry.metadata()`: on Windows that is the directory listing's
+        // copy, which lags behind a file still open for writing.
+        let Ok(metadata) = std::fs::metadata(entry.path()) else {
             continue;
         };
         if metadata.is_file() {
@@ -66,7 +68,24 @@ pub fn prune(
     max_days: i64,
     max_bytes: u64,
 ) -> io::Result<Vec<PathBuf>> {
-    let files = scan(dir)?;
+    prune_counting(dir, today, max_days, max_bytes, None)
+}
+
+/// [`prune`], counting today's file as `today_size` bytes when the writer
+/// knows better than the file system.
+fn prune_counting(
+    dir: &Path,
+    today: NaiveDate,
+    max_days: i64,
+    max_bytes: u64,
+    today_size: Option<u64>,
+) -> io::Result<Vec<PathBuf>> {
+    let mut files = scan(dir)?;
+    if let Some(written) = today_size {
+        for (_, _, size) in files.iter_mut().filter(|(day, _, _)| *day == today) {
+            *size = (*size).max(written);
+        }
+    }
     let oldest_kept = today - chrono::Duration::days(max_days - 1);
     let mut total: u64 = files.iter().map(|(_, _, size)| size).sum();
     let mut deleted = Vec::new();
@@ -132,11 +151,12 @@ impl<C: Clock> DailyFile<C> {
 
     /// Prunes so that `incoming` more bytes still fit, and recounts the rest.
     fn prune(&mut self, incoming: u64) {
-        let _ = prune(
+        let _ = prune_counting(
             &self.dir,
             self.day,
             self.max_days,
             self.max_bytes.saturating_sub(incoming),
+            Some(self.size),
         );
         self.others = scan(&self.dir)
             .unwrap_or_default()
@@ -445,6 +465,31 @@ mod tests {
         assert_eq!(file.write(&[b'b'; 90]).unwrap(), 90);
         assert_eq!(names(dir.path()).len(), 4);
         // A line that fits once the oldest day goes still prunes it.
+        file.write_all(&[b'c'; 60]).unwrap();
+        assert_eq!(
+            names(dir.path()),
+            [file_name(day(23)), file_name(day(24)), file_name(day(25))]
+        );
+    }
+
+    #[test]
+    fn pruning_counts_todays_bytes_as_written() {
+        // Windows reports a stale size for a file that is still open for
+        // writing; here the file on disk looks empty in the same way.
+        let dir = tempfile::tempdir().unwrap();
+        for n in 22..=24 {
+            seed(dir.path(), day(n), 10);
+        }
+        let mut file =
+            DailyFile::new(dir.path().into(), FakeClock::at(day(25)), MAX_DAYS, 100).unwrap();
+        file.write_all(&[b'a'; 20]).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(dir.path().join(file_name(day(25))))
+            .unwrap()
+            .set_len(0)
+            .unwrap();
+        // 20 written + 60 + 30 older = 110: the oldest day has to go.
         file.write_all(&[b'c'; 60]).unwrap();
         assert_eq!(
             names(dir.path()),
