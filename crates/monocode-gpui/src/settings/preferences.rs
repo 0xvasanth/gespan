@@ -132,7 +132,7 @@ impl Default for Preferences {
             paced_reveal: true,
             follow_up: "steer".into(),
             model_controls: "menu".into(),
-            autocorrect: true,
+            autocorrect: false,
             format_on_save: true,
             autosave: false,
             diff_view: "editor".into(),
