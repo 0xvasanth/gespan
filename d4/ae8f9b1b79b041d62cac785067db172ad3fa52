@@ -1,0 +1,23 @@
+crates/gespan-core/src/tickets/parse.rs
+  s_938a6e0c93b076::t_53d0fe61a8af18 13-14,25,54,81-86,102-103,186-191
+crates/gespan-core/src/tickets/service.rs
+  s_938a6e0c93b076::t_53d0fe61a8af18 30-36,40-65,115-119,130-136,149-156,217,219-231,350-352,363-370,373-378,382-383,386-387
+  s_938a6e0c93b076::t_8cc467e339b50e 348-349,353-362,371-372,379-381,384-385,454,465-468,490-494,518-618,745
+  s_938a6e0c93b076::t_ac33b2b35cea63 388
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d4ae8f9b1b79b041d62cac785067db172ad3fa52",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
