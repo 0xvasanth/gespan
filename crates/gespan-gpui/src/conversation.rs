@@ -12,6 +12,7 @@ mod empty_arcade_tests;
 mod follow_up;
 mod history;
 mod hold;
+pub(crate) use hold::HoldChanged;
 mod mobile;
 mod notifications;
 mod pilot;
@@ -213,7 +214,7 @@ pub(crate) struct Conversation {
     questions:
         std::collections::VecDeque<(Entity<crate::questions::QuestionCard>, Vec<Subscription>)>,
     question_overlay: crate::questions::Overlay,
-    controls: Option<std::sync::mpsc::Sender<Control>>,
+    pub(crate) controls: Option<std::sync::mpsc::Sender<Control>>,
     /// Where this session rests while the app is on hold.
     pub(crate) held: Option<gespan_core::hold::Reason>,
     /// Hold was sent to the running turn and its safe point is pending.

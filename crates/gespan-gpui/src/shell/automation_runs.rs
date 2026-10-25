@@ -14,7 +14,7 @@ pub(super) struct State {
     pub service: Option<ServiceHandle>,
     pub open_requested: Option<u64>,
     opening: bool,
-    polling: bool,
+    pub(super) polling: bool,
     recovered: bool,
     started_before: i64,
     pending: HashSet<String>,
@@ -122,6 +122,10 @@ impl Shell {
         let sessions: Vec<_> = self.automation_state.running.keys().copied().collect();
         for id in sessions {
             self.automation_session_changed(id, cx);
+        }
+        // Due runs stay due while held and are claimed once on Resume.
+        if crate::hold::active(cx) {
+            return;
         }
         let Some(service) = self.automation_state.service.clone() else {
             self.initialize_automations(cx);

@@ -326,7 +326,7 @@ impl Shell {
     pub(super) fn sync_keep_awake(&mut self) {
         let mode = gespan_keep_awake::Mode::parse(&self.workspace.preferences.keep_awake)
             .unwrap_or_default();
-        if let Err(error) = self.keep_awake.update(mode, !self.busy_sessions.is_empty()) {
+        if let Err(error) = self.keep_awake.update(mode, self.agents_keep_awake()) {
             tracing::warn!(%error, ?mode, "keep screen awake failed");
         }
     }

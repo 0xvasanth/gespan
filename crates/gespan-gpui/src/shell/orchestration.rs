@@ -136,7 +136,8 @@ impl Shell {
                         && let Some(view) = self.sessions.get(&id)
                     {
                         let view = view.read(cx);
-                        if !view.busy {
+                        // A held worker hasn't finished; its outcome comes after Resume.
+                        if !view.busy && view.held.is_none() && !view.hold_requested {
                             let (success, report) = view.external_outcome(cx);
                             task.report = report;
                             task.state = if success { State::Done } else { State::Failed };
@@ -147,7 +148,11 @@ impl Shell {
             self.schedule_orchestration(lead, cx);
         }
     }
-    fn schedule_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
+    pub(super) fn schedule_orchestration(&mut self, lead: i64, cx: &mut Context<Self>) {
+        // Nothing is dispatched while held; Resume schedules every run again.
+        if crate::hold::active(cx) {
+            return;
+        }
         let Some(run) = self.orchestrations.get_mut(&lead) else {
             return;
         };

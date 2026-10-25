@@ -410,6 +410,17 @@ impl Pilots {
         this.file_loose_launches(cx);
         this
     }
+    /// Every Pilot-owned conversation Hold must stop: chats (resumed last),
+    /// running habits and Flow reviews.
+    pub(crate) fn hold_views(&self) -> Vec<(Entity<Conversation>, bool)> {
+        let chats = self.chats.values().map(|view| (view.clone(), true));
+        let habits = self.running.values().map(|run| (run.view.clone(), true));
+        let reviews = self
+            .reviews
+            .values()
+            .map(|review| (review.view.clone(), false));
+        chats.chain(habits).chain(reviews).collect()
+    }
     pub(crate) fn is_pilot_session(&self, id: i64) -> bool {
         self.roster.hidden_sessions.contains(&id)
             || self.roster.of_session(id).is_some()

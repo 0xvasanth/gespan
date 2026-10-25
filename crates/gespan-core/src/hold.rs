@@ -130,6 +130,47 @@ pub fn resume_plan(state: &HoldState, exists: impl Fn(i64) -> bool) -> Vec<Vec<i
         .collect()
 }
 
+/// Starts resumed sessions a few at a time, one stage after another: a later
+/// stage begins once every session of the earlier one has started.
+#[derive(Debug, Default)]
+pub struct ResumeQueue {
+    stages: std::collections::VecDeque<std::collections::VecDeque<i64>>,
+    running: std::collections::HashSet<i64>,
+}
+
+impl ResumeQueue {
+    pub fn new(plan: Vec<Vec<i64>>) -> Self {
+        Self {
+            stages: plan.into_iter().map(Into::into).collect(),
+            running: Default::default(),
+        }
+    }
+    /// The sessions to start now, given at most `limit` resuming at once.
+    pub fn next(&mut self, limit: usize) -> Vec<i64> {
+        let mut start = Vec::new();
+        while self.running.len() < limit {
+            while self.stages.front().is_some_and(|stage| stage.is_empty()) {
+                self.stages.pop_front();
+            }
+            let Some(id) = self.stages.front_mut().and_then(|stage| stage.pop_front()) else {
+                break;
+            };
+            self.running.insert(id);
+            start.push(id);
+        }
+        start
+    }
+    pub fn finished(&mut self, session: i64) {
+        self.running.remove(&session);
+    }
+    pub fn is_running(&self, session: i64) -> bool {
+        self.running.contains(&session)
+    }
+    pub fn done(&self) -> bool {
+        self.running.is_empty() && self.stages.iter().all(|stage| stage.is_empty())
+    }
+}
+
 impl crate::store::Store {
     pub fn hold(&self) -> Result<Option<HoldState>, String> {
         match self.setting(KEY)? {
@@ -250,6 +291,35 @@ mod tests {
     fn held_ms_counts_from_when_hold_started() {
         assert_eq!(state(&[]).held_ms(4_500), 3_500);
         assert_eq!(state(&[]).held_ms(500), 0);
+    }
+
+    #[test]
+    fn resume_queue_starts_at_most_the_limit_and_refills_as_sessions_finish() {
+        let mut queue = ResumeQueue::new(vec![vec![1, 2, 3, 4, 5], vec![9]]);
+        assert_eq!(queue.next(3), vec![1, 2, 3]);
+        assert!(queue.is_running(2));
+        assert_eq!(queue.next(3), Vec::<i64>::new());
+        queue.finished(2);
+        assert_eq!(queue.next(3), vec![4]);
+        queue.finished(1);
+        queue.finished(3);
+        // Stage two may begin as soon as the last worker has started.
+        assert_eq!(queue.next(3), vec![5, 9]);
+        assert!(!queue.done());
+        queue.finished(4);
+        queue.finished(5);
+        queue.finished(9);
+        assert!(queue.done());
+    }
+
+    #[test]
+    fn resume_queue_ignores_unknown_finishes() {
+        let mut queue = ResumeQueue::new(vec![vec![1]]);
+        queue.finished(7);
+        assert_eq!(queue.next(3), vec![1]);
+        queue.finished(1);
+        assert!(queue.done());
+        assert!(ResumeQueue::new(Vec::new()).done());
     }
 
     #[test]
