@@ -1,6 +1,7 @@
 import {
   bindClaudeSession,
   cancelClaudeTurn,
+  holdClaudeTurn,
   compactClaudeContext,
   forgetClaudeSession,
   respondClaudeApproval,
@@ -32,6 +33,7 @@ export const claudeAdapter: HarnessAdapter = {
   compactContext: compactClaudeContext,
   steerTurn: steerClaudeTurn,
   cancelTurn: cancelClaudeTurn,
+  holdTurn: holdClaudeTurn,
   respondApproval: respondClaudeApproval,
   respondQuestion: respondClaudeQuestion,
   stopSession: stopClaudeSession,
