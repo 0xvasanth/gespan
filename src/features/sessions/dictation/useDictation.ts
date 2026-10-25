@@ -57,9 +57,14 @@ const ALREADY_DOWNLOADING = "The speech model is already downloading.";
 
 /**
  * The helper is shared, so its events belong to the one composer that last
- * started dictation; starting in another composer cancels this one.
+ * started dictation; starting in another composer cancels this one. Across
+ * windows the backend decides: it sends events only to the owning window and
+ * tells a window when another one took over.
  */
 let owner: { abandon: () => void } | null = null;
+
+/** Numbers this window's attempts, so the backend can tell them apart. */
+let attempts = 0;
 
 /**
  * Tauri runs each command on its own thread, so a Cancel for one composer
@@ -78,8 +83,11 @@ function speechCommand(
 }
 
 /** Fire and forget; the helper reports failures as events. */
-function sendSpeech(name: "dictation_stop" | "dictation_cancel") {
-  speechCommand(name).catch(() => undefined);
+function sendSpeech(
+  name: "dictation_stop" | "dictation_cancel",
+  attempt: number,
+) {
+  speechCommand(name, { attempt }).catch(() => undefined);
 }
 
 type Options = {
@@ -113,6 +121,8 @@ export function useDictation({
       state: "idle" as DictationState,
       /** Bumped by every start and cancel; a stale start result is dropped. */
       run: 0,
+      /** The backend's name for the latest start; 0 before the first. */
+      attempt: 0,
       /** This composer's attempt owns the helper's events. */
       active: false,
       startPending: false,
@@ -140,6 +150,8 @@ export function useDictation({
       if (owner && owner !== self) owner.abandon();
       owner = self;
       const run = ++ref.run;
+      const attempt = ++attempts;
+      ref.attempt = attempt;
       ref.active = true;
       ref.startPending = true;
       ref.stopAfterStart = false;
@@ -150,6 +162,7 @@ export function useDictation({
       setState("starting");
       try {
         await speechCommand("dictation_start", {
+          attempt,
           projectPath: options.current.projectPath ?? null,
           modelId: ref.modelId,
           userWords: loadDictationWords(),
@@ -177,7 +190,7 @@ export function useDictation({
       if (run !== ref.run) return;
       if (ref.active && ref.stopAfterStart) {
         ref.stopAfterStart = false;
-        sendSpeech("dictation_stop");
+        sendSpeech("dictation_stop", attempt);
       }
     };
 
@@ -185,7 +198,7 @@ export function useDictation({
       if (!ref.active || ref.state === "finishing") return;
       setState("finishing");
       if (ref.startPending) ref.stopAfterStart = true;
-      else sendSpeech("dictation_stop");
+      else sendSpeech("dictation_stop", ref.attempt);
     };
 
     /** Drop the attempt without inserting anything. */
@@ -194,8 +207,18 @@ export function useDictation({
       if (ref.active) {
         ref.run++;
         release();
-        sendSpeech("dictation_cancel");
+        sendSpeech("dictation_cancel", ref.attempt);
       }
+      setError(undefined);
+      setState("idle");
+    };
+
+    /** Another window started dictation; the backend cancelled this take. */
+    const onTakenOver = (attempt: number) => {
+      if (!ref.active || attempt !== ref.attempt) return;
+      ref.press = null;
+      ref.run++;
+      release();
       setError(undefined);
       setState("idle");
     };
@@ -273,6 +296,7 @@ export function useDictation({
       cancelDownload,
       onSpeech,
       onDownload,
+      onTakenOver,
       abandon,
       stop,
       download,
@@ -306,10 +330,14 @@ export function useDictation({
     const download = subscribe<DownloadEvent>("dictation-download", (payload) =>
       controller.onDownload(payload),
     );
+    const takenOver = subscribe<number>("dictation-taken-over", (attempt) =>
+      controller.onTakenOver(attempt),
+    );
     return () => {
       controller.ref.mounted = false;
       void speech.then((unlisten) => unlisten?.());
       void download.then((unlisten) => unlisten?.());
+      void takenOver.then((unlisten) => unlisten?.());
     };
   }, [controller]);
 

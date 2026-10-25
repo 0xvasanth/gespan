@@ -119,6 +119,7 @@ describe("useDictation", () => {
       [
         "dictation_start",
         {
+          attempt: expect.any(Number),
           projectPath: "/repo",
           modelId: DICTATION_DEFAULT_MODEL,
           userWords: [],
@@ -417,6 +418,50 @@ describe("useDictation", () => {
     expect(otherField.value).toBe("for b");
     expect(textarea.value).toBe("");
     expect(other.state).toBe("idle");
+  });
+
+  it("another_window_taking_over_returns_to_idle", async () => {
+    await render();
+    await run(() => dictation.toggle());
+    await speech({ type: "listening" });
+    await speech({ type: "partial", text: "half" });
+    const { attempt } = calls("dictation_start")[0][1] as { attempt: number };
+
+    // A notice for an earlier attempt is not about this one.
+    await emit("dictation-taken-over", attempt - 1);
+    expect(dictation.state).toBe("listening");
+
+    await emit("dictation-taken-over", attempt);
+    expect(dictation.state).toBe("idle");
+    expect(dictation.partial).toBe("");
+    expect(dictation.error).toBeUndefined();
+    // The backend already cancelled the take for the other window.
+    expect(calls("dictation_cancel")).toHaveLength(0);
+    await speech({ type: "final", text: "half", capped: false });
+    expect(textarea.value).toBe("");
+
+    // Ready to start again, as a new attempt.
+    await run(() => dictation.toggle());
+    expect(dictation.state).toBe("starting");
+    const next = calls("dictation_start")[1][1] as { attempt: number };
+    expect(next.attempt).toBeGreaterThan(attempt);
+  });
+
+  it("stop_and_cancel_name_their_attempt", async () => {
+    await render();
+    await run(() => dictation.toggle());
+    await speech({ type: "listening" });
+    const { attempt } = calls("dictation_start")[0][1] as { attempt: number };
+    await run(() => dictation.stop());
+    expect(calls("dictation_stop")[0][1]).toEqual({ attempt });
+    await speech({ type: "final", text: "done", capped: false });
+
+    await run(() => dictation.toggle());
+    const second = calls("dictation_start")[1][1] as { attempt: number };
+    await run(() => dictation.cancel());
+    expect(calls("dictation_cancel")[0][1]).toEqual({
+      attempt: second.attempt,
+    });
   });
 
   it("commands_are_serialised", async () => {

@@ -12,15 +12,40 @@ use gespan_speech::catalog;
 use gespan_speech::protocol::{ErrorKind, Event, Request};
 use gespan_speech::{helper_command, local_branches, pick_terms, SpeechClient, VocabularySources};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 pub const DICTATION_EVENT: &str = "dictation-event";
 pub const DICTATION_DOWNLOAD: &str = "dictation-download";
+/// Sent to a window whose dictation another window took over.
+pub const DICTATION_TAKEN_OVER: &str = "dictation-taken-over";
 
 /// At most this often, except for the final 100% report.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 type EventSink = Arc<dyn Fn(Event) + Send + Sync>;
+
+/// One window's dictation attempt. The webview numbers its own attempts.
+#[derive(Debug, Clone, PartialEq)]
+struct Attempt {
+    window: String,
+    id: u64,
+}
+
+struct Owner {
+    attempt: Attempt,
+    /// This attempt's `Listening` has arrived. Until then a partial or final
+    /// is the tail of a take that was cancelled.
+    heard: bool,
+}
+
+impl Attempt {
+    fn of(window: &WebviewWindow, id: u64) -> Self {
+        Self {
+            window: window.label().to_string(),
+            id,
+        }
+    }
+}
 
 pub struct State {
     client: Mutex<Option<SpeechClient>>,
@@ -28,6 +53,10 @@ pub struct State {
     cancels: Mutex<HashMap<String, CancelToken>>,
     /// Model id last sent to the helper in a `Load`.
     loaded: Mutex<Option<String>>,
+    /// The attempt the helper is listening for. The helper is shared by every
+    /// window, so ownership is decided here. Held while sending, so requests
+    /// reach the helper in the order ownership changed.
+    owner: Mutex<Option<Owner>>,
     /// Tests record requests here instead of running the helper.
     #[cfg(test)]
     sent: Mutex<Option<Vec<Request>>>,
@@ -40,6 +69,7 @@ impl State {
             store,
             cancels: Mutex::new(HashMap::new()),
             loaded: Mutex::new(None),
+            owner: Mutex::new(None),
             #[cfg(test)]
             sent: Mutex::new(None),
         }
@@ -232,7 +262,12 @@ fn delete_model_impl(state: &State, model_id: &str) -> Result<(), String> {
 
 /// Blocking (reads git): spawns the helper on first use, loads the model if it
 /// changed, then starts listening with the project's vocabulary.
-fn start_impl(state: &State, sink: &EventSink, args: StartArgs) -> Result<(), String> {
+fn start_impl(
+    state: &State,
+    sink: &EventSink,
+    who: Attempt,
+    args: StartArgs,
+) -> Result<Option<Attempt>, String> {
     let spec = find_spec(&args.model_id)?;
     if state.store.status(spec) != ModelStatus::Ready {
         return Err("model-missing".into());
@@ -250,7 +285,15 @@ fn start_impl(state: &State, sink: &EventSink, args: StartArgs) -> Result<(), St
         user_words: &args.user_words,
     });
 
+    let mut owner = lock(&state.owner);
     spawn_helper(state, sink)?;
+    // A take still owned, possibly by another window, ends first. The same
+    // attempt id only comes back from a reloaded webview.
+    let previous = owner.take();
+    if previous.is_some() {
+        send_impl(state, Request::Cancel);
+    }
+    let replaced = previous.map(|o| o.attempt).filter(|a| *a != who);
     let mut loaded = lock(&state.loaded);
     if loaded.as_deref() != Some(args.model_id.as_str()) {
         send_impl(
@@ -263,7 +306,11 @@ fn start_impl(state: &State, sink: &EventSink, args: StartArgs) -> Result<(), St
         *loaded = Some(args.model_id);
     }
     send_impl(state, Request::Start { terms });
-    Ok(())
+    *owner = Some(Owner {
+        attempt: who,
+        heard: false,
+    });
+    Ok(replaced)
 }
 
 fn spawn_helper(state: &State, sink: &EventSink) -> Result<(), String> {
@@ -283,16 +330,41 @@ fn spawn_helper(state: &State, sink: &EventSink) -> Result<(), String> {
     Ok(())
 }
 
-/// Bookkeeping for every helper event, before it reaches the webview.
-fn on_helper_event(state: &State, event: &Event) {
+/// Hands a helper event to the window that owns the take, if any.
+fn on_helper_event(state: &State, event: Event, out: &dyn Fn(&str, Event)) {
     // The model is gone or failed to load, so the next start loads again.
     if let Event::Error {
         kind: ErrorKind::ModelMissing | ErrorKind::ModelLoad,
         ..
-    } = event
+    } = &event
     {
         *lock(&state.loaded) = None;
     }
+    let mut owner = lock(&state.owner);
+    let Some(current) = owner.as_mut() else {
+        // Nobody can stop this take, and it would hold the mic until the cap.
+        if event == Event::Listening {
+            send_impl(state, Request::Cancel);
+        }
+        return;
+    };
+    match event {
+        Event::Listening => current.heard = true,
+        Event::Level { .. } | Event::Partial { .. } | Event::Final { .. } if !current.heard => {
+            return
+        }
+        _ => {}
+    }
+    let window = current.attempt.window.clone();
+    if matches!(event, Event::Final { .. } | Event::Error { .. }) {
+        *owner = None;
+    }
+    drop(owner);
+    out(&window, event);
+}
+
+fn owns(owner: &Option<Owner>, who: &Attempt) -> bool {
+    owner.as_ref().is_some_and(|o| o.attempt == *who)
 }
 
 fn send_impl(state: &State, req: Request) {
@@ -303,6 +375,22 @@ fn send_impl(state: &State, req: Request) {
     }
     if let Some(client) = lock(&state.client).as_ref() {
         client.send(req);
+    }
+}
+
+/// Only the owner may stop or cancel the take; it may be another window's now.
+fn stop_impl(state: &State, who: &Attempt) {
+    let owner = lock(&state.owner);
+    if owns(&owner, who) {
+        send_impl(state, Request::Stop);
+    }
+}
+
+fn cancel_impl(state: &State, who: &Attempt) {
+    let mut owner = lock(&state.owner);
+    if owns(&owner, who) {
+        *owner = None;
+        send_impl(state, Request::Cancel);
     }
 }
 
@@ -355,44 +443,61 @@ pub async fn dictation_delete_model(
 #[tauri::command]
 pub async fn dictation_start(
     app: AppHandle,
+    window: WebviewWindow,
+    attempt: u64,
     project_path: Option<String>,
     model_id: String,
     user_words: Vec<String>,
     known_names: Vec<String>,
 ) -> Result<(), String> {
+    let who = Attempt::of(&window, attempt);
     tauri::async_runtime::spawn_blocking(move || {
         let sink: EventSink = {
             let app = app.clone();
             Arc::new(move |event| {
-                on_helper_event(&app.state::<State>(), &event);
-                let _ = app.emit(DICTATION_EVENT, event);
+                on_helper_event(&app.state::<State>(), event, &|window, event| {
+                    let _ = app.emit_to(window, DICTATION_EVENT, event);
+                });
             })
         };
         let state = app.state::<State>();
-        start_impl(
+        let replaced = start_impl(
             &state,
             &sink,
+            who,
             StartArgs {
                 project_path,
                 model_id,
                 user_words,
                 known_names,
             },
-        )
+        )?;
+        if let Some(old) = replaced {
+            let _ = app.emit_to(old.window.as_str(), DICTATION_TAKEN_OVER, old.id);
+        }
+        Ok(())
     })
     .await
     .map_err(blocking_failed)?
 }
 
 #[tauri::command]
-pub async fn dictation_stop(state: tauri::State<'_, State>) -> Result<(), String> {
-    send_impl(&state, Request::Stop);
+pub async fn dictation_stop(
+    state: tauri::State<'_, State>,
+    window: WebviewWindow,
+    attempt: u64,
+) -> Result<(), String> {
+    stop_impl(&state, &Attempt::of(&window, attempt));
     Ok(())
 }
 
 #[tauri::command]
-pub async fn dictation_cancel(state: tauri::State<'_, State>) -> Result<(), String> {
-    send_impl(&state, Request::Cancel);
+pub async fn dictation_cancel(
+    state: tauri::State<'_, State>,
+    window: WebviewWindow,
+    attempt: u64,
+) -> Result<(), String> {
+    cancel_impl(&state, &Attempt::of(&window, attempt));
     Ok(())
 }
 
@@ -425,10 +530,23 @@ mod tests {
         Arc::new(|_| {})
     }
 
+    fn who(window: &str, id: u64) -> Attempt {
+        Attempt {
+            window: window.into(),
+            id,
+        }
+    }
+
     #[test]
     fn start_without_model_prompts_download() {
         let (_dir, state) = state();
-        let err = start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap_err();
+        let err = start_impl(
+            &state,
+            &noop_sink(),
+            who("a", 1),
+            start_args(PARAKEET_V2_EN.id),
+        )
+        .unwrap_err();
         assert_eq!(err, "model-missing");
         // The helper is never spawned for a model that cannot load.
         assert!(state.client.lock().unwrap().is_none());
@@ -437,7 +555,7 @@ mod tests {
     #[test]
     fn start_with_unknown_model_is_rejected() {
         let (_dir, state) = state();
-        let err = start_impl(&state, &noop_sink(), start_args("nope")).unwrap_err();
+        let err = start_impl(&state, &noop_sink(), who("a", 1), start_args("nope")).unwrap_err();
         assert_eq!(err, "unknown-model");
     }
 
@@ -642,9 +760,21 @@ mod tests {
     fn a_failed_load_makes_the_next_start_load_again() {
         for kind in [ErrorKind::ModelLoad, ErrorKind::ModelMissing] {
             let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
-            start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap();
-            on_helper_event(&state, &error(kind.clone()));
-            start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap();
+            start_impl(
+                &state,
+                &noop_sink(),
+                who("a", 1),
+                start_args(PARAKEET_V2_EN.id),
+            )
+            .unwrap();
+            on_helper_event(&state, error(kind.clone()), &|_, _| {});
+            start_impl(
+                &state,
+                &noop_sink(),
+                who("a", 1),
+                start_args(PARAKEET_V2_EN.id),
+            )
+            .unwrap();
             let sent = sent(&state);
             assert_eq!(sent.len(), 4, "{kind:?}: {sent:?}");
             assert!(is_load(&sent[0]) && is_load(&sent[2]), "{kind:?}: {sent:?}");
@@ -655,10 +785,195 @@ mod tests {
     #[test]
     fn other_errors_keep_the_loaded_model() {
         let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
-        start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap();
-        on_helper_event(&state, &error(ErrorKind::NoInputDevice));
-        start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap();
+        start_impl(
+            &state,
+            &noop_sink(),
+            who("a", 1),
+            start_args(PARAKEET_V2_EN.id),
+        )
+        .unwrap();
+        on_helper_event(&state, error(ErrorKind::NoInputDevice), &|_, _| {});
+        start_impl(
+            &state,
+            &noop_sink(),
+            who("a", 1),
+            start_args(PARAKEET_V2_EN.id),
+        )
+        .unwrap();
         assert_eq!(sent(&state).iter().filter(|r| is_load(r)).count(), 1);
+    }
+
+    /// Records what each window is sent.
+    #[derive(Default)]
+    struct Windows(std::cell::RefCell<Vec<(String, Event)>>);
+
+    impl Windows {
+        fn route(&self, state: &State, event: Event) {
+            on_helper_event(state, event, &|window, event| {
+                self.0.borrow_mut().push((window.into(), event))
+            });
+        }
+
+        fn take(&self) -> Vec<(String, Event)> {
+            std::mem::take(&mut *self.0.borrow_mut())
+        }
+    }
+
+    fn partial(text: &str) -> Event {
+        Event::Partial { text: text.into() }
+    }
+
+    fn final_text(text: &str) -> Event {
+        Event::Final {
+            text: text.into(),
+            capped: false,
+        }
+    }
+
+    fn start(state: &State, window: &str, id: u64) -> Option<Attempt> {
+        start_impl(
+            state,
+            &noop_sink(),
+            who(window, id),
+            start_args(PARAKEET_V2_EN.id),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_start_from_another_window_cancels_the_owner_first() {
+        let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
+        let windows = Windows::default();
+        assert_eq!(start(&state, "a", 1), None);
+        windows.route(&state, Event::Listening);
+
+        assert_eq!(start(&state, "b", 1), Some(who("a", 1)));
+        let sent = sent(&state);
+        assert!(is_load(&sent[0]), "{sent:?}");
+        assert!(
+            matches!(
+                sent[1..],
+                [
+                    Request::Start { .. },
+                    Request::Cancel,
+                    Request::Start { .. }
+                ]
+            ),
+            "{sent:?}"
+        );
+        // The model was already loaded for the first take.
+        assert_eq!(sent.iter().filter(|r| is_load(r)).count(), 1);
+    }
+
+    #[test]
+    fn a_reloaded_window_reusing_its_attempt_id_still_cancels_first() {
+        let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
+        start(&state, "a", 1);
+        // Its old take is not reported as taken over: it is the same attempt.
+        assert_eq!(start(&state, "a", 1), None);
+        assert!(matches!(
+            sent(&state)[1..],
+            [
+                Request::Start { .. },
+                Request::Cancel,
+                Request::Start { .. }
+            ]
+        ));
+    }
+
+    #[test]
+    fn helper_events_reach_only_the_owning_window() {
+        let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
+        let windows = Windows::default();
+        start(&state, "a", 1);
+        windows.route(&state, Event::Listening);
+        assert_eq!(windows.take(), vec![("a".into(), Event::Listening)]);
+
+        start(&state, "b", 7);
+        for event in [Event::Listening, partial("hel"), final_text("hello")] {
+            windows.route(&state, event);
+        }
+        assert_eq!(
+            windows.take(),
+            vec![
+                ("b".into(), Event::Listening),
+                ("b".into(), partial("hel")),
+                ("b".into(), final_text("hello")),
+            ]
+        );
+        // The final ended the take, so nothing owns what follows.
+        windows.route(&state, partial("late"));
+        assert!(windows.take().is_empty());
+    }
+
+    #[test]
+    fn transcripts_wait_for_this_attempts_listening() {
+        let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
+        let windows = Windows::default();
+        start(&state, "a", 1);
+        windows.route(&state, Event::Listening);
+        cancel_impl(&state, &who("a", 1));
+        start(&state, "a", 2);
+        // Still in flight from the cancelled take.
+        windows.route(&state, partial("old"));
+        windows.route(&state, final_text("old"));
+        assert_eq!(windows.take(), vec![("a".into(), Event::Listening)]);
+
+        windows.route(&state, Event::Listening);
+        windows.route(&state, final_text("new"));
+        assert_eq!(
+            windows.take(),
+            vec![
+                ("a".into(), Event::Listening),
+                ("a".into(), final_text("new"))
+            ]
+        );
+    }
+
+    #[test]
+    fn an_error_before_listening_reaches_the_owner_and_ends_its_take() {
+        let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
+        let windows = Windows::default();
+        start(&state, "a", 1);
+        windows.route(&state, error(ErrorKind::NoInputDevice));
+        assert_eq!(
+            windows.take(),
+            vec![("a".into(), error(ErrorKind::NoInputDevice))]
+        );
+        windows.route(&state, error(ErrorKind::Engine));
+        assert!(windows.take().is_empty());
+    }
+
+    #[test]
+    fn an_unowned_listening_is_cancelled() {
+        let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
+        let windows = Windows::default();
+        windows.route(&state, Event::Listening);
+        assert_eq!(sent(&state), vec![Request::Cancel]);
+        assert!(windows.take().is_empty());
+
+        // Also once the owner has cancelled and its Listening comes late.
+        start(&state, "a", 1);
+        cancel_impl(&state, &who("a", 1));
+        let before = sent(&state).len();
+        windows.route(&state, Event::Listening);
+        assert_eq!(sent(&state)[before..], [Request::Cancel]);
+        assert!(windows.take().is_empty());
+    }
+
+    #[test]
+    fn stop_and_cancel_from_an_attempt_that_lost_ownership_do_nothing() {
+        let (_dir, state) = fake_helper(&PARAKEET_V2_EN);
+        start(&state, "a", 1);
+        start(&state, "b", 1);
+        let before = sent(&state).len();
+        stop_impl(&state, &who("a", 1));
+        cancel_impl(&state, &who("a", 1));
+        assert_eq!(sent(&state).len(), before, "{:?}", sent(&state));
+
+        stop_impl(&state, &who("b", 1));
+        cancel_impl(&state, &who("b", 1));
+        assert_eq!(sent(&state)[before..], [Request::Stop, Request::Cancel]);
     }
 
     #[test]
@@ -684,7 +999,13 @@ mod tests {
         }
         *lock(&state.client) = Some(client);
 
-        let err = start_impl(&state, &noop_sink(), start_args(PARAKEET_V2_EN.id)).unwrap_err();
+        let err = start_impl(
+            &state,
+            &noop_sink(),
+            who("a", 1),
+            start_args(PARAKEET_V2_EN.id),
+        )
+        .unwrap_err();
         assert_eq!(err, "speech-unavailable");
         // Nothing was sent, so the model is not recorded as loaded.
         assert!(lock(&state.loaded).is_none());
