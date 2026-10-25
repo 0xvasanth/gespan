@@ -109,6 +109,57 @@ impl FlowStore {
         readable(&mut st, [], "flows")
     }
 
+    /// Flows a Pilot owns; user Flows and other Pilots' Flows are excluded.
+    pub fn owned(&self, owner: &str) -> Result<Vec<Flow>, String> {
+        let mut flows = self.list()?;
+        flows.retain(|f| f.owner.as_deref() == Some(owner));
+        Ok(flows)
+    }
+
+    pub fn owned_flow(&self, owner: &str, id: &str) -> Result<Option<Flow>, String> {
+        Ok(self.owned(owner)?.into_iter().find(|f| f.id == id))
+    }
+
+    /// A run and its visits, only when the run's snapshot is owned by `owner`.
+    pub fn owned_run(
+        &self,
+        owner: &str,
+        run_id: &str,
+    ) -> Result<Option<(FlowRun, Vec<FlowVisit>)>, String> {
+        let Some(run) = self.run(run_id)? else {
+            return Ok(None);
+        };
+        if run.flow.owner.as_deref() != Some(owner) {
+            return Ok(None);
+        }
+        let visits = self.visits(run_id)?;
+        Ok(Some((run, visits)))
+    }
+
+    /// Newest first across the owner's Flows (each scanned to its newest 50
+    /// runs), optionally only runs tagged with `goal`.
+    pub fn owned_runs(
+        &self,
+        owner: &str,
+        goal: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FlowRun>, String> {
+        let mut runs = Vec::new();
+        for flow in self.owned(owner)? {
+            runs.extend(self.runs(&flow.id, MAX_RUNS)?);
+        }
+        if let Some(goal) = goal {
+            runs.retain(|r| r.tag.as_ref().is_some_and(|t| t.goal == goal));
+        }
+        runs.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| b.id.cmp(&a.id))
+        });
+        runs.truncate(limit);
+        Ok(runs)
+    }
+
     /// Sets `created_at` on insert (kept on update) and always bumps `updated_at`.
     /// Refuses a Flow `validate_flow` reports errors for, so no path stores one.
     pub fn upsert(&self, flow: &Flow) -> Result<Flow, String> {
@@ -276,6 +327,22 @@ mod tests {
         f
     }
 
+    /// A one-state Flow a Pilot may own (no approval states).
+    fn pilot_flow(id: &str, owner: &str) -> Flow {
+        let mut f = flow(id);
+        f.states.truncate(1);
+        let FlowState::Agent(only) = &mut f.states[0] else {
+            panic!("the starter begins with an agent");
+        };
+        only.transitions = vec![crate::flow::Transition {
+            to: crate::flow::SUCCEEDED.into(),
+            when: None,
+        }];
+        f.initial = only.id.clone();
+        f.owner = Some(owner.into());
+        f
+    }
+
     fn run(id: &str, flow: &Flow, status: RunStatus, created_at: i64) -> FlowRun {
         FlowRun {
             id: id.into(),
@@ -288,6 +355,8 @@ mod tests {
             error: None,
             created_at,
             finished_at: None,
+            tag: None,
+            edits: vec![],
         }
     }
 
@@ -307,6 +376,71 @@ mod tests {
             started_at: 1,
             finished_at: None,
         }
+    }
+
+    #[test]
+    fn owned_helpers_return_only_that_pilots_flows_and_runs() {
+        use crate::flow::run::RunTag;
+        let s = store();
+        let p1 = pilot_flow("p1-flow", "p1");
+        let p1b = pilot_flow("p1-other", "p1");
+        let p2 = pilot_flow("p2-flow", "p2");
+        let user = flow("user-flow");
+        for f in [&p1, &p1b, &p2, &user] {
+            s.upsert(f).unwrap();
+        }
+        let tagged = |id: &str, f: &Flow, goal: &str, at: i64| {
+            let mut r = run(id, f, RunStatus::Succeeded, at);
+            r.tag = Some(RunTag {
+                goal: goal.into(),
+                task: "t".into(),
+            });
+            r
+        };
+        s.save_run(&tagged("r1", &p1, "g1", 10)).unwrap();
+        s.save_run(&tagged("r2", &p1b, "g2", 30)).unwrap();
+        s.save_run(&tagged("r3", &p1, "g1", 20)).unwrap();
+        s.save_run(&tagged("r4", &p2, "g1", 40)).unwrap();
+        s.save_run(&run("r5", &user, RunStatus::Succeeded, 50))
+            .unwrap();
+        s.save_visit(&visit("v1", "r1", 1)).unwrap();
+
+        let mut ids: Vec<String> = s.owned("p1").unwrap().into_iter().map(|f| f.id).collect();
+        ids.sort();
+        assert_eq!(ids, ["p1-flow", "p1-other"]);
+        assert!(s.owned("nobody").unwrap().is_empty());
+
+        assert_eq!(
+            s.owned_flow("p1", "p1-flow").unwrap().unwrap().id,
+            "p1-flow"
+        );
+        assert_eq!(s.owned_flow("p1", "p2-flow").unwrap(), None);
+        assert_eq!(s.owned_flow("p1", "user-flow").unwrap(), None);
+        assert_eq!(s.owned_flow("p1", "missing").unwrap(), None);
+
+        let (r, visits) = s.owned_run("p1", "r1").unwrap().unwrap();
+        assert_eq!(r.id, "r1");
+        assert_eq!(visits.len(), 1);
+        assert!(s.owned_run("p1", "r4").unwrap().is_none());
+        assert!(s.owned_run("p1", "r5").unwrap().is_none());
+        assert!(s.owned_run("p1", "missing").unwrap().is_none());
+
+        let all: Vec<String> = s
+            .owned_runs("p1", None, 50)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(all, ["r2", "r3", "r1"]);
+        let g1: Vec<String> = s
+            .owned_runs("p1", Some("g1"), 50)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(g1, ["r3", "r1"]);
+        assert_eq!(s.owned_runs("p1", None, 2).unwrap().len(), 2);
+        assert!(s.owned_runs("p1", Some("none"), 50).unwrap().is_empty());
     }
 
     #[test]

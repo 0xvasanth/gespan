@@ -34,6 +34,7 @@ artifacts.list {kind?,limit?,offset?}; artifacts.read {id}; artifacts.write {id?
 soul.read {}; soul.update {text,expectedHash}
 memory.read {topic?}; memory.search {query,since?}; memory.add {fact,topic?,until?}; memory.replace {find,fact,topic?,until?}; memory.remove {find,topic?}
 habits.list {}; habits.add {name,instructions,schedule:{kind,time?,minute?,dayOfWeek?}}; habits.update {id,name?,instructions?,schedule?,enabled?}; habits.run {id}; habits.remove {id}
+flows.list {}; flows.read {flowId}; flows.save {flow}; flows.delete {flowId}; flows.start {flowId,goal,task,inputs?}; flows.runs {goal?}; flows.run {runId}; flows.editRun {runId,flow,note}; flows.cancel {runId}; flows.resume {runId,stateId}
 chat.card {type:"pr",repo?,number,note?} / {type:"session",sessionId,note?} / {type:"choices",options:[text]} / {type:"habit",name,instructions,schedule}
 The CLI returns {ok,result,requestId}. Retry uncertain mutations with the same request ID.
 Assigned projects alone may be addressed. Credentials are provided in the environment; never print them.

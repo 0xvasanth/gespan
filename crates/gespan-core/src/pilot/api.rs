@@ -17,6 +17,8 @@ pub fn validate(action: &str, input: &Value) -> Result<(), String> {
         "memory.add"=>"fact topic until","memory.replace"=>"find fact topic until","memory.remove"=>"find topic",
         "habits.add"=>"name instructions schedule","habits.update"=>"id name instructions schedule enabled","habits.run"|"habits.remove"=>"id",
         "chat.card"=>"type repo number note sessionId options name instructions schedule",
+        "flows.list"=>"","flows.read"|"flows.delete"=>"flowId","flows.save"=>"flow","flows.start"=>"flowId goal task inputs",
+        "flows.runs"=>"goal","flows.run"|"flows.cancel"=>"runId","flows.editRun"=>"runId flow note","flows.resume"=>"runId stateId",
         _=>return Err("Unknown app action. Run app help".into()),
     };
     for (key, value) in input.as_object().ok_or("Input must be an object")? {
@@ -50,6 +52,8 @@ pub fn validate(action: &str, input: &Value) -> Result<(), String> {
             "schedule",
             "tags",
             "options",
+            "flow",
+            "inputs",
         ]
         .contains(&key.as_str())
             && !value.is_string()
@@ -70,6 +74,15 @@ pub fn validate(action: &str, input: &Value) -> Result<(), String> {
         .is_some_and(|v| !matches!(v.as_str(), Some("current" | "checkout" | "worktree")))
     {
         return Err("workspaceMode must be current or worktree".into());
+    }
+    if input.get("flow").is_some_and(|v| !v.is_object()) {
+        return Err("flow must be a Flow object".into());
+    }
+    if input.get("inputs").is_some_and(|v| {
+        v.as_object()
+            .is_none_or(|o| o.values().any(|v| !v.is_string()))
+    }) {
+        return Err("inputs must be an object of text values".into());
     }
     if input.get("tags").is_some_and(|v| {
         v.as_array().is_none_or(|a| {
@@ -94,5 +107,65 @@ mod tests {
             &json!({"prompt":"x","project":"/code","draft":true})
         )
         .is_ok());
+    }
+    #[test]
+    fn api_validate_rejects_unknown_flows_keys() {
+        for (action, input) in [
+            ("flows.list", json!({"owner":"p2"})),
+            ("flows.save", json!({"flow":{},"owner":"p2"})),
+            ("flows.read", json!({"id":"f1"})),
+            (
+                "flows.start",
+                json!({"flowId":"f1","goal":"g","task":"t","tag":{}}),
+            ),
+            ("flows.runs", json!({"owner":"p2"})),
+            ("flows.run", json!({"runId":"r1","limit":5})),
+            (
+                "flows.editRun",
+                json!({"runId":"r1","flow":{},"note":"n","force":true}),
+            ),
+            ("flows.cancel", json!({"runId":"r1","flowId":"f1"})),
+            (
+                "flows.resume",
+                json!({"runId":"r1","stateId":"s","inputs":{}}),
+            ),
+            ("flows.delete", json!({"flowId":"f1","runId":"r1"})),
+            ("flows.approve", json!({"runId":"r1"})),
+        ] {
+            assert!(validate(action, &input).is_err(), "{action} {input}");
+        }
+        assert_eq!(
+            validate("flows.save", &json!({"flow":"{}"})),
+            Err("flow must be a Flow object".into())
+        );
+        assert_eq!(
+            validate("flows.start", &json!({"flowId":"f1","inputs":{"task":1}})),
+            Err("inputs must be an object of text values".into())
+        );
+        assert_eq!(
+            validate("flows.start", &json!({"flowId":"f1","inputs":["task"]})),
+            Err("inputs must be an object of text values".into())
+        );
+        assert_eq!(
+            validate("flows.read", &json!({"flowId":7})),
+            Err("flowId must be text".into())
+        );
+        for (action, input) in [
+            ("flows.list", json!({})),
+            ("flows.read", json!({"flowId":"f1"})),
+            ("flows.save", json!({"flow":{"name":"x"}})),
+            ("flows.delete", json!({"flowId":"f1"})),
+            (
+                "flows.start",
+                json!({"flowId":"f1","goal":"g","task":"t","inputs":{"task":"x"}}),
+            ),
+            ("flows.runs", json!({"goal":"g"})),
+            ("flows.run", json!({"runId":"r1"})),
+            ("flows.editRun", json!({"runId":"r1","flow":{},"note":"n"})),
+            ("flows.cancel", json!({"runId":"r1"})),
+            ("flows.resume", json!({"runId":"r1","stateId":"build"})),
+        ] {
+            assert_eq!(validate(action, &input), Ok(()), "{action} {input}");
+        }
     }
 }

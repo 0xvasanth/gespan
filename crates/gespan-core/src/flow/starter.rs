@@ -92,6 +92,7 @@ fn flow(
         initial: initial.into(),
         states,
         access: super::definition::DEFAULT_ACCESS.into(),
+        owner: None,
         created_at: 0,
         updated_at: 0,
     }

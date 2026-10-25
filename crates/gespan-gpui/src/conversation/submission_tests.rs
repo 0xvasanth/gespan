@@ -45,6 +45,7 @@ fn pilot_messages_steer_the_ready_provider_once_and_keep_their_send_time(cx: &mu
                 internal: false,
                 error: None,
                 attachments: vec!["/tmp/image.png".into()],
+                report: Vec::new(),
             };
             assert!(
                 !view.pilot_dispatch(&message, cx),

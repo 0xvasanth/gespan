@@ -1,14 +1,25 @@
 //! Capability-checked app actions used by Pilot provider subprocesses.
 use super::*;
-use gespan_core::pilot::{Document, Launch, bridge::Call, files, memory};
+use gespan_core::flow::{Flow, FlowStore, RunTag};
+use gespan_core::pilot::{Document, Launch, bridge::Call, completions, files, memory};
 use gespan_core::{session_groups::Groups, time::now_ms};
 use serde_json::{Value, json};
 use std::path::Path;
+/// One session in a completion report; `entry` is `None` while it is built off-thread.
+pub(super) struct PendingReport {
+    session: i64,
+    turn: u64,
+    entry: Option<String>,
+}
 enum Effect {
     Card(Value),
     None,
     Start(Session, Box<Settings>, String, bool, bool),
     Groups(String, Groups),
+}
+/// The sidebar folder holding a Pilot's sessions; the id survives renames.
+pub(super) fn pilot_folder_id(pilot_id: &str) -> String {
+    format!("pilot-{pilot_id}")
 }
 fn text(v: &Value, key: &str, max: usize) -> Result<String, String> {
     v.get(key)
@@ -25,6 +36,126 @@ fn id(v: &Value, key: &str) -> Result<i64, String> {
 }
 fn flag(v: &Value, key: &str, default: bool) -> bool {
     v.get(key).and_then(Value::as_bool).unwrap_or(default)
+}
+/// The Shell's Flow store handle.
+type StoreHandle = std::sync::Arc<std::sync::Mutex<FlowStore>>;
+const FLOWS_NOT_READY: &str = "Flows are not ready";
+const FLOW_OUTSIDE_PROJECTS: &str = "Flow project is outside the assigned projects";
+/// The longest goal or task a Pilot run is tagged with, in characters.
+const FLOW_TAG_MAX: usize = 300;
+/// The most runs `flows.runs` lists, newest first.
+const FLOW_RUNS_LISTED: usize = 50;
+/// Like `text`, counting characters rather than bytes.
+fn short_text(v: &Value, key: &str, max: usize) -> Result<String, String> {
+    v.get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty() && s.chars().count() <= max)
+        .map(str::to_owned)
+        .ok_or_else(|| format!("Provide {key} (up to {max} characters)"))
+}
+fn flows_lock(store: &StoreHandle) -> Result<std::sync::MutexGuard<'_, FlowStore>, String> {
+    store.lock().map_err(|_| "Flows are unavailable".into())
+}
+/// A resumed run launches sessions again, so its project must still be
+/// assigned, as for `flows.start`.
+fn resume_in_scope(
+    action: &str,
+    input: &Value,
+    pilot: &pilot::Pilot,
+    store: &StoreHandle,
+) -> Result<(), String> {
+    if action != "flows.resume" {
+        return Ok(());
+    }
+    let run_id = text(input, "runId", 256)?;
+    match flows_lock(store)?.owned_run(&pilot.id, &run_id)? {
+        Some((run, _)) if !pilot.works_on(&run.flow.cwd) => Err(FLOW_OUTSIDE_PROJECTS.into()),
+        _ => Ok(()),
+    }
+}
+/// The `flow` a Pilot sent, owned by `owner` whatever it claimed. The store
+/// sets the timestamps, so the Pilot may leave them out.
+fn pilot_flow(v: &Value, owner: &str) -> Result<Flow, String> {
+    let mut flow = v.get("flow").cloned().ok_or("Provide flow")?;
+    let fields = flow.as_object_mut().ok_or("flow must be a Flow object")?;
+    fields.insert("owner".into(), json!(owner));
+    fields.entry("id").or_insert(json!(""));
+    for key in ["createdAt", "updatedAt"] {
+        fields.entry(key).or_insert(json!(0));
+    }
+    serde_json::from_value(flow).map_err(|e| format!("flow is not a valid Flow: {e}"))
+}
+/// A Flow `flows.save` may store: in one of the Pilot's projects, with an id.
+fn saved_flow(v: &Value, pilot: &pilot::Pilot) -> Result<Flow, String> {
+    let mut flow = pilot_flow(v, &pilot.id)?;
+    if !pilot.works_on(&flow.cwd) {
+        return Err(FLOW_OUTSIDE_PROJECTS.into());
+    }
+    if flow.id.trim().is_empty() {
+        flow.id = gespan_core::automations::new_id();
+    }
+    Ok(flow)
+}
+/// The read-only `flows.*` actions and `flows.save`, against `owner`'s Flows.
+fn read_flows(
+    store: &FlowStore,
+    owner: &str,
+    action: &str,
+    input: &Value,
+    flow: Option<Flow>,
+) -> Result<Value, String> {
+    Ok(match action {
+        "flows.list" => json!({"flows": store.owned(owner)?.iter().map(|f| json!({
+            "id": f.id,
+            "name": f.name,
+            "description": f.description,
+            "states": f.states.iter().map(|s| s.id()).collect::<Vec<_>>(),
+            "updatedAt": f.updated_at,
+        })).collect::<Vec<_>>()}),
+        "flows.read" => json!(
+            store
+                .owned_flow(owner, &text(input, "flowId", 256)?)?
+                .ok_or("Flow not found")?
+        ),
+        "flows.save" => {
+            let flow = flow.ok_or("Provide flow")?;
+            // Another Pilot's or the user's Flow is not this Pilot's to see.
+            if store
+                .list()?
+                .iter()
+                .any(|f| f.id == flow.id && f.owner.as_deref() != Some(owner))
+            {
+                return Err("Flow not found".into());
+            }
+            json!({"flow": store.upsert(&flow)?})
+        }
+        "flows.runs" => {
+            let goal = input.get("goal").and_then(Value::as_str);
+            let runs = store.owned_runs(owner, goal, FLOW_RUNS_LISTED)?;
+            json!({"runs": runs.iter().map(|r| json!({
+                "runId": r.id,
+                "flowId": r.flow_id,
+                "goal": r.tag.as_ref().map(|t| &t.goal),
+                "task": r.tag.as_ref().map(|t| &t.task),
+                "status": r.status,
+                "currentState": r.current_state,
+                "error": r.error,
+            })).collect::<Vec<_>>()})
+        }
+        _ => {
+            let (run, visits) = store
+                .owned_run(owner, &text(input, "runId", 256)?)?
+                .ok_or("Run not found")?;
+            json!({"run": run, "visits": visits.iter().map(|v| json!({
+                "seq": v.seq,
+                "stateId": v.state_id,
+                "status": v.status,
+                "sessionId": v.session_id,
+                "outputs": v.outputs,
+                "error": v.error,
+            })).collect::<Vec<_>>()})
+        }
+    })
 }
 fn fingerprint(call: &Call) -> String {
     files::content_hash(&format!("{}:{}", call.action, call.input))
@@ -142,6 +273,11 @@ impl Pilots {
                     .get(&call.session)
                     .and_then(|r| self.roster.get(&r.pilot))
             })
+            .or_else(|| {
+                self.reviews
+                    .get(&call.session)
+                    .and_then(|r| self.roster.get(&r.pilot))
+            })
             .cloned();
         let Some(pilot) = pilot else {
             let _ = call.reply.send(Err(
@@ -156,6 +292,12 @@ impl Pilots {
             let _ = call
                 .reply
                 .send(Err("A habit run cannot schedule more runs".into()));
+            return;
+        }
+        if self.reviews.contains_key(&call.session)
+            && !flow_reviews::REVIEW_ACTIONS.contains(&call.action.as_str())
+        {
+            let _ = call.reply.send(Err(flow_reviews::REVIEW_READ_ONLY.into()));
             return;
         }
         if let Err(error) = pilot::api::validate(&call.action, &call.input) {
@@ -252,8 +394,8 @@ impl Pilots {
                 let view=self.owner.upgrade().and_then(|owner|owner.update(cx, |owner, cx| owner.pilot_ensure_session(session, cx))).filter(|v|gespan_core::files::path_key(&v.read(cx).summary.cwd)==gespan_core::files::path_key(&project));
                 let Some(view)=view else{self.finish_call(call,Err("Session is outside the assigned project".into()),cx);return;};
                 if action=="sessions.send"||action=="sessions.draft"{if view.read(cx).busy||view.read(cx).pilot_external_pending()||!view.read(cx).input.read(cx).content.trim().is_empty(){self.finish_call(call,Err("Session is busy or has an unsent draft".into()),cx);return;}match text(&input,"prompt",65536){Ok(prompt)=>{let sent=view.update(cx,|v,cx|v.pilot_external_send(prompt,action=="sessions.draft",cx));if let Err(e)=sent{self.finish_call(call,Err(e),cx);return;}
-if flag(&input,"notifyOnComplete",false){if let Some(m)=self.roster.get_mut(&pilot.id){let origin=source.map(|v|v.read(cx).pilot_turn).unwrap_or(0);if let Some(launch)=m.launches.iter_mut().find(|l|l.session_id==session){launch.completed=false;launch.dismissed=false;launch.notify_on_complete=true;launch.origin_turn=((call.session as u64)<<32)|origin;}else{let summary=&view.read(cx).summary;m.launches.push(Launch{session_id:session,cwd:summary.cwd.clone(),title:summary.title.clone(),harness:summary.provider.clone(),model:view.read(cx).pilot_model(),origin_turn:((call.session as u64)<<32)|origin,notify_on_complete:true,completed:false,dismissed:false});}}self.save(cx);}Ok(json!({"accepted":true}))},Err(e)=>Err(e)}}else{
-                    for m in &mut self.roster.pilots{for launch in &mut m.launches{if launch.session_id==session{launch.dismissed=true;}}}self.save(cx);
+if flag(&input,"notifyOnComplete",false){if let Some(m)=self.roster.get_mut(&pilot.id){let origin=source.map(|v|v.read(cx).pilot_turn).unwrap_or(0);if let Some(launch)=m.launches.iter_mut().find(|l|l.session_id==session){launch.completed=false;launch.dismissed=false;launch.notify_on_complete=true;launch.origin_turn=((call.session as u64)<<32)|origin;}else{let summary=&view.read(cx).summary;m.launches.push(Launch{session_id:session,cwd:summary.cwd.clone(),title:summary.title.clone(),harness:summary.provider.clone(),model:view.read(cx).pilot_model(),origin_turn:((call.session as u64)<<32)|origin,notify_on_complete:true,completed:false,dismissed:false});}}self.save(cx);let loose=self.owner.upgrade().is_some_and(|o|o.read(cx).pilot_groups(&project).folder_of(session).is_none());if loose{let pid=pilot.id.clone();self.group_launch(&pid,session,cx);}}Ok(json!({"accepted":true}))},Err(e)=>Err(e)}}else{
+                    for m in &mut self.roster.pilots{for launch in &mut m.launches{if launch.session_id==session{launch.dismissed=true;}}}self.dismiss_reports(session,cx);self.save(cx);
                     if action=="sessions.stop"{view.update(cx,|v,cx|v.stop_if_busy(cx));}else{let delete=action=="sessions.delete";let owner=self.owner.clone();let handle=window.window_handle();let app:&mut App=cx;app.defer(move|cx|{let _=handle.update(cx,|_,window,cx|{let _=owner.update(cx,|owner,cx|owner.pilot_remove(session,delete,window,cx));});});}Ok(json!({"accepted":true}))
                 }
             }
@@ -314,43 +456,253 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                     };Ok((value,Effect::None))
                 },cx);return;
             }
+            a if a.starts_with("flows.")=>{self.flows_call(call,&pilot,cx);return;}
             _=>Err("Unknown action. Run app help to see supported actions".into()),
         };
         self.finish_call(call, result, cx);
     }
+    /// `flows.*`: the calling Pilot's own Flows and runs, never anyone else's.
+    /// Reads and saves run off-thread; run changes go through the Shell.
+    fn flows_call(&mut self, call: Call, pilot: &pilot::Pilot, cx: &mut Context<Self>) {
+        let store = self
+            .owner
+            .upgrade()
+            .ok_or_else(|| FLOWS_NOT_READY.to_string())
+            .and_then(|shell| shell.read(cx).pilot_flows_store());
+        let store = match store {
+            Ok(store) => store,
+            Err(error) => return self.finish_call(call, Err(error), cx),
+        };
+        let input = call.input.clone();
+        let action = call.action.clone();
+        let owner = pilot.id.clone();
+        let result = match action.as_str() {
+            "flows.list" | "flows.read" | "flows.runs" | "flows.run" | "flows.save" => {
+                let flow = match action.as_str() {
+                    "flows.save" => match saved_flow(&input, pilot) {
+                        Ok(flow) => Some(flow),
+                        Err(error) => return self.finish_call(call, Err(error), cx),
+                    },
+                    _ => None,
+                };
+                let target = owner.clone();
+                self.call_work(
+                    call,
+                    target,
+                    move |_| {
+                        let store = flows_lock(&store)?;
+                        Ok((
+                            read_flows(&store, &owner, &action, &input, flow)?,
+                            Effect::None,
+                        ))
+                    },
+                    cx,
+                );
+                return;
+            }
+            "flows.start" => self.start_flow_run(&input, pilot, &store, cx),
+            "flows.editRun" | "flows.cancel" | "flows.resume" | "flows.delete" => {
+                let changed = resume_in_scope(&action, &input, pilot, &store)
+                    .and_then(|()| self.change_flows(&action, &input, &owner, cx));
+                if changed.is_ok()
+                    && let Some(run_id) = input.get("runId").and_then(Value::as_str)
+                {
+                    self.flow_changed(&owner, &action, run_id);
+                    self.save(cx);
+                }
+                changed
+            }
+            _ => Err("Unknown action. Run app help to see supported actions".into()),
+        };
+        self.finish_call(call, result, cx);
+    }
+    fn start_flow_run(
+        &mut self,
+        input: &Value,
+        pilot: &pilot::Pilot,
+        store: &StoreHandle,
+        cx: &mut Context<Self>,
+    ) -> Result<Value, String> {
+        let flow_id = text(input, "flowId", 256)?;
+        let tag = RunTag {
+            goal: short_text(input, "goal", FLOW_TAG_MAX)?,
+            task: short_text(input, "task", FLOW_TAG_MAX)?,
+        };
+        let inputs: HashMap<String, String> = match input.get("inputs") {
+            Some(inputs) => serde_json::from_value(inputs.clone())
+                .map_err(|_| "inputs must be an object of text values".to_string())?,
+            None => HashMap::new(),
+        };
+        // Its project may have been unassigned since the Flow was saved.
+        let cwd = flows_lock(store)?
+            .owned_flow(&pilot.id, &flow_id)?
+            .ok_or("Flow not found")?
+            .cwd;
+        if !pilot.works_on(&cwd) {
+            return Err(FLOW_OUTSIDE_PROJECTS.into());
+        }
+        let owner = pilot.id.clone();
+        let run = self
+            .owner
+            .update(cx, |shell, cx| {
+                shell.start_pilot_flow(&owner, &flow_id, inputs, tag, cx)
+            })
+            .map_err(|_| FLOWS_NOT_READY.to_string())?
+            .map_err(|errors| errors.join("; "))?;
+        let id = run.id.clone();
+        self.flow_started(&owner, run);
+        self.save(cx);
+        Ok(json!({"runId": id}))
+    }
+    fn change_flows(
+        &mut self,
+        action: &str,
+        input: &Value,
+        owner: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<Value, String> {
+        let (result, done) = match action {
+            "flows.delete" => {
+                let flow_id = text(input, "flowId", 256)?;
+                let result = self
+                    .owner
+                    .update(cx, |shell, _| shell.delete_pilot_flow(owner, &flow_id));
+                (result, json!({"deleted": true}))
+            }
+            "flows.editRun" => {
+                let run_id = text(input, "runId", 256)?;
+                let flow = pilot_flow(input, owner)?;
+                let note = text(input, "note", 4000)?;
+                let result = self.owner.update(cx, |shell, cx| {
+                    shell
+                        .edit_pilot_run(owner, &run_id, flow, &note, cx)
+                        .map_err(|errors| errors.join("; "))
+                });
+                (result, json!({"edited": true}))
+            }
+            "flows.cancel" => {
+                let run_id = text(input, "runId", 256)?;
+                let result = self
+                    .owner
+                    .update(cx, |shell, cx| shell.cancel_pilot_run(owner, &run_id, cx));
+                (result, json!({"cancelled": true}))
+            }
+            _ => {
+                let run_id = text(input, "runId", 256)?;
+                let state_id = text(input, "stateId", 256)?;
+                let result = self.owner.update(cx, |shell, cx| {
+                    shell.resume_pilot_run(owner, &run_id, &state_id, cx)
+                });
+                (result, json!({"resumed": true}))
+            }
+        };
+        result.map_err(|_| FLOWS_NOT_READY.to_string())??;
+        Ok(done)
+    }
+    /// Files a Pilot-started session in its folder; every launch is filed.
     pub(super) fn group_launch(&mut self, id: &str, session: i64, cx: &mut Context<Self>) {
-        let Some(pilot) = self
+        let Some(launch) = self
             .roster
             .get(id)
-            .filter(|m| m.show_started_sessions_in_sidebar && m.use_sidebar_folders)
-            .cloned()
+            .and_then(|p| p.launches.iter().find(|l| l.session_id == session))
         else {
             return;
         };
-        let Some(launch) = pilot.launches.iter().find(|l| l.session_id == session) else {
+        let project = launch.cwd.clone();
+        self.file_session(id, project, session, cx);
+    }
+    /// Files a session a Pilot's Flow run started in the Pilot's folder. It is not a launch
+    /// (the Flow's events report it), so it never joins `launches`.
+    pub(crate) fn file_flow_session(
+        &mut self,
+        id: &str,
+        project: String,
+        session: i64,
+        cx: &mut Context<Self>,
+    ) {
+        self.file_session(id, project, session, cx);
+    }
+    /// Puts `session` in Pilot `id`'s folder of `project`.
+    fn file_session(&mut self, id: &str, project: String, session: i64, cx: &mut Context<Self>) {
+        let Some(pilot) = self.roster.get(id).cloned() else {
             return;
         };
-        let project = launch.cwd.clone();
         let mut groups = self
             .owner
             .upgrade()
             .map(|o| o.read(cx).pilot_groups(&project))
             .unwrap_or_default();
-        let folder = groups
-            .folders
+        file_in_pilot_folder(&mut groups, &pilot, session);
+        self.apply_groups(project, groups, cx);
+    }
+    /// Files launches that versions before every launch was filed left out of folders: each
+    /// one whose session still exists and is in no folder goes into its Pilot's folder.
+    /// Sessions in any folder stay put, so running it again changes nothing.
+    pub(super) fn file_loose_launches(&mut self, cx: &mut Context<Self>) {
+        let projects: HashSet<String> = self
+            .roster
+            .pilots
             .iter()
-            .find(|f| f.name == pilot.label())
-            .map(|f| f.id.clone())
-            .or_else(|| groups.create_folder(&[session], pilot::new_id()));
-        if let Some(folder) = folder {
-            groups.rename_folder(&folder, &pilot.label());
-            let color = pilot::COLORS_PILOT
-                .iter()
-                .position(|c| *c == pilot.color)
-                .map(|n| if n == 8 { 6 } else { n + 1 });
-            groups.set_color(&folder, color);
-            groups.add_to_folder(&folder, session);
+            .flat_map(|p| p.launches.iter().map(|l| l.cwd.clone()))
+            .collect();
+        if projects.is_empty() {
+            return;
         }
+        let store = self.store.clone();
+        let work = cx.background_executor().spawn(async move {
+            let db = locked(&store)?;
+            let sessions: HashSet<i64> = db.sessions()?.into_iter().map(|s| s.id).collect();
+            let groups = projects
+                .into_iter()
+                .map(|p| db.groups(&p).map(|g| (p, g)))
+                .collect::<Result<HashMap<_, _>, String>>()?;
+            Ok::<_, String>((sessions, groups))
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok((sessions, saved)) = work.await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| this.file_launches(&sessions, saved, cx));
+        })
+        .detach();
+    }
+    fn file_launches(
+        &mut self,
+        sessions: &HashSet<i64>,
+        saved: HashMap<String, Groups>,
+        cx: &mut Context<Self>,
+    ) {
+        let owner = self.owner.upgrade();
+        // The sidebar's copy wins for projects it has open; it may have moved on since startup.
+        let mut groups: HashMap<String, Groups> = saved
+            .into_iter()
+            .map(|(project, saved)| {
+                let open = owner
+                    .as_ref()
+                    .and_then(|o| o.read(cx).pilot_loaded_groups(&project));
+                (project, open.unwrap_or(saved))
+            })
+            .collect();
+        let mut changed = HashSet::new();
+        for pilot in &self.roster.pilots {
+            for launch in &pilot.launches {
+                let Some(project) = groups.get_mut(&launch.cwd) else {
+                    continue;
+                };
+                if sessions.contains(&launch.session_id)
+                    && project.folder_of(launch.session_id).is_none()
+                {
+                    file_in_pilot_folder(project, pilot, launch.session_id);
+                    changed.insert(launch.cwd.clone());
+                }
+            }
+        }
+        for project in changed {
+            let filed = groups.remove(&project).unwrap_or_default();
+            self.apply_groups(project, filed, cx);
+        }
+    }
+    fn apply_groups(&mut self, project: String, groups: Groups, cx: &mut Context<Self>) {
         let _ = self.owner.update(cx, |o, cx| {
             o.pilot_apply_groups(project.clone(), groups.clone(), cx)
         });
@@ -367,56 +719,52 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
             .upgrade()
             .map(|o| o.read(cx).pilot_session_views(cx))
             .unwrap_or_default();
+        let source_busy = |source: i64| {
+            self.chats
+                .values()
+                .chain(self.running.values().map(|r| &r.view))
+                .any(|v| v.read(cx).summary.id == source && v.read(cx).busy)
+        };
         let mut ready = Vec::new();
         for pilot in &self.roster.pilots {
-            let groups: HashSet<_> = pilot
-                .launches
-                .iter()
-                .filter(|l| l.notify_on_complete && !l.completed && !l.dismissed)
-                .map(|l| l.origin_turn)
-                .collect();
-            for group in groups {
-                let source = (group >> 32) as i64;
-                if self
-                    .chats
-                    .values()
-                    .chain(self.running.values().map(|r| &r.view))
-                    .any(|v| v.read(cx).summary.id == source && v.read(cx).busy)
-                {
-                    continue;
-                }
-                let children: Vec<_> = pilot
+            let stopped = |session: i64| {
+                views
+                    .iter()
+                    .find(|v| v.id == session)
+                    .is_none_or(|v| !v.busy && v.has_messages)
+            };
+            let in_flight = |session: i64| {
+                self.completion_work.iter().any(|((p, _), work)| {
+                    *p == pilot.id && work.iter().any(|w| w.session == session)
+                })
+            };
+            for report in completions::ready(&pilot.launches, stopped, source_busy, in_flight) {
+                let children: Vec<_> = report
                     .launches
                     .iter()
-                    .filter(|l| {
-                        l.origin_turn == group
-                            && l.notify_on_complete
-                            && !l.completed
-                            && !l.dismissed
+                    .filter_map(|&(session, _)| {
+                        pilot
+                            .launches
+                            .iter()
+                            .find(|l| l.session_id == session)
+                            .map(|l| (session, l.title.clone()))
                     })
                     .collect();
-                if !children.is_empty()
-                    && children.iter().all(|l| {
-                        views
-                            .iter()
-                            .find(|v| v.id == l.session_id)
-                            .is_none_or(|v| !v.busy && v.has_messages)
-                    })
-                    && !self.completion_work.contains(&(pilot.id.clone(), group))
-                {
-                    ready.push((
-                        pilot.id.clone(),
-                        group,
-                        children
-                            .iter()
-                            .map(|l| (l.session_id, l.title.clone()))
-                            .collect::<Vec<_>>(),
-                    ));
-                }
+                ready.push((pilot.id.clone(), report, children));
             }
         }
-        for (id, group, children) in ready {
-            self.completion_work.insert((id.clone(), group));
+        for (id, report, children) in ready {
+            let key = (id, report.source);
+            self.completion_work.entry(key.clone()).or_default().extend(
+                report
+                    .launches
+                    .iter()
+                    .map(|&(session, turn)| PendingReport {
+                        session,
+                        turn,
+                        entry: None,
+                    }),
+            );
             let store = self.store.clone();
             let work = cx.background_executor().spawn(async move {
                 children
@@ -426,24 +774,196 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                             .and_then(|db| db.load(id))
                             .map(|t| gespan_core::response::prose(&t.rows))
                             .unwrap_or_else(|_| "Session was removed".into());
-                        format!(
+                        let entry = format!(
                             "Session {id}: {title}\n{}",
                             gespan_core::response::limit(&rows, 12000)
-                        )
+                        );
+                        (id, entry)
                     })
                     .collect::<Vec<_>>()
-                    .join("\n\n")
             });
-            cx.spawn(async move |this,cx| {
-                let report=work.await;
-                let _=this.update(cx,|this,cx|{
-                    this.completion_work.remove(&(id.clone(),group));
-                    if let Some(pilot)=this.roster.get_mut(&id){for launch in &mut pilot.launches{if launch.origin_turn==group{launch.completed=true;}}}
-                    let message=format!("[Delegated work completed]\nAll sessions in this group have stopped. Inspect their results and give an integrated update.\n\n{report}");
-                    let source=(group>>32) as i64;
-                    if let Some(run)=this.running.get_mut(&source){run.mailbox.push(message);this.save(cx);this.habit_changed(source,cx);}else{this.enqueue(&id,message,Vec::new(),true,cx);this.ensure_chat(&id,cx);}
-                });
-            }).detach();
+            cx.spawn(async move |this, cx| {
+                let entries = work.await;
+                let _ = this.update(cx, |this, cx| this.finish_completion(key, entries, cx));
+            })
+            .detach();
         }
     }
+    /// Holds a chat's built reports until every report for it is built, so sessions that stop
+    /// close together reach it as one message.
+    fn finish_completion(
+        &mut self,
+        key: (String, i64),
+        entries: Vec<(i64, String)>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(work) = self.completion_work.get_mut(&key) else {
+            return;
+        };
+        for (session, entry) in entries {
+            if let Some(w) = work
+                .iter_mut()
+                .find(|w| w.session == session && w.entry.is_none())
+            {
+                w.entry = Some(entry);
+            }
+        }
+        let building = |this: &Self| this.completion_work[&key].iter().any(|w| w.entry.is_none());
+        if building(self) {
+            return;
+        }
+        // Siblings that stopped while this was built join the same message.
+        self.check_completions(cx);
+        if building(self) {
+            return;
+        }
+        let work = self.completion_work.remove(&key).unwrap_or_default();
+        let (id, source) = key;
+        let mut entries = Vec::new();
+        if let Some(pilot) = self.roster.get_mut(&id) {
+            for w in work {
+                // A session the Pilot stopped, archived or deleted meanwhile never reports.
+                let Some(launch) = pilot
+                    .launches
+                    .iter_mut()
+                    .find(|l| l.session_id == w.session && !l.dismissed)
+                else {
+                    continue;
+                };
+                // Only the reported turn closes; a launch re-armed since stays open.
+                if launch.origin_turn == w.turn {
+                    launch.completed = true;
+                }
+                entries.extend(w.entry.map(|entry| (w.session, entry)));
+            }
+        }
+        if entries.is_empty() {
+            self.save(cx);
+            return;
+        }
+        if let Some(run) = self.running.get_mut(&source) {
+            match run.mailbox.iter_mut().find(|m| !m.report.is_empty()) {
+                Some(queued) => {
+                    completions::merge_report(&mut queued.report, entries);
+                    rewrite_report(queued);
+                }
+                None => run.mailbox.push(new_report(entries)),
+            }
+            self.save(cx);
+            self.habit_changed(source, cx);
+            return;
+        }
+        // A report still waiting in the outbox absorbs these sessions; one already handed to
+        // the chat is never rewritten.
+        let handed = self.handed_reports(&id, cx);
+        if let Some(pilot) = self.roster.get_mut(&id) {
+            match pilot.outbox.iter_mut().find(|m| {
+                m.internal && m.error.is_none() && !m.report.is_empty() && !handed.contains(&m.id)
+            }) {
+                Some(queued) => {
+                    completions::merge_report(&mut queued.report, entries);
+                    rewrite_report(queued);
+                }
+                None => pilot.outbox.push(new_report(entries)),
+            }
+            self.save(cx);
+            self.configure_chat(&id, cx);
+            self.dispatch(&id, cx);
+        }
+        self.ensure_chat(&id, cx);
+    }
+    /// Reports the chat has been handed, delivered or in flight; they are never rewritten.
+    fn handed_reports(&self, id: &str, cx: &App) -> HashSet<String> {
+        self.chats
+            .get(id)
+            .map(|v| v.read(cx).pilot_delivered().clone())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(self.inflight.get(id).map(|m| m.id.clone()))
+            .collect()
+    }
+    /// Takes a session the Pilot stopped, archived or deleted out of every report not handed
+    /// over yet, so it never reports; a report left naming no session is dropped.
+    fn dismiss_reports(&mut self, session: i64, cx: &mut Context<Self>) {
+        let ids: Vec<String> = self.roster.pilots.iter().map(|p| p.id.clone()).collect();
+        for id in ids {
+            let handed = self.handed_reports(&id, cx);
+            let Some(pilot) = self.roster.get_mut(&id) else {
+                continue;
+            };
+            if dismiss_from(&mut pilot.outbox, session, |m| !handed.contains(&m.id)) {
+                self.configure_chat(&id, cx);
+                self.dispatch(&id, cx);
+            }
+        }
+        // A habit run only waits for its mailbox, so one emptied here may be done.
+        let runs: Vec<i64> = self
+            .running
+            .iter_mut()
+            .filter_map(|(&run, r)| dismiss_from(&mut r.mailbox, session, |_| true).then_some(run))
+            .collect();
+        for run in runs {
+            self.habit_changed(run, cx);
+        }
+    }
+}
+/// Puts `session` in the Pilot's folder, creating it or adopting the one older versions named
+/// after the Pilot.
+fn file_in_pilot_folder(groups: &mut Groups, pilot: &pilot::Pilot, session: i64) {
+    let folder_id = pilot_folder_id(&pilot.id);
+    let label = pilot.label();
+    let color = pilot::COLORS_PILOT
+        .iter()
+        .position(|c| *c == pilot.color)
+        .map(|n| if n == 8 { 6 } else { n + 1 });
+    let folder = if groups.folder(&folder_id).is_some() {
+        Some(folder_id.clone())
+    } else if let Some(legacy) = groups.folders.iter().find(|f| f.name == label).cloned() {
+        // Older versions filed by name; move that folder to the stable id.
+        let mut sessions = legacy.session_ids.clone();
+        sessions.push(session);
+        groups.dissolve(&legacy.id);
+        groups.create_folder(&sessions, folder_id.clone())
+    } else {
+        groups.create_folder(&[session], folder_id.clone())
+    };
+    if let Some(folder) = folder {
+        groups.rename_folder(&folder, &label);
+        groups.set_color(&folder, color);
+        groups.add_to_folder(&folder, session);
+    }
+}
+fn new_report(entries: Vec<completions::Entry>) -> Message {
+    Message {
+        id: pilot::new_id(),
+        text: completions::report_message(&entries),
+        sent_at: Some(now_ms()),
+        internal: true,
+        error: None,
+        attachments: Vec::new(),
+        report: entries,
+    }
+}
+/// Renders a queued report again after its sessions changed. A fresh id waits for this text
+/// to be saved before it can be dispatched.
+fn rewrite_report(message: &mut Message) {
+    message.id = pilot::new_id();
+    message.text = completions::report_message(&message.report);
+    message.sent_at = Some(now_ms());
+}
+/// Takes `session` out of the open reports in `queue`; returns whether any changed.
+fn dismiss_from(queue: &mut Vec<Message>, session: i64, open: impl Fn(&Message) -> bool) -> bool {
+    let mut changed = false;
+    queue.retain_mut(|m| {
+        if !open(m) || !completions::dismiss(&mut m.report, session) {
+            return true;
+        }
+        changed = true;
+        if m.report.is_empty() {
+            return false;
+        }
+        rewrite_report(m);
+        true
+    });
+    changed
 }

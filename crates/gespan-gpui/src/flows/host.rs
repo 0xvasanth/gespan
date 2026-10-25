@@ -3,7 +3,8 @@
 //! keeps the host contract: `on_session` before any settle, the first visit's
 //! worktree before its settle, and exactly one settle per agent turn.
 use gespan_core::flow::{
-    AgentOutcome, AgentStatus, Effect, Flow, FlowRun, FlowVisit, LaunchRequest, Runner,
+    AgentOutcome, AgentStatus, Effect, Flow, FlowRun, FlowVisit, LaunchRequest, RunStatus, RunTag,
+    Runner,
 };
 use gespan_core::transcript::Row;
 use std::collections::HashMap;
@@ -21,6 +22,11 @@ pub(crate) trait SessionDriver {
     fn persist(&mut self, run: FlowRun, visit: Option<FlowVisit>);
     /// A run needs approval or finished.
     fn changed(&mut self, run_id: &str);
+    /// An agent visit ended; `run` is the run as it stands after the step.
+    /// Reported after the next visit's launch, so nothing waits on it.
+    fn visit_finished(&mut self, run: FlowRun, visit: FlowVisit);
+    /// A run finished, after its final `changed`.
+    fn run_finished(&mut self, run_id: &str, status: RunStatus);
 }
 
 /// A session's turn state, read on every `SessionChanged`.
@@ -97,10 +103,24 @@ impl Host {
         driver: &mut dyn SessionDriver,
         flow: &Flow,
         inputs: &HashMap<String, String>,
+        tag: Option<RunTag>,
     ) -> Result<FlowRun, Vec<String>> {
-        let (run, effects) = self.runner.start(flow, inputs)?;
+        let (run, effects) = self.runner.start(flow, inputs, tag)?;
         self.apply(driver, effects);
         Ok(run)
+    }
+
+    /// Replaces an active run's snapshot with `flow` and persists it.
+    pub(crate) fn edit_run(
+        &mut self,
+        driver: &mut dyn SessionDriver,
+        run_id: &str,
+        flow: Flow,
+        note: &str,
+    ) -> Result<(), Vec<String>> {
+        let effects = self.runner.edit_run(run_id, flow, note)?;
+        self.apply(driver, effects);
+        Ok(())
     }
 
     pub(crate) fn resolve_approval(
@@ -325,7 +345,7 @@ impl Host {
                 }
                 Effect::Persist { run, visit } => driver.persist(run, visit),
                 Effect::NeedsApproval { run_id, .. } => driver.changed(&run_id),
-                Effect::Finished { run_id, .. } => {
+                Effect::Finished { run_id, status } => {
                     let done: Vec<i64> = self
                         .sessions
                         .iter()
@@ -337,7 +357,9 @@ impl Host {
                         self.awaiting.remove(&session);
                     }
                     driver.changed(&run_id);
+                    driver.run_finished(&run_id, status);
                 }
+                Effect::VisitFinished { run, visit } => driver.visit_finished(run, visit),
             }
         }
     }
