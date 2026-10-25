@@ -607,7 +607,7 @@ impl Shell {
             let store = locked(&store)?;
             let mut summary = store.create(kind.id(), &cwd)?;
             summary.title = format!("{} · {}", item.reference(), item.title);
-            summary.work_item = Some(item.work_item());
+            summary.work_item = Some(item.work_item().into());
             store.title(summary.id, &summary.title)?;
             store.set_work_item(summary.id, summary.work_item.as_ref())?;
             store.save_agent_settings(summary.id, &settings)?;

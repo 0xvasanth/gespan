@@ -11,7 +11,9 @@ pub mod jira;
 pub mod linear;
 pub mod plane;
 
-use crate::{desktop_preferences::DesktopPreferences, session_groups::WorkItem, store::Store};
+use crate::{
+    desktop_preferences::DesktopPreferences, session_groups::GithubWorkItem, store::Store,
+};
 use chrono::{Datelike, Local, TimeZone};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -135,8 +137,8 @@ impl Item {
             "Open"
         }
     }
-    pub fn work_item(&self) -> WorkItem {
-        WorkItem {
+    pub fn work_item(&self) -> GithubWorkItem {
+        GithubWorkItem {
             kind: self.kind.clone(),
             repo: self.repo.clone(),
             number: self.number.max(0) as u64,

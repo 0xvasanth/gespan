@@ -519,6 +519,7 @@ import {
   type BtwThread,
   type ComposerTurnOptions,
   type HarnessId,
+  type GithubLinkedWorkItem,
   type LinkedWorkItem,
   type ModelTarget,
   type PlanBuildTarget,
@@ -527,6 +528,7 @@ import {
   type PlanStatus,
   type SecondOpinionMeta,
   type PilotSpawnedSession,
+  isGithubWorkItem,
   type Session,
   type UsageLimit,
   type WorkspaceMode,
@@ -918,7 +920,7 @@ const BoardView = lazySurface(
 );
 
 type LinkedWorkItemPanelState = {
-  item: LinkedWorkItem;
+  item: GithubLinkedWorkItem;
   sessionId: string;
   cwd: string;
 };
@@ -4919,7 +4921,7 @@ function Workspace({
       const session = sessionsRef.current.find(
         (entry) => entry.id === sessionId,
       );
-      if (!session?.linkedWorkItem) return;
+      if (!isGithubWorkItem(session?.linkedWorkItem)) return;
       if (
         session.linkedWorkItemUpdateCard?.updatedAt === update.updatedAt &&
         session.linkedWorkItemUpdateCard.status !== "error"
@@ -12312,6 +12314,8 @@ function Workspace({
 
   const onOpenLinkedWorkItem = useCallback(
     (item: LinkedWorkItem, sessionId: string) => {
+      // Ticket items have no side panel yet.
+      if (!isGithubWorkItem(item)) return;
       const request = linkedWorkItemPanelRequest.current + 1;
       linkedWorkItemPanelRequest.current = request;
       setFilePickerOpen(false);

@@ -4,8 +4,8 @@ use super::*;
 use chrono::{Local, NaiveDateTime, TimeZone};
 use gespan_core::{
     session_groups::{
-        Entry, Groups, build_list, format_reminder, navigation_ids, parse_github_work_item,
-        reminder_at, reminder_presets,
+        Entry, Groups, WorkItem, build_list, format_reminder, navigation_ids,
+        parse_github_work_item, reminder_at, reminder_presets,
     },
     store::Reminder,
 };
@@ -1082,7 +1082,11 @@ impl Shell {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let item = self.session_metadata(id, cx).summary.work_item.clone()?;
+        let item = match self.session_metadata(id, cx).summary.work_item.clone()? {
+            WorkItem::Github(item) => item,
+            // Tickets get their own chip.
+            WorkItem::Ticket(_) => return None,
+        };
         let noun = if item.kind == "pr" { "PR" } else { "issue" };
         let url = item.url.clone();
         Some(
@@ -1634,7 +1638,7 @@ impl Shell {
                 cx,
             )
         });
-        if let Some(item) = &initial {
+        if let Some(item) = initial.as_ref().and_then(|w| w.github()) {
             let url = item.url.clone();
             input.update(cx, |i, cx| i.set_text(url, cx));
         }
@@ -1676,7 +1680,7 @@ impl Shell {
         let id = dialog.id;
         let item = if keep {
             match parse_github_work_item(dialog.input.read(cx).content.trim()) {
-                Some(item) => Some(item),
+                Some(item) => Some(WorkItem::Github(item)),
                 None => {
                     dialog.error = Some("Enter a valid GitHub issue or pull request URL.".into());
                     cx.notify();
@@ -2274,6 +2278,7 @@ mod tests {
                         .unwrap()
                         .work_item
                         .as_ref()
+                        .and_then(|w| w.github())
                         .unwrap()
                         .number,
                     42

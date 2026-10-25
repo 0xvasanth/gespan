@@ -1,3 +1,4 @@
+import { isGithubWorkItem } from "../../sessions/model/session";
 import {
   useCallback,
   useEffect,
@@ -260,7 +261,7 @@ export function useInboxActivity(
           });
           for (const session of sessionsRef.current) {
             if (
-              session.linkedWorkItem &&
+              isGithubWorkItem(session.linkedWorkItem) &&
               linkedWorkItemUpdateKey(session.linkedWorkItem) === key
             ) {
               markLinkedSessionUpdateSeen(session.id, updatedAt);

@@ -145,9 +145,10 @@ import {
   saveSessionSidebarFilters,
   type SessionSidebarFilters,
 } from "../../features/sessions/model/sessionFilters";
-import type {
-  HarnessId,
-  LinkedWorkItem,
+import {
+  isGithubWorkItem,
+  type HarnessId,
+  type LinkedWorkItem,
 } from "../../features/sessions/model/session";
 import type { LiveAgent } from "../../features/sessions/model/liveAgents";
 import type { SessionSummary } from "../../features/sessions/data/sessionStore";
@@ -5051,7 +5052,8 @@ export const SessionCard = memo(function SessionCard({
       className="size-1.5 shrink-0 rounded-full bg-accent"
     />
   ) : null;
-  const workItemBadge = linkedWorkItem ? (
+  // Ticket chips arrive with the ticket UI; only GitHub items render here.
+  const workItemBadge = isGithubWorkItem(linkedWorkItem) ? (
     <button
       type="button"
       data-no-drag

@@ -111,7 +111,7 @@ import {
 } from "../../projects/model/recents";
 import {
   sessionDisplayTitle,
-  type LinkedWorkItem,
+  type GithubLinkedWorkItem,
 } from "../../sessions/model/session";
 import type { SessionSummary } from "../../sessions/data/sessionStore";
 import {
@@ -390,7 +390,7 @@ type Props = {
   sessions?: readonly SessionSummary[];
   onOpenSession?: (sessionId: string) => void | Promise<void>;
   /** Session-card destination to reveal after the Inbox list loads. */
-  target?: LinkedWorkItem | null;
+  target?: GithubLinkedWorkItem | null;
   /** Opens Settings on the card where the given source is connected. */
   onOpenIntegrations: (source: ConnectableInboxSource) => void;
 };
@@ -1245,7 +1245,7 @@ export function LinkedWorkItemPanel({
   repairSessions?: CiRepairProps["repairSessions"];
   onRepairChecks?: CiRepairProps["onRepairChecks"];
   onOpenSession?: (sessionId: string) => void | Promise<void>;
-  target: LinkedWorkItem;
+  target: GithubLinkedWorkItem;
   cwd: string;
   recents: RecentProject[];
   visible?: boolean;

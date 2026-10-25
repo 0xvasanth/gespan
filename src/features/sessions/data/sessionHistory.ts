@@ -7,6 +7,7 @@ import { sameProjectPath } from "../../projects/model/recents";
 import {
   sessionDisplayTitle,
   sessionDraftBlock,
+  linkedWorkItemUrl,
   sessionNeedsInput,
   type Session,
 } from "../model/session";
@@ -220,7 +221,8 @@ export function historyWithLiveSessions(
         stored.automationId !== automationId ||
         stored.title !== session.title ||
         !!stored.sidebarHidden !== !!session.sidebarHidden ||
-        stored.linkedWorkItem?.url !== linkedWorkItem?.url
+        linkedWorkItemUrl(stored.linkedWorkItem) !==
+          linkedWorkItemUrl(linkedWorkItem)
       ) {
         rows[storedIndex] = {
           ...stored,

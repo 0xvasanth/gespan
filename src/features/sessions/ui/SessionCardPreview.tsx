@@ -5,7 +5,7 @@ import { Popover } from "../../../shared/ui/Popover";
 import { NO_BRANCH_LABEL } from "../../source-control/model/worktrees";
 import type { SessionSummary } from "../data/sessionStore";
 import { resolveModel } from "../model/models";
-import { sessionDisplayTitle } from "../model/session";
+import { isGithubWorkItem, sessionDisplayTitle } from "../model/session";
 import { HarnessIcon } from "./HarnessIcon";
 
 export function SessionCardPreview({
@@ -129,7 +129,7 @@ export function SessionCardPreview({
             </span>
           </Detail>
         ) : null}
-        {session.linkedWorkItem ? (
+        {isGithubWorkItem(session.linkedWorkItem) ? (
           <Detail
             label={
               session.linkedWorkItem.kind === "pr" ? "Pull request" : "Issue"

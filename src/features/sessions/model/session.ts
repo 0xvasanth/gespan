@@ -419,13 +419,64 @@ export type Block = {
 export type RuntimeMode =
   "supervised" | "auto-accept-edits" | "auto" | "full-access";
 
-/** One GitHub issue or pull request associated with a coding session. */
-export type LinkedWorkItem = {
+export type TicketTracker = "jira" | "linear" | "plane";
+
+export type TicketStatusGroup =
+  | "triage"
+  | "backlog"
+  | "unstarted"
+  | "started"
+  | "completed"
+  | "cancelled"
+  | "unknown";
+
+/** A tracker ticket plus the last fetched snapshot; mirrors Rust's `TicketRef`. */
+export type TicketRef = {
+  tracker: TicketTracker;
+  key: string;
+  url: string | null;
+  title: string | null;
+  status: string | null;
+  statusGroup: TicketStatusGroup | null;
+  /** Unix milliseconds of the last successful fetch. */
+  fetchedAt: number | null;
+};
+
+export type GithubLinkedWorkItem = {
   kind: "issue" | "pr";
   repo: string;
   number: number;
   url: string;
 };
+
+/**
+ * What a coding session is linked to: one GitHub issue or pull request, or one
+ * tracker ticket. Stored in the same `linked_work_item_json` column.
+ */
+export type LinkedWorkItem =
+  GithubLinkedWorkItem | { kind: "ticket"; ticket: TicketRef };
+
+export function isGithubWorkItem(
+  item: LinkedWorkItem | null | undefined,
+): item is GithubLinkedWorkItem {
+  return item != null && item.kind !== "ticket";
+}
+
+/** The URL a work item opens, whichever kind it is. */
+export function linkedWorkItemUrl(
+  item: LinkedWorkItem | null | undefined,
+): string | undefined {
+  if (!item) return undefined;
+  return item.kind === "ticket"
+    ? (item.ticket.url ?? `${item.ticket.tracker}:${item.ticket.key}`)
+    : item.url;
+}
+
+export function sessionTicket(
+  item: LinkedWorkItem | null | undefined,
+): TicketRef | null {
+  return item?.kind === "ticket" ? item.ticket : null;
+}
 
 export const RUNTIME_MODES: RuntimeMode[] = [
   "supervised",

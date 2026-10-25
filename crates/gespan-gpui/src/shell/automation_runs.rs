@@ -712,6 +712,7 @@ fn automation_work_item(
     gespan_core::session_groups::parse_github_work_item(&format!(
         "https://github.com/{repo}/{kind}/{number}"
     ))
+    .map(Into::into)
 }
 
 #[cfg(test)]

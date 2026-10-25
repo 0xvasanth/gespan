@@ -14,7 +14,9 @@ export function LinkSessionWorkItemDialog({
   onSave: (item: LinkedWorkItem | undefined) => void;
   onClose: () => void;
 }) {
-  const [url, setUrl] = useState(initial?.url ?? "");
+  const [url, setUrl] = useState(
+    initial && initial.kind !== "ticket" ? initial.url : "",
+  );
   const [error, setError] = useState("");
 
   const submit = (event: FormEvent) => {

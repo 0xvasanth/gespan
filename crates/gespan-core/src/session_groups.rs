@@ -1,5 +1,6 @@
 //! The sidebar's session grouping: sessionFolders.ts, sessionReminders.ts and
 //! sessionWorkItem.ts's URL parsing, without their storage.
+use crate::tickets::TicketRef;
 use chrono::{Datelike, Duration, NaiveDateTime, NaiveTime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -288,9 +289,10 @@ pub fn format_reminder(at: NaiveDateTime) -> String {
     at.format("%a, %b %-d, %-H:%M").to_string()
 }
 
-/// session.ts's `LinkedWorkItem`.
+/// A GitHub issue or pull request. The wire shape predates tickets and must
+/// stay as it is: `{"kind":"issue"|"pr","repo":..,"number":..,"url":..}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkItem {
+pub struct GithubWorkItem {
     /// "issue" or "pr".
     pub kind: String,
     pub repo: String,
@@ -298,8 +300,74 @@ pub struct WorkItem {
     pub url: String,
 }
 
+/// session.ts's `LinkedWorkItem`: one GitHub issue or PR, or one ticket,
+/// stored in the same `linked_work_item_json` column.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkItem {
+    Github(GithubWorkItem),
+    /// Boxed so a session summary stays as small as it was before tickets.
+    Ticket(Box<TicketRef>),
+}
+
+impl WorkItem {
+    pub fn github(&self) -> Option<&GithubWorkItem> {
+        match self {
+            Self::Github(item) => Some(item),
+            Self::Ticket(_) => None,
+        }
+    }
+
+    pub fn ticket(&self) -> Option<&TicketRef> {
+        match self {
+            Self::Github(_) => None,
+            Self::Ticket(ticket) => Some(ticket.as_ref()),
+        }
+    }
+}
+
+impl From<GithubWorkItem> for WorkItem {
+    fn from(item: GithubWorkItem) -> Self {
+        Self::Github(item)
+    }
+}
+
+pub fn session_ticket(item: &WorkItem) -> Option<&TicketRef> {
+    item.ticket()
+}
+
+impl Serialize for WorkItem {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Github(item) => item.serialize(serializer),
+            Self::Ticket(ticket) => {
+                use serde::ser::SerializeStruct;
+                let mut out = serializer.serialize_struct("WorkItem", 2)?;
+                out.serialize_field("kind", "ticket")?;
+                out.serialize_field("ticket", ticket)?;
+                out.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkItem {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if value.get("kind").and_then(|k| k.as_str()) == Some("ticket") {
+            let ticket = value.get("ticket").cloned().unwrap_or_default();
+            return serde_json::from_value(ticket)
+                .map(|ticket| Self::Ticket(Box::new(ticket)))
+                .map_err(D::Error::custom);
+        }
+        serde_json::from_value(value)
+            .map(Self::Github)
+            .map_err(D::Error::custom)
+    }
+}
+
 /// parseGithubWorkItemUrl: the first github.com issue or pull request URL.
-pub fn parse_github_work_item(text: &str) -> Option<WorkItem> {
+pub fn parse_github_work_item(text: &str) -> Option<GithubWorkItem> {
     let name = |s: &str| {
         !s.is_empty()
             && s.chars()
@@ -336,7 +404,7 @@ pub fn parse_github_work_item(text: &str) -> Option<WorkItem> {
             "https://github.com/{repo}/{}/{number}",
             if kind == "pr" { "pull" } else { "issues" }
         );
-        return Some(WorkItem {
+        return Some(GithubWorkItem {
             kind: kind.into(),
             repo,
             number,
@@ -446,11 +514,69 @@ mod tests {
         assert_eq!(format_reminder(monday_noon), "Mon, Oct 19, 12:05");
     }
 
+    const OLD_PR_JSON: &str = r#"{"kind":"pr","repo":"acme/app","number":123,"url":"https://github.com/acme/app/pull/123"}"#;
+    const OLD_ISSUE_JSON: &str =
+        r#"{"kind":"issue","repo":"a/b","number":7,"url":"https://github.com/a/b/issues/7"}"#;
+
+    fn jira_ticket() -> TicketRef {
+        TicketRef {
+            tracker: crate::tickets::Tracker::Jira,
+            key: "ENG-42".into(),
+            url: Some("https://acme.atlassian.net/browse/ENG-42".into()),
+            title: Some("Fix login".into()),
+            status: Some("In Progress".into()),
+            status_group: Some(crate::provider_boards::StateGroup::Started),
+            fetched_at: Some(1_700_000_000_000),
+        }
+    }
+
+    #[test]
+    fn existing_github_json_parses_and_serializes_byte_for_byte() {
+        for (raw, kind) in [(OLD_PR_JSON, "pr"), (OLD_ISSUE_JSON, "issue")] {
+            let item: WorkItem = serde_json::from_str(raw).unwrap();
+            assert_eq!(item.github().unwrap().kind, kind);
+            assert!(session_ticket(&item).is_none());
+            assert_eq!(serde_json::to_string(&item).unwrap(), raw);
+        }
+    }
+
+    #[test]
+    fn ticket_work_item_round_trips_with_the_kind_tag() {
+        let item = WorkItem::Ticket(Box::new(jira_ticket()));
+        let value = serde_json::to_value(&item).unwrap();
+        assert_eq!(value["kind"], "ticket");
+        assert_eq!(value["ticket"]["tracker"], "jira");
+        assert_eq!(value["ticket"]["statusGroup"], "started");
+        assert_eq!(serde_json::from_value::<WorkItem>(value).unwrap(), item);
+        assert_eq!(session_ticket(&item).unwrap().key, "ENG-42");
+        assert!(item.github().is_none());
+    }
+
+    #[test]
+    fn a_ticket_with_only_tracker_and_key_parses() {
+        let item: WorkItem = serde_json::from_str(
+            r#"{"kind":"ticket","ticket":{"tracker":"plane","key":"WEB-3","url":null,"title":null,"status":null,"statusGroup":null,"fetchedAt":null}}"#,
+        )
+        .unwrap();
+        assert_eq!(item.ticket().unwrap().key, "WEB-3");
+    }
+
+    #[test]
+    fn malformed_work_items_are_rejected_not_misread_as_github() {
+        for bad in [
+            r#"{"kind":"ticket"}"#,
+            r#"{"kind":"ticket","ticket":{"tracker":"trello","key":"X-1"}}"#,
+            r#"{"kind":"epic","repo":"a/b"}"#,
+        ] {
+            assert!(serde_json::from_str::<WorkItem>(bad).is_err(), "{bad}");
+        }
+    }
+
     #[test]
     fn github_links_parse_issues_and_pull_requests() {
         assert_eq!(
             parse_github_work_item("see https://github.com/acme/app/pull/123/files"),
-            Some(WorkItem {
+            Some(GithubWorkItem {
                 kind: "pr".into(),
                 repo: "acme/app".into(),
                 number: 123,

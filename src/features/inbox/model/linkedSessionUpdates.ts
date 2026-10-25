@@ -1,10 +1,13 @@
-import type { LinkedWorkItem } from "../../sessions/model/session";
+import {
+  isGithubWorkItem,
+  type GithubLinkedWorkItem,
+} from "../../sessions/model/session";
 import type { GithubWorkItem } from "./githubTasks";
 import type { SessionSummary } from "../../sessions/data/sessionStore";
 
 export type LinkedWorkItemTarget = {
   key: string;
-  item: LinkedWorkItem;
+  item: GithubLinkedWorkItem;
 };
 
 export type LinkedSessionUpdate = {
@@ -16,7 +19,7 @@ export type LinkedSessionUpdate = {
 };
 
 export function linkedWorkItemUpdateKey(
-  item: Pick<LinkedWorkItem, "repo" | "kind" | "number">,
+  item: Pick<GithubLinkedWorkItem, "repo" | "kind" | "number">,
 ): string {
   return `${item.repo.trim().toLowerCase()}:${item.kind}:${item.number}`;
 }
@@ -24,11 +27,12 @@ export function linkedWorkItemUpdateKey(
 export function linkedWorkItemTargets(
   sessions: readonly SessionSummary[],
 ): LinkedWorkItemTarget[] {
-  const targets = new Map<string, LinkedWorkItem>();
+  const targets = new Map<string, GithubLinkedWorkItem>();
   for (const session of sessions) {
-    if (!session.linkedWorkItem || session.archived) continue;
-    const key = linkedWorkItemUpdateKey(session.linkedWorkItem);
-    if (!targets.has(key)) targets.set(key, session.linkedWorkItem);
+    const linked = session.linkedWorkItem;
+    if (!isGithubWorkItem(linked) || session.archived) continue;
+    const key = linkedWorkItemUpdateKey(linked);
+    if (!targets.has(key)) targets.set(key, linked);
   }
   return [...targets].map(([key, item]) => ({ key, item }));
 }
@@ -42,7 +46,7 @@ export function linkedSessionUpdates(
   const updates = new Map<string, LinkedSessionUpdate>();
   for (const session of sessions) {
     const linked = session.linkedWorkItem;
-    if (!linked || session.archived) continue;
+    if (!isGithubWorkItem(linked) || session.archived) continue;
     const item = workItems.get(linkedWorkItemUpdateKey(linked));
     if (!item) continue;
     const remoteUpdatedAt = Date.parse(item.updatedAt);

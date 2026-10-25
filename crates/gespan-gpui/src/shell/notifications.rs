@@ -1255,6 +1255,7 @@ impl Shell {
                     .session_summaries
                     .get(&id)
                     .and_then(|s| s.work_item.as_ref())
+                    .and_then(|w| w.github())
                 {
                     cx.open_url(&item.url);
                 }

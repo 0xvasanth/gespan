@@ -1298,9 +1298,10 @@ mod tests {
         let keep = store.create("codex", "/project").unwrap();
         let gone = store.create("claude", "/project").unwrap();
         store.set_pinned(&[keep.id], true).unwrap();
-        let item =
+        let item = crate::session_groups::WorkItem::Github(
             crate::session_groups::parse_github_work_item("https://github.com/acme/app/pull/9")
-                .unwrap();
+                .unwrap(),
+        );
         store.set_work_item(keep.id, Some(&item)).unwrap();
         let mut groups = crate::session_groups::Groups::default();
         groups.create_folder(&[keep.id, gone.id], "f".into());

@@ -460,3 +460,19 @@ fn board_setting_key_matches_tauri() {
     .unwrap();
     assert!(native.contains("(\"board\", \"boardEnabled\", true)"));
 }
+
+/// The same file is parsed by `sessionWorkItem.test.ts`, so a drift in either
+/// app's ticket wire shape fails a test on one side.
+#[test]
+fn ticket_work_item_fixture_parses_and_serializes_back_to_itself() {
+    use gespan_core::{provider_boards::StateGroup, session_groups::WorkItem, tickets::Tracker};
+    let raw = tauri("tests/fixtures/shared/ticket-work-item.json");
+    let item: WorkItem = serde_json::from_str(&raw).unwrap();
+    let ticket = item.ticket().expect("a ticket variant");
+    assert_eq!(ticket.tracker, Tracker::Jira);
+    assert_eq!(ticket.key, "ENG-142");
+    assert_eq!(ticket.status_group, Some(StateGroup::Started));
+    assert_eq!(ticket.fetched_at, Some(1_761_350_400_000));
+    let fixture: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(serde_json::to_value(&item).unwrap(), fixture);
+}

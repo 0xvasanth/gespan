@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -8,6 +9,8 @@ import {
   type GithubWorkItem,
   type InboxItem,
 } from "../../inbox/model/githubTasks";
+import { sanitizeLinkedWorkItem } from "../data/sessionStore";
+import { isGithubWorkItem, sessionTicket } from "./session";
 import {
   inboxItemMatchesLinkedWorkItem,
   linkedWorkItemInboxKey,
@@ -229,5 +232,52 @@ describe("session work items", () => {
         sessions,
       ),
     ).toEqual([]);
+  });
+});
+
+describe("ticket work items", () => {
+  // The Rust side parses this same file (crates/gespan-core/tests/shared_contracts.rs).
+  const fixtureText = readFileSync(
+    new URL(
+      "../../../../tests/fixtures/shared/ticket-work-item.json",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const fixture: unknown = JSON.parse(fixtureText);
+
+  it("accepts the shared fixture unchanged and round-trips through JSON", () => {
+    const item = sanitizeLinkedWorkItem(fixture);
+    expect(item).toEqual(fixture);
+    expect(sessionTicket(item)?.key).toBe("ENG-142");
+    expect(JSON.parse(JSON.stringify(item))).toEqual(fixture);
+  });
+
+  it("is not treated as a GitHub item", () => {
+    const item = sanitizeLinkedWorkItem(fixture);
+    expect(isGithubWorkItem(item)).toBe(false);
+    expect(
+      relatedSessionsForInboxItem(
+        {
+          provider: "github",
+          kind: "pr",
+          number: 1,
+          repo: "acme/app",
+        } as InboxItem,
+        [{ linkedWorkItem: item }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps today's GitHub JSON as is", () => {
+    const github = {
+      kind: "pr",
+      repo: "acme/app",
+      number: 123,
+      url: "https://github.com/acme/app/pull/123",
+    };
+    expect(sanitizeLinkedWorkItem(github)).toEqual(github);
+    expect(isGithubWorkItem(github as never)).toBe(true);
+    expect(sessionTicket(github as never)).toBeNull();
   });
 });

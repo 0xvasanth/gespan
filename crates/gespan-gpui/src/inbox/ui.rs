@@ -653,12 +653,15 @@ impl Inbox {
         self.sessions
             .iter()
             .filter(|s| {
-                s.work_item.as_ref().is_some_and(|work| {
-                    (!work.url.is_empty() && work.url == work_item.url)
-                        || (work.kind == work_item.kind
-                            && work.number == work_item.number
-                            && work.repo.eq_ignore_ascii_case(&work_item.repo))
-                })
+                s.work_item
+                    .as_ref()
+                    .and_then(|w| w.github())
+                    .is_some_and(|work| {
+                        (!work.url.is_empty() && work.url == work_item.url)
+                            || (work.kind == work_item.kind
+                                && work.number == work_item.number
+                                && work.repo.eq_ignore_ascii_case(&work_item.repo))
+                    })
             })
             .cloned()
             .collect()
