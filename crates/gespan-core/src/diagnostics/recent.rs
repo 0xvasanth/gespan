@@ -36,8 +36,13 @@ pub fn recent_error_events(within: Duration) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// The ring is process-wide: one test filling it must not evict the
+    /// other's id.
+    static RING: Mutex<()> = Mutex::new(());
+
     #[test]
     fn error_lines_are_remembered_for_reports() {
+        let _ring = RING.lock().unwrap_or_else(|e| e.into_inner());
         let lines = crate::diagnostics::test_capture(|| {
             tracing::error!("disk full");
             tracing::info!("routine");
@@ -50,6 +55,7 @@ mod tests {
 
     #[test]
     fn only_the_newest_ids_within_the_window_are_kept() {
+        let _ring = RING.lock().unwrap_or_else(|e| e.into_inner());
         note_error_event("stale-id".into());
         RECENT.lock().unwrap().iter_mut().for_each(|(at, id)| {
             if id == "stale-id" {
