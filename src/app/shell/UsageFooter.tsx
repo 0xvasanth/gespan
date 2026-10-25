@@ -81,6 +81,7 @@ export function UsageFooter({
   onManageAccounts,
   inset = false,
   pressureSlot,
+  holdSlot,
 }: {
   providers: RateLimitProvider[];
   session?: UsageFooterSession;
@@ -101,6 +102,8 @@ export function UsageFooter({
   inset?: boolean;
   /** Receives the slot beside the terminal button for the pressure chip. */
   pressureSlot?: (element: HTMLSpanElement | null) => void;
+  /** Hold everything, always the last control on the right. */
+  holdSlot?: ReactNode;
 }) {
   const opencode = useCachedRateLimits("opencode");
   const showUsage =
@@ -153,7 +156,7 @@ export function UsageFooter({
           ) : null
         }
       />
-      {showTerminals || showTerminalButton || pressureSlot ? (
+      {showTerminals || showTerminalButton || pressureSlot || holdSlot ? (
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {pressureSlot ? (
             <span
@@ -187,6 +190,7 @@ export function UsageFooter({
               <span>Terminal</span>
             </button>
           ) : null}
+          {holdSlot}
         </div>
       ) : null}
     </footer>

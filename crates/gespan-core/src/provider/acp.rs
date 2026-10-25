@@ -1363,6 +1363,8 @@ pub(super) fn respond(
     decision: Decision,
 ) -> Result<(), String> {
     let preference = match &decision {
+        // Hold is handled by the turn loop and never answers a request.
+        Decision::Hold | Decision::Release => return Ok(()),
         Decision::Allow => ["allow_once", "allow_always"],
         Decision::Session => ["allow_always", "allow_once"],
         Decision::Deny | Decision::KeepOpen | Decision::Answer(_) | Decision::Steer(_) => {

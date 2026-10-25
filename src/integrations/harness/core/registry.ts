@@ -64,6 +64,12 @@ export type HarnessAdapter = {
   rewindLastTurn?(input: RewindLastTurnInput): Promise<RewindLastTurnResult>;
   steerTurn(input: SteerTurnInput): Promise<void>;
   cancelTurn(sessionId: string): Promise<void>;
+  /**
+   * End the turn at a safe point for Hold without stopping background work.
+   * Adapters without one use cancelTurn, which only differs by denying
+   * pending requests, and Hold never interrupts while one is pending.
+   */
+  holdTurn?(sessionId: string): Promise<void>;
   respondApproval(
     sessionId: string,
     requestId: number,
@@ -380,6 +386,18 @@ export async function cancelHarnessTurn(
   if (!adapter?.live) return;
   cancelIdlePark(sessionId);
   await adapter.cancelTurn(sessionId);
+  scheduleIdlePark(harness, sessionId);
+}
+
+/** Hold: end the turn at its safe point, keeping the process and its background work. */
+export async function holdHarnessTurn(
+  harness: HarnessId,
+  sessionId: string,
+): Promise<void> {
+  const adapter = getHarness(harness);
+  if (!adapter?.live) return;
+  cancelIdlePark(sessionId);
+  await (adapter.holdTurn ?? adapter.cancelTurn)(sessionId);
   scheduleIdlePark(harness, sessionId);
 }
 

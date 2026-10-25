@@ -33,6 +33,7 @@ mod git_graph;
 mod git_picker;
 mod git_status;
 mod history;
+mod hold;
 mod image_lightbox;
 mod image_memory;
 mod inbox;

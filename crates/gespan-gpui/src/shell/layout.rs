@@ -782,6 +782,7 @@ impl Shell {
             )
             .children(self.pressure_chip(cx))
             .children(self.terminal_footer(cx))
+            .child(self.hold_control(cx))
     }
     /// ResourcePressureNotice's chip, just before the terminal controls.
     fn pressure_chip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

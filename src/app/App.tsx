@@ -332,6 +332,7 @@ import {
   bindHarnessSession,
   transferHarnessSessionAccount,
   cancelHarnessTurn,
+  holdHarnessTurn,
   canCompactHarnessContext,
   canRewindHarnessLastTurn,
   canSteerHarness,
@@ -834,6 +835,10 @@ import {
   sameSessionSummaries,
   summaryFromSession,
 } from "../features/sessions/data/sessionHistory";
+import { HoldPhaseContext } from "../features/hold/model/holdContext";
+import { useHold } from "../features/hold/model/useHold";
+import { ConfirmHold } from "../features/hold/ui/ConfirmHold";
+import { HoldControl } from "../features/hold/ui/HoldControl";
 import {
   CONTINUE_PROMPT,
   canAutoContinue,
@@ -1173,6 +1178,63 @@ function Workspace({
     useWorkspaceSessionState(
       () => windowTransfer?.sessions ?? resumed?.sessions ?? [seed.session],
     );
+  // Hold everything: local sessions that are working, waiting or queued.
+  const holdApi = useHold({
+    sessions: () =>
+      sessionsRef.current
+        .filter(
+          (s) =>
+            !remoteProjectFor(s.cwd) &&
+            (!!s.busy ||
+              (s.queuedMessages?.length ?? 0) > 0 ||
+              sessionNeedsInput(s) ||
+              holdRef.current.isSessionHeld(s.id)),
+        )
+        .map((s) => ({
+          id: s.id,
+          busy: !!s.busy,
+          pilotChat: isPilotSession(s.id),
+          awaitingInput: sessionNeedsInput(s),
+          queued: s.queuedMessages?.length ?? 0,
+        })),
+    holdTurn: (id) => {
+      const session = sessionsRef.current.find((s) => s.id === id);
+      if (session) void holdHarnessTurn(session.harness, id);
+    },
+    stop: (id) => onStopRef.current(id),
+    resume: (id, prompt) => {
+      const session = sessionsRef.current.find((s) => s.id === id);
+      if (!session) return false;
+      const queued = (session.queuedMessages?.length ?? 0) > 0;
+      if (queued)
+        setSessions((prev) =>
+          prev.map((entry) =>
+            entry.id === id
+              ? {
+                  ...entry,
+                  // The continuation goes first; the queue follows it.
+                  queueStatus:
+                    prompt && !isPilotSession(id) ? "resuming" : "active",
+                }
+              : entry,
+          ),
+        );
+      if (!prompt) return false;
+      return onSubmitRef.current(id, prompt, [], { followUpBehavior: "steer" });
+    },
+  });
+  const holdRef = useRef(holdApi.hold);
+  const onStopRef = useRef<(id: string) => void>(() => undefined);
+  const onSubmitRef = useRef<(...args: Parameters<Submit>) => boolean>(
+    () => false,
+  );
+  useEffect(() => {
+    holdRef.current.sync();
+  }, [sessions]);
+  useEffect(() => {
+    // Resume lifts the hold: queued orchestration work may start again.
+    if (holdApi.phase === null) orchestrator.wake();
+  }, [holdApi.phase]);
   const [sessionDeleteDialog, setSessionDeleteDialog] = useState<{
     mode: "archive" | "delete";
     title: string;
@@ -2478,8 +2540,8 @@ function Workspace({
 
   const keepAwake = useKeepAwake();
   useEffect(() => {
-    syncKeepAwake(sessions, keepAwake);
-  }, [sessions, keepAwake]);
+    syncKeepAwake(sessions, keepAwake, holdApi.phase === "onHold");
+  }, [sessions, keepAwake, holdApi.phase]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -7573,7 +7635,9 @@ function Workspace({
         });
       }
 
-      if (current.busy && !pendingSwitch) {
+      // While on hold nothing starts: the message waits for Resume.
+      const held = holdRef.current.isHeld();
+      if ((current.busy || held) && !pendingSwitch) {
         if (
           operatorCommand.matched &&
           options?.queuedMessageId &&
@@ -7589,6 +7653,7 @@ function Workspace({
         const steerable =
           isLiveHarness(current.harness) && canSteerHarness(current.harness);
         const followUpBehavior =
+          held ||
           current.worktreePreparing ||
           intent === "plan" ||
           intent === "orchestrate" ||
@@ -7607,6 +7672,7 @@ function Workspace({
                   : "queue"
                 : (options?.followUpBehavior ?? loadFollowUpBehavior());
         if (followUpBehavior === "queue") {
+          if (held) holdRef.current.noteQueued(sessionId, isPilotSession(sessionId));
           setSessions((prev) =>
             prev.map((s) =>
               s.id === sessionId
@@ -7628,7 +7694,7 @@ function Workspace({
                       },
                     ],
                     queueStatus:
-                      s.queueStatus === "paused" ? "paused" : "active",
+                      held || s.queueStatus === "paused" ? "paused" : "active",
                   }
                 : s,
             ),
@@ -8245,6 +8311,7 @@ function Workspace({
 
         const pendingEditedEvents: HarnessEvent[] = [];
         const applyTurnEvent = (event: HarnessEvent) => {
+          holdRef.current.observe(sessionId, event);
           orchestrator.observe(sessionId, event);
           if (options?.onSettled && event.type === "message.delta")
             controlText = (controlText + event.text).slice(-20_000);
@@ -8724,7 +8791,17 @@ function Workspace({
               ? { status: "cancelled", text: controlText }
               : controlOutcome;
           linkedTurns.current!.settled(sessionId, gen, outcome.status);
-          options?.onSettled?.(outcome);
+          // A held turn hasn't finished: its settlement waits for the turn
+          // that really ends after Resume.
+          const settle = options?.onSettled;
+          if (settle && holdRef.current.isSessionHeld(sessionId)) {
+            holdRef.current.deferSettlement<ControlOutcome>(sessionId, (later) =>
+              settle(later ?? outcome),
+            );
+          } else {
+            settle?.(outcome);
+            holdRef.current.turnEnded(sessionId, outcome);
+          }
         });
       return true;
     },
@@ -8750,6 +8827,7 @@ function Workspace({
     },
     [submitSession],
   );
+  onSubmitRef.current = onSubmit;
 
   // onApproval is created once; it reaches the current helper through this.
   const decidePilotBlockRef = useRef<
@@ -8808,6 +8886,8 @@ function Workspace({
   decidePilotBlockRef.current = decidePilotBlock;
 
   usePilotHabits({
+    held: () => holdRef.current.isHeld(),
+    heldSince: () => holdRef.current.heldSince(),
     sessions: () => sessionsRef.current,
     open: async (id) => (await ensureOpenSession(id)) ?? undefined,
     add: (session) => {
@@ -9307,7 +9387,8 @@ function Workspace({
     let disposed = false;
     let evaluating = false;
     const evaluate = async () => {
-      if (disposed || evaluating) return;
+      // Due runs stay due while held and are claimed once on Resume.
+      if (disposed || evaluating || holdRef.current.isHeld()) return;
       evaluating = true;
       try {
         await ensureAutomationRecovery();
@@ -10626,6 +10707,8 @@ function Workspace({
     // Delay past React StrictMode's dev remount so Continue is not claimed
     // against a discarded tree (sessionStorage also survives Vite reloads).
     const timer = window.setTimeout(() => {
+      // Resume continues held sessions itself.
+      if (holdRef.current.isHeld()) return;
       for (const id of ids) {
         const session = sessionsRef.current.find((entry) => entry.id === id);
         if (
@@ -10791,6 +10874,7 @@ function Workspace({
     },
     [flushHarnessEvents],
   );
+  onStopRef.current = onStop;
 
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
@@ -10938,6 +11022,7 @@ function Workspace({
 
   useLayoutEffect(() => {
     orchestrator.bind({
+      held: () => holdRef.current.isHeld(),
       session: (id) => sessionsRef.current.find((session) => session.id === id),
       sessions: () => sessionsRef.current,
       choices: () =>
@@ -13288,6 +13373,8 @@ function Workspace({
           run("open_settings", () => a.openSettings());
         else if (shortcut === "App: Find in Files")
           run("find_in_project", a.onFindInProject);
+        else if (shortcut === "App: Hold Everything")
+          run("hold_toggle", () => void holdRef.current.toggle());
         return;
       }
     };
@@ -13356,6 +13443,9 @@ function Workspace({
       listen("go_to_file", () => run("go_to_file", actions.current.onGoToFile)),
       listen("open_command_palette", () =>
         run("open_command_palette", actions.current.onOpenCommandPalette),
+      ),
+      listen("hold_toggle", () =>
+        run("hold_toggle", () => void holdRef.current.toggle()),
       ),
       listen("reload", () => run("reload", actions.current.onReload)),
       listen("open_search", () => actions.current.onOpenSearch()),
@@ -14356,6 +14446,18 @@ function Workspace({
     (pilotCovers && !insetLayout) ? null : (
       <UsageFooter
         pressureSlot={setPressureChipHost}
+        holdSlot={
+          <HoldControl
+            phase={holdApi.phase}
+            summary={holdApi.hold.summary()}
+            settling={holdApi.hold.settling().map((id) => {
+              const session = sessions.find((s) => s.id === id);
+              return { id, title: session?.title || "Session" };
+            })}
+            onToggle={() => void holdApi.hold.toggle()}
+            onStopNow={(id) => holdApi.hold.stopNow(id)}
+          />
+        }
         providers={usageProviders}
         session={usageSession}
         project={usageSource?.cwd ?? projectCwd}
@@ -14384,6 +14486,7 @@ function Workspace({
     );
 
   return (
+    <HoldPhaseContext.Provider value={holdApi.phase}>
     <SessionStateContext.Provider value={sessionState}>
     <OrchestrationActions.Provider value={orchestrationActions}>
       <OrchestrationWorkers.Provider value={orchestrationWorkers}>
@@ -14964,13 +15067,23 @@ function Workspace({
               openPaths={openFilePaths}
               initialQuery={filePickerInitialQuery}
               onOpenFile={onOpenFile}
+              holdLabel={
+                holdApi.phase === "onHold" ? "Resume everything" : "Hold everything"
+              }
               onRunAction={(id) => {
                 if (id === "reload") actions.current.onReload();
+                if (id === "hold") void holdRef.current.toggle();
               }}
               onClose={() => setFilePickerOpen(false)}
             />
           ) : null}
 
+          {holdApi.confirming && (
+            <ConfirmHold
+              running={sessions.filter((s) => s.busy).length}
+              onClose={holdApi.answer}
+            />
+          )}
           {sessionDeleteDialog && (
             <DeleteSessionDialog
               mode={sessionDeleteDialog.mode}
@@ -15052,6 +15165,7 @@ function Workspace({
       </OrchestrationWorkers.Provider>
     </OrchestrationActions.Provider>
     </SessionStateContext.Provider>
+    </HoldPhaseContext.Provider>
   );
 }
 function conversationTitle(session: Session): string {

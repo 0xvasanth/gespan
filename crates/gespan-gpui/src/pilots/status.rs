@@ -66,8 +66,13 @@ impl Status {
             signature: String::new(),
         })
     }
-    pub(super) fn update(&mut self, pilots: &[(String, String)], run: Rc<dyn Fn(&str)>) {
-        let signature = format!("{pilots:?}");
+    pub(super) fn update(
+        &mut self,
+        pilots: &[(String, String)],
+        hold: &str,
+        run: Rc<dyn Fn(&str)>,
+    ) {
+        let signature = format!("{pilots:?}{hold}");
         if self.signature == signature {
             return;
         }
@@ -95,6 +100,7 @@ impl Status {
             run.clone(),
         ));
         menu.addItem(&NSMenuItem::separatorItem(mtm));
+        menu.addItem(&Item::new(mtm, hold, "hold".into(), run.clone()));
         menu.addItem(&Item::new(mtm, "Quit Gespan", "quit".into(), run));
         self.item.setMenu(Some(&menu));
     }

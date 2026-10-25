@@ -424,6 +424,8 @@ pub(super) fn run(
     let mut connected = false;
     let mut steering = false;
     let mut aborted = false;
+    let mut held = false;
+    let mut gate = super::hold::Gate::default();
     let mut queue = VecDeque::new();
     let result = (|| -> Result<(), String> {
         loop {
@@ -441,6 +443,10 @@ pub(super) fn run(
                 while let Ok(control) = controls.try_recv() {
                     if let Decision::Steer(message) = control.decision {
                         queue.push_back(message);
+                    } else if matches!(control.decision, Decision::Hold) {
+                        gate.request();
+                    } else if matches!(control.decision, Decision::Release) {
+                        gate.release();
                     } else {
                         let events = state.respond(&client, control)?;
                         if !events.is_empty() {
@@ -487,6 +493,9 @@ pub(super) fn run(
                 }
                 Ok(Wire::Frame(event)) => {
                     let events = state.frame(&client, event, controls.is_some())?;
+                    for event in &events {
+                        gate.observe(event);
+                    }
                     if !events.is_empty() {
                         emit(events)?;
                     }
@@ -523,6 +532,18 @@ pub(super) fn run(
                 result?;
                 return emit(vec![Event::Done]);
             }
+            let awaiting = !state.approvals.is_empty() || !state.questions.is_empty();
+            match gate.decide(awaiting) {
+                Some(super::hold::Action::Interrupt) => {
+                    emit(vec![Event::HoldSettled(HoldPoint::Interrupted)])?;
+                    state.cancel(&client);
+                    aborted = true;
+                    held = true;
+                    return Err("Held".into());
+                }
+                Some(super::hold::Action::Settle(point)) => emit(vec![Event::HoldSettled(point)])?,
+                None => {}
+            }
             if crate::visual_bridge::configured(&request.settings.environment) {
                 emit(Vec::new())?;
             }
@@ -544,7 +565,7 @@ pub(super) fn run(
     }
     // Stop aborts the prompt while retaining the local HTTP server, just as
     // cancelOpenCodeTurn does. A transport failure still retires its server.
-    if result.is_ok() || (aborted && cancel.load(Ordering::Relaxed)) {
+    if result.is_ok() || (aborted && (cancel.load(Ordering::Relaxed) || held)) {
         if let Some(server) = server.take() {
             park(server, &request, session);
         }

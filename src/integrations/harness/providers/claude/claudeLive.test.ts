@@ -38,6 +38,7 @@ const {
   bindClaudeSession,
   cancelClaudeTurn,
   compactClaudeContext,
+  holdClaudeTurn,
   respondClaudeApproval,
   respondClaudeQuestion,
   restoreClaudeTaskLists,
@@ -1885,6 +1886,25 @@ describe("claude background tasks", () => {
       return request ? [request] : [];
     });
     expect(requests).toContainEqual({ subtype: "stop_task", task_id: "b7" });
+    expect(requests.at(-1)).toEqual({ subtype: "interrupt" });
+    expect(events.some((event) => event.type === "message.completed")).toBe(
+      true,
+    );
+  });
+});
+
+describe("claude hold", () => {
+  it("interrupts without stopping background commands", async () => {
+    const { events, turn } = await startTurn("s1");
+    emitBackgroundBash("b8");
+
+    await holdClaudeTurn("s1");
+    await turn;
+    const requests = parse().flatMap((m) => {
+      const request = m.request as Record<string, unknown> | undefined;
+      return request ? [request] : [];
+    });
+    expect(requests).not.toContainEqual({ subtype: "stop_task", task_id: "b8" });
     expect(requests.at(-1)).toEqual({ subtype: "interrupt" });
     expect(events.some((event) => event.type === "message.completed")).toBe(
       true,

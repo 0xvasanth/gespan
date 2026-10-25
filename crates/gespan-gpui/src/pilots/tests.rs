@@ -3689,3 +3689,88 @@ fn a_goal_whose_failed_run_the_pilot_resumes_waits_for_that_run(cx: &mut TestApp
         updates[0]
     );
 }
+
+fn hold_app(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(crate::hold::Hold(Some(gespan_core::hold::HoldState::new(
+            1,
+        ))))
+    });
+}
+fn set_held(s: &Setup, child: i64, held: bool, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let owner = s.manager.read(cx).owner.upgrade().unwrap();
+        let view = owner.read(cx).pilot_session_entity(child).unwrap();
+        view.update(cx, |v, _| {
+            v.held = held.then_some(gespan_core::hold::Reason::Interrupted);
+        });
+    });
+}
+
+#[gpui::test]
+fn a_held_worker_does_not_report_completion_until_it_really_stops(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let (a, _) = delegated_pair(&s, cx);
+    set_child(&s, a, false, cx);
+    set_held(&s, a, true, cx);
+    cx.update(|cx| s.manager.update(cx, |m, cx| m.check_completions(cx)));
+    cx.run_until_parked();
+    assert!(delegated_reports(&s, cx).is_empty());
+    assert!(!launch_of(&s, a, cx).completed);
+    // Resumed and finished for real.
+    set_held(&s, a, false, cx);
+    cx.update(|cx| s.manager.update(cx, |m, cx| m.check_completions(cx)));
+    cx.run_until_parked();
+    assert_eq!(delegated_reports(&s, cx).len(), 1);
+}
+
+#[gpui::test]
+fn a_habit_run_is_not_timed_out_while_held(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let run = habit_run(&s, cx);
+    hold_app(cx);
+    // Started at 0: far past the one-hour habit timeout.
+    cx.update(|cx| s.manager.update(cx, |m, cx| m.check_habits(cx)));
+    cx.run_until_parked();
+    let failure = cx.update(|cx| s.manager.read(cx).running[&run].failure.clone());
+    assert_eq!(failure, None);
+}
+
+#[gpui::test]
+fn resume_moves_running_habit_clocks_past_the_hold(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let run = habit_run(&s, cx);
+    cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            let r = m.running.get_mut(&run).unwrap();
+            r.started = 1_000;
+            r.waiting_since = Some(2_000);
+            m.resumed(500, 1, cx);
+            let r = &m.running[&run];
+            assert_eq!(r.started, 1_500);
+            assert_eq!(r.waiting_since, Some(2_500));
+        })
+    });
+}
+
+#[gpui::test]
+fn pilot_chat_messages_wait_in_the_mailbox_while_held(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    hold_app(cx);
+    cx.update(|cx| {
+        let chat = s.manager.read(cx).chats[&s.id].clone();
+        chat.update(cx, |view, cx| {
+            let message = Message {
+                id: "while-held".into(),
+                text: "Next epic: #46".into(),
+                sent_at: None,
+                internal: false,
+                error: None,
+                attachments: Vec::new(),
+                report: Vec::new(),
+            };
+            assert!(!view.pilot_dispatch(&message, cx));
+            assert!(!view.busy);
+        });
+    });
+}

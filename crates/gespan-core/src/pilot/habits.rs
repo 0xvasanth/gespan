@@ -226,6 +226,15 @@ fn parse(text: Option<&str>) -> Result<Vec<Habit>, String> {
         .take(MAX)
         .collect())
 }
+/// Habits that came due while the app was on hold run once now, instead of
+/// being skipped as too old or run once per missed slot.
+pub fn catch_up(all: &mut [Habit], since: u64, now: u64) {
+    for habit in all.iter_mut() {
+        if habit.enabled && (since..=now).contains(&habit.next_run_at) {
+            habit.next_run_at = now;
+        }
+    }
+}
 pub fn update<T>(
     root: &Path,
     id: &str,
@@ -263,6 +272,46 @@ pub fn report(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hourly(next_run_at: u64, enabled: bool) -> Habit {
+        let mut habit = Habit::new(
+            "Heartbeat".into(),
+            "Check the epic".into(),
+            Schedule {
+                schedule_kind: "hourly".into(),
+                minute: 5,
+                time: "09:00".into(),
+                day_of_week: 1,
+            },
+            0,
+        )
+        .unwrap();
+        habit.next_run_at = next_run_at;
+        habit.enabled = enabled;
+        habit
+    }
+
+    #[test]
+    fn habits_due_during_a_hold_run_once_when_it_ends() {
+        let hour = 3_600_000;
+        let since = 10 * hour;
+        let now = since + 3 * hour;
+        let mut all = vec![
+            hourly(since + hour, true),     // missed during the hold
+            hourly(since - 5 * hour, true), // overdue before the hold: untouched
+            hourly(now + hour, true),       // not due yet
+            hourly(since + 2 * hour, false),
+        ];
+        catch_up(&mut all, since, now);
+        assert_eq!(all[0].next_run_at, now);
+        assert!(
+            all[0].due(now),
+            "a single catch-up run, not one per missed slot"
+        );
+        assert_eq!(all[1].next_run_at, since - 5 * hour);
+        assert_eq!(all[2].next_run_at, now + hour);
+        assert_eq!(all[3].next_run_at, since + 2 * hour);
+    }
 
     #[test]
     fn desktop_habit_optional_timestamps_and_partial_history_remain_editable() {

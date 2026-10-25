@@ -30,6 +30,7 @@ fn update(status: impl Into<String>, finished: bool) -> Update {
         metrics: None,
         usage_limit: None,
         background: None,
+        hold: None,
         approvals: vec![],
         approvals_resolved: vec![],
         questions: vec![],
@@ -770,7 +771,8 @@ pub(crate) fn run_with_client(
                         next["type"] = json!("answer");
                         next["reply"] = reply(question, answers);
                     }
-                    Decision::KeepOpen => continue,
+                    // Remote sessions run on another machine and are not held.
+                    Decision::KeepOpen | Decision::Hold | Decision::Release => continue,
                     Decision::Steer(_) => {
                         return Err("Steering is not supported by this remote host".into());
                     }

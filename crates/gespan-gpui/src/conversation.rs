@@ -11,6 +11,8 @@ mod edit_last_turn;
 mod empty_arcade_tests;
 mod follow_up;
 mod history;
+mod hold;
+pub(crate) use hold::HoldChanged;
 mod mobile;
 mod notifications;
 mod pilot;
@@ -212,7 +214,13 @@ pub(crate) struct Conversation {
     questions:
         std::collections::VecDeque<(Entity<crate::questions::QuestionCard>, Vec<Subscription>)>,
     question_overlay: crate::questions::Overlay,
-    controls: Option<std::sync::mpsc::Sender<Control>>,
+    pub(crate) controls: Option<std::sync::mpsc::Sender<Control>>,
+    /// Where this session rests while the app is on hold.
+    pub(crate) held: Option<gespan_core::hold::Reason>,
+    /// Hold was sent to the running turn and its safe point is pending.
+    pub(crate) hold_requested: bool,
+    /// The held turn was interrupted and is draining.
+    hold_interrupted: bool,
     branch: Option<String>,
     git: Option<gespan_core::git::Snapshot>,
     git_picker: Option<Entity<GitPicker>>,
@@ -641,6 +649,9 @@ impl Conversation {
             questions: Default::default(),
             question_overlay: Default::default(),
             controls: None,
+            held: None,
+            hold_requested: false,
+            hold_interrupted: false,
             branch: git.as_ref().and_then(|s| s.current.clone()),
             git,
             git_picker: None,
@@ -967,17 +978,17 @@ impl Conversation {
         }
     }
     fn launch_prompt(&mut self, prompt: String, cx: &mut Context<Self>) {
+        // While on hold nothing starts: the prompt waits in the queue for Resume.
+        if crate::hold::active(cx) {
+            let mode = self.submitted_mode();
+            self.enqueue_follow_up(prompt, mode, cx);
+            cx.emit(SessionChanged);
+            cx.notify();
+            return;
+        }
         if self.stopping {
-            let mode = if self.settings.orchestrator {
-                Some("orchestrator")
-            } else if self.settings.plan {
-                Some("plan")
-            } else if self.settings.operator {
-                Some("operator")
-            } else {
-                None
-            };
-            self.enqueue_follow_up(prompt, mode.map(str::to_owned), cx);
+            let mode = self.submitted_mode();
+            self.enqueue_follow_up(prompt, mode, cx);
             if let Some(id) = self
                 .follow_ups
                 .state
@@ -1286,6 +1297,9 @@ impl Conversation {
                         if let Some(tasks) = update.background.filter(|_| !stopping) {
                             this.set_background(tasks, cx);
                         }
+                        if let Some(point) = update.hold.filter(|_| !stopping) {
+                            this.hold_point(point, cx);
+                        }
                         if !stopping {
                             this.approvals.extend(update.approvals);
                         }
@@ -1432,6 +1446,7 @@ impl Conversation {
                             this.refresh_git(cx);
                             this.run_history_actions(cx);
                             this.pilot_flush_external(cx);
+                            this.hold_turn_finished(cx);
                             cx.emit(SessionChanged);
                         } else if incoming_notification_input
                             || pilot_queue_changed
@@ -1457,7 +1472,19 @@ impl Conversation {
         cx.emit(SessionChanged);
         cx.notify();
     }
+    fn submitted_mode(&self) -> Option<String> {
+        if self.settings.orchestrator {
+            Some("orchestrator".into())
+        } else if self.settings.plan {
+            Some("plan".into())
+        } else if self.settings.operator {
+            Some("operator".into())
+        } else {
+            None
+        }
+    }
     fn begin_turn(&mut self, cx: &mut Context<Self>) {
+        self.held = None;
         self.submission_generation = self.submission_generation.wrapping_add(1);
         if !self.summary.has_messages {
             self.composer_motion.capture(self.composer_anchor.get());

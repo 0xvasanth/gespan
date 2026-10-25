@@ -72,7 +72,11 @@ pub(crate) fn bind(cx: &mut App) {
 pub(crate) fn menus(prefs: &crate::settings::Preferences, cx: &mut App) {
     use gpui::{Menu, MenuItem};
     cx.set_menus(vec![
-        Menu::new("Gespan Native").items([MenuItem::action("Quit Gespan Native", crate::Quit)]),
+        Menu::new("Gespan Native").items([
+            MenuItem::action("Hold Everything", crate::shell::ToggleHold),
+            MenuItem::separator(),
+            MenuItem::action("Quit Gespan Native", crate::Quit),
+        ]),
         Menu::new("File").items([
             MenuItem::action("Save", Save),
             MenuItem::action("Reload file", ReloadFile),

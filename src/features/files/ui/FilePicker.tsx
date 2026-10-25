@@ -39,6 +39,7 @@ export function reloadActionHint(mod = MOD, shift = SHIFT) {
 
 const ACTIONS: Action[] = [
   { id: "reload", label: "Reload Gespan", hint: reloadActionHint() },
+  { id: "hold", label: "Hold everything", hint: `${MOD}${SHIFT}H` },
 ];
 
 type Props = {
@@ -46,6 +47,8 @@ type Props = {
   cwd: string;
   openPaths?: string[];
   initialQuery?: string;
+  /** "Resume everything" once everything is on hold. */
+  holdLabel?: string;
   onOpenFile: OpenFileFn;
   onRunAction: (id: string) => void;
   onClose: () => void;
@@ -56,6 +59,7 @@ export function FilePicker({
   cwd,
   openPaths = [],
   initialQuery = "",
+  holdLabel = "Hold everything",
   onOpenFile,
   onRunAction,
   onClose,
@@ -89,18 +93,21 @@ export function FilePicker({
   );
   const actionResults = useMemo((): RankedAction[] => {
     if (!paletteMode) return [];
+    const actions = ACTIONS.map((action) =>
+      action.id === "hold" ? { ...action, label: holdLabel } : action,
+    );
     if (!actionQuery) {
-      return ACTIONS.map((action) => ({
+      return actions.map((action) => ({
         ...action,
         score: 0,
         positions: [],
       }));
     }
-    return ACTIONS.flatMap((action) => {
+    return actions.flatMap((action) => {
       const hit = fuzzyMatch(actionQuery, action.label);
       return hit ? [{ ...action, ...hit }] : [];
     }).sort((a, b) => b.score - a.score);
-  }, [actionQuery, paletteMode]);
+  }, [actionQuery, paletteMode, holdLabel]);
   const optionCount = paletteMode ? actionResults.length : results.length;
 
   useEffect(() => {

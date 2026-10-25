@@ -27,6 +27,11 @@ mod compaction;
 pub(crate) mod devin;
 mod discovery;
 mod follow_up;
+mod hold;
+pub use hold::HoldPoint;
+use lifecycle::Interrupt;
+#[cfg(all(test, unix))]
+mod hold_tests;
 mod kind;
 mod lifecycle;
 mod limits;
@@ -113,6 +118,8 @@ pub enum Event {
         model: Option<String>,
         model_settings: HashMap<String, String>,
     },
+    /// A held turn reached its safe point.
+    HoldSettled(HoldPoint),
     Done,
 }
 
@@ -265,6 +272,8 @@ struct Protocol {
     previous_turn: Option<String>,
     interrupt_id: Option<String>,
     claude_prompt_sent: bool,
+    /// Hold was requested: pending questions wait instead of auto-resolving.
+    holding: bool,
     claude_result_seen: bool,
     claude_usage_limit: Option<crate::usage::Limit>,
     claude_resume_at: Option<Instant>,
@@ -307,6 +316,7 @@ impl Protocol {
             interrupt_id: None,
             claude_prompt_sent: false,
             claude_result_seen: false,
+            holding: false,
             claude_usage_limit: None,
             claude_resume_at: None,
             follow_up_ready: false,
@@ -1611,6 +1621,7 @@ fn run_operation(
         pending.push(Event::SessionId(id));
     }
     let mut stop_confirmed = false;
+    let mut held = false;
     let result = (|| {
         protocol.probe = probe;
         protocol.compact = compact;
@@ -1650,10 +1661,11 @@ fn run_operation(
         let started = Instant::now();
         let mut ready_emitted = false;
         let mut interrupted = false;
+        let mut gate = hold::Gate::default();
         loop {
             if cancel.load(Ordering::Relaxed) && !interrupted {
                 interrupted = true;
-                if !protocol.interrupt(&mut stdin)? {
+                if !protocol.interrupt(&mut stdin, Interrupt::Stop)? {
                     return Err("Stopped".into());
                 }
                 if protocol.request.kind == Kind::Claude {
@@ -1663,22 +1675,51 @@ fn run_operation(
             if !interrupted {
                 if let Some(controls) = &controls {
                     while let Ok(control) = controls.try_recv() {
-                        if let Decision::Steer(message) = control.decision {
-                            let id = message.id.clone();
-                            match protocol.steer(message, &mut stdin) {
-                                Ok(events) => pending.extend(events),
-                                Err(error) => pending.push(Event::FollowUpFailed { id, error }),
+                        match control.decision {
+                            Decision::Steer(message) => {
+                                let id = message.id.clone();
+                                match protocol.steer(message, &mut stdin) {
+                                    Ok(events) => pending.extend(events),
+                                    Err(error) => pending.push(Event::FollowUpFailed { id, error }),
+                                }
                             }
-                        } else {
-                            protocol.respond(control, &mut stdin)?;
+                            Decision::Hold => {
+                                gate.request();
+                                protocol.holding = true;
+                            }
+                            Decision::Release => {
+                                gate.release();
+                                protocol.holding = false;
+                            }
+                            _ => protocol.respond(control, &mut stdin)?,
                         }
                     }
                 }
                 pending.extend(protocol.expire_steering());
-                pending.extend(protocol.lifecycle_tick(started, &mut stdin)?);
+                let tick = protocol.lifecycle_tick(started, &mut stdin)?;
+                for event in &tick {
+                    gate.observe(event);
+                }
+                pending.extend(tick);
                 if protocol.ready() && !ready_emitted {
                     ready_emitted = true;
                     pending.push(Event::Ready);
+                }
+                let awaiting = !protocol.approvals.is_empty() || !protocol.questions.is_empty();
+                let decision = (awaiting || protocol.prompt_delivered())
+                    .then(|| gate.decide(awaiting))
+                    .flatten();
+                match decision {
+                    Some(hold::Action::Interrupt) => {
+                        interrupted = true;
+                        held = true;
+                        pending.push(Event::HoldSettled(HoldPoint::Interrupted));
+                        if !protocol.interrupt(&mut stdin, Interrupt::Hold)? {
+                            return Err("Stopped".into());
+                        }
+                    }
+                    Some(hold::Action::Settle(point)) => pending.push(Event::HoldSettled(point)),
+                    None => {}
                 }
             }
             if interrupted && protocol.request.kind.is_pi() {
@@ -1759,6 +1800,7 @@ fn run_operation(
                         Err(error) => return Err(error),
                     };
                     for event in events {
+                        gate.observe(&event);
                         if controls.is_none() || interrupted {
                             if let Event::Approval(approval) = &event {
                                 protocol.respond(
@@ -1848,15 +1890,20 @@ fn run_operation(
             }
         }
     })();
+    // A Hold interrupt ends the turn like Stop, but the session is held, not stopped.
+    let result = match result {
+        Err(error) if held && error == "Stopped" => Err("Held".to_owned()),
+        result => result,
+    };
     // Cancellation can arrive while publishing an event batch. Its callback
     // then returns Stopped before the next receive-loop iteration can interrupt.
     if cancel.load(Ordering::Relaxed) && protocol.interrupt_id.is_none() {
-        let _ = protocol.interrupt(&mut wire.stdin);
+        let _ = protocol.interrupt(&mut wire.stdin, Interrupt::Stop);
     }
     if cancel.load(Ordering::Relaxed) && protocol.done {
         stop_confirmed = true;
     }
-    if let (Err(error), false) = (&result, cancel.load(Ordering::Relaxed)) {
+    if let (Err(error), false) = (&result, cancel.load(Ordering::Relaxed) || held) {
         // Conversation turns only: not probes or background text work.
         if eligible {
             crate::diagnostics::metrics::failure(

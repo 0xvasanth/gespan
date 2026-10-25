@@ -20,6 +20,14 @@ impl Kind {
 }
 
 impl Protocol {
+    /// Hold may only stop a turn whose prompt the agent has received;
+    /// stopping earlier would drop the user's message.
+    pub(super) fn prompt_delivered(&self) -> bool {
+        match self.request.kind {
+            Kind::Claude => self.claude_prompt_sent,
+            _ => self.ready(),
+        }
+    }
     pub(super) fn ready(&self) -> bool {
         match self.request.kind {
             Kind::Codex => self.active_turn.is_some(),
