@@ -1,0 +1,31 @@
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_b8756c98834f02 264-274,283,495-498,502,633-638
+src/features/board/ui/ArchiveView.test.ts
+  s_938a6e0c93b076::t_c45b0dc7c34a7d 54-59,158,166,173-180,184-194
+  s_938a6e0c93b076::t_0c620f0eb14cf0 195-196
+src/features/board/model/undo.ts
+  s_938a6e0c93b076::t_1e722aa7a53e43 33-36,38-43,48-51,53-54,71,97-98,102-103,115,121,123,134-138
+  s_938a6e0c93b076::t_cd6cac4f6e0de8 99-101
+src/features/board/model/undo.test.ts
+  s_938a6e0c93b076::t_6dbb1ed54e49b3 153-192,195
+src/features/board/ui/ArchiveView.tsx
+  s_938a6e0c93b076::t_a837d789fef073 3,68-74
+src/features/board/ui/BoardView.test.ts
+  s_938a6e0c93b076::t_c45b0dc7c34a7d 2087-2151,2243-2244,2246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6e0063ac340c0780439ab0f63956003a3f943f1",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
