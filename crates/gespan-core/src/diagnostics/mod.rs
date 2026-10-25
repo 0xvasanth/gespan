@@ -17,8 +17,8 @@ pub use bundle::{
     MAX_BUNDLE_BYTES,
 };
 pub use collect::{
-    build_channel, collect, installed_providers, locale_from, log_tail, redactor_for,
-    running_log_dir, system, Environment, TAIL_LINES,
+    build_channel, collect, environment_json, installed_providers, locale_from, log_tail,
+    redactor_for, running_log_dir, system, Environment, TAIL_LINES,
 };
 pub use fallback::{
     downloads_dir, issue_url, remove_crashes, save_bundle, CUT_NOTE, ISSUE_FORM, MAX_URL_BYTES,

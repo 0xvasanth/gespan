@@ -2228,6 +2228,7 @@ dependencies = [
  "chrono",
  "gespan-core",
  "gespan-keep-awake",
+ "gespan-redact",
  "gpui-pre",
  "gpui-pre-apple",
  "gpui-pre-platform",
@@ -2270,6 +2271,8 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "unicode-segmentation",
+ "url",
+ "zip",
 ]
 
 [[package]]

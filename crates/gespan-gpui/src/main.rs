@@ -62,6 +62,7 @@ mod questions;
 mod quick_composer;
 mod quick_open;
 mod reflow_motion;
+mod report;
 mod resource_pressure;
 mod response_actions;
 mod reveal;

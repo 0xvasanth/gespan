@@ -70,20 +70,23 @@ pub fn collect(
             .map(|(name, text)| (name, scrub_json_text(redactor, &text)))
             .collect(),
         counters: counters.map(|value| pretty(redactor.redact_value(value))),
-        environment: environment.map(|environment| {
-            pretty(redactor.redact_value(json!({
-                "providers": environment
-                    .providers
-                    .into_iter()
-                    .map(|(id, version)| json!({ "id": id, "version": version }))
-                    .collect::<Vec<_>>(),
-                "projects_count": environment.projects_count,
-                "sessions_count": environment.sessions_count,
-            })))
-        }),
+        environment: environment.map(|environment| environment_json(redactor, environment)),
         consent: default_consent(),
         install_id: None,
     }
+}
+
+/// `environment.json`: provider ids and versions, and counts.
+pub fn environment_json(redactor: &Redactor, environment: Environment) -> String {
+    pretty(redactor.redact_value(json!({
+        "providers": environment
+            .providers
+            .into_iter()
+            .map(|(id, version)| json!({ "id": id, "version": version }))
+            .collect::<Vec<_>>(),
+        "projects_count": environment.projects_count,
+        "sessions_count": environment.sessions_count,
+    })))
 }
 
 /// `(file name, contents)` of each crash record, oldest first.
