@@ -1351,9 +1351,9 @@ impl BoardView {
 
     fn copy_reference(&mut self, cx: &mut Context<Self>) {
         if let Some(card) = self.detail_card() {
-            cx.write_to_clipboard(ClipboardItem::new_string(format!(
-                "#{} {}",
-                card.number, card.title
+            cx.write_to_clipboard(ClipboardItem::new_string(more::card_reference(
+                card.number,
+                &card.title,
             )));
         }
     }

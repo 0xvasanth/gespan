@@ -898,6 +898,7 @@ impl BoardView {
             crate::popover::MenuItem::Separator,
         ];
         let mut targets = HashMap::new();
+        let more_anchor = self.card_anchors.get(&card_id).cloned().unwrap_or_default();
         for (index, column) in detail.columns.iter().enumerate() {
             if Some(&column.id) == current.as_ref() {
                 continue;
@@ -908,6 +909,8 @@ impl BoardView {
                 crate::popover::MenuAction::new(id, format!("Move to {}", column.name)).into(),
             );
         }
+        items.push(crate::popover::MenuItem::Separator);
+        items.push(crate::popover::MenuAction::new("more", "More…").into());
         self.menu = None;
         let menu = cx.new(|cx| crate::popover::Menu::new("Card actions", items, window, cx));
         let events = cx.subscribe_in(
@@ -920,6 +923,9 @@ impl BoardView {
                 if let crate::popover::MenuEvent::Picked(id, _) = event {
                     if id.as_ref() == "open" {
                         this.open_card_detail(open.card_id, window, cx);
+                    } else if id.as_ref() == "more" {
+                        let anchor = Anchor::Slot(more_anchor.clone());
+                        this.open_more_menu(open.card_id, anchor, window, cx);
                     } else if let Some(column_id) = targets.get(id.as_ref()) {
                         this.move_card_to(open.card_id, column_id.clone(), cx);
                     }

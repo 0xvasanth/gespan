@@ -1330,7 +1330,8 @@ impl BoardView {
                                 div()
                                     .id(SharedString::from(format!("board-comment-avatar-{index}")))
                                     .debug_selector({
-                                        let selector = format!("board-comment-avatar-{index}");
+                                        let selector =
+                                            format!("board-comment-avatar-{index}-{initial}");
                                         move || selector.clone()
                                     })
                                     .size(px(22.))
@@ -1364,8 +1365,9 @@ impl BoardView {
                                                         "board-comment-author-{index}"
                                                     )))
                                                     .debug_selector({
-                                                        let selector =
-                                                            format!("board-comment-author-{index}");
+                                                        let selector = format!(
+                                                            "board-comment-author-{index}-{name}"
+                                                        );
                                                         move || selector.clone()
                                                     })
                                                     .font_weight(FontWeight::MEDIUM)

@@ -16,6 +16,25 @@ pub(crate) fn card_link(board_id: &str, card_id: &str) -> String {
     format!("gespan://board/{board_id}/card/{card_id}")
 }
 
+/// What "Copy reference" puts on the clipboard: `#N Title`.
+pub(crate) fn card_reference(number: i64, title: &str) -> String {
+    format!("#{number} {title}")
+}
+
+const COPY_LABEL_TITLE: usize = 40;
+
+/// The menu row for the reference, with a long title cut short.
+pub(crate) fn copy_label(number: i64, title: &str) -> String {
+    let title = title.trim();
+    let shown = if title.chars().count() > COPY_LABEL_TITLE {
+        let cut: String = title.chars().take(COPY_LABEL_TITLE).collect();
+        format!("{}…", cut.trim_end())
+    } else {
+        title.to_string()
+    };
+    format!("Copy {}", card_reference(number, &shown))
+}
+
 impl BoardView {
     pub(crate) fn open_more_menu(
         &mut self,
@@ -24,9 +43,13 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.dragging || self.card(&card_id).is_none() {
+        if self.dragging {
             return;
         }
+        let Some(card) = self.card(&card_id) else {
+            return;
+        };
+        let copy_ref = copy_label(card.number, &card.title);
         let items: Vec<MenuItem> = vec![
             MenuAction::new("open", "Open").into(),
             MenuAction::new("status", "Status…").into(),
@@ -34,7 +57,7 @@ impl BoardView {
             MenuAction::new("labels", "Labels…").into(),
             MenuAction::new("move-board", "Move to board…").into(),
             MenuAction::new("copy-link", "Copy link").into(),
-            MenuAction::new("copy-ref", "Copy #N Title").into(),
+            MenuAction::new("copy-ref", copy_ref).into(),
             MenuAction::new("duplicate", "Duplicate").into(),
             MenuAction::new("archive", "Archive").into(),
             MenuAction::new("delete", "Delete").danger().into(),
@@ -113,7 +136,7 @@ impl BoardView {
             }
             "copy-ref" => {
                 if let Some(card) = self.card(&card_id) {
-                    let text = format!("#{} {}", card.number, card.title);
+                    let text = card_reference(card.number, &card.title);
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
                 }
             }
@@ -183,10 +206,14 @@ impl BoardView {
         }
     }
 
-    fn duplicate_card(&mut self, card_id: &str, cx: &mut Context<Self>) {
+    pub(crate) fn duplicate_card(&mut self, card_id: &str, cx: &mut Context<Self>) {
         let Some(card) = self.card(card_id).cloned() else {
             return;
         };
+        // A typed but unsaved description is part of what gets copied.
+        if self.shown_in_drawer(card_id).is_some() && !self.save_card_details(cx) {
+            return;
+        }
         self.commit_pending(cx);
         let mut copy = None;
         if self.write(cx, |service| {
@@ -211,5 +238,29 @@ impl BoardView {
         if self.write(cx, |service| service.archive_many(&ids)) {
             self.push_undo(archived_label(&[number]), Undo::Archive(vec![place]), cx);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_copy_row_names_the_real_card() {
+        assert_eq!(copy_label(7, "Fix the bug"), "Copy #7 Fix the bug");
+        assert_eq!(card_reference(7, "Fix the bug"), "#7 Fix the bug");
+    }
+
+    #[test]
+    fn a_long_title_is_cut_in_the_row_but_not_on_the_clipboard() {
+        let title = "x".repeat(60);
+        assert_eq!(
+            copy_label(1, &title),
+            format!("Copy #1 {}…", "x".repeat(40))
+        );
+        assert_eq!(card_reference(1, &title), format!("#1 {title}"));
+        // Cuts on characters, never inside one.
+        let wide = "é".repeat(45);
+        assert_eq!(copy_label(2, &wide), format!("Copy #2 {}…", "é".repeat(40)));
     }
 }

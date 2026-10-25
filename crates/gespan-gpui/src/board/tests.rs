@@ -3961,9 +3961,13 @@ fn agent_comments_show_agent(cx: &mut TestAppContext) {
     reload(&f, cx);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-card-1");
-    assert!(shown(visual, "board-comment-avatar-0"));
-    assert!(shown(visual, "board-comment-avatar-1"));
-    assert!(shown(visual, "board-comment-author-1"));
+    // The selectors carry the rendered text: who wrote it and the initial.
+    assert!(shown(visual, "board-comment-author-0-You"));
+    assert!(shown(visual, "board-comment-avatar-0-Y"));
+    assert!(shown(visual, "board-comment-author-1-Agent"));
+    assert!(shown(visual, "board-comment-avatar-1-A"));
+    assert!(!shown(visual, "board-comment-author-0-Agent"));
+    assert!(!shown(visual, "board-comment-author-1-You"));
     assert_eq!(super::detail::comment_author("user"), ("You", "Y", false));
     assert_eq!(super::detail::comment_author("agent"), ("Agent", "A", true));
     // Distinct avatars: the author and the initial both differ.
@@ -4036,6 +4040,61 @@ fn right_click_on_a_card_opens_the_more_menu(cx: &mut TestAppContext) {
         visual,
         selector(format!("menu-action-status-{step}"))
     ));
+}
+
+#[gpui::test]
+fn duplicate_from_more_menu(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task", "Other"]);
+    let original = card_id(&f, cx, "Task");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    right_click(visual, "board-card-1");
+    click(visual, "menu-action-duplicate");
+    // The copy sits right after the original.
+    assert_eq!(
+        titles_in(&f, visual, "Backlog"),
+        ["Task", "Task (copy)", "Other"]
+    );
+    assert_eq!(toast(&f, visual).as_deref(), Some("Duplicated #1 as #3"));
+    assert_ne!(card_id(&f, visual, "Task (copy)"), original);
+}
+
+#[gpui::test]
+fn duplicate_includes_an_unsaved_description_typed_in_the_drawer(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    retype(visual, "board-drawer-description", "typed, not yet saved");
+    let id = card_id(&f, visual, "Task");
+    // Run it straight from the menu's action, with no blur in between.
+    f.window
+        .update(visual, |view, _, cx| view.duplicate_card(&id, cx))
+        .unwrap();
+    visual.run_until_parked();
+    let copy = detail(&f, visual)
+        .cards
+        .into_iter()
+        .find(|c| c.title == "Task (copy)")
+        .expect("the copy exists");
+    assert_eq!(copy.body, "typed, not yet saved");
+    // The original was saved first, and the drawer stays open on it.
+    assert_eq!(
+        Service::open(&f.db).unwrap().card(&id).unwrap().body,
+        "typed, not yet saved"
+    );
+    assert!(shown(visual, "board-drawer"));
+}
+
+#[gpui::test]
+fn the_card_menu_has_a_more_item_that_opens_the_full_menu(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-menu-1");
+    assert!(shown(visual, "menu-action-more"));
+    click(visual, "menu-action-more");
+    assert_more_menu_in_order(visual);
+    // The full menu is live: Duplicate works from it.
+    click(visual, "menu-action-duplicate");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["Task", "Task (copy)"]);
 }
 
 #[gpui::test]
