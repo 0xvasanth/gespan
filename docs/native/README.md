@@ -12,8 +12,9 @@ uses React/Tauri. Native builds have their own Cargo workspace and lockfile.
 - At least one installed, signed-in agent CLI. See [provider setup](../providers.md).
 
 The native commands do not require `npm install` or a frontend build.
-macOS is the primary preview target. Linux and Windows GUI builds and interaction
-remain unverified; see [preview limitations](parity.md).
+macOS is the primary preview target. A Linux ARM64 source build has been
+smoke-tested in a VM; Linux x64 packages and Windows GUI interaction still need
+runtime testing. See [preview limitations](parity.md).
 
 ## Develop
 
