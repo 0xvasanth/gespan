@@ -150,6 +150,32 @@ export function DictationBar({
       <span className="shrink-0 text-[11px] text-content/35">
         Esc to cancel
       </span>
+      {/* Reachable when focus has left the field or the composer is disabled. */}
+      {state !== "finishing" ? (
+        <button
+          type="button"
+          aria-label="Stop dictation"
+          title="Stop dictation"
+          className={button}
+          onMouseDown={keepFocus}
+          onClick={() => dictation.stop()}
+        >
+          Stop
+        </button>
+      ) : null}
+      <button
+        type="button"
+        aria-label="Cancel dictation"
+        title="Cancel dictation"
+        className={quiet}
+        onMouseDown={keepFocus}
+        onClick={() => {
+          dictation.cancel();
+          onDismiss?.();
+        }}
+      >
+        Cancel
+      </button>
     </div>
   );
 }

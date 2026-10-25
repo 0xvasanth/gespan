@@ -454,6 +454,19 @@ export function Composer({
     dictation.state === "starting" ||
     dictation.state === "listening" ||
     dictation.state === "finishing";
+  const dictationCancellable = dictating || dictation.state === "needs-model";
+  const cancelDictation = dictation.cancel;
+  // A disabled field gets no key events, so Escape is heard on the window.
+  useEffect(() => {
+    if (!disabled || !dictationCancellable) return;
+    const onEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      cancelDictation();
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [cancelDictation, dictationCancellable, disabled]);
   const dictateShortcut = keybindingShortcutLabel(
     DICTATE_COMMAND,
     `${MOD}${SHIFT}M`,
@@ -1505,20 +1518,18 @@ export function Composer({
     syncHasValue("", []);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Cancelling dictation stays possible after the composer is disabled.
+    if (e.key === "Escape" && dictationCancellable) {
+      e.preventDefault();
+      dictation.cancel();
+      return;
+    }
     if (disabled) return;
     if (isImeComposition(e.nativeEvent)) return;
     if (creatingSkill) return;
     if (isDictationShortcut(e)) {
       e.preventDefault();
       if (!e.repeat) dictation.pressStart();
-      return;
-    }
-    if (
-      e.key === "Escape" &&
-      (dictating || dictation.state === "needs-model")
-    ) {
-      e.preventDefault();
-      dictation.cancel();
       return;
     }
     if (
@@ -2394,7 +2405,7 @@ export function Composer({
                       : "Dictate"
                 }
                 active={dictating}
-                disabled={disabled}
+                disabled={disabled && !dictating}
                 onClick={() => {
                   dictation.toggle();
                   ref.current?.focus();

@@ -40,6 +40,30 @@ function Harness({ sessionId }: { sessionId?: string }) {
   return null;
 }
 
+/** A second composer, for the shared-helper cases. */
+let otherField: HTMLTextAreaElement;
+let other: Dictation;
+
+function OtherHarness() {
+  other = useDictation({
+    fieldRef: { current: otherField },
+    projectPath: "/other",
+    sessionId: "s9",
+  });
+  return null;
+}
+
+async function renderBoth() {
+  otherField = document.createElement("textarea");
+  document.body.append(otherField);
+  await act(async () => {
+    root.render([
+      createElement(Harness, { key: "a", sessionId: "s1" }),
+      createElement(OtherHarness, { key: "b" }),
+    ]);
+  });
+}
+
 async function render(sessionId = "s1") {
   await act(async () => {
     root.render(createElement(Harness, { sessionId }));
@@ -360,10 +384,71 @@ describe("useDictation", () => {
     });
     expect(dictation.state).toBe("starting");
     await run(() => dictation.cancel());
+    expect(dictation.state).toBe("idle");
+    // The cancel waits behind the Start, so the helper gets it afterwards.
+    expect(calls("dictation_cancel")).toHaveLength(0);
     await run(() => resolveStart());
-    // The helper may have started after the first cancel, so it is told again.
-    expect(calls("dictation_cancel")).toHaveLength(2);
+    expect(calls("dictation_cancel")).toHaveLength(1);
     await speech({ type: "listening" });
     expect(dictation.state).toBe("idle");
+  });
+
+  it("stale_cancelled_does_not_end_next_attempt", async () => {
+    await renderBoth();
+    await run(() => dictation.toggle());
+    await speech({ type: "listening" });
+    expect(dictation.state).toBe("listening");
+
+    // Starting in the other composer cancels the first one.
+    await run(() => other.toggle());
+    expect(dictation.state).toBe("idle");
+    expect(calls("dictation_cancel")).toHaveLength(1);
+    expect(calls("dictation_start")).toHaveLength(2);
+
+    // The helper answers that cancel, then starts listening for B.
+    await speech({ type: "cancelled" });
+    expect(other.state).toBe("starting");
+    await speech({ type: "listening" });
+    expect(other.state).toBe("listening");
+    await speech({ type: "partial", text: "for b" });
+    expect(other.partial).toBe("for b");
+    await run(() => other.toggle());
+    await speech({ type: "final", text: "for b", capped: false });
+    expect(otherField.value).toBe("for b");
+    expect(textarea.value).toBe("");
+    expect(other.state).toBe("idle");
+  });
+
+  it("commands_are_serialised", async () => {
+    let finishCancel: () => void = () => {};
+    let failCancel = false;
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "dictation_cancel") {
+        await new Promise<void>((resolve) => (finishCancel = resolve));
+        if (failCancel) throw "helper gone";
+      }
+    });
+    await renderBoth();
+    await run(() => dictation.toggle());
+    await speech({ type: "listening" });
+
+    await run(() => other.toggle());
+    expect(calls("dictation_cancel")).toHaveLength(1);
+    // B's Start waits until A's Cancel has reached the backend.
+    expect(calls("dictation_start")).toHaveLength(1);
+    await run(() => finishCancel());
+    expect(calls("dictation_start")).toHaveLength(2);
+    expect(calls("dictation_start")[1][1]).toMatchObject({
+      projectPath: "/other",
+    });
+
+    // A failed command does not block the ones queued after it.
+    failCancel = true;
+    await run(() => other.cancel());
+    await run(() => dictation.toggle());
+    expect(calls("dictation_start")).toHaveLength(2);
+    await run(() => finishCancel());
+    expect(calls("dictation_start")).toHaveLength(3);
+    expect(dictation.state).toBe("starting");
   });
 });

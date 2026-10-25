@@ -212,4 +212,81 @@ describe("Composer dictation", () => {
     await speech({ type: "final", text: "meant for s1", capped: false });
     expect(textarea.value).toBe("fix");
   });
+
+  it("the bar's Stop and Cancel buttons work without the field", async () => {
+    const textarea = await render();
+    const bar = (label: string) =>
+      container.querySelector<HTMLButtonElement>(
+        `[data-dictation-bar] button[aria-label="${label}"]`,
+      );
+    const mic = () =>
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label^="Dictate"]',
+      )!;
+
+    await act(async () => mic().click());
+    await speech({ type: "listening" });
+    await act(async () => bar("Stop dictation")!.click());
+    expect(calls("dictation_stop")).toHaveLength(1);
+    expect(bar("Stop dictation")).toBeNull();
+    await speech({ type: "final", text: "kept", capped: false });
+    expect(textarea.value).toBe("fix kept");
+
+    await act(async () => mic().click());
+    await speech({ type: "listening" });
+    await act(async () => bar("Cancel dictation")!.click());
+    expect(calls("dictation_cancel")).toHaveLength(1);
+    expect(container.querySelector("[data-dictation-bar]")).toBeNull();
+    await speech({ type: "final", text: "dropped", capped: false });
+    expect(textarea.value).toBe("fix kept");
+  });
+
+  it("a composer disabled mid-dictation can still stop or cancel it", async () => {
+    const textarea = await render();
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label^="Dictate"]')!
+        .click(),
+    );
+    await speech({ type: "listening" });
+    await render({ disabled: true });
+
+    // The mic button itself, not the bar's Stop.
+    const stop = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        'button[aria-label="Stop dictation"]',
+      ),
+    ].find((button) => !button.closest("[data-dictation-bar]"))!;
+    expect(stop.disabled).toBe(false);
+    const cancel = container.querySelector<HTMLButtonElement>(
+      '[data-dictation-bar] button[aria-label="Cancel dictation"]',
+    )!;
+    expect(cancel.disabled).toBe(false);
+
+    // Escape is heard on the window, since a disabled field gets no keys.
+    const escape = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => window.dispatchEvent(escape));
+    expect(escape.defaultPrevented).toBe(true);
+    expect(calls("dictation_cancel")).toHaveLength(1);
+    await speech({ type: "final", text: "dropped", capped: false });
+    expect(textarea.value).toBe("fix");
+
+    // Starting again is not allowed while disabled.
+    const mic = container.querySelector<HTMLButtonElement>(
+      'button[aria-label^="Dictate"]',
+    )!;
+    expect(mic.disabled).toBe(true);
+    const idleEscape = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => window.dispatchEvent(idleEscape));
+    expect(idleEscape.defaultPrevented).toBe(false);
+    expect(calls("dictation_start")).toHaveLength(1);
+  });
 });

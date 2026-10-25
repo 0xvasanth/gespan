@@ -23,6 +23,8 @@ export type Dictation = {
   /** Set while this prompt's model download runs. */
   downloadProgress: DownloadProgress | null;
   toggle: () => void;
+  /** Stop listening and insert what was heard. */
+  stop: () => void;
   pressStart: () => void;
   pressEnd: () => void;
   cancel: () => void;
@@ -58,6 +60,27 @@ const ALREADY_DOWNLOADING = "The speech model is already downloading.";
  * started dictation; starting in another composer cancels this one.
  */
 let owner: { abandon: () => void } | null = null;
+
+/**
+ * Tauri runs each command on its own thread, so a Cancel for one composer
+ * could reach the helper after the next composer's Start. Every speech
+ * command waits for the previous one; a failure does not hold up the rest.
+ */
+let commands: Promise<unknown> = Promise.resolve();
+
+function speechCommand(
+  name: "dictation_start" | "dictation_stop" | "dictation_cancel",
+  args?: Record<string, unknown>,
+): Promise<unknown> {
+  const result = commands.then(() => invoke(name, args));
+  commands = result.catch(() => undefined);
+  return result;
+}
+
+/** Fire and forget; the helper reports failures as events. */
+function sendSpeech(name: "dictation_stop" | "dictation_cancel") {
+  speechCommand(name).catch(() => undefined);
+}
 
 type Options = {
   fieldRef: RefObject<HTMLTextAreaElement | null>;
@@ -126,7 +149,7 @@ export function useDictation({
       setLevel(0);
       setState("starting");
       try {
-        await invoke("dictation_start", {
+        await speechCommand("dictation_start", {
           projectPath: options.current.projectPath ?? null,
           modelId: ref.modelId,
           userWords: loadDictationWords(),
@@ -149,15 +172,12 @@ export function useDictation({
         return;
       }
       ref.startPending = false;
-      if (run !== ref.run) {
-        // Cancelled while the helper was being started: it may be listening
-        // now, so tell it again unless another attempt has taken over.
-        if (!ref.active) void invoke("dictation_cancel");
-        return;
-      }
+      // A cancel sent meanwhile was queued behind this Start, so it already
+      // reaches the helper after it.
+      if (run !== ref.run) return;
       if (ref.active && ref.stopAfterStart) {
         ref.stopAfterStart = false;
-        void invoke("dictation_stop");
+        sendSpeech("dictation_stop");
       }
     };
 
@@ -165,7 +185,7 @@ export function useDictation({
       if (!ref.active || ref.state === "finishing") return;
       setState("finishing");
       if (ref.startPending) ref.stopAfterStart = true;
-      else void invoke("dictation_stop");
+      else sendSpeech("dictation_stop");
     };
 
     /** Drop the attempt without inserting anything. */
@@ -174,7 +194,7 @@ export function useDictation({
       if (ref.active) {
         ref.run++;
         release();
-        void invoke("dictation_cancel");
+        sendSpeech("dictation_cancel");
       }
       setError(undefined);
       setState("idle");
@@ -200,8 +220,9 @@ export function useDictation({
           return;
         }
         case "cancelled":
-          release();
-          setState("idle");
+          // Only this hook sends Cancel, and it has already reset by then. A
+          // Cancelled seen here answers an earlier attempt's cancel, possibly
+          // another composer's, and must not end this one.
           return;
         case "error":
           release();
@@ -253,6 +274,7 @@ export function useDictation({
       onSpeech,
       onDownload,
       abandon,
+      stop,
       download,
       toggle: () => {
         if (ref.state === "idle" || ref.state === "error") void start();
@@ -303,6 +325,7 @@ export function useDictation({
     error,
     downloadProgress,
     toggle: controller.toggle,
+    stop: controller.stop,
     pressStart: controller.pressStart,
     pressEnd: controller.pressEnd,
     cancel: controller.abandon,
