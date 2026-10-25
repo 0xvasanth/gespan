@@ -1,0 +1,55 @@
+src/features/settings/ui/SettingsView.tsx
+  s_938a6e0c93b076::t_b7b0d82f5c9d4c 355,380,859,904-907,1026-1039
+  s_938a6e0c93b076::t_fd77ee668d9e32 401
+  s_938a6e0c93b076::t_ba8301b9d8e67a 1040
+src/features/board/model/cardProps.test.ts
+  s_938a6e0c93b076::t_37cddf8be10e6c 1-205
+src/features/board/model/cardProps.ts
+  s_938a6e0c93b076::t_8d6d770e2f57fc 7,29-33,232
+  s_938a6e0c93b076::t_39c9a42daf1c6f 1-6,8-28,34-231,233-238
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_01b8b0ac6a0a07 90
+  s_938a6e0c93b076::t_013a9a4025b5e8 239-240,242-245,773-774,814,816-817,1057,1080-1088
+  s_938a6e0c93b076::t_8d6d770e2f57fc 1048
+src/features/board/ui/BoardView.test.ts
+  s_938a6e0c93b076::t_8d6d770e2f57fc 2335-2339,2352-2354
+  s_938a6e0c93b076::t_d620f7c2219c7c 26,158-169,2323-2334,2340-2351,2355-2389
+  s_938a6e0c93b076::t_e3e5f9fe79307d 2390
+src/features/board/ui/CardDetail.tsx
+  s_938a6e0c93b076::t_013a9a4025b5e8 6,43-50,83,85-86,105-106,108-110,256-258,375-376,382-396,399-401,477,613,615-625
+src/features/board/ui/CardWorkSections.tsx
+  s_938a6e0c93b076::t_8d6d770e2f57fc 744-746
+  s_938a6e0c93b076::t_dfe1f7f1fec93b 94-97,115-121,126,136
+  s_938a6e0c93b076::t_7e55084f7cdc87 1-93,98-114,122-125,127-135,137-743,747-781
+src/features/settings/model/settings.flags.test.ts
+  s_938a6e0c93b076::t_fd77ee668d9e32 251-276
+src/features/board/ui/CardPropertyMenus.tsx
+  s_938a6e0c93b076::t_473e33f3356ba9 3-4,35,47,52,72,77,82,89
+src/features/settings/model/settings.ts
+  s_938a6e0c93b076::t_fd77ee668d9e32 251-256
+  s_938a6e0c93b076::t_b7b0d82f5c9d4c 904,906-943
+  s_938a6e0c93b076::t_bab53ca3180c43 905
+src/features/board/ui/CardDetail.test.ts
+  s_938a6e0c93b076::t_6e3942b2bbf5b5 7,19-22,1085-1286,1293-1438,1442-1461,1465-1504,1508-1523
+  s_938a6e0c93b076::t_8d6d770e2f57fc 235-246,1287-1292,1462-1464,1505-1507
+  s_938a6e0c93b076::t_dfe1f7f1fec93b 1439-1441
+  s_938a6e0c93b076::t_122de337abedff 616-617
+src/features/board/ui/CardDrawerParts.tsx
+  s_938a6e0c93b076::t_433b8823e928bf 73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60540397a43d73444b8b5c1e7767b44d7fd32f0e",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
