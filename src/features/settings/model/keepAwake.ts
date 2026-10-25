@@ -80,8 +80,10 @@ let last: string | null = null;
 export function syncKeepAwake(
   sessions: readonly Session[],
   mode: KeepAwakeMode = loadKeepAwake(),
+  /** Everything is on hold: nothing is working, whatever is left running. */
+  onHold = false,
 ): void {
-  const running = hasWorkingAgent(sessions);
+  const running = !onHold && hasWorkingAgent(sessions);
   const key = `${mode}:${running}`;
   if (key === last) return;
   last = key;
