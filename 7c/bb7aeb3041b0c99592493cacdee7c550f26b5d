@@ -1,0 +1,25 @@
+crates/gespan-core/src/remote/ssh.rs
+  s_723f23b667816d::t_013666dd4b844d 94,98,942-970,972
+crates/gespan-core/src/remote.rs
+  s_723f23b667816d::t_013666dd4b844d 510,512
+crates/gespan-core/src/visual_bridge.rs
+  s_723f23b667816d::t_013666dd4b844d 172-178,909-924
+crates/gespan-core/src/pilot/bridge.rs
+  s_723f23b667816d::t_013666dd4b844d 68-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7cbb7aeb3041b0c99592493cacdee7c550f26b5d",
+  "prompts": {},
+  "sessions": {
+    "s_723f23b667816d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09d88fd0-1ba2-46bd-ab5c-dc747e3a6767",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
