@@ -64,7 +64,7 @@ fn pick_terms_filters_short_and_dedupes() {
         known_names: &known,
         user_words: &user,
     });
-    assert_eq!(terms, strings(&["Tauri", "Voice-Input", "main"]));
+    assert_eq!(terms, strings(&["Tauri", "voice-input", "main"]));
 }
 
 #[test]
@@ -88,6 +88,8 @@ fn pick_terms_reads_top_folders_and_git_files() {
     let root = dir.path();
     fs::create_dir_all(root.join("workspace/src")).unwrap();
     fs::create_dir_all(root.join(".hidden")).unwrap();
+    fs::create_dir_all(root.join("node_modules")).unwrap();
+    fs::create_dir_all(root.join("target")).unwrap();
     fs::write(root.join("workspace/src/useInboxUnseen.ts"), "x").unwrap();
     fs::write(root.join("workspace/Cargo.toml"), "x").unwrap();
     fs::write(root.join("untracked_notes.txt"), "x").unwrap();
@@ -106,7 +108,7 @@ fn pick_terms_reads_top_folders_and_git_files() {
     });
     assert_eq!(
         terms,
-        strings(&["workspace", "Cargo", "useInboxUnseen", "trunk"])
+        strings(&["trunk", "workspace", "Cargo", "useInboxUnseen"])
     );
 }
 
@@ -122,4 +124,32 @@ fn non_repo_contributes_no_file_terms() {
         user_words: &[],
     });
     assert_eq!(terms, strings(&["plain_folder"]));
+}
+
+#[test]
+fn pick_terms_keeps_branches_and_known_names_in_large_repos() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir(root.join("files")).unwrap();
+    for i in 0..300 {
+        fs::write(root.join(format!("files/module{i}.rs")), "x").unwrap();
+    }
+    git(root, &["init", "-q", "-b", "feature/dictation"]);
+    git(root, &["add", "files"]);
+    git(root, &["commit", "-q", "-m", "init"]);
+
+    let user = strings(&["Zebracorn"]);
+    let known = strings(&["claude", "sonnet"]);
+    let branches = local_branches(root);
+    let terms = pick_terms(&VocabularySources {
+        project_root: Some(root),
+        branches: &branches,
+        known_names: &known,
+        user_words: &user,
+    });
+    assert_eq!(terms.len(), MAX_TERMS);
+    assert_eq!(terms[0], "Zebracorn");
+    for want in ["dictation", "feature", "claude", "sonnet"] {
+        assert!(terms.iter().any(|t| t == want), "missing {want}");
+    }
 }

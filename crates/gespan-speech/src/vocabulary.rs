@@ -8,6 +8,7 @@ pub const MAX_TERMS: usize = 230;
 pub const MIN_TERM_LEN: usize = 4;
 
 const MAX_TRACKED_FILES: usize = 2000;
+const SKIPPED_FOLDERS: &[&str] = &["node_modules", "target", "dist", "build", "vendor"];
 
 pub struct VocabularySources<'a> {
     pub project_root: Option<&'a Path>,
@@ -32,19 +33,19 @@ pub fn local_branches(project_root: &Path) -> Vec<String> {
     .unwrap_or_default()
 }
 
-/// Builds the term list: user words first (never truncated away), then
-/// project folders, tracked file stems, branch segments and known names.
+/// Builds the term list in priority order so the cap trims the largest
+/// source first: user words, known names, branch segments, top-level
+/// folders, then tracked file stems.
 pub fn pick_terms(src: &VocabularySources) -> Vec<String> {
     let mut candidates: Vec<String> = src.user_words.to_vec();
-
+    candidates.extend(src.known_names.iter().cloned());
+    for branch in src.branches {
+        candidates.extend(branch.split('/').map(String::from));
+    }
     if let Some(root) = src.project_root {
         candidates.extend(top_level_folders(root));
         candidates.extend(tracked_file_stems(root));
     }
-    for branch in src.branches {
-        candidates.extend(branch.split('/').map(String::from));
-    }
-    candidates.extend(src.known_names.iter().cloned());
 
     let mut seen = HashSet::new();
     let mut terms = Vec::new();
@@ -71,7 +72,7 @@ fn top_level_folders(root: &Path) -> Vec<String> {
         .filter_map(Result::ok)
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
         .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| !n.starts_with('.'))
+        .filter(|n| !n.starts_with('.') && !SKIPPED_FOLDERS.contains(&n.as_str()))
         .collect();
     names.sort();
     names
@@ -98,5 +99,5 @@ fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    String::from_utf8(out.stdout).ok()
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
