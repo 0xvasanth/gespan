@@ -1,0 +1,41 @@
+crates/gespan-core/src/inbox/linear.rs
+  s_0bbf4c1f20225e::t_38399cfa69dc96 2,635-642,651,655
+  s_0bbf4c1f20225e::t_fd806f9f142441 1
+crates/gespan-core/src/inbox.rs
+  s_0bbf4c1f20225e::t_7a2630892dcc44 1079
+  s_0bbf4c1f20225e::t_884e3005b0e648 999-1025,1028-1035,1040-1052,1057-1067,1069-1078,1080-1092,1100-1107,1113-1119
+  s_0bbf4c1f20225e::t_d17c589a3799ac 1068
+  s_0bbf4c1f20225e::t_fd806f9f142441 2,1026-1027,1036-1039,1053-1056,1093-1099,1108-1112
+  s_0bbf4c1f20225e::t_f0c45311724bb3 998
+crates/gespan-core/Cargo.toml
+  s_0bbf4c1f20225e::t_884e3005b0e648 27,69
+crates/gespan-core/src/inbox/azure_devops.rs
+  s_0bbf4c1f20225e::t_38399cfa69dc96 2,1965-1967,1970-1975,1985,1989
+  s_0bbf4c1f20225e::t_fd806f9f142441 1968-1969
+  s_0bbf4c1f20225e::t_7f231d0f34f7ce 1
+crates/gespan-core/src/inbox/jira.rs
+  s_0bbf4c1f20225e::t_38399cfa69dc96 2,851-862,872,876
+  s_0bbf4c1f20225e::t_336e14c2976f47 1
+crates/gespan-core/src/inbox/gitlab.rs
+  s_0bbf4c1f20225e::t_38399cfa69dc96 2,1010-1012,1015-1020,1030,1034
+  s_0bbf4c1f20225e::t_fd806f9f142441 1013-1014
+  s_0bbf4c1f20225e::t_eae637fc85b3a4 1
+crates/gespan-gpui/Cargo.lock
+  s_0bbf4c1f20225e::t_1e5bf89dd9bce3 2156-2171,2173-2190,2195-2291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6dac020d237afb94a4c58e5bd7adb3fac14abcf",
+  "prompts": {},
+  "sessions": {
+    "s_0bbf4c1f20225e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf188816-f125-4205-bd6c-ae2dc78044e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

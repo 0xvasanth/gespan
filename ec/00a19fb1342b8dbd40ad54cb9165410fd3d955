@@ -1,0 +1,32 @@
+crates/tracker-secrets/tests/store.rs
+  s_0bbf4c1f20225e::t_068fafb6a7a43a 188,230-245
+  s_0bbf4c1f20225e::t_f2f76d626af47a 164-167,171-174,198-201,204-211,225-228
+  s_0bbf4c1f20225e::t_5b7665f77da29a 189-197,202-203,212-224,229
+  s_0bbf4c1f20225e::t_424e23247deb13 1,157-163,168-170,175-187
+crates/tracker-secrets/src/lib.rs
+  s_0bbf4c1f20225e::t_8398353f974202 69-71,88-94,96-98
+  s_0bbf4c1f20225e::t_f2f76d626af47a 16-17,95,105
+  s_0bbf4c1f20225e::t_ce05b49f21b697 60-62,64-65
+crates/tracker-secrets/src/testing.rs
+  s_0bbf4c1f20225e::t_424e23247deb13 19,50-63,108-113
+CHANGELOG.md
+  s_0bbf4c1f20225e::t_640f43a4977027 14
+docs/jira.md
+  s_0bbf4c1f20225e::t_0caffcf6715b42 29-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec00a19fb1342b8dbd40ad54cb9165410fd3d955",
+  "prompts": {},
+  "sessions": {
+    "s_0bbf4c1f20225e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf188816-f125-4205-bd6c-ae2dc78044e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
