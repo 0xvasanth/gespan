@@ -7,6 +7,7 @@ mod classic_sidebar;
 #[cfg(test)]
 mod classic_surface_tests;
 mod classic_surfaces;
+mod diagnostics;
 mod file_panes;
 mod flow_runs;
 #[cfg(test)]

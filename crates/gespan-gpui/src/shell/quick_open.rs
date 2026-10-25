@@ -53,37 +53,11 @@ impl Shell {
                     Command::Panel => window.dispatch_action(Box::new(ToggleRightPanel), cx),
                     Command::Terminal => window.dispatch_action(Box::new(ToggleTerminal), cx),
                     Command::Layout => window.dispatch_action(Box::new(ToggleLayout), cx),
-                    Command::OpenLogs => {
-                        let open = cx
-                            .background_executor()
-                            .spawn(async { gespan_core::diagnostics::open_logs_folder() });
-                        cx.spawn(async move |this, cx| {
-                            if let Err(error) = open.await {
-                                let _ = this.update(cx, |this, cx| {
-                                    this.error = Some(format!("Open logs folder: {error}"));
-                                    cx.notify();
-                                });
-                            }
-                        })
-                        .detach();
-                    }
+                    Command::OpenLogs => this.open_logs_folder(cx),
                     Command::ReportIssue => {
                         window.dispatch_action(Box::new(crate::report::ReportIssue), cx)
                     }
-                    Command::CopyDiagnostics => {
-                        // It scans the log and crash folders: keep that off
-                        // the UI thread.
-                        let summary = cx
-                            .background_executor()
-                            .spawn(async { gespan_core::diagnostics::summary() });
-                        cx.spawn(async move |_, cx| {
-                            let summary = summary.await;
-                            cx.update(|cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(summary))
-                            })
-                        })
-                        .detach();
-                    }
+                    Command::CopyDiagnostics => this.copy_diagnostics(cx),
                     Command::Plan | Command::Operator | Command::Orchestrator => {
                         if let Some(view) =
                             this.workspace.active.and_then(|id| this.sessions.get(&id))

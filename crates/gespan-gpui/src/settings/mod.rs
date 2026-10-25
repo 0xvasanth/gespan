@@ -135,6 +135,9 @@ pub(crate) enum SettingsEvent {
     MobilePair,
     MobileCancelInvite,
     MobileRevoke(String),
+    ReportIssue,
+    OpenLogsFolder,
+    CopyDiagnostics,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

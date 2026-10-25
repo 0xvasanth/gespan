@@ -237,6 +237,11 @@ impl Shell {
                 SettingsEvent::MobilePair => this.pair_mobile(cx),
                 SettingsEvent::MobileCancelInvite => this.mobile_cancel_invite(cx),
                 SettingsEvent::MobileRevoke(id) => this.mobile_revoke(id, cx),
+                SettingsEvent::ReportIssue => {
+                    this.open_report(crate::report::Prefill::default(), window, cx)
+                }
+                SettingsEvent::OpenLogsFolder => this.open_logs_folder(cx),
+                SettingsEvent::CopyDiagnostics => this.copy_diagnostics(cx),
             },
         ));
         // This dialog is painted at the window root, like React's portal.

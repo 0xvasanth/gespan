@@ -1,7 +1,10 @@
 //! The Diagnostics page: local tools for reporting a problem, and the
 //! failure counters #71 keeps on this computer. Nothing here sends anything.
 use crate::{
-    settings::{SettingsView, widgets::note},
+    settings::{
+        SettingsEvent, SettingsView,
+        widgets::{note, secondary_button},
+    },
     theme::*,
 };
 use gespan_core::diagnostics::metrics::{self, Count, ErrorKind};
@@ -76,7 +79,48 @@ impl SettingsView {
         self.counters_loading = None;
     }
 
-    pub(super) fn diagnostics_page(&mut self, _cx: &mut Context<Self>) -> Vec<AnyElement> {
+    pub(super) fn diagnostics_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let tools = vec![
+            self.row(
+                Some("report-issue"),
+                true,
+                "Report an issue",
+                Some(
+                    "Describe what went wrong and choose what to attach before anything leaves."
+                        .into(),
+                ),
+                vec![action(
+                    "diagnostics-report",
+                    "Report an issue…",
+                    || SettingsEvent::ReportIssue,
+                    cx,
+                )],
+            ),
+            self.row(
+                Some("open-logs"),
+                false,
+                "Open logs folder",
+                Some("Show Gespan's log and crash files.".into()),
+                vec![action(
+                    "diagnostics-open-logs",
+                    "Open folder",
+                    || SettingsEvent::OpenLogsFolder,
+                    cx,
+                )],
+            ),
+            self.row(
+                Some("copy-diagnostics"),
+                false,
+                "Copy diagnostics",
+                Some("Copy a short plain-text summary of this build and its log files.".into()),
+                vec![action(
+                    "diagnostics-copy",
+                    "Copy",
+                    || SettingsEvent::CopyDiagnostics,
+                    cx,
+                )],
+            ),
+        ];
         let counters = match &self.counters {
             None => vec![note("Reading the counters…")],
             Some(Err(error)) => vec![
@@ -97,9 +141,11 @@ impl SettingsView {
                 .map(|(ix, row)| counter_row(ix, row))
                 .collect(),
         };
-        vec![self.group(
+        vec![
+            self.group(None, true, "Get help", None, None, tools),
+            self.group(
             Some("failure-counters"),
-            true,
+            false,
             "Failures in the last 7 days",
             Some(
                 "How often each operation failed, by kind. Counted on this computer and never sent."
@@ -107,8 +153,22 @@ impl SettingsView {
             ),
             None,
             counters,
-        )]
+        ),
+        ]
     }
+}
+
+fn action(
+    id: &'static str,
+    label: &'static str,
+    event: fn() -> SettingsEvent,
+    cx: &mut Context<SettingsView>,
+) -> AnyElement {
+    secondary_button(id, label, false, false)
+        .debug_selector(move || id.into())
+        .child(label)
+        .on_click(cx.listener(move |_, _, _, cx| cx.emit(event())))
+        .into_any_element()
 }
 
 fn counter_row(ix: usize, row: &CounterRow) -> AnyElement {
@@ -200,7 +260,10 @@ mod tests {
 
     #[test]
     fn successes_alone_are_the_empty_state() {
-        let counts = stored(&[(0, "1.0", "git.fetch", None), (1, "1.0", "agent.spawn", None)]);
+        let counts = stored(&[
+            (0, "1.0", "git.fetch", None),
+            (1, "1.0", "agent.spawn", None),
+        ]);
         assert!(failure_rows(&counts).is_empty());
     }
 
