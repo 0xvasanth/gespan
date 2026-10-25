@@ -1,0 +1,25 @@
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_b9d8fd77235c83 247,1040-1043,1045-1046,1287
+src/features/board/ui/BoardView.test.ts
+  s_938a6e0c93b076::t_dc49b8368f4653 2616-2639,2645,2647-2720
+  s_938a6e0c93b076::t_b97c6afc8010ad 2640-2644
+  s_938a6e0c93b076::t_48bea203bd04d1 2646
+src/features/board/ui/NewCardModal.tsx
+  s_938a6e0c93b076::t_b9d8fd77235c83 87,96-97,99-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "efa9133fa3b04f8222a376cd92915bc592a376d4",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
