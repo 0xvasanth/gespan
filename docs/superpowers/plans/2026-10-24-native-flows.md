@@ -1,17 +1,17 @@
-# Flows for Rebase Native — Implementation Plan
+# Flows for Gespan Native — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let a user write a deterministic orchestrator once and run it again and again. Rebase Native calls this a **Flow**.
+**Goal:** Let a user write a deterministic orchestrator once and run it again and again. Gespan Native calls this a **Flow**.
 
 **Architecture:**
 - A Flow is a state machine. Agent states each run a supported harness in a fresh session. A state receives only the inputs that are linked to it, and returns typed JSON outputs that choose the next state.
-- The Flow model, validation, bindings, output contract, storage and runner live in `crates/rebase-core` as plain Rust, with no GPUI.
+- The Flow model, validation, bindings, output contract, storage and runner live in `crates/gespan-core` as plain Rust, with no GPUI.
 - The runner is a step-driven state machine behind a `FlowHost` trait.
-- `crates/rebase-gpui` implements that host on the session-launch path automations already use. It adds a Flows app view for listing, running and watching Flows.
+- `crates/gespan-gpui` implements that host on the session-launch path automations already use. It adds a Flows app view for listing, running and watching Flows.
 - Phase 1 ships a usable Flows with starter Flows and a JSON definition editor. Phases 2 and 3 add a visual editor, automation triggers, Board integration and Tauri parity.
 
-**Tech Stack:** Rust (`rebase-core`, GPUI `rebase-gpui`), SQLite through the shared `rebase.db`, cargo tests with the `native-dev` profile, Bun for any UI tooling.
+**Tech Stack:** Rust (`gespan-core`, GPUI `gespan-gpui`), SQLite through the shared `gespan.db`, cargo tests with the `native-dev` profile, Bun for any UI tooling.
 
 **Spec:**
 - The state-machine design the user approved on 2026-10-23 (`docs/superpowers/plans/2026-10-23-flows.md`, Design Decisions). Decisions recorded there: JSON output contract, shared worktree per run, sequential with loops in v1, Kiro separate.
@@ -30,36 +30,36 @@
 
 **Board**
 - Tauri Board is merged (#32). It has `LINK_KINDS = ["session","pilot","flow-run"]` (`src-tauri/src/board.rs:16`).
-- Native Board is in flight on `mc/sql-workflow-state-tracking` (worktree `mc-c4738962`, not merged). Its core module `crates/rebase-core/src/board/` has the same link kinds (`mod.rs:37`) and the hook `board::on_linked_work(service, kind, id, LinkedWorkEvent)` (`auto_move.rs:52`).
+- Native Board is in flight on `mc/sql-workflow-state-tracking` (worktree `mc-c4738962`, not merged). Its core module `crates/gespan-core/src/board/` has the same link kinds (`mod.rs:37`) and the hook `board::on_linked_work(service, kind, id, LinkedWorkEvent)` (`auto_move.rs:52`).
 
 **Session launch to reuse**
-- `Shell::launch_automation` (`crates/rebase-gpui/src/shell/automation_runs.rs:286-530`) is the launch path to copy:
+- `Shell::launch_automation` (`crates/gespan-gpui/src/shell/automation_runs.rs:286-530`) is the launch path to copy:
   1. `store.create(harness, cwd)` (`:422`)
   2. `save_agent_settings`
-  3. worktree selection: `settings.new_worktree` + `worktree_base: "HEAD"`, or `settings.worktree_cwd` to reuse (`:385-388`, fields in `crates/rebase-core/src/agent.rs:136-138`)
+  3. worktree selection: `settings.new_worktree` + `worktree_base: "HEAD"`, or `settings.worktree_cwd` to reuse (`:385-388`, fields in `crates/gespan-core/src/agent.rs:136-138`)
   4. `self.add(summary)`, then `Conversation::quick_submit(prompt, settings)` (`conversation.rs:779`)
 - Completion is reported through `Shell::automation_session_changed` (`automation_runs.rs:534`, called from `shell.rs:1239`), plus `external_submission_pending()` and `external_outcome()` (`composer_features.rs:~451-470`).
 - `external_submission_pending` already waits out the Claude background-wake window.
-- Final text comes from `rebase_core::response::prose` (`response.rs:56`). The outcome path truncates it to 12,000 chars, so the contract must use the untruncated last assistant message instead.
+- Final text comes from `gespan_core::response::prose` (`response.rs:56`). The outcome path truncates it to 12,000 chars, so the contract must use the untruncated last assistant message instead.
 
 **Worktrees**
-- `git::create_worktree` (`git.rs:187`) makes a `rebase/native-…` branch on the first turn (`runtime.rs:223`). The resulting path is reported in `Update.worktree_cwd` (`runtime.rs:966`).
+- `git::create_worktree` (`git.rs:187`) makes a `gespan/native-…` branch on the first turn (`runtime.rs:223`). The resulting path is reported in `Update.worktree_cwd` (`runtime.rs:966`).
 - Later sessions reuse it through `settings.worktree_cwd`.
 
 **Storage**
 - Core modules own tables through `ensure_tables(conn)`, using DDL identical to Tauri's. Examples: `automations.rs:207`, `board/mod.rs:106`, native-only `board/extras.rs:17`.
-- Cross-app contract tests: `crates/rebase-core/tests/shared_contracts.rs`, `src/test/sharedContracts.test.ts`.
+- Cross-app contract tests: `crates/gespan-core/tests/shared_contracts.rs`, `src/test/sharedContracts.test.ts`.
 
 **Harnesses**
-- Native `Kind` (`crates/rebase-core/src/provider/kind.rs:3-14`): Codex, Claude, Cursor, Grok, OpenCode, Antigravity, Pi, Omp, Fx, Hermes, Devin.
+- Native `Kind` (`crates/gespan-core/src/provider/kind.rs:3-14`): Codex, Claude, Cursor, Grok, OpenCode, Antigravity, Pi, Omp, Fx, Hermes, Devin.
 - There's no Kiro in Native.
 
 **App views**
-- `enum AppView` is at `crates/rebase-gpui/src/workspace.rs:10`, with render and labels in `shell/app_views.rs:14-16`.
+- `enum AppView` is at `crates/gespan-gpui/src/workspace.rs:10`, with render and labels in `shell/app_views.rs:14-16`.
 - Native Board commit `3b34648a` shows the full set of places a new view touches: `workspace.rs`, `app_views.rs`, `project_rail.rs`, `sidebar_list.rs`, `title_tabs.rs`, a settings toggle, and `classic_surface_tests.rs`.
 
 **Orchestration**
-- `crates/rebase-core/src/orchestration.rs` is planned by a lead agent, so it isn't deterministic. Flows don't use it.
+- `crates/gespan-core/src/orchestration.rs` is planned by a lead agent, so it isn't deterministic. Flows don't use it.
 
 **Claude**
 - Sub-agent and background-agent capture and heartbeat dropping already work (`provider/agent_registry.rs`, `provider/tasks.rs`).
@@ -67,9 +67,9 @@
 
 ## Global Constraints
 
-- **Target app.** Rebase Native, macOS first. Tauri parity is Phase 3. No change may break the Tauri app's use of the shared `rebase.db`.
+- **Target app.** Gespan Native, macOS first. Tauri parity is Phase 3. No change may break the Tauri app's use of the shared `gespan.db`.
 - **Tooling.**
-  - Rust: `cargo … --locked --manifest-path crates/rebase-gpui/Cargo.toml -p <pkg> --profile native-dev`.
+  - Rust: `cargo … --locked --manifest-path crates/gespan-gpui/Cargo.toml -p <pkg> --profile native-dev`.
   - Gates: `env ZDOTDIR=$(mktemp -d) bun run native:check` and `bun run check`.
   - Never run cargo without `--locked`, which rewrites `Cargo.lock`.
 - **Limits (unchanged from the approved design).**
@@ -89,7 +89,7 @@
     - `No transition matched from <id>`
     - `Interrupted by app restart`
     - `Binding states.<id>.outputs.<field> has no value yet`
-- **Harnesses.** Agent states may use any `rebase_core::provider::Kind`. Kiro is out of scope until Native supports it.
+- **Harnesses.** Agent states may use any `gespan_core::provider::Kind`. Kiro is out of scope until Native supports it.
 - **Commits.** No Co-Authored-By trailer and no AI attribution. No local Cubic review. Never stage the user's uncommitted `README.md`.
 - **Branch.** `feat/native-flows`, from `origin/main` 71f80daa.
 
@@ -106,7 +106,7 @@ The approved 2026-10-23 decisions carry over:
 - "Resume from state" appends a visit
 
 These are new for Native and are **my calls, flagged for review**:
-1. **Core owns everything except the host.** `rebase_core::flow` has `definition`, `template`, `contract`, `store` and `runner`. GPUI only implements `FlowHost` and the views. A future Tauri port reuses the same rules through its own TS twin (Phase 3).
+1. **Core owns everything except the host.** `gespan_core::flow` has `definition`, `template`, `contract`, `store` and `runner`. GPUI only implements `FlowHost` and the views. A future Tauri port reuses the same rules through its own TS twin (Phase 3).
 2. **The runner is step-driven, not async.** Every runner method returns a list of `Effect`s (`Launch`, `FollowUp`, `Cancel`, `NeedsApproval`, `Finished`), and the host reports results back:
    - `on_agent_settled(run_id, visit_id, AgentOutcome)`
    - `on_worktree(run_id, path)`
@@ -116,14 +116,14 @@ These are new for Native and are **my calls, flagged for review**:
    This fits GPUI's callback-driven session events and makes the runner fully unit-testable with no clock or executor.
 3. **Visible background sessions.** Each agent visit is a normal session, launched like a scheduled automation: titled `"<Flow name> · <state title>"`, not revealed, and placed in a session folder per run when the project supports folders. A visit links to its session by `session_id`. Sessions get **no** new column, so the shared DB stays unchanged. A truly hidden session is a later option.
 4. **Worktree handoff.** The first agent visit launches with `new_worktree = true` and `worktree_base = "HEAD"`. The host reads the created path from that session's settled update and calls `on_worktree`. Every later visit launches with `worktree_cwd = <path>`.
-5. **Final text for the contract.** Use the **untruncated** text of the last assistant message group after the last `user` row. That needs a new `rebase_core::response::last_assistant_text(rows)` beside `prose`, not the 12,000-char `external_outcome` text. A follow-up retry reads its own turn the same way.
+5. **Final text for the contract.** Use the **untruncated** text of the last assistant message group after the last `user` row. That needs a new `gespan_core::response::last_assistant_text(rows)` beside `prose`, not the 12,000-char `external_outcome` text. A follow-up retry reads its own turn the same way.
 6. **Storage.**
    - Tables:
      - `flows(id PK, definition_json, updated_at)`
      - `flow_runs(id PK, flow_id FK→flows ON DELETE CASCADE, status, created_at, run_json)`, with indexes `(flow_id, created_at DESC)` and `(status)`
      - `flow_visits(id PK, run_id FK→flow_runs ON DELETE CASCADE, seq, state_id, status, visit_json, UNIQUE(run_id, seq))`, with index `(run_id, seq)`
-   - All created by `rebase_core::flow::store::ensure_tables`.
-   - `crates/rebase-core/tests/shared_contracts.rs` pins the DDL text so the Phase 3 Tauri twin can match it exactly.
+   - All created by `gespan_core::flow::store::ensure_tables`.
+   - `crates/gespan-core/tests/shared_contracts.rs` pins the DDL text so the Phase 3 Tauri twin can match it exactly.
    - The Tauri app never creates or reads these tables until Phase 3, so it is unaffected.
    - Deleting a Flow with a `running` or `waiting-approval` run is refused with `"Flow has an active run"`.
 7. **Definitions in Phase 1.**
@@ -143,13 +143,13 @@ These are new for Native and are **my calls, flagged for review**:
 
 ---
 
-## Phase 1 — Usable Flows in Rebase Native
+## Phase 1 — Usable Flows in Gespan Native
 
 ### Task 1: Flow definition, validation, bindings and starters (core)
 
 **Files:**
-- Create: `crates/rebase-core/src/flow/mod.rs`, `flow/definition.rs`, `flow/template.rs`, `flow/starter.rs`, with tests inline or in `flow/tests/`.
-- Modify: `crates/rebase-core/src/lib.rs`, to add `pub mod flow;`.
+- Create: `crates/gespan-core/src/flow/mod.rs`, `flow/definition.rs`, `flow/template.rs`, `flow/starter.rs`, with tests inline or in `flow/tests/`.
+- Modify: `crates/gespan-core/src/lib.rs`, to add `pub mod flow;`.
 - Port source: stash `a17401ea^3`, specifically `src/features/flows/model/flowDefinition.ts`, `flowTemplate.ts`, `starterFlows.ts` and both test files.
 
 **Interfaces (serde camelCase, so the JSON matches the TS shape):**
@@ -182,20 +182,20 @@ pub fn starter_flows() -> Vec<Flow>;                                    // id/cw
   - `harness_must_be_a_native_kind`: an unknown harness id produces an error containing `"unknown harness"`.
   - `research_starter_validates_without_code_steps`
   - `flow_json_round_trips_with_ts_shape`: a fixture JSON in the TS shape deserializes and re-serializes identically.
-- [ ] **Step 2: Run** `cargo test --locked --manifest-path crates/rebase-gpui/Cargo.toml -p rebase-core --profile native-dev flow::`. Expect FAIL.
+- [ ] **Step 2: Run** `cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev flow::`. Expect FAIL.
 - [ ] **Step 3: Implement.** Port the algorithms faithfully:
   - Reachability: BFS from `initial`.
   - "Cannot reach `$succeeded`": reverse reachability.
   - Must-precede dominators: iterative dominator sets.
   - Single-pass binding substitution using `\{\{\s*(inputs\.[a-z][a-z0-9_]*|states\.[a-z][a-z0-9_]*\.outputs\.[a-z][a-z0-9_]*)(\?)?\s*\}\}`.
 - [ ] **Step 4: Verify.** The same command passes, and so does clippy (`-D warnings`).
-- [ ] **Step 5: Commit** `Add Flow definitions, validation, bindings and starters to rebase-core`.
+- [ ] **Step 5: Commit** `Add Flow definitions, validation, bindings and starters to gespan-core`.
 
 ### Task 2: Output contract and transition selection (core)
 
 **Files:**
-- Create: `crates/rebase-core/src/flow/contract.rs`, with tests.
-- Modify: `crates/rebase-core/src/response.rs`, to add `last_assistant_text`.
+- Create: `crates/gespan-core/src/flow/contract.rs`, with tests.
+- Modify: `crates/gespan-core/src/response.rs`, to add `last_assistant_text`.
 
 **Interfaces:**
 
@@ -226,7 +226,7 @@ pub fn last_assistant_text(rows: &[Row]) -> String;          // untruncated last
   - `last_assistant_text`:
     - It returns the last assistant group after the last user row, in full. A 30,000-char reply comes back untruncated.
     - It ignores tool rows and earlier turns.
-- [ ] **Step 2: Run** `… -p rebase-core flow::contract response::`. Expect FAIL.
+- [ ] **Step 2: Run** `… -p gespan-core flow::contract response::`. Expect FAIL.
 - [ ] **Step 3: Implement.** Find fences with `(?s)```json\s*\n(.*?)````. Build `last_assistant_text` on the same row walk `prose` uses.
 - [ ] **Step 4: Verify.** The tests pass and clippy is clean.
 - [ ] **Step 5: Commit** `Add the Flow output contract and transition selection`.
@@ -234,8 +234,8 @@ pub fn last_assistant_text(rows: &[Row]) -> String;          // untruncated last
 ### Task 3: Flow storage (core)
 
 **Files:**
-- Create: `crates/rebase-core/src/flow/store.rs`.
-- Modify: `crates/rebase-core/tests/shared_contracts.rs`, to pin the DDL. Also modify whatever opens `rebase.db` for Native features, so it calls `flow::store::ensure_tables` the way automations and board do.
+- Create: `crates/gespan-core/src/flow/store.rs`.
+- Modify: `crates/gespan-core/tests/shared_contracts.rs`, to pin the DDL. Also modify whatever opens `gespan.db` for Native features, so it calls `flow::store::ensure_tables` the way automations and board do.
 
 **Interfaces:**
 
@@ -277,15 +277,15 @@ pub struct FlowVisit { id, run_id, seq: u32, state_id, status, prompt: Option<St
   - `run_save_rejects_unknown_flow`
   - `ensure_tables_is_idempotent_alongside_other_native_tables`
   - In `shared_contracts.rs`: `flow_ddl_is_pinned`, which asserts the exact `CREATE TABLE` text for all three tables.
-- [ ] **Step 2: Run** `… -p rebase-core flow::store` and `--test shared_contracts`. Expect FAIL.
+- [ ] **Step 2: Run** `… -p gespan-core flow::store` and `--test shared_contracts`. Expect FAIL.
 - [ ] **Step 3: Implement.** Mirror `automations::Service`: WAL, a 5 s `busy_timeout`, and JSON blobs with mirrored indexed columns.
 - [ ] **Step 4: Verify.** The tests pass and clippy is clean.
-- [ ] **Step 5: Commit** `Store Flows, runs and visits in rebase.db`.
+- [ ] **Step 5: Commit** `Store Flows, runs and visits in gespan.db`.
 
 ### Task 4: The state-machine runner (core)
 
 **Files:**
-- Create: `crates/rebase-core/src/flow/runner.rs`, with tests.
+- Create: `crates/gespan-core/src/flow/runner.rs`, with tests.
 
 **Interfaces:**
 
@@ -340,17 +340,17 @@ impl Runner {
   - `resume` appends seq last+1 and reuses the worktree
   - snapshot isolation
   - Also: `first_visit_failing_before_a_worktree_fails_the_run_without_hanging` (Review Focus 4)
-- [ ] **Step 2: Run** `… -p rebase-core flow::runner`. Expect FAIL.
+- [ ] **Step 2: Run** `… -p gespan-core flow::runner`. Expect FAIL.
 - [ ] **Step 3: Implement.** Keep all state transitions inside `Runner`. The host never decides flow logic.
-- [ ] **Step 4: Verify.** The tests pass, and the full `-p rebase-core` suite and clippy are clean.
+- [ ] **Step 4: Verify.** The tests pass, and the full `-p gespan-core` suite and clippy are clean.
 - [ ] **Step 5: Commit** `Add the Flow state-machine runner`.
 
 ### Task 5: GPUI host — sessions, worktree handoff, completion, cancel, recovery
 
 **Files:**
-- Create: `crates/rebase-gpui/src/flows/mod.rs` and `flows/host.rs`.
+- Create: `crates/gespan-gpui/src/flows/mod.rs` and `flows/host.rs`.
 - Modify:
-  - `crates/rebase-gpui/src/shell/automation_runs.rs`: extract the shared launch path into `Shell::launch_background_session(spec) -> SessionId`. `launch_automation` calls it with no behaviour change.
+  - `crates/gespan-gpui/src/shell/automation_runs.rs`: extract the shared launch path into `Shell::launch_background_session(spec) -> SessionId`. `launch_automation` calls it with no behaviour change.
   - The session-changed hook (`shell.rs:~1239`): also notify Flows.
   - Shell init: open a `FlowStore`, create a `Runner`, and run `recover` on startup.
 
@@ -377,15 +377,15 @@ impl Runner {
   - Cancel stops the session and marks the run cancelled.
   - Startup recovery marks a persisted running visit `Interrupted by app restart`.
   - A settled turn whose text exceeds 12,000 chars still parses its trailing JSON block, which proves the untruncated path.
-- [ ] **Step 2: Run** `… -p rebase-gpui flows:: automation`. Expect FAIL.
+- [ ] **Step 2: Run** `… -p gespan-gpui flows:: automation`. Expect FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Verify** with `env ZDOTDIR=$(mktemp -d) bun run native:check`.
-- [ ] **Step 5: Commit** `Run Flows on background sessions in Rebase Native`.
+- [ ] **Step 5: Commit** `Run Flows on background sessions in Gespan Native`.
 
 ### Task 6: Flows app view — list, new from starter, JSON editor, run dialog, run view
 
 **Files:**
-- Create: `crates/rebase-gpui/src/flows/view.rs`, `flows/editor.rs` (JSON), `flows/run_view.rs`.
+- Create: `crates/gespan-gpui/src/flows/view.rs`, `flows/editor.rs` (JSON), `flows/run_view.rs`.
 - Modify: everything the native Board commit `3b34648a` touched for a new `AppView`:
   - `workspace.rs` (`AppView::Flows`)
   - `shell/app_views.rs`
@@ -412,18 +412,18 @@ impl Runner {
   - The run dialog keeps Run disabled until a required input is filled.
   - A run view with a waiting-approval visit dispatches `resolve_approval(false, "redo")` on Reject.
   - Resume on a failed run defaults to the failed state.
-- [ ] **Step 2: Run** `… -p rebase-gpui flows::`. Expect FAIL.
+- [ ] **Step 2: Run** `… -p gespan-gpui flows::`. Expect FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Verify** with `env ZDOTDIR=$(mktemp -d) bun run native:check` and `bun run check`.
-- [ ] **Step 5: Commit** `Add the Flows view to Rebase Native`.
+- [ ] **Step 5: Commit** `Add the Flows view to Gespan Native`.
 
 ### Task 7: End-to-end check (controller)
 
 - [ ] Full gates.
-- [ ] `bun run native:dev`, which runs as Rebase Native Dev with dev data.
+- [ ] `bun run native:dev`, which runs as Gespan Native Dev with dev data.
 - [ ] In a scratch git repo:
   1. Create "Fix an issue" from the starter and run it.
-  2. Watch triage, then implement, then test, each in its own background session sharing one `rebase/native-…` worktree.
+  2. Watch triage, then implement, then test, each in its own background session sharing one `gespan/native-…` worktree.
   3. Check that implement's prompt contains triage's `plan`.
   4. Reject at review and watch it loop back to implement. Approve and see `succeeded`.
 - [ ] Edge cases:
