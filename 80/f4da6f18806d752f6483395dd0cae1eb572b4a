@@ -1,0 +1,29 @@
+Cargo.lock
+  s_cb714e3c395324::t_ec95102c76f25a 57-78,887-930,1095-1100,1986,3104-3109,3438-3448,3541-3566,3578-3600,3619,3621
+crates/gespan-speech/Cargo.toml
+  s_cb714e3c395324::t_e9d7c4c7066101 12
+crates/gespan-speech/src/capture.rs
+  s_cb714e3c395324::t_36e2d4b3a380f0 1-266
+crates/gespan-speech/src/helper.rs
+  s_cb714e3c395324::t_e5d1d1a45366e5 1-395
+crates/gespan-speech/src/lib.rs
+  s_cb714e3c395324::t_f11a590eb787ad 4,7,13,15-17
+crates/gespan-speech/tests/helper.rs
+  s_cb714e3c395324::t_d7b254db2d61b1 1-570
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "80f4da6f18806d752f6483395dd0cae1eb572b4a",
+  "prompts": {},
+  "sessions": {
+    "s_cb714e3c395324": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9490eb45-d269-459d-a64c-099ef06fd161",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
