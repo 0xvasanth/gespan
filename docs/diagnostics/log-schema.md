@@ -5,9 +5,8 @@ logs in this one format. Each line of a log file is a single JSON object
 (JSON Lines). The same lines, after scrubbing, become `logs.jsonl` in a
 diagnostics bundle (see [bundle-format.md](bundle-format.md)).
 
-Logs are always written locally. Writing them needs no consent, because they
-never leave the machine unless the user sends a report (see
-[consent.md](consent.md) and [../privacy.md](../privacy.md)).
+Logs are always written locally. They never leave the machine unless the user
+saves a report and sends it on themselves (see [../privacy.md](../privacy.md)).
 
 ## Files
 

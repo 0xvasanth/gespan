@@ -1,12 +1,13 @@
 # Diagnostics bundle format
 
-A diagnostics bundle is what "Report an issue" sends, or saves for the user to
-attach when the intake can't be reached. Both apps build the same bundle. This
-is `bundle_version: 1`.
+A diagnostics bundle is what "Report an issue" saves to the user's Downloads
+folder. Gespan never sends it: the user attaches it to an email to the
+maintainer or to a GitHub issue. Both apps build the same bundle. This is
+`bundle_version: 1`.
 
 Everything in a bundle is scrubbed on the user's machine by
 `crates/gespan-redact` **before** it is shown in the report preview. The
-preview shows exactly the bytes that will be sent.
+preview shows exactly the bytes that will be saved.
 
 ## Layout
 
@@ -16,7 +17,7 @@ A zip named `gespan-diagnostics-<app>-<version>-<timestamp>.zip`, for example
 
 | Entry | Always present | Contents |
 |---|---|---|
-| `report.json` | yes | The report itself: what the user wrote, the app and system, and the consent state. |
+| `report.json` | yes | The report itself: what the user wrote, the app and system. |
 | `logs.jsonl` | no | The last 2,000 log lines or 24 hours, whichever is smaller, in the [log schema](log-schema.md). Left out when the user turns off "Include recent logs" or unticks "Attach diagnostics". |
 | `crashes/*.json` | no | Unsent crash records, one file each, keeping their on-disk names. |
 | `counters.json` | no | The last 7 days of failure counters. |
@@ -31,13 +32,13 @@ A zip named `gespan-diagnostics-<app>-<version>-<timestamp>.zip`, for example
 
 ## Contents by kind
 
-`kind` in `report.json` says who started the send. A send from the crash
-notice ("Send" or "Always send") is a `crash` send, the same as an automatic
-one.
+`kind` in `report.json` says who started the report. Gespan only makes
+`user` bundles, including from the crash notice's "Report…". `crash` is kept
+in the format for an automatic crash send, which Gespan doesn't do.
 
 | Kind | `report.json` | `logs.jsonl` | `crashes/*.json` | `counters.json` | `environment.json` |
 |---|---|---|---|---|---|
-| `user` | Always | If "Attach diagnostics" is ticked and logs are included | If "Attach diagnostics" is ticked, unless crash reports are set to "Never send" | If "Attach diagnostics" is ticked | If "Attach diagnostics" is ticked |
+| `user` | Always | If "Attach diagnostics" is ticked and logs are included | If "Attach diagnostics" is ticked and the record isn't unticked | If "Attach diagnostics" is ticked | If "Attach diagnostics" is ticked |
 | `crash` | Always | Never | Always: the crash records being sent | Never | Never |
 
 ## report.json
@@ -45,7 +46,7 @@ one.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `bundle_version` | number | yes | Always `1` for this format. |
-| `submission_id` | string | yes | A random UUID v4 made when the bundle is built. The intake uses it to ignore retries of the same send. |
+| `submission_id` | string | yes | A random UUID v4 made when the bundle is built. It tells two reports from the same second apart. |
 | `kind` | string | yes | `"user"` for a report a person wrote, `"crash"` for an automatic crash send. |
 | `created_at` | string | yes | RFC 3339 UTC. |
 | `app` | string | yes | `"native"` or `"tauri"`. |
@@ -58,11 +59,11 @@ one.
 | `title` | string | yes | The user's title, scrubbed like every other text in the bundle. For a crash send, `Crash in <file>:<line>` from the crash record's `location`, never the panic message, because nobody previews a crash send's title before it becomes public. |
 | `description` | string | yes | "What happened?", scrubbed. Empty for a crash send. |
 | `steps` | string | no | "Steps to reproduce", scrubbed. Omitted when empty. |
-| `contact_email` | string | no | Optional, entered by the user. Kept in the private bundle only and never put in the public issue. Left out of a fallback bundle (see [intake-api.md](intake-api.md#fallback-when-the-intake-cant-be-reached)), which the user attaches to a public issue. |
-| `install_id` | string | no | The anonymous install ID, if the user has opted in to anything (see [consent.md](consent.md#anonymous-install-id)). Omitted otherwise. Left out of a fallback bundle, so a public attachment can't link an install's reports. |
+| `contact_email` | string | no | Optional, entered by the user. Kept in the private bundle only and never put in the public issue. Left out of a fallback bundle, which the user may attach to a public issue. |
+| `install_id` | string | no | Reserved: an anonymous install ID. Gespan doesn't create one, since it never sends reports itself. Left out of a fallback bundle, so a public attachment can't link an install's reports. |
 | `event_ids` | array of strings | yes | `event_id`s of the log lines this report is about (from an error toast's "Report" action). May be empty. |
-| `consent` | object | yes | The consent record at the time of sending, as defined in [consent.md](consent.md#consent-record). |
-| `consent.consent_version` | number | yes | Which version of the consent wording the user agreed to. |
+| `consent` | object | yes | Always the default record (`crash_reports: "ask"`, `metrics: false`), kept so readers of `bundle_version: 1` find it. Gespan has no sending choices: it never sends anything by itself. |
+| `consent.consent_version` | number | yes | Always `1`. |
 | `files` | array of strings | yes | The other entries in this zip, so the intake can tell an empty file from a missing one. |
 
 ```json
@@ -81,7 +82,6 @@ one.
   "title": "New worktree fails in a fresh folder",
   "description": "Creating a worktree shows an error and nothing happens.",
   "steps": "1. Add a folder that is not a git repository\n2. New worktree",
-  "install_id": "c2d8e4a1-7b3f-4e9c-a6d0-5f1b8e2c9a74",
   "event_ids": ["0b7f1c2e-5a4d-4e8b-9f3a-2c6d1e0a9b47"],
   "consent": {
     "consent_version": 1,
@@ -99,10 +99,9 @@ one.
 Written by the panic hook with a synchronous, fsync'd write, named
 `crashes/<timestamp>-<random>.json`: the same timestamp format as the zip
 name, then 8 random hex digits, so two panics in the same second keep both
-records. A record leaves the local `crashes/` folder once it has been sent,
+records. A record leaves the local `crashes/` folder once it is saved in a report,
 once the user chooses "Don't send", or after 7 days, whichever comes first.
-The 7-day limit applies whatever the consent choice, so with "Never send"
-records don't pile up.
+Records don't pile up when a user never reports them.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
@@ -188,21 +187,12 @@ repository URLs.
 }
 ```
 
-## Sent reports
-
-Each app keeps `sent-reports.json` next to its logs: a list of
-`{ report_id, kind, sent_at }` for every send the intake accepted, including
-automatic crash sends, kept for 90 days to match the private storage. It is
-how a user finds the `report_id` of a send they never saw, to ask for its
-deletion. It holds nothing else.
-
 ## Versioning
 
 - Adding an optional field, or a new optional entry in the zip, keeps
   `bundle_version: 1`. Readers ignore fields and entries they don't know.
 - Removing or renaming a field, changing its type, or making a field required
-  needs `bundle_version: 2`, and the intake must accept both until the old
-  app versions are gone.
-- Sending something new (for example screenshots) is a change to what is
-  collected. It also bumps `consent_version` (see [consent.md](consent.md)),
-  so users are asked again.
+  needs `bundle_version: 2`, and readers must accept both until the old app
+  versions are gone.
+- Adding something new to the bundle (for example screenshots) is a change
+  to what is collected, so [privacy.md](../privacy.md) must say so first.

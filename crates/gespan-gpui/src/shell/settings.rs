@@ -684,6 +684,7 @@ mod tests {
         assert!(visual.debug_bounds("sidebar-content").is_none());
         for (section, selector) in Section::ALL.into_iter().zip([
             "settings-nav-general",
+            "settings-nav-diagnostics",
             "settings-nav-connections",
             "settings-nav-appearance",
             "settings-nav-keybindings",
