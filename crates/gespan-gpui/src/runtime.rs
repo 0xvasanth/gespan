@@ -87,7 +87,17 @@ pub(crate) fn run_turn(
     cancel: Arc<AtomicBool>,
     tx: async_channel::Sender<Update>,
 ) {
-    if summary.cwd.starts_with("remote://") {
+    let remote = summary.cwd.starts_with("remote://");
+    // Everything this turn logs, here and in gespan-core, names its session.
+    let _session = tracing::info_span!(
+        "agent_session",
+        session_id = summary.id,
+        provider = %summary.provider,
+        remote,
+    )
+    .entered();
+    tracing::info!("agent session started");
+    if remote {
         remote::run(summary, prompt, settings, controls, store, cancel, tx);
         return;
     }
@@ -904,6 +914,9 @@ fn run_turn_using(
             store.capture(&session, cwd, &edited_paths(&transcript.rows[turn_start..]))?;
             store.finish_turn(&session, cwd, id)
         });
+    }
+    if !cancelled && let Err(error) = &result {
+        tracing::warn!(%error, "agent turn failed");
     }
     let succeeded = history_loaded && result.is_ok();
     let (start, rows, mut status) = if !history_loaded {

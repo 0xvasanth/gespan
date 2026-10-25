@@ -37,6 +37,8 @@ mod image_lightbox;
 mod image_memory;
 mod inbox;
 mod input;
+#[cfg(test)]
+mod log_capture;
 mod markdown;
 mod markdown_model;
 #[cfg(target_os = "macos")]

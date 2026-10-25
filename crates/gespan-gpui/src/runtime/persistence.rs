@@ -396,4 +396,66 @@ mod tests {
         assert_eq!(rows[0].text, "Create the checkout");
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    /// Runs one turn the preflight rejects, with the given cancel flag, and
+    /// returns the session id and the log lines it wrote.
+    fn logged_rejected_turn(cancelled: bool) -> (i64, String, Vec<serde_json::Value>) {
+        let (store, id, _) = conversation();
+        let summary = locked(&store).unwrap().sessions().unwrap().pop().unwrap();
+        let provider = summary.provider.clone();
+        let (tx, _rx) = async_channel::bounded(8);
+        let (_control, controls) = std::sync::mpsc::channel();
+        let lines = crate::log_capture::capture(|| {
+            run_turn(
+                summary,
+                "Unsent".into(),
+                Settings {
+                    worktree_removed: true,
+                    ..Default::default()
+                },
+                controls,
+                store.clone(),
+                Arc::new(AtomicBool::new(cancelled)),
+                tx,
+            )
+        });
+        (id, provider, lines)
+    }
+
+    fn line<'a>(lines: &'a [serde_json::Value], message: &str) -> Option<&'a serde_json::Value> {
+        lines.iter().find(|line| line["message"] == message)
+    }
+
+    #[test]
+    fn turn_logs_run_inside_an_agent_session_span() {
+        let (id, provider, lines) = logged_rejected_turn(false);
+        let started = line(&lines, "agent session started").expect("a start line");
+        assert_eq!(started["level"], "info");
+        assert_eq!(started["span"], "agent_session");
+        assert_eq!(started["session_id"], id);
+        assert_eq!(started["fields"]["provider"], provider.as_str());
+        assert_eq!(started["fields"]["remote"], false);
+    }
+
+    #[test]
+    fn rejected_turn_logs_the_failure_with_its_session() {
+        let (id, _, lines) = logged_rejected_turn(false);
+        let failed = line(&lines, "agent turn failed").expect("a failure line");
+        assert_eq!(failed["level"], "warn");
+        assert_eq!(failed["target"], "gespan_gpui::runtime");
+        assert_eq!(failed["span"], "agent_session");
+        assert_eq!(failed["session_id"], id);
+        let error = failed["fields"]["error"].as_str().unwrap();
+        assert!(error.contains("Select a branch or worktree"), "{error}");
+    }
+
+    #[test]
+    fn stopped_turn_logs_no_failure() {
+        let (_, _, lines) = logged_rejected_turn(true);
+        assert!(line(&lines, "agent session started").is_some());
+        assert!(
+            line(&lines, "agent turn failed").is_none(),
+            "a user stop is not a failure: {lines:?}"
+        );
+    }
 }
