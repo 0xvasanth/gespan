@@ -5,12 +5,14 @@ const COLOR: Record<ColumnRole | "none", string> = {
   doing: "text-skill",
   review: "text-accent",
   done: "text-diff-add",
+  cancelled: "text-content/45",
   none: "text-content/45",
 };
 
 /**
  * 14px ring for a column role: todo dashed, doing half filled, review three
- * quarters filled, done filled with a check, no role a plain ring.
+ * quarters filled, done filled with a check, cancelled struck through, no
+ * role a plain ring.
  */
 export function ColumnRoleIcon({
   role,
@@ -56,6 +58,15 @@ export function ColumnRoleIcon({
           )}
           {role === "review" && (
             <path d="M7 7V3.5a3.5 3.5 0 1 1-3.5 3.5Z" fill="currentColor" />
+          )}
+          {role === "cancelled" && (
+            <path
+              data-mark="strike"
+              d="M3 11 11 3"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+            />
           )}
         </>
       )}

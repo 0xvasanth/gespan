@@ -1743,6 +1743,7 @@ dependencies = [
  "arboard",
  "base64 0.23.1",
  "block2",
+ "gespan-board-schema",
  "gespan-keep-awake",
  "gespan-mobile-link",
  "gespan-tracker-secrets",

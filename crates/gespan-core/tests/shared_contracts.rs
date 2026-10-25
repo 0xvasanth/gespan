@@ -411,8 +411,14 @@ fn local_board_ddl(source: &str) -> Vec<String> {
 #[test]
 fn both_apps_use_the_shared_board_schema() {
     let native = native_board_sources();
-    assert!(native.contains("gespan_board_schema::ensure"));
-    assert_eq!(local_board_ddl(&native), Vec::<String>::new());
+    let tauri = tauri("src-tauri/src/board.rs");
+    for (app, source) in [("native", &native), ("Tauri", &tauri)] {
+        assert!(
+            source.contains("gespan_board_schema::ensure"),
+            "{app} does not open the shared schema"
+        );
+        assert_eq!(local_board_ddl(source), Vec::<String>::new(), "{app}");
+    }
 }
 
 #[test]

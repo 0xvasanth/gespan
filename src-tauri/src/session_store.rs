@@ -2154,6 +2154,25 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     #[test]
+    fn open_waits_for_a_held_migration_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        drop(SessionStore::open(path.clone()).unwrap());
+        // The other app is mid-migration: it holds the write lock for a while.
+        let other = Connection::open(&path).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        let started = std::time::Instant::now();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            other.execute_batch("COMMIT;").unwrap();
+        });
+        let opened = SessionStore::open(path);
+        release.join().unwrap();
+        assert!(opened.is_ok(), "{:?}", opened.err());
+        assert!(started.elapsed() >= std::time::Duration::from_millis(250));
+    }
+
+    #[test]
     fn search_keeps_older_pilot_messages_available_after_conversion() {
         let store = SessionStore::open_in_memory().unwrap();
         let conn = store.lock_conn().unwrap();

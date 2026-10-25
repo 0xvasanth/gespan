@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { BoardActivity } from "../model/board";
 import {
+  ROLE_LABEL,
+  ROLES,
   activityText,
   linkValue,
   parseLinkValue,
@@ -27,6 +29,13 @@ function row(overrides: Partial<BoardActivity>): BoardActivity {
     ...overrides,
   };
 }
+
+describe("column roles", () => {
+  it("offers every role both backends accept, cancelled last", () => {
+    expect(ROLES).toEqual(["todo", "doing", "review", "done", "cancelled"]);
+    expect(ROLE_LABEL.cancelled).toBe("Cancelled");
+  });
+});
 
 describe("relativeTime", () => {
   it.each([

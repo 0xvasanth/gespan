@@ -1,3 +1,4 @@
+use gespan_board_schema::{sync_primary_link, ROLES};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -12,7 +13,6 @@ const MAX_TITLE: usize = 500;
 const MAX_BODY: usize = 1_000_000;
 const MAX_ACTIVITY: usize = 500;
 
-const ROLES: [&str; 4] = ["todo", "doing", "review", "done"];
 const LINK_KINDS: [&str; 3] = ["session", "pilot", "flow-run"];
 const ACTORS: [&str; 2] = ["user", "system"];
 /// Kinds `board_card_record` may append. Every other kind is written by the
@@ -42,6 +42,9 @@ pub struct Column {
     name: String,
     position: i64,
     role: Option<String>,
+    color: Option<String>,
+    wip_limit: Option<i64>,
+    collapsed: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -82,58 +85,10 @@ pub struct BoardDetail {
     cards: Vec<Card>,
 }
 
+/// Creates or upgrades the board tables `gespan.db` shares with Native; the
+/// schema and its migrations live in `gespan-board-schema`.
 pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS boards (
-           id TEXT PRIMARY KEY,
-           name TEXT NOT NULL,
-           card_seq INTEGER NOT NULL DEFAULT 0,
-           created_at INTEGER NOT NULL,
-           updated_at INTEGER NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS board_columns (
-           id TEXT PRIMARY KEY,
-           board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-           name TEXT NOT NULL,
-           position INTEGER NOT NULL,
-           role TEXT
-         );
-         CREATE UNIQUE INDEX IF NOT EXISTS board_columns_role_idx
-           ON board_columns (board_id, role) WHERE role IS NOT NULL;
-         CREATE TABLE IF NOT EXISTS board_cards (
-           id TEXT PRIMARY KEY,
-           board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-           column_id TEXT NOT NULL REFERENCES board_columns(id),
-           number INTEGER NOT NULL,
-           title TEXT NOT NULL,
-           body TEXT NOT NULL DEFAULT '',
-           position INTEGER NOT NULL,
-           link_kind TEXT,
-           link_id TEXT,
-           created_at INTEGER NOT NULL,
-           updated_at INTEGER NOT NULL,
-           UNIQUE (board_id, number)
-         );
-         CREATE INDEX IF NOT EXISTS board_cards_column_idx
-           ON board_cards (column_id, position);
-         CREATE INDEX IF NOT EXISTS board_cards_link_idx
-           ON board_cards (link_kind, link_id);
-         CREATE TABLE IF NOT EXISTS board_activity (
-           id TEXT PRIMARY KEY,
-           board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-           card_id TEXT REFERENCES board_cards(id) ON DELETE CASCADE,
-           kind TEXT NOT NULL,
-           actor TEXT NOT NULL,
-           from_column TEXT,
-           to_column TEXT,
-           detail TEXT,
-           created_at INTEGER NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS board_activity_board_idx
-           ON board_activity (board_id, created_at DESC);
-         CREATE INDEX IF NOT EXISTS board_activity_card_idx
-           ON board_activity (card_id, created_at DESC);",
-    )
+    gespan_board_schema::ensure(conn)
 }
 
 fn db(error: rusqlite::Error) -> String {
@@ -192,6 +147,9 @@ fn column_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Column> {
         name: row.get("name")?,
         position: row.get("position")?,
         role: row.get("role")?,
+        color: row.get("color")?,
+        wip_limit: row.get("wip_limit")?,
+        collapsed: row.get::<_, i64>("collapsed")? != 0,
     })
 }
 
@@ -457,6 +415,9 @@ pub(crate) fn create_column(
         name,
         position,
         role: role.map(str::to_string),
+        color: None,
+        wip_limit: None,
+        collapsed: false,
     };
     tx.execute(
         "INSERT INTO board_columns (id, board_id, name, position, role)
@@ -735,11 +696,13 @@ pub(crate) fn link_card(
         (None, None) => return Ok(card.board_id),
     };
     let tx = conn.unchecked_transaction().map_err(db)?;
+    let now = now_millis();
     tx.execute(
         "UPDATE board_cards SET link_kind = ?1, link_id = ?2, updated_at = ?3 WHERE id = ?4",
-        params![link.map(|l| l.0), link.map(|l| l.1), now_millis(), card_id],
+        params![link.map(|l| l.0), link.map(|l| l.1), now, card_id],
     )
     .map_err(db)?;
+    sync_primary_link(&tx, card_id, link, now).map_err(db)?;
     log_activity(
         &tx,
         NewActivity {
@@ -1562,4 +1525,192 @@ mod tests {
         let kinds: Vec<&str> = log.iter().map(|row| row.kind.as_str()).collect();
         assert_eq!(kinds, vec!["completed", "started"]);
     }
+    fn strings(conn: &Connection, sql: &str) -> Vec<String> {
+        let mut statement = conn.prepare(sql).unwrap();
+        let rows = statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        rows
+    }
+
+    fn count(conn: &Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    #[test]
+    fn native_v2_database_opens_in_tauri_with_every_value() {
+        use gespan_board_schema::testing::{assert_native_v2_migrated, seed_native_v2};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let seed = {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+            seed_native_v2(&conn)
+        };
+        let store = SessionStore::open(path).unwrap();
+        let conn = store.lock_conn().unwrap();
+        assert_native_v2_migrated(&conn, &seed);
+        let detail = get_board(&conn, &seed.board_id).unwrap();
+        let cards: Vec<(String, i64)> = detail
+            .cards
+            .iter()
+            .map(|card| (card.title.clone(), card.position))
+            .collect();
+        assert_eq!(
+            cards,
+            [("A".into(), 0), ("B".into(), 1), ("C".into(), 2)]
+        );
+        let a = &detail.cards[0];
+        assert_eq!(
+            (a.link_kind.as_deref(), a.link_id.as_deref()),
+            (Some("session"), Some("s-1"))
+        );
+    }
+
+    #[test]
+    fn opening_twice_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let version = {
+            let store = SessionStore::open(path.clone()).unwrap();
+            let conn = store.lock_conn().unwrap();
+            count(&conn, "PRAGMA schema_version")
+        };
+        let store = SessionStore::open(path).unwrap();
+        let conn = store.lock_conn().unwrap();
+        assert_eq!(count(&conn, "PRAGMA schema_version"), version);
+        assert_eq!(
+            strings(&conn, "SELECT CAST(version AS TEXT) FROM board_schema_migrations"),
+            ["3"]
+        );
+    }
+
+    #[test]
+    fn deleting_a_card_removes_its_v3_rows() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let cards = add_cards(&conn, &columns[0].id, &["gone", "kept", "other"]);
+        let (gone, kept, other) = (&cards[0].id, &cards[1].id, &cards[2].id);
+        conn.execute(
+            "INSERT INTO board_labels (id, board_id, name, color, position) VALUES ('l', ?1, 'Bug', 'd73a4a', 0)",
+            [&board.id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO board_fields (id, board_id, name, kind, position) VALUES ('f', ?1, 'Size', 'number', 0)",
+            [&board.id],
+        )
+        .unwrap();
+        for card in [gone, kept] {
+            conn.execute_batch(&format!(
+                "INSERT INTO board_card_meta (card_id, priority) VALUES ('{card}', 2);
+                 INSERT INTO board_card_labels (card_id, label_id) VALUES ('{card}', 'l');
+                 INSERT INTO board_subtasks (id, card_id, title, position) VALUES ('s-{card}', '{card}', 'Do', 0);
+                 INSERT INTO board_comments (id, card_id, body, created_at) VALUES ('c-{card}', '{card}', 'Hi', 1);
+                 INSERT INTO board_card_projects (card_id, project) VALUES ('{card}', '/work');
+                 INSERT INTO board_card_links (card_id, kind, ref, created_at) VALUES ('{card}', 'pr', 'gh:1', 1);
+                 INSERT INTO board_card_field_values (card_id, field_id, value_json) VALUES ('{card}', 'f', '3');"
+            ))
+            .unwrap();
+        }
+        conn.execute_batch(&format!(
+            "INSERT INTO board_card_relations (card_id, related_card_id, kind, created_at) VALUES
+               ('{gone}', '{kept}', 'blocks', 1),
+               ('{other}', '{gone}', 'relates', 1),
+               ('{kept}', '{other}', 'duplicates', 1);
+             INSERT INTO board_subtasks (id, card_id, title, position, converted_card_id)
+               VALUES ('s-converted', '{kept}', 'Split out', 1, '{gone}');"
+        ))
+        .unwrap();
+        delete_card(&conn, gone).unwrap();
+        for table in [
+            "board_card_meta",
+            "board_card_labels",
+            "board_subtasks",
+            "board_comments",
+            "board_card_projects",
+            "board_card_links",
+            "board_card_field_values",
+        ] {
+            assert_eq!(
+                strings(&conn, &format!("SELECT DISTINCT card_id FROM {table} ORDER BY card_id")),
+                [kept.clone()],
+                "{table}"
+            );
+        }
+        assert_eq!(
+            strings(
+                &conn,
+                "SELECT card_id || '>' || related_card_id FROM board_card_relations"
+            ),
+            [format!("{kept}>{other}")]
+        );
+        // A subtask converted into the deleted card stays, unlinked.
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM board_subtasks WHERE id = 's-converted' AND converted_card_id IS NULL"
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn link_card_keeps_the_primary_link_row_in_step() {
+        let conn = setup();
+        let (_, columns) = board_with_columns(&conn);
+        let card = add_cards(&conn, &columns[0].id, &["a"]).remove(0);
+        let primary = |conn: &Connection| {
+            strings(
+                conn,
+                &format!(
+                    "SELECT kind || '/' || ref FROM board_card_links
+                     WHERE card_id = '{}' AND role = 'primary'",
+                    card.id
+                ),
+            )
+        };
+        link_card(&conn, &card.id, Some("session"), Some("x")).unwrap();
+        assert_eq!(primary(&conn), ["session/x"]);
+        link_card(&conn, &card.id, Some("pilot"), Some("y")).unwrap();
+        assert_eq!(primary(&conn), ["pilot/y"]);
+        assert!(link_card(&conn, &card.id, Some("bogus"), Some("z")).is_err());
+        assert_eq!(primary(&conn), ["pilot/y"]);
+        link_card(&conn, &card.id, None, None).unwrap();
+        assert!(primary(&conn).is_empty());
+    }
+
+    #[test]
+    fn cancelled_role_is_accepted_and_unique() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let dropped = create_column(&conn, &board.id, "Dropped", Some("cancelled")).unwrap();
+        assert_eq!(dropped.role.as_deref(), Some("cancelled"));
+        let error = create_column(&conn, &board.id, "Won't do", Some("cancelled")).unwrap_err();
+        assert!(error.contains("already has the cancelled role"), "{error}");
+        let error = update_column(&conn, &columns[0].id, "Backlog", Some("cancelled")).unwrap_err();
+        assert!(error.contains("already has the cancelled role"), "{error}");
+    }
+
+    #[test]
+    fn columns_serialize_colour_wip_limit_and_collapsed() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        conn.execute(
+            "UPDATE board_columns SET color = 'd73a4a', wip_limit = 3, collapsed = 1 WHERE id = ?1",
+            [&columns[1].id],
+        )
+        .unwrap();
+        let read = get_board(&conn, &board.id).unwrap().columns;
+        let json = serde_json::to_value(&read[..2]).unwrap();
+        assert_eq!(json[0]["color"], serde_json::Value::Null);
+        assert_eq!(json[0]["wipLimit"], serde_json::Value::Null);
+        assert_eq!(json[0]["collapsed"], false);
+        assert_eq!(json[1]["color"], "d73a4a");
+        assert_eq!(json[1]["wipLimit"], 3);
+        assert_eq!(json[1]["collapsed"], true);
+    }
+
 }

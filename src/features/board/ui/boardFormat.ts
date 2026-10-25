@@ -11,9 +11,16 @@ export const ROLE_LABEL: Record<ColumnRole, string> = {
   doing: "In progress",
   review: "Review",
   done: "Done",
+  cancelled: "Cancelled",
 };
 
-export const ROLES: readonly ColumnRole[] = ["todo", "doing", "review", "done"];
+export const ROLES: readonly ColumnRole[] = [
+  "todo",
+  "doing",
+  "review",
+  "done",
+  "cancelled",
+];
 
 /** Something a card can link to, as the app currently knows it. */
 export type BoardLinkTarget = {

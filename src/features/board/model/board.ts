@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 
 export const BOARD_CHANGED = "gespan:board-changed";
 
-export type ColumnRole = "todo" | "doing" | "review" | "done";
+export type ColumnRole = "todo" | "doing" | "review" | "done" | "cancelled";
 export type CardLinkKind = "session" | "pilot" | "flow-run";
 export type LinkedWorkEvent = "started" | "completed" | "failed";
 export type BoardActor = "user" | "system";
@@ -21,6 +21,10 @@ export type BoardColumn = {
   name: string;
   position: number;
   role: ColumnRole | null;
+  /** Schema v3 column fields; no editor writes them yet. */
+  color?: string | null;
+  wipLimit?: number | null;
+  collapsed?: boolean;
 };
 
 export type BoardCard = {

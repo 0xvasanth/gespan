@@ -38,6 +38,7 @@ uuid = { version = "1", features = ["v4"] }
 base64 = "0.23"
 tauri-plugin-dialog = "2"
 rusqlite = { version = "0.40.2", features = ["bundled", "hooks"], default-features = false }
+gespan-board-schema = { path = "../crates/board-schema" }
 ureq = { version = "2.12.1", default-features = false, features = ["tls", "gzip"] }
 url = "2.5"
 time = { version = "0.3", features = ["parsing"] }
@@ -82,5 +83,6 @@ tauri-plugin-updater = "2"
 tauri-plugin-window-state = "2.4.1"
 
 [dev-dependencies]
+gespan-board-schema = { path = "../crates/board-schema", features = ["testing"] }
 gespan-tracker-secrets = { path = "../crates/tracker-secrets", features = ["testing"] }
 tempfile = "3"

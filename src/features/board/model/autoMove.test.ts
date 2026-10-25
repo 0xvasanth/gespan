@@ -54,6 +54,21 @@ describe("autoMoveTarget", () => {
     expect(autoMoveTarget(columns, review, "completed")).toBeNull();
   });
 
+  it("never moves a card out of a cancelled column", () => {
+    // Cancelled sits left of doing and review, so a forward move exists.
+    const cancelled = column("cancelled", 1, "cancelled");
+    const board = [todo, cancelled, { ...doing, position: 2 }, { ...review, position: 3 }];
+    expect(autoMoveTarget(board, cancelled, "started")).toBeNull();
+    expect(autoMoveTarget(board, cancelled, "completed")).toBeNull();
+  });
+
+  it("never moves a card out of done, even when done sits left", () => {
+    const leftDone = column("done", 0, "done");
+    const board = [leftDone, { ...doing, position: 1 }, { ...review, position: 2 }];
+    expect(autoMoveTarget(board, leftDone, "started")).toBeNull();
+    expect(autoMoveTarget(board, leftDone, "completed")).toBeNull();
+  });
+
   it("never moves a failed run", () => {
     for (const current of columns) {
       expect(autoMoveTarget(columns, current, "failed")).toBeNull();

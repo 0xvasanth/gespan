@@ -26,13 +26,15 @@ function forwardColumn(
 /**
  * Where a card should go when its linked work reports `event`, or null to stay.
  * Cards only ever move right: started -> doing, completed -> review (or done
- * when the board has no review column). Failed work never moves a card.
+ * when the board has no review column). Failed work never moves a card, and
+ * neither does any event for a card already in a done or cancelled column.
  */
 export function autoMoveTarget(
   columns: BoardColumn[],
   current: BoardColumn,
   event: LinkedWorkEvent,
 ): BoardColumn | null {
+  if (current.role === "done" || current.role === "cancelled") return null;
   if (event === "started") return forwardColumn(columns, current, "doing");
   if (event === "completed") {
     const hasReview = columns.some((column) => column.role === "review");
