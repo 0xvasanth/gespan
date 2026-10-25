@@ -70,29 +70,37 @@ cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core
 
 ## Board — October 24, 2026
 
-The native Board shares the Tauri app's `boards`, `board_columns`,
-`board_cards` and `board_activity` tables; `crates/gespan-core/tests/shared_contracts.rs` pins the
-DDL, error strings and the `gespan.boardEnabled` key to Tauri, and checks that
-anything else is a `board_native_*` table. Task projects, labels, priority, due
-date, subtasks and comments live only in those native tables. Deleting a card
-in either app removes its own rows there, including which labels it carries;
-the board's label definitions stay until the board is deleted. The Board setting is on by default in both apps.
+Both apps read and write the same `boards`, `board_columns`, `board_cards`
+and `board_activity` tables, plus the shared label, project, subtask, comment
+and ticket-link tables, through the `gespan-board-store` crate;
+`crates/gespan-core/tests/shared_contracts.rs` pins the DDL, error strings and
+the `gespan.boardEnabled` key to Tauri. The earlier `board_native_*` tables
+stay in the database for one release and nothing reads them. Deleting a card
+in either app removes its own rows, including which labels it carries; the
+board's label definitions stay until the board is deleted. The Board setting
+is on by default in both apps.
 Automated coverage: storage, ordering, extras and concurrent writes (core);
-auto-move and turn rules (core); the setting and app view; the one-board view
-with search and filters; card and step styling; drag and drop and Move to…;
-the task drawer; and turn hooks (GPUI tests).
+auto-move and turn rules (core); the setting and app view; the board switcher,
+search and filters; card and step styling; drag and drop, keyboard dragging and
+Move to…; the task drawer; and turn hooks (GPUI tests).
 
 These runtime checks are pending; none has been run by hand yet:
 
 - Board is on by default; turning it off in Settings → General hides the rail,
   sidebar and title-tab entries, and turning it on again shows the same board.
-- The header has no board switcher: search narrows cards (also by `#12`),
-  Filter narrows by project, label and priority, counts read `shown/total`,
-  and New task opens the add field in the first step.
+- The header's board switcher creates, renames and deletes boards. Deleting
+  the open board opens another, and deleting the last one creates a new
+  default board. The board you opened last is still open after quitting and
+  reopening.
+- Search narrows cards (also by `#12`), Filter narrows by project, label and
+  priority, counts read `shown/total`, and New task opens the add field in
+  the first step.
 - Cards show label chips, subtask progress, priority, due date (red when
   past), comment count and linked work; steps add, rename, reorder and delete.
 - Drag cards within a step, across steps and onto an empty step, including
   while a filter is on.
+- Drag a card from the keyboard: Tab to a card, Space lifts it, arrows move
+  it, Space or Enter drops it, and Escape puts it back with nothing written.
 - Use a card's "Move to…" menu, both by clicking "…" and from the keyboard
   (Tab to a card, Enter, arrow keys, Enter).
 - Open a task: the drawer sits beside the board and never covers the header.
@@ -100,6 +108,11 @@ These runtime checks are pending; none has been run by hand yet:
   labels (including creating one), linked work, description, subtasks and
   comments; Mark complete, copy reference and Delete.
 - Edit a board in Tauri and see the change in native within about 2 s.
+  Both apps show the same boards, tasks, labels,
+  priority, due dates, subtasks, comments and ticket links.
+- In Tauri, the same task carries priority, due date, projects, labels,
+  subtasks and comments in the docked drawer; search and filters show
+  `shown/total`, and cards drag with the keyboard (Space or Enter, Escape).
 - Send a message to a Pilot with Board on and with Board off; a Pilot-linked
   card moves when Board is on, and nothing breaks either way.
 - Link a card to a session, send a prompt, and watch the card move to In
