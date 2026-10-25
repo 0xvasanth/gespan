@@ -82,7 +82,8 @@ Board setting is on by default in both apps.
 Automated coverage: storage, ordering, extras and concurrent writes (core);
 auto-move and turn rules (core); the setting and app view; the board switcher,
 search and filters; card and step styling; drag and drop, keyboard dragging and
-Move to…; the task drawer; and turn hooks (GPUI tests).
+Move to…; the task drawer; card-face quick edits, the column menu, collapsed columns,
+undo, held deletes and the Archive view; and turn hooks (GPUI tests).
 
 These runtime checks are pending; none has been run by hand yet:
 
@@ -107,6 +108,37 @@ These runtime checks are pending; none has been run by hand yet:
   Change status, priority, due date (including "Pick a date…"), projects,
   labels (including creating one), linked work, description, subtasks and
   comments; Mark complete, copy reference and Delete.
+- Card face: click priority, due or labels and a small menu opens in place
+  without dragging or opening the card; a card with no priority shows a faint
+  target on hover. In Native, "Pick a date…" opens the drawer's date picker.
+- Column menu: Collapse column, Sort by priority (Urgent first), Sort by due
+  date (soonest first, no date last) and Mark all as done (hidden on the done
+  column). Archive completed shows only on the done column. Sort with a filter
+  on still sorts the whole column.
+- Collapse a column: it becomes a thin strip with its name and count (Native
+  stacks the name top to bottom). Drop a card on it by mouse and from the
+  keyboard; the card lands at the end. Click or Enter expands it, and it stays
+  collapsed after reopening the board.
+- Quick add: type a title and press Enter; the field stays open for the next
+  card, and Escape closes it.
+- Undo a move: drag a card to another step, press Undo in the toast ("Moved #N
+  to {column}") within 8 s, and it returns to its old place. Do the same for a
+  multi-card move ("Moved N cards to {column}").
+- Undo a sort: sort a column and press Undo ("Sorted {column}"); the previous
+  order returns exactly.
+- Undo an archive: Archive completed ("Archived N cards"), then Undo; the cards
+  return to their columns and positions.
+- Undo a delete: delete a card ("Deleted #N"); it leaves the board but is not
+  in the Archive view. Undo brings it back at its old place. Let the toast
+  expire instead and the card is gone for good.
+- Quit during a held delete: delete a card, quit within 8 s and reopen. The
+  card is in the Archive view, not lost; Restore puts it back.
+- Move or delete the card in the other app during the 8 s, then press Undo:
+  the toast says what could not be undone and nothing is duplicated.
+- Archive view: open it from the header; archived cards are newest first.
+  Restore puts a card at the end of its column, and Delete forever asks first.
+- Delete column is disabled with "Move or delete its N cards first" while the
+  column holds live or archived cards, and works once both are gone.
 - Edit a board in Tauri and see the change in native within about 2 s. Both
   apps show the same boards, tasks, labels, priority, due dates, subtasks,
   comments and ticket links.
