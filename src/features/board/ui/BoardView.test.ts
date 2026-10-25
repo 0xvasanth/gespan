@@ -1086,6 +1086,105 @@ describe("BoardView card face, search and filters", () => {
     });
   });
 
+  it("filter options are checkboxes that report whether they are on", async () => {
+    five();
+    await renderBoard();
+    await pick("Filter", "Low");
+    await pick("Filter", "Bug");
+    const items = [
+      ...document.querySelectorAll<HTMLElement>(
+        '[role="menu"] [role^="menuitem"]',
+      ),
+    ];
+    const option = (name: string) =>
+      items.find((el) => el.textContent?.trim() === name)!;
+    for (const name of ["None", "Low", "High", "Bug"]) {
+      expect(option(name).getAttribute("role")).toBe("menuitemcheckbox");
+    }
+    expect(option("Low").getAttribute("aria-checked")).toBe("true");
+    expect(option("Bug").getAttribute("aria-checked")).toBe("true");
+    expect(option("High").getAttribute("aria-checked")).toBe("false");
+    // Clear is an action, not a toggle.
+    expect(option("Clear").getAttribute("role")).toBe("menuitem");
+  });
+
+  it("keyboard_drop_while_filtered_lands_between_the_right_cards", async () => {
+    five();
+    handlers.board_card_move = () => undefined;
+    await renderBoard();
+    search("alpha"); // shows #1, #3, #5; hides #2 and #4
+    // happy-dom has no layout: columns 300px apart, cards stacked.
+    const rect = (x: number, y: number, w: number, h: number) =>
+      ({
+        x,
+        y,
+        left: x,
+        top: y,
+        width: w,
+        height: h,
+        right: x + w,
+        bottom: y + h,
+        toJSON() {},
+      }) as DOMRect;
+    const spy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        const section = this.closest("[data-kanban-column]");
+        if (!section) return rect(6, 190, 268, 60); // over #5
+        const x =
+          [...container.querySelectorAll("[data-kanban-column]")].indexOf(
+            section,
+          ) * 300;
+        if (this === section) return rect(x, 0, 280, 500);
+        if (this.hasAttribute("data-kanban-card")) {
+          const above = [...this.parentElement!.children].indexOf(this);
+          return rect(x + 6, 50 + above * 70, 268, 60);
+        }
+        if (
+          this.querySelector("[data-kanban-card]") ||
+          this.matches(".overflow-y-auto")
+        ) {
+          return rect(x, 40, 280, 420);
+        }
+        return rect(x, 0, 280, 36);
+      });
+    try {
+      const key = (target: EventTarget, code: string) =>
+        act(() => {
+          target.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              code,
+              key: code === "Space" ? " " : code,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        });
+      const tick = () =>
+        act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+      const el = container.querySelector<HTMLElement>(
+        "[data-kanban-card='c5']",
+      )!;
+      act(() => el.focus());
+      key(el, "Space");
+      await tick();
+      key(el, "ArrowUp");
+      await tick();
+      key(document, "Space");
+      await tick();
+      await flush();
+      // Over visible #3 means before #3: after the hidden #2, so full index 2.
+      expect(commands("board_card_move")).toHaveLength(1);
+      expect(commands("board_card_move")[0][1]).toMatchObject({
+        cardId: "c5",
+        columnId: "backlog",
+        index: 2,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("a_deleted_label_in_the_filter_is_dropped", async () => {
     five();
     await renderBoard();

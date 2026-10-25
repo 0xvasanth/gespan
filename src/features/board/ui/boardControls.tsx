@@ -116,19 +116,28 @@ export function MenuItem({
   title,
   danger = false,
   checked,
+  kind = "radio",
 }: {
   children: ReactNode;
   onSelect: () => void;
   disabled?: boolean;
   title?: string;
   danger?: boolean;
-  /** Set for a radio item. */
+  /** Set for a checkable item: a radio, or a checkbox with `kind`. */
   checked?: boolean;
+  /** What a checkable item is: one of an exclusive set, or an independent toggle. */
+  kind?: "radio" | "checkbox";
 }) {
   return (
     <button
       type="button"
-      role={checked === undefined ? "menuitem" : "menuitemradio"}
+      role={
+        checked === undefined
+          ? "menuitem"
+          : kind === "checkbox"
+            ? "menuitemcheckbox"
+            : "menuitemradio"
+      }
       aria-checked={checked}
       disabled={disabled}
       title={title}

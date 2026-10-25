@@ -28,7 +28,7 @@ function Option({
   children: ReactNode;
 }) {
   return (
-    <MenuItem checked={checked} onSelect={onSelect}>
+    <MenuItem kind="checkbox" checked={checked} onSelect={onSelect}>
       <span className="grid size-3.5 shrink-0 place-items-center">
         {checked ? <Check className="size-3.5" strokeWidth={2} /> : null}
       </span>
