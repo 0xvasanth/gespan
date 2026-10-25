@@ -1,0 +1,25 @@
+crates/gespan-core/src/scm/tests.rs
+  s_723f23b667816d::t_503e785e6cc19a 1119-1122
+  s_723f23b667816d::t_c3f50f6f62c6bb 1082-1118,1123
+crates/gespan-core/src/git.rs
+  s_723f23b667816d::t_5d42f71b649278 34
+crates/gespan-core/src/scm.rs
+  s_723f23b667816d::t_5d42f71b649278 1236,1238,1241,1243-1248
+  s_723f23b667816d::t_57abb09f4ebadd 1161,1233-1235,1237,1239-1240,1242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0e96e9817ca3f6927dfde0c4c2330a848715ca20",
+  "prompts": {},
+  "sessions": {
+    "s_723f23b667816d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09d88fd0-1ba2-46bd-ab5c-dc747e3a6767",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

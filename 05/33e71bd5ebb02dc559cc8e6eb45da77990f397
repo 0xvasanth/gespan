@@ -1,0 +1,23 @@
+crates/gespan-core/tests/no_eprintln.rs
+  s_723f23b667816d::t_9a94d8c46ab97b 28,66
+  s_723f23b667816d::t_503e785e6cc19a 69-72
+  s_723f23b667816d::t_5d42f71b649278 11,18-27,29-34
+  s_723f23b667816d::t_9a2c6d00eab095 61-65,67-68
+  s_723f23b667816d::t_15a2dcdd6ebd6e 35-36,60,73-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0533e71bd5ebb02dc559cc8e6eb45da77990f397",
+  "prompts": {},
+  "sessions": {
+    "s_723f23b667816d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09d88fd0-1ba2-46bd-ab5c-dc747e3a6767",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
