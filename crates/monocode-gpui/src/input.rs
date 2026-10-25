@@ -1765,7 +1765,7 @@ impl Render for Input {
                 "Composer"
             })
             .when(self.code.is_some(), |d| {
-                d.h_full().font_family(crate::markdown::MONO)
+                d.h_full().font_family(crate::fonts::mono())
             })
             .track_focus(&self.focus)
             .cursor(if self.code_rail_hovered() {

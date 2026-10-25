@@ -413,6 +413,7 @@ fn main() {
             explorer::bind(cx);
             history::bind(cx);
             diff_view::bind(cx);
+            fonts::init(cx);
             terminal::bind(cx);
             let modifier = if cfg!(target_os = "macos") {
                 "cmd"

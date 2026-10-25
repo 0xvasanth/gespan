@@ -968,7 +968,7 @@ fn cell_rect(
 }
 
 fn mono_font() -> Font {
-    gpui::font(crate::markdown::MONO)
+    gpui::font(crate::fonts::mono())
 }
 fn selection_fill() -> Hsla {
     crate::theme::text_selection()

@@ -1341,7 +1341,7 @@ fn plain_line(
             px(font_size),
             &[TextRun {
                 len: text.len(),
-                font: gpui::font(crate::markdown::MONO),
+                font: gpui::font(crate::fonts::mono()),
                 color,
                 background_color: None,
                 underline: None,
@@ -1362,7 +1362,7 @@ fn token_line(
 ) -> WrappedLine {
     let base = TextRun {
         len: 0,
-        font: gpui::font(crate::markdown::MONO),
+        font: gpui::font(crate::fonts::mono()),
         color: crate::theme::content(1.),
         background_color: None,
         underline: None,
@@ -1411,7 +1411,7 @@ fn shape(i: &Input, row: usize, width: Option<Pixels>, w: &mut Window) -> Wrappe
     };
     let base = TextRun {
         len: text.len(),
-        font: gpui::font(crate::markdown::MONO),
+        font: gpui::font(crate::fonts::mono()),
         color: crate::theme::content(1.),
         background_color: None,
         underline: None,
@@ -1611,7 +1611,7 @@ impl Element for CodeElement {
                     px(i.font_size),
                     &[TextRun {
                         len: 1,
-                        font: gpui::font(crate::markdown::MONO),
+                        font: gpui::font(crate::fonts::mono()),
                         color: crate::theme::content(1.),
                         background_color: None,
                         underline: None,
@@ -1902,7 +1902,7 @@ impl Element for CodeElement {
                             } else {
                                 "⌄".len()
                             },
-                            font: gpui::font(crate::markdown::MONO),
+                            font: gpui::font(crate::fonts::mono()),
                             color: crate::theme::content(0.45),
                             background_color: None,
                             underline: None,
@@ -1930,7 +1930,7 @@ impl Element for CodeElement {
                     px(11.),
                     &[TextRun {
                         len,
-                        font: gpui::font(crate::markdown::MONO),
+                        font: gpui::font(crate::fonts::mono()),
                         color: crate::theme::content(0.3),
                         background_color: None,
                         underline: None,

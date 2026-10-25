@@ -201,7 +201,7 @@ fn background_row(task: &BackgroundTask) -> gpui::Stateful<gpui::Div> {
                     d.child(
                         div()
                             .truncate()
-                            .font_family(crate::markdown::MONO)
+                            .font_family(crate::fonts::mono())
                             .text_size(px(11.))
                             .text_color(content(0.4))
                             .child(format!("$ {}", first_line(&command))),

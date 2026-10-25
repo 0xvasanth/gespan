@@ -1,6 +1,6 @@
 //! Compact semantic tool captions with clickable file targets.
 use super::{TranscriptView, tasks};
-use crate::{markdown, theme::*};
+use crate::theme::*;
 use gpui::{AnyElement, Context, Div, Role, div, prelude::*, px, rgb};
 use monocode_core::tool::{CommandStep, ToolCall, ToolState};
 
@@ -250,7 +250,9 @@ impl TranscriptView {
                         .items_center()
                         .gap_1()
                         // A chain's description is prose; only its chips are code.
-                        .when(!chain, |d| d.font_family(markdown::MONO).text_size(px(12.)))
+                        .when(!chain, |d| {
+                            d.font_family(crate::fonts::mono()).text_size(px(12.))
+                        })
                         .text_color(if failed {
                             rgb(0xff6467).into()
                         } else {
@@ -346,7 +348,7 @@ impl TranscriptView {
                                             })
                                             .max_w(px(200.))
                                             .flex_shrink(1.)
-                                            .font_family(markdown::MONO)
+                                            .font_family(crate::fonts::mono())
                                             .text_size(px(12.))
                                             .gap_1()
                                             .px_1p5()
@@ -392,7 +394,7 @@ impl TranscriptView {
                                                 format!("tool-step-more-{start}")
                                             })
                                             .flex_shrink_0()
-                                            .font_family(markdown::MONO)
+                                            .font_family(crate::fonts::mono())
                                             .text_size(px(12.))
                                             .bg(content(0.))
                                             .border_color(content(0.12))
@@ -462,7 +464,7 @@ impl TranscriptView {
                         .pb_2()
                         .flex()
                         .flex_col()
-                        .font_family(markdown::MONO)
+                        .font_family(crate::fonts::mono())
                         .text_size(px(12.))
                         .line_height(px(20.))
                         .children(steps.into_iter().enumerate().map(
@@ -514,7 +516,7 @@ impl TranscriptView {
                     div()
                         .min_w_0()
                         .pb_2()
-                        .font_family(markdown::MONO)
+                        .font_family(crate::fonts::mono())
                         .text_size(px(12.))
                         .line_height(px(20.))
                         .text_color(rgb(0xf87171))
