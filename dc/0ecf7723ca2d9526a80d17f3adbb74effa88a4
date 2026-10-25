@@ -1,0 +1,21 @@
+crates/gespan-speech/src/client.rs
+  s_cb714e3c395324::t_0bcb9e8f9932fc 18-21
+crates/gespan-speech/src/lib.rs
+  s_cb714e3c395324::t_2d9191ab5c7077 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc0ecf7723ca2d9526a80d17f3adbb74effa88a4",
+  "prompts": {},
+  "sessions": {
+    "s_cb714e3c395324": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9490eb45-d269-459d-a64c-099ef06fd161",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
