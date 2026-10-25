@@ -1,0 +1,32 @@
+src/features/settings/ui/PlaneSettings.test.ts
+  s_938a6e0c93b076::t_5d53e02b15ca97 138-150
+src/features/sessions/ui/LinkTicketDialog.test.ts
+  s_938a6e0c93b076::t_5d53e02b15ca97 177-219
+src/features/sessions/ui/SessionTicketChip.test.ts
+  s_938a6e0c93b076::t_5d53e02b15ca97 17,25,161-172,174
+  s_938a6e0c93b076::t_dd795d8a35f332 173,175
+src/features/inbox/model/plane.ts
+  s_938a6e0c93b076::t_5d53e02b15ca97 12-22
+src/features/sessions/ui/LinkSessionWorkItemDialog.tsx
+  s_938a6e0c93b076::t_5d53e02b15ca97 1,31-43,58,63,72,74,105,157-160,168-171
+src/features/settings/ui/PlaneSettings.tsx
+  s_938a6e0c93b076::t_5d53e02b15ca97 7,137
+src/features/sessions/ui/SessionTicketChip.tsx
+  s_938a6e0c93b076::t_5d53e02b15ca97 13-14,58-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f0b1906126bafa24f35b056932a8e40626f2d707",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
