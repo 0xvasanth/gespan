@@ -188,6 +188,7 @@ const TOP_INSET: f32 = 20.;
 // Saved drafts are presentation rows, outside the provider transcript.
 const SAVED_DRAFT_START: usize = usize::MAX - 1;
 const BOTTOM_INSET: f32 = 40.;
+#[cfg(target_os = "macos")]
 const TOP_FADE: f32 = 24.;
 /// `.turn-actions-hover`'s 120ms opacity transition, in seconds.
 const HOVER_FADE: f32 = 0.12;
@@ -5618,28 +5619,10 @@ fn paint_edge_fade(bounds: Bounds<Pixels>, begin: bool, window: &mut Window) {
             BOTTOM_INSET * window.scale_factor(),
         ),
     ));
+    // A color overlay cannot mask text without tinting the pane and creating
+    // a seam above the composer. Only the Metal backend supports a real mask.
     #[cfg(not(target_os = "macos"))]
-    if !begin {
-        // Other native backends use an opaque chat pane.
-        for (top, height) in [(true, TOP_FADE as usize), (false, BOTTOM_INSET as usize)] {
-            for y in 0..height {
-                let mut color: gpui::Hsla = rgb(CHAT).into();
-                color.a = 1. - (y as f32 + 0.5) / height as f32;
-                let origin = gpui::point(
-                    bounds.left(),
-                    if top {
-                        bounds.top() + px(y as f32)
-                    } else {
-                        bounds.bottom() - px(y as f32 + 1.)
-                    },
-                );
-                window.paint_quad(gpui::fill(
-                    Bounds::new(origin, size(bounds.size.width, px(1.))),
-                    color,
-                ));
-            }
-        }
-    }
+    let _ = (bounds, begin, window);
 }
 
 #[cfg(test)]

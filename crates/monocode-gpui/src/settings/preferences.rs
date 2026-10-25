@@ -25,6 +25,7 @@ pub(crate) struct Preferences {
     pub terminal_in_panel: bool,
     // Appearance
     pub theme: String,
+    pub wayland_window_decorations: bool,
     pub workspace_theme: String,
     // Retain the legacy inset-only key when reading and saving preferences.
     // Window materials now use the shared opacity and main-pane glass values.
@@ -109,6 +110,7 @@ impl Default for Preferences {
             action_opens_terminal: true,
             terminal_in_panel: false,
             theme: "dark".into(),
+            wayland_window_decorations: true,
             workspace_theme: "default".into(),
             inset_glass: true,
             accent_color: None,
@@ -176,6 +178,7 @@ impl Preferences {
     pub(crate) fn restore_appearance(&mut self) {
         let d = Self::default();
         self.theme = d.theme;
+        self.wayland_window_decorations = d.wayland_window_decorations;
         self.accent_color = d.accent_color;
         self.workspace_theme = d.workspace_theme;
         self.sidebar_opacity = d.sidebar_opacity;
@@ -221,5 +224,22 @@ impl Preferences {
         hidden.sort();
         hidden.dedup();
         hidden
+    }
+}
+
+#[cfg(test)]
+mod decoration_tests {
+    use super::Preferences;
+
+    #[test]
+    fn decorations_default_persist_and_restore() {
+        let mut prefs: Preferences = serde_json::from_str("{}").unwrap();
+        assert!(prefs.wayland_window_decorations);
+        prefs.wayland_window_decorations = false;
+        let saved = serde_json::to_string(&prefs).unwrap();
+        let mut restored: Preferences = serde_json::from_str(&saved).unwrap();
+        assert!(!restored.wayland_window_decorations);
+        restored.restore_appearance();
+        assert!(restored.wayland_window_decorations);
     }
 }

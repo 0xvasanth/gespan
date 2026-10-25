@@ -39,6 +39,8 @@ mod sidebar_list;
 mod sidebar_peek;
 mod terminal_dock;
 mod title_tabs;
+#[cfg(target_os = "linux")]
+mod window_chrome;
 mod worktrees;
 
 use crate::{
@@ -258,6 +260,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
 
 /// macOS must receive button clicks as app content. Only blank titlebar
 /// regions initiate native dragging or the system double-click action.
+/// Client-decorated Linux windows also need explicit native drag requests.
 pub(crate) fn titlebar_drag_area() -> gpui::Div {
     let bounds = AnchorSlot::default();
     div()
@@ -266,7 +269,12 @@ pub(crate) fn titlebar_drag_area() -> gpui::Div {
         .child(bounds.probe())
         .window_control_area(WindowControlArea::Drag)
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-            if cfg!(target_os = "macos")
+            if (cfg!(target_os = "macos")
+                || (cfg!(target_os = "linux")
+                    && matches!(
+                        window.window_decorations(),
+                        gpui::Decorations::Client { .. }
+                    )))
                 && bounds.get().is_some_and(|b| b.contains(&event.position))
             {
                 // Check the measured spacer as well as GPUI's cached hit test:
@@ -7918,6 +7926,7 @@ impl Render for Shell {
         self.sync_notices(window, cx);
         div()
             .id("monocode-workspace")
+            .relative()
             .role(Role::Application)
             .aria_label("Monocode Native")
             .key_context("Workspace")
@@ -8365,6 +8374,11 @@ impl Render for Shell {
                     .as_ref()
                     .map(|(view, _)| crate::image_lightbox::overlay(view)),
             )
+            .map(|root| {
+                #[cfg(target_os = "linux")]
+                let root = root.children(window_chrome::resize_handles(window));
+                root
+            })
     }
 }
 
