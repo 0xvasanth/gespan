@@ -8,7 +8,9 @@ import { describe, expect, it } from "vitest";
 // each one parses, carries every field its own table marks required, and the
 // documents agree with each other on the shared constants.
 const root = resolve(__dirname, "../..");
-const doc = (path: string) => readFileSync(join(root, path), "utf8");
+/** Line endings as the parser expects them, whatever the checkout used. */
+const lf = (text: string) => text.replaceAll("\r\n", "\n");
+const doc = (path: string) => lf(readFileSync(join(root, path), "utf8"));
 
 type Json = Record<string, unknown>;
 
@@ -57,6 +59,16 @@ function requiredFields(md: string, heading: string): string[] {
 
 const LOG_SCHEMA = "docs/diagnostics/log-schema.md";
 const DENY_LIST = ["prompt", "content", "diff", "output", "body", "env", "audio", "transcript"];
+
+describe("reading the contract docs", () => {
+  it("parses a Windows (CRLF) checkout exactly like an LF one", () => {
+    const md = doc(LOG_SCHEMA);
+    const crlf = lf(md.replaceAll("\n", "\r\n"));
+    expect(requiredFields(crlf, "Fields")).toEqual(requiredFields(md, "Fields"));
+    expect(jsonBlocks(crlf, "jsonl")).toEqual(jsonBlocks(md, "jsonl"));
+    expect(section(crlf, "Deny-listed fields")).toBe(section(md, "Deny-listed fields"));
+  });
+});
 
 describe("log schema", () => {
   const md = doc(LOG_SCHEMA);
