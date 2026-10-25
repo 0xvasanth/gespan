@@ -23,6 +23,7 @@ pub mod pilot;
 pub mod process;
 pub mod project_appearance;
 pub mod provider;
+pub mod provider_boards;
 pub mod remote;
 pub mod resources;
 pub mod response;
