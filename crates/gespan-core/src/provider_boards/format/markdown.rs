@@ -165,7 +165,7 @@ impl Builder {
             .strip_prefix(skip.fallback.as_str())
             .unwrap_or(&leading);
         if !rest.is_empty() {
-            self.text(&rest.to_string(), false);
+            self.text(rest, false);
         }
         for event in held {
             self.event(event);

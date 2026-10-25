@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Code lives under `crates/gespan-core/src/provider_boards/format/**` (new). `provider_boards/mod.rs` only declares `pub mod format;`, and `lib.rs` gains one `pub mod provider_boards;` line (#97 is creating the same parent module in parallel, so both stay one line).
+- Code lives under `crates/gespan-core/src/provider_boards/format/**` (new). `provider_boards.rs` (the crate's `foo.rs` + `foo/` layout) only declares `pub mod format;`, and `lib.rs` gains one `pub mod provider_boards;` line (#97 is creating the same parent module in parallel, so both stay one line).
 - Pure functions only: no I/O, no network, no global state.
 - Round trips keep headings, lists, code, links and emphasis.
 - Blocks we can't represent are kept read-only, never dropped.
@@ -105,7 +105,7 @@ All derive `Debug, Clone, PartialEq, Eq`.
 ### Task 1: Module scaffold and document model
 
 **Files:**
-- Create: `crates/gespan-core/src/provider_boards/mod.rs`, `crates/gespan-core/src/provider_boards/format/mod.rs`, `crates/gespan-core/src/provider_boards/format/doc.rs`
+- Create: `crates/gespan-core/src/provider_boards.rs`, `crates/gespan-core/src/provider_boards/format/mod.rs`, `crates/gespan-core/src/provider_boards/format/doc.rs`
 - Modify: `crates/gespan-core/src/lib.rs` (one `pub mod provider_boards;` line)
 
 **Interfaces:**
