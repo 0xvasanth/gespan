@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub enum ProviderKind {
     Linear,
     Jira,
+    Plane,
     #[cfg(test)]
     Fake,
 }
@@ -18,6 +19,7 @@ impl ProviderKind {
         match self {
             Self::Linear => "linear",
             Self::Jira => "jira",
+            Self::Plane => "plane",
             #[cfg(test)]
             Self::Fake => "fake",
         }
@@ -27,6 +29,7 @@ impl ProviderKind {
         match self {
             Self::Linear => "Linear",
             Self::Jira => "Jira",
+            Self::Plane => "Plane",
             #[cfg(test)]
             Self::Fake => "Fake",
         }
