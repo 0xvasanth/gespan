@@ -1,0 +1,32 @@
+docs/diagnostics/consent.md
+  s_3d70b2915bde53::t_7f81e6c5db9f6a 97,102-103,114-116,122-123
+docs/diagnostics/log-schema.md
+  s_3d70b2915bde53::t_7f81e6c5db9f6a 64-66
+docs/diagnostics/bundle-format.md
+  s_3d70b2915bde53::t_7f81e6c5db9f6a 32-42,100-105,191-197
+  s_3d70b2915bde53::t_a7b93d63143ca7 198
+docs/privacy.md
+  s_3d70b2915bde53::t_7f81e6c5db9f6a 18-32,52-60,63-66,69-72,77-79,86-91,129-130,144-145,147-150
+docs/diagnostics/intake-api.md
+  s_3d70b2915bde53::t_7f81e6c5db9f6a 119-123,137-139,152-153
+src/test/diagnosticsContract.test.ts
+  s_3d70b2915bde53::t_0bec611346ec02 88-89,93,95-97,101,103-104,147-168,247,281,298-299,301-305,336-340,342-358
+  s_3d70b2915bde53::t_f0a547cabc25a3 102,300,341
+  s_3d70b2915bde53::t_11ffa8189f07e7 359
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4181b72b89ef7668652d1b4bc60f27016ea25824",
+  "prompts": {},
+  "sessions": {
+    "s_3d70b2915bde53": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "090d580c-c9c5-4007-950a-6316c24edf7d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
