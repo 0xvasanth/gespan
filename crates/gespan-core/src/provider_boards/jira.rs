@@ -934,10 +934,11 @@ fn fetch_jira_labels(
         if data["isLast"].as_bool() != Some(false) {
             return Ok(labels);
         }
-        if values.is_empty() {
+        let next = data["startAt"].as_u64().unwrap_or(start) + values.len() as u64;
+        if next <= start {
             return Err("Jira label pagination did not advance".into());
         }
-        start = data["startAt"].as_u64().unwrap_or(start) + values.len() as u64;
+        start = next;
     }
 }
 
@@ -954,7 +955,9 @@ fn parse_jira_member(node: &Value) -> Option<Member> {
     })
 }
 
-/// The assignable-users endpoint returns a bare array; a short page is the last.
+/// The assignable-users endpoint returns a bare array. Jira filters each
+/// `startAt`/`maxResults` window after slicing it, so a short page is not the
+/// last one: keep going until a page comes back empty.
 fn fetch_assignable_users(
     mut fetch: impl FnMut(u64) -> Result<Value, String>,
 ) -> Result<Vec<Member>, String> {
@@ -965,11 +968,11 @@ fn fetch_assignable_users(
         let users = data
             .as_array()
             .ok_or_else(|| "Jira did not return users".to_string())?;
-        members.extend(users.iter().filter_map(parse_jira_member));
-        if users.len() < USER_PAGE {
+        if users.is_empty() {
             return Ok(members);
         }
-        start += users.len() as u64;
+        members.extend(users.iter().filter_map(parse_jira_member));
+        start += USER_PAGE as u64;
     }
 }
 
@@ -1359,6 +1362,7 @@ mod tests {
         let pages = [
             Value::Array(full),
             json!([user("last", true), user("gone", false)]),
+            json!([]),
         ];
         let mut starts = Vec::new();
         let members = fetch_assignable_users(|start| {
@@ -1366,11 +1370,40 @@ mod tests {
             Ok(pages[starts.len() - 1].clone())
         })
         .unwrap();
-        assert_eq!(starts, [0, USER_PAGE as u64]);
+        assert_eq!(starts, [0, USER_PAGE as u64, 2 * USER_PAGE as u64]);
         assert_eq!(members.len(), USER_PAGE + 1);
         assert_eq!(members.last().unwrap().id, "last");
         assert_eq!(members[0].name, "U0");
         assert_eq!(members[0].avatar_url, "https://a/x.png");
+    }
+
+    #[test]
+    fn short_user_pages_do_not_end_paging() {
+        // Jira filters each window after slicing it, so a short page is not the last.
+        let user = |id: &str| json!({ "accountId": id, "displayName": id, "active": true });
+        let pages = [json!([user("a"), user("b")]), json!([user("c")]), json!([])];
+        let mut starts = Vec::new();
+        let members = fetch_assignable_users(|start| {
+            starts.push(start);
+            Ok(pages[starts.len() - 1].clone())
+        })
+        .unwrap();
+        assert_eq!(starts, [0, USER_PAGE as u64, 2 * USER_PAGE as u64]);
+        let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn label_paging_stops_when_start_does_not_advance() {
+        let echo = json!({ "startAt": 0, "isLast": false, "values": ["a"] });
+        let mut calls = 0;
+        let result = fetch_jira_labels(|_| {
+            calls += 1;
+            assert!(calls < 5, "label paging looped");
+            Ok(echo.clone())
+        });
+        // The first page moves to start 1; the echoed startAt 0 then fails to advance.
+        assert_eq!(result.unwrap_err(), "Jira label pagination did not advance");
     }
 
     #[test]

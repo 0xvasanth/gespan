@@ -68,8 +68,28 @@ fn reject_people_and_labels(labels: bool, assignees: bool) -> ProviderResult<()>
     Ok(())
 }
 
-fn sync_key(issue: &RemoteIssue) -> String {
-    format!("{}|{}", issue.updated_at, issue.id)
+/// Orders by the instant, not the text: `…00.5Z`, `…00Z` and `+00:00` forms
+/// don't sort correctly as strings.
+fn sync_key(issue: &RemoteIssue) -> (i64, String) {
+    (instant_ms(&issue.updated_at), issue.id.clone())
+}
+
+fn instant_ms(value: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|at| at.timestamp_millis())
+        .unwrap_or(0)
+}
+
+fn encode_cursor((ms, id): &(i64, String)) -> SyncCursor {
+    SyncCursor(format!("{ms}|{id}"))
+}
+
+fn decode_cursor(cursor: &SyncCursor) -> ProviderResult<(i64, String)> {
+    cursor
+        .0
+        .split_once('|')
+        .and_then(|(ms, id)| Some((ms.parse().ok()?, id.to_string())))
+        .ok_or_else(|| ProviderError::InvalidInput(format!("Bad sync cursor {}", cursor.0)))
 }
 
 impl FakeProvider {
@@ -125,8 +145,15 @@ impl FakeProvider {
         self
     }
 
+    /// Seeds an issue. The clock moves past its `updated_at`, so a later write
+    /// is always newer than the seed.
     pub(crate) fn with_issue(self, issue: RemoteIssue) -> Self {
-        self.lock().issues.insert(issue.id.clone(), issue);
+        let mut state = self.lock();
+        state.clock = state
+            .clock
+            .max(instant_ms(&issue.updated_at).div_euclid(1000));
+        state.issues.insert(issue.id.clone(), issue);
+        drop(state);
         self
     }
 
@@ -371,18 +398,19 @@ impl BoardProvider for FakeProvider {
     ) -> ProviderResult<SyncBatch> {
         let state = self.enter("sync_since")?;
         state.container(container_id)?;
-        let after = cursor.map(|cursor| cursor.0.as_str()).unwrap_or_default();
+        let after = cursor.map(decode_cursor).transpose()?;
         let mut changed: Vec<&RemoteIssue> = state
             .issues
             .values()
-            .filter(|issue| issue.container_id == container_id && sync_key(issue).as_str() > after)
+            .filter(|issue| issue.container_id == container_id)
+            .filter(|issue| after.as_ref().is_none_or(|after| &sync_key(issue) > after))
             .collect();
         changed.sort_by_key(|issue| sync_key(issue));
         let has_more = changed.len() > SYNC_BATCH;
         let changes: Vec<RemoteIssue> = changed.into_iter().take(SYNC_BATCH).cloned().collect();
         let next_cursor = changes
             .last()
-            .map(|issue| SyncCursor(sync_key(issue)))
+            .map(|issue| encode_cursor(&sync_key(issue)))
             .unwrap_or_else(|| cursor.cloned().unwrap_or_default());
         Ok(SyncBatch {
             changes,
@@ -416,6 +444,7 @@ impl BoardProvider for FakeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inbox::timestamp_ms;
 
     fn issue(id: &str, state: &str, updated_at: &str) -> RemoteIssue {
         let fake = FakeProvider::new();
@@ -543,6 +572,39 @@ mod tests {
         let second = fake.sync_since("C1", Some(&first.next_cursor)).unwrap();
         assert_eq!(ids(&second.changes), ["i50"]);
         assert!(!second.has_more);
+    }
+
+    #[test]
+    fn writes_never_move_a_seeded_issue_back_in_time() {
+        let fake = FakeProvider::new().with_issue(issue("a", "todo", "2026-03-01T10:00:00.500Z"));
+        let first = fake.sync_since("C1", None).unwrap();
+        let moved = fake
+            .move_issue(
+                "a",
+                &MoveTarget {
+                    state_id: "doing".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(
+            timestamp_ms(&moved.updated_at) > timestamp_ms("2026-03-01T10:00:00.500Z"),
+            "{}",
+            moved.updated_at
+        );
+        let next = fake.sync_since("C1", Some(&first.next_cursor)).unwrap();
+        assert_eq!(ids(&next.changes), ["a"]);
+    }
+
+    #[test]
+    fn sync_orders_by_instant_not_by_timestamp_text() {
+        // As text, ".500Z" sorts before "Z" and "+00:00" sorts before both.
+        let fake = FakeProvider::new()
+            .with_issue(issue("half", "todo", "2026-01-01T00:00:00.500Z"))
+            .with_issue(issue("whole", "todo", "2026-01-01T00:00:00Z"))
+            .with_issue(issue("offset", "todo", "2026-01-01T00:00:01+00:00"));
+        let batch = fake.sync_since("C1", None).unwrap();
+        assert_eq!(ids(&batch.changes), ["whole", "half", "offset"]);
     }
 
     #[test]
