@@ -25,7 +25,7 @@
 3. **`--check-data`'s report stays on stderr.** It's the output of a CLI mode, not an error.
 4. **`GESPAN_NATIVE_TRACE` in `conversation.rs` becomes `debug!` events** (session settings action, model pick). Turn them on with `GESPAN_LOG=gespan_gpui::conversation=debug`. The two `gespan-core` uses belong to #69.
 5. **Benchmark output in `#[test]`s stays on stderr** (`shell.rs` CoreText frames, `sidebar_list.rs` 1,000-session layout). It's test output, not an error path.
-6. **The `agent_session` span is entered in `run_turn`**, around both the local and the remote path. It logs `agent session started`, and `agent turn failed` (warn, with `error`) when a turn ends in an error that isn't a user stop. Without that event the span would carry nothing on the failure path, which is the one we need.
+6. **The `agent_session` span is entered in `run_turn`**, around both the local and the remote path. It logs `agent turn started` on every turn, and `agent turn failed` (warn) when a turn, local or remote, ends in an error that isn't a user stop. `agent turn failed` carries the error's first line, capped at 200 characters, plus `error_len`: provider errors carry up to 8 KB of CLI stderr, and #45 keeps provider output out of the logs. (Both points came out of the self-review.) Without that event the span would carry nothing on the failure path, which is the one we need.
 7. **A source-scan test pins the remaining `eprintln!` calls** to the allow-list above, so a sibling branch can't quietly add a new one.
 
 ## Review Focus
