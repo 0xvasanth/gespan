@@ -8,6 +8,7 @@
 //! `<span data-gespan-…>` around readable text; both are read-only.
 mod adf;
 mod doc;
+mod html;
 mod markdown;
 #[cfg(test)]
 mod strategies;
@@ -22,4 +23,14 @@ pub fn markdown_to_adf(markdown: &str) -> Value {
 /// A Jira description (an ADF `doc`, or `null`) to Markdown.
 pub fn adf_to_markdown(adf: &Value) -> String {
     markdown::render(&adf::parse(adf))
+}
+
+/// Markdown to a Plane `description_html`.
+pub fn markdown_to_plane_html(markdown: &str) -> String {
+    html::render(&markdown::parse(markdown))
+}
+
+/// A Plane `description_html` to Markdown.
+pub fn plane_html_to_markdown(html: &str) -> String {
+    markdown::render(&html::parse(html))
 }
