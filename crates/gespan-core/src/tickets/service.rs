@@ -301,6 +301,7 @@ impl Tickets {
                 target.to_string()
             }
             None => {
+                supplied_fields_fit(&[], &fields)?;
                 let issue = board.get_issue(&r.key)?;
                 let target = target.trim();
                 board
@@ -387,8 +388,10 @@ fn site_mismatch(
 }
 
 /// Fails with the fields still missing when every transition to `target`
-/// demands something the caller has not supplied. A target no transition
-/// matches is left for the tracker to reject.
+/// demands something the caller has not supplied. Supplied fields must be
+/// ones the chosen transition asks for, with allowed values: they come from
+/// the agent as well as the UI. A target no transition matches is left for
+/// the tracker to reject, but carries no fields.
 fn ensure_fields(
     transitions: &[Transition],
     target: &str,
@@ -403,13 +406,20 @@ fn ensure_fields(
             .collect()
     };
     let mut fewest: Option<Vec<RequiredField>> = None;
+    let mut refused = None;
     for t in transitions
         .iter()
         .filter(|t| t.id == target || t.to.id == target || t.to.name.eq_ignore_ascii_case(target))
     {
         let missing = missing_for(t);
         if missing.is_empty() {
-            return Ok(());
+            match supplied_fields_fit(&t.required_fields, fields) {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    refused.get_or_insert(error);
+                    continue;
+                }
+            }
         }
         if fewest
             .as_ref()
@@ -418,9 +428,52 @@ fn ensure_fields(
             fewest = Some(missing);
         }
     }
+    if let Some(error) = refused {
+        return Err(error);
+    }
     match fewest {
         Some(missing) => Err(TicketError::NeedsFields(missing)),
-        None => Ok(()),
+        None => supplied_fields_fit(&[], fields),
+    }
+}
+
+fn supplied_fields_fit(
+    required: &[RequiredField],
+    fields: &BTreeMap<String, Value>,
+) -> Result<(), TicketError> {
+    for (key, value) in fields {
+        let Some(field) = required.iter().find(|field| &field.key == key) else {
+            return Err(TicketError::Invalid(format!(
+                "Field {key} isn't part of this status change"
+            )));
+        };
+        if !field.allowed.is_empty() && !allowed_value(value, &field.allowed) {
+            return Err(TicketError::Invalid(format!(
+                "{} must be one of: {}",
+                field.name,
+                field.allowed.join(", ")
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A label, a `{name|value|id: label}` object, or a list of those.
+fn allowed_value(value: &Value, allowed: &[String]) -> bool {
+    let label = |text: &str| allowed.iter().any(|choice| choice == text);
+    match value {
+        Value::String(text) => label(text),
+        Value::Array(items) => {
+            !items.is_empty() && items.iter().all(|item| allowed_value(item, allowed))
+        }
+        Value::Object(map) => {
+            !map.is_empty()
+                && map.iter().all(|(key, value)| {
+                    matches!(key.as_str(), "name" | "value" | "id")
+                        && value.as_str().is_some_and(label)
+                })
+        }
+        _ => false,
     }
 }
 
@@ -856,5 +909,120 @@ mod tests {
             .set_status(&link(Tracker::Jira, "ENG-1"), "done", BTreeMap::new())
             .unwrap();
         assert_eq!(moved.status.as_deref(), Some("Done"));
+    }
+
+    fn jira_needing_resolution() -> (Arc<FakeProvider>, Tickets) {
+        let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
+        struct Shared(Arc<FakeProvider>, Vec<Transition>);
+        impl Connection for Shared {
+            fn board(&self) -> &dyn BoardProvider {
+                &*self.0
+            }
+            fn transitions(&self, _: &str) -> ProviderResult<Option<Vec<Transition>>> {
+                Ok(Some(self.1.clone()))
+            }
+        }
+        // The fake moves by state id, so the transition shares it.
+        let transition = Transition {
+            id: "done".into(),
+            ..done_transition(vec![resolution_field()])
+        };
+        let t = tickets(vec![(
+            Tracker::Jira,
+            Arc::new(Shared(fake.clone(), vec![transition])),
+        )]);
+        (fake, t)
+    }
+
+    fn fields(entries: &[(&str, Value)]) -> BTreeMap<String, Value> {
+        entries
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn set_status_refuses_fields_the_transition_does_not_ask_for() {
+        let (fake, t) = jira_needing_resolution();
+        let r = link(Tracker::Jira, "ENG-1");
+        let error = t
+            .set_status(
+                &r,
+                "done",
+                fields(&[
+                    ("resolution", json!("Fixed")),
+                    ("assignee", json!({"id": "x"})),
+                ]),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error,
+            TicketError::Invalid("Field assignee isn't part of this status change".into())
+        );
+        // Fields for a target no transition matches are refused too.
+        let error = t
+            .set_status(&r, "Elsewhere", fields(&[("resolution", json!("Fixed"))]))
+            .unwrap_err();
+        assert_eq!(
+            error,
+            TicketError::Invalid("Field resolution isn't part of this status change".into())
+        );
+        assert_eq!(fake.get_issue("ENG-1").unwrap().state.name, "Todo");
+    }
+
+    #[test]
+    fn set_status_refuses_a_value_outside_the_allowed_list() {
+        let (fake, t) = jira_needing_resolution();
+        let r = link(Tracker::Jira, "ENG-1");
+        for value in [
+            json!({"name": "Duplicate"}),
+            json!("Duplicate"),
+            json!(7),
+            json!({"self": "Fixed"}),
+            json!(["Fixed", "Duplicate"]),
+        ] {
+            let error = t
+                .set_status(&r, "done", fields(&[("resolution", value.clone())]))
+                .unwrap_err();
+            assert_eq!(
+                error,
+                TicketError::Invalid("Resolution must be one of: Fixed".into()),
+                "{value}"
+            );
+        }
+        assert_eq!(fake.get_issue("ENG-1").unwrap().state.name, "Todo");
+        for value in [
+            json!("Fixed"),
+            json!({"value": "Fixed"}),
+            json!({"id": "Fixed"}),
+        ] {
+            let (fake, t) = jira_needing_resolution();
+            let moved = t
+                .set_status(&r, "done", fields(&[("resolution", value)]))
+                .unwrap();
+            assert_eq!(moved.status.as_deref(), Some("Done"));
+            assert_eq!(fake.get_issue("ENG-1").unwrap().state.name, "Done");
+        }
+    }
+
+    #[test]
+    fn set_status_refuses_fields_where_moves_take_none() {
+        for tracker in [Tracker::Linear, Tracker::Plane] {
+            let t = tickets(vec![(
+                tracker,
+                plain(FakeProvider::new().with_issue(issue("ENG-1"))),
+            )]);
+            let r = link(tracker, "ENG-1");
+            let error = t
+                .set_status(&r, "done", fields(&[("priority", json!("High"))]))
+                .unwrap_err();
+            assert_eq!(
+                error,
+                TicketError::Invalid("Field priority isn't part of this status change".into())
+            );
+            assert_eq!(t.fetch(&r).unwrap().status.as_deref(), Some("Todo"));
+            let moved = t.set_status(&r, "done", BTreeMap::new()).unwrap();
+            assert_eq!(moved.status.as_deref(), Some("Done"));
+        }
     }
 }

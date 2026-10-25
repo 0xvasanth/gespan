@@ -2078,6 +2078,35 @@ impl Shell {
         })
         .detach();
     }
+    /// A move's snapshot is saved as is, with no fetch; it also supersedes a
+    /// fetch already in flight, which would carry the status from before.
+    pub(super) fn agent_changed_ticket(
+        &mut self,
+        id: i64,
+        change: crate::runtime::TicketChange,
+        cx: &mut Context<Self>,
+    ) {
+        let crate::runtime::TicketChange::Moved(moved) = change else {
+            self.refresh_ticket(id, false, cx);
+            return;
+        };
+        let Some(WorkItem::Ticket(current)) =
+            self.session_metadata(id, cx).summary.work_item.clone()
+        else {
+            return;
+        };
+        if current.tracker != moved.tracker || current.key != moved.key {
+            return;
+        }
+        self.ticket_requests.remove(&id);
+        self.stale_tickets.remove(&id);
+        let merged = TicketRef {
+            url: moved.url.or(current.url),
+            title: moved.title.or(current.title),
+            ..moved
+        };
+        self.set_work_item(id, Some(WorkItem::Ticket(Box::new(merged))), cx);
+    }
     fn ticket_refreshed(
         &mut self,
         id: i64,
@@ -3014,6 +3043,7 @@ mod tests {
         }).unwrap();
     }
 
+    use crate::runtime::TicketChange;
     use crate::tickets::fakes::FakeTickets;
 
     /// `debug_bounds` wants a `'static` selector; a leaked test string is fine.
@@ -3425,27 +3455,100 @@ mod tests {
         let fake = fake_tickets(window, cx, &[Tracker::Linear]);
         submit_link(window, cx, a, "ENG-7");
         assert_eq!(fake.fetch_count(), 1);
-        let emit = |id: i64, cx: &mut TestAppContext| {
+        let emit = |id: i64, change: TicketChange, cx: &mut TestAppContext| {
             window
                 .update(cx, |shell, _, cx| {
                     let view = shell.sessions.get(&id).unwrap().clone();
-                    view.update(cx, |_, cx| cx.emit(crate::conversation::TicketChanged));
+                    view.update(cx, |_, cx| {
+                        cx.emit(crate::conversation::TicketChanged(change))
+                    });
                 })
                 .unwrap();
             cx.run_until_parked();
         };
-        emit(a, cx);
-        assert_eq!(
-            fake.fetch_count(),
-            2,
-            "the agent's ticket call refreshes once"
-        );
-        emit(b, cx);
+        emit(a, TicketChange::Refresh, cx);
+        assert_eq!(fake.fetch_count(), 2, "the agent's comment refreshes once");
+        emit(b, TicketChange::Refresh, cx);
         assert_eq!(
             fake.fetch_count(),
             2,
             "a session with no ticket fetches nothing"
         );
+    }
+
+    #[gpui::test]
+    fn an_agent_status_move_is_saved_without_a_fetch(cx: &mut TestAppContext) {
+        let (window, a, b) = setup(cx);
+        let fake = fake_tickets(window, cx, &[Tracker::Linear]);
+        submit_link(window, cx, a, "ENG-7");
+        let before = window
+            .update(cx, |shell, _, _| saved_ticket(shell, a))
+            .unwrap()
+            .unwrap();
+        assert!(before.title.is_some(), "the link fetch filled the title");
+        let moved = TicketRef {
+            url: None,
+            title: None,
+            status: Some("Done".into()),
+            status_group: Some(StateGroup::Completed),
+            fetched_at: Some(42),
+            ..before.clone()
+        };
+        let emit = |id: i64, moved: TicketRef, cx: &mut TestAppContext| {
+            window
+                .update(cx, |shell, _, cx| {
+                    let view = shell.sessions.get(&id).unwrap().clone();
+                    view.update(cx, |_, cx| {
+                        cx.emit(crate::conversation::TicketChanged(TicketChange::Moved(
+                            moved,
+                        )))
+                    });
+                })
+                .unwrap();
+            cx.run_until_parked();
+        };
+        emit(a, moved.clone(), cx);
+        let after = window
+            .update(cx, |shell, _, _| saved_ticket(shell, a))
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.status.as_deref(), Some("Done"));
+        assert_eq!(after.status_group, Some(StateGroup::Completed));
+        assert_eq!(after.fetched_at, Some(42));
+        assert_eq!(after.title, before.title, "a missing title is kept");
+        assert_eq!(after.url, before.url, "a missing url is kept");
+        assert_eq!(fake.fetch_count(), 1, "no fetch after a move");
+        let in_view = window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&a].read(cx).summary.work_item.clone()
+            })
+            .unwrap();
+        assert_eq!(in_view, Some(WorkItem::Ticket(Box::new(after))));
+        // A move for another ticket, or a session linked to none, changes nothing.
+        emit(
+            a,
+            TicketRef {
+                key: "ENG-8".into(),
+                ..moved.clone()
+            },
+            cx,
+        );
+        assert_eq!(
+            window
+                .update(cx, |shell, _, _| saved_ticket(shell, a))
+                .unwrap()
+                .unwrap()
+                .key,
+            "ENG-7"
+        );
+        emit(b, moved, cx);
+        assert_eq!(
+            window
+                .update(cx, |shell, _, _| saved_ticket(shell, b))
+                .unwrap(),
+            None
+        );
+        assert_eq!(fake.fetch_count(), 1);
     }
 
     #[gpui::test]

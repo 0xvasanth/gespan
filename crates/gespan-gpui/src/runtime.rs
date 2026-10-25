@@ -56,8 +56,8 @@ pub(crate) struct Update {
     /// It stays true when saving the transcript, metadata or handoff fails
     /// afterwards: the work itself is done, and `status` reports the save.
     pub(crate) succeeded: bool,
-    /// A ticket tool call was answered; the session's ticket chip may be stale.
-    pub(crate) ticket_changed: bool,
+    /// A ticket tool call changed the linked ticket.
+    pub(crate) ticket: Option<TicketChange>,
     pub(crate) finished: bool,
 }
 fn publish(
@@ -162,7 +162,7 @@ fn run_turn_using(
     let mut visual_introduction = None;
     let mut ticket_introduction = None;
     let mut ticket_tools = None;
-    let ticket_answered = Arc::new(AtomicBool::new(false));
+    let ticket_changes: TicketChanges = Arc::default();
     let mut prepared_handoff = None;
     let mut handoff_accepted = false;
     // SessionReview's recorded turn: its project and id, once the baseline is taken.
@@ -284,7 +284,7 @@ fn run_turn_using(
                 }
                 .into(),
                 succeeded: false,
-                ticket_changed: false,
+                ticket: None,
                 finished: false,
             },
         )?;
@@ -333,7 +333,7 @@ fn run_turn_using(
                     handoff: None,
                     status: "Connecting…".into(),
                     succeeded: false,
-                    ticket_changed: false,
+                    ticket: None,
                     finished: false,
                 },
             )?;
@@ -388,7 +388,7 @@ fn run_turn_using(
                     handoff: Some(Some(prepared)),
                     status: "Connecting…".into(),
                     succeeded: false,
-                    ticket_changed: false,
+                    ticket: None,
                     finished: false,
                 },
             )?;
@@ -544,21 +544,28 @@ fn run_turn_using(
                     && !visual_discovery::lacks_tool_servers(kind, provider_id.as_deref())
             });
         let data_dir = locked(&store)?.data_dir().map(std::path::Path::to_path_buf);
-        if let (Some(ticket), Some(data_dir)) = (ticket, data_dir) {
+        // Ticket tools are optional: a refused start (logged by the bridge) or
+        // an unknown executable skips them and the turn goes on.
+        let executable = std::env::current_exe()
+            .inspect_err(|error| tracing::warn!(%error, "ticket tools need the app executable"))
+            .ok();
+        if let (Some(ticket), Some(data_dir), Some(executable)) = (ticket, data_dir, executable) {
             let may_change_status = may_change_ticket_status(&summary);
-            // Ticket tools are optional; a refused start is logged and the turn goes on.
+            let read_only =
+                settings.plan || settings.access == gespan_core::agent::AccessMode::ReadOnly;
             if let Ok(server) = gespan_core::ticket_bridge::Server::start(
                 summary.id,
                 ticket.clone(),
                 may_change_status,
+                read_only,
             ) {
-                let executable = std::env::current_exe().map_err(|e| e.to_string())?;
                 settings.environment.extend(server.environment(&executable));
                 ticket_introduction = ticket_context::TicketContext::prepare(
                     &*locked(&store)?,
                     summary.id,
                     ticket,
                     may_change_status,
+                    read_only,
                     provider_id.as_deref(),
                 )?;
                 if let Some(introduction) = &ticket_introduction {
@@ -567,7 +574,7 @@ fn run_turn_using(
                 ticket_tools = Some(TicketTools {
                     server,
                     tickets: Arc::new(gespan_core::tickets::Tickets::new(data_dir)),
-                    answered: ticket_answered.clone(),
+                    changes: ticket_changes.clone(),
                 });
             }
         }
@@ -606,8 +613,8 @@ fn run_turn_using(
                 if let Some(tools) = &ticket_tools {
                     tools.answer_pending();
                 }
-                let ticket_changed = ticket_answered.swap(false, Ordering::Relaxed);
-                if events.is_empty() && publications.is_empty() && !ticket_changed {
+                let ticket_change = take_ticket_change(&ticket_changes);
+                if events.is_empty() && publications.is_empty() && ticket_change.is_none() {
                     return Ok(());
                 }
                 let mut start = transcript.rows.len();
@@ -896,7 +903,7 @@ fn run_turn_using(
                             handoff,
                             status,
                             succeeded: false,
-                            ticket_changed,
+                            ticket: ticket_change,
                             finished: false,
                         },
                     )
@@ -1076,7 +1083,7 @@ fn run_turn_using(
         handoff,
         status,
         succeeded,
-        ticket_changed: ticket_answered.swap(false, Ordering::Relaxed),
+        ticket: take_ticket_change(&ticket_changes),
         finished: true,
     });
 }
@@ -1089,34 +1096,67 @@ const LOGGED_ERROR_CHARS: usize = 200;
 /// keeps only this part; the stderr stays in the transcript.
 const PROVIDER_EXITED: &str = "Provider exited before completing the turn.";
 
-/// The per-board setting arrives with the board store; until then every
-/// session may move its ticket, the plan's default.
+// #174: the per-board "Agent may change ticket status" setting arrives with the board store.
 fn may_change_ticket_status(_session: &Session) -> bool {
     true
+}
+
+/// What the view does with the linked ticket after the agent's tool calls.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum TicketChange {
+    /// Fetch again: something changed that the answer does not describe.
+    Refresh,
+    /// The tracker's snapshot after a status move; no fetch needed.
+    Moved(gespan_core::tickets::TicketRef),
+}
+
+type TicketChanges = Arc<Mutex<Option<TicketChange>>>;
+
+fn take_ticket_change(changes: &TicketChanges) -> Option<TicketChange> {
+    changes.lock().ok()?.take()
+}
+
+/// Reads, listings and failures change nothing. A move's snapshot beats a
+/// pending refresh, since it is the newer state.
+fn record_ticket_change(changes: &TicketChanges, effect: gespan_core::ticket_bridge::Effect) {
+    use gespan_core::ticket_bridge::Effect;
+    let Ok(mut slot) = changes.lock() else {
+        return;
+    };
+    match effect {
+        Effect::None => {}
+        Effect::Commented => {
+            slot.get_or_insert(TicketChange::Refresh);
+        }
+        Effect::Moved(ticket) => *slot = Some(TicketChange::Moved(ticket)),
+    }
 }
 
 /// A turn's ticket capability and the service that answers its calls.
 struct TicketTools {
     server: gespan_core::ticket_bridge::Server,
     tickets: Arc<gespan_core::tickets::Tickets>,
-    answered: Arc<AtomicBool>,
+    changes: TicketChanges,
 }
 
 impl TicketTools {
-    /// Tracker calls are network round trips, so each runs off the provider
-    /// loop; `answered` asks the view to refresh the ticket chip afterwards.
+    /// Tracker calls are network round trips, so each runs off the provider loop.
     fn answer_pending(&self) {
         for call in self.server.drain() {
             let tickets = self.tickets.clone();
             let ticket = self.server.ticket().clone();
-            let answered = self.answered.clone();
+            let changes = self.changes.clone();
             std::thread::spawn(move || {
-                let result = gespan_core::ticket_bridge::answer(&tickets, &ticket, &call.tool);
-                if let Err(error) = &result {
-                    tracing::warn!(%error, "ticket tool call failed");
+                match gespan_core::ticket_bridge::answer(&tickets, &ticket, &call.tool) {
+                    Ok(answered) => {
+                        let _ = call.reply.send(Ok(answered.value));
+                        record_ticket_change(&changes, answered.effect);
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "ticket tool call failed");
+                        let _ = call.reply.send(Err(error));
+                    }
                 }
-                let _ = call.reply.send(result);
-                answered.store(true, Ordering::Relaxed);
             });
         }
     }
@@ -1210,6 +1250,32 @@ fn shlex_quote(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_comments_and_moves_change_the_ticket_and_a_move_wins() {
+        use gespan_core::ticket_bridge::Effect;
+        let moved = gespan_core::tickets::TicketRef {
+            tracker: gespan_core::tickets::Tracker::Jira,
+            key: "ENG-1".into(),
+            url: None,
+            title: None,
+            status: Some("Done".into()),
+            status_group: None,
+            fetched_at: None,
+        };
+        let changes = TicketChanges::default();
+        record_ticket_change(&changes, Effect::None);
+        assert_eq!(take_ticket_change(&changes), None);
+        record_ticket_change(&changes, Effect::Commented);
+        assert_eq!(take_ticket_change(&changes), Some(TicketChange::Refresh));
+        assert_eq!(take_ticket_change(&changes), None, "taken once");
+        record_ticket_change(&changes, Effect::Commented);
+        record_ticket_change(&changes, Effect::Moved(moved.clone()));
+        record_ticket_change(&changes, Effect::Commented);
+        assert_eq!(
+            take_ticket_change(&changes),
+            Some(TicketChange::Moved(moved))
+        );
+    }
     use super::*;
     use gespan_core::tool::{ToolCall, ToolState, live};
 

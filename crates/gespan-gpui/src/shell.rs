@@ -1297,8 +1297,8 @@ impl Shell {
             }));
         self.observations.push(cx.subscribe(
             &view,
-            move |this, _, _: &crate::conversation::TicketChanged, cx| {
-                this.refresh_ticket(id, false, cx)
+            move |this, _, event: &crate::conversation::TicketChanged, cx| {
+                this.agent_changed_ticket(id, event.0.clone(), cx)
             },
         ));
         self.observations

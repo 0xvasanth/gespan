@@ -33,7 +33,7 @@ for line in sys.stdin:
                     'session': int(os.environ['GESPAN_TICKET_SESSION']),
                     'token': os.environ['GESPAN_TICKET_TOKEN'],
                     'key': 'ENG-1',
-                    'tool': {'tool': 'get'},
+                    'tool': json.loads(os.environ.get('MOCK_TICKET_TOOL', '{"tool": "get"}')),
                 }
                 connection.sendall((json.dumps(request) + '\n').encode())
                 record['reply'] = json.loads(connection.makefile('rb').readline())
@@ -44,7 +44,7 @@ for line in sys.stdin:
         break
 "#;
 
-fn run(ticket: Option<TicketRef>) -> (serde_json::Value, bool, String) {
+fn run(ticket: Option<TicketRef>, settings: Settings) -> (serde_json::Value, bool, String) {
     gespan_tracker_secrets::testing::use_memory_keychain();
     let fixture = Fixture(std::env::temp_dir().join(format!(
         "gespan-runtime-ticket-{}-{}",
@@ -73,7 +73,7 @@ fn run(ticket: Option<TicketRef>) -> (serde_json::Value, bool, String) {
             TurnInput {
                 summary,
                 prompt: "Fix it".into(),
-                settings: Settings::default(),
+                settings,
             },
             control_rx,
             store,
@@ -85,7 +85,7 @@ fn run(ticket: Option<TicketRef>) -> (serde_json::Value, bool, String) {
     let mut ticket_changed = false;
     let status = loop {
         let update = receive.recv_blocking().unwrap();
-        ticket_changed |= update.ticket_changed;
+        ticket_changed |= update.ticket.is_some();
         if update.finished {
             break update.status;
         }
@@ -96,9 +96,8 @@ fn run(ticket: Option<TicketRef>) -> (serde_json::Value, bool, String) {
     (record, ticket_changed, status)
 }
 
-#[test]
-fn a_linked_session_mounts_ticket_tools_answers_calls_and_refreshes_the_chip() {
-    let (record, ticket_changed, status) = run(Some(TicketRef {
+fn linked() -> Option<TicketRef> {
+    Some(TicketRef {
         tracker: Tracker::Linear,
         key: "ENG-1".into(),
         url: None,
@@ -106,7 +105,12 @@ fn a_linked_session_mounts_ticket_tools_answers_calls_and_refreshes_the_chip() {
         status: None,
         status_group: None,
         fetched_at: None,
-    }));
+    })
+}
+
+#[test]
+fn a_linked_session_mounts_ticket_tools_and_answers_calls() {
+    let (record, ticket_changed, status) = run(linked(), Settings::default());
     assert_eq!(status, "Ready");
     let argv = record["argv"].to_string();
     assert!(
@@ -115,7 +119,7 @@ fn a_linked_session_mounts_ticket_tools_answers_calls_and_refreshes_the_chip() {
     );
     assert_eq!(record["env"].as_array().unwrap().len(), 4);
     assert!(record["prompt"].as_str().unwrap().starts_with(
-        "This session is linked to Linear ticket ENG-1 (\"Fix login\"). Use the gespan_ticket tools to read it, comment on it, and change its status.\n\n"
+        "This session is linked to Linear ticket ENG-1. Use the gespan_ticket tools to read it, comment on it, and change its status.\n\n"
     ));
     // No Linear credential is saved, so the app's answer is the tracker's
     // user-facing error, delivered while the provider waited on the call.
@@ -124,14 +128,44 @@ fn a_linked_session_mounts_ticket_tools_answers_calls_and_refreshes_the_chip() {
         serde_json::json!({"ok":false,"error":"Connect Linear in Settings"})
     );
     assert!(
-        ticket_changed,
-        "The view must hear that the ticket may have changed"
+        !ticket_changed,
+        "A failed call changes nothing, so nothing is refetched"
     );
 }
 
 #[test]
+fn a_read_only_session_is_told_it_may_only_read_and_cannot_comment() {
+    for settings in [
+        Settings {
+            access: gespan_core::agent::AccessMode::ReadOnly,
+            ..Settings::default()
+        },
+        Settings {
+            plan: true,
+            ..Settings::default()
+        },
+    ] {
+        let mut settings = settings;
+        settings.environment.insert(
+            "MOCK_TICKET_TOOL".into(),
+            r#"{"tool":"comment","markdown":"Done"}"#.into(),
+        );
+        let (record, ticket_changed, status) = run(linked(), settings);
+        assert_eq!(status, "Ready");
+        assert!(record["prompt"].as_str().unwrap().starts_with(
+            "This session is linked to Linear ticket ENG-1. Use the gespan_ticket tools to read it.\n\n"
+        ));
+        assert_eq!(
+            record["reply"],
+            serde_json::json!({"ok":false,"error":"This session is read-only"})
+        );
+        assert!(!ticket_changed);
+    }
+}
+
+#[test]
 fn a_session_without_a_ticket_gets_no_ticket_tools() {
-    let (record, ticket_changed, status) = run(None);
+    let (record, ticket_changed, status) = run(None, Settings::default());
     assert_eq!(status, "Ready");
     assert!(!record["argv"].to_string().contains("gespan_ticket"));
     assert_eq!(record["env"], serde_json::json!([]));

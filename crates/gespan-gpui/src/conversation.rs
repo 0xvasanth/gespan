@@ -141,8 +141,8 @@ struct OpenMenu {
 }
 use response_menu::ResponseMenu;
 pub(crate) struct SessionChanged;
-/// The agent read or changed the linked ticket through its ticket tools.
-pub(crate) struct TicketChanged;
+/// The agent changed the linked ticket through its ticket tools.
+pub(crate) struct TicketChanged(pub(crate) crate::runtime::TicketChange);
 pub(crate) struct ChooseFolder(pub(crate) AnchorSlot);
 /// The review card asked to open the session's recorded changes.
 pub(crate) struct OpenSessionChanges(pub(crate) crate::review::ReviewTab);
@@ -1159,8 +1159,8 @@ impl Conversation {
                             };
                             tracker.observe(store, *session, generation, turn, cx);
                         }
-                        if update.ticket_changed {
-                            cx.emit(TicketChanged);
+                        if let Some(change) = update.ticket {
+                            cx.emit(TicketChanged(change));
                         }
                         let source_selected = this.summary.provider == source_provider
                             && this.settings.account.id == source_account;

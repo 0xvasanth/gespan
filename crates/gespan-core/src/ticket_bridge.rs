@@ -25,6 +25,7 @@ const ENV_SESSION: &str = "GESPAN_TICKET_SESSION";
 const ENV_EXECUTABLE: &str = "GESPAN_TICKET_EXECUTABLE";
 pub(crate) const ENV_KEYS: [&str; 4] = [ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE];
 const STATUS_OFF: &str = "Changing ticket status is turned off for this session";
+const READ_ONLY: &str = "This session is read-only";
 const APP_GONE: &str = "Gespan stopped handling this session's ticket tools";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -64,6 +65,22 @@ struct ActiveTurn {
     send: mpsc::SyncSender<Call>,
     key: String,
     may_change_status: bool,
+    read_only: bool,
+}
+
+/// Why a tool may not run in this turn, before it reaches the app.
+fn refusal(tool: &TicketTool, may_change_status: bool, read_only: bool) -> Option<&'static str> {
+    let writes = matches!(
+        tool,
+        TicketTool::Comment { .. } | TicketTool::SetStatus { .. }
+    );
+    if writes && read_only {
+        Some(READ_ONLY)
+    } else if matches!(tool, TicketTool::SetStatus { .. }) && !may_change_status {
+        Some(STATUS_OFF)
+    } else {
+        None
+    }
 }
 
 struct SessionCapability {
@@ -142,14 +159,26 @@ impl Drop for Server {
 }
 
 impl Server {
-    pub fn start(session: i64, ticket: TicketRef, may_change_status: bool) -> Result<Self, String> {
+    /// `read_only` sessions (read-only access or plan mode) may read and list
+    /// statuses but never comment or move the ticket.
+    pub fn start(
+        session: i64,
+        ticket: TicketRef,
+        may_change_status: bool,
+        read_only: bool,
+    ) -> Result<Self, String> {
         let _span =
             tracing::info_span!("mcp_start", server = "ticket", session_id = session).entered();
-        Self::open(session, ticket, may_change_status)
+        Self::open(session, ticket, may_change_status, read_only)
             .inspect_err(|error| tracing::warn!(%error, "could not start a tool server"))
     }
 
-    fn open(session: i64, ticket: TicketRef, may_change_status: bool) -> Result<Self, String> {
+    fn open(
+        session: i64,
+        ticket: TicketRef,
+        may_change_status: bool,
+        read_only: bool,
+    ) -> Result<Self, String> {
         let hub = hub()?;
         let (send, calls) = mpsc::sync_channel(16);
         let (token, generation) = {
@@ -177,6 +206,7 @@ impl Server {
                 send,
                 key: ticket.key.clone(),
                 may_change_status,
+                read_only,
             });
             (capability.token.clone(), capability.generation)
         };
@@ -289,10 +319,14 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
             }
         }
         let Some(tool) = wire.tool else {
-            return Ok(json!({"key":active.key,"mayChangeStatus":active.may_change_status}));
+            return Ok(json!({
+                "key": active.key,
+                "mayChangeStatus": active.may_change_status,
+                "readOnly": active.read_only,
+            }));
         };
-        if matches!(tool, TicketTool::SetStatus { .. }) && !active.may_change_status {
-            return Err(STATUS_OFF.into());
+        if let Some(refused) = refusal(&tool, active.may_change_status, active.read_only) {
+            return Err(refused.into());
         }
         let (reply, result) = mpsc::channel();
         active
@@ -319,9 +353,31 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
     }
 }
 
+/// What a successful call did to the ticket, so the app can update its chip
+/// without fetching again, or know it needs nothing.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Effect {
+    None,
+    Commented,
+    Moved(TicketRef),
+}
+
+pub struct Answered {
+    pub value: Value,
+    pub effect: Effect,
+}
+
 /// The app's side of a call. Errors are the user-facing tracker messages,
 /// never credentials or raw responses.
-pub fn answer(tickets: &Tickets, ticket: &TicketRef, tool: &TicketTool) -> Result<Value, String> {
+pub fn answer(
+    tickets: &Tickets,
+    ticket: &TicketRef,
+    tool: &TicketTool,
+) -> Result<Answered, String> {
+    let unchanged = |value| Answered {
+        value,
+        effect: Effect::None,
+    };
     let result = match tool {
         TicketTool::Get => tickets.read(ticket).map(|(fresh, description)| {
             json!({
@@ -332,10 +388,14 @@ pub fn answer(tickets: &Tickets, ticket: &TicketRef, tool: &TicketTool) -> Resul
                 "url": fresh.url,
                 "description": description,
             })
-        }),
+        })
+        .map(unchanged),
         TicketTool::Comment { markdown } => tickets
             .comment(ticket, markdown)
-            .map(|url| json!({"commented":true,"url":url})),
+            .map(|url| Answered {
+                value: json!({"commented":true,"url":url}),
+                effect: Effect::Commented,
+            }),
         TicketTool::Statuses => tickets.statuses(ticket).map(|choices| {
             json!({
                 "key": ticket.key,
@@ -353,10 +413,14 @@ pub fn answer(tickets: &Tickets, ticket: &TicketRef, tool: &TicketTool) -> Resul
                     }))
                     .collect::<Vec<_>>(),
             })
-        }),
+        })
+        .map(unchanged),
         TicketTool::SetStatus { target, fields } => tickets
             .set_status(ticket, target, fields.clone())
-            .map(|moved| json!({"key":moved.key,"status":moved.status,"url":moved.url})),
+            .map(|moved| Answered {
+                value: json!({"key":moved.key,"status":moved.status,"url":moved.url}),
+                effect: Effect::Moved(moved),
+            }),
     };
     result.map_err(|error| match &error {
         TicketError::NeedsFields(fields) => format!(
@@ -511,13 +575,14 @@ impl Client {
             return Err(format!("This session is linked to {linked}"));
         }
         let may_change_status = scope["mayChangeStatus"] == true;
-        if matches!(tool, TicketTool::SetStatus { .. }) && !may_change_status {
-            return Err(STATUS_OFF.into());
+        let read_only = scope["readOnly"] == true;
+        if let Some(refused) = refusal(&tool, may_change_status, read_only) {
+            return Err(refused.into());
         }
         let statuses = matches!(tool, TicketTool::Statuses);
         let mut result = request(&self.environment, key, Some(tool))?;
         if statuses {
-            result["mayChangeStatus"] = may_change_status.into();
+            result["mayChangeStatus"] = (may_change_status && !read_only).into();
         }
         Ok(result)
     }
@@ -664,9 +729,9 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(3);
         while !worker.is_finished() && Instant::now() < deadline {
             for call in server.drain() {
-                let _ = call
-                    .reply
-                    .send(answer(tickets, server.ticket(), &call.tool));
+                let _ = call.reply.send(
+                    answer(tickets, server.ticket(), &call.tool).map(|answered| answered.value),
+                );
             }
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -679,7 +744,7 @@ mod tests {
 
     #[test]
     fn ticket_tools_list_three_tools() {
-        let server = Server::start(401, linked("ENG-1"), true).unwrap();
+        let server = Server::start(401, linked("ENG-1"), true, false).unwrap();
         let catalog = client(&server)
             .mcp_response(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
             .unwrap();
@@ -707,7 +772,7 @@ mod tests {
 
     #[test]
     fn ticket_get_returns_key_title_status_description() {
-        let server = Server::start(402, linked("ENG-1"), true).unwrap();
+        let server = Server::start(402, linked("ENG-1"), true, false).unwrap();
         let tickets = tickets(
             Arc::new(FakeProvider::new().with_issue(issue("ENG-1"))),
             None,
@@ -737,7 +802,7 @@ mod tests {
 
     #[test]
     fn ticket_comment_reaches_the_app_and_returns_url() {
-        let server = Server::start(403, linked("ENG-1"), true).unwrap();
+        let server = Server::start(403, linked("ENG-1"), true, false).unwrap();
         let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
         let tickets = tickets(fake.clone(), None);
         let result = call_answered(
@@ -763,7 +828,7 @@ mod tests {
 
     #[test]
     fn ticket_tools_refuse_another_key() {
-        let server = Server::start(404, linked("ABC-1"), true).unwrap();
+        let server = Server::start(404, linked("ABC-1"), true, false).unwrap();
         for request in [
             tool_call("ticket_get", json!({"key":"ABC-99"})),
             tool_call("ticket_comment", json!({"key":"ABC-99","body":"hi"})),
@@ -779,7 +844,7 @@ mod tests {
     #[test]
     fn hub_refuses_another_key_without_the_stdio_process() {
         // The token is in the agent's environment, so the hub is the boundary.
-        let server = Server::start(405, linked("ABC-1"), true).unwrap();
+        let server = Server::start(405, linked("ABC-1"), true, false).unwrap();
         let environment = server.environment(Path::new("/test/app"));
         let error = request(&environment, Some("ABC-99"), Some(TicketTool::Get)).unwrap_err();
         assert_eq!(error, "This session is linked to ABC-1");
@@ -788,7 +853,7 @@ mod tests {
 
     #[test]
     fn status_change_refused_when_not_allowed() {
-        let server = Server::start(406, linked("ENG-1"), false).unwrap();
+        let server = Server::start(406, linked("ENG-1"), false, false).unwrap();
         let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
         let tickets = tickets(fake.clone(), None);
         let listing = call_answered(&server, &tickets, tool_call("ticket_status", json!({})));
@@ -832,7 +897,7 @@ mod tests {
 
     #[test]
     fn allowed_status_change_moves_the_ticket() {
-        let server = Server::start(407, linked("ENG-1"), true).unwrap();
+        let server = Server::start(407, linked("ENG-1"), true, false).unwrap();
         let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
         let tickets = tickets(fake.clone(), None);
         let result = call_answered(
@@ -848,7 +913,7 @@ mod tests {
 
     #[test]
     fn needs_fields_is_reported_as_tool_error_with_field_list() {
-        let server = Server::start(408, linked("ENG-1"), true).unwrap();
+        let server = Server::start(408, linked("ENG-1"), true, false).unwrap();
         let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
         let transition = Transition {
             // The fake moves by state id, so the transition shares it.
@@ -899,7 +964,7 @@ mod tests {
 
     #[test]
     fn bad_token_is_rejected() {
-        let server = Server::start(409, linked("ENG-1"), true).unwrap();
+        let server = Server::start(409, linked("ENG-1"), true, false).unwrap();
         let mut environment = server.environment(Path::new("/test/app"));
         let token = environment[ENV_TOKEN].clone();
         assert!(token.len() >= 32, "at least 128 bits");
@@ -921,7 +986,7 @@ mod tests {
 
     #[test]
     fn app_gone_returns_error_not_hang() {
-        let server = Server::start(410, linked("ENG-1"), true).unwrap();
+        let server = Server::start(410, linked("ENG-1"), true, false).unwrap();
         let client = client(&server);
         let worker = std::thread::spawn(move || {
             client
@@ -949,7 +1014,7 @@ mod tests {
         drop(held);
         // With the turn over, a new call fails at once instead of waiting.
         let started = Instant::now();
-        let environment = Server::start(411, linked("ENG-1"), true)
+        let environment = Server::start(411, linked("ENG-1"), true, false)
             .unwrap()
             .environment(Path::new("/test/app"));
         assert!(request(&environment, None, Some(TicketTool::Get)).is_err());
@@ -958,21 +1023,21 @@ mod tests {
 
     #[test]
     fn a_restarted_turn_keeps_the_token_but_takes_the_new_ticket() {
-        let first = Server::start(412, linked("ENG-1"), true).unwrap();
+        let first = Server::start(412, linked("ENG-1"), true, false).unwrap();
         let environment = first.environment(Path::new("/test/app"));
-        assert!(Server::start(412, linked("ENG-1"), true).is_err());
+        assert!(Server::start(412, linked("ENG-1"), true, false).is_err());
         drop(first);
-        let next = Server::start(412, linked("ENG-2"), false).unwrap();
+        let next = Server::start(412, linked("ENG-2"), false, false).unwrap();
         assert_eq!(environment, next.environment(Path::new("/test/app")));
         assert_eq!(
             request(&environment, None, None).unwrap(),
-            json!({"key":"ENG-2","mayChangeStatus":false})
+            json!({"key":"ENG-2","mayChangeStatus":false,"readOnly":false})
         );
     }
 
     #[test]
     fn tool_results_and_server_logs_never_carry_the_token() {
-        let server = Server::start(413, linked("ENG-1"), true).unwrap();
+        let server = Server::start(413, linked("ENG-1"), true, false).unwrap();
         let environment = server.environment(Path::new("/test/app"));
         let tickets = tickets(
             Arc::new(FakeProvider::new().with_issue(issue("ENG-1"))),
@@ -984,5 +1049,76 @@ mod tests {
         });
         assert!(!result.to_string().contains(&environment[ENV_TOKEN]));
         assert!(!format!("{logged:?}").contains(&environment[ENV_TOKEN]));
+    }
+
+    #[test]
+    fn read_only_sessions_can_read_and_list_but_not_write() {
+        let server = Server::start(414, linked("ENG-1"), true, true).unwrap();
+        let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
+        let tickets = tickets(fake.clone(), None);
+        for request in [
+            tool_call("ticket_comment", json!({"body":"Done"})),
+            tool_call("ticket_status", json!({"target":"Done"})),
+        ] {
+            let response = client(&server).mcp_response(request).unwrap();
+            assert_eq!(response["result"]["isError"], true);
+            assert_eq!(text(&response["result"]), "This session is read-only");
+        }
+        assert!(server.drain().is_empty(), "Refused before reaching the app");
+        // The hub refuses the same writes from a caller that skips the stdio server.
+        let environment = server.environment(Path::new("/test/app"));
+        for tool in [
+            TicketTool::Comment {
+                markdown: "Done".into(),
+            },
+            TicketTool::SetStatus {
+                target: "Done".into(),
+                fields: BTreeMap::new(),
+            },
+        ] {
+            assert_eq!(
+                request(&environment, None, Some(tool)).unwrap_err(),
+                "This session is read-only"
+            );
+        }
+        assert!(server.drain().is_empty());
+        assert_eq!(
+            request(&environment, None, None).unwrap(),
+            json!({"key":"ENG-1","mayChangeStatus":true,"readOnly":true})
+        );
+        let read = call_answered(&server, &tickets, tool_call("ticket_get", json!({})));
+        assert_eq!(read["isError"], false, "{read}");
+        let listing = call_answered(&server, &tickets, tool_call("ticket_status", json!({})));
+        assert_eq!(listing["isError"], false, "{listing}");
+        let listing: Value = serde_json::from_str(text(&listing)).unwrap();
+        assert_eq!(listing["mayChangeStatus"], false);
+        assert!(fake.comments("ENG-1").is_empty());
+        assert_eq!(fake.get_issue("ENG-1").unwrap().state.name, "Todo");
+    }
+
+    #[test]
+    fn answers_report_what_changed_on_the_ticket() {
+        let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
+        let tickets = tickets(fake, None);
+        let ticket = linked("ENG-1");
+        let effect = |tool: TicketTool| answer(&tickets, &ticket, &tool).unwrap().effect;
+        assert_eq!(effect(TicketTool::Get), Effect::None);
+        assert_eq!(effect(TicketTool::Statuses), Effect::None);
+        assert_eq!(
+            effect(TicketTool::Comment {
+                markdown: "Note".into()
+            }),
+            Effect::Commented
+        );
+        let Effect::Moved(moved) = effect(TicketTool::SetStatus {
+            target: "Doing".into(),
+            fields: BTreeMap::new(),
+        }) else {
+            panic!("a status move returns the moved ticket");
+        };
+        assert_eq!(moved.key, "ENG-1");
+        assert_eq!(moved.status.as_deref(), Some("Doing"));
+        assert_eq!(moved.status_group, Some(StateGroup::Started));
+        assert!(answer(&tickets, &linked("ENG-404"), &TicketTool::Get).is_err());
     }
 }
