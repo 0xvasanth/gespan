@@ -1,0 +1,21 @@
+crates/board-schema/src/testing.rs
+  s_d05c806a911629::t_46e6bd50ef92bf 262,356-397,399-439,442-505
+  s_d05c806a911629::t_8d36b12b7da3c7 440-441
+  s_d05c806a911629::t_fe703fc1b33a5c 4-5,7-8,263-355,398
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "42174a78f75b154f19045d6e1ecd79645b384626",
+  "prompts": {},
+  "sessions": {
+    "s_d05c806a911629": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fc2888e-f1ae-430e-909f-05282820ed3d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
