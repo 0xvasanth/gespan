@@ -35,7 +35,7 @@ proptest! {
         prefix in any::<String>(), open in separator(), token in token(),
         close in separator(), suffix in any::<String>(),
     ) {
-        let input = surround(&prefix, &open, &token, &close, &suffix);
+        let input = surround(&prefix, open, &token, close, &suffix);
         let out = Redactor::new(Config::default()).redact_text(&input);
         prop_assert!(!out.contains(&token), "{token:?} survived in {out:?}");
         prop_assert!(out.contains("<redacted>"));
@@ -46,7 +46,7 @@ proptest! {
         prefix in any::<String>(), open in separator(),
         value in "[A-Za-z0-9._~+/=-]{8,40}", close in separator(), suffix in any::<String>(),
     ) {
-        let input = surround(&prefix, &open, &format!("Bearer {value}"), &close, &suffix);
+        let input = surround(&prefix, open, &format!("Bearer {value}"), close, &suffix);
         let out = Redactor::new(Config::default()).redact_text(&input);
         prop_assert!(!out.contains(&format!("Bearer {value}")), "survived in {out:?}");
     }
@@ -58,7 +58,7 @@ proptest! {
         value in "[A-Za-z0-9!#$%()*+./:=?@_~-]{1,40}", close in separator(), suffix in any::<String>(),
     ) {
         let pair = format!("{key}={value}");
-        let input = surround(&prefix, &open, &pair, &close, &suffix);
+        let input = surround(&prefix, open, &pair, close, &suffix);
         let out = Redactor::new(Config::default()).redact_text(&input);
         prop_assert!(!out.contains(&pair), "{pair:?} survived in {out:?}");
         prop_assert!(out.contains(&format!("{key}=<redacted>")), "{out:?}");
