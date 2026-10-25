@@ -268,6 +268,7 @@ impl Pilots {
                     run.view.update(cx, |v, cx| v.pilot_stop(cx));
                 }
                 this.roster.pilots.retain(|m| m.id != id);
+                this.roadmaps.remove(&id);
                 if this.active.as_ref() == Some(&id) {
                     this.active = None;
                 }

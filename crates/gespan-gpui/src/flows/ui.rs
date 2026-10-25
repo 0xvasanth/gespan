@@ -13,7 +13,7 @@ pub(super) fn run_status_label(status: RunStatus) -> &'static str {
     }
 }
 
-pub(super) fn status_color(status: &str) -> Hsla {
+pub(crate) fn status_color(status: &str) -> Hsla {
     match status {
         "running" => accent_color(),
         "waiting-approval" => rgb(0xf59e0b).into(),

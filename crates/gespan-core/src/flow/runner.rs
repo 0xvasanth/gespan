@@ -9,7 +9,8 @@ use super::template::{render_template, resolve_inputs, BindingContext};
 use std::collections::{HashMap, HashSet};
 
 pub const MAX_RUN_STEPS: u32 = 50;
-const INTERRUPTED: &str = "Interrupted by app restart";
+/// The error `recover` gives a visit (and its run) cut off by a restart.
+pub const INTERRUPTED: &str = "Interrupted by app restart";
 const IDENTITY_EDIT: &str =
     "A run edit cannot change the Flow's id, owner, initial state, access, folder or inputs";
 
