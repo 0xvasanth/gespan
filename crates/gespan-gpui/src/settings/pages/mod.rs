@@ -16,6 +16,7 @@ mod worktrees;
 
 pub(super) use appearance::parse_hex;
 pub(super) use connections::ConnectionsState;
+pub(super) use diagnostics::{CounterRow, CounterSource, last_days};
 pub(crate) use keybindings::command_shortcut;
 pub(super) use mobile::MobileState;
 

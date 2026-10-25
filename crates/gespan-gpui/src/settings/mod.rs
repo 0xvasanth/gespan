@@ -254,6 +254,10 @@ pub(crate) struct SettingsView {
     accent_custom_open: bool,
     accent_anchor: AnchorSlot,
     mobile: pages::MobileState,
+    /// The Diagnostics page's rows, read on each visit; `None` until read.
+    counters: Option<Result<Vec<pages::CounterRow>, String>>,
+    counters_loading: Option<Task<()>>,
+    counter_source: pages::CounterSource,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<SettingsEvent> for SettingsView {}
@@ -389,6 +393,9 @@ impl SettingsView {
             accent_custom_open: false,
             accent_anchor: AnchorSlot::default(),
             mobile: pages::MobileState::default(),
+            counters: None,
+            counters_loading: None,
+            counter_source: pages::last_days(),
             _subscriptions: subscriptions,
         };
         this.watch_mobile(cx);
@@ -397,6 +404,9 @@ impl SettingsView {
             this.probe_notification_permission(false, cx);
         }
         this.notification_deadline(cx);
+        if this.section == Section::Diagnostics {
+            this.enter_diagnostics(cx);
+        }
         this.refresh(cx);
         this
     }
@@ -461,7 +471,11 @@ impl SettingsView {
             self.management_generation += 1;
             self.leave_mobile(cx);
             self.leave_connections(cx);
+            self.leave_diagnostics();
             self.section = section;
+            if section == Section::Diagnostics {
+                self.enter_diagnostics(cx);
+            }
             self.watch_mobile(cx);
             self.watch_connections(cx);
             if section == Section::Mcp {
