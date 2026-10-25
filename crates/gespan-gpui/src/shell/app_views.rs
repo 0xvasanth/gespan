@@ -345,6 +345,7 @@ impl Shell {
                     inbox::Event::ItemsChanged(items) => {
                         this.inbox_automation_events(items.clone(), cx)
                     }
+                    inbox::Event::ConnectionsChanged => this.refresh_connected_trackers(cx),
                 },
             ));
             self.app_view_events

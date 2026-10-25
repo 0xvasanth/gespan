@@ -585,10 +585,14 @@ pub(crate) struct Shell {
     renaming: Option<session_groups::Renaming>,
     link_dialog: Option<session_groups::LinkDialog>,
     tickets: Arc<dyn crate::tickets::TicketBackend>,
-    /// Sessions whose linked ticket could not be read because its tracker is
-    /// disconnected; the chip then shows its cached data as stale.
+    /// Trackers with saved credentials; `None` until the first off-thread read.
+    connected_trackers: Option<HashSet<gespan_core::tickets::Tracker>>,
+    /// Sessions whose last ticket read found the tracker disconnected.
     stale_tickets: HashSet<i64>,
-    ticket_refreshing: HashSet<i64>,
+    /// The newest ticket request per session: (sequence, tracker, key). An older
+    /// reply is dropped, so a relink or a manual refresh is never swallowed.
+    ticket_requests: HashMap<i64, (u64, gespan_core::tickets::Tracker, String)>,
+    ticket_sequence: u64,
     /// New-session composers holding only the ticket key until its title arrives.
     ticket_drafts: HashMap<i64, String>,
     action_dialog: Option<actions::ActionDialog>,
@@ -945,8 +949,10 @@ impl Shell {
             renaming: None,
             link_dialog: None,
             tickets,
+            connected_trackers: None,
             stale_tickets: HashSet::new(),
-            ticket_refreshing: HashSet::new(),
+            ticket_requests: HashMap::new(),
+            ticket_sequence: 0,
             ticket_drafts: HashMap::new(),
             action_dialog: None,
             actions_anchor: AnchorSlot::default(),
@@ -1177,6 +1183,9 @@ impl Shell {
         this.poll_reminders(cx);
         this.initialize_automations(cx);
         this.initialize_flows(cx);
+        // Tests install a fake backend instead of reading the real keychain.
+        #[cfg(not(test))]
+        this.refresh_connected_trackers(cx);
         if this.workspace.active.is_none() {
             cx.spawn(async move |this, cx| {
                 let _ = this.update_in(cx, |this, window, cx| {

@@ -28,8 +28,13 @@ use std::{
 pub(crate) enum Event {
     Close,
     OpenSession(i64),
-    StartSession { item: Box<Item>, prompt: String },
+    StartSession {
+        item: Box<Item>,
+        prompt: String,
+    },
     ItemsChanged(Vec<Item>),
+    /// A tracker was connected or disconnected.
+    ConnectionsChanged,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -850,6 +855,7 @@ impl Inbox {
                     Ok(status) => {
                         let connected = status.connected;
                         this.snapshot.connections.insert(provider.clone(), status);
+                        cx.emit(Event::ConnectionsChanged);
                         this.connect_token.update(cx, |input, cx| input.set_text(String::new(), cx));
                         if connected || disconnect {
                             this.connect_provider = None;

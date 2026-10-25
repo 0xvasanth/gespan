@@ -1,14 +1,20 @@
 //! What the shell asks of the ticket trackers. A trait so gpui tests can swap
 //! in a fake without exposing gespan-core's provider internals.
-use gespan_core::tickets::{Resolved, TicketError, TicketRef, Tickets};
+use gespan_core::tickets::{Resolved, TicketError, TicketRef, Tickets, Tracker};
 
 pub(crate) trait TicketBackend: Send + Sync {
+    /// Trackers with saved credentials. Reads the keychain: call off the UI thread.
+    fn connected(&self) -> Vec<Tracker>;
     /// Never touches the network.
     fn resolve(&self, input: &str) -> Resolved;
     fn fetch(&self, ticket: &TicketRef) -> Result<TicketRef, TicketError>;
 }
 
 impl TicketBackend for Tickets {
+    fn connected(&self) -> Vec<Tracker> {
+        Tickets::connected(self)
+    }
+
     fn resolve(&self, input: &str) -> Resolved {
         Tickets::resolve(self, input)
     }
@@ -21,10 +27,7 @@ impl TicketBackend for Tickets {
 #[cfg(test)]
 pub(crate) mod fakes {
     use super::*;
-    use gespan_core::{
-        provider_boards::StateGroup,
-        tickets::{Tracker, parse_ticket},
-    };
+    use gespan_core::{provider_boards::StateGroup, tickets::parse_ticket};
     use std::sync::Mutex;
 
     /// Resolves like gespan-core's `Tickets` (which has its own tests) and
@@ -54,6 +57,10 @@ pub(crate) mod fakes {
     }
 
     impl TicketBackend for FakeTickets {
+        fn connected(&self) -> Vec<Tracker> {
+            self.connected.lock().unwrap().clone()
+        }
+
         fn resolve(&self, input: &str) -> Resolved {
             let Some(parsed) = parse_ticket(input) else {
                 return Resolved::Invalid;
