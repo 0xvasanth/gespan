@@ -224,3 +224,46 @@ describe("consent", () => {
     expect(report.consent.consent_version).toBe(version);
   });
 });
+
+const INTAKE = "docs/diagnostics/intake-api.md";
+
+describe("intake API", () => {
+  const md = doc(INTAKE);
+
+  it("authenticates with a public per-build ingest key, never a secret", () => {
+    const conventions = section(md, "Conventions");
+    expect(conventions).toContain("`X-Gespan-Ingest-Key`");
+    expect(conventions).toMatch(/not a secret/i);
+  });
+
+  it("sends the bundle zip to POST /v1/reports and answers with report_id and issue_url", () => {
+    expect(section(md, "POST /v1/reports")).toMatch(/application\/zip/);
+    const response = exampleIn(md, "Report response");
+    expectRequired(md, "Report response", response);
+    expect(Object.keys(response).sort()).toEqual(["issue_url", "report_id"]);
+    expect(String(response.issue_url)).toMatch(/^https:\/\/github\.com\/0xvasanth\/gespan\/issues\/\d+$/);
+  });
+
+  it("takes a daily aggregate at POST /v1/metrics that cannot be tied to a person or a report", () => {
+    const request = exampleIn(md, "Metrics request");
+    expectRequired(md, "Metrics request", request);
+    expect(request).not.toHaveProperty("install_id");
+    expect(request).not.toHaveProperty("submission_id");
+    expect(request.day).toMatch(/^\d{4}-\d\d-\d\d$/);
+    for (const c of request.counters as Json[]) {
+      expect(Object.keys(c).sort()).toEqual(["count", "error_kind", "name"]);
+      expect(c.error_kind === null || /^[a-z_]+$/.test(String(c.error_kind))).toBe(true);
+      expect(Number.isInteger(c.count)).toBe(true);
+    }
+  });
+
+  it("documents the rejections both apps must handle, each with a fixed error code", () => {
+    const [, rows] = table(md, "Errors");
+    const statuses = rows.map((r) => r[0]);
+    for (const status of ["400", "401", "413", "415", "429", "5xx"]) expect(statuses).toContain(status);
+    for (const r of rows) expect(r[1]).toMatch(/^`[a-z_]+`$/);
+    const error = exampleIn(md, "Errors") as { error: Json };
+    expect(Object.keys(error.error).sort()).toEqual(["code", "message"]);
+    expect(rows.map((r) => r[1])).toContain(`\`${error.error.code}\``);
+  });
+});
