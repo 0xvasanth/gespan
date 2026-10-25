@@ -38,6 +38,12 @@ minisign-verify = "0.3"
 tempfile = "3"
 flate2 = "1"
 tar = "0.4"
+# Diagnostics: structured JSONL logs, crash files and the `log` bridge.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "ansi", "env-filter", "registry", "tracing-log"] }
+tracing-appender = "0.2"
+log = "0.4"
+tracing-log = { version = "0.2", default-features = false, features = ["log-tracer", "std"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }

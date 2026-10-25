@@ -53,6 +53,34 @@ impl Shell {
                     Command::Panel => window.dispatch_action(Box::new(ToggleRightPanel), cx),
                     Command::Terminal => window.dispatch_action(Box::new(ToggleTerminal), cx),
                     Command::Layout => window.dispatch_action(Box::new(ToggleLayout), cx),
+                    Command::OpenLogs => {
+                        let open = cx
+                            .background_executor()
+                            .spawn(async { gespan_core::diagnostics::open_logs_folder() });
+                        cx.spawn(async move |this, cx| {
+                            if let Err(error) = open.await {
+                                let _ = this.update(cx, |this, cx| {
+                                    this.error = Some(format!("Open logs folder: {error}"));
+                                    cx.notify();
+                                });
+                            }
+                        })
+                        .detach();
+                    }
+                    Command::CopyDiagnostics => {
+                        // It scans the log and crash folders: keep that off
+                        // the UI thread.
+                        let summary = cx
+                            .background_executor()
+                            .spawn(async { gespan_core::diagnostics::summary() });
+                        cx.spawn(async move |_, cx| {
+                            let summary = summary.await;
+                            cx.update(|cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(summary))
+                            })
+                        })
+                        .detach();
+                    }
                     Command::Plan | Command::Operator | Command::Orchestrator => {
                         if let Some(view) =
                             this.workspace.active.and_then(|id| this.sessions.get(&id))
@@ -217,6 +245,55 @@ mod tests {
                         .content,
                     ">"
                 )
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn palette_copies_diagnostics_and_reports_a_missing_logs_folder(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::input::bind(cx);
+            super::super::bind_keys(cx);
+            crate::popover::bind(cx);
+        });
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        let run = |query: &str, cx: &mut TestAppContext| {
+            cx.simulate_keystrokes(window.into(), &format!("{modifier}-shift-p"));
+            cx.run_until_parked();
+            window
+                .update(cx, |shell, _, cx| {
+                    let search = shell
+                        .quick_open
+                        .as_ref()
+                        .unwrap()
+                        .picker
+                        .read(cx)
+                        .search
+                        .clone();
+                    search.update(cx, |input, cx| input.set_text(query.into(), cx));
+                })
+                .unwrap();
+            cx.run_until_parked();
+            cx.simulate_keystrokes(window.into(), "enter");
+            cx.run_until_parked();
+        };
+        run(">Copy diagnostics", cx);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(gespan_core::diagnostics::summary())
+        );
+        // Tests never start diagnostics, so the folder action must say why it
+        // did nothing rather than fail silently.
+        run(">Open logs folder", cx);
+        window
+            .update(cx, |shell, _, _| {
+                assert!(shell.quick_open.is_none());
+                let error = shell.error.clone().unwrap_or_default();
+                assert!(error.contains("Diagnostics have not started"), "{error}");
             })
             .unwrap();
     }
