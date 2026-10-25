@@ -37,13 +37,19 @@ function section(md: string, heading: string): string {
   return lines.slice(start + 1, end < 0 ? undefined : end).join("\n");
 }
 
-/** Rows of the field table under `heading` whose Required column says yes. */
-function requiredFields(md: string, heading: string): string[] {
+/** The first table under `heading`: its header cells and body rows, separator dropped. */
+function table(md: string, heading: string): [string[], string[][]] {
   const rows = section(md, heading)
     .split("\n")
     .filter((l) => l.startsWith("|"))
     .map((l) => l.split("|").slice(1, -1).map((c) => c.trim()));
   const [header, , ...body] = rows;
+  return [header, body];
+}
+
+/** Rows of the field table under `heading` whose Required column says yes. */
+function requiredFields(md: string, heading: string): string[] {
+  const [header, body] = table(md, heading);
   const req = header.findIndex((c) => c.toLowerCase() === "required");
   expect(req, `"${heading}" table has a Required column`).toBeGreaterThan(0);
   return body.filter((r) => r[req].toLowerCase() === "yes").map((r) => r[0].replaceAll("`", ""));
@@ -163,5 +169,58 @@ describe("bundle format", () => {
         : [];
     const env = exampleIn(md, "environment.json");
     expect(keys(env).filter((k) => /path|name|url|repo/i.test(k))).toEqual([]);
+  });
+});
+
+const CONSENT = "docs/diagnostics/consent.md";
+
+/** The `consent_version` a document declares as current. */
+const currentConsentVersion = (md: string) =>
+  Number(/current `consent_version` is \*\*(\d+)\*\*/i.exec(md)?.[1]);
+
+describe("consent", () => {
+  const md = doc(CONSENT);
+  const version = currentConsentVersion(md);
+
+  it("declares a current consent_version", () => {
+    expect(Number.isInteger(version) && version >= 1).toBe(true);
+  });
+
+  it("stores a record with the five contract fields at the current version", () => {
+    expect(requiredFields(md, "Consent record").sort()).toEqual(
+      ["consent_version", "crash_reports", "decided_at", "include_logs", "metrics"].sort(),
+    );
+    expectRequired(md, "Consent record", exampleIn(md, "Consent record"));
+    expect(exampleIn(md, "Consent record").consent_version).toBe(version);
+  });
+
+  it("defaults to sending nothing: ask for crashes, metrics off, logs included, undecided", () => {
+    expect(exampleIn(md, "Defaults")).toEqual({
+      consent_version: version,
+      crash_reports: "ask",
+      metrics: false,
+      include_logs: true,
+      decided_at: null,
+    });
+  });
+
+  it("offers three prompt buttons, and dismissing the prompt is the same as Ask me each time", () => {
+    const [header, rows] = table(md, "First-run prompt");
+    const choice = (label: string) => {
+      const row = rows.find((r) => r[0].includes(label));
+      expect(row, label).toBeDefined();
+      return Object.fromEntries(header.slice(1).map((h, i) => [h, row![i + 1]]));
+    };
+    const buttons = ["Send crash reports automatically", "Ask me each time", "No thanks"];
+    expect(new Set(buttons.map((b) => choice(b)["`crash_reports`"]))).toEqual(
+      new Set(["`\"always\"`", "`\"ask\"`", "`\"never\"`"]),
+    );
+    expect(choice("Dismissed")).toEqual(choice("Ask me each time"));
+    expect(choice("No thanks")["`metrics`"]).toBe("`false`");
+  });
+
+  it("matches the consent_version recorded in the bundle example", () => {
+    const report = exampleIn(doc(BUNDLE), "report.json") as { consent: Json };
+    expect(report.consent.consent_version).toBe(version);
   });
 });
