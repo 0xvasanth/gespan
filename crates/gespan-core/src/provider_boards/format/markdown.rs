@@ -262,7 +262,21 @@ impl Builder {
             Frame::Paragraph(content) => self.push_block(Block::Paragraph(content)),
             Frame::Heading(level, content) => self.push_block(Block::Heading { level, content }),
             Frame::Quote(blocks) => self.push_block(Block::Quote(blocks)),
-            Frame::Code(language, code) => self.push_block(Block::Code { language, code }),
+            // Only Gespan's own exact fence marks kept content; a tracker's
+            // code block in that language stays code (see `fenced_info`).
+            Frame::Code(language, code) => {
+                let source = language
+                    .as_deref()
+                    .map(str::trim)
+                    .and_then(Source::from_fence);
+                self.push_block(match source {
+                    Some(source) => Block::Preserved(Preserved {
+                        source,
+                        raw: code.trim_end_matches('\n').to_string(),
+                    }),
+                    None => Block::Code { language, code },
+                });
+            }
             Frame::Html(raw) => self.push_block(Block::Html(raw)),
             Frame::List { start, items } => self.push_block(match start {
                 Some(start) => Block::OrderedList { start, items },
@@ -468,7 +482,7 @@ fn render_block(block: &Block, bullet_alt: bool, ordered_alt: bool) -> Vec<Strin
                 })
                 .collect()
         }
-        Block::Code { language, code } => fenced(language.as_deref().unwrap_or(""), code),
+        Block::Code { language, code } => fenced(&fenced_info(language.as_deref()), code),
         Block::Quote(blocks) => render_blocks(blocks)
             .into_iter()
             .map(|line| {
@@ -482,6 +496,16 @@ fn render_block(block: &Block, bullet_alt: bool, ordered_alt: bool) -> Vec<Strin
         Block::Rule => vec!["---".to_string()],
         Block::Html(raw) => raw.split('\n').map(str::to_string).collect(),
         Block::Preserved(preserved) => fenced(preserved.source.fence(), &preserved.raw),
+    }
+}
+
+/// A code block's info string. A real code block whose language is a kept-content
+/// fence gets a second word, so it never reads back as kept content.
+fn fenced_info(language: Option<&str>) -> String {
+    match language {
+        Some(language) if Source::from_fence(language).is_some() => format!("{language} code"),
+        Some(language) => language.to_string(),
+        None => String::new(),
     }
 }
 
@@ -1243,6 +1267,23 @@ mod tests {
             assert_eq!(render(&doc).matches('x').count(), 1);
             assert_eq!(parse(&render(&doc)), doc);
         }
+    }
+
+    #[test]
+    fn only_an_exact_gespan_fence_is_kept_content() {
+        let code = |language: &str| Block::Code {
+            language: Some(language.into()),
+            code: "<b>x</b>".into(),
+        };
+        let doc = normalize(Doc {
+            blocks: vec![code("gespan-html")],
+        });
+        assert_eq!(render(&doc), "```gespan-html code\n<b>x</b>\n```");
+        assert_eq!(round_trip(&doc), doc);
+        assert_eq!(
+            parse("```gespan-html extra\n<b>x</b>\n```").blocks,
+            vec![code("gespan-html")]
+        );
     }
 
     #[test]

@@ -156,7 +156,13 @@ fn leaf(profile: Profile) -> BoxedStrategy<Block> {
     let heading =
         (1u8..=6, inlines(profile)).prop_map(|(level, content)| Block::Heading { level, content });
     let code = (
-        prop::option::of(prop::sample::select(vec!["rust", "c++", "js extra", ""])),
+        prop::option::of(prop::sample::select(vec![
+            "rust",
+            "c++",
+            "js extra",
+            "",
+            "gespan-html",
+        ])),
         "[a-z `~\n]{0,12}",
     )
         .prop_map(|(language, code)| Block::Code {

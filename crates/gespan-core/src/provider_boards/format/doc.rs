@@ -281,9 +281,6 @@ fn normalize_block(block: Block) -> Option<Block> {
                 .trim_end_matches('\n')
                 .to_string();
             let language = language.and_then(|l| l.split_whitespace().next().map(str::to_string));
-            if let Some(source) = language.as_deref().and_then(Source::from_fence) {
-                return Some(Block::Preserved(Preserved { source, raw: code }));
-            }
             Some(Block::Code { language, code })
         }
         Block::Quote(blocks) => {
@@ -366,8 +363,13 @@ fn merge_runs(inlines: Vec<Inline>) -> Vec<Inline> {
                     text: previous,
                     marks: previous_marks,
                 }) if *previous_marks == marks => {
-                    previous.push_str(&text);
-                    *previous = collapse_whitespace(previous);
+                    // Both sides are already collapsed; only the join can
+                    // hold two spaces.
+                    let text = match previous.ends_with(' ') {
+                        true => text.strip_prefix(' ').unwrap_or(&text),
+                        false => &text,
+                    };
+                    previous.push_str(text);
                 }
                 _ => out.push(Inline::Text { text, marks }),
             },
@@ -638,12 +640,12 @@ mod tests {
     }
 
     #[test]
-    fn gespan_code_fence_becomes_preserved() {
+    fn code_languages_and_list_starts_are_canonical() {
         let doc = normalize(Doc {
             blocks: vec![
                 Block::Code {
                     language: Some("gespan-adf extra".into()),
-                    code: "{\"type\":\"panel\"}\n".into(),
+                    code: "{\"type\":\"panel\"}\r\n".into(),
                 },
                 Block::Code {
                     language: Some("  ".into()),
@@ -658,10 +660,11 @@ mod tests {
         assert_eq!(
             doc.blocks,
             vec![
-                Block::Preserved(Preserved {
-                    source: Source::Adf,
-                    raw: "{\"type\":\"panel\"}".into(),
-                }),
+                // Only Gespan's own Markdown marks content as kept.
+                Block::Code {
+                    language: Some("gespan-adf".into()),
+                    code: "{\"type\":\"panel\"}".into(),
+                },
                 Block::Code {
                     language: None,
                     code: "x".into(),

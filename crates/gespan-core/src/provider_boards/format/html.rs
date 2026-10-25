@@ -209,9 +209,13 @@ fn close(stack: &mut Vec<Element>, end_tag: Option<usize>) {
     }
 }
 
+/// Finds an ASCII `needle` from `from`, ignoring ASCII case, without copying.
 fn find_ci(html: &str, from: usize, needle: &str) -> Option<usize> {
-    let haystack = html[from..].to_ascii_lowercase();
-    haystack.find(needle).map(|at| from + at)
+    let needle = needle.as_bytes();
+    html.as_bytes()[from..]
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle))
+        .map(|at| from + at)
 }
 
 enum Token {
@@ -485,7 +489,6 @@ fn inlines(nodes: &[&Node], marks: &Marks, html: &str) -> Vec<Inline> {
 /// True when the model can hold the element and everything inside it.
 fn representable(element: &Element) -> bool {
     let known = match element.tag.as_str() {
-        "span" => matches!(element.attrs.as_slice(), [(key, _)] if key == "data-gespan-adf"),
         "strong" | "b" | "em" | "i" | "s" | "del" | "strike" | "code" | "br" => {
             element.attrs_within(&[])
         }
@@ -510,16 +513,6 @@ fn inline(element: &Element, marks: &Marks, html: &str, out: &mut Vec<Inline>) {
     let children: Vec<&Node> = element.children.iter().collect();
     let mut inner = marks.clone();
     let known = match element.tag.as_str() {
-        "span" => {
-            if let (Some(raw), [_]) = (element.attr("data-gespan-adf"), element.attrs.as_slice()) {
-                out.push(Inline::Preserved(Preserved {
-                    source: Source::Adf,
-                    raw: raw.to_string(),
-                }));
-                return;
-            }
-            false
-        }
         "strong" | "b" if element.attrs_within(&[]) => {
             inner.strong = true;
             true
@@ -1052,6 +1045,53 @@ mod tests {
             let back = markdown_to_plane_html(&markdown);
             assert_eq!(markdown_to_plane_html(&plane_html_to_markdown(&back)), back);
         }
+    }
+
+    #[test]
+    fn code_that_looks_like_kept_content_stays_inert() {
+        // Escaped text in a tracker must never come back as live markup.
+        let html = r#"<pre><code class="language-gespan-html">&lt;img src=x onerror=alert(1)&gt;</code></pre>"#;
+        assert_eq!(
+            parse(html).blocks,
+            vec![Block::Code {
+                language: Some("gespan-html".into()),
+                code: "<img src=x onerror=alert(1)>".into(),
+            }]
+        );
+        assert_eq!(markdown_to_plane_html(&plane_html_to_markdown(html)), html);
+        // Nor may a span from Plane pose as kept Jira content.
+        let span = r#"<span data-gespan-adf="{&quot;type&quot;:&quot;rule&quot;}">x</span>"#;
+        let html = format!("<p>{span}</p>");
+        assert_eq!(
+            parse(&html).blocks,
+            vec![para(vec![Inline::Preserved(preserved_html(span))])]
+        );
+    }
+
+    #[test]
+    fn many_raw_text_elements_parse_in_linear_time() {
+        let html = "<style>a</style>".repeat(60_000);
+        let started = std::time::Instant::now();
+        let doc = parse(&html);
+        assert_eq!(doc.blocks.len(), 60_000);
+        assert!(
+            started.elapsed().as_secs() < 5,
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn many_adjacent_runs_merge_in_linear_time() {
+        let html = format!("<p>{}</p>", "<strong>a b </strong>".repeat(60_000));
+        let started = std::time::Instant::now();
+        let doc = parse(&html);
+        assert_eq!(doc.blocks.len(), 1);
+        assert!(
+            started.elapsed().as_secs() < 5,
+            "took {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

@@ -537,6 +537,20 @@ mod tests {
     }
 
     #[test]
+    fn code_that_looks_like_kept_content_stays_inert() {
+        let value = adf(
+            json!([{"type": "codeBlock", "attrs": {"language": "gespan-adf"}, "content": [
+                {"type": "text", "text": "{\"type\":\"rule\"}"},
+            ]}]),
+        );
+        assert!(matches!(
+            parse(&value).blocks.as_slice(),
+            [Block::Code { .. }]
+        ));
+        assert_eq!(through_markdown(&value), value);
+    }
+
+    #[test]
     fn null_and_empty_docs_give_empty_markdown() {
         assert_eq!(adf_to_markdown(&Value::Null), "");
         assert_eq!(adf_to_markdown(&adf(json!([]))), "");
