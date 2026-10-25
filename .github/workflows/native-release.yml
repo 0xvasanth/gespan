@@ -18,11 +18,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15
+          # Like release.yml: AppKit draws its controls (traffic lights, menus)
+          # for the SDK the app links against, and only the newest Apple
+          # silicon images ship a current one, so Intel cross-compiles there.
+          - os: macos-latest
             target: aarch64-apple-darwin
             arch: aarch64
             kind: macos
-          - os: macos-15-intel
+          - os: macos-latest
             target: x86_64-apple-darwin
             arch: x86_64
             kind: macos
@@ -118,6 +121,23 @@ jobs:
           df -h .
           cargo clean --manifest-path crates/monocode-gpui/Cargo.toml --profile native-dev
           df -h .
+      - name: Require a current macOS SDK
+        if: runner.os == 'macOS'
+        run: |
+          sdk=$(xcrun --sdk macosx --show-sdk-version)
+          echo "macOS SDK $sdk"
+          if (( ${sdk%%.*} < 26 )); then
+            echo "macOS SDK $sdk would draw pre-macOS 26 window controls" >&2
+            exit 1
+          fi
+          # Xcode 26 ships the Metal compiler GPUI's shaders need separately.
+          if ! xcrun metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun metal --version
+          fi
+      - name: Install Rosetta to run the Intel build while packaging
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: /usr/sbin/softwareupdate --install-rosetta --agree-to-license || arch -x86_64 /usr/bin/true
       - name: Build optimized native app
         run: cargo build --locked --manifest-path crates/monocode-gpui/Cargo.toml -p monocode-gpui --target ${{ matrix.target }} --release
       - name: Use TCP for Mac notarization
