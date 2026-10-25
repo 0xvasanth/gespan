@@ -1,13 +1,16 @@
 //! The board's Tauri commands. Storage is the shared `gespan-board-store`
 //! crate the native app also uses; each mutating command emits `CHANGED`.
-use gespan_board_store::{
-    cards_for_link, create_board, create_card, create_column, delete_board, delete_card,
-    delete_column, get_board, link_card, list_activity, list_boards, move_card, move_column,
-    record_card, rename_board, update_card, update_column, validate_id, Activity, Board,
-    BoardDetail, Card, Column,
-};
 #[cfg(test)]
-use gespan_board_store::{ensure_tables, get_card};
+use gespan_board_store::ensure_tables;
+use gespan_board_store::get_card;
+use gespan_board_store::{
+    add_comment, add_subtask, card_extras, cards_for_link, create_board, create_card,
+    create_column, create_label, delete_board, delete_card, delete_column, delete_subtask,
+    get_board, link_card, list_activity, list_boards, list_comments, list_labels, list_subtasks,
+    move_card, move_column, record_card, rename_board, set_card_labels, set_due, set_priority,
+    set_projects, toggle_subtask, update_card, update_column, validate_id, Activity, Board,
+    BoardDetail, Card, CardExtras, Column, Comment, Label, Subtask,
+};
 use gespan_tracker_client::tickets::TicketRef;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, State};
@@ -302,6 +305,200 @@ pub fn board_card_record(
     drop(conn);
     notify(&app, &board_id);
     Ok(())
+}
+
+fn comment_add_inner(
+    conn: &rusqlite::Connection,
+    card_id: &str,
+    body: &str,
+) -> Result<Comment, String> {
+    validate_id(card_id, "card")?;
+    add_comment(conn, card_id, body, "user")
+}
+
+fn subtask_delete_inner(
+    conn: &rusqlite::Connection,
+    subtask_id: &str,
+) -> Result<Option<String>, String> {
+    validate_id(subtask_id, "subtask")?;
+    delete_subtask(conn, subtask_id)
+}
+
+#[tauri::command(async)]
+pub fn board_card_extras(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<HashMap<String, CardExtras>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    card_extras(&conn, &board_id)
+}
+
+#[tauri::command(async)]
+pub fn board_card_set_priority(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    priority: u8,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = set_priority(&conn, &card_id, priority)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_card_set_due(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    due_at: Option<i64>,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = set_due(&conn, &card_id, due_at)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_card_set_projects(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    projects: Vec<String>,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = set_projects(&conn, &card_id, &projects)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_labels(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<Vec<Label>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    list_labels(&conn, &board_id)
+}
+
+#[tauri::command(async)]
+pub fn board_label_create(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    board_id: String,
+    name: String,
+    color: String,
+) -> Result<Label, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    let label = create_label(&conn, &board_id, &name, &color)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(label)
+}
+
+#[tauri::command(async)]
+pub fn board_card_set_labels(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    label_ids: Vec<String>,
+) -> Result<(), String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let board_id = set_card_labels(&conn, &card_id, &label_ids)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_subtasks(
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<Vec<Subtask>, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    list_subtasks(&conn, &card_id)
+}
+
+#[tauri::command(async)]
+pub fn board_subtask_add(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    title: String,
+) -> Result<Subtask, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    let subtask = add_subtask(&conn, &card_id, &title)?;
+    let board_id = get_card(&conn, &card_id)?.board_id;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(subtask)
+}
+
+#[tauri::command(async)]
+pub fn board_subtask_toggle(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    subtask_id: String,
+    done: bool,
+) -> Result<(), String> {
+    validate_id(&subtask_id, "subtask")?;
+    let conn = store.lock_conn()?;
+    let board_id = toggle_subtask(&conn, &subtask_id, done)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_subtask_delete(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    subtask_id: String,
+) -> Result<(), String> {
+    let conn = store.lock_conn()?;
+    let board_id = subtask_delete_inner(&conn, &subtask_id)?;
+    drop(conn);
+    if let Some(board_id) = board_id {
+        notify(&app, &board_id);
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_comments(
+    store: State<'_, SessionStore>,
+    card_id: String,
+) -> Result<Vec<Comment>, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    list_comments(&conn, &card_id)
+}
+
+#[tauri::command(async)]
+pub fn board_comment_add(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_id: String,
+    body: String,
+) -> Result<Comment, String> {
+    let conn = store.lock_conn()?;
+    let comment = comment_add_inner(&conn, &card_id, &body)?;
+    let board_id = get_card(&conn, &card_id)?.board_id;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(comment)
 }
 
 #[cfg(test)]
@@ -816,5 +1013,62 @@ mod tests {
         move_card(&conn, &card.id, &detail.columns[1].id, 0, "user").unwrap();
         delete_card(&conn, &card.id).unwrap();
         assert!(store::list_comments(&conn, &card.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn extras_commands_round_trip() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let card = add_cards(&conn, &columns[0].id, &["a"]).remove(0);
+
+        set_priority(&conn, &card.id, 3).unwrap();
+        set_due(&conn, &card.id, Some(1_700_000_000_000)).unwrap();
+        set_projects(&conn, &card.id, &["/work/app".to_string()]).unwrap();
+        let label = create_label(&conn, &board.id, "Bug", "ff0000").unwrap();
+        set_card_labels(&conn, &card.id, std::slice::from_ref(&label.id)).unwrap();
+        let sub = add_subtask(&conn, &card.id, "one").unwrap();
+        add_subtask(&conn, &card.id, "two").unwrap();
+        toggle_subtask(&conn, &sub.id, true).unwrap();
+        let comment = comment_add_inner(&conn, &card.id, "hello").unwrap();
+        assert_eq!(comment.author, "user");
+
+        let extras = card_extras(&conn, &board.id).unwrap();
+        let value = serde_json::to_value(&extras[&card.id]).unwrap();
+        assert_eq!(value["priority"], 3);
+        assert_eq!(value["dueAt"], 1_700_000_000_000_i64);
+        assert_eq!(value["projects"], serde_json::json!(["/work/app"]));
+        assert_eq!(value["labels"], serde_json::json!([label.id]));
+        assert_eq!(value["subtasksDone"], 1);
+        assert_eq!(value["subtasksTotal"], 2);
+        assert_eq!(value["comments"], 1);
+
+        let label_json = serde_json::to_value(list_labels(&conn, &board.id).unwrap()).unwrap();
+        assert_eq!(label_json[0]["boardId"], board.id.as_str());
+        let sub_json = serde_json::to_value(list_subtasks(&conn, &card.id).unwrap()).unwrap();
+        assert_eq!(sub_json[0]["cardId"], card.id.as_str());
+        let comment_json = serde_json::to_value(list_comments(&conn, &card.id).unwrap()).unwrap();
+        assert!(comment_json[0].get("createdAt").is_some());
+        assert!(comment_json[0]["editedAt"].is_null());
+
+        // Clearing the due date serializes as null.
+        set_due(&conn, &card.id, None).unwrap();
+        let cleared = card_extras(&conn, &board.id).unwrap();
+        assert!(serde_json::to_value(&cleared[&card.id]).unwrap()["dueAt"].is_null());
+    }
+
+    #[test]
+    fn subtask_delete_reports_the_board_only_when_something_was_deleted() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let card = add_cards(&conn, &columns[0].id, &["a"]).remove(0);
+        let sub = add_subtask(&conn, &card.id, "one").unwrap();
+
+        assert_eq!(subtask_delete_inner(&conn, "no-such-id").unwrap(), None);
+        assert_eq!(
+            subtask_delete_inner(&conn, &sub.id).unwrap(),
+            Some(board.id.clone())
+        );
+        assert!(list_subtasks(&conn, &card.id).unwrap().is_empty());
+        assert!(subtask_delete_inner(&conn, "bad id!").is_err());
     }
 }

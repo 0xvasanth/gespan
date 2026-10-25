@@ -22,6 +22,9 @@ export type BoardColumn = {
   name: string;
   position: number;
   role: ColumnRole | null;
+  color: string | null;
+  wipLimit: number | null;
+  collapsed: boolean;
 };
 
 export type BoardCard = {
@@ -215,4 +218,117 @@ export function subscribeBoard(
     disposed = true;
     unlisten?.();
   };
+}
+
+export const PRIORITIES = ["None", "Low", "Medium", "High", "Urgent"] as const;
+
+export type CardExtras = {
+  priority: number;
+  dueAt: number | null;
+  projects: string[];
+  labels: string[];
+  subtasksDone: number;
+  subtasksTotal: number;
+  comments: number;
+};
+
+export type BoardLabel = {
+  id: string;
+  boardId: string;
+  name: string;
+  color: string;
+  position: number;
+};
+
+export type BoardSubtask = {
+  id: string;
+  cardId: string;
+  title: string;
+  done: boolean;
+  position: number;
+};
+
+export type BoardComment = {
+  id: string;
+  cardId: string;
+  body: string;
+  author: string;
+  createdAt: number;
+  editedAt: number | null;
+};
+
+export function getCardExtras(
+  boardId: string,
+): Promise<Record<string, CardExtras>> {
+  return invoke<Record<string, CardExtras>>("board_card_extras", { boardId });
+}
+
+export function setCardPriority(
+  cardId: string,
+  priority: number,
+): Promise<void> {
+  return invoke("board_card_set_priority", { cardId, priority });
+}
+
+export function setCardDue(
+  cardId: string,
+  dueAt: number | null,
+): Promise<void> {
+  return invoke("board_card_set_due", { cardId, dueAt });
+}
+
+export function setCardProjects(
+  cardId: string,
+  projects: string[],
+): Promise<void> {
+  return invoke("board_card_set_projects", { cardId, projects });
+}
+
+export function listLabels(boardId: string): Promise<BoardLabel[]> {
+  return invoke<BoardLabel[]>("board_labels", { boardId });
+}
+
+export function createLabel(
+  boardId: string,
+  name: string,
+  color: string,
+): Promise<BoardLabel> {
+  return invoke<BoardLabel>("board_label_create", { boardId, name, color });
+}
+
+export function setCardLabels(
+  cardId: string,
+  labelIds: string[],
+): Promise<void> {
+  return invoke("board_card_set_labels", { cardId, labelIds });
+}
+
+export function listSubtasks(cardId: string): Promise<BoardSubtask[]> {
+  return invoke<BoardSubtask[]>("board_subtasks", { cardId });
+}
+
+export function addSubtask(
+  cardId: string,
+  title: string,
+): Promise<BoardSubtask> {
+  return invoke<BoardSubtask>("board_subtask_add", { cardId, title });
+}
+
+export function toggleSubtask(subtaskId: string, done: boolean): Promise<void> {
+  return invoke("board_subtask_toggle", { subtaskId, done });
+}
+
+export function deleteSubtask(subtaskId: string): Promise<void> {
+  return invoke("board_subtask_delete", { subtaskId });
+}
+
+export function listComments(cardId: string): Promise<BoardComment[]> {
+  return invoke<BoardComment[]>("board_comments", { cardId });
+}
+
+export function addComment(
+  cardId: string,
+  body: string,
+): Promise<BoardComment> {
+  return invoke<BoardComment>("board_comment_add", { cardId, body });
 }
