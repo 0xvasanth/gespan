@@ -743,4 +743,14 @@ mod tests {
         );
         assert_eq!(redact_tokens("https://h:8443#a@b"), "https://h:8443#a@b");
     }
+
+    #[test]
+    fn header_values_end_by_one_rule() {
+        // A no-break space is not where the value ends for either the
+        // decision or the replacement.
+        assert_eq!(
+            redact_tokens("X-Api-Key: abcdefgh\u{a0}ijklmnop1234 next"),
+            "X-Api-Key: <redacted> next"
+        );
+    }
 }

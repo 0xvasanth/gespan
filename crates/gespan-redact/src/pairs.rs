@@ -111,14 +111,13 @@ fn secret_value(input: &str, key: regex::Match) -> Option<(usize, usize, String)
     if let Some(caps) = COLON_BARE.captures(rest) {
         let scheme = caps.get(2).map_or("", |scheme| scheme.as_str());
         let start = key.end() + caps[0].len();
-        let ends_value = |c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';');
+        // One rule for where the value ends, for the decision and the replacement.
+        let ends_value =
+            |b: &u8| b.is_ascii_whitespace() || matches!(b, b'"' | b'\'' | b',' | b';');
         // Decide on the first DECIDE_WITHIN bytes only, then replace the
         // whole value up to whitespace, a quote, `,` or `;`.
         let window = &input.as_bytes()[start..input.len().min(start + DECIDE_WITHIN)];
-        let shown = window
-            .iter()
-            .position(|b| b.is_ascii_whitespace() || matches!(b, b'"' | b'\'' | b',' | b';'))
-            .unwrap_or(window.len());
+        let shown = window.iter().position(ends_value).unwrap_or(window.len());
         let value = &window[..shown];
         // "token: missing" stays; a strong name needs no digit once the value
         // is too long to be a word.
@@ -127,8 +126,9 @@ fn secret_value(input: &str, key: regex::Match) -> Option<(usize, usize, String)
                 || value.iter().any(u8::is_ascii_digit)
                 || (is_strong_secret_key(key.as_str()) && value.len() >= 16));
         if looks_secret {
-            let end = input[start..]
-                .find(ends_value)
+            let end = input.as_bytes()[start..]
+                .iter()
+                .position(ends_value)
                 .map_or(input.len(), |offset| start + offset);
             let replacement = format!("{}{scheme}{REDACTED}", &caps[1]);
             return Some((key.end(), end, replacement));
