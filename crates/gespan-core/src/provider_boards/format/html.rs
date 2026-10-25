@@ -97,6 +97,7 @@ impl Tree {
             content_end: 0,
         }];
         let bytes = html.as_bytes();
+        let mut dead_ends = vec![false; html.len() + 1];
         let mut i = 0;
         let mut text_start = 0;
         while i < bytes.len() {
@@ -104,7 +105,7 @@ impl Tree {
                 i += 1;
                 continue;
             }
-            let Some(token) = tag_at(html, i) else {
+            let Some(token) = tag_at(html, i, &mut dead_ends) else {
                 i += 1;
                 continue;
             };
@@ -241,7 +242,29 @@ enum Token {
 }
 
 /// The tag starting at `html[at] == '<'`, or `None` when it's just text.
-fn tag_at(html: &str, at: usize) -> Option<Token> {
+///
+/// `dead_ends[p]` marks an attribute boundary at `html[p]` from which an
+/// earlier attempt failed. What follows a boundary doesn't depend on where
+/// the tag started, so a later attempt reaching it fails at once. Each
+/// boundary is scanned past at most once, which keeps the whole parse linear
+/// even when `<` sits inside quoted values with no `>` to close the tag.
+fn tag_at(html: &str, at: usize, dead_ends: &mut [bool]) -> Option<Token> {
+    let mut boundaries = Vec::new();
+    let token = scan_tag(html, at, dead_ends, &mut boundaries);
+    if token.is_none() {
+        for p in boundaries {
+            dead_ends[p] = true;
+        }
+    }
+    token
+}
+
+fn scan_tag(
+    html: &str,
+    at: usize,
+    dead_ends: &[bool],
+    boundaries: &mut Vec<usize>,
+) -> Option<Token> {
     let rest = &html[at..];
     if let Some(comment) = rest.strip_prefix("<!--") {
         let end = comment.find("-->").map_or(html.len(), |e| at + 4 + e + 3);
@@ -270,6 +293,10 @@ fn tag_at(html: &str, at: usize) -> Option<Token> {
         while i < bytes.len() && bytes[i].is_ascii_whitespace() {
             i += 1;
         }
+        if dead_ends[at + i] {
+            return None;
+        }
+        boundaries.push(at + i);
         match bytes.get(i)? {
             b'>' => {
                 let end = at + i + 1;
@@ -298,8 +325,8 @@ fn tag_at(html: &str, at: usize) -> Option<Token> {
                 });
             }
             b'/' => i += 1,
-            // A `<` inside a tag means it was text, or the tag would swallow
-            // the one after it (quoted values are checked the same way).
+            // An unquoted `<` inside a tag means it was text, or the tag
+            // would swallow the one after it.
             b'<' => return None,
             _ => {
                 let start = i;
@@ -321,13 +348,9 @@ fn tag_at(html: &str, at: usize) -> Option<Token> {
                     }
                     match bytes.get(i)? {
                         quote @ (b'"' | b'\'') => {
+                            // A raw `<` is part of a quoted value, as in a
+                            // browser: older serializers leave it unescaped.
                             let close = rest[i + 1..].find(*quote as char)?;
-                            // Serializers escape `<` in values. A raw one
-                            // means this isn't a tag, and stopping here keeps
-                            // every attempt short of the next `<`.
-                            if rest[i + 1..i + 1 + close].contains('<') {
-                                return None;
-                            }
                             value = decode_html_entities(&rest[i + 1..i + 1 + close]);
                             i += close + 2;
                         }
@@ -1001,12 +1024,6 @@ mod tests {
             ("plain text", "plain text"),
             ("<p>a <b<c d</p>", "a \\<b\\<c d"),
             ("<p>x <i a=<y z</i></p>", "x \\<i a=\\<y z"),
-            // Serializers escape `<` in attribute values; a raw one means
-            // this isn't a tag, which also keeps the scan linear.
-            (
-                "<p>q <a title=\"<b>\" href=\"u\">t</a></p>",
-                "q \\<a title=\"**\" href=\"u\"\\>t**",
-            ),
         ];
         for (html, markdown) in cases {
             assert_eq!(plane_html_to_markdown(html), markdown, "{html}");
@@ -1119,6 +1136,38 @@ mod tests {
             started.elapsed().as_secs() < 5,
             "took {:?}",
             started.elapsed()
+        );
+    }
+
+    #[test]
+    fn raw_lt_in_a_quoted_attribute_stays_in_the_attribute() {
+        // Older serializers leave `<` raw in attribute values. The tag must
+        // still be a tag, and the value must never come back as live markup.
+        let html = "<p><a href=\"https://x\" title=\"<img src=x onerror=alert(1)>\">l</a></p>";
+        let markdown = plane_html_to_markdown(html);
+        let back = markdown_to_plane_html(&markdown);
+        assert!(
+            !markdown.contains("\\<a"),
+            "the link became text: {markdown}"
+        );
+        assert!(
+            back.contains("href=\"https://x\""),
+            "the link was lost: {back}"
+        );
+        assert!(back.contains(">l</a>"), "the link text was lost: {back}");
+        // Outside an attribute value, the `<img` must not exist.
+        let outside: String = back.split('"').step_by(2).collect();
+        assert!(
+            !outside.contains("<img"),
+            "attribute text came back as markup: {back}"
+        );
+    }
+
+    #[test]
+    fn an_unquoted_lt_inside_a_tag_is_still_text() {
+        assert_eq!(
+            plane_html_to_markdown("<p>x <i a=<y z</i></p>"),
+            "x \\<i a=\\<y z"
         );
     }
 
