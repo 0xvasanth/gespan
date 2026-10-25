@@ -1,0 +1,25 @@
+crates/board-store/src/subtasks.rs
+  s_938a6e0c93b076::t_c966004aba7c89 144-149
+crates/board-store/src/ops.rs
+  s_938a6e0c93b076::t_c966004aba7c89 7
+crates/board-store/tests/v3.rs
+  s_938a6e0c93b076::t_c966004aba7c89 1108-1109,1185-1242
+crates/board-store/src/card_ops.rs
+  s_938a6e0c93b076::t_c966004aba7c89 6,395-396
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "38a9c151b641a016bb9e86557b0187e2e26be2eb",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
