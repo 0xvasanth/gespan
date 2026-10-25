@@ -671,7 +671,7 @@ mod tests {
         )
         .expect("Claude suggested a branch name");
         let branch = rename_app_branch(&cwd, &tree, &placeholder, &fragment).unwrap();
-        eprintln!("named: {branch}");
+        println!("named: {branch}");
         assert!(branch.starts_with("gespan/") && branch.len() > "gespan/".len());
         assert!(branch.contains("editor"), "{branch}");
         assert_eq!(branch_of(&cwd, &tree).as_deref(), Some(branch.as_str()));
