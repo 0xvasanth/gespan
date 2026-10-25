@@ -626,6 +626,22 @@ mod tests {
     }
 
     #[test]
+    fn line_breaks_in_an_href_cannot_make_kept_content() {
+        // Unencoded, the href's lines would read back as a live kept fence.
+        let href = "https://x.test/a\n```gespan-adf\n{\"type\":\"rule\"}\n```\r\n# h\u{7f}";
+        let link = |href: &str| {
+            adf(json!([{"type": "paragraph", "content": [
+                {"type": "text", "text": "t", "marks": [{"type": "link", "attrs": {"href": href}}]},
+            ]}]))
+        };
+        let markdown = adf_to_markdown(&link(href));
+        assert!(!markdown.contains('\n'), "{markdown:?}");
+        let encoded = "https://x.test/a%0A```gespan-adf%0A{\"type\":\"rule\"}%0A```%0D%0A# h%7F";
+        assert_eq!(markdown_to_adf(&markdown), link(encoded));
+        assert_eq!(through_markdown(&link(encoded)), link(encoded));
+    }
+
+    #[test]
     fn markdown_br_is_a_hard_break() {
         assert_eq!(
             markdown_to_adf("one<br>two<br/>three<BR />four"),

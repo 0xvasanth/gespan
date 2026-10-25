@@ -741,14 +741,18 @@ fn starts_reference(rest: &str) -> bool {
 }
 
 fn destination(href: &str, title: Option<&str>) -> String {
-    let angle = href.is_empty()
-        || href.starts_with('<')
-        || href.chars().any(|c| c == ' ' || c.is_ascii_control());
+    let angle = href.is_empty() || href.starts_with('<') || href.contains(' ');
     let mut out = String::new();
     if angle {
         out.push('<');
     }
     for (i, c) in href.char_indices() {
+        // A line break would end the link and let the rest read as blocks,
+        // even a kept fence, so control characters are percent-encoded.
+        if c.is_ascii_control() {
+            out.push_str(&format!("%{:02X}", c as u8));
+            continue;
+        }
         let escape = match c {
             '\\' => true,
             '<' | '>' => angle,

@@ -892,6 +892,17 @@ mod tests {
     }
 
     #[test]
+    fn line_breaks_in_an_href_or_src_stay_in_it() {
+        let html = "<p><a href=\"x&#10;&#10;# h\">t</a> <img src=\"i&#13;&#10;---\" alt=\"a\"></p>";
+        let markdown = plane_html_to_markdown(html);
+        assert_eq!(markdown, "[t](<x%0A%0A# h>) ![a](i%0D%0A---)");
+        assert_eq!(
+            markdown_to_plane_html(&markdown),
+            "<p><a href=\"x%0A%0A# h\">t</a> <img src=\"i%0D%0A---\" alt=\"a\"></p>"
+        );
+    }
+
+    #[test]
     fn every_html5_named_entity_decodes() {
         let html = "<p>a&mdash;b &rsquo;q&lsquo; &hellip; &copy; &eacute; &CounterClockwiseContourIntegral; &amp;mdash;</p>";
         assert_eq!(
