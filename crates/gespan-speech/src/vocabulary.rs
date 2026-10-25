@@ -91,11 +91,14 @@ fn tracked_file_stems(root: &Path) -> Vec<String> {
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .ok()?;
+    let mut command = Command::new("git");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: no console flashes up from the GUI apps.
+        command.creation_flags(0x0800_0000);
+    }
+    let out = command.args(args).current_dir(dir).output().ok()?;
     if !out.status.success() {
         return None;
     }
