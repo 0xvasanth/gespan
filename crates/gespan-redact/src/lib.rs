@@ -8,10 +8,12 @@
 
 mod paths;
 mod patterns;
+mod value;
 
 use std::path::PathBuf;
 
 use paths::PathRule;
+pub use value::DENY_LIST;
 
 /// Replaces the home directory.
 pub const HOME: &str = "~";
