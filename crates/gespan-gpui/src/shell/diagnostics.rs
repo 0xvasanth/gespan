@@ -54,6 +54,9 @@ mod tests {
             .unwrap();
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
+        // Opening straight onto the page reads the store; tests never open
+        // it, so `last_days` is empty.
+        assert!(visual.debug_bounds("diagnostics-counters-empty").is_some());
 
         click("diagnostics-copy", visual);
         assert_eq!(

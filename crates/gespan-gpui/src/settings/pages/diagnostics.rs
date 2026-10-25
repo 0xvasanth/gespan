@@ -13,6 +13,8 @@ use std::{collections::HashMap, sync::Arc};
 
 /// The week of counters the page shows.
 const DAYS: u32 = 7;
+const COUNTERS_NOTE: &str =
+    "How often each operation failed, by kind. Counted on this computer and never sent.";
 
 /// Reads the counters; `metrics::last_days` outside tests.
 pub(in crate::settings) type CounterSource =
@@ -144,16 +146,13 @@ impl SettingsView {
         vec![
             self.group(None, true, "Get help", None, None, tools),
             self.group(
-            Some("failure-counters"),
-            false,
-            "Failures in the last 7 days",
-            Some(
-                "How often each operation failed, by kind. Counted on this computer and never sent."
-                    .into(),
+                Some("failure-counters"),
+                false,
+                "Failures in the last 7 days",
+                Some(COUNTERS_NOTE.into()),
+                None,
+                counters,
             ),
-            None,
-            counters,
-        ),
         ]
     }
 }
