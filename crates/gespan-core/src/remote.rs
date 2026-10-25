@@ -634,6 +634,7 @@ impl Connections {
                 }
                 Ok((machine, tunnel))
             })();
+            let prepared = crate::diagnostics::metrics::track("remote.ssh_connect", prepared);
             job.complete(|| {
                 let (mut machine, tunnel) = prepared?;
                 let _guard = state

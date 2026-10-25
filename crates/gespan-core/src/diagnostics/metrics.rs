@@ -298,12 +298,14 @@ pub fn success(name: &str) {
     record(name, None);
 }
 
-/// A success, or a failure sorted by [`ErrorKind::of_message`].
-pub fn track<T, E: AsRef<str>>(name: &str, result: &Result<T, E>) {
-    match result {
+/// Counts `result` as a success, or as a failure sorted by
+/// [`ErrorKind::of_message`], and hands it back.
+pub fn track<T, E: AsRef<str>>(name: &str, result: Result<T, E>) -> Result<T, E> {
+    match &result {
         Ok(_) => success(name),
         Err(error) => failure(name, ErrorKind::of_message(error.as_ref())),
     }
+    result
 }
 
 fn record(name: &str, kind: Option<ErrorKind>) {
@@ -576,15 +578,18 @@ mod tests {
         // Nothing is open in unit tests; these must neither panic nor write.
         failure("worktree.create", ErrorKind::Io);
         success("worktree.create");
-        track("worktree.create", &Err::<(), _>("timed out"));
+        let _ = track("worktree.create", Err::<(), _>("timed out"));
         assert!(last_days(7).unwrap().is_empty());
     }
 
     #[test]
     fn capture_sees_this_thread_s_calls() {
         let ((), counts) = capture(|| {
-            track("remote.ssh_connect", &Err::<(), _>("Operation timed out"));
-            track("remote.ssh_connect", &Ok::<_, String>(()));
+            assert_eq!(
+                track("remote.ssh_connect", Err::<(), _>("Operation timed out")),
+                Err("Operation timed out")
+            );
+            assert_eq!(track("remote.ssh_connect", Ok::<_, String>(7)), Ok(7));
             failure("bad name with text", ErrorKind::Other);
         });
         let got: Vec<_> = counts

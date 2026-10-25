@@ -1,6 +1,7 @@
 //! Working-copy operations used by the native composer. Git protects dirty files;
 //! these operations never force a checkout, stash, or discard changes.
 mod remote;
+use crate::diagnostics::metrics;
 use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
@@ -40,13 +41,18 @@ pub(crate) fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0");
     crate::process::configure_child(&mut command);
-    let out = command
-        .output()
-        .map_err(|e| format!("Could not run Git: {e}"))?;
+    let out = command.output().map_err(|e| {
+        metrics::failure("git.command", metrics::ErrorKind::of_spawn(&e));
+        format!("Could not run Git: {e}")
+    })?;
     if !out.status.success() {
+        metrics::failure("git.command", metrics::ErrorKind::ExitStatus);
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
     }
-    String::from_utf8(out.stdout).map_err(|e| e.to_string())
+    String::from_utf8(out.stdout).map_err(|e| {
+        metrics::failure("git.command", metrics::ErrorKind::Parse);
+        e.to_string()
+    })
 }
 pub fn snapshot(cwd: &Path) -> Result<Snapshot, String> {
     if crate::files::remote::is_remote(cwd) {
@@ -290,6 +296,12 @@ pub fn rename_app_branch(
 }
 
 pub fn create_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, String> {
+    metrics::track(
+        "worktree.create",
+        create_session_worktree(cwd, base, session),
+    )
+}
+fn create_session_worktree(cwd: &Path, base: &str, session: i64) -> Result<PathBuf, String> {
     if crate::files::remote::is_remote(cwd) {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -349,6 +361,17 @@ pub fn create_named_worktree(cwd: &Path, branch: &str) -> Result<Worktree, Strin
     create_project_worktree(cwd, branch, None, false)
 }
 pub fn create_project_worktree(
+    cwd: &Path,
+    branch: &str,
+    base: Option<&str>,
+    existing: bool,
+) -> Result<Worktree, String> {
+    metrics::track(
+        "worktree.create",
+        create_branch_worktree(cwd, branch, base, existing),
+    )
+}
+fn create_branch_worktree(
     cwd: &Path,
     branch: &str,
     base: Option<&str>,
@@ -442,6 +465,64 @@ pub fn create_project_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::metrics::{capture, ErrorKind};
+
+    fn counted(
+        counts: Vec<crate::diagnostics::metrics::Count>,
+    ) -> Vec<(String, Option<ErrorKind>, u64)> {
+        counts
+            .into_iter()
+            .map(|c| (c.name, c.kind, c.count))
+            .collect()
+    }
+
+    #[test]
+    fn failed_git_commands_are_counted_by_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let (result, counts) = capture(|| git(dir.path(), &["rev-parse", "--show-toplevel"]));
+        assert!(result.is_err());
+        assert_eq!(
+            counted(counts),
+            [("git.command".into(), Some(ErrorKind::ExitStatus), 1)]
+        );
+        let (result, counts) = capture(|| git(dir.path(), &["--version"]));
+        assert!(result.is_ok());
+        assert!(counts.is_empty(), "successful git commands are not counted");
+    }
+
+    #[test]
+    fn worktree_create_outside_a_repository_counts_a_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let (session, counts) = capture(|| create_worktree(dir.path(), "main", 1));
+        assert!(session.is_err());
+        let counts = counted(counts);
+        assert!(
+            counts.contains(&("worktree.create".into(), Some(ErrorKind::NotFound), 1)),
+            "{counts:?}"
+        );
+        let (named, counts) = capture(|| create_named_worktree(dir.path(), "feature"));
+        assert!(named.is_err());
+        assert!(counted(counts)
+            .iter()
+            .any(|(name, kind, _)| name == "worktree.create" && kind.is_some()));
+    }
+
+    #[test]
+    fn worktree_create_in_a_repository_counts_a_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = |args: &[&str]| git(dir.path(), args).unwrap();
+        run(&["init", "-b", "main"]);
+        run(&["config", "user.email", "fixture@example.invalid"]);
+        run(&["config", "user.name", "Fixture"]);
+        std::fs::write(dir.path().join("file"), "x").unwrap();
+        run(&["add", "file"]);
+        run(&["commit", "-m", "Initial"]);
+        let (tree, counts) = capture(|| create_named_worktree(dir.path(), "counted"));
+        let tree = tree.unwrap();
+        assert!(counted(counts).contains(&("worktree.create".into(), None, 1)));
+        run(&["worktree", "remove", "--force", "--", &tree.path]);
+        let _ = std::fs::remove_dir(Path::new(&tree.path).parent().unwrap());
+    }
     #[test]
     fn native_session_worktrees_use_gespan_prefix() {
         let temp = tempfile::tempdir().unwrap();

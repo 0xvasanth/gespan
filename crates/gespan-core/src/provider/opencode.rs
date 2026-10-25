@@ -1,11 +1,14 @@
 //! Native OpenCode HTTP/SSE transport, ported from the Tauri adapter.
 //! v1 owns a local `serve` child; v2 connects to OpenCode's managed service.
 use super::*;
+use crate::diagnostics::metrics;
 use std::collections::VecDeque;
 use std::sync::{atomic::AtomicUsize, OnceLock};
 mod client;
 mod events;
 use client::Client;
+
+const START: &str = "agent.start.opencode";
 
 enum Wire {
     Connected,
@@ -376,10 +379,13 @@ pub(super) fn run(
     compact: bool,
     mut emit: impl FnMut(Vec<Event>) -> Result<(), String>,
 ) -> Result<Option<Value>, String> {
-    let v2 = generation(&request, &cancel)?;
+    let started = generation(&request, &cancel);
     if probe {
-        return catalog(&request, &cancel, v2).map(Some);
+        return catalog(&request, &cancel, started?).map(Some);
     }
+    // A start is the version check and the connection; it counts once.
+    let v2 = started
+        .inspect_err(|error| metrics::failure(START, metrics::ErrorKind::of_message(error)))?;
     if cancel.load(Ordering::Relaxed) {
         return Err("Stopped".into());
     }
@@ -393,7 +399,7 @@ pub(super) fn run(
         &request.cwd.to_string_lossy(),
         &request.settings.attachments,
     )?;
-    let (client, mut server) = connect(&request, &cancel, v2)?;
+    let (client, mut server) = metrics::track(START, connect(&request, &cancel, v2))?;
     let session = client.session(&request)?;
     if request.provider_id.is_some() {
         let _ = client.repair_unsupported_file_turn(&session);

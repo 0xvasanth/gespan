@@ -1,6 +1,7 @@
 //! Bounded, expiring provider processes. Each parked process belongs to one
 //! conversation, account, directory and launch configuration.
 use super::*;
+use crate::diagnostics::metrics;
 use std::sync::{atomic::AtomicUsize, OnceLock};
 type WriteRequest = (Vec<u8>, mpsc::Sender<std::io::Result<()>>);
 pub(super) struct Input {
@@ -49,13 +50,16 @@ pub(super) struct Wire {
 }
 impl Wire {
     pub fn spawn(command: &mut Command, request: &Request) -> Result<Self, String> {
+        let counter = format!("agent.start.{}", request.kind.id());
         let mut child = command.spawn().map_err(|e| {
+            metrics::failure(&counter, metrics::ErrorKind::of_spawn(&e));
             format!(
                 "Cannot start {} at {}: {e}",
                 request.kind.label(),
                 request.binary.display()
             )
         })?;
+        metrics::success(&counter);
         let registration = process::register(child.id());
         let account = crate::accounts::track(child.id(), request.kind, &request.settings.account);
         let stdout = child.stdout.take().unwrap();
@@ -515,6 +519,42 @@ pub(super) fn discard_session(request: &Request) {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    fn start_request(kind: Kind, binary: &str) -> Request {
+        Request {
+            kind,
+            binary: PathBuf::from(binary),
+            cwd: std::env::temp_dir(),
+            prompt: String::new(),
+            provider_id: None,
+            model: None,
+            settings: Settings::default(),
+        }
+    }
+
+    #[test]
+    fn agent_starts_are_counted_by_provider() {
+        use crate::diagnostics::metrics::{capture, ErrorKind};
+        let missing = start_request(Kind::Claude, "/nonexistent/gespan-test/claude");
+        let (wire, counts) = capture(|| Wire::spawn(&mut Command::new(&missing.binary), &missing));
+        assert!(wire.is_err());
+        let got: Vec<_> = counts.into_iter().map(|c| (c.name, c.kind)).collect();
+        assert_eq!(
+            got,
+            [("agent.start.claude".into(), Some(ErrorKind::NotFound))]
+        );
+
+        let started = start_request(Kind::Codex, "/bin/cat");
+        let mut command = Command::new(&started.binary);
+        command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let (wire, counts) = capture(|| Wire::spawn(&mut command, &started));
+        drop(wire.unwrap());
+        let got: Vec<_> = counts.into_iter().map(|c| (c.name, c.kind)).collect();
+        assert_eq!(got, [("agent.start.codex".into(), None)]);
+    }
 
     #[test]
     fn parked_keys_separate_pilot_identity_and_private_storage_from_regular_sessions() {

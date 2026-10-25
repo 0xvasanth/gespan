@@ -57,6 +57,9 @@ pub fn check(cwd: &Path, path: &Path) -> Result<crate::git::Worktree, String> {
     Ok(tree)
 }
 pub fn remove(cwd: &Path, path: &Path) -> Result<(), String> {
+    crate::diagnostics::metrics::track("worktree.remove", remove_checked(cwd, path))
+}
+fn remove_checked(cwd: &Path, path: &Path) -> Result<(), String> {
     let tree = check(cwd, path)?;
     crate::provider::discard_worktree(Path::new(&tree.path));
     crate::git::git(cwd, &["worktree", "remove", "--force", "--", &tree.path]).map(|_| ())
@@ -94,6 +97,26 @@ mod tests {
             &["show-ref", "--verify", "refs/heads/settings-parity"]
         )
         .is_ok());
+        let _ = std::fs::remove_dir(default_root(dir.path()));
+    }
+    #[test]
+    fn removals_are_counted() {
+        use crate::diagnostics::metrics::{capture, ErrorKind};
+        let dir = repo();
+        let (refused, counts) = capture(|| remove(dir.path(), dir.path()));
+        assert!(refused.is_err());
+        let failures: Vec<_> = counts
+            .iter()
+            .filter(|c| c.name == "worktree.remove")
+            .map(|c| (c.kind, c.count))
+            .collect();
+        assert_eq!(failures, [(Some(ErrorKind::Other), 1)]);
+        let tree = crate::git::create_named_worktree(dir.path(), "counted-removal").unwrap();
+        let (removed, counts) = capture(|| remove(dir.path(), Path::new(&tree.path)));
+        removed.unwrap();
+        assert!(counts
+            .iter()
+            .any(|c| c.name == "worktree.remove" && c.kind.is_none() && c.count == 1));
         let _ = std::fs::remove_dir(default_root(dir.path()));
     }
     #[test]
