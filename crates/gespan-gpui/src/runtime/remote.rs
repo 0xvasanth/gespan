@@ -483,10 +483,22 @@ pub(crate) fn run(
         Ok(client) => run_with_client(
             client, summary, prompt, settings, controls, store, cancel, tx,
         ),
-        Err(error) => {
-            let _ = tx.send_blocking(update(error, true));
-        }
+        Err(error) => fail_setup(&summary, error, &cancel, &tx),
     }
+}
+
+/// Ends a remote turn that couldn't reach its connections.
+fn fail_setup(
+    summary: &Session,
+    error: String,
+    cancel: &AtomicBool,
+    tx: &async_channel::Sender<Update>,
+) {
+    let _session = crate::runtime::enter_turn(summary, true);
+    if !cancel.load(Ordering::Relaxed) {
+        crate::runtime::log_turn_failure(&error);
+    }
+    let _ = tx.send_blocking(update(error, true));
 }
 #[allow(
     clippy::too_many_arguments,
@@ -502,6 +514,7 @@ pub(crate) fn run_with_client(
     cancel: Arc<AtomicBool>,
     tx: async_channel::Sender<Update>,
 ) {
+    let _session = crate::runtime::enter_turn(&summary, true);
     let mut latest_rows = Vec::new();
     let result = (|| -> Result<(), String> {
         if tx.is_closed() {
@@ -783,6 +796,9 @@ pub(crate) fn run_with_client(
         Ok(())
     })();
     if let Err(error) = result {
+        if !cancel.load(Ordering::Relaxed) {
+            crate::runtime::log_turn_failure(&error);
+        }
         let mut next = update(error, true);
         // Every valid snapshot was already published. An empty error patch
         // preserves any optimistic prompt awaiting a host receipt.

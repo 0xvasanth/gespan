@@ -335,7 +335,7 @@ impl Shell {
         let mode = gespan_keep_awake::Mode::parse(&self.workspace.preferences.keep_awake)
             .unwrap_or_default();
         if let Err(error) = self.keep_awake.update(mode, !self.busy_sessions.is_empty()) {
-            eprintln!("gespan: keep screen awake failed: {error}");
+            tracing::warn!(%error, ?mode, "keep screen awake failed");
         }
     }
     pub(super) fn set_preferences(

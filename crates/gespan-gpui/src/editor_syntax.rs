@@ -278,7 +278,7 @@ fn grammar(lang: Lang) -> Option<&'static Grammar> {
         .or_insert_with(|| match Grammar::new(lang) {
             Ok(grammar) => Some(Box::leak(Box::new(grammar))),
             Err(error) => {
-                eprintln!("gespan: syntax grammar failed: {error}");
+                tracing::error!(%error, language = ?lang, "syntax grammar failed");
                 gespan_core::diagnostics::metrics::failure(
                     "editor.syntax_grammar",
                     gespan_core::diagnostics::metrics::ErrorKind::Parse,
