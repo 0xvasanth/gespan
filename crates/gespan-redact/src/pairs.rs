@@ -47,13 +47,16 @@ static COLON_QUOTED: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"^([ \t]*:[ \t]*)("(?:[^"\\]|\\.)*"|'[^']*')"#).expect("colon quoted pattern")
 });
 
-/// After `key`: `: value` with no quotes, as in a header. The value stops at
-/// whitespace, a quote, `,`, `;` or `:`, and is capped, so a rejected one is
-/// cheap.
+/// After `key`: the `:` (and an optional scheme) of an unquoted header
+/// value. The value itself is scanned by hand in [`secret_value`].
 static COLON_BARE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)^([ \t]*:[ \t]*)((?:bearer|basic|token)[ \t]+)?([^\s"',;:]{8,512})"#)
+    Regex::new(r#"(?i)^([ \t]*:[ \t]*)((?:bearer|basic|token)[ \t]+)?"#)
         .expect("colon bare pattern")
 });
+
+/// How much of an unquoted header value decides whether it is a secret, so
+/// a rejected one costs little however long it runs.
+const DECIDE_WITHIN: usize = 512;
 
 /// After `--key`: whitespace and the value.
 static FLAG_VALUE: LazyLock<Regex> =
@@ -107,15 +110,28 @@ fn secret_value(input: &str, key: regex::Match) -> Option<(usize, usize, String)
     }
     if let Some(caps) = COLON_BARE.captures(rest) {
         let scheme = caps.get(2).map_or("", |scheme| scheme.as_str());
-        let value = &caps[3];
+        let start = key.end() + caps[0].len();
+        let ends_value = |c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';');
+        // Decide on the first DECIDE_WITHIN bytes only, then replace the
+        // whole value up to whitespace, a quote, `,` or `;`.
+        let window = &input.as_bytes()[start..input.len().min(start + DECIDE_WITHIN)];
+        let shown = window
+            .iter()
+            .position(|b| b.is_ascii_whitespace() || matches!(b, b'"' | b'\'' | b',' | b';'))
+            .unwrap_or(window.len());
+        let value = &window[..shown];
         // "token: missing" stays; a strong name needs no digit once the value
         // is too long to be a word.
-        let looks_secret = !scheme.is_empty()
-            || value.bytes().any(|b| b.is_ascii_digit())
-            || (is_strong_secret_key(key.as_str()) && value.len() >= 16);
+        let looks_secret = value.len() >= 8
+            && (!scheme.is_empty()
+                || value.iter().any(u8::is_ascii_digit)
+                || (is_strong_secret_key(key.as_str()) && value.len() >= 16));
         if looks_secret {
+            let end = input[start..]
+                .find(ends_value)
+                .map_or(input.len(), |offset| start + offset);
             let replacement = format!("{}{scheme}{REDACTED}", &caps[1]);
-            return Some((key.end(), key.end() + caps[0].len(), replacement));
+            return Some((key.end(), end, replacement));
         }
     }
     let dashes = before.len() - before.trim_end_matches('-').len();

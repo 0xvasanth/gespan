@@ -138,10 +138,10 @@ Each fix has a test that failed first.
 
 - **Secret pairs are found key first** (`src/pairs.rs`). Keys are found in one pass and judged on their own. A value is matched, anchored at the key's end, only for a secret key. Before, a rejected key re-read its whole value, so 48 KB of `tokens_used=` took 13.7 s; it now takes 3 ms.
 - **JSON values of secret keys use `fields::value_end`,** so an object or array value goes as a whole: `{"secret": {"value": …}}` no longer leaks.
-- **A cut-off value ends at its line.** JSON strings hold no raw newline and JSONL has one record per line, so one cut line can't blank the rest of a log tail.
-- **Strong header names** (`api-key`, `authorization`, `cookie`, …) need no digit once the value has 16+ characters. Weak names (`token`) still do, so `token: missing` survives. A cookie header's value now goes as a whole.
+- **A cut-off value ends where the next JSONL record starts** (a newline followed by `{`), otherwise at the end of the text. One cut line can't blank the records after it, and later lines of a raw multi-line value can't leak.
+- **Unquoted header values** are judged on their first 512 bytes by a hand scan, then replaced in full, `:` included. Strong header names (`api-key`, `authorization`, `cookie`, …) need no digit once the value has 16+ characters. Weak names (`token`) still do, so `token: missing` survives. A cookie header's value now goes as a whole.
 - **Distinctive token prefixes** (`ghp_`, `AKIA`, `glpat-`, `AIza`, `xox…`) match even right after a digit. Prefixes that occur inside words (`sk-`, `sk_live_`, `eyJ`, `hf_`, `npm_`) keep the boundary.
-- **A URL password stops at `?` or `#`,** so `host:8443/docs?u=bob@corp.com` keeps its host. `/` stays allowed, because Git URLs with an unencoded `/` in a token are caught that way.
+- **URL passwords are found by a hand scan** of at most 512 bytes after `user:`. The `host:port` shape (digits, then `/`, `?` or `#`) is not a password, so `host:8443/docs?u=bob@corp.com` keeps its host. Otherwise a password runs to the last `@` before the host and may hold `/`, `?` or `#`. A rejected candidate resumes after `user:`, so a URL nested in the query is still checked.
 - **Known secrets go through one Aho-Corasick scan** (LeftmostLongest) instead of a `str::replace` per encoded variant. Secrets that are part of a placeholder (`redacted`, `project-1`) are ignored, so scrubbing stays stable.
 - **Emails never start with `'`.**
 

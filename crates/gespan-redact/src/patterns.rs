@@ -43,13 +43,14 @@ static PRIVATE_KEY: LazyLock<Regex> = LazyLock::new(|| {
     .expect("private key pattern")
 });
 
-/// The password in `scheme://user:password@host`, up to the last `@` before
-/// the host; the user may be empty (`redis://:pw@host`). A `?` or `#` ends
-/// the authority, so `host:8443/docs?u=bob@corp.com` is not a password.
-static URL_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?-u:\b)([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s@?#]*(?:@[^\s@/?#]*)*@")
-        .expect("URL password pattern")
+/// `scheme://user:` (the user may be empty: `redis://:pw@host`). The password
+/// after it is found by [`redact_url_passwords`].
+static URL_USER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?-u:\b)[a-z][a-z0-9+.-]*://[^\s:/@]*:").expect("URL user pattern")
 });
+
+/// How far past `user:` to look for the `@` that ends a password.
+const PASSWORD_WITHIN: usize = 512;
 
 static BEARER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?-u:\b)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}").expect("bearer pattern")
@@ -82,9 +83,53 @@ pub(crate) fn redact_tokens(input: &str) -> String {
     let out = BEARER.replace_all(&out, format!("${{1}}{REDACTED}"));
     let out = BASIC.replace_all(&out, format!("${{1}}{REDACTED}"));
     let out = pairs::redact_secret_pairs(&out);
-    URL_PASSWORD
-        .replace_all(&out, format!("${{1}}{REDACTED}@"))
-        .into_owned()
+    redact_url_passwords(&out)
+}
+
+/// The password in `scheme://user:password@host` becomes `<redacted>`. It runs
+/// to the last `@` before the host and may hold `?` or `#`. `host:8443/docs`
+/// (a port, then `/`, `?` or `#`) is not a password, and a URL nested in its
+/// query is still checked.
+fn redact_url_passwords(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut copied = 0;
+    let mut from = 0;
+    while let Some(user) = URL_USER.find_at(input, from) {
+        from = user.end();
+        let start = user.end();
+        let run = &bytes[start..bytes.len().min(start + PASSWORD_WITHIN)];
+        let run = &run[..run
+            .iter()
+            .position(u8::is_ascii_whitespace)
+            .unwrap_or(run.len())];
+        let digits = run.iter().take_while(|b| b.is_ascii_digit()).count();
+        let is_port = digits > 0
+            && run
+                .get(digits)
+                .is_none_or(|b| matches!(b, b'/' | b'?' | b'#'));
+        let Some(first_at) = run.iter().position(|b| *b == b'@') else {
+            continue;
+        };
+        if is_port {
+            continue;
+        }
+        // Later `@`s still belong to the password until the host's `/?#`.
+        let mut last_at = first_at;
+        for (i, byte) in run.iter().enumerate().skip(first_at + 1) {
+            match byte {
+                b'@' => last_at = i,
+                b'/' | b'?' | b'#' => break,
+                _ => {}
+            }
+        }
+        out.push_str(&input[copied..start]);
+        out.push_str(REDACTED);
+        copied = start + last_at;
+        from = copied;
+    }
+    out.push_str(&input[copied..]);
+    out
 }
 
 /// Email addresses become `<email>`.
@@ -670,5 +715,32 @@ mod tests {
             "{'email': '<email>'}"
         );
         assert_eq!(redact_emails("o'neil@x.io"), "<email>");
+    }
+
+    #[test]
+    fn header_values_go_as_a_whole() {
+        assert_eq!(
+            redact_tokens("X-Api-Key: abcd:efgh:ijkl:mnop:qrst next"),
+            "X-Api-Key: <redacted> next"
+        );
+        let long = "a1".repeat(400);
+        assert_eq!(
+            redact_tokens(&format!("Authorization: token {long} x")),
+            "Authorization: token <redacted> x"
+        );
+    }
+
+    #[test]
+    fn url_passwords_may_hold_query_characters() {
+        assert_eq!(
+            redact_tokens("https://user:pa?ss#1@host/x"),
+            "https://user:<redacted>@host/x"
+        );
+        // host:port/path is not userinfo, but a URL nested in its query is checked.
+        assert_eq!(
+            redact_tokens("https://h:80/x?r=https://u:pw@h2/"),
+            "https://h:80/x?r=https://u:<redacted>@h2/"
+        );
+        assert_eq!(redact_tokens("https://h:8443#a@b"), "https://h:8443#a@b");
     }
 }

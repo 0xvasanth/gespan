@@ -287,6 +287,41 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_off_value_only_stops_at_the_next_record() {
+        let r = Redactor::new(Config::default());
+        // Later lines that don't start a JSONL record still belong to the value.
+        assert_eq!(
+            r.redact_text("{\"prompt\":\"line one\nline two secret\n{\"level\":\"info\"}"),
+            "{\"prompt\":\"<redacted>\"\n{\"level\":\"info\"}"
+        );
+        assert_eq!(
+            r.redact_text("\"prompt\": \"first\nsecond secret\nthird"),
+            "\"prompt\": \"<redacted>\""
+        );
+        assert_eq!(
+            r.redact_text("{\"env\":{\"A\":\"b\nC=secret\n  {\"level\":\"info\"}"),
+            "{\"env\":\"<redacted>\"\n  {\"level\":\"info\"}"
+        );
+    }
+
+    #[test]
+    fn rejected_headers_and_urls_stay_linear() {
+        let r = Redactor::new(Config::default());
+        for input in [
+            "token:".repeat(8000),
+            format!("token: {}", "token:".repeat(8000)),
+        ] {
+            let started = std::time::Instant::now();
+            let _ = r.redact_text(&input);
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(2),
+                "took {:?}",
+                started.elapsed()
+            );
+        }
+    }
+
+    #[test]
     fn known_secrets_inside_placeholders_are_ignored() {
         let r = Redactor::new(Config {
             projects: vec!["/w/app".into()],
