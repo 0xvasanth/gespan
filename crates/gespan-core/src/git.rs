@@ -32,7 +32,7 @@ pub struct Snapshot {
     pub worktrees: Vec<Worktree>,
 }
 /// The Git subcommand in `args`, past any global options such as `-c x=y`.
-fn subcommand<'a>(args: &[&'a str]) -> &'a str {
+pub(crate) fn subcommand<'a>(args: &[&'a str]) -> &'a str {
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match *arg {

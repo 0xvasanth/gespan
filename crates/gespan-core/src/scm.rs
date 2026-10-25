@@ -1158,7 +1158,7 @@ fn gh_run(root: &Path, args: &[&str]) -> Result<String, String> {
     } else if !stdout.is_empty() {
         stdout
     } else {
-        format!("gh {} failed", args.join(" "))
+        gh_failed(args)
     };
     Err(detail)
 }
@@ -1230,7 +1230,22 @@ fn git_checked(root: &Path, args: &[&str]) -> Result<(), String> {
     if !msg.is_empty() {
         return Err(msg.to_string());
     }
-    Err(format!("git {} failed", args.join(" ")))
+    Err(git_failed(args))
+}
+
+/// Names only the subcommand: the arguments can hold a commit message or file names.
+fn git_failed(args: &[&str]) -> String {
+    format!("git {} failed", crate::git::subcommand(args))
+}
+
+/// Names only the command, such as `pr create`, never its flag values.
+fn gh_failed(args: &[&str]) -> String {
+    let command: Vec<_> = args
+        .iter()
+        .take_while(|arg| !arg.starts_with('-'))
+        .copied()
+        .collect();
+    format!("gh {} failed", command.join(" "))
 }
 
 fn git_run(root: &Path, args: &[&str]) -> Option<String> {

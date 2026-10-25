@@ -1079,3 +1079,45 @@ fn a_logged_git_action_error_drops_url_credentials() {
     assert!(logged.contains("https://github.com/o/r.git/"), "{logged}");
     assert!(logged.contains("ssh://host.example/r.git"), "{logged}");
 }
+
+#[test]
+fn a_silent_git_failure_names_only_the_subcommand() {
+    let dir = tmp();
+    let dir = dir.path();
+    assert!(init_git_commit(dir, &[("a.txt", "alpha\n")]));
+    std::fs::write(dir.join("a.txt"), "beta\n").unwrap();
+    git(dir, &["add", "."]);
+    // A hook that rejects the commit without printing anything.
+    let hook = dir.join(".git/hooks/pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut committed = Ok(());
+    let logged = crate::diagnostics::test_capture(|| {
+        committed = commit(dir, "Rotate the private-project key", false)
+    });
+    assert_eq!(committed.unwrap_err(), "git commit failed");
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["fields"]["op"], "commit");
+    assert_eq!(logged[0]["fields"]["error"], "git commit failed");
+    assert!(!logged[0].to_string().contains("private-project"));
+}
+
+#[test]
+fn silent_command_failures_name_the_command_not_its_arguments() {
+    assert_eq!(
+        git_failed(&["--literal-pathspecs", "add", "--", "secret/name.txt"]),
+        "git add failed"
+    );
+    assert_eq!(
+        gh_failed(&["pr", "create", "--title", "Secret title", "--base", "main"]),
+        "gh pr create failed"
+    );
+    assert_eq!(
+        gh_failed(&["repo", "view", "--json", "nameWithOwner"]),
+        "gh repo view failed"
+    );
+}
