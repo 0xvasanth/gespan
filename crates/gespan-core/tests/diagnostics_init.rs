@@ -5,6 +5,9 @@ use std::time::{Duration, Instant};
 
 #[test]
 fn init_prunes_writes_both_apis_and_flushes() {
+    // Hermetic: a developer's exported GESPAN_LOG must not change the levels.
+    // This binary has one test, so nothing else reads the environment.
+    std::env::remove_var("GESPAN_LOG");
     let dir = tempfile::tempdir().unwrap();
     let logs = dir.path().join("logs");
     std::fs::create_dir_all(&logs).unwrap();
