@@ -731,7 +731,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                 views
                     .iter()
                     .find(|v| v.id == session)
-                    .is_none_or(|v| !v.busy && v.has_messages)
+                    .is_none_or(|v| !v.busy && v.has_messages && !v.held)
             };
             let in_flight = |session: i64| {
                 self.completion_work.iter().any(|((p, _), work)| {

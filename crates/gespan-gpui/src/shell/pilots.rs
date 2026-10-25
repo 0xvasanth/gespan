@@ -9,6 +9,8 @@ pub(crate) struct PilotSession {
     pub archived: bool,
     pub updated_at: u64,
     pub needs_input: bool,
+    /// Held, or waiting for its turn to resume: it has not finished.
+    pub held: bool,
     pub branch: Option<String>,
     pub model: SharedString,
 }
@@ -44,6 +46,7 @@ impl Shell {
                     archived: metadata.summary.archived,
                     updated_at: metadata.summary.updated_at,
                     needs_input: metadata.needs_approval(),
+                    held: self.session_held(id, live, cx),
                     branch: live.and_then(|v| v.branch_name()).map(str::to_owned),
                     model: live.map(|v| v.pilot_model_label()).unwrap_or_default(),
                 }
