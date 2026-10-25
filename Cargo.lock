@@ -1841,6 +1841,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gespan-speech"
+version = "0.16.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "gespan-tracker-secrets"
 version = "0.1.0"
 dependencies = [
