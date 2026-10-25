@@ -153,10 +153,7 @@ impl Render for Chrome {
             .update(cx, |shell, cx| match kind {
                 ChromeKind::Sidebar => {
                     let sidebar = shell.sidebar(cx);
-                    if shell.space_slide.is_some()
-                        || shell.spaces_nudge.is_some()
-                        || shell.classic_tabs.animating()
-                    {
+                    if shell.spaces_nudge.is_some() || shell.classic_tabs.animating() {
                         window.request_animation_frame();
                     }
                     sidebar
@@ -680,9 +677,6 @@ pub(crate) struct Shell {
     pane_ticks: HashMap<i64, PaneTick>,
     skip_tab_click: bool,
     spaces_start: usize,
-    /// Sidebar.tsx's space push: which way the incoming project slides in
-    /// (1 from the right, -1 from the left) and when it set off.
-    space_slide: Option<(f32, std::time::Instant)>,
     /// The spaces bar's short nudge after a chevron pages it.
     spaces_nudge: Option<(f32, std::time::Instant)>,
     /// The space under the pointer, whose name and shortcuts show above it.
@@ -1023,7 +1017,6 @@ impl Shell {
             pane_ticks: HashMap::new(),
             skip_tab_click: false,
             spaces_start: 0,
-            space_slide: None,
             spaces_nudge: None,
             hovered_space: None,
             space_anchor: AnchorSlot::default(),
@@ -4007,23 +4000,9 @@ impl Shell {
         if let Some(monos) = self.monos.clone() {
             monos.update(cx, |m, cx| m.close(cx));
         }
-        let from = self
-            .workspace
-            .projects
-            .iter()
-            .position(|p| *p == self.workspace.project);
-        let changed = self.workspace.project != path;
         self.workspace.project = path.clone();
         self.workspace.active = None;
         if let Some(ix) = self.workspace.projects.iter().position(|p| p == &path) {
-            // Switching projects slides the sidebar the way the spaces run:
-            // moving right, the new project comes in from the right.
-            if changed && !self.workspace.classic_layout && !cx.reduce_motion() {
-                self.space_slide = from.map(|from| {
-                    let direction = if ix > from { 1. } else { -1. };
-                    (direction, std::time::Instant::now())
-                });
-            }
             if ix < self.spaces_start {
                 self.spaces_start = ix;
             } else if ix >= self.spaces_start + 5 {
@@ -6194,10 +6173,6 @@ impl Shell {
             && next != self.workspace.project
         {
             self.select_project(next, window, cx);
-            // A step past either end wraps around but keeps moving the same way.
-            if let Some((direction, _)) = &mut self.space_slide {
-                *direction = step.signum() as f32;
-            }
         }
     }
     fn close_other_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -6242,22 +6217,6 @@ impl Shell {
         }
         self.refresh_sidebar_structure(cx);
         let live_agents = self.live_agents_preview(cx);
-        // The incoming project's header and list push in across the full
-        // width, fading in as they come.
-        let (slide_x, slide_opacity) = match self.space_slide {
-            Some((direction, start)) => {
-                let t = start.elapsed().as_secs_f32() / 0.44;
-                if t >= 1. {
-                    self.space_slide = None;
-                    (0., 1.)
-                } else {
-                    let eased = crate::reveal::bezier(t, 0.4, 0., 0.2, 1.);
-                    let width = self.workspace.sidebar_width;
-                    (direction * width * (1. - eased), eased)
-                }
-            }
-            None => (0., 1.),
-        };
         div()
             .id("monocode-sidebar")
             .debug_selector(|| "sidebar-content".into())
@@ -6279,139 +6238,131 @@ impl Shell {
             .flex()
             .flex_col()
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .when(self.space_slide.is_some(), |d| d.overflow_hidden())
-                    .child(
-                        div()
-                            .relative()
-                            .left(px(slide_x))
-                            .opacity(slide_opacity)
-                            .size_full()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .h(px(39.))
-                                    .flex_shrink_0()
-                                    .px_3()
-                                    .pb_px()
-                                    .relative()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        div().flex_1().min_w_0().flex().items_center().child(
-                                            div()
-                                                .id("workspace-project")
-                                                .debug_selector(|| "sidebar-project-button".into())
-                                                .relative()
-                                                .role(Role::Button)
-                                                .aria_label(format!(
-                                                    "Switch project, {}",
-                                                    self.project_label(&self.workspace.project)
-                                                ))
-                                                .aria_description(self.workspace.project.clone())
-                                                .aria_expanded(self.menu_open(&MenuTarget::Header))
-                                                .cursor_pointer()
-                                                .h(px(28.))
-                                                // The whole picker shares Search's left edge.
-                                                .px_1p5()
-                                                .ml(px(-4.))
-                                                .rounded_md()
-                                                .max_w_full()
-                                                .hover(|s| s.bg(content(0.08)))
-                                                .when(self.menu_open(&MenuTarget::Header), |d| {
-                                                    d.bg(content(0.08))
-                                                })
-                                                .min_w_0()
-                                                .flex()
-                                                .items_center()
-                                                .gap_1p5()
-                                                .text_size(px(13.))
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .child(
-                                                    crate::project_settings::header_project_icon(
-                                                        &self.appearance(&self.workspace.project),
-                                                        &self.workspace.project,
-                                                    ),
-                                                )
-                                                .child(div().min_w_0().truncate().child(
+                div().flex_1().min_h_0().child(
+                    div()
+                        .relative()
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .h(px(39.))
+                                .flex_shrink_0()
+                                .px_3()
+                                .pb_px()
+                                .relative()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    div().flex_1().min_w_0().flex().items_center().child(
+                                        div()
+                                            .id("workspace-project")
+                                            .debug_selector(|| "sidebar-project-button".into())
+                                            .relative()
+                                            .role(Role::Button)
+                                            .aria_label(format!(
+                                                "Switch project, {}",
+                                                self.project_label(&self.workspace.project)
+                                            ))
+                                            .aria_description(self.workspace.project.clone())
+                                            .aria_expanded(self.menu_open(&MenuTarget::Header))
+                                            .cursor_pointer()
+                                            .h(px(28.))
+                                            // The whole picker shares Search's left edge.
+                                            .px_1p5()
+                                            .ml(px(-4.))
+                                            .rounded_md()
+                                            .max_w_full()
+                                            .hover(|s| s.bg(content(0.08)))
+                                            .when(self.menu_open(&MenuTarget::Header), |d| {
+                                                d.bg(content(0.08))
+                                            })
+                                            .min_w_0()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .text_size(px(13.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(crate::project_settings::header_project_icon(
+                                                &self.appearance(&self.workspace.project),
+                                                &self.workspace.project,
+                                            ))
+                                            .child(
+                                                div().min_w_0().truncate().child(
                                                     self.project_label(&self.workspace.project),
-                                                ))
-                                                .when_some(
-                                                    self.worktree_focus
-                                                        .get(&self.workspace.project),
-                                                    |d, focus| {
-                                                        d.child(
-                                                            div()
-                                                                .min_w_0()
-                                                                .truncate()
-                                                                .font_weight(FontWeight::NORMAL)
-                                                                .text_color(content(0.45))
-                                                                .child(
-                                                                    focus
-                                                                        .branch
-                                                                        .clone()
-                                                                        .unwrap_or_else(|| {
-                                                                            "detached".into()
-                                                                        }),
-                                                                ),
-                                                        )
-                                                    },
-                                                )
-                                                .child(icon("chevron-down", 14.))
-                                                .child(self.project_anchor.probe())
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    if this.menu_open(&MenuTarget::Header) {
-                                                        this.close_menu(cx);
-                                                    } else {
-                                                        let anchor = Anchor::Slot(
-                                                            this.project_anchor.clone(),
-                                                        );
-                                                        this.open_menu(
-                                                            MenuTarget::Header,
-                                                            anchor,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-                                                })),
-                                        ),
-                                    )
-                                    .child(
-                                        icon_button(
-                                            "sidebar-options",
-                                            "Sidebar options",
-                                            "more-horizontal",
-                                        )
-                                        .debug_selector(|| "sidebar-options".into())
-                                        .aria_expanded(self.menu_open(&MenuTarget::SidebarOptions))
-                                        .relative()
-                                        .child(self.sidebar_options_anchor.probe())
-                                        .on_click(
-                                            cx.listener(|this, _, window, cx| {
-                                                if this.menu_open(&MenuTarget::SidebarOptions) {
+                                                ),
+                                            )
+                                            .when_some(
+                                                self.worktree_focus.get(&self.workspace.project),
+                                                |d, focus| {
+                                                    d.child(
+                                                        div()
+                                                            .min_w_0()
+                                                            .truncate()
+                                                            .font_weight(FontWeight::NORMAL)
+                                                            .text_color(content(0.45))
+                                                            .child(
+                                                                focus
+                                                                    .branch
+                                                                    .clone()
+                                                                    .unwrap_or_else(|| {
+                                                                        "detached".into()
+                                                                    }),
+                                                            ),
+                                                    )
+                                                },
+                                            )
+                                            .child(icon("chevron-down", 14.))
+                                            .child(self.project_anchor.probe())
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                if this.menu_open(&MenuTarget::Header) {
                                                     this.close_menu(cx);
                                                 } else {
+                                                    let anchor =
+                                                        Anchor::Slot(this.project_anchor.clone());
                                                     this.open_menu(
-                                                        MenuTarget::SidebarOptions,
-                                                        Anchor::Slot(
-                                                            this.sidebar_options_anchor.clone(),
-                                                        ),
+                                                        MenuTarget::Header,
+                                                        anchor,
                                                         window,
                                                         cx,
                                                     );
                                                 }
-                                            }),
-                                        ),
+                                            })),
                                     ),
-                            )
-                            .child(self.virtual_sidebar(cx))
-                            .children(live_agents)
-                            .child(self.app_update_footer(cx)),
-                    ),
+                                )
+                                .child(
+                                    icon_button(
+                                        "sidebar-options",
+                                        "Sidebar options",
+                                        "more-horizontal",
+                                    )
+                                    .debug_selector(|| "sidebar-options".into())
+                                    .aria_expanded(self.menu_open(&MenuTarget::SidebarOptions))
+                                    .relative()
+                                    .child(self.sidebar_options_anchor.probe())
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| {
+                                            if this.menu_open(&MenuTarget::SidebarOptions) {
+                                                this.close_menu(cx);
+                                            } else {
+                                                this.open_menu(
+                                                    MenuTarget::SidebarOptions,
+                                                    Anchor::Slot(
+                                                        this.sidebar_options_anchor.clone(),
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        },
+                                    )),
+                                ),
+                        )
+                        .child(self.virtual_sidebar(cx))
+                        .children(live_agents)
+                        .child(self.app_update_footer(cx)),
+                ),
             )
             .when(!self.workspace.classic_layout, |d| {
                 d.child(self.project_spaces(cx))
