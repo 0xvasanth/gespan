@@ -7,6 +7,7 @@
 //! and known secrets become `<redacted>`; deny-listed JSON fields are dropped.
 
 mod paths;
+mod patterns;
 
 use std::path::PathBuf;
 
@@ -26,6 +27,10 @@ pub struct Config {
     pub home: Option<PathBuf>,
     /// Project roots, in a stable order: the first is `<project-1>`.
     pub projects: Vec<PathBuf>,
+    /// Secret values known to this machine (keychain, account store). Each
+    /// is replaced wherever it appears; values under 8 characters are
+    /// ignored so a short one can't shred ordinary text.
+    pub secrets: Vec<String>,
 }
 
 /// Scrubs text and JSON. Build it once and reuse it.
@@ -33,6 +38,8 @@ pub struct Config {
 pub struct Redactor {
     /// Project roots longest first, then home, so a project under home wins.
     paths: Vec<PathRule>,
+    /// Known secret values, longest first.
+    secrets: Vec<String>,
 }
 
 impl Redactor {
@@ -51,7 +58,13 @@ impl Redactor {
                 .as_deref()
                 .and_then(|home| PathRule::new(home, HOME.to_string())),
         );
-        Self { paths }
+        let mut secrets: Vec<String> = config
+            .secrets
+            .into_iter()
+            .filter(|secret| secret.chars().count() >= 8)
+            .collect();
+        secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+        Self { paths, secrets }
     }
 
     /// Scrubs free text: a log message, a panic, a stack trace.
@@ -60,7 +73,10 @@ impl Redactor {
         for rule in &self.paths {
             out = rule.apply(&out);
         }
-        out
+        for secret in &self.secrets {
+            out = out.replace(secret.as_str(), REDACTED);
+        }
+        patterns::redact_emails(&patterns::redact_tokens(&out))
     }
 }
 
@@ -72,7 +88,31 @@ mod tests {
         Redactor::new(Config {
             home: Some(home.into()),
             projects: projects.iter().map(PathBuf::from).collect(),
+            ..Config::default()
         })
+    }
+
+    #[test]
+    fn known_secrets_are_replaced_and_short_ones_ignored() {
+        let r = Redactor::new(Config {
+            secrets: vec!["hunter2hunter2".into(), "abcd".into(), String::new()],
+            ..Config::default()
+        });
+        assert_eq!(
+            r.redact_text("login hunter2hunter2 failed for abcd"),
+            "login <redacted> failed for abcd"
+        );
+    }
+
+    #[test]
+    fn every_rule_applies_to_one_line() {
+        let r = redactor("/Users/alice", &["/Users/alice/me@work.dev"]);
+        assert_eq!(
+            r.redact_text(
+                "push /Users/alice/me@work.dev/a.rs as bob@x.io with ghp_16C7e42F292c6912E7710c838347Ae178B4a from /Users/alice/tmp"
+            ),
+            "push <project-1>/a.rs as <email> with <redacted> from ~/tmp"
+        );
     }
 
     #[test]
