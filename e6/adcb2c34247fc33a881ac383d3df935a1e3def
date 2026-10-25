@@ -1,0 +1,21 @@
+docs/privacy.md
+  s_3d70b2915bde53::t_b8b99f1cfdf0c1 1-117
+src/test/diagnosticsContract.test.ts
+  s_3d70b2915bde53::t_926c749f88268f 2-3,270-332
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6adcb2c34247fc33a881ac383d3df935a1e3def",
+  "prompts": {},
+  "sessions": {
+    "s_3d70b2915bde53": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "090d580c-c9c5-4007-950a-6316c24edf7d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
