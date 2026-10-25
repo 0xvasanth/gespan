@@ -94,6 +94,9 @@ pub fn read(tracker: Tracker, data_dir: &Path) -> Result<Option<String>, String>
 }
 
 pub fn write(tracker: Tracker, data_dir: &Path, value: &str) -> Result<(), String> {
+    // The account names the resolved directory, which only exists once the
+    // directory does; later reads must find the same entry.
+    fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
     entry(tracker, data_dir)?.set_password(value).map_err(|_| {
         format!(
             "Could not save the {} credentials to the keychain. {KEYCHAIN_HINT}",

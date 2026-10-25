@@ -255,7 +255,10 @@ fn a_stuck_old_file_does_not_hide_the_keychain_value() {
     write(Tracker::Linear, dir.path(), "lin_api_x").unwrap();
     stuck_old_file(dir.path(), "linear-token");
 
-    assert_eq!(read(Tracker::Linear, dir.path()).unwrap().as_deref(), Some("lin_api_x"));
+    assert_eq!(
+        read(Tracker::Linear, dir.path()).unwrap().as_deref(),
+        Some("lin_api_x")
+    );
 }
 
 #[test]
@@ -308,5 +311,28 @@ fn a_refused_delete_never_reports_the_secret() {
     let error = delete(Tracker::Jira, dir.path()).unwrap_err();
 
     assert!(!error.contains("jira_api_secret"), "{error}");
-    assert_eq!(stored(Tracker::Jira, dir.path()).as_deref(), Some("jira_api_secret"));
+    assert_eq!(
+        stored(Tracker::Jira, dir.path()).as_deref(),
+        Some("jira_api_secret")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn saving_before_the_data_directory_exists_uses_its_final_name() {
+    let dir = dir();
+    let real = dir.path().join("real");
+    fs::create_dir(&real).unwrap();
+    std::os::unix::fs::symlink(&real, dir.path().join("link")).unwrap();
+    let data = dir.path().join("link").join("data");
+
+    write(Tracker::Gitlab, &data, "cfg").unwrap();
+
+    assert!(real.join("data").is_dir());
+    assert_eq!(
+        read(Tracker::Gitlab, &real.join("data"))
+            .unwrap()
+            .as_deref(),
+        Some("cfg")
+    );
 }
