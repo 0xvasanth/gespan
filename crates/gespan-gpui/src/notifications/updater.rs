@@ -4,6 +4,7 @@ use crate::{
     theme::*,
 };
 use gespan_core::app_update::{self, Config, Installation, Installed, Update};
+use gespan_core::diagnostics::metrics;
 use gpui::{App, Context, Entity, EventEmitter, Global, Role, div, prelude::*, px};
 use std::{
     sync::{Arc, Mutex},
@@ -152,7 +153,10 @@ impl Updater {
                 Some(installation) => installation,
                 None => Installation::detect()?,
             };
-            let update = app_update::check(&config, &installation)?;
+            let update = metrics::track(
+                "app_update.check",
+                app_update::check(&config, &installation),
+            )?;
             Ok::<_, String>((installation, update))
         });
         cx.spawn(async move |this, cx| {
@@ -201,7 +205,7 @@ impl Updater {
         let gate = self.gate.clone();
         let (tx, rx) = async_channel::bounded(8);
         let work = cx.background_executor().spawn(async move {
-            let result = (|| {
+            let result = metrics::track("app_update.install", (|| {
                 let mut last_bytes = 0;
                 let mut last_percent = None;
                 let download = update.download(|n, total| {
@@ -224,7 +228,7 @@ impl Updater {
                 )?;
                 locked(&store)?.save_setting("gespan.nativeReleaseNotes", &serde_json::json!({"version": update.version.to_string(), "body": update.notes}).to_string())?;
                 update.install(download, &installation)
-            })();
+            })());
             if result.is_err() {
                 let _ = locked(&store)
                     .and_then(|store| store.save_setting("gespan.installedUpdate", ""));

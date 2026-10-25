@@ -113,6 +113,7 @@ pub fn install_panic_hook(crash_dir: PathBuf, version: String) {
             crash_error = crash_file.as_ref().err().map(|e| e.to_string()),
             "panic: {message}"
         );
+        super::metrics::record_panic();
         previous(info);
     }));
 }

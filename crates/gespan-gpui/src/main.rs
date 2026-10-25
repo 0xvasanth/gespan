@@ -326,6 +326,11 @@ fn main() {
         }
         return;
     }
+    // Logs its own error; the app runs without counters if the file is unusable.
+    let _ = gespan_core::diagnostics::metrics::open(
+        &gespan_core::diagnostics::metrics::database_path(&database),
+        notifications::updater::version(),
+    );
     gespan_core::checkpoint::init(
         database
             .parent()

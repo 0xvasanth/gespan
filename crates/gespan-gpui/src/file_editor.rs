@@ -651,6 +651,9 @@ impl FileEditor {
             }
             let source = text.clone();
             let base = original.clone();
+            // Only QuickJS failures count: the native path runs per edit, and
+            // its one failure, a missing grammar, is `editor.syntax_grammar`.
+            let quickjs = syntax.is_none();
             let work = cx.background_executor().spawn(async move {
                 match syntax {
                     Some(syntax) => {
@@ -666,7 +669,17 @@ impl FileEditor {
                         Ok(analysis) => this
                             .input
                             .update(cx, |input, cx| input.set_editor_analysis(analysis, cx)),
-                        Err(error) => eprintln!("gespan: editor analysis failed: {error}"),
+                        Err(error) => {
+                            // Counted once per current result, not for stale ones.
+                            if quickjs {
+                                use gespan_core::diagnostics::metrics;
+                                metrics::failure(
+                                    "editor.analysis",
+                                    metrics::ErrorKind::of_message(&error),
+                                );
+                            }
+                            eprintln!("gespan: editor analysis failed: {error}");
+                        }
                     }
                 }
             });

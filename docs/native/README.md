@@ -147,6 +147,11 @@ Support, Linux's XDG data directory, or Windows' `%APPDATA%`. The app uses the
 existing desktop schema and session IDs. GPUI preferences are saved beside the
 database in `gespan.db.gpui.json`.
 
+Failure counters (how often worktree creation, agent starts, Git, updates and
+similar operations failed each day, by a short fixed error code) are kept in
+`gespan-native.db`, also beside the database. Only Gespan Native opens that
+file; nothing is added to `gespan.db`. The counts stay on this machine.
+
 Supported desktop preferences and workspace state are read from the installed
 app's webview localStorage on macOS and Linux. The Windows WebView2 reader is
 implemented and covered by synthetic fixtures on Linux; reading a real Windows

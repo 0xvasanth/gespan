@@ -1595,7 +1595,7 @@ fn run_operation(
             parked::discard_session(&request);
         }
         (
-            parked::Wire::spawn(&mut command, &request)?,
+            parked::Wire::spawn(&mut command, &request, eligible)?,
             Protocol::new(request),
             false,
         )
@@ -1854,7 +1854,14 @@ fn run_operation(
     if cancel.load(Ordering::Relaxed) && protocol.done {
         stop_confirmed = true;
     }
-    if result.is_err() && !cancel.load(Ordering::Relaxed) {
+    if let (Err(error), false) = (&result, cancel.load(Ordering::Relaxed)) {
+        // Conversation turns only: not probes or background text work.
+        if eligible {
+            crate::diagnostics::metrics::failure(
+                "agent.turn_error",
+                crate::diagnostics::metrics::ErrorKind::of_message(error),
+            );
+        }
         if let Some(limit) = protocol.claude_usage_limit.take() {
             pending.push(Event::UsageLimited(limit));
         }
@@ -1881,6 +1888,151 @@ fn run_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The agents here are shell scripts.
+    #[cfg(unix)]
+    mod counters {
+        use super::*;
+        use crate::diagnostics::metrics::{capture, ErrorKind};
+        use std::os::unix::fs::PermissionsExt;
+
+        fn agent(dir: &Path, kind: Kind, script: &str) -> Request {
+            let binary = dir.join("agent");
+            std::fs::write(&binary, format!("#!/bin/sh\n{script}\n")).unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+            Request {
+                kind,
+                binary,
+                cwd: dir.to_owned(),
+                prompt: "Hello".into(),
+                provider_id: None,
+                model: None,
+                settings: Default::default(),
+            }
+        }
+        fn counted(
+            counts: Vec<crate::diagnostics::metrics::Count>,
+        ) -> Vec<(String, Option<ErrorKind>)> {
+            counts.into_iter().map(|c| (c.name, c.kind)).collect()
+        }
+
+        #[test]
+        fn a_failed_turn_counts_one_turn_error_after_a_start() {
+            let dir = tempfile::tempdir().unwrap();
+            let request = agent(dir.path(), Kind::Claude, "exit 3");
+            let (result, counts) =
+                capture(|| run(request, Arc::new(AtomicBool::new(false)), |_| Ok(())));
+            assert!(result.is_err());
+            let counts = counted(counts);
+            assert!(
+                counts.contains(&("agent.start.claude".into(), None)),
+                "{counts:?}"
+            );
+            assert_eq!(
+                counts
+                    .iter()
+                    .filter(|(name, _)| name == "agent.turn_error")
+                    .count(),
+                1,
+                "{counts:?}"
+            );
+        }
+
+        #[test]
+        fn a_cancelled_turn_is_not_an_error() {
+            let dir = tempfile::tempdir().unwrap();
+            let request = agent(
+                dir.path(),
+                Kind::Claude,
+                "touch \"$0.started\"; exec sleep 5",
+            );
+            let marker = request.binary.with_extension("started");
+            let cancel = Arc::new(AtomicBool::new(false));
+            let stop = cancel.clone();
+            let stopper = std::thread::spawn(move || {
+                while !marker.exists() {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                stop.store(true, Ordering::Relaxed);
+            });
+            let (result, counts) = capture(|| run(request, cancel, |_| Ok(())));
+            stopper.join().unwrap();
+            assert!(result.is_err());
+            let counts = counted(counts);
+            assert!(
+                counts.contains(&("agent.start.claude".into(), None)),
+                "{counts:?}"
+            );
+            assert!(
+                !counts.iter().any(|(name, _)| name == "agent.turn_error"),
+                "{counts:?}"
+            );
+        }
+
+        #[test]
+        fn model_catalog_probes_are_not_agent_starts() {
+            let dir = tempfile::tempdir().unwrap();
+            let request = agent(dir.path(), Kind::Cursor, "exit 3");
+            let (result, counts) = capture(|| {
+                run_process(
+                    request,
+                    Arc::new(AtomicBool::new(false)),
+                    None,
+                    true,
+                    |_| Ok(()),
+                )
+            });
+            assert!(result.is_err());
+            assert!(counts.is_empty(), "{:?}", counted(counts));
+        }
+
+        #[test]
+        fn background_text_requests_are_not_starts_or_turn_errors() {
+            let dir = tempfile::tempdir().unwrap();
+            let request = agent(dir.path(), Kind::Claude, "exit 3");
+            let (result, counts) = capture(|| run_text(request, Arc::new(AtomicBool::new(false))));
+            assert!(result.is_err());
+            assert!(counts.is_empty(), "{:?}", counted(counts));
+        }
+
+        #[test]
+        fn a_stopped_opencode_start_is_not_a_failure() {
+            let dir = tempfile::tempdir().unwrap();
+            let request = agent(
+                dir.path(),
+                Kind::OpenCode,
+                "touch \"$0.started\"; exec sleep 5",
+            );
+            let marker = request.binary.with_extension("started");
+            let cancel = Arc::new(AtomicBool::new(false));
+            let stop = cancel.clone();
+            let stopper = std::thread::spawn(move || {
+                while !marker.exists() {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                stop.store(true, Ordering::Relaxed);
+            });
+            let (result, counts) = capture(|| run(request, cancel, |_| Ok(())));
+            stopper.join().unwrap();
+            assert_eq!(result, Err("Stopped".into()));
+            assert!(counts.is_empty(), "{:?}", counted(counts));
+        }
+
+        #[test]
+        fn a_missing_opencode_counts_a_start_failure() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut request = agent(dir.path(), Kind::OpenCode, "exit 0");
+            request.binary = dir.path().join("missing-opencode");
+            let (result, counts) =
+                capture(|| run(request, Arc::new(AtomicBool::new(false)), |_| Ok(())));
+            assert!(result.is_err());
+            assert_eq!(
+                counted(counts),
+                [("agent.start.opencode".into(), Some(ErrorKind::NotFound))]
+            );
+        }
+    }
+
     fn protocol(kind: Kind) -> Protocol {
         Protocol::new(Request {
             kind,

@@ -74,7 +74,7 @@ pub fn rewind_last_turn(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     process::isolate(&mut command);
-    let mut wire = parked::Wire::spawn(&mut command, &request)?;
+    let mut wire = parked::Wire::spawn(&mut command, &request, false)?;
     let mut rpc = Rpc {
         wire: &mut wire,
         serial: 100,
