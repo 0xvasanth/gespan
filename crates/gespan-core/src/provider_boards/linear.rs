@@ -1,5 +1,6 @@
 //! Linear over its GraphQL API. Shared by the Inbox and the board sync.
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -97,21 +98,63 @@ pub struct LinearIssueThread {
     pub head_ref_name: String,
 }
 
-/// A Linear connection authenticated with a personal API key.
+/// Sends one GraphQL request and returns its `data`. Swapped out in tests.
+pub trait LinearTransport: Send + Sync {
+    fn execute(&self, query: &str, variables: Value) -> Result<Value, String>;
+}
+
+/// How requests authenticate. Linear wants a personal API key raw and an
+/// OAuth access token as `Bearer`. A token issued with `actor=app` makes our
+/// writes come from the app rather than from the person.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinearAuth {
+    ApiKey(String),
+    OAuth(String),
+}
+
+struct HttpTransport {
+    auth: LinearAuth,
+}
+
+impl LinearTransport for HttpTransport {
+    fn execute(&self, query: &str, variables: Value) -> Result<Value, String> {
+        graphql_with_authorization(&authorization_header(&self.auth), query, variables)
+    }
+}
+
+/// A Linear connection. Reads and writes go through one transport.
 #[derive(Clone)]
 pub struct LinearProvider {
-    token: String,
+    transport: Arc<dyn LinearTransport>,
 }
 
 impl LinearProvider {
+    /// Authenticates with a personal API key.
     pub fn new(token: &str) -> Self {
-        Self {
-            token: token.trim().to_string(),
-        }
+        Self::with_auth(LinearAuth::ApiKey(token.trim().to_string()))
+    }
+
+    /// Authenticates with an OAuth access token (for example one granted with
+    /// `actor=app`).
+    pub fn oauth(access_token: &str) -> Self {
+        Self::with_auth(LinearAuth::OAuth(access_token.trim().to_string()))
+    }
+
+    fn with_auth(auth: LinearAuth) -> Self {
+        Self::from_transport(Arc::new(HttpTransport { auth }))
+    }
+
+    fn from_transport(transport: Arc<dyn LinearTransport>) -> Self {
+        Self { transport }
+    }
+
+    #[cfg(test)]
+    fn with_transport(transport: Arc<dyn LinearTransport>) -> Self {
+        Self::from_transport(transport)
     }
 
     fn graphql(&self, query: &str, variables: Value) -> Result<Value, String> {
-        graphql_with_token(&self.token, query, variables)
+        self.transport.execute(query, variables)
     }
 
     /// The cheapest call that proves the key works.
@@ -257,14 +300,24 @@ fn linear_authorization(token: &str) -> String {
         .to_string()
 }
 
-fn graphql_with_token(token: &str, query: &str, variables: Value) -> Result<Value, String> {
-    let authorization = linear_authorization(token);
+fn authorization_header(auth: &LinearAuth) -> String {
+    match auth {
+        LinearAuth::ApiKey(key) => linear_authorization(key),
+        LinearAuth::OAuth(token) => format!("Bearer {}", linear_authorization(token)),
+    }
+}
+
+fn graphql_with_authorization(
+    authorization: &str,
+    query: &str,
+    variables: Value,
+) -> Result<Value, String> {
     let agent = ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build();
     let payload = serde_json::to_string(&json!({ "query": query, "variables": variables }))
         .map_err(|error| error.to_string())?;
     let result = agent
         .post(LINEAR_API)
-        .set("Authorization", &authorization)
+        .set("Authorization", authorization)
         .set("Content-Type", "application/json")
         .send_string(&payload);
     let response = match result {
@@ -1014,6 +1067,80 @@ impl BoardProvider for LinearProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    /// Replays queued replies in order and records every request it was sent.
+    #[derive(Default)]
+    struct Scripted {
+        replies: Mutex<VecDeque<Result<Value, String>>>,
+        requests: Mutex<Vec<(String, Value)>>,
+    }
+
+    impl Scripted {
+        fn new(replies: Vec<Result<Value, String>>) -> Arc<Self> {
+            Arc::new(Self {
+                replies: Mutex::new(replies.into()),
+                requests: Mutex::default(),
+            })
+        }
+
+        fn requests(&self) -> Vec<(String, Value)> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    impl LinearTransport for Scripted {
+        fn execute(&self, query: &str, variables: Value) -> Result<Value, String> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push((query.to_string(), variables));
+            self.replies
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("an unscripted Linear request")
+        }
+    }
+
+    fn scripted(replies: Vec<Result<Value, String>>) -> (LinearProvider, Arc<Scripted>) {
+        let transport = Scripted::new(replies);
+        (LinearProvider::with_transport(transport.clone()), transport)
+    }
+
+    #[test]
+    fn oauth_tokens_use_bearer_and_api_keys_stay_raw() {
+        assert_eq!(
+            authorization_header(&LinearAuth::OAuth(" abc ".into())),
+            "Bearer abc"
+        );
+        assert_eq!(
+            authorization_header(&LinearAuth::OAuth("Bearer abc".into())),
+            "Bearer abc"
+        );
+        assert_eq!(
+            authorization_header(&LinearAuth::ApiKey("Bearer lin_api_x".into())),
+            "lin_api_x"
+        );
+    }
+
+    #[test]
+    fn scripted_transport_records_whoami_request() {
+        let (linear, transport) = scripted(vec![
+            Ok(json!({ "viewer": { "id": "u1", "name": "ada", "displayName": "Ada", "email": "a@x" } })),
+            Err("Could not reach Linear".into()),
+        ]);
+        assert_eq!(linear.whoami().unwrap().name, "Ada");
+        assert_eq!(
+            transport.requests(),
+            [(VIEWER_ACCOUNT_QUERY.to_string(), json!({}))]
+        );
+        assert_eq!(
+            linear.whoami(),
+            Err(ProviderError::Remote("Could not reach Linear".into()))
+        );
+    }
 
     #[test]
     fn parses_issue_fields_and_trims_label_hash() {
