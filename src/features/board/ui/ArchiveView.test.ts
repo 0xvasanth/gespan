@@ -51,7 +51,12 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (cmd, args) => {
     const id = (args as { cardId?: string } | undefined)?.cardId;
     if (cmd === "board_archived_cards") return archived.map((c) => ({ ...c }));
-    if (cmd === "board_card_unarchive" || cmd === "board_card_delete") {
+    if (cmd === "board_card_unarchive") {
+      archived = archived.filter((c) => c.id !== id);
+      return undefined;
+    }
+    if (cmd === "board_card_delete_archived") {
+      // The store deletes it only while it is still archived.
       archived = archived.filter((c) => c.id !== id);
       return undefined;
     }
@@ -150,7 +155,7 @@ describe("ArchiveView", () => {
     expect(vi.mocked(ask).mock.calls[0][1]).toMatchObject({
       okLabel: "Delete forever",
     });
-    expect(invoke).not.toHaveBeenCalledWith("board_card_delete", {
+    expect(invoke).not.toHaveBeenCalledWith("board_card_delete_archived", {
       cardId: "b",
     });
 
@@ -158,15 +163,35 @@ describe("ArchiveView", () => {
     vi.mocked(ask).mockRejectedValue(new Error("no dialog"));
     await act(async () => button("b", "Delete forever").click());
     await flush();
-    expect(invoke).not.toHaveBeenCalledWith("board_card_delete", {
+    expect(invoke).not.toHaveBeenCalledWith("board_card_delete_archived", {
       cardId: "b",
     });
 
     vi.mocked(ask).mockResolvedValue(true);
     await act(async () => button("b", "Delete forever").click());
     await flush();
-    expect(invoke).toHaveBeenCalledWith("board_card_delete", { cardId: "b" });
+    // The atomic store op, never a plain delete, then a reload.
+    expect(invoke).toHaveBeenCalledWith("board_card_delete_archived", {
+      cardId: "b",
+    });
+    expect(invoke).not.toHaveBeenCalledWith("board_card_delete", {
+      cardId: "b",
+    });
+    expect(rows()).toEqual(["a"]);
     expect(props.onError).not.toHaveBeenCalled();
+  });
+
+  it("Delete forever of a card restored elsewhere leaves it alone and drops it from the list", async () => {
+    await render({});
+    // Another app restored "b" after this list loaded.
+    archived = archived.filter((c) => c.id !== "b");
+    vi.mocked(ask).mockResolvedValue(true);
+    await act(async () => button("b", "Delete forever").click());
+    await flush();
+    expect(invoke).toHaveBeenCalledWith("board_card_delete_archived", {
+      cardId: "b",
+    });
+    expect(rows()).toEqual(["a"]);
   });
 
   it("reports a failed load instead of claiming the archive is empty", async () => {

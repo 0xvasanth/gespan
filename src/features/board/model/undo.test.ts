@@ -150,9 +150,49 @@ describe("createUndo", () => {
     expect(onCommitDelete).not.toHaveBeenCalled();
   });
 
+  it("ignores a push after dispose, so a late action can't start a delete timer", () => {
+    const onCommitDelete = vi.fn();
+    const undo = createUndo({ onCommitDelete });
+    undo.dispose();
+    undo.push("Deleted #9", del);
+    expect(undo.current()).toBeNull();
+    expect(undo.notify("Couldn't undo: the card was deleted")).toBe(false);
+    vi.advanceTimersByTime(UNDO_WINDOW_MS * 2);
+    expect(onCommitDelete).not.toHaveBeenCalled();
+  });
+
+  it("attach revives a disposed controller (StrictMode remount) and detaching disposes it", () => {
+    const onCommitDelete = vi.fn();
+    const undo = createUndo({ onCommitDelete });
+    const detach = undo.attach();
+    detach();
+    undo.push("Moved #1 to Done", move);
+    expect(undo.current()).toBeNull();
+    const detachAgain = undo.attach();
+    undo.push("Deleted #9", del);
+    expect(undo.current()?.label).toBe("Deleted #9");
+    detachAgain();
+    expect(undo.current()).toBeNull();
+    vi.advanceTimersByTime(UNDO_WINDOW_MS * 2);
+    expect(onCommitDelete).not.toHaveBeenCalled();
+  });
+
+  it("notify never replaces a showing toast, so it never commits a held delete", () => {
+    const onCommitDelete = vi.fn();
+    const undo = createUndo({ onCommitDelete });
+    undo.push("Deleted #9", del);
+    expect(undo.notify("Couldn't undo: the card was deleted")).toBe(false);
+    expect(undo.current()?.label).toBe("Deleted #9");
+    expect(onCommitDelete).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(UNDO_WINDOW_MS - 1);
+    expect(onCommitDelete).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onCommitDelete).toHaveBeenCalledExactlyOnceWith("c9");
+  });
+
   it("a message toast has no inverse and expires like any toast", () => {
     const undo = createUndo({ onCommitDelete: vi.fn() });
-    undo.notify("Couldn't undo: the card was deleted");
+    expect(undo.notify("Couldn't undo: the card was deleted")).toBe(true);
     expect(undo.current()).toMatchObject({
       label: "Couldn't undo: the card was deleted",
       action: null,

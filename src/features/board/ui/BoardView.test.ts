@@ -2084,6 +2084,71 @@ describe("BoardView undo toasts, held deletes and the Archive view", () => {
     expect(db.archivedIds()).toEqual(["c1"]);
   });
 
+  it("an archive that finishes after unmount shows no toast and deletes nothing", async () => {
+    const db = backend();
+    const archive = handlers.board_card_archive;
+    let finish!: () => void;
+    handlers.board_card_archive = (a) =>
+      new Promise<void>((resolve) => {
+        finish = () => {
+          archive(a);
+          resolve();
+        };
+      });
+    await renderBoard();
+    await deleteFromMenu(1);
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => finish());
+    await flush();
+    await advance(10_000);
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    expect(db.archivedIds()).toEqual(["c1"]);
+  });
+
+  it("a failed undo never cuts short a newer delete's window", async () => {
+    const db = backend();
+    await renderBoard();
+    await drop("c1", "done", 0);
+    // The undo's move is held, then fails, after card #2 was deleted.
+    let fail!: () => void;
+    handlers.board_card_move = () =>
+      new Promise<void>((_, reject) => {
+        fail = () => reject("Card not found");
+      });
+    act(() => undoButton()!.click());
+    await flush();
+    await deleteFromMenu(2);
+    expect(toastText()).toBe("Deleted #2");
+    await act(async () => fail());
+    await flush();
+    await flush();
+    // The delete's toast stays, Undo and all; the failure goes to the error toast.
+    expect(toastText()).toBe("Deleted #2");
+    expect(undoButton()).toBeDefined();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "Couldn't undo: the card was deleted",
+    );
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    await advance(7_900);
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    expect(db.exists("c2")).toBe(true);
+    await advance(200);
+    expect(commands("board_card_delete_archived")).toEqual([
+      ["board_card_delete_archived", { cardId: "c2" }],
+    ]);
+  });
+
+  it("a drop back onto the same place leaves a held delete held", async () => {
+    const db = backend();
+    await renderBoard();
+    await deleteFromMenu(1);
+    await drop("c2", "backlog", 0);
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    expect(toastText()).toBe("Deleted #1");
+    expect(db.archivedIds()).toEqual(["c1"]);
+  });
+
   it("undo after the card was deleted elsewhere says so; a bulk undo restores what it can", async () => {
     const db = backend();
     await renderBoard();
@@ -2175,9 +2240,10 @@ describe("BoardView undo toasts, held deletes and the Archive view", () => {
     await act(async () => rowButton("c2", "Delete forever").click());
     await flush();
     await flush();
-    expect(commands("board_card_delete")).toEqual([
-      ["board_card_delete", { cardId: "c2" }],
+    expect(commands("board_card_delete_archived")).toEqual([
+      ["board_card_delete_archived", { cardId: "c2" }],
     ]);
+    expect(db.exists("c2")).toBe(false);
     expect(archiveEl()!.textContent).toContain("No archived cards");
 
     // The header button closes it again.

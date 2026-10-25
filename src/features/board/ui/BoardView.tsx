@@ -261,7 +261,17 @@ function BoardContent({
   );
   const undoToast = useSyncExternalStore(undo.subscribe, undo.current);
   // Closing the window drops the timer: a held card stays archived.
-  useEffect(() => () => undo.dispose(), [undo]);
+  // A write that finishes after unmount shows no toast, so its card stays
+  // archived. Set in the effect body so StrictMode's remount works.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    const detach = undo.attach();
+    return () => {
+      mounted.current = false;
+      detach();
+    };
+  }, [undo]);
 
   /**
    * Shows the toast for an action on `boardId` that just finished. If the
@@ -270,6 +280,7 @@ function BoardContent({
    */
   const pushUndo = useCallback(
     (boardId: string, label: string, action: UndoAction) => {
+      if (!mounted.current) return;
       if (openIdRef.current === boardId) undo.push(label, action);
       else if (action.kind === "delete") {
         void deleteArchivedCard(action.cardId).catch(
@@ -481,13 +492,15 @@ function BoardContent({
       }
       const from = placeOf(before, cardId);
       const column = before.columns.find((other) => other.id === to.columnId);
-      void undo.commitPending();
+      // A drop back onto the same place is no action: a held delete stays held.
+      const samePlace =
+        from?.place[1] === to.columnId && from.place[2] === to.index;
+      if (!samePlace) void undo.commitPending();
       setDetail(applyCardMove(before, cardId, to));
       moveCard(cardId, to.columnId, to.index, "user")
         .then(() => {
-          if (!from || !column) return;
+          if (!from || !column || samePlace) return;
           const [, fromColumn, fromIndex] = from.place;
-          if (fromColumn === to.columnId && fromIndex === to.index) return;
           pushUndo(before.board.id, movedLabel([from.number], column.name), {
             kind: "move",
             cardId,
@@ -617,7 +630,12 @@ function BoardContent({
     const action = undo.undo();
     if (!action) return;
     runUndo(action, undoApi)
-      .catch((cause) => undo.notify(undoFailure(cause)))
+      .catch((cause) => {
+        // A toast pushed while the undo ran is newer: it stays, and with it
+        // any delete it holds. The failure goes to the error toast instead.
+        const message = undoFailure(cause);
+        if (!undo.notify(message) && mounted.current) setError(message);
+      })
       .finally(() => void refresh());
   };
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  deleteCard,
+  deleteArchivedCard,
   listArchivedCards,
   subscribeBoard,
   unarchiveCard,
@@ -65,9 +65,13 @@ export function ArchiveView({
 
   const deleteForever = async (card: BoardCard) => {
     if (!(await confirmDeleteCard(card))) return;
-    deleteCard(card.id).catch((error) =>
-      onError(`Couldn't delete card #${card.number}: ${errorText(error)}`),
-    );
+    // Only while still archived: a card restored elsewhere meanwhile is left
+    // alone, and the reload shows it gone from here.
+    deleteArchivedCard(card.id)
+      .then(load)
+      .catch((error) =>
+        onError(`Couldn't delete card #${card.number}: ${errorText(error)}`),
+      );
   };
 
   const shown = (cards ?? []).filter((card) => card.id !== pendingDelete);

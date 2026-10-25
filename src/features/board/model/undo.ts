@@ -30,16 +30,28 @@ export type UndoToast = {
 };
 
 export type Undo = {
-  /** Shows the toast for an action that just ran; a held delete is committed first. */
+  /**
+   * Shows the toast for an action that just ran; a held delete is committed
+   * first. Ignored while disposed.
+   */
   push: (label: string, action: UndoAction) => void;
-  /** Shows a message with no Undo, for 8 seconds. */
-  notify: (message: string) => void;
+  /**
+   * Shows a message with no Undo, for 8 seconds, but only when no toast is
+   * showing: it never replaces one, so it never cuts short a held delete.
+   * False when it showed nothing.
+   */
+  notify: (message: string) => boolean;
   /** Closes the toast and hands back its inverse, for the caller to run. */
   undo: () => UndoAction | null;
   /** Closes the toast; a held delete is carried out now. */
   commitPending: () => Promise<void>;
-  /** Drops the toast and its timer without committing: the card stays archived. */
+  /**
+   * Drops the toast and its timer without committing (the card stays
+   * archived) and ignores later pushes until `attach` is called again.
+   */
   dispose: () => void;
+  /** Accepts pushes again; returns `dispose`. For a mount effect. */
+  attach: () => () => void;
   current: () => UndoToast | null;
   /** The card whose delete is being held, if any. */
   pendingDelete: () => string | null;
@@ -56,6 +68,7 @@ export function createUndo({
   let toast: UndoToast | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let nextId = 0;
+  let disposed = false;
   const listeners = new Set<() => void>();
   const emit = () => {
     for (const listener of [...listeners]) listener();
@@ -81,6 +94,13 @@ export function createUndo({
     if (held) await onCommitDelete(held);
   };
 
+  const dispose = () => {
+    disposed = true;
+    const had = toast !== null;
+    close();
+    if (had) emit();
+  };
+
   const show = (label: string, action: UndoAction | null) => {
     toast = { id: ++nextId, label, action };
     timer = setTimeout(() => {
@@ -92,14 +112,15 @@ export function createUndo({
 
   return {
     push: (label, action) => {
+      if (disposed) return;
       const held = close();
       if (held) void onCommitDelete(held);
       show(label, action);
     },
     notify: (message) => {
-      const held = close();
-      if (held) void onCommitDelete(held);
+      if (disposed || toast) return false;
       show(message, null);
+      return true;
     },
     undo: () => {
       const action = toast?.action ?? null;
@@ -110,7 +131,11 @@ export function createUndo({
       return action;
     },
     commitPending,
-    dispose: () => void close(),
+    dispose,
+    attach: () => {
+      disposed = false;
+      return dispose;
+    },
     current: () => toast,
     pendingDelete: () =>
       toast?.action?.kind === "delete" ? toast.action.cardId : null,
