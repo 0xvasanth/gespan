@@ -624,12 +624,15 @@ mod tests {
 
     #[test]
     fn report_roots_add_worktree_folders_and_skip_repeats() {
+        // Absolute on every platform: `/Users/…` is not absolute on Windows.
+        let base = std::env::temp_dir().join("gespan-report-roots-none");
+        let path = |rel: &str| base.join(rel).to_string_lossy().into_owned();
         let roots = report_roots(
-            &["/Users/alice/Developer/acme".into(), "/w/app".into()],
+            &[path("alice/Developer/acme"), path("w/app")],
             &[
-                "/Users/alice/Developer/acme-worktrees/feature-x".into(),
-                "/w/app".into(),
-                "/Users/alice/old".into(),
+                path("alice/Developer/acme-worktrees/feature-x"),
+                path("w/app"),
+                path("alice/old"),
                 "relative/dir".into(),
                 "".into(),
             ],
@@ -637,12 +640,12 @@ mod tests {
         assert_eq!(
             roots,
             [
-                "/Users/alice/Developer/acme",
-                "/w/app",
-                "/Users/alice/Developer/acme-worktrees",
-                "/w/app-worktrees",
-                "/Users/alice/Developer/acme-worktrees/feature-x",
-                "/Users/alice/old",
+                path("alice/Developer/acme"),
+                path("w/app"),
+                path("alice/Developer/acme-worktrees"),
+                path("w/app-worktrees"),
+                path("alice/Developer/acme-worktrees/feature-x"),
+                path("alice/old"),
             ]
         );
     }
