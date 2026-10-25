@@ -159,7 +159,7 @@ fn leaf(profile: Profile) -> BoxedStrategy<Block> {
         prop::option::of(prop::sample::select(vec!["rust", "c++", "js extra", ""])),
         "[a-z `~\n]{0,12}",
     )
-        .prop_map(|(language, code)| Block::CodeBlock {
+        .prop_map(|(language, code)| Block::Code {
             language: language.map(str::to_string),
             code,
         });

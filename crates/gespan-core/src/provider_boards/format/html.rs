@@ -443,7 +443,7 @@ fn block(element: &Element, html: &str) -> Option<Block> {
                     code = inner.text_content();
                 }
             }
-            Some(Block::CodeBlock { language, code })
+            Some(Block::Code { language, code })
         }
         "blockquote" if element.attrs_within(&[]) => Some(Block::Quote(blocks(element, html))),
         "hr" if element.attrs_within(&[]) => Some(Block::Rule),
@@ -588,7 +588,7 @@ fn render_blocks(blocks: &[Block], out: &mut String) {
                 render_items(items, out);
                 out.push_str("</ol>");
             }
-            Block::CodeBlock { language, code } => render_code(language.as_deref(), code, out),
+            Block::Code { language, code } => render_code(language.as_deref(), code, out),
             Block::Quote(blocks) => {
                 out.push_str("<blockquote>");
                 render_blocks(blocks, out);

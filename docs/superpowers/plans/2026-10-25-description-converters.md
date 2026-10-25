@@ -42,7 +42,7 @@ pub(crate) enum Block {
     Heading { level: u8, content: Vec<Inline> },          // 1..=6
     BulletList(Vec<Vec<Block>>),                          // items
     OrderedList { start: u64, items: Vec<Vec<Block>> },
-    CodeBlock { language: Option<String>, code: String },
+    Code { language: Option<String>, code: String },
     Quote(Vec<Block>),
     Rule,
     Html(String),                                         // a raw HTML block written in Markdown

@@ -22,7 +22,7 @@ pub(crate) enum Block {
         start: u64,
         items: Vec<Vec<Block>>,
     },
-    CodeBlock {
+    Code {
         language: Option<String>,
         code: String,
     },
@@ -274,7 +274,7 @@ fn normalize_block(block: Block) -> Option<Block> {
                 items,
             })
         }
-        Block::CodeBlock { language, code } => {
+        Block::Code { language, code } => {
             let code = code
                 .replace("\r\n", "\n")
                 .replace('\r', "\n")
@@ -284,7 +284,7 @@ fn normalize_block(block: Block) -> Option<Block> {
             if let Some(source) = language.as_deref().and_then(Source::from_fence) {
                 return Some(Block::Preserved(Preserved { source, raw: code }));
             }
-            Some(Block::CodeBlock { language, code })
+            Some(Block::Code { language, code })
         }
         Block::Quote(blocks) => {
             let blocks = normalize_blocks(blocks);
@@ -486,7 +486,7 @@ mod tests {
         let doc = normalize(Doc {
             blocks: vec![
                 para(vec![plain("a \t\n b\r\nc\0")]),
-                Block::CodeBlock {
+                Block::Code {
                     language: None,
                     code: "x  \ty\r\n\n".into(),
                 },
@@ -496,7 +496,7 @@ mod tests {
             doc.blocks,
             vec![
                 para(vec![plain("a b c\u{FFFD}")]),
-                Block::CodeBlock {
+                Block::Code {
                     language: None,
                     code: "x  \ty".into(),
                 },
@@ -637,11 +637,11 @@ mod tests {
     fn gespan_code_fence_becomes_preserved() {
         let doc = normalize(Doc {
             blocks: vec![
-                Block::CodeBlock {
+                Block::Code {
                     language: Some("gespan-adf extra".into()),
                     code: "{\"type\":\"panel\"}\n".into(),
                 },
-                Block::CodeBlock {
+                Block::Code {
                     language: Some("  ".into()),
                     code: "x".into(),
                 },
@@ -658,7 +658,7 @@ mod tests {
                     source: Source::Adf,
                     raw: "{\"type\":\"panel\"}".into(),
                 }),
-                Block::CodeBlock {
+                Block::Code {
                     language: None,
                     code: "x".into(),
                 },

@@ -188,7 +188,7 @@ impl Builder {
             Frame::Paragraph(content) => self.push_block(Block::Paragraph(content)),
             Frame::Heading(level, content) => self.push_block(Block::Heading { level, content }),
             Frame::Quote(blocks) => self.push_block(Block::Quote(blocks)),
-            Frame::Code(language, code) => self.push_block(Block::CodeBlock { language, code }),
+            Frame::Code(language, code) => self.push_block(Block::Code { language, code }),
             Frame::Html(raw) => self.push_block(Block::Html(raw)),
             Frame::List { start, items } => self.push_block(match start {
                 Some(start) => Block::OrderedList { start, items },
@@ -222,11 +222,10 @@ impl Builder {
 
     fn push_block(&mut self, block: Block) {
         self.flush_item();
-        match self.frames.last_mut() {
-            Some(Frame::Container(blocks) | Frame::Quote(blocks) | Frame::Item { blocks, .. }) => {
-                blocks.push(block)
-            }
-            _ => {}
+        if let Some(Frame::Container(blocks) | Frame::Quote(blocks) | Frame::Item { blocks, .. }) =
+            self.frames.last_mut()
+        {
+            blocks.push(block);
         }
     }
 
@@ -384,7 +383,7 @@ fn render_block(block: &Block, bullet_alt: bool, ordered_alt: bool) -> Vec<Strin
                 })
                 .collect()
         }
-        Block::CodeBlock { language, code } => fenced(language.as_deref().unwrap_or(""), code),
+        Block::Code { language, code } => fenced(language.as_deref().unwrap_or(""), code),
         Block::Quote(blocks) => render_blocks(blocks)
             .into_iter()
             .map(|line| {
@@ -913,7 +912,7 @@ mod tests {
                         },
                     ],
                 ]),
-                Block::CodeBlock {
+                Block::Code {
                     language: Some("rust".into()),
                     code: "fn main() {}".into(),
                 },
@@ -1029,7 +1028,7 @@ mod tests {
     #[test]
     fn fence_longer_than_code_backticks() {
         let doc = normalize(Doc {
-            blocks: vec![Block::CodeBlock {
+            blocks: vec![Block::Code {
                 language: Some("md".into()),
                 code: "```\ninner\n````".into(),
             }],

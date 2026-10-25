@@ -124,7 +124,7 @@ fn try_block(node: &Value) -> Option<Block> {
                 (text.get("type")?.as_str()? == "text").then_some(())?;
                 code.push_str(text.get("text")?.as_str()?);
             }
-            Some(Block::CodeBlock { language, code })
+            Some(Block::Code { language, code })
         }
         "blockquote" => {
             let node = fields(node, &["content", "attrs"], &[])?;
@@ -266,7 +266,7 @@ fn render_block(block: &Block, nested: bool) -> Vec<Value> {
             "attrs": {"order": start},
             "content": render_items(items),
         }),
-        Block::CodeBlock { language, code } => code_block(language.as_deref(), code),
+        Block::Code { language, code } => code_block(language.as_deref(), code),
         Block::Quote(blocks) if !nested => {
             json!({"type": "blockquote", "content": render_blocks(blocks, true)})
         }
