@@ -209,14 +209,14 @@ describe("keybinding overrides", () => {
   });
 
   it("persists a custom shortcut and matches only that combination", () => {
-    saveKeybindingOverride("App: Search", { shortcut: "Command+Shift+KeyM" });
+    saveKeybindingOverride("App: Search", { shortcut: "Command+Shift+KeyY" });
     expect(localStorage.getItem(KEYBINDING_OVERRIDES_KEY)).toBe(
-      '{"App: Search":{"shortcut":"Command+Shift+KeyM"}}',
+      '{"App: Search":{"shortcut":"Command+Shift+KeyY"}}',
     );
     expect(
       keybindingPressed(
         "App: Search",
-        key("KeyM", { metaKey: true, shiftKey: true }),
+        key("KeyY", { metaKey: true, shiftKey: true }),
         true,
       ),
     ).toBe(true);
@@ -224,7 +224,7 @@ describe("keybinding overrides", () => {
       keybindingPressed("App: Search", key("KeyK", { metaKey: true }), true),
     ).toBe(false);
     expect(
-      matchCustomKeybinding(key("KeyM", { metaKey: true, shiftKey: true })),
+      matchCustomKeybinding(key("KeyY", { metaKey: true, shiftKey: true })),
     ).toBe("App: Search");
 
     saveKeybindingOverride("App: Search", {});
@@ -232,11 +232,11 @@ describe("keybinding overrides", () => {
   });
 
   it("matches real keyboard events whose modifiers are prototype accessors", () => {
-    saveKeybindingOverride("App: Search", { shortcut: "Control+Shift+KeyM" });
+    saveKeybindingOverride("App: Search", { shortcut: "Control+Shift+KeyY" });
     // Browsers define metaKey/ctrlKey/altKey/shiftKey on KeyboardEvent.prototype,
     // so they are not own properties and must be read, never spread.
     const prototyped = Object.create({
-      code: "KeyM",
+      code: "KeyY",
       metaKey: false,
       ctrlKey: true,
       altKey: false,
@@ -299,7 +299,7 @@ describe("keybinding overrides", () => {
 
   it("rejects a chord the command cannot use and invalid chords", () => {
     expect(() =>
-      saveKeybindingOverride("Tab: Activate 1–8", { shortcut: "Control+KeyM" }),
+      saveKeybindingOverride("Tab: Activate 1–8", { shortcut: "Control+KeyY" }),
     ).toThrow("needs a number key");
     expect(() =>
       saveKeybindingOverride("App: Search", { shortcut: "KeyK" }),
@@ -309,10 +309,10 @@ describe("keybinding overrides", () => {
   it("normalises modifier order when reading stored shortcuts", () => {
     localStorage.setItem(
       KEYBINDING_OVERRIDES_KEY,
-      JSON.stringify({ "App: Search": { shortcut: "Shift+Command+KeyM" } }),
+      JSON.stringify({ "App: Search": { shortcut: "Shift+Command+KeyY" } }),
     );
     expect(loadKeybindingOverrides()).toEqual({
-      "App: Search": { shortcut: "Command+Shift+KeyM" },
+      "App: Search": { shortcut: "Command+Shift+KeyY" },
     });
   });
 
@@ -624,6 +624,7 @@ describe("settings navigation", () => {
       "connections",
       "appearance",
       "keybindings",
+      "dictation",
       "chat",
       "providers",
       "mcp",

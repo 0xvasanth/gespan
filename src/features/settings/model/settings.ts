@@ -22,6 +22,7 @@ export type SettingsSectionId =
   | "connections"
   | "appearance"
   | "keybindings"
+  | "dictation"
   | "chat"
   | "providers"
   | "mcp"
@@ -83,6 +84,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     description:
       "Every shortcut the workspace handles, from the app menu and the key handler.",
     keywords: "shortcut hotkey keyboard binding",
+  },
+  {
+    id: "dictation",
+    group: "app",
+    label: "Dictation",
+    description:
+      "Speak into the composer. Speech is recognized on this device.",
+    keywords: "voice, microphone, speech, parakeet",
   },
   {
     id: "chat",
@@ -391,6 +400,24 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     section: "appearance",
     label: "Chat background",
     keywords: "wallpaper image picture opacity backdrop",
+  },
+  {
+    id: "dictation-model",
+    section: "dictation",
+    label: "Speech model",
+    keywords: "voice language english multilingual download delete parakeet",
+  },
+  {
+    id: "dictation-words",
+    section: "dictation",
+    label: "Custom words",
+    keywords: "vocabulary names terms spelling",
+  },
+  {
+    id: "dictation-shortcut",
+    section: "dictation",
+    label: "Dictation shortcut",
+    keywords: "hold push to talk keyboard",
   },
   {
     id: "transcript-layout",
@@ -1215,6 +1242,11 @@ export const KEYBINDINGS: KeybindingRow[] = [
     command: "Composer: Toggle Workspace",
     keys: `${MOD}${SHIFT}G`,
     when: "Draft session composer",
+  },
+  {
+    command: "Composer: Dictate",
+    keys: `${MOD}${SHIFT}M`,
+    when: "Composer focused",
   },
   { command: "View: Reload", keys: `${MOD}${SHIFT}R`, when: "Always" },
   { command: "View: Zoom In", keys: `${MOD}+`, when: "Always" },

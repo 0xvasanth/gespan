@@ -1003,8 +1003,8 @@ describe("settings search", () => {
     await act(async () =>
       document.body.dispatchEvent(
         new KeyboardEvent("keydown", {
-          code: "KeyM",
-          key: "m",
+          code: "KeyY",
+          key: "y",
           ctrlKey: true,
           shiftKey: true,
           bubbles: true,
@@ -1014,9 +1014,9 @@ describe("settings search", () => {
     );
 
     expect(localStorage.getItem("gespan.keybindingOverrides")).toBe(
-      '{"App: Search":{"shortcut":"Control+Shift+KeyM"}}',
+      '{"App: Search":{"shortcut":"Control+Shift+KeyY"}}',
     );
-    expect(input.value).toBe("Ctrl+Shift+M");
+    expect(input.value).toBe("Ctrl+Shift+Y");
   });
 
   it("lets Tab leave the recorder and keeps Cmd+Delete recordable", async () => {

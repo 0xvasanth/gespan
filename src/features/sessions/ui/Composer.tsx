@@ -5,6 +5,7 @@ import {
   CircleDashed,
   CursorMagicSelection,
   FilePlus,
+  Mic,
   Plus,
   Share,
   Square,
@@ -80,6 +81,7 @@ import type {
   UserQuestionReply,
 } from "../model/userQuestion";
 import { isImeComposition } from "../../../shared/lib/keyboard";
+import { MOD, SHIFT } from "../../../platform/tauri/platform";
 import {
   captureDraft,
   dropPastedText,
@@ -118,6 +120,9 @@ import { HandoffMiniCard } from "./HandoffMiniCard";
 import { ModelControlPills, ModelPicker } from "./ModelPicker";
 import { QuestionForm } from "./QuestionForm";
 import { MessageQueue } from "./MessageQueue";
+import { DictationBar, dictationBarVisible } from "./DictationBar";
+import { useDictation } from "../dictation/useDictation";
+import { DICTATE_COMMAND, isDictationShortcut } from "../dictation/shortcut";
 import { SkillPicker } from "../../skills/ui/SkillPicker";
 import { pathKey, projectKey } from "../../../shared/lib/paths";
 import { consumeQuoteRequest, type QuoteRequest } from "../model/quoteDraft";
@@ -127,6 +132,7 @@ import {
   COMPOSER_RUNNER_CHANGE_EVENT,
   loadComposerRunner,
   loadModelControls,
+  keybindingShortcutLabel,
   loadNotesEnabled,
   subscribeModelControls,
   subscribeNotesEnabled,
@@ -438,6 +444,20 @@ export function Composer({
   const slashRef = useRef<SlashToken | null>(null);
   const mentionRef = useRef<MentionToken | null>(null);
   const [draft, setDraft] = useState(initialDraft ?? "");
+  const dictation = useDictation({
+    fieldRef: ref,
+    projectPath: remoteSession ? undefined : executionCwd,
+    sessionId,
+    knownNames: [...Object.values(HARNESS_TITLE), model],
+  });
+  const dictating =
+    dictation.state === "starting" ||
+    dictation.state === "listening" ||
+    dictation.state === "finishing";
+  const dictateShortcut = keybindingShortcutLabel(
+    DICTATE_COMMAND,
+    `${MOD}${SHIFT}M`,
+  );
   // React rewrites a textarea's text node whenever defaultValue changes, and
   // WebKit then resets the field, committing any IME composition. Parents
   // re-render with the latest draft (remote sessions on every poll), so keep
@@ -1488,6 +1508,19 @@ export function Composer({
     if (disabled) return;
     if (isImeComposition(e.nativeEvent)) return;
     if (creatingSkill) return;
+    if (isDictationShortcut(e)) {
+      e.preventDefault();
+      if (!e.repeat) dictation.pressStart();
+      return;
+    }
+    if (
+      e.key === "Escape" &&
+      (dictating || dictation.state === "needs-model")
+    ) {
+      e.preventDefault();
+      dictation.cancel();
+      return;
+    }
     if (
       e.key === "Enter" &&
       !e.shiftKey &&
@@ -2087,6 +2120,13 @@ export function Composer({
             />
           ) : null}
 
+          {dictationBarVisible(dictation) ? (
+            <DictationBar
+              dictation={dictation}
+              onDismiss={() => ref.current?.focus()}
+            />
+          ) : null}
+
           <div className="relative">
             <div
               ref={highlightRef}
@@ -2136,7 +2176,11 @@ export function Composer({
               onPaste={onPaste}
               onScroll={(e) => syncHighlightScroll(e.currentTarget)}
               onClick={(e) => syncTokensFromTextarea(e.currentTarget)}
-              onKeyUp={(e) => syncTokensFromTextarea(e.currentTarget)}
+              onKeyUp={(e) => {
+                dictation.pressEnd();
+                syncTokensFromTextarea(e.currentTarget);
+              }}
+              onBlur={() => dictation.pressEnd()}
               onSelect={(e) => syncTokensFromTextarea(e.currentTarget)}
               onInput={(e) => {
                 const el = e.currentTarget;
@@ -2340,6 +2384,25 @@ export function Composer({
                 </Popover>
               ) : null}
             </div>
+            {compact ? null : (
+              <ToolButton
+                label={
+                  dictating
+                    ? "Stop dictation"
+                    : dictateShortcut
+                      ? `Dictate (${dictateShortcut})`
+                      : "Dictate"
+                }
+                active={dictating}
+                disabled={disabled}
+                onClick={() => {
+                  dictation.toggle();
+                  ref.current?.focus();
+                }}
+              >
+                <Mic className="size-3.5" strokeWidth={1.5} />
+              </ToolButton>
+            )}
             {!compact && operatorActive ? (
               <ModeCommandPill
                 name={OPERATOR_COMMAND.name}
