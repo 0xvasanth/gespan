@@ -1,5 +1,6 @@
 //! The board's header row: title, search, filter and New task, like gr8r's.
 use super::{BoardView, menu_row};
+use crate::runtime::locked;
 use crate::{
     popover::{Anchor, popover},
     theme::*,
@@ -9,6 +10,9 @@ use gpui::{
     AnyElement, App, Context, Focusable, FontWeight, Role, SharedString, Toggled, div, prelude::*,
     px,
 };
+
+/// The Native setting behind "Open cards in": `drawer` or `page`.
+pub(super) const CARD_OPEN_SETTING: &str = "board-card-open";
 
 /// A filter row that says whether it is on, to assistive tech as well.
 pub(super) fn checked_row(
@@ -218,6 +222,37 @@ impl BoardView {
             .child(div().flex_1())
             .child(
                 div()
+                    .id("board-open-in")
+                    .debug_selector(|| "board-open-in".into())
+                    .relative()
+                    .role(Role::Button)
+                    .aria_label("Open cards in")
+                    .size(px(26.))
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(content(0.06)))
+                    .when(self.open_in_open, |d| d.bg(content(0.05)))
+                    .tab_index(0)
+                    .focus_visible(|s| s.border_1().border_color(accent_color()))
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                        if presses(event) {
+                            cx.stop_propagation();
+                            this.open_in_open = !this.open_in_open;
+                            cx.notify();
+                        }
+                    }))
+                    .child(self.open_in_anchor.probe())
+                    .child(icon("sliders", 13.).text_color(content(0.6)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.open_in_open = !this.open_in_open;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
                     .id("board-archive")
                     .debug_selector(|| "board-archive".into())
                     .role(Role::Button)
@@ -419,6 +454,71 @@ impl BoardView {
                     .flex()
                     .flex_col()
                     .children(rows),
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// Save where cards open. A failed save keeps the choice for this run and
+    /// shows the reason.
+    fn set_open_in_page(&mut self, page: bool, cx: &mut Context<Self>) {
+        self.open_in_open = false;
+        self.open_in_page = page;
+        let value = if page { "page" } else { "drawer" };
+        if let Err(error) =
+            locked(&self.store).and_then(|db| db.save_setting(CARD_OPEN_SETTING, value))
+        {
+            self.error = Some(error);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn render_open_in(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.open_in_open {
+            return None;
+        }
+        let weak = cx.weak_entity();
+        let check = |on: bool| {
+            div().size(px(12.)).flex_shrink_0().when(on, |d| {
+                d.child(icon("check", 12.).text_color(accent_color()))
+            })
+        };
+        let option = |id: &'static str, label: &'static str, page: bool| {
+            let on = self.open_in_page == page;
+            checked_row(id.into(), label, on)
+                .flex()
+                .gap_2()
+                .child(check(on))
+                .on_click(cx.listener(move |this, _, _, cx| this.set_open_in_page(page, cx)))
+        };
+        Some(
+            popover(
+                "board-open-in-menu",
+                Anchor::Slot(self.open_in_anchor.clone()),
+            )
+            .width(200.)
+            .on_dismiss(move |_, cx| {
+                let _ = weak.update(cx, |this, cx| {
+                    this.open_in_open = false;
+                    cx.notify();
+                });
+            })
+            .child(
+                div()
+                    .p(px(4.))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .px(px(8.))
+                            .pt(px(6.))
+                            .pb(px(2.))
+                            .text_size(px(11.))
+                            .text_color(content(0.45))
+                            .child("Open cards in"),
+                    )
+                    .child(option("board-open-in-drawer", "Drawer", false))
+                    .child(option("board-open-in-page", "Full page", true)),
             )
             .into_any_element(),
         )

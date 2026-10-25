@@ -57,7 +57,7 @@ fn open(cx: &mut TestAppContext) -> Fixture {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::new(
                     point(px(0.), px(0.)),
-                    size(px(1400.), px(800.)),
+                    size(px(1400.), px(1400.)),
                 ))),
                 ..Default::default()
             },
@@ -3470,4 +3470,316 @@ fn a_held_delete_does_not_block_deleting_its_column(cx: &mut TestAppContext) {
         "the held delete is carried out first"
     );
     assert_eq!(toast(&f, visual), None);
+}
+
+// ---- drawer pass 1: full page, dates, estimate, relations, fields, links ----
+
+fn shown(visual: &mut VisualTestContext, target: &'static str) -> bool {
+    visual.refresh().unwrap();
+    visual.debug_bounds(target).is_some()
+}
+
+fn local_midnight(day: chrono::NaiveDate) -> i64 {
+    super::style::day_start(day).unwrap()
+}
+
+fn meta_of(f: &Fixture, card: &str) -> gespan_core::board::extras::CardMeta {
+    Service::open(&f.db).unwrap().card_meta(card).unwrap()
+}
+
+#[gpui::test]
+fn full_page_toggle_expands_and_escape_returns_to_drawer(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    assert!(shown(visual, "board-columns"));
+    click(visual, "board-drawer-full-page");
+    assert!(
+        !shown(visual, "board-columns"),
+        "the page replaces the columns"
+    );
+    assert!(shown(visual, "board-drawer"));
+    assert!(shown(visual, "board-header"), "the header stays");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(
+        shown(visual, "board-columns"),
+        "Escape returns to the drawer"
+    );
+    assert!(shown(visual, "board-drawer"));
+    click(visual, "board-drawer-full-page");
+    click(visual, "board-drawer-full-page");
+    assert!(shown(visual, "board-columns"), "the toggle also returns");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(!shown(visual, "board-drawer"), "a second Escape closes");
+}
+
+#[gpui::test]
+fn the_open_cards_in_setting_opens_full_page_by_default(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    assert!(shown(visual, "board-columns"), "the drawer is the default");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    click(visual, "board-open-in");
+    click(visual, "board-open-in-page");
+    let saved = crate::runtime::locked(&f.store)
+        .unwrap()
+        .setting("board-card-open")
+        .unwrap();
+    assert_eq!(saved.as_deref(), Some("page"));
+    click(visual, "board-card-1");
+    assert!(!shown(visual, "board-columns"), "the card opens as a page");
+    assert!(shown(visual, "board-drawer"));
+    // A new window reads the saved setting.
+    let window = reopen(&f, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    click(visual, "board-card-1");
+    assert!(!shown(visual, "board-columns"));
+    click(visual, "board-drawer-full-page");
+    assert!(
+        shown(visual, "board-columns"),
+        "the toggle still shrinks it"
+    );
+}
+
+#[gpui::test]
+fn start_and_due_quick_picks_include_in_two_weeks(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = card_id(&f, cx, "Task");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    let today = chrono::Local::now().date_naive();
+    let in_two_weeks = today + chrono::Days::new(14);
+    click(visual, "board-drawer-start");
+    click(visual, "menu-action-start-in-two-weeks");
+    assert_eq!(
+        meta_of(&f, &card).start_at,
+        Some(local_midnight(in_two_weeks))
+    );
+    click(visual, "board-drawer-due");
+    click(visual, "menu-action-due-in-two-weeks");
+    assert_eq!(
+        meta_of(&f, &card).due_at,
+        Some(local_midnight(in_two_weeks))
+    );
+    click(visual, "board-drawer-start");
+    click(visual, "menu-action-start-clear");
+    assert_eq!(meta_of(&f, &card).start_at, None);
+}
+
+#[gpui::test]
+fn estimate_parses_hours_and_minutes_in_the_drawer(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = card_id(&f, cx, "Task");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-estimate");
+    visual.simulate_input("1h 30m");
+    visual.simulate_keystrokes("enter");
+    assert_eq!(meta_of(&f, &card).estimate_minutes, Some(90));
+    // A bad value shows inline and leaves the estimate alone.
+    click(visual, "board-drawer-estimate");
+    visual.simulate_input("0");
+    visual.simulate_keystrokes("enter");
+    assert!(shown(visual, "board-inline-error"));
+    assert_eq!(meta_of(&f, &card).estimate_minutes, Some(90));
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    // Empty clears it.
+    click(visual, "board-drawer-estimate");
+    visual.simulate_keystrokes("enter");
+    assert_eq!(meta_of(&f, &card).estimate_minutes, None);
+}
+
+fn relations_of(f: &Fixture, card: &str) -> Vec<(String, String, String)> {
+    Service::open(&f.db)
+        .unwrap()
+        .card_relations(card)
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.card_id, r.related_card_id, r.kind))
+        .collect()
+}
+
+#[gpui::test]
+fn blocks_and_blocked_by_write_the_right_direction(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C", "D"]);
+    let (a, b, c, d) = (
+        card_id(&f, cx, "A"),
+        card_id(&f, cx, "B"),
+        card_id(&f, cx, "C"),
+        card_id(&f, cx, "D"),
+    );
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    // The card itself is never offered; B is the first of the others.
+    click(visual, "board-drawer-blocks");
+    visual.simulate_input("#2");
+    click(visual, "board-pick-relation-0");
+    assert_eq!(
+        relations_of(&f, &a),
+        [(a.clone(), b.clone(), "blocks".into())]
+    );
+    click(visual, "board-drawer-blocked-by");
+    visual.simulate_input("c");
+    click(visual, "board-pick-relation-0");
+    assert!(relations_of(&f, &a).contains(&(c.clone(), a.clone(), "blocks".into())));
+    click(visual, "board-drawer-relates");
+    visual.simulate_input("D");
+    click(visual, "board-pick-relation-0");
+    assert!(relations_of(&f, &a).contains(&(a.clone(), d.clone(), "relates".into())));
+    assert_eq!(relations_of(&f, &a).len(), 3);
+    // Self is not in the list: "A" matches only itself, so nothing shows.
+    click(visual, "board-drawer-relates");
+    visual.simulate_input("A");
+    assert!(!shown(visual, "board-pick-relation-0"));
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    // Removing one writes that one only.
+    click(visual, "board-relation-remove-0");
+    assert_eq!(relations_of(&f, &a).len(), 2);
+}
+
+#[gpui::test]
+fn a_relation_cycle_shows_the_refusal_inline(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let (a, b) = (card_id(&f, cx, "A"), card_id(&f, cx, "B"));
+    Service::open(&f.db)
+        .unwrap()
+        .add_relation(&a, &b, "blocks")
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-2");
+    // B blocking A would close a loop.
+    click(visual, "board-drawer-blocks");
+    visual.simulate_input("A");
+    click(visual, "board-pick-relation-0");
+    assert!(shown(visual, "board-inline-error"));
+    assert_eq!(relations_of(&f, &b), [(a, b, "blocks".into())]);
+}
+
+fn add_field(f: &Fixture, name: &str, kind: &str, options: Option<&str>, position: i64) {
+    let board = Service::open(&f.db).unwrap().default_board().unwrap();
+    let conn = rusqlite::Connection::open(&f.db).unwrap();
+    conn.execute(
+        "INSERT INTO board_fields (id, board_id, name, kind, options_json, position)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![format!("f-{name}"), board.id, name, kind, options, position],
+    )
+    .unwrap();
+}
+
+fn field_value(f: &Fixture, card: &str, name: &str) -> Option<String> {
+    Service::open(&f.db)
+        .unwrap()
+        .field_values(card)
+        .unwrap()
+        .into_iter()
+        .find(|v| v.field_id == format!("f-{name}"))
+        .map(|v| v.value_json)
+}
+
+#[gpui::test]
+fn custom_field_values_edit_by_kind(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = card_id(&f, cx, "Task");
+    add_field(&f, "Note", "text", None, 0);
+    add_field(&f, "Points", "number", None, 1);
+    add_field(&f, "Ship", "date", None, 2);
+    add_field(&f, "Stage", "select", Some(r#"["alpha","beta"]"#), 3);
+    add_field(&f, "Ready", "checkbox", None, 4);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    for index in 0..5 {
+        assert!(
+            shown(visual, selector(format!("board-drawer-field-{index}"))),
+            "no row for field {index}"
+        );
+    }
+    click(visual, "board-drawer-field-0");
+    visual.simulate_input("hello");
+    visual.simulate_keystrokes("enter");
+    assert_eq!(field_value(&f, &card, "Note").as_deref(), Some("\"hello\""));
+    click(visual, "board-drawer-field-1");
+    visual.simulate_input("abc");
+    visual.simulate_keystrokes("enter");
+    assert!(shown(visual, "board-inline-error"));
+    assert_eq!(field_value(&f, &card, "Points"), None);
+    visual.simulate_keystrokes("cmd-a backspace");
+    visual.simulate_input("3.5");
+    visual.simulate_keystrokes("enter");
+    assert_eq!(field_value(&f, &card, "Points").as_deref(), Some("3.5"));
+    click(visual, "board-drawer-field-2");
+    click(visual, "menu-action-field-tomorrow");
+    let tomorrow = chrono::Local::now().date_naive().succ_opt().unwrap();
+    assert_eq!(
+        field_value(&f, &card, "Ship"),
+        Some(local_midnight(tomorrow).to_string())
+    );
+    click(visual, "board-drawer-field-2");
+    click(visual, "menu-action-field-clear");
+    assert_eq!(field_value(&f, &card, "Ship"), None);
+    click(visual, "board-drawer-field-3");
+    click(visual, "menu-action-field-option-1");
+    assert_eq!(field_value(&f, &card, "Stage").as_deref(), Some("\"beta\""));
+    click(visual, "board-drawer-field-3");
+    click(visual, "menu-action-field-clear");
+    assert_eq!(field_value(&f, &card, "Stage"), None);
+    click(visual, "board-drawer-field-4");
+    assert_eq!(field_value(&f, &card, "Ready").as_deref(), Some("true"));
+    click(visual, "board-drawer-field-4");
+    assert_eq!(field_value(&f, &card, "Ready").as_deref(), Some("false"));
+}
+
+fn links_of(f: &Fixture, card: &str) -> Vec<(String, String)> {
+    Service::open(&f.db)
+        .unwrap()
+        .card_links(card)
+        .unwrap()
+        .into_iter()
+        .map(|l| (l.kind, l.reference))
+        .collect()
+}
+
+#[gpui::test]
+fn links_list_adds_a_pr_url_and_removes_a_link(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Task"]);
+    let card = card_id(&f, cx, "Task");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-links-add");
+    click(visual, "menu-action-link-pr");
+    visual.simulate_input("ftp://example.com/x");
+    visual.simulate_keystrokes("enter");
+    assert!(
+        shown(visual, "board-inline-error"),
+        "only http(s) is allowed"
+    );
+    assert!(links_of(&f, &card).is_empty());
+    visual.simulate_keystrokes("cmd-a backspace");
+    visual.simulate_input("https://github.com/a/b/pull/1");
+    visual.simulate_keystrokes("enter");
+    assert_eq!(
+        links_of(&f, &card),
+        [(
+            "pr".to_string(),
+            "https://github.com/a/b/pull/1".to_string()
+        )]
+    );
+    assert!(shown(visual, "board-link-row-0"));
+    assert!(shown(visual, "board-link-open-0"));
+    click(visual, "board-drawer-links-add");
+    click(visual, "menu-action-link-worktree");
+    visual.simulate_input("/tmp/work");
+    visual.simulate_keystrokes("enter");
+    assert_eq!(links_of(&f, &card).len(), 2);
+    click(visual, "board-link-remove-0");
+    assert_eq!(
+        links_of(&f, &card),
+        [("worktree".to_string(), "/tmp/work".to_string())]
+    );
 }

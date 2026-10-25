@@ -1,11 +1,11 @@
 //! How the task drawer looks: gr8r's top bar, property grid, description,
 //! subtasks and Comments/Activity tabs, in the board's quiet type scale.
-use super::{CardDetail, Choice, Picker, Tab, activity_text};
+use super::{CardDetail, Choice, Picker, RelationKind, Tab, activity_text};
 use crate::{
     board::{
         BoardView, LinkLabel,
         column::role_icon,
-        menu_row,
+        menu_row, quick,
         style::{due_label, label_chip, priority_glyph},
     },
     popover::{Anchor, menu_popover},
@@ -71,13 +71,17 @@ impl BoardView {
         let anchor = |key: &str| detail.anchors.get(key).cloned().unwrap_or_default();
         let choice = detail.choice.as_ref().map(|(which, menu, _)| {
             let key = match which {
-                Choice::Status => "status",
-                Choice::Priority => "priority",
-                Choice::Due => "due",
-                Choice::More => "more",
+                Choice::Status => "status".to_string(),
+                Choice::Priority => "priority".to_string(),
+                Choice::Due => "due".to_string(),
+                Choice::Start => "start".to_string(),
+                Choice::More => "more".to_string(),
+                Choice::FieldDate(index) | Choice::FieldSelect(index) => format!("field-{index}"),
+                Choice::LinkAdd => "links-add".to_string(),
             };
-            menu_popover(menu, Anchor::Slot(anchor(key)), cx).into_any_element()
+            menu_popover(menu, Anchor::Slot(anchor(&key)), cx).into_any_element()
         });
+        let full_page = detail.full_page;
         let top_bar = div()
             .h(px(PANE_HEADER_HEIGHT))
             .flex_shrink_0()
@@ -104,6 +108,13 @@ impl BoardView {
                     ),
             )
             .child(div().flex_1())
+            .child(
+                quiet_button(
+                    "board-drawer-full-page",
+                    if full_page { "Drawer" } else { "Full page" },
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_full_page(cx))),
+            )
             .child(
                 quiet_button(
                     "board-drawer-complete",
@@ -152,55 +163,64 @@ impl BoardView {
             .overflow_y_scroll()
             .px_5()
             .py_4()
-            .flex()
-            .flex_col()
-            .gap_5()
             .child(
                 div()
-                    .id("board-drawer-title")
-                    .debug_selector(|| "board-drawer-title".into())
-                    .child(detail.title.clone()),
-            )
-            .child(self.render_properties(detail, &card, cx))
-            .child(
-                div()
+                    .w_full()
+                    .when(full_page, |d| d.max_w(px(760.)).mx_auto())
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .child(section("Description"))
+                    .gap_5()
                     .child(
                         div()
-                            .id("board-drawer-description")
-                            .debug_selector(|| "board-drawer-description".into())
-                            .min_h(px(72.))
-                            .px(px(8.))
-                            .py(px(6.))
-                            .rounded(px(6.))
-                            .hover(|s| s.bg(content(0.03)))
-                            .cursor_text()
-                            .on_click({
-                                let focus = detail.body.focus_handle(cx);
-                                move |_, window, cx| window.focus(&focus, cx)
-                            })
-                            .child(detail.body.clone()),
-                    ),
-            )
-            .child(self.render_subtasks(detail, cx))
-            .child(self.render_tabs(detail, cx));
+                            .id("board-drawer-title")
+                            .debug_selector(|| "board-drawer-title".into())
+                            .child(detail.title.clone()),
+                    )
+                    .child(self.render_properties(detail, &card, cx))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(section("Description"))
+                            .child(
+                                div()
+                                    .id("board-drawer-description")
+                                    .debug_selector(|| "board-drawer-description".into())
+                                    .min_h(px(72.))
+                                    .px(px(8.))
+                                    .py(px(6.))
+                                    .rounded(px(6.))
+                                    .hover(|s| s.bg(content(0.03)))
+                                    .cursor_text()
+                                    .on_click({
+                                        let focus = detail.body.focus_handle(cx);
+                                        move |_, window, cx| window.focus(&focus, cx)
+                                    })
+                                    .child(detail.body.clone()),
+                            ),
+                    )
+                    .child(self.render_links(detail, &card, cx))
+                    .child(self.render_subtasks(detail, cx))
+                    .child(self.render_tabs(detail, cx)),
+            );
         Some(
             div()
                 .id("board-drawer")
                 .debug_selector(|| "board-drawer".into())
                 .role(Role::Dialog)
                 .aria_label(format!("Task #{}", card.number))
-                .w(px(DRAWER_WIDTH))
                 .h_full()
-                .flex_shrink_0()
                 .flex()
                 .flex_col()
                 .bg(pane_fill())
-                .border_l_1()
-                .border_color(content(0.07))
+                .when(full_page, |d| d.flex_1().min_h_0().min_w_0())
+                .when(!full_page, |d| {
+                    d.w(px(DRAWER_WIDTH))
+                        .flex_shrink_0()
+                        .border_l_1()
+                        .border_color(content(0.07))
+                })
                 .child(top_bar)
                 .child(body)
                 .children(choice)
@@ -220,14 +240,15 @@ impl BoardView {
             .as_ref()
             .and_then(|d| d.columns.iter().find(|c| c.id == card.column_id).cloned());
         let anchor = |key: &str| detail.anchors.get(key).cloned().unwrap_or_default();
-        let row = |key: &'static str, glyph: &'static str, label: &'static str| {
+        let row = |key: &str, glyph: &'static str, label: &str| {
             let selector = format!("board-drawer-{key}");
+            let label = SharedString::from(label.to_string());
             div()
                 .id(SharedString::from(selector.clone()))
                 .debug_selector(move || selector.clone())
                 .relative()
                 .role(Role::Button)
-                .aria_label(label)
+                .aria_label(label.clone())
                 .min_h(px(32.))
                 .px(px(6.))
                 .rounded(px(6.))
@@ -295,6 +316,27 @@ impl BoardView {
                     .into_any_element()
             },
         );
+        let start = detail
+            .start_at
+            .and_then(|at| due_label(at, now))
+            .map_or_else(empty, |(text, _)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(icon("calendar-03", 12.))
+                    .child(text)
+                    .into_any_element()
+            });
+        let estimate = detail.estimate.map_or_else(empty, |minutes| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .child(icon("clock", 12.))
+                .child(quick::format_estimate(minutes))
+                .into_any_element()
+        });
         let projects = if extras.projects.is_empty() {
             empty()
         } else {
@@ -411,6 +453,143 @@ impl BoardView {
                 .into_any_element(),
         };
         let picker = detail.picker;
+        // Relations come in three groups, each with a row to add to it. The
+        // remove buttons count through all three in order.
+        let mut next_remove = 0usize;
+        let mut relation_rows: Vec<Vec<AnyElement>> = Vec::new();
+        for (key, label, kind) in [
+            ("blocks", "Blocks", RelationKind::Blocks),
+            ("blocked-by", "Blocked by", RelationKind::BlockedBy),
+            ("relates", "Relates to", RelationKind::RelatesTo),
+        ] {
+            let mut chips: Vec<AnyElement> = Vec::new();
+            for relation in &detail.relations {
+                let other = match (kind, relation.kind.as_str()) {
+                    (RelationKind::Blocks, "blocks") if relation.card_id == card.id => {
+                        &relation.related_card_id
+                    }
+                    (RelationKind::BlockedBy, "blocks") if relation.related_card_id == card.id => {
+                        &relation.card_id
+                    }
+                    (RelationKind::RelatesTo, "relates") => {
+                        if relation.card_id == card.id {
+                            &relation.related_card_id
+                        } else {
+                            &relation.card_id
+                        }
+                    }
+                    _ => continue,
+                };
+                let index = next_remove;
+                next_remove += 1;
+                let name = self.card(other).map_or_else(
+                    || "Unknown card".to_string(),
+                    |c| format!("#{} {}", c.number, c.title),
+                );
+                let relation = relation.clone();
+                let remove = format!("board-relation-remove-{index}");
+                chips.push(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .px(px(6.))
+                        .py(px(1.))
+                        .rounded(px(4.))
+                        .bg(content(0.06))
+                        .text_size(px(12.))
+                        .child(div().min_w_0().truncate().child(name))
+                        .child(
+                            div()
+                                .id(SharedString::from(remove.clone()))
+                                .debug_selector(move || remove.clone())
+                                .role(Role::Button)
+                                .aria_label("Remove relation")
+                                .cursor_pointer()
+                                .child(icon("close", 10.))
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.unrelate(relation.clone(), cx)
+                                })),
+                        )
+                        .into_any_element(),
+                );
+            }
+            let shown = if chips.is_empty() {
+                empty()
+            } else {
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(4.))
+                    .children(chips)
+                    .into_any_element()
+            };
+            let mut group = vec![
+                row(key, "link-01", label)
+                    .child(value(shown))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_picker(Picker::Relation(kind), window, cx)
+                    }))
+                    .into_any_element(),
+            ];
+            if picker == Some(Picker::Relation(kind)) {
+                group.push(self.render_picker(detail, Picker::Relation(kind), card, cx));
+            }
+            relation_rows.push(group);
+        }
+        // One row per field the board has, in position order.
+        let mut field_rows: Vec<Vec<AnyElement>> = Vec::new();
+        for (index, field) in detail.fields.iter().enumerate() {
+            let raw = detail.field_values.get(&field.id);
+            let shown = match field.kind.as_str() {
+                "checkbox" => {
+                    let on = quick::field_checked(raw.map(String::as_str));
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .size(px(14.))
+                                .rounded(px(3.))
+                                .border_1()
+                                .border_color(content(0.3))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .when(on, |d| {
+                                    d.bg(accent_color().opacity(0.2))
+                                        .child(icon("check", 10.).text_color(accent_color()))
+                                }),
+                        )
+                        .child(if on { "Yes" } else { "No" })
+                        .into_any_element()
+                }
+                kind => raw
+                    .and_then(|raw| quick::field_text(kind, raw))
+                    .map_or_else(empty, |text| {
+                        div().min_w_0().truncate().child(text).into_any_element()
+                    }),
+            };
+            let kind = field.kind.clone();
+            let mut group = vec![
+                row(&format!("field-{index}"), "sliders", &field.name)
+                    .child(value(shown))
+                    .on_click(cx.listener(move |this, _, window, cx| match kind.as_str() {
+                        "checkbox" => this.toggle_checkbox_field(index, cx),
+                        "date" => this.open_choice(Choice::FieldDate(index), window, cx),
+                        "select" => this.open_choice(Choice::FieldSelect(index), window, cx),
+                        _ => this.open_picker(Picker::Field(index), window, cx),
+                    }))
+                    .into_any_element(),
+            ];
+            if picker == Some(Picker::Field(index)) {
+                group.push(self.render_picker(detail, Picker::Field(index), card, cx));
+            }
+            field_rows.push(group);
+        }
         div()
             .flex()
             .flex_col()
@@ -430,6 +609,16 @@ impl BoardView {
                     })),
             )
             .child(
+                row("start", "calendar-03", "Start date")
+                    .child(value(start))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_choice(Choice::Start, window, cx)
+                    })),
+            )
+            .when(picker == Some(Picker::StartDate), |d| {
+                d.child(self.render_picker(detail, Picker::StartDate, card, cx))
+            })
+            .child(
                 row("due", "calendar-03", "Due date")
                     .child(value(due))
                     .on_click(
@@ -440,6 +629,16 @@ impl BoardView {
             )
             .when(picker == Some(Picker::DueDate), |d| {
                 d.child(self.render_picker(detail, Picker::DueDate, card, cx))
+            })
+            .child(
+                row("estimate", "clock", "Estimate")
+                    .child(value(estimate))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_picker(Picker::Estimate, window, cx)
+                    })),
+            )
+            .when(picker == Some(Picker::Estimate), |d| {
+                d.child(self.render_picker(detail, Picker::Estimate, card, cx))
             })
             .child(
                 row("projects", "folder-01", "Projects")
@@ -478,6 +677,8 @@ impl BoardView {
                         cx.emit(crate::board::Event::LinkTicket(card_id.clone()))
                     })),
             )
+            .children(relation_rows.into_iter().flatten())
+            .children(field_rows.into_iter().flatten())
     }
 
     fn render_picker(
@@ -613,7 +814,58 @@ impl BoardView {
                     );
                 }
             }
-            Picker::DueDate => {}
+            Picker::Relation(kind) => {
+                let mut others: Vec<_> = self
+                    .detail
+                    .iter()
+                    .flat_map(|d| d.cards.iter())
+                    .filter(|other| other.id != card.id)
+                    .filter(|other| matches(&format!("#{} {}", other.number, other.title)))
+                    .collect();
+                others.sort_by_key(|other| other.number);
+                for (index, other) in others.into_iter().take(50).enumerate() {
+                    let id = other.id.clone();
+                    rows.push(
+                        menu_row(
+                            format!("board-pick-relation-{index}").into(),
+                            format!("#{} {}", other.number, other.title),
+                        )
+                        .truncate()
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.relate(kind, id.clone(), cx)),
+                        )
+                        .into_any_element(),
+                    );
+                }
+            }
+            Picker::AddLink(kind) => {
+                for (index, target) in detail.link_targets.iter().enumerate() {
+                    if target.kind != kind || !matches(&target.label) {
+                        continue;
+                    }
+                    let glyph = if kind == "pilot" { "bot" } else { "chatting" };
+                    let id = target.id.clone();
+                    rows.push(
+                        menu_row(
+                            format!("board-add-link-target-{index}").into(),
+                            target.label.clone(),
+                        )
+                        .flex()
+                        .gap_2()
+                        .child(icon(glyph, 12.).text_color(content(0.5)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.add_link_ref(kind, id.clone(), cx)
+                        }))
+                        .into_any_element(),
+                    );
+                }
+            }
+            Picker::DueDate
+            | Picker::StartDate
+            | Picker::Estimate
+            | Picker::Field(_)
+            | Picker::PrUrl
+            | Picker::WorktreePath => {}
         }
         div()
             .id("board-picker")
@@ -640,6 +892,16 @@ impl BoardView {
                     .items_center()
                     .child(detail.query.clone()),
             )
+            .children(detail.inline_error.clone().map(|error| {
+                div()
+                    .id("board-inline-error")
+                    .debug_selector(|| "board-inline-error".into())
+                    .px(px(8.))
+                    .pb(px(4.))
+                    .text_size(px(12.))
+                    .text_color(diff_foreground(false))
+                    .child(error)
+            }))
             .child(
                 div()
                     .id("board-picker-rows")
@@ -650,6 +912,135 @@ impl BoardView {
                     .children(rows),
             )
             .into_any_element()
+    }
+
+    /// The card's links: kind and reference, with Open and Remove, then an
+    /// Add menu. Tickets keep their own row above.
+    fn render_links(
+        &self,
+        detail: &CardDetail,
+        card: &Card,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let label = |kind: &str| match kind {
+            "session" => "Session",
+            "pilot" => "Pilot",
+            "flow-run" => "Flow run",
+            "pr" => "PR",
+            "worktree" => "Worktree",
+            _ => "",
+        };
+        let rows = detail
+            .links
+            .iter()
+            .filter(|link| !label(&link.kind).is_empty())
+            .enumerate()
+            .map(|(index, link)| {
+                let openable =
+                    matches!(link.kind.as_str(), "session" | "pilot" | "pr" | "worktree");
+                let (row_id, open_id, remove_id) = (
+                    format!("board-link-row-{index}"),
+                    format!("board-link-open-{index}"),
+                    format!("board-link-remove-{index}"),
+                );
+                let (open, remove) = (link.clone(), link.clone());
+                let small = |id: String, text: &'static str| {
+                    div()
+                        .id(SharedString::from(id.clone()))
+                        .debug_selector(move || id.clone())
+                        .role(Role::Button)
+                        .aria_label(text)
+                        .px(px(6.))
+                        .rounded(px(4.))
+                        .text_size(px(12.))
+                        .text_color(content(0.6))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(content(0.06)).text_color(content(0.95)))
+                        .child(text)
+                };
+                div()
+                    .id(SharedString::from(row_id.clone()))
+                    .debug_selector(move || row_id.clone())
+                    .min_h(px(28.))
+                    .px(px(6.))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(13.))
+                    .child(
+                        div()
+                            .w(px(72.))
+                            .flex_shrink_0()
+                            .text_size(px(12.))
+                            .text_color(content(0.5))
+                            .child(label(&link.kind)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(link.reference.clone()),
+                    )
+                    .when(openable, |d| {
+                        d.child(small(open_id, "Open").text_color(accent_color()).on_click(
+                            cx.listener(move |this, _, _, cx| this.open_link_row(open.clone(), cx)),
+                        ))
+                    })
+                    .child(small(remove_id, "Remove").on_click(
+                        cx.listener(move |this, _, _, cx| this.remove_link_row(remove.clone(), cx)),
+                    ))
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+        let picker = detail.picker;
+        let adding = matches!(
+            picker,
+            Some(Picker::AddLink(_) | Picker::PrUrl | Picker::WorktreePath)
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(section("Links"))
+                    .child(
+                        div()
+                            .id("board-drawer-links-add")
+                            .debug_selector(|| "board-drawer-links-add".into())
+                            .relative()
+                            .role(Role::Button)
+                            .aria_label("Add link")
+                            .size(px(22.))
+                            .rounded_md()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(content(0.06)))
+                            .child(
+                                detail
+                                    .anchors
+                                    .get("links-add")
+                                    .cloned()
+                                    .unwrap_or_default()
+                                    .probe(),
+                            )
+                            .child(icon("plus", 12.).text_color(content(0.6)))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_choice(Choice::LinkAdd, window, cx)
+                            })),
+                    ),
+            )
+            .children(rows.is_empty().then(empty))
+            .children(rows)
+            .when(adding, |d| {
+                d.child(self.render_picker(detail, picker.unwrap_or(Picker::PrUrl), card, cx))
+            })
     }
 
     fn render_subtasks(&self, detail: &CardDetail, cx: &mut Context<Self>) -> impl IntoElement {

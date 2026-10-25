@@ -33,13 +33,20 @@ pub(crate) fn parse_priority(id: &str) -> Option<u8> {
 }
 
 pub(crate) fn due_items() -> Vec<MenuItem> {
+    date_items("due")
+}
+
+/// The date quick picks, with ids like `{prefix}-today`. Due date, start date
+/// and date fields share them.
+pub(crate) fn date_items(prefix: &str) -> Vec<MenuItem> {
     vec![
-        MenuAction::new("due-today", "Today").into(),
-        MenuAction::new("due-tomorrow", "Tomorrow").into(),
-        MenuAction::new("due-next-week", "Next week").into(),
-        MenuAction::new("due-pick", "Pick a date…").into(),
+        MenuAction::new(format!("{prefix}-today"), "Today").into(),
+        MenuAction::new(format!("{prefix}-tomorrow"), "Tomorrow").into(),
+        MenuAction::new(format!("{prefix}-next-week"), "Next week").into(),
+        MenuAction::new(format!("{prefix}-in-two-weeks"), "In 2 weeks").into(),
+        MenuAction::new(format!("{prefix}-pick"), "Pick a date…").into(),
         MenuItem::Separator,
-        MenuAction::new("due-clear", "Clear").into(),
+        MenuAction::new(format!("{prefix}-clear"), "Clear").into(),
     ]
 }
 
@@ -52,17 +59,145 @@ pub(crate) enum DueChoice {
 }
 
 pub(crate) fn parse_due(id: &str, today: NaiveDate) -> Option<DueChoice> {
-    match id {
-        "due-today" => Some(DueChoice::Day(today)),
+    parse_date("due", id, today)
+}
+
+pub(crate) fn parse_date(prefix: &str, id: &str, today: NaiveDate) -> Option<DueChoice> {
+    let ahead = |days| {
         // A date past chrono's range is ignored, never a clear.
-        "due-tomorrow" => today.succ_opt().map(DueChoice::Day),
-        "due-next-week" => today
-            .checked_add_days(chrono::Days::new(7))
-            .map(DueChoice::Day),
-        "due-clear" => Some(DueChoice::Clear),
-        "due-pick" => Some(DueChoice::Pick),
+        today
+            .checked_add_days(chrono::Days::new(days))
+            .map(DueChoice::Day)
+    };
+    match id.strip_prefix(prefix)?.strip_prefix('-')? {
+        "today" => Some(DueChoice::Day(today)),
+        "tomorrow" => ahead(1),
+        "next-week" => ahead(7),
+        "in-two-weeks" => ahead(14),
+        "clear" => Some(DueChoice::Clear),
+        "pick" => Some(DueChoice::Pick),
         _ => None,
     }
+}
+
+/// Most minutes the store accepts.
+const MAX_ESTIMATE: i64 = 6_000_000;
+
+/// An estimate typed as `90`, `90m`, `1h`, `1h 30m` or `1.5h`, in minutes.
+pub(crate) fn parse_estimate(text: &str) -> Result<i64, String> {
+    let text = text.trim().to_lowercase();
+    let bad = || format!("“{}” is not a time like 90m or 1h 30m", text);
+    if text.is_empty() {
+        return Err(bad());
+    }
+    let minutes = if text.chars().all(|c| c.is_ascii_digit()) {
+        text.parse::<f64>().map_err(|_| bad())?
+    } else {
+        let (mut total, mut number, mut seen) = (0f64, String::new(), (false, false));
+        for c in text.chars() {
+            match c {
+                '0'..='9' | '.' => number.push(c),
+                'h' | 'm' => {
+                    let value: f64 = number.parse().map_err(|_| bad())?;
+                    number.clear();
+                    let slot = if c == 'h' { &mut seen.0 } else { &mut seen.1 };
+                    if std::mem::replace(slot, true) {
+                        return Err(bad());
+                    }
+                    total += if c == 'h' { value * 60. } else { value };
+                }
+                c if c.is_whitespace() => {
+                    if !number.is_empty() {
+                        return Err(bad());
+                    }
+                }
+                _ => return Err(bad()),
+            }
+        }
+        if !number.is_empty() {
+            return Err(bad());
+        }
+        total
+    };
+    let minutes = minutes.round();
+    if !minutes.is_finite() || minutes < 1. {
+        return Err("An estimate must be at least 1 minute".into());
+    }
+    if minutes > MAX_ESTIMATE as f64 {
+        return Err(format!("An estimate can be at most {MAX_ESTIMATE} minutes"));
+    }
+    Ok(minutes as i64)
+}
+
+/// `90` shows as `1h 30m`, `45` as `45m`, `120` as `2h`.
+pub(crate) fn format_estimate(minutes: i64) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{m}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h {m}m"),
+    }
+}
+
+/// A typed text or number field value as stored JSON; empty clears it.
+pub(crate) fn encode_field(kind: &str, text: &str) -> Result<Option<String>, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    match kind {
+        "text" => Ok(Some(
+            serde_json::Value::String(text.to_string()).to_string(),
+        )),
+        "number" => {
+            let number = match text.parse::<i64>() {
+                Ok(whole) => serde_json::Number::from(whole),
+                Err(_) => text
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(serde_json::Number::from_f64)
+                    .ok_or_else(|| format!("“{text}” is not a number"))?,
+            };
+            Ok(Some(number.to_string()))
+        }
+        _ => Err(format!("Can't type a {kind} value")),
+    }
+}
+
+/// The choices of a select field, from its `["a","b"]` options.
+pub(crate) fn field_options(options_json: Option<&str>) -> Vec<String> {
+    options_json
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
+        .unwrap_or_default()
+}
+
+/// A stored field value as the drawer shows it. `None` when it has no value
+/// or the stored JSON doesn't fit the kind.
+pub(crate) fn field_text(kind: &str, raw: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    match (kind, value) {
+        ("text" | "select", serde_json::Value::String(text)) => Some(text),
+        ("number", serde_json::Value::Number(number)) => Some(number.to_string()),
+        ("date", serde_json::Value::Number(at)) => {
+            let day = super::style::local_day(at.as_i64()?)?;
+            Some(day.format("%b %-d, %Y").to_string())
+        }
+        ("checkbox", serde_json::Value::Bool(on)) => Some(if on { "Yes" } else { "No" }.into()),
+        _ => None,
+    }
+}
+
+/// Whether a checkbox field's stored value is on.
+pub(crate) fn field_checked(raw: Option<&str>) -> bool {
+    raw.and_then(|raw| serde_json::from_str::<bool>(raw).ok())
+        .unwrap_or(false)
+}
+
+/// A PR link is an http or https URL with a host.
+pub(crate) fn valid_pr_url(text: &str) -> bool {
+    ["http://", "https://"].iter().any(|scheme| {
+        text.strip_prefix(scheme)
+            .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
+    }) && !text.chars().any(char::is_whitespace)
 }
 
 /// One row per board label, ticked when the card has it.
@@ -404,5 +539,89 @@ mod tests {
         let on = toggled(&["a".into()], "b");
         assert_eq!(on, ["a", "b"]);
         assert_eq!(toggled(&on, "a"), ["b"]);
+    }
+
+    #[test]
+    fn date_quick_picks_include_in_two_weeks_for_every_prefix() {
+        let today = day(2026, 10, 26);
+        for prefix in ["due", "start", "field"] {
+            let id = format!("{prefix}-in-two-weeks");
+            assert_eq!(
+                parse_date(prefix, &id, today),
+                Some(DueChoice::Day(day(2026, 11, 9)))
+            );
+            assert_eq!(
+                parse_date(prefix, &format!("{prefix}-next-week"), today),
+                Some(DueChoice::Day(day(2026, 11, 2)))
+            );
+        }
+        assert_eq!(parse_date("start", "due-today", today), None);
+        assert_eq!(
+            parse_due("due-in-two-weeks", today),
+            Some(DueChoice::Day(day(2026, 11, 9)))
+        );
+    }
+
+    #[test]
+    fn estimate_parses_hours_and_minutes() {
+        for (text, minutes) in [
+            ("90", 90),
+            ("90m", 90),
+            ("1h", 60),
+            ("2h", 120),
+            ("1h 30m", 90),
+            ("1h30m", 90),
+            (" 1.5h ", 90),
+            ("1H 5M", 65),
+        ] {
+            assert_eq!(parse_estimate(text), Ok(minutes), "{text}");
+        }
+        for text in [
+            "", "0", "0m", "0h", "-5", "abc", "1x", "1h 1h", "1 h 30", "h", "1.5.2h", "6000001",
+            "100001h",
+        ] {
+            assert!(parse_estimate(text).is_err(), "{text:?} should be rejected");
+        }
+        assert_eq!(parse_estimate("6000000"), Ok(6_000_000));
+    }
+
+    #[test]
+    fn estimates_display_as_hours_and_minutes() {
+        assert_eq!(format_estimate(90), "1h 30m");
+        assert_eq!(format_estimate(45), "45m");
+        assert_eq!(format_estimate(120), "2h");
+        assert_eq!(format_estimate(60), "1h");
+        assert_eq!(format_estimate(1), "1m");
+    }
+
+    #[test]
+    fn field_values_encode_by_kind() {
+        assert_eq!(encode_field("text", " hi "), Ok(Some("\"hi\"".into())));
+        assert_eq!(encode_field("text", "  "), Ok(None));
+        assert_eq!(encode_field("number", "3"), Ok(Some("3".into())));
+        assert_eq!(encode_field("number", "3.5"), Ok(Some("3.5".into())));
+        assert!(encode_field("number", "abc").is_err());
+        assert!(encode_field("number", "NaN").is_err());
+        assert!(encode_field("number", "inf").is_err());
+        assert_eq!(field_options(Some(r#"["a","b"]"#)), ["a", "b"]);
+        assert!(field_options(Some("nope")).is_empty());
+        assert_eq!(field_text("checkbox", "true").as_deref(), Some("Yes"));
+        assert_eq!(field_text("number", "\"x\""), None);
+    }
+
+    #[test]
+    fn pr_links_must_be_http_or_https() {
+        assert!(valid_pr_url("https://github.com/a/b/pull/1"));
+        assert!(valid_pr_url("http://example.com"));
+        for bad in [
+            "ftp://x.com",
+            "github.com/a",
+            "https://",
+            "https:///x",
+            "https://a b",
+            "",
+        ] {
+            assert!(!valid_pr_url(bad), "{bad:?}");
+        }
     }
 }

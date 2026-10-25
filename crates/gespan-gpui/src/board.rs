@@ -168,6 +168,11 @@ pub(crate) struct BoardView {
     search: Entity<Input>,
     pub(crate) filter: Filter,
     filter_open: bool,
+    /// "Open cards in" (setting `board-card-open`): cards open as a full page
+    /// instead of the drawer.
+    pub(crate) open_in_page: bool,
+    open_in_open: bool,
+    open_in_anchor: AnchorSlot,
     /// The header's Filter and New task buttons are tab stops.
     filter_focus: FocusHandle,
     new_task_focus: FocusHandle,
@@ -237,6 +242,12 @@ impl BoardView {
                 this.reload(cx);
             }
         });
+        let open_in_page = locked(&store)
+            .and_then(|db| db.setting(header::CARD_OPEN_SETTING))
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some("page");
         Self {
             store,
             db_path,
@@ -273,6 +284,9 @@ impl BoardView {
             search,
             filter: Filter::default(),
             filter_open: false,
+            open_in_page,
+            open_in_open: false,
+            open_in_anchor: AnchorSlot::default(),
             filter_focus: cx.focus_handle(),
             new_task_focus: cx.focus_handle(),
             column_anchors: HashMap::new(),
@@ -328,6 +342,7 @@ impl BoardView {
         self.card_menu = None;
         self.renaming = None;
         self.filter_open = false;
+        self.open_in_open = false;
         self.switcher = None;
         cx.notify();
     }
@@ -931,10 +946,12 @@ impl BoardView {
         // Innermost first: transient editors and menus, then the drawer.
         if self.composer.take().is_some()
             || std::mem::take(&mut self.filter_open)
+            || std::mem::take(&mut self.open_in_open)
             || self.switcher.take().is_some()
             || self.renaming.take().is_some()
             || self.menu.take().is_some()
             || self.close_detail_layer(cx)
+            || self.leave_full_page(cx)
             || self.close_card_detail(cx)
         {
             cx.notify();
@@ -1234,11 +1251,13 @@ impl gpui::Render for BoardView {
                 .unwrap_or_default();
             crate::popover::menu_popover(&open.menu, Anchor::Slot(anchor), cx)
         });
-        let card_detail = self.render_card_detail(cx);
+        let mut card_detail = self.render_card_detail(cx);
         let filter = self.render_filter(cx);
+        let open_in = self.render_open_in(cx);
         let switcher = self.render_switcher(cx);
         let archive = self.render_archive(cx);
         let undo_toast = self.render_undo_toast(cx);
+        let full_page = self.card_detail.as_ref().is_some_and(|d| d.full_page());
         let board = div()
             .flex_1()
             .min_w_0()
@@ -1247,31 +1266,36 @@ impl gpui::Render for BoardView {
             .flex_col()
             .child(self.render_header(cx))
             .children(error)
-            .child(
-                div()
-                    .id("board-columns")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_x_scroll()
-                    .px_4()
-                    .py_3()
-                    .flex()
-                    .items_start()
-                    .gap_2()
-                    .children(columns)
-                    .child(
-                        icon_button("board-add-column", "Add column", "plus")
-                            .debug_selector(|| "board-add-column".into())
-                            .flex_shrink_0()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.add_column(window, cx)),
-                            ),
-                    ),
-            );
+            .when(full_page, |d| d.children(card_detail.take()))
+            .when(!full_page, |d| {
+                d.child(
+                    div()
+                        .id("board-columns")
+                        .debug_selector(|| "board-columns".into())
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_x_scroll()
+                        .px_4()
+                        .py_3()
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .children(columns)
+                        .child(
+                            icon_button("board-add-column", "Add column", "plus")
+                                .debug_selector(|| "board-add-column".into())
+                                .flex_shrink_0()
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.add_column(window, cx)),
+                                ),
+                        ),
+                )
+            });
         root.child(board)
             .children(archive)
             .children(card_detail)
             .children(filter)
+            .children(open_in)
             .children(switcher)
             .children(menu)
             .children(card_menu)
