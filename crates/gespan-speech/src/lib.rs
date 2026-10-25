@@ -3,6 +3,7 @@
 
 pub mod capture;
 pub mod catalog;
+mod client;
 mod engine;
 mod helper;
 mod parakeet;
@@ -11,6 +12,7 @@ pub mod protocol;
 mod vocabulary;
 
 pub use capture::{AudioSource, CaptureError, MicSource};
+pub use client::{helper_command, RestartPolicy, SpeechClient};
 pub use engine::{EngineError, SpeechEngine};
 pub use helper::{
     helper_main, run_helper, run_helper_with, HelperLimits, MAX_RECORDING_SECS, PARTIAL_INTERVAL_MS,
