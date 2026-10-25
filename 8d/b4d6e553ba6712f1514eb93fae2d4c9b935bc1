@@ -1,0 +1,25 @@
+crates/tracker-secrets/tests/store.rs
+  s_0bbf4c1f20225e::t_a08f5866c068f5 179-181,183-192
+  s_0bbf4c1f20225e::t_daf63cc98ffe84 237,240-244
+crates/tracker-secrets/src/lib.rs
+  s_0bbf4c1f20225e::t_42a30c458632c7 89-92
+crates/gespan-core/src/inbox.rs
+  s_0bbf4c1f20225e::t_a08f5866c068f5 1077-1097
+  s_0bbf4c1f20225e::t_9a1c46255a4fe6 1076
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8db4d6e553ba6712f1514eb93fae2d4c9b935bc1",
+  "prompts": {},
+  "sessions": {
+    "s_0bbf4c1f20225e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf188816-f125-4205-bd6c-ae2dc78044e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
