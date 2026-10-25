@@ -271,11 +271,12 @@ fn action(op: &'static str, run: impl FnOnce() -> Result<(), String>) -> Result<
     )
 }
 
-/// Git can echo a remote URL with its `user:token@` part; the log never keeps it.
+/// Git can echo a remote URL with its `user:token@` part; the log never keeps it,
+/// up to the last `@` before the host, so a password holding `@` goes too.
 fn without_url_credentials(text: &str) -> std::borrow::Cow<'_, str> {
     static USERINFO: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     USERINFO
-        .get_or_init(|| regex::Regex::new(r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s']+@").unwrap())
+        .get_or_init(|| regex::Regex::new(r#"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s'"]+@"#).unwrap())
         .replace_all(text, "$1")
 }
 

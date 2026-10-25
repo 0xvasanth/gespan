@@ -1121,3 +1121,20 @@ fn silent_command_failures_name_the_command_not_its_arguments() {
         "gh repo view failed"
     );
 }
+
+#[test]
+fn a_password_with_an_at_sign_is_dropped_whole() {
+    let error = "fatal: unable to access 'https://me:pa@ss@github.com/o/r.git/': 403\n\
+                 and \"https://you:x@y@gitlab.com/g/r.git\" on github.com/o/r";
+    let logged = without_url_credentials(error);
+    assert!(
+        !logged.contains("ss@") && !logged.contains("y@"),
+        "{logged}"
+    );
+    assert!(logged.contains("'https://github.com/o/r.git/'"), "{logged}");
+    assert!(
+        logged.contains("\"https://gitlab.com/g/r.git\""),
+        "{logged}"
+    );
+    assert!(logged.ends_with("on github.com/o/r"), "{logged}");
+}
