@@ -1,0 +1,52 @@
+src/features/board/ui/BoardView.test.ts
+  s_938a6e0c93b076::t_73f114b7f3823d 340-347,349,354,360-376,378-385,387-406,1341-1633
+src/features/board/ui/CardPropertyMenus.tsx
+  s_938a6e0c93b076::t_36a8fa28721f33 1-106
+src/features/board/ui/BoardCardItem.test.ts
+  s_938a6e0c93b076::t_c8a6a69bda84e3 8,58-77,86-90,119,124-126,128-150,153-161,163-209
+  s_938a6e0c93b076::t_95e7242cbdc045 120-123,127
+  s_938a6e0c93b076::t_50fa8e9d482983 151-152,162
+src/features/board/ui/kanban/KanbanColumn.tsx
+  s_938a6e0c93b076::t_00475958ff9990 22-23,37,47-48,67-112
+  s_938a6e0c93b076::t_c7a177b6eaa93e 113
+src/features/board/model/columnActions.ts
+  s_938a6e0c93b076::t_f1cd243e8a5e06 21-23
+  s_938a6e0c93b076::t_36a8fa28721f33 1-20,24-25
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_f1cd243e8a5e06 19,23,34,36-39,58,72,476-520,574-599,608-609,641-650,824
+src/features/board/ui/kanban/KanbanBoard.test.ts
+  s_938a6e0c93b076::t_f1cd243e8a5e06 164-166
+  s_938a6e0c93b076::t_fc89208631f83a 9-18,88-96,152-163,167-189,404-417
+  s_938a6e0c93b076::t_cf87a88dc6bc62 418
+src/features/board/model/columnActions.test.ts
+  s_938a6e0c93b076::t_f1cd243e8a5e06 65-71
+  s_938a6e0c93b076::t_fc89208631f83a 1-64,72-73
+src/features/board/ui/BoardCardItem.tsx
+  s_938a6e0c93b076::t_004c785d58e09b 19-20,48-77,83-96,98-121,123,125-133,135-151,220-224,239-244,295-300,302-327,329-330,337-342
+src/features/board/ui/CardDetail.tsx
+  s_938a6e0c93b076::t_27b1fba21bfd6b 44
+  s_938a6e0c93b076::t_f1cd243e8a5e06 45
+  s_938a6e0c93b076::t_09ef07af9d30a6 418-424,434-438,441
+src/features/board/ui/BoardColumnHeader.tsx
+  s_938a6e0c93b076::t_f1cd243e8a5e06 225
+  s_938a6e0c93b076::t_d6f839b7e252f1 1,3-8,34-37,50-55,111-159,182-183,188,196-224,226-227
+  s_938a6e0c93b076::t_070b31c40b93a9 228-229
+src/features/board/ui/kanban/KanbanBoard.tsx
+  s_938a6e0c93b076::t_00475958ff9990 66-67,118,257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "75729aab16b9b6cb525ba95a42448c8688feb12e",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
