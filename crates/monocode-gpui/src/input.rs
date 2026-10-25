@@ -227,6 +227,8 @@ pub struct Input {
     reveal_in_parent: bool,
     reveal_pending: bool,
     selecting: bool,
+    drag_position: Option<Point<Pixels>>,
+    autoscroll: Option<gpui::Task<()>>,
 }
 impl EventEmitter<Submitted> for Input {}
 impl EventEmitter<Changed> for Input {}
@@ -275,6 +277,8 @@ impl Input {
             reveal_in_parent: false,
             reveal_pending: false,
             selecting: false,
+            drag_position: None,
+            autoscroll: None,
         }
     }
     pub fn search(cx: &mut Context<Self>) -> Self {
@@ -1020,6 +1024,7 @@ impl Input {
         }
         w.focus(&self.focus, cx);
         self.selecting = true;
+        self.drag_position = Some(e.position);
         let ix = self.mouse_index(e.position);
         if e.modifiers.shift {
             self.select_to(ix, cx)
@@ -1044,18 +1049,103 @@ impl Input {
         }
     }
     fn mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
-        self.selecting = false;
+        self.end_drag();
         self.code_scrollbar_up();
     }
     fn mouse_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.code_hover(e, cx);
-        if self.code_scrollbar_move(e, cx) {
+        self.code_scrollbar_move(e, cx);
+    }
+    fn end_drag(&mut self) {
+        self.selecting = false;
+        self.drag_position = None;
+        self.autoscroll = None;
+    }
+    /// Extends a drag selection wherever the pointer goes, not only while it
+    /// hovers the field, and keeps scrolling while it is held past an edge.
+    fn drag_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if !self.selecting {
             return;
         }
-        if self.selecting {
-            self.select_to(self.mouse_index(e.position), cx);
+        if e.pressed_button != Some(MouseButton::Left) {
+            self.end_drag();
+            return;
+        }
+        self.drag_position = Some(e.position);
+        self.drag_select(cx);
+        if self.autoscroll.is_none() && self.drag_overshoot() != px(0.) {
+            self.autoscroll = Some(cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(16))
+                        .await;
+                    if !this
+                        .update(cx, |input, cx| input.autoscroll_step(cx))
+                        .unwrap_or(false)
+                    {
+                        break;
+                    }
+                }
+            }));
         }
     }
+    /// Selects up to the pointer, pinned inside the viewport so the selection
+    /// follows the scroll instead of jumping ahead of it.
+    fn drag_select(&mut self, cx: &mut Context<Self>) {
+        let (Some(p), Some(b)) = (self.drag_position, self.bounds) else {
+            return;
+        };
+        let y = p.y.max(b.top()).min(b.bottom() - px(1.));
+        self.select_to(self.mouse_index(point(p.x, y)), cx);
+    }
+    /// How far the dragging pointer is above (negative) or below the field.
+    fn drag_overshoot(&self) -> Pixels {
+        match (self.drag_position, self.bounds) {
+            _ if self.single_line => px(0.),
+            (Some(p), Some(b)) if p.y < b.top() => p.y - b.top(),
+            (Some(p), Some(b)) if p.y > b.bottom() => p.y - b.bottom(),
+            _ => px(0.),
+        }
+    }
+    fn max_scroll_y(&self) -> Pixels {
+        if self.code.is_some() {
+            return self.code_max_scroll_y();
+        }
+        let total = self
+            .lines
+            .iter()
+            .map(|line| line.size(self.line_height()).height)
+            .fold(px(0.), |a, b| a + b);
+        (total - self.bounds.map_or(px(0.), |b| b.size.height)).max(px(0.))
+    }
+    fn autoscroll_step(&mut self, cx: &mut Context<Self>) -> bool {
+        let overshoot = self.drag_overshoot().as_f32();
+        let max = self.max_scroll_y();
+        if !self.selecting || overshoot == 0. || max <= px(0.) {
+            self.autoscroll = None;
+            return false;
+        }
+        // Speed grows with distance past the edge, like native text views.
+        let limit = self.line_height * 3.;
+        let step = (overshoot / 4.).clamp(-limit, limit);
+        let step = if step.abs() < 1. { step.signum() } else { step };
+        self.scroll_y = (self.scroll_y + px(step)).max(px(0.)).min(max);
+        self.drag_select(cx);
+        true
+    }
+}
+/// GPUI only delivers `on_mouse_move` while the field is hovered, so a drag
+/// selection listens at the window level until the button is released.
+fn paint_drag_listener(input: &Entity<Input>, w: &mut Window, cx: &App) {
+    if !input.read(cx).selecting {
+        return;
+    }
+    let input = input.clone();
+    w.on_mouse_event(move |e: &MouseMoveEvent, phase, _, cx| {
+        if phase == gpui::DispatchPhase::Capture {
+            input.update(cx, |input, cx| input.drag_move(e, cx));
+        }
+    });
 }
 fn from16(text: &str, offset: usize) -> usize {
     let mut units = 0;
@@ -1541,6 +1631,7 @@ impl Element for InputElement {
         w: &mut Window,
         cx: &mut App,
     ) {
+        paint_drag_listener(&self.input, w, cx);
         let i = self.input.read(cx);
         let focus = i.focus.clone();
         let to_display = |at| state.command.map_or(at, |command| command.to_display(at));
