@@ -17,6 +17,8 @@ import {
   type FloatingPilotHost,
   type FloatingPilotRequest,
 } from "../../features/pilots/model/floatingPilot";
+import { noCodingAgentDetected } from "../../features/sessions/model/noCodingAgent";
+import { subscribeHarnessAvailability } from "../../integrations/harness/core/availabilityState";
 
 type Host = Omit<FloatingPilotHost, "create"> & {
   /** Add a Pilot to the roster and return its id. */
@@ -152,8 +154,18 @@ export function useFloatingPilot(
         sync();
       })
       .catch(console.error);
+    // Published sessions carry the no-agent flag; republish when it flips.
+    let blocked = noCodingAgentDetected();
+    const stopAvailability = subscribeHarnessAvailability(() => {
+      const next = noCodingAgentDetected();
+      if (next === blocked) return;
+      blocked = next;
+      lastSessions.clear();
+      publish.current();
+    });
     return () => {
       disposed = true;
+      stopAvailability();
       refresh.current = () => {};
       publish.current = () => {};
       unlisten?.();

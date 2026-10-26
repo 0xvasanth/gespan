@@ -313,17 +313,17 @@ impl Shell {
         })
         .detach();
     }
-    /// The project's provider, else the global default, kept only when its
-    /// CLI is installed; otherwise the first installed provider.
+    /// A new session's provider and model in this project: its default,
+    /// else the last used, else the first installed provider.
+    pub(super) fn new_session_choice(&self, cx: &App) -> (Kind, Option<String>) {
+        crate::installed_providers::new_session_choice(
+            &self.workspace.preferences,
+            Some(&self.workspace.project),
+            cx,
+        )
+    }
     pub(super) fn default_kind(&self, cx: &App) -> Kind {
-        let p = &self.workspace.preferences;
-        let preferred = p
-            .project_providers
-            .get(&self.workspace.project)
-            .and_then(|p| p.provider.as_deref())
-            .or(p.default_provider.as_deref())
-            .and_then(Kind::parse);
-        crate::installed_providers::pick(preferred, cx)
+        self.new_session_choice(cx).0
     }
     /// Any busy session counts, including ones in background tabs or panes.
     pub(super) fn sync_keep_awake(&mut self) {
@@ -866,8 +866,8 @@ mod tests {
                     Kind::Kiro,
                     "installed preference kept"
                 );
-                // A project provider that is missing falls through to an
-                // installed one, not to the global default blindly.
+                // A project provider that is missing falls through to the
+                // last used one when installed, else the first installed.
                 shell
                     .workspace
                     .preferences
@@ -875,6 +875,8 @@ mod tests {
                     .entry(project)
                     .or_default()
                     .provider = Some("claude".into());
+                assert_eq!(shell.default_kind(cx), Kind::Kiro);
+                shell.workspace.preferences.default_provider = Some("codex".into());
                 assert_eq!(shell.default_kind(cx), Kind::Hermes);
             })
             .unwrap();
@@ -900,6 +902,377 @@ mod tests {
                     Kind::Kiro,
                     "probed: Grok is missing"
                 );
+            })
+            .unwrap();
+    }
+
+    // New-session provider and model: project default, then last used, then
+    // the first installed provider; the model follows the chosen provider.
+    fn only_installed(kinds: &[Kind], cx: &mut TestAppContext) {
+        let kinds = kinds.to_vec();
+        cx.update(|cx| {
+            cx.set_global(crate::installed_providers::InstalledProviders::probed(
+                kinds,
+            ))
+        });
+    }
+    fn active_chat(shell: &Shell) -> Entity<Conversation> {
+        shell.sessions[&shell.workspace.active.unwrap()].clone()
+    }
+    fn create_default_session(
+        window: gpui::WindowHandle<Shell>,
+        cx: &mut TestAppContext,
+    ) -> Entity<Conversation> {
+        window
+            .update(cx, |shell, _, cx| shell.create(shell.default_kind(cx), cx))
+            .unwrap();
+        cx.run_until_parked();
+        window.update(cx, |shell, _, _| active_chat(shell)).unwrap()
+    }
+
+    #[gpui::test]
+    fn new_session_uses_project_default_then_last_used_then_first_installed(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _, _) = window(cx);
+        only_installed(&[Kind::Claude, Kind::Hermes, Kind::Kiro], cx);
+        window
+            .update(cx, |shell, _, cx| {
+                let project = shell.workspace.project.clone();
+                let p = &mut shell.workspace.preferences;
+                p.default_provider = None;
+                p.last_provider = None;
+                p.default_models.clear();
+                assert_eq!(
+                    shell.new_session_choice(cx),
+                    (Kind::Claude, None),
+                    "nothing chosen yet: the first installed provider"
+                );
+                let p = &mut shell.workspace.preferences;
+                p.last_provider = Some("kiro".into());
+                p.default_models.insert("kiro".into(), "kiro-fast".into());
+                p.default_models
+                    .insert("hermes".into(), "hermes-last".into());
+                assert_eq!(
+                    shell.new_session_choice(cx),
+                    (Kind::Kiro, Some("kiro-fast".into())),
+                    "last used beats the first installed, with its last model"
+                );
+                let settings = shell
+                    .workspace
+                    .preferences
+                    .project_providers
+                    .entry(project.clone())
+                    .or_default();
+                settings.provider = Some("hermes".into());
+                assert_eq!(
+                    shell.new_session_choice(cx),
+                    (Kind::Hermes, Some("hermes-last".into())),
+                    "the project default beats last used; no project model yet"
+                );
+                shell
+                    .workspace
+                    .preferences
+                    .project_providers
+                    .get_mut(&project)
+                    .unwrap()
+                    .models
+                    .insert("hermes".into(), "hermes-project".into());
+                assert_eq!(
+                    shell.new_session_choice(cx),
+                    (Kind::Hermes, Some("hermes-project".into())),
+                    "the project's model for that provider comes first"
+                );
+                shell
+                    .workspace
+                    .preferences
+                    .project_providers
+                    .get_mut(&project)
+                    .unwrap()
+                    .provider = Some("codex".into());
+                assert_eq!(
+                    shell.new_session_choice(cx),
+                    (Kind::Kiro, Some("kiro-fast".into())),
+                    "a project default that is not installed falls to last used"
+                );
+                shell.workspace.preferences.last_provider = Some("grok".into());
+                assert_eq!(
+                    shell.new_session_choice(cx),
+                    (Kind::Claude, None),
+                    "nothing installed among them: the first installed provider"
+                );
+                // Providers hidden in this project are skipped like missing
+                // ones, as the desktop's firstEnabledHarness does.
+                shell
+                    .workspace
+                    .preferences
+                    .project_providers
+                    .get_mut(&project)
+                    .unwrap()
+                    .hidden = vec!["claude".into()];
+                assert_eq!(
+                    shell.new_session_choice(cx),
+                    (Kind::Hermes, Some("hermes-project".into()))
+                );
+                shell.workspace.preferences.last_provider = Some("kiro".into());
+                shell.workspace.preferences.hidden_providers = vec!["kiro".into()];
+                assert_eq!(
+                    shell.new_session_choice(cx),
+                    (Kind::Hermes, Some("hermes-project".into())),
+                    "a globally hidden last used provider is skipped too"
+                );
+                shell.workspace.preferences.hidden_providers.clear();
+                shell
+                    .workspace
+                    .preferences
+                    .project_providers
+                    .get_mut(&project)
+                    .unwrap()
+                    .hidden
+                    .clear();
+                shell
+                    .workspace
+                    .preferences
+                    .project_providers
+                    .get_mut(&project)
+                    .unwrap()
+                    .provider = Some("hermes".into());
+            })
+            .unwrap();
+        // A real new session starts there.
+        let chat = create_default_session(window, cx);
+        chat.read_with(cx, |chat, _| {
+            assert_eq!(chat.summary.provider, "hermes");
+            assert_eq!(chat.pilot_model().as_deref(), Some("hermes-project"));
+        });
+    }
+
+    #[gpui::test]
+    fn picking_a_model_in_a_chat_becomes_the_last_used_choice(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        only_installed(&[Kind::Claude, Kind::Codex, Kind::Kiro], cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.preferences.default_provider = Some("claude".into());
+                shell.apply_preferences(cx);
+            })
+            .unwrap();
+        let chat = window.update(cx, |shell, _, _| active_chat(shell)).unwrap();
+        let pick = |kind: Kind, model: Option<&str>, cx: &mut TestAppContext| {
+            chat.update(cx, |chat, cx| {
+                assert!(chat.apply_model_pick(
+                    &crate::pickers::ModelPicked(kind, model.map(Into::into)),
+                    cx
+                ));
+            });
+            cx.run_until_parked();
+        };
+        pick(Kind::Kiro, Some("kiro-fast"), cx);
+        window
+            .update(cx, |shell, _, cx| {
+                let p = &shell.workspace.preferences;
+                assert_eq!(p.last_provider.as_deref(), Some("kiro"));
+                assert_eq!(p.default_models["kiro"], "kiro-fast");
+                assert_eq!(
+                    shell.new_session_choice(cx),
+                    (Kind::Kiro, Some("kiro-fast".into()))
+                );
+            })
+            .unwrap();
+        // Each provider keeps its own last model.
+        pick(Kind::Claude, Some("opus"), cx);
+        window
+            .update(cx, |shell, _, cx| {
+                assert_eq!(
+                    shell.new_session_choice(cx),
+                    (Kind::Claude, Some("opus".into()))
+                );
+                assert_eq!(
+                    shell.workspace.preferences.default_models["kiro"],
+                    "kiro-fast"
+                );
+            })
+            .unwrap();
+        // Picking the provider's Default entry forgets its last model.
+        pick(Kind::Kiro, None, cx);
+        window
+            .update(cx, |shell, _, cx| {
+                assert_eq!(shell.new_session_choice(cx), (Kind::Kiro, None));
+                assert_eq!(shell.workspace.preferences.default_models["claude"], "opus");
+            })
+            .unwrap();
+        let next = create_default_session(window, cx);
+        next.read_with(cx, |next, _| {
+            assert_eq!(next.summary.provider, "kiro");
+            assert_eq!(next.pilot_model(), None);
+        });
+        // Re-picking a chat's current provider and model is still the most
+        // recent pick.
+        pick(Kind::Claude, Some("opus"), cx);
+        next.update(cx, |next, cx| {
+            assert!(next.apply_model_pick(&crate::pickers::ModelPicked(Kind::Kiro, None), cx));
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                assert_eq!(shell.new_session_choice(cx), (Kind::Kiro, None));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn last_used_controls_follow_into_a_new_session(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        only_installed(&[Kind::Claude, Kind::Codex], cx);
+        let chat = window.update(cx, |shell, _, _| active_chat(shell)).unwrap();
+        chat.update(cx, |chat, cx| {
+            assert_eq!(chat.summary.provider, "claude");
+            chat.choose_setting_for_test("fast:on", cx);
+            chat.choose_setting_for_test(r#"model-setting:["context","1m"]"#, cx);
+            chat.choose_setting_for_test("effort:high", cx);
+            chat.choose_setting_for_test("thinking", cx);
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                let last = &shell.workspace.preferences.last_model_settings;
+                assert_eq!(last.get("fast").map(String::as_str), Some("true"));
+                assert_eq!(last.get("context").map(String::as_str), Some("1m"));
+                shell.workspace.preferences.last_provider = Some("claude".into());
+            })
+            .unwrap();
+        let next = create_default_session(window, cx);
+        next.read_with(cx, |next, _| {
+            assert_eq!(next.summary.provider, "claude");
+            assert!(next.settings.fast, "fast follows");
+            assert_eq!(
+                next.settings
+                    .model_settings
+                    .get("context")
+                    .map(String::as_str),
+                Some("1m")
+            );
+            assert_eq!(next.settings.effort.as_deref(), Some("high"));
+        });
+        // Turning a control off is remembered too.
+        next.update(cx, |next, cx| next.choose_setting_for_test("fast:off", cx));
+        cx.run_until_parked();
+        let third = create_default_session(window, cx);
+        third.read_with(cx, |third, _| assert!(!third.settings.fast));
+        // Controls another provider does not support stay behind.
+        window
+            .update(cx, |shell, _, _| {
+                shell.workspace.preferences.last_provider = Some("codex".into());
+            })
+            .unwrap();
+        let codex = create_default_session(window, cx);
+        codex.read_with(cx, |codex, _| {
+            assert_eq!(codex.summary.provider, "codex");
+            assert!(!codex.settings.model_settings.contains_key("context"));
+        });
+        // Claude's fast, context and boolean thinking never reach providers
+        // whose models do not define them; a Pi thinking level survives.
+        only_installed(&[Kind::Omp, Kind::Cursor, Kind::Pi], cx);
+        window
+            .update(cx, |_, _, cx| {
+                cx.update_global::<crate::settings::Preferences, _>(|p, _| {
+                    p.last_model_settings.insert("fast".into(), "true".into());
+                    p.provider_efforts.insert("pi".into(), "high".into());
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        for provider in ["omp", "cursor", "pi"] {
+            window
+                .update(cx, |shell, _, _| {
+                    shell.workspace.preferences.last_provider = Some(provider.into());
+                })
+                .unwrap();
+            let chat = create_default_session(window, cx);
+            chat.read_with(cx, |chat, _| {
+                assert_eq!(chat.summary.provider, provider);
+                assert!(!chat.settings.fast, "{provider}: fast");
+                assert_eq!(chat.settings.thinking, None, "{provider}: thinking");
+                assert!(
+                    chat.settings.model_settings.is_empty(),
+                    "{provider}: {:?}",
+                    chat.settings.model_settings
+                );
+                if provider == "pi" {
+                    assert_eq!(chat.settings.effort.as_deref(), Some("high"));
+                }
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn first_time_uses_the_first_installed_provider_and_its_first_model(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        // Kind::ALL order: Hermes is listed before Kiro.
+        only_installed(&[Kind::Kiro, Kind::Hermes], cx);
+        window
+            .update(cx, |shell, _, cx| {
+                let p = &mut shell.workspace.preferences;
+                p.default_provider = None;
+                p.last_provider = None;
+                p.default_models.clear();
+                p.project_providers.clear();
+                p.last_model_settings.clear();
+                assert_eq!(shell.new_session_choice(cx), (Kind::Hermes, None));
+            })
+            .unwrap();
+        let chat = create_default_session(window, cx);
+        chat.read_with(cx, |chat, _| {
+            assert_eq!(chat.summary.provider, "hermes");
+            // `None` is the picker's first entry: the provider's Default.
+            assert_eq!(chat.pilot_model(), None);
+            assert!(!chat.settings.fast);
+            assert!(chat.settings.model_settings.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn settings_default_no_longer_outranks_last_used(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        only_installed(&[Kind::Claude, Kind::Kiro], cx);
+        window
+            .update(cx, |shell, _, cx| {
+                let p = &mut shell.workspace.preferences;
+                p.default_provider = Some("claude".into());
+                p.last_provider = Some("kiro".into());
+                assert_eq!(shell.default_kind(cx), Kind::Kiro);
+                // Preferences saved before last-used existed keep their default.
+                shell.workspace.preferences.last_provider = None;
+                assert_eq!(shell.default_kind(cx), Kind::Claude);
+                // Choosing a default in Settings → Providers is a last-used pick.
+                shell.workspace.preferences.last_provider = Some("kiro".into());
+                shell.workspace.preferences.use_by_default(Kind::Claude);
+                assert_eq!(
+                    shell.workspace.preferences.last_provider.as_deref(),
+                    Some("claude")
+                );
+                assert_eq!(shell.default_kind(cx), Kind::Claude);
+            })
+            .unwrap();
+        let old: crate::settings::Preferences =
+            serde_json::from_str(r#"{"default_provider":"claude"}"#).unwrap();
+        assert_eq!(old.last_provider, None);
+        assert!(old.last_model_settings.is_empty());
+    }
+
+    #[gpui::test]
+    fn the_disabled_model_picker_opens_settings_at_agent_clis(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        only_installed(&[], cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let pill = visual.debug_bounds("composer-model").unwrap();
+        visual.simulate_click(pill.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, cx| {
+                let settings = shell.settings.as_ref().expect("Settings opened");
+                assert_eq!(settings.read(cx).section, Section::Providers);
             })
             .unwrap();
     }

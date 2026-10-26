@@ -26,8 +26,12 @@ describe("newSessionForProject", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps a seed provider the project allows", () => {
-    const seed = newSession("claude", "/repo/a", "claude:opus-5");
+  it("starts on the last used provider and model, not the seed's", () => {
+    localStorage.setItem(
+      "gespan.lastModel",
+      JSON.stringify({ harness: "claude", model: "claude:opus-5" }),
+    );
+    const seed = newSession("codex", "/repo/a");
     const session = newSessionForProject(seed, "/repo/a");
     expect(session.harness).toBe("claude");
     expect(session.model).toBe("claude:opus-5");

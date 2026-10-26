@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Copy, ExternalLink, Plus, Square, X } from "../../../shared/ui/icons";
@@ -13,18 +14,24 @@ import { PixelMascot } from "../../projects/ui/PixelMascot";
 import { AgentTranscript } from "../../sessions/ui/AgentTranscript";
 import { QuestionForm } from "../../sessions/ui/QuestionForm";
 import { revokeAttachment } from "../../sessions/model/attachments";
+import {
+  NO_CODING_AGENT_HINT,
+  OPEN_AGENT_CLIS_REQUEST_EVENT,
+} from "../../sessions/model/noCodingAgent";
+import { NoCodingAgentSettingsButton } from "../../sessions/ui/NoCodingAgent";
 import { usePilotTranscript } from "../hooks/usePilotTranscript";
 import { pilotState } from "../model/pilot";
 import {
   pilotMessageDeliveries,
   pilotPendingTranscriptBlocks,
 } from "../model/pilotMessaging";
-import { sessionWorkCwd, type Session } from "../../sessions/model/session";
+import { sessionWorkCwd } from "../../sessions/model/session";
 import {
   FLOATING_PILOT_CHANGED,
   floatingPilotAttachments,
   type FloatingPilotAction,
   type FloatingPilotEntry,
+  type FloatingPilotSession,
   type FloatingPilotView,
 } from "../model/floatingPilot";
 import { PilotComposer } from "./PilotComposer";
@@ -377,7 +384,7 @@ function FloatingConversation({
   onOpenArtifact,
 }: {
   pilot: FloatingPilotEntry;
-  session: Session;
+  session: FloatingPilotSession;
   focus: number;
   action: (action: FloatingPilotAction) => Promise<boolean>;
   onOpenArtifact: (id: string) => void;
@@ -484,10 +491,22 @@ function FloatingConversation({
         </div>
       ) : null}
       <div className="shrink-0 px-1 pb-1">
+        {session.noCodingAgent ? (
+          // This window never probes CLIs; the owner flags it, and a
+          // workspace window opens Settings.
+          <div className="flex justify-end px-1">
+            <NoCodingAgentSettingsButton
+              onOpen={() => void emit(OPEN_AGENT_CLIS_REQUEST_EVENT)}
+            />
+          </div>
+        ) : null}
         <PilotComposer
           sessionId={`floating:${session.id}`}
           name={pilot.name}
           enabled={!session.worktreeRemoved}
+          blockedReason={
+            session.noCodingAgent ? NO_CODING_AGENT_HINT : undefined
+          }
           focusToken={focus}
           onSubmit={async (text, attachments) => {
             const accepted = await action({

@@ -842,6 +842,17 @@ export function firstEnabledHarness(
   cwd: string | undefined,
   preferred: HarnessId,
 ): HarnessId {
+  return firstEnabledOf(cwd, [preferred]) ?? preferred;
+}
+
+/**
+ * The first of `candidates` the project allows and this computer has, else
+ * the first such provider in standard order. Undefined only when there is none.
+ */
+export function firstEnabledOf(
+  cwd: string | undefined,
+  candidates: readonly (HarnessId | undefined)[],
+): HarnessId | undefined {
   const hidden = new Set(loadProjectProviderSettings(cwd).hidden ?? []);
   const enabled = (id: HarnessId) =>
     !hidden.has(id) &&
@@ -850,18 +861,25 @@ export function firstEnabledHarness(
       isHarnessAvailable(id),
       hasProbedHarnessAvailability(),
     );
-  if (enabled(preferred)) return preferred;
-  return HARNESSES.find(enabled) ?? preferred;
+  return (
+    candidates.find((id): id is HarnessId => id != null && enabled(id)) ??
+    HARNESSES.find(enabled)
+  );
 }
 
-/** Provider + model new conversations should start with. */
+/**
+ * Provider + model new conversations should start with: the project's
+ * default, else the last provider picked, else the first installed one. Each
+ * is skipped when it is not installed or the project hides it.
+ */
 export function defaultSessionChoice(cwd?: string): LastModelChoice {
   const project = loadProjectProviderSettings(cwd);
   const last = loadLastModelChoice();
-  const harness = firstEnabledHarness(
-    cwd,
-    project.defaultHarness ?? last?.harness ?? "cursor",
-  );
+  const harness =
+    firstEnabledOf(cwd, [project.defaultHarness, last?.harness]) ??
+    project.defaultHarness ??
+    last?.harness ??
+    HARNESSES[0]!;
   const model =
     project.models?.[harness] ??
     (project.defaultHarness === harness ? project.defaultModel : undefined) ??
@@ -898,6 +916,20 @@ export function saveLastModelChoice(harness: HarnessId, model: string) {
   } catch {
     // private mode / quota
   }
+}
+
+/**
+ * A provider + model the user picked in a chat or Pilot chat becomes the last
+ * used choice, which new conversations start with. The controls the previous
+ * model had fill in any the user has not set yet.
+ */
+export function rememberModelPick(
+  picked: Pick<AgentModel, "harness" | "id">,
+  previousSettings?: Record<string, string>,
+) {
+  saveRecentModelChoice(picked.harness, picked.id);
+  saveLastModelChoice(picked.harness, picked.id);
+  if (previousSettings) saveLastModelSettings(previousSettings, "fill");
 }
 
 export function loadRecentModelChoices(): LastModelChoice[] {

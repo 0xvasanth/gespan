@@ -2006,6 +2006,12 @@ impl Pilots {
         let Some(chat) = self.chat() else {
             return;
         };
+        // No CLI detected: the dropdown leads to where one is set up.
+        if crate::installed_providers::none_detected(cx) {
+            window.focus(&chat.read(cx).input.focus_handle(cx), cx);
+            window.dispatch_action(Box::new(crate::conversation::OpenAgentSettings), cx);
+            return;
+        }
         let view = chat.read(cx);
         let provider = Kind::from_id(&view.summary.provider);
         let model = view.pilot_model();
@@ -2014,12 +2020,13 @@ impl Pilots {
         let list = cx.new(|cx| ModelList::new_for(provider, model, &project, account, cx));
         let focus = list.read(cx).search_focus(cx);
         let picked = cx.subscribe(&list, |this, _, picked: &ModelPicked, cx| {
-            if let Some(view) = this.chat()
-                && let Err(e) = view.update(cx, |v, cx| {
+            if let Some(view) = this.chat() {
+                match view.update(cx, |v, cx| {
                     v.pilot_config(picked.0, picked.1.clone(), HashMap::new(), cx)
-                })
-            {
-                this.error = Some(e);
+                }) {
+                    Ok(()) => crate::pickers::remember_last_used(picked.0, picked.1.clone(), cx),
+                    Err(e) => this.error = Some(e),
+                }
             }
             this.picker = None;
             this.changed(cx);

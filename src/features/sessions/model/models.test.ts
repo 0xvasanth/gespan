@@ -257,10 +257,10 @@ describe("provider defaults", () => {
     });
   });
 
-  it("keeps catalog defaults when nothing is saved", () => {
+  it("starts on the first provider in standard order when nothing is saved", () => {
     expect(defaultSessionChoice()).toEqual({
-      harness: "cursor",
-      model: defaultModelId("cursor"),
+      harness: "claude",
+      model: defaultModelId("claude"),
     });
   });
 

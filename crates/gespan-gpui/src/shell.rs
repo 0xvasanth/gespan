@@ -4143,6 +4143,7 @@ impl Shell {
             .unwrap_or_default();
         let access = crate::conversation::default_access(cx);
         let effort = crate::conversation::preferred_effort(kind.id(), cx);
+        let controls = self.workspace.preferences.last_model_settings.clone();
         let work = cx.background_executor().spawn({
             let cwd = cwd.clone();
             let worktree_cwd = focus.as_ref().map(|f| f.path.clone());
@@ -4166,10 +4167,14 @@ impl Shell {
                     settings.effort = Some(effort);
                 }
                 settings.account = account;
+                crate::settings::apply_last_controls_to(&controls, &mut settings, kind);
                 settings.worktree_cwd = worktree_cwd;
                 if settings.model.is_some()
                     || settings.effort.is_some()
                     || !settings.model_settings.is_empty()
+                    || settings.fast
+                    || settings.thinking.is_some()
+                    || settings.service_tier.is_some()
                     || settings.worktree_cwd.is_some()
                     || settings.account.id != gespan_core::accounts::DEFAULT
                     || access != Default::default()
@@ -8015,6 +8020,11 @@ impl Render for Shell {
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.open_settings(crate::settings::Section::General, window, cx)
             }))
+            .on_action(cx.listener(
+                |this, _: &crate::conversation::OpenAgentSettings, window, cx| {
+                    this.open_settings(crate::settings::Section::Providers, window, cx)
+                },
+            ))
             .on_action(
                 cx.listener(|this, _: &session_groups::RenameSidebarItem, window, cx| {
                     this.rename_sidebar_item(window, cx)

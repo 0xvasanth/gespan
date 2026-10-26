@@ -500,15 +500,14 @@ impl Shell {
             .clone()
             .filter(|path| !path.is_empty())
             .unwrap_or_else(|| self.workspace.project.clone());
-        let kind = self.default_kind(cx);
+        let (kind, model) = crate::installed_providers::new_session_choice(
+            &self.workspace.preferences,
+            Some(&cwd),
+            cx,
+        );
         let store = self.store.clone();
-        let settings = gespan_core::agent::Settings {
-            model: self
-                .workspace
-                .preferences
-                .default_models
-                .get(kind.id())
-                .cloned(),
+        let mut settings = gespan_core::agent::Settings {
+            model,
             effort: crate::conversation::preferred_effort(kind.id(), cx),
             access: self
                 .workspace
@@ -522,6 +521,9 @@ impl Shell {
                 .unwrap_or_default(),
             ..Default::default()
         };
+        self.workspace
+            .preferences
+            .apply_last_controls(&mut settings, kind);
         self.leave_app_views(cx);
         self.navigation_revision += 1;
         let revision = self.navigation_revision;
@@ -574,16 +576,13 @@ impl Shell {
         } else {
             item.project_path.clone()
         };
-        let kind = self.default_kind(cx);
-        let settings = gespan_core::agent::Settings {
-            model: self
-                .workspace
-                .preferences
-                .project_providers
-                .get(&cwd)
-                .and_then(|preferences| preferences.models.get(kind.id()))
-                .or(self.workspace.preferences.default_models.get(kind.id()))
-                .cloned(),
+        let (kind, model) = crate::installed_providers::new_session_choice(
+            &self.workspace.preferences,
+            Some(&cwd),
+            cx,
+        );
+        let mut settings = gespan_core::agent::Settings {
+            model,
             effort: crate::conversation::preferred_effort(kind.id(), cx),
             access: self
                 .workspace
@@ -597,6 +596,9 @@ impl Shell {
                 .unwrap_or_default(),
             ..Default::default()
         };
+        self.workspace
+            .preferences
+            .apply_last_controls(&mut settings, kind);
         let store = self.store.clone();
         self.navigation_revision += 1;
         let revision = self.navigation_revision;

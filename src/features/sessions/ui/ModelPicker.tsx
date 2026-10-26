@@ -82,6 +82,8 @@ type Props = {
   onChange: (harness: HarnessId, model: string) => void;
   onSettingsChange: (settings: Record<string, string>) => void;
   onClose?: () => void;
+  /** Disables the trigger, its menus and hotkey, with this as its tooltip. */
+  disabledReason?: string;
 };
 
 type Variant = "pill" | "plain" | "text";
@@ -323,6 +325,7 @@ export function ModelPicker({
   onChange,
   onSettingsChange,
   onClose,
+  disabledReason,
 }: Props) {
   const source = useModelSource();
   const catalogVersion = useSyncExternalStore(
@@ -364,6 +367,8 @@ export function ModelPicker({
   const recentOpenRef = useRef(recentMenu != null);
   const currentRef = useRef<AgentModel | null>(null);
   const lastHotkey = useRef(0);
+  const disabledRef = useRef(!!disabledReason);
+  disabledRef.current = !!disabledReason;
   onCloseRef.current = onClose;
   openRef.current = open;
   recentOpenRef.current = recentMenu != null;
@@ -458,6 +463,7 @@ export function ModelPicker({
   };
 
   const togglePicker = () => {
+    if (disabledRef.current) return;
     if (openRef.current) dismiss(true);
     else {
       setRecentMenu(null);
@@ -467,7 +473,7 @@ export function ModelPicker({
 
   const openRecentMenu = () => {
     const selected = currentRef.current;
-    if (!selected) return;
+    if (!selected || disabledRef.current) return;
     const models = recentMenuModels(selected, source);
     const selectedIndex = models.findIndex((item) => item.id === selected.id);
     setOpen(false);
@@ -486,11 +492,19 @@ export function ModelPicker({
   };
 
   const toggleFromHotkey = () => {
+    if (disabledRef.current) return;
     const now = performance.now();
     if (now - lastHotkey.current < 80) return;
     lastHotkey.current = now;
     toggleRecentMenu();
   };
+
+  useEffect(() => {
+    if (!disabledReason) return;
+    setOpen(false);
+    setRecentMenu(null);
+    setSubmenu(null);
+  }, [disabledReason]);
 
   useEffect(() => {
     if (!open) return;
@@ -735,10 +749,12 @@ export function ModelPicker({
       <button
         ref={button}
         type="button"
+        disabled={!!disabledReason}
         title={
-          triggerLabel
+          disabledReason ??
+          (triggerLabel
             ? `${triggerLabel} · ${triggerTitle}`
-            : `${triggerTitle} · Recent models: right-click or ${MOD}.`
+            : `${triggerTitle} · Recent models: right-click or ${MOD}.`)
         }
         aria-label={
           triggerLabel ??
@@ -758,7 +774,7 @@ export function ModelPicker({
           openRecentMenu();
         }}
         onClick={() => togglePicker()}
-        className={
+        className={`${
           variant === "text"
             ? textControlClass(open, "shrink-0 gap-1.5")
             : variant === "plain"
@@ -770,7 +786,7 @@ export function ModelPicker({
                     ? "bg-selection text-content"
                     : "bg-selection text-content hover:bg-selection-hover"
                 }`
-        }
+        } disabled:cursor-default disabled:opacity-50`}
       >
         <HarnessIcon
           harness={current.harness}

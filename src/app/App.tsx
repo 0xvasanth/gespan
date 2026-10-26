@@ -87,6 +87,7 @@ import {
 import { flushSync } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getAllWebviewWindows } from "@tauri-apps/api/webviewWindow";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import {
   startTransition,
@@ -346,6 +347,7 @@ import {
   isLiveHarness,
   latestTurnNeedsHarnessLogin,
   probeHarnessAvailability,
+  subscribeHarnessAvailability,
   refreshHarnessCatalogs,
   registerBuiltinHarnesses,
   promoteLastAssistantToPlan,
@@ -429,10 +431,17 @@ import {
   mergeModelSettings,
   nativeModelId,
   preferredModelSettings,
+  rememberModelPick,
   resolveModel,
   saveLastModelSettings,
   saveRecentModelChoice,
 } from "../features/sessions/model/models";
+import {
+  OPEN_AGENT_CLIS_EVENT,
+  OPEN_AGENT_CLIS_REQUEST_EVENT,
+  answerAgentClisSettingsRequest,
+  assertPhoneSendAllowed,
+} from "../features/sessions/model/noCodingAgent";
 
 import {
   buildPlanPrompt,
@@ -516,6 +525,7 @@ import {
   sessionDraftBlock,
   sessionWorkCwd,
   titleFromPrompt,
+  withInstalledDefault,
   type Attachment,
   type Block,
   type BtwThread,
@@ -2143,6 +2153,25 @@ function Workspace({
       cancelled = true;
     };
   }, [pilotsSnap]);
+
+  // Conversations opened before detection finished may sit on a provider this
+  // computer lacks; until their first message, move them to one it has.
+  useEffect(
+    () =>
+      subscribeHarnessAvailability(() => {
+        setSessions((prev) => {
+          let changed = false;
+          const next = prev.map((session) => {
+            if (isRemoteProjectPath(session.cwd)) return session;
+            const moved = withInstalledDefault(session);
+            if (moved !== session) changed = true;
+            return moved;
+          });
+          return changed ? next : prev;
+        });
+      }),
+    [],
+  );
 
   useEffect(() => {
     void probeHarnessAvailability();
@@ -7192,9 +7221,10 @@ function Workspace({
       if (!current) return;
       if (isPreparingHandoff(current)) return;
       const resolved = resolveModel(harness, model);
-      saveRecentModelChoice(resolved.harness, resolved.id);
-      if (current.modelSettings) {
-        saveLastModelSettings(current.modelSettings, "fill");
+      // The pick becomes the last used choice new conversations start with.
+      // Host sessions pick from the host's CLIs, so they leave it alone.
+      if (!isRemoteProjectPath(current.cwd)) {
+        rememberModelPick(resolved, current.modelSettings);
       }
       const modelSettings = preferredModelSettings(
         resolved,
@@ -9313,6 +9343,7 @@ function Workspace({
         if (!id) throw new Error("Missing mobile session ID");
         const existing = sessionsRef.current.find(current => current.id === id) ?? await getSession(id);
         if (existing?.blocks.some(block => block.appRequestId === commandId)) return { sessionId: id };
+        assertPhoneSendAllowed(isRemoteProjectPath(cwd));
         // Staged before the session exists, so a bad file leaves nothing behind.
         const attachments = await mobileAttachments(params.attachments);
         const session = existing ?? {
@@ -9384,6 +9415,7 @@ function Workspace({
         session.queuedMessages?.some((message) => message.id === commandId)
       )
         return { sessionId: session.id };
+      assertPhoneSendAllowed(isRemoteProjectPath(session.cwd));
       const attachments = await mobileAttachments(params.attachments);
       // Mid-turn it steers or queues, as a message typed in the composer would.
       if (!submitSessionRef.current(session.id, text, attachments, { appRequestId: commandId, followsUp: true }))
@@ -12661,6 +12693,13 @@ function Workspace({
   }, []);
 
   useEffect(() => {
+    const onOpenAgentClis = () => openSettings("providers", "agent-clis");
+    window.addEventListener(OPEN_AGENT_CLIS_EVENT, onOpenAgentClis);
+    return () =>
+      window.removeEventListener(OPEN_AGENT_CLIS_EVENT, onOpenAgentClis);
+  }, [openSettings]);
+
+  useEffect(() => {
     const onOpenMcp = () => openSettings("mcp");
     window.addEventListener("gespan:open-mcp-settings", onOpenMcp);
     return () =>
@@ -13505,6 +13544,15 @@ function Workspace({
       listen("open_settings", () => actions.current.openSettings()),
       listen("check_for_updates", () => {
         void runUpdateFlow(true);
+      }),
+      // "Open Settings" from the quick composer or a floating Pilot chat when
+      // no coding agent is found.
+      listen(OPEN_AGENT_CLIS_REQUEST_EVENT, async () => {
+        await answerAgentClisSettingsRequest(
+          getCurrentWindow(),
+          await getAllWebviewWindows(),
+          () => actions.current.openSettings("providers", "agent-clis"),
+        );
       }),
       listen("sidebar_opacity", () => {
         actions.current.openSettings("appearance");

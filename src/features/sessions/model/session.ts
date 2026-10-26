@@ -9,11 +9,14 @@ import type { LinkedWorkItemUpdateCard } from "../../inbox/model/linkedWorkItemA
 import {
   defaultSessionChoice,
   firstEnabledHarness,
+  firstEnabledOf,
+  loadLastModelChoice,
   preferredModelId,
   preferredModelSettings,
   resolveModel,
 } from "./models";
 import { loadProjectProviderSettings } from "./projectProviders";
+import { hasProbedHarnessAvailability } from "../../../integrations/harness/core/availabilityState";
 
 export type HarnessId =
   | "claude"
@@ -616,6 +619,38 @@ export function newDefaultSession(
 }
 
 /**
+ * A conversation opened before detection finished may sit on a provider this
+ * computer doesn't have. Until its first message, move it to the provider and
+ * model a new conversation would get now. Started conversations, and ones
+ * already on an installed provider, are returned as is.
+ */
+export function withInstalledDefault(session: Session): Session {
+  if (
+    session.blocks.length > 0 ||
+    session.busy ||
+    session.providerSessionId ||
+    !hasProbedHarnessAvailability()
+  )
+    return session;
+  const installed = firstEnabledOf(session.cwd, [session.harness]);
+  // Nothing installed: rule 2 disables the composer instead.
+  if (!installed || installed === session.harness) return session;
+  const choice = defaultSessionChoice(session.cwd);
+  if (choice.harness === session.harness) return session;
+  const resolved = resolveModel(choice.harness, choice.model);
+  return {
+    ...session,
+    harness: choice.harness,
+    model: resolved.id,
+    modelSettings: preferredModelSettings(resolved, session.modelSettings),
+    title:
+      session.title === HARNESS_LABEL[session.harness]
+        ? HARNESS_LABEL[choice.harness]
+        : session.title,
+  };
+}
+
+/**
  * Provider and model a seeded session should use in `cwd`. The project's own
  * default provider and model win over the seed; when the project has neither,
  * the seed's provider and model are carried. A provider the project hides is
@@ -627,38 +662,34 @@ function projectSessionChoice(
 ): { harness: HarnessId; model?: string } {
   const project = loadProjectProviderSettings(cwd);
   const seedHarness = seed?.harness ?? "claude";
-  const harness = firstEnabledHarness(
-    cwd,
-    project.defaultHarness ?? seedHarness,
-  );
+  // An uninstalled project default falls to the seed's provider, then the
+  // last one picked, before the first installed one.
+  const harness =
+    firstEnabledOf(cwd, [
+      project.defaultHarness,
+      seedHarness,
+      loadLastModelChoice()?.harness,
+    ]) ?? firstEnabledHarness(cwd, project.defaultHarness ?? seedHarness);
   const model =
     project.models?.[harness] ??
     (project.defaultHarness === harness ? project.defaultModel : undefined) ??
-    (project.defaultHarness == null && harness === seedHarness
+    (project.defaultHarness !== harness && harness === seedHarness
       ? seed?.model
       : undefined);
   return { harness, model };
 }
 
 /**
- * New conversation for a project. The project's default provider and model win
- * over the seed's; a provider the project has hidden is swapped for its first
- * enabled one.
+ * New conversation for a project, on the provider and model any new
+ * conversation there gets: the project's default, else the last picked, else
+ * the first installed. Only the seed's access mode carries over.
  */
 export function newSessionForProject(
   seed: Session | undefined,
   cwd: string,
 ): Session {
-  const { harness, model } = projectSessionChoice(seed, cwd);
-  const carriesSeed =
-    model != null && model === seed?.model && harness === seed?.harness;
-  return newSession(
-    harness,
-    cwd,
-    model,
-    seed?.runtimeMode,
-    carriesSeed ? seed?.modelSettings : undefined,
-  );
+  const choice = defaultSessionChoice(cwd);
+  return newSession(choice.harness, cwd, choice.model, seed?.runtimeMode);
 }
 
 /**

@@ -35,9 +35,14 @@ import {
   subscribeModels,
   mergeModelSettings,
   loadLastModelSettings,
+  rememberModelPick,
   saveLastModelSettings,
   saveRecentModelChoice,
 } from "../../sessions/model/models";
+import {
+  NO_CODING_AGENT_HINT,
+  OPEN_AGENT_CLIS_REQUEST_EVENT,
+} from "../../sessions/model/noCodingAgent";
 import {
   DEFAULT_RUNTIME_MODE,
   HARNESS_TITLE,
@@ -145,6 +150,8 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
   const [highlight, setHighlight] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Known only once a workspace window reports its probe.
+  const noCodingAgent = availableHarnesses?.length === 0;
   const attachmentsSupported = harnessSupportsAttachments(choice.harness);
   const attachments = useQuickAttachments(
     attachmentsSupported && !busy,
@@ -208,7 +215,15 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
     let unlisten: (() => void) | undefined;
     void listen(QUICK_COMPOSER_CATALOG_EVENT, (event) => {
       const available = applyQuickCatalog(event.payload);
-      if (available) setAvailableHarnesses(available);
+      if (!available) return;
+      setAvailableHarnesses(available);
+      // Opened before detection on a provider that isn't installed: move to
+      // the one a new session would get now.
+      setChoice((current) =>
+        available.length === 0 || available.includes(current.harness)
+          ? current
+          : initialQuickChoice(),
+      );
     }).then((stop) => {
       if (disposed) {
         stop();
@@ -277,6 +292,7 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
   const openPicker = (
     kind: "project" | "model" | "permissions" | "attachments",
   ) => {
+    if (kind === "model" && noCodingAgent) return;
     if (picker === kind) {
       closePicker();
       return;
@@ -356,6 +372,7 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
       (!text && !attachments.files.length) ||
       !cwd ||
       busy ||
+      noCodingAgent ||
       attachments.loading ||
       gitOpen ||
       !resolvedModel ||
@@ -467,6 +484,7 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
       attachments.files.length) &&
     cwd &&
     !busy &&
+    !noCodingAgent &&
     !attachments.loading &&
     !gitOpen &&
     resolvedModel &&
@@ -660,14 +678,29 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
           type="button"
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => openPicker("model")}
-          title="Model (⌘.)"
+          disabled={noCodingAgent}
+          title={noCodingAgent ? NO_CODING_AGENT_HINT : "Model (⌘.)"}
           aria-expanded={picker === "model"}
-          className={`flex min-w-0 max-w-[40%] items-center gap-1.5 rounded-md px-2 py-1 text-[12px] ${picker === "model" ? "bg-selection-emphasis text-content" : "text-content/70 hover:bg-selection-hover hover:text-content"}`}
+          className={`flex min-w-0 max-w-[40%] items-center gap-1.5 rounded-md px-2 py-1 text-[12px] disabled:opacity-50 ${picker === "model" ? "bg-selection-emphasis text-content" : "text-content/70 hover:bg-selection-hover hover:text-content"}`}
         >
           <HarnessIcon harness={model.harness} className="size-3.5 shrink-0" />
           <span className="truncate">{model.name}</span>
           <ChevronDown className="size-3 shrink-0 opacity-60" />
         </button>
+        {noCodingAgent ? (
+          <button
+            type="button"
+            title={NO_CODING_AGENT_HINT}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              void emit(OPEN_AGENT_CLIS_REQUEST_EVENT);
+              dismiss();
+            }}
+            className="shrink-0 rounded-md px-2 py-1 text-[12px] text-amber-400 hover:bg-selection-hover hover:text-amber-300"
+          >
+            Open Settings
+          </button>
+        ) : null}
         {model.harness !== "fx" ? (
           <button
             type="button"
@@ -706,6 +739,7 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
             type="button"
             onClick={() => void submit(false)}
             disabled={!canSubmit}
+            title={noCodingAgent ? NO_CODING_AGENT_HINT : undefined}
             className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-40"
           >
             {leadingMode?.name === DRAFT_COMMAND.name ? "Save draft" : "Start"}
@@ -790,13 +824,14 @@ export function QuickComposer({ onShown }: { onShown: () => void }) {
               )}
             </div>
           ) : null}
-          {picker === "model" ? (
+          {picker === "model" && !noCodingAgent ? (
             <QuickModelSelector
               model={model}
               values={settings}
               availableHarnesses={availableHarnesses}
               onChange={(selected) => {
                 setChoice({ harness: selected.harness, model: selected.id });
+                rememberModelPick(selected);
                 setModelSettings((current) =>
                   mergeModelSettings(selected, current),
                 );

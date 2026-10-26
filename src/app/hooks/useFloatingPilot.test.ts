@@ -200,3 +200,41 @@ it("shows or hides the menu bar icon to match the setting", async () => {
     visible: false,
   });
 });
+
+// Last: detection can't be undone within this file.
+it("republishes open Pilots when detection finds no coding agent, and again when one appears", async () => {
+  const availability = await import(
+    "../../integrations/harness/core/availabilityState"
+  );
+  const none = Object.fromEntries(
+    ["claude", "codex", "cursor", "grok", "opencode", "pi", "omp", "fx", "hermes", "kiro", "antigravity", "devin"].map(
+      (id) => [id, false],
+    ),
+  ) as Parameters<typeof availability.setHarnessAvailability>[0];
+  await act(async () => root.render(createElement(Harness, { sessions })));
+  const flags = () =>
+    native.invoke.mock.calls
+      .filter(([command]) => command === "pilot_chat_publish")
+      .map(([, { pilotId, session }]) => [pilotId, !!session.noCodingAgent]);
+
+  native.invoke.mockClear();
+  await act(async () => {
+    availability.setHarnessAvailability(none);
+    availability.markHarnessAvailabilityProbed();
+    availability.emitHarnessAvailability();
+  });
+  expect(flags()).toEqual([
+    ["first", true],
+    ["second", true],
+  ]);
+
+  native.invoke.mockClear();
+  await act(async () => {
+    availability.setHarnessAvailability({ ...none, codex: true });
+    availability.emitHarnessAvailability();
+  });
+  expect(flags()).toEqual([
+    ["first", false],
+    ["second", false],
+  ]);
+});
