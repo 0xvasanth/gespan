@@ -5881,3 +5881,193 @@ fn layout_state_marks_the_view_dirty_and_saves_with_it(cx: &mut TestAppContext) 
         list::Layout::Table
     );
 }
+
+// ---- C4-4 review fixes ----
+
+/// The list's groups as (heading, card titles), in display order.
+fn group_summary(f: &Fixture, cx: &mut impl gpui::AppContext) -> Vec<(String, Vec<String>)> {
+    drawer(f, cx, |view, _| {
+        let detail = view.detail.as_ref().unwrap();
+        view.groups(&view.layout_spec())
+            .iter()
+            .map(|group| {
+                (
+                    group.label.clone(),
+                    group
+                        .cards
+                        .iter()
+                        .map(|&at| detail.cards[at].title.clone())
+                        .collect(),
+                )
+            })
+            .collect()
+    })
+}
+
+fn group_by(visual: &mut VisualTestContext, key: &'static str) {
+    click(visual, "board-list-group-by");
+    click(visual, key);
+}
+
+fn titles(names: &[&str]) -> Vec<String> {
+    names.iter().map(|n| n.to_string()).collect()
+}
+
+#[gpui::test]
+fn list_groups_by_label_due_bucket_and_project(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let board = detail(&f, cx).board.id.clone();
+    let (a, b) = (card_id(&f, cx, "A"), card_id(&f, cx, "B"));
+    {
+        let mut service = Service::open(&f.db).unwrap();
+        let bug = service.create_label(&board, "Bug", "e5534b").unwrap();
+        let docs = service.create_label(&board, "Docs", "4da3f5").unwrap();
+        service.set_labels(&a, &[bug.id.clone(), docs.id]).unwrap();
+        service.set_labels(&b, &[bug.id]).unwrap();
+        service.set_projects(&a, &["/work/one".into()]).unwrap();
+    }
+    due_in(&f, cx, "A", 0);
+    due_in(&f, cx, "B", 9);
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-list");
+    group_by(visual, "menu-action-group-label");
+    // A card with two labels is under both; the unlabelled one under "No label".
+    assert_eq!(
+        group_summary(&f, visual),
+        [
+            ("Bug".to_string(), titles(&["A", "B"])),
+            ("Docs".to_string(), titles(&["A"])),
+            ("No label".to_string(), titles(&["C"])),
+        ]
+    );
+    group_by(visual, "menu-action-group-due");
+    assert_eq!(
+        group_summary(&f, visual),
+        [
+            ("Today".to_string(), titles(&["A"])),
+            ("Later".to_string(), titles(&["B"])),
+            ("No due date".to_string(), titles(&["C"])),
+        ]
+    );
+    group_by(visual, "menu-action-group-project");
+    assert_eq!(
+        group_summary(&f, visual),
+        [
+            ("one".to_string(), titles(&["A"])),
+            ("No project".to_string(), titles(&["B", "C"])),
+        ]
+    );
+    // Selecting across groups follows the shown order, a card counted once.
+    group_by(visual, "menu-action-group-label");
+    cmd_click(visual, 1);
+    shift_click(visual, 3);
+    assert_eq!(selected_numbers(&f, visual), [1, 2, 3]);
+}
+
+#[gpui::test]
+fn table_labels_edit_inline(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let a = card_id(&f, cx, "A");
+    let board = detail(&f, cx).board.id.clone();
+    let (bug, docs) = {
+        let mut service = Service::open(&f.db).unwrap();
+        (
+            service.create_label(&board, "Bug", "e5534b").unwrap(),
+            service.create_label(&board, "Docs", "4da3f5").unwrap(),
+        )
+    };
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-table");
+    click(visual, "board-table-cell-labels-1");
+    click(visual, selector(format!("menu-action-label-{}", bug.id)));
+    assert_eq!(extras_of(&f, &a).labels, std::slice::from_ref(&bug.id));
+    click(visual, "board-table-cell-labels-1");
+    click(visual, selector(format!("menu-action-label-{}", docs.id)));
+    assert_eq!(extras_of(&f, &a).labels, [bug.id.clone(), docs.id.clone()]);
+    click(visual, "board-table-cell-labels-1");
+    click(visual, selector(format!("menu-action-label-{}", bug.id)));
+    assert_eq!(extras_of(&f, &a).labels, std::slice::from_ref(&docs.id));
+    drawer(&f, visual, |view, _| assert!(view.card_detail.is_none()));
+}
+
+#[gpui::test]
+fn a_selection_holds_only_cards_on_screen(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Keep", "Drop"]);
+    let (keep, drop_id) = (card_id(&f, cx, "Keep"), card_id(&f, cx, "Drop"));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    cmd_click(visual, 1);
+    cmd_click(visual, 2);
+    drawer(&f, visual, |view, _| assert_eq!(view.selected_count(), 2));
+    click(visual, "board-search");
+    visual.simulate_input("keep");
+    visual.run_until_parked();
+    assert_eq!(selected_numbers(&f, visual), [1]);
+    drawer(&f, visual, |view, _| assert_eq!(view.selected_count(), 1));
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-bulk-bar").is_some());
+    click(visual, "board-bulk-archive");
+    assert_eq!(archived_ids(&f, visual), std::slice::from_ref(&keep));
+    assert!(!archived_ids(&f, visual).contains(&drop_id));
+    assert_eq!(toast(&f, visual).as_deref(), Some("Archived #1"));
+}
+
+#[gpui::test]
+fn an_untouched_table_edit_never_overwrites_a_remote_rename(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Alpha"]);
+    let alpha = card_id(&f, cx, "Alpha");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-table");
+    click(visual, "board-table-edit-1");
+    Service::open(&f.db)
+        .unwrap()
+        .card_update(&alpha, "Renamed elsewhere", "")
+        .unwrap();
+    reload(&f, visual);
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(card_of(&f, &alpha).title, "Renamed elsewhere");
+    drawer(&f, visual, |view, _| assert!(view.table_edit.is_none()));
+    // Typing something does write it.
+    click(visual, "board-table-edit-1");
+    visual.simulate_input("!");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(card_of(&f, &alpha).title, "Renamed elsewhere!");
+}
+
+#[gpui::test]
+fn a_second_bulk_delete_commits_the_first_and_a_board_switch_commits_the_second(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded(cx, &["A", "B", "C", "D"]);
+    let ids: Vec<String> = ["A", "B", "C", "D"]
+        .iter()
+        .map(|t| card_id(&f, cx, t))
+        .collect();
+    let sprint = Service::open(&f.db).unwrap().create("Sprint").unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    cmd_click(visual, 1);
+    cmd_click(visual, 2);
+    click(visual, "board-bulk-delete");
+    assert!(card_exists(&f, &ids[0]) && card_exists(&f, &ids[1]), "held");
+    cmd_click(visual, 3);
+    cmd_click(visual, 4);
+    click(visual, "board-bulk-delete");
+    // The first pair is deleted for good; the second is held now.
+    assert!(!card_exists(&f, &ids[0]) && !card_exists(&f, &ids[1]));
+    assert!(card_exists(&f, &ids[2]) && card_exists(&f, &ids[3]));
+    let mut held = archived_ids(&f, visual);
+    held.sort();
+    let mut expected = vec![ids[2].clone(), ids[3].clone()];
+    expected.sort();
+    assert_eq!(held, expected);
+    assert_eq!(toast(&f, visual).as_deref(), Some("Deleted 2 cards"));
+    f.window
+        .update(visual, |view, _, cx| view.open_board(sprint.id.clone(), cx))
+        .unwrap();
+    visual.run_until_parked();
+    assert!(!card_exists(&f, &ids[2]) && !card_exists(&f, &ids[3]));
+    assert_eq!(toast(&f, visual), None);
+}

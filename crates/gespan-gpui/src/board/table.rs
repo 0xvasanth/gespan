@@ -44,6 +44,9 @@ const FIELD_WIDTH: i64 = 140;
 /// A title being typed in a row.
 pub(super) struct TableEdit {
     pub card_id: String,
+    /// The title the edit started from. Only typing that differs from it is
+    /// written, so an untouched edit never overwrites a rename made elsewhere.
+    original: String,
     pub input: Entity<Input>,
     _submit: Subscription,
 }
@@ -177,6 +180,7 @@ impl BoardView {
         window.focus(&input.focus_handle(cx), cx);
         self.table_edit = Some(TableEdit {
             card_id: card.id,
+            original: card.title,
             input,
             _submit: submit,
         });
@@ -195,7 +199,7 @@ impl BoardView {
             cx.notify();
             return true;
         };
-        if title == card.title {
+        if title == edit.original.trim() {
             cx.notify();
             return true;
         }
@@ -400,7 +404,7 @@ impl BoardView {
             .iter()
             .map(|column| self.table_cell(card, column, cx))
             .collect();
-        self.row_shell(card, cx)
+        self.row_shell(card, 0, cx)
             .w(px(total))
             .px_0()
             .gap_0()

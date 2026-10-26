@@ -115,6 +115,13 @@ impl BoardView {
 
     /// Re-run the query and cache the cards it matched and their order.
     pub(super) fn refresh_query(&mut self, cx: &App) -> Result<(), String> {
+        let result = self.run_query(cx);
+        // A selection holds only cards on screen: ones the query now hides drop.
+        self.prune_selection();
+        result
+    }
+
+    fn run_query(&mut self, cx: &App) -> Result<(), String> {
         let spec = self.current_spec(cx);
         self.last_query = spec.query.clone();
         let Some(board_id) = self.open_board_id.clone() else {

@@ -183,13 +183,20 @@ impl BoardView {
     }
 
     /// Forget selected cards that left the board (archived, deleted, moved to
-    /// another board) so the bar never counts a card that is gone.
+    /// another board) or that the search or filter now hides, so the bar and
+    /// every bulk action cover only what is on screen.
     pub(super) fn prune_selection(&mut self) {
         let Some(detail) = &self.detail else {
             return;
         };
         let live: HashSet<&str> = detail.cards.iter().map(|card| card.id.as_str()).collect();
-        self.selection.ids.retain(|id| live.contains(id.as_str()));
+        let shown: HashSet<&str> = detail
+            .cards
+            .iter()
+            .filter(|card| self.card_matches(card))
+            .map(|card| card.id.as_str())
+            .collect();
+        self.selection.ids.retain(|id| shown.contains(id.as_str()));
         if let Some(anchor) = &self.selection.anchor
             && !live.contains(anchor.as_str())
         {

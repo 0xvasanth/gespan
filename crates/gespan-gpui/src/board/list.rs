@@ -124,7 +124,8 @@ pub(super) enum ListRow {
         count: usize,
         collapsed: bool,
     },
-    Card(usize),
+    /// A card (index into the board's cards) and the group showing it.
+    Card(usize, usize),
 }
 
 fn due_bucket(due_at: Option<i64>, done: bool, today: NaiveDate) -> (&'static str, &'static str) {
@@ -317,7 +318,7 @@ impl BoardView {
                 collapsed,
             });
             if !collapsed {
-                rows.extend(group.cards.into_iter().map(ListRow::Card));
+                rows.extend(group.cards.into_iter().map(|at| ListRow::Card(at, index)));
             }
         }
         rows
@@ -328,13 +329,16 @@ impl BoardView {
     pub(super) fn row_shell(
         &self,
         card: &gespan_core::board::Card,
+        scope: usize,
         cx: &mut Context<Self>,
     ) -> Stateful<gpui::Div> {
         let number = card.number;
         let selected = self.is_selected(&card.id);
         let (click_id, menu_id) = (card.id.clone(), card.id.clone());
         div()
-            .id(("board-card", number as u64))
+            .id(gpui::SharedString::from(format!(
+                "board-card-{scope}-{number}"
+            )))
             .debug_selector(move || format!("board-card-{number}"))
             .role(Role::ListItem)
             .aria_label(card.title.clone())
@@ -420,7 +424,7 @@ impl BoardView {
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_group(&key, cx)))
                     .into_any_element()
             }
-            ListRow::Card(at) => {
+            ListRow::Card(at, group) => {
                 let Some(card) = detail.cards.get(*at) else {
                     return div().into_any_element();
                 };
@@ -433,7 +437,7 @@ impl BoardView {
                     .due_at
                     .and_then(|at| super::style::due_label(at, now as i64));
                 let by_status = spec.group_by.as_deref().unwrap_or("status") == "status";
-                self.row_shell(card, cx)
+                self.row_shell(card, *group, cx)
                     .child(div().w(px(18.)).child(priority_glyph(extras.priority)))
                     .child(
                         div()
