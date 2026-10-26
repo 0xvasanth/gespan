@@ -1,0 +1,41 @@
+crates/gespan-gpui/src/shell/hold.rs
+  s_b06ab57b57164e::t_bb322aea4c0dfd 106-107,109-112,1104-1117
+src-tauri/src/pilot_chat.rs
+  s_b06ab57b57164e::t_f15e853f4ade61 188-189
+src/app/App.tsx
+  s_b06ab57b57164e::t_ebed95ab835647 840,1227-1241,13392-13396,13400-13405,13407-13414,13478,14486-14487,15105
+src/features/hold/model/holdCoordinator.test.ts
+  s_b06ab57b57164e::t_dbcd8ef9d42769 50,65,67,74,87,91,106,113,122,126,134,140,151-152,171,182
+src/features/hold/model/holdCoordinator.ts
+  s_b06ab57b57164e::t_71dee581b1ae92 2,83-90
+src/features/hold/model/holdPress.test.ts
+  s_b06ab57b57164e::t_96570c90e08cf0 1-117
+src/features/hold/model/holdPress.ts
+  s_b06ab57b57164e::t_54deb98310efbe 1-116
+src/features/hold/model/useHold.test.ts
+  s_b06ab57b57164e::t_83d81baa7bd229 42,46,48
+src/features/hold/model/useHold.ts
+  s_b06ab57b57164e::t_2c3a5680072ed4 1,5,33
+src/features/hold/ui/HoldControl.test.ts
+  s_b06ab57b57164e::t_c4c7d5019ef2ab 5,7,33-34,40-41,47-48,59-60,84-85,98-197
+src/features/hold/ui/HoldControl.tsx
+  s_b06ab57b57164e::t_d604a8b306ec9c 5-6,21-22,28-29,33,89
+src/features/hold/ui/HoldToConfirm.tsx
+  s_b06ab57b57164e::t_c6047321f23cb9 1-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0bc5152a4959595f92c0ab484f120dbc244ea22c",
+  "prompts": {},
+  "sessions": {
+    "s_b06ab57b57164e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bbb2945e-6204-480d-8aee-b490f9bc914d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
