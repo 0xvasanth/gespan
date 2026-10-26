@@ -1,67 +1,165 @@
-//! Hold everything: confirm, stop every session at its safe point, keep the
-//! hold across restarts, and resume sessions a few at a time.
+//! Hold everything: press and hold to confirm, stop every session at its
+//! safe point, keep the hold across restarts, and resume sessions a few at a
+//! time.
 use super::*;
 use crate::conversation::HoldChanged;
 use crate::hold::Hold;
+use crate::hold_confirm::{Label, Press, Released};
 use gespan_core::hold::{HoldState, Phase, Reason, ResumeQueue};
+use gpui::{ClickEvent, Div, Hsla, Stateful, relative};
+use std::time::Duration;
 
 /// At most this many held sessions start again at once.
 const RESUME_LIMIT: usize = 3;
+/// Wide enough for the longest label, so the button never resizes.
+const PRESS_WIDTH: f32 = 172.;
+const PRESS_FRAME: Duration = Duration::from_millis(16);
+/// How often a waiting hint or armed label checks whether it expired.
+const LABEL_FRAME: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
 pub(super) struct HoldCoordinator {
     subscriptions: Vec<Subscription>,
     resume: Option<ResumeQueue>,
     reasons: HashMap<i64, Reason>,
-    prompting: bool,
+    pub(super) press: Press,
+    /// ⌘⇧H is down: its auto-repeats are ignored until it is released.
+    key_held: bool,
+    ticking: bool,
     details_open: bool,
     /// Mirrors the global phase for code that has no `App` at hand.
     pub(super) on_hold: bool,
 }
 
+/// The Hold shortcut's modifiers are still down, so the press can be held.
+fn shortcut_down(window: &Window) -> bool {
+    let modifiers = window.modifiers();
+    modifiers.secondary() && modifiers.shift
+}
+
 impl Shell {
-    /// ⌘⇧H, the status-bar control, the palette and the menus all land here.
+    /// ⌘⇧H, the palette and the menus all land here. Held ⌘⇧H drives the
+    /// press; anything that cannot be held only shows "Hold to confirm".
     pub(super) fn toggle_hold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match crate::hold::phase(cx) {
-            None => self.confirm_hold(window, cx),
-            // Hold can't be undone until every session has stopped.
-            Some(Phase::Holding) => {}
-            Some(Phase::OnHold) => self.resume_all(cx),
-        }
-    }
-    pub(super) fn confirm_hold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.hold.prompting || crate::hold::active(cx) {
+        if self.hold.key_held {
             return;
         }
-        self.hold.prompting = true;
-        let running = self
-            .hold_views(cx)
-            .iter()
-            .filter(|(v, _)| v.read(cx).busy)
-            .count();
-        let sessions = match running {
-            1 => "1 running session".to_owned(),
-            n => format!("{n} running sessions"),
-        };
-        let detail = format!(
-            "{sessions} will stop once their current command finishes, and nothing new will start. \
-             Messages you send will wait until you resume. You can't resume until every session has stopped."
-        );
-        let answer = window.prompt(
-            gpui::PromptLevel::Warning,
-            "Hold everything?",
-            Some(&detail),
-            &["Hold", "Cancel"],
-            cx,
-        );
+        let key = shortcut_down(window);
+        match crate::hold::phase(cx) {
+            None if key => {
+                self.hold.key_held = true;
+                self.start_hold_press(cx);
+            }
+            None => self.arm_hold_hint(cx),
+            // Hold can't be undone until every session has stopped.
+            Some(Phase::Holding) => {}
+            Some(Phase::OnHold) => {
+                self.hold.key_held = key;
+                self.resume_all(cx);
+            }
+        }
+    }
+    /// Shows "Hold to confirm" on the status-bar button.
+    pub(super) fn arm_hold_hint(&mut self, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        self.hold.press.hint(now);
+        self.drive_hold_press(cx);
+    }
+    fn start_hold_press(&mut self, cx: &mut Context<Self>) {
+        if crate::hold::active(cx) {
+            return;
+        }
+        let now = cx.background_executor().now();
+        self.hold.press.start(now);
+        self.drive_hold_press(cx);
+    }
+    fn release_hold_press(&mut self, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        if self.hold.press.release(now) == Released::Confirmed {
+            self.hold_press_confirmed(cx);
+        } else {
+            self.drive_hold_press(cx);
+        }
+    }
+    /// The pointer left, the window lost focus or a modifier was released.
+    pub(super) fn cancel_hold_press(&mut self, cx: &mut Context<Self>) {
+        self.hold.key_held = false;
+        if self.hold.press.pressing() {
+            let now = cx.background_executor().now();
+            self.hold.press.cancel(now);
+            self.drive_hold_press(cx);
+        }
+    }
+    pub(super) fn hold_key_up(&mut self, event: &gpui::KeyUpEvent, cx: &mut Context<Self>) {
+        if self.hold.key_held && event.keystroke.key.eq_ignore_ascii_case("h") {
+            self.hold.key_held = false;
+            if self.hold.press.pressing() {
+                self.release_hold_press(cx);
+            }
+        }
+    }
+    pub(super) fn hold_modifiers_changed(
+        &mut self,
+        event: &gpui::ModifiersChangedEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if self.hold.key_held && !(event.modifiers.secondary() && event.modifiers.shift) {
+            self.cancel_hold_press(cx);
+        }
+    }
+    /// Enter, Space or VoiceOver on the button: no press to hold, so the
+    /// first activation arms and a second one confirms.
+    pub(super) fn hold_button_keyboard_press(&mut self, cx: &mut Context<Self>) {
+        if crate::hold::active(cx) {
+            return;
+        }
+        let now = cx.background_executor().now();
+        if self.hold.press.click(now) {
+            self.hold_press_confirmed(cx);
+        } else {
+            self.drive_hold_press(cx);
+        }
+    }
+    fn hold_press_confirmed(&mut self, cx: &mut Context<Self>) {
+        self.hold.press = Press::default();
+        self.hold_all(cx);
+    }
+    /// Repaints while the fill moves, and confirms when it completes.
+    fn drive_hold_press(&mut self, cx: &mut Context<Self>) {
+        cx.notify();
+        if self.hold.ticking {
+            return;
+        }
+        self.hold.ticking = true;
         cx.spawn(async move |this, cx| {
-            let answer = answer.await;
-            let _ = this.update(cx, |this, cx| {
-                this.hold.prompting = false;
-                if matches!(answer, Ok(0)) {
-                    this.hold_all(cx);
+            let mut frame = PRESS_FRAME;
+            loop {
+                cx.background_executor().timer(frame).await;
+                let next = this
+                    .update(cx, |this, cx| {
+                        let now = cx.background_executor().now();
+                        if this.hold.press.tick(now).is_some() {
+                            this.hold_press_confirmed(cx);
+                        }
+                        cx.notify();
+                        let press = &this.hold.press;
+                        let next = if press.pressing() || press.progress(now) > 0. {
+                            Some(PRESS_FRAME)
+                        } else if press.animating(now) {
+                            Some(LABEL_FRAME)
+                        } else {
+                            None
+                        };
+                        this.hold.ticking = next.is_some();
+                        next
+                    })
+                    .ok()
+                    .flatten();
+                match next {
+                    Some(next) => frame = next,
+                    None => break,
                 }
-            });
+            }
         })
         .detach();
     }
@@ -396,12 +494,7 @@ impl Shell {
         };
         let summary = self.hold_summary(cx);
         let control = match crate::hold::phase(cx) {
-            None => chip("hold-control")
-                .aria_label("Hold everything (⌘⇧H)")
-                .child(icon("queue-pause", 12.))
-                .child(summary)
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_hold(window, cx)))
-                .into_any_element(),
+            None => self.hold_press_button(chip("hold-control"), cx),
             Some(Phase::Holding) => chip("hold-control")
                 .aria_label("Holding: show what is still finishing")
                 .child(crate::pulse::looping(
@@ -449,6 +542,81 @@ impl Shell {
             .flex_shrink_0()
             .mr(px(6.))
             .child(control)
+            .into_any_element()
+    }
+    /// Hold all: press and hold. The fill is an inverted copy of the label,
+    /// clipped to the progress, so the text changes colour under the edge.
+    fn hold_press_button(&self, chip: Stateful<Div>, cx: &mut Context<Self>) -> AnyElement {
+        let now = cx.background_executor().now();
+        let progress = self.hold.press.progress(now);
+        let text = match self.hold.press.label(now) {
+            Label::Rest => "Hold all",
+            Label::Hint => "Hold to confirm",
+            Label::Armed => "Press again to confirm",
+            Label::Done => "Holding…",
+        };
+        let face = |color: Hsla| {
+            div()
+                .w(px(PRESS_WIDTH))
+                .h_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap(px(5.))
+                .text_color(color)
+                .child(icon("queue-pause", 12.).text_color(color))
+                .child(text)
+        };
+        let mut ink = crate::theme::shell_fill();
+        ink.a = 1.;
+        chip.relative()
+            .w(px(PRESS_WIDTH))
+            .px_0()
+            .overflow_hidden()
+            .aria_label("Hold everything: press and hold (⌘⇧H)")
+            .child(face(content(0.6)))
+            .when(progress > 0., |chip| {
+                chip.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .bottom_0()
+                        .w(relative(progress))
+                        .overflow_hidden()
+                        .bg(content(0.85))
+                        .child(face(ink)),
+                )
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.start_hold_press(cx);
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.hold.press.pressing() {
+                        this.release_hold_press(cx);
+                    }
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.cancel_hold_press(cx)),
+            )
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !hovered && !this.hold.key_held {
+                    this.cancel_hold_press(cx);
+                }
+            }))
+            .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                if event.is_keyboard() {
+                    this.hold_button_keyboard_press(cx);
+                }
+            }))
             .into_any_element()
     }
     /// What Hold is still waiting for, each with Stop now, above the status bar.
@@ -561,6 +729,7 @@ mod tests {
 
     fn shell(store: Store, cx: &mut TestAppContext) -> WindowHandle<Shell> {
         let store = Arc::new(Mutex::new(store));
+        cx.update(crate::shell::bind_keys);
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |_, cx| {
                 cx.new(|cx| Shell::new(store, vec![], "/missing/hold".into(), None, cx))
@@ -777,46 +946,217 @@ mod tests {
             .unwrap();
     }
 
-    #[gpui::test]
-    fn cancelled_confirmation_changes_nothing(cx: &mut TestAppContext) {
-        let store = Store::open(Path::new(":memory:")).unwrap();
-        let ids = sessions(&store, 1);
-        let window = shell(store, cx);
-        busy_and_idle(window, &ids, cx);
-        window
-            .update(cx, |shell, w, cx| shell.toggle_hold(w, cx))
-            .unwrap();
+    fn advance(cx: &mut TestAppContext, ms: u64) {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(ms));
         cx.run_until_parked();
-        assert!(cx.has_pending_prompt());
-        cx.simulate_prompt_answer("Cancel");
-        cx.run_until_parked();
-        assert_eq!(phase(cx), None);
-        assert_eq!(saved(window, cx), None);
+    }
+    fn label(window: WindowHandle<Shell>, cx: &mut TestAppContext) -> crate::hold_confirm::Label {
         window
             .update(cx, |shell, _, cx| {
-                assert!(!shell.sessions[&ids[0]].read(cx).hold_requested);
+                shell.hold.press.label(cx.background_executor().now())
             })
-            .unwrap();
+            .unwrap()
+    }
+    fn requested(window: WindowHandle<Shell>, id: i64, cx: &mut TestAppContext) -> bool {
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&id].read(cx).hold_requested
+            })
+            .unwrap()
+    }
+    const SHORTCUT: &str = if cfg!(target_os = "macos") {
+        "cmd-shift-h"
+    } else {
+        "ctrl-shift-h"
+    };
+    fn shortcut_modifiers() -> gpui::Modifiers {
+        gpui::Modifiers {
+            shift: true,
+            ..gpui::Modifiers::secondary_key()
+        }
+    }
+    /// ⌘⇧H goes down: the modifiers first, then the key.
+    fn shortcut_down(visual: &mut gpui::VisualTestContext) {
+        visual.simulate_modifiers_change(shortcut_modifiers());
+        visual.simulate_keystrokes(SHORTCUT);
+    }
+    fn shortcut_up(visual: &mut gpui::VisualTestContext) {
+        visual.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(SHORTCUT).unwrap(),
+        });
+        visual.simulate_modifiers_change(gpui::Modifiers::none());
+    }
+    fn press_control(visual: &mut gpui::VisualTestContext) -> gpui::Point<gpui::Pixels> {
+        visual.refresh().unwrap();
+        let at = visual.debug_bounds("hold-control").unwrap().center();
+        visual.simulate_mouse_move(at, None, Default::default());
+        visual.simulate_mouse_down(at, gpui::MouseButton::Left, Default::default());
+        at
     }
 
     #[gpui::test]
-    fn confirmed_hold_starts_holding(cx: &mut TestAppContext) {
+    fn holding_the_button_for_the_full_duration_starts_holding(cx: &mut TestAppContext) {
         let store = Store::open(Path::new(":memory:")).unwrap();
         let ids = sessions(&store, 1);
         let window = shell(store, cx);
         busy_and_idle(window, &ids, cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        press_control(visual);
+        advance(visual, 1100);
+        assert_eq!(phase(visual), None, "not before the fill completes");
+        advance(visual, 150);
+        assert!(!visual.has_pending_prompt(), "no dialog");
+        assert_eq!(phase(visual), Some(Phase::Holding));
+        assert!(requested(window, ids[0], visual));
+    }
+
+    #[gpui::test]
+    fn early_release_changes_nothing(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let ids = sessions(&store, 1);
+        let window = shell(store, cx);
+        busy_and_idle(window, &ids, cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        let at = press_control(visual);
+        advance(visual, 500);
+        visual.simulate_mouse_up(at, gpui::MouseButton::Left, Default::default());
+        advance(visual, 3000);
+        assert_eq!(phase(visual), None);
+        assert_eq!(saved(window, visual), None);
+        assert!(!requested(window, ids[0], visual));
+    }
+
+    #[gpui::test]
+    fn leaving_the_button_mid_press_never_confirms(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        press_control(visual);
+        advance(visual, 400);
+        visual.simulate_mouse_move(
+            gpui::point(gpui::px(5.), gpui::px(5.)),
+            gpui::MouseButton::Left,
+            Default::default(),
+        );
+        advance(visual, 3000);
+        assert_eq!(phase(visual), None);
+    }
+
+    #[gpui::test]
+    fn a_tap_shows_hold_to_confirm(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        let at = press_control(visual);
+        advance(visual, 100);
+        visual.simulate_mouse_up(at, gpui::MouseButton::Left, Default::default());
+        visual.run_until_parked();
+        assert_eq!(label(window, visual), crate::hold_confirm::Label::Hint);
+        assert_eq!(phase(visual), None);
+        advance(visual, 2000);
+        assert_eq!(label(window, visual), crate::hold_confirm::Label::Rest);
+    }
+
+    #[gpui::test]
+    fn holding_the_shortcut_holds_and_an_early_key_up_does_not(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let ids = sessions(&store, 1);
+        let window = shell(store, cx);
+        busy_and_idle(window, &ids, cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        shortcut_down(visual);
+        advance(visual, 300);
+        shortcut_up(visual);
+        advance(visual, 3000);
+        assert_eq!(phase(visual), None, "released after 0.3 s");
+
+        shortcut_down(visual);
+        for _ in 0..12 {
+            // Key auto-repeat must not restart or speed up the fill.
+            advance(visual, 90);
+            visual.simulate_keystrokes(SHORTCUT);
+        }
+        assert_eq!(phase(visual), None, "1.08 s in");
+        advance(visual, 200);
+        assert!(!visual.has_pending_prompt());
+        assert_eq!(phase(visual), Some(Phase::Holding));
+    }
+
+    #[gpui::test]
+    fn releasing_a_modifier_cancels_the_shortcut(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        shortcut_down(visual);
+        advance(visual, 600);
+        visual.simulate_modifiers_change(gpui::Modifiers::secondary_key());
+        advance(visual, 3000);
+        assert_eq!(phase(visual), None);
+        assert_eq!(label(window, visual), crate::hold_confirm::Label::Rest);
+    }
+
+    #[gpui::test]
+    fn blurring_the_window_mid_press_never_confirms(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.update(|window, _| window.activate_window());
+        visual.run_until_parked();
+        shortcut_down(visual);
+        advance(visual, 600);
+        visual.deactivate_window();
+        advance(visual, 3000);
+        assert_eq!(phase(visual), None);
+    }
+
+    #[gpui::test]
+    fn key_repeat_after_the_hold_lands_does_not_resume(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        shortcut_down(visual);
+        advance(visual, 1250);
+        assert_eq!(phase(visual), Some(Phase::OnHold), "nothing running");
+        visual.simulate_keystrokes(SHORTCUT);
+        advance(visual, 100);
+        assert_eq!(phase(visual), Some(Phase::OnHold), "still held down");
+        shortcut_up(visual);
+        shortcut_down(visual);
+        assert_eq!(phase(visual), None, "a fresh press resumes");
+    }
+
+    #[gpui::test]
+    fn the_palette_and_menus_show_the_hint_instead_of_holding(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
         window
-            .update(cx, |shell, w, cx| shell.toggle_hold(w, cx))
+            .update(cx, |_, w, cx| w.dispatch_action(Box::new(ToggleHold), cx))
             .unwrap();
         cx.run_until_parked();
-        cx.simulate_prompt_answer("Hold");
-        cx.run_until_parked();
-        assert_eq!(phase(cx), Some(Phase::Holding));
+        assert!(!cx.has_pending_prompt());
+        assert_eq!(phase(cx), None);
+        assert_eq!(label(window, cx), crate::hold_confirm::Label::Hint);
+        advance(cx, 5000);
+        assert_eq!(phase(cx), None);
+    }
+
+    #[gpui::test]
+    fn a_keyboard_press_of_the_button_arms_then_confirms(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
         window
-            .update(cx, |shell, _, cx| {
-                assert!(shell.sessions[&ids[0]].read(cx).hold_requested);
-            })
+            .update(cx, |shell, _, cx| shell.hold_button_keyboard_press(cx))
             .unwrap();
+        cx.run_until_parked();
+        assert_eq!(phase(cx), None, "the first press only arms");
+        assert_eq!(label(window, cx), crate::hold_confirm::Label::Armed);
+        advance(cx, 1000);
+        window
+            .update(cx, |shell, _, cx| shell.hold_button_keyboard_press(cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(phase(cx), Some(Phase::OnHold));
     }
 
     #[gpui::test]
@@ -833,7 +1173,7 @@ mod tests {
             .update(cx, |shell, w, cx| shell.toggle_hold(w, cx))
             .unwrap();
         cx.run_until_parked();
-        assert!(!cx.has_pending_prompt(), "no second confirmation");
+        assert!(!cx.has_pending_prompt());
         assert_eq!(phase(cx), Some(Phase::Holding), "no resume while holding");
     }
 
@@ -988,8 +1328,11 @@ mod tests {
         );
         assert!(visual.debug_bounds("hold-resume").is_none());
         click("hold-control", visual);
-        assert!(visual.has_pending_prompt(), "Hold always asks first");
-        visual.simulate_prompt_answer("Cancel");
+        assert!(
+            !visual.has_pending_prompt(),
+            "a click is a tap, not a dialog"
+        );
+        assert_eq!(visual.update(|_, cx| crate::hold::phase(cx)), None);
     }
 
     #[gpui::test]

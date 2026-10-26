@@ -7832,6 +7832,7 @@ impl Render for Shell {
                 .push(cx.observe_window_activation(window, |this, window, cx| {
                     if !window.is_window_active() {
                         this.close_preview(cx);
+                        this.cancel_hold_press(cx);
                     } else {
                         this.resume_git(cx);
                     }
@@ -7971,6 +7972,10 @@ impl Render for Shell {
             )
             .on_action(cx.listener(report::report_issue))
             .on_action(cx.listener(|this, _: &ToggleHold, window, cx| this.toggle_hold(window, cx)))
+            .on_key_up(cx.listener(|this, event, _, cx| this.hold_key_up(event, cx)))
+            .on_modifiers_changed(
+                cx.listener(|this, event, _, cx| this.hold_modifiers_changed(event, cx)),
+            )
             .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| {
                 this.open_quick_open(true, window, cx)
             }))
