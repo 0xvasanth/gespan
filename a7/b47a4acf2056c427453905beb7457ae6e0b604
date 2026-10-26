@@ -1,0 +1,62 @@
+src/features/board/ui/BoardUxBatch.test.ts
+  s_938a6e0c93b076::t_62121dc674ce04 1-795,797-799
+  s_938a6e0c93b076::t_a0dd04a1726e70 796,800-866
+src/features/board/model/cardProps.ts
+  s_938a6e0c93b076::t_45a28418cf2659 9-19,22,35,171-172,190-192,294-307
+src/features/board/model/constants.ts
+  s_938a6e0c93b076::t_1896d72f420a3c 1-4
+src/features/board/ui/BoardColumnHeader.tsx
+  s_938a6e0c93b076::t_a5d614cea52626 40-41,43-46,209,214-217,229-231,236,238,242,244,246-248,254-259,261,266-269,276-281,283-307
+src/features/board/ui/BoardScale.test.ts
+  s_938a6e0c93b076::t_d5b1880c8d5f17 9-10
+src/features/board/ui/BoardView.test.ts
+  s_938a6e0c93b076::t_21b74bc3ca1628 1487,1496,1499,1501-1502,1505,1519,1529,1531,2574
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_12d09ee71bfe2c 64,187-188,457-464,469-493,667,706,1179-1183,1187,1477-1478,1480,1812-1817,1819,1824-1839,1874,1886,1889-1895,1976-1979,2285-2302,2366-2369,2379-2384,2835,2883-2892
+src/features/board/ui/CardDetail.test.ts
+  s_938a6e0c93b076::t_5219af9391c697 541-544
+src/features/board/ui/CardDetail.tsx
+  s_938a6e0c93b076::t_8a33935130a9f7 1-10,79-86,114-116,118-126,168,187,217,222,275,290-294,296-299,307,312,320-338,449-450,456,460,483-485,501,513,535,554,571,604,732,758,780-781,790-824
+src/features/board/ui/CardDrawerParts.tsx
+  s_938a6e0c93b076::t_73810a6182b554 6,111-125,348,429
+src/features/board/ui/CardPropertyMenus.tsx
+  s_938a6e0c93b076::t_9297790cd559bb 75-84,106,110-115
+src/features/board/ui/CardWorkSections.tsx
+  s_938a6e0c93b076::t_1489ab4fcf404d 126,133-134,138,144-146,151,153,562,592,598-606,621-627,630-633,689
+src/features/board/ui/kanban/KanbanBoard.tsx
+  s_938a6e0c93b076::t_91cbaf45682782 92-96,198,569
+src/features/board/ui/kanban/KanbanColumn.tsx
+  s_938a6e0c93b076::t_ec267214ab5f49 55,57-61,127-132,139,166
+src/features/board/ui/kanban/SwimlanesScale.test.ts
+  s_938a6e0c93b076::t_c4be8079ae2961 82,459-460
+src/features/board/ui/linkRunWith.test.ts
+  s_938a6e0c93b076::t_5ca8bc0bdf6eb6 331
+src/features/board/ui/settings/ColumnsSection.tsx
+  s_938a6e0c93b076::t_64c8a7f713568e 8,174-175,177,205
+src/features/board/ui/settings/PrioritySection.tsx
+  s_938a6e0c93b076::t_07c4dcc9504f48 1,38-40,52-55,75
+src/features/board/ui/settings/boardSettings.test.ts
+  s_938a6e0c93b076::t_b3258cae06e202 212,530,532-533,574,583,585,588,590,592,601
+src/features/board/ui/settings/fieldsDisplay.test.ts
+  s_938a6e0c93b076::t_27db7f49be92bc 278
+src/features/board/ui/settings/templatesAutomation.test.ts
+  s_938a6e0c93b076::t_debf235a29a920 309
+src/features/board/ui/testBackend.ts
+  s_938a6e0c93b076::t_274091b25b4ffd 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a7b47a4acf2056c427453905beb7457ae6e0b604",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
