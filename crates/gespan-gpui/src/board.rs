@@ -45,17 +45,21 @@ use gespan_core::{
     tickets::{TicketRef, Tracker},
 };
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, Role,
-    SharedString, Subscription, Task, Window, div, prelude::*, px,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent,
+    ListState, Pixels, Role, SharedString, Subscription, Task, Window, div, prelude::*, px,
 };
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
 
 const POLL: Duration = Duration::from_secs(2);
+/// How far past each edge of a board column's view cards are laid out.
+pub(crate) const CARD_LIST_OVERDRAW: Pixels = px(240.);
 pub(crate) const ROLES: [(&str, &str); 4] = [
     ("todo", "To do"),
     ("doing", "Doing"),
@@ -264,6 +268,22 @@ pub(crate) struct BoardView {
     card_menu: Option<CardMenu>,
     /// One tab stop per collapsed column's strip.
     pub(crate) collapsed_focus: HashMap<String, FocusHandle>,
+    /// One windowed list per column: only the cards in (or near) view mount.
+    /// Item `i` is the column's `i`th visible card; the last item is the
+    /// composer (or "Add card").
+    pub(crate) column_lists: HashMap<String, ListState>,
+    /// The visible card ids each column's list was last synced with.
+    column_ids: HashMap<String, Vec<String>>,
+    /// Each card's place in `detail.cards`, for the list items.
+    card_slots: HashMap<String, usize>,
+    /// The last painted height of each column item (card id, or a column's
+    /// footer key), so a short column is exactly as tall as its cards.
+    item_heights: Rc<RefCell<HashMap<String, Pixels>>>,
+    /// The display options the lists were measured with.
+    list_display: Option<DisplayOptions>,
+    /// Cards rendered since the start of the last board render.
+    #[cfg(test)]
+    pub(crate) rendered_cards: std::cell::Cell<usize>,
     /// `(live, archived)` card counts per column, read with each reload.
     column_counts: HashMap<String, (usize, usize)>,
     /// The slot a dragged column would land in.
@@ -436,6 +456,13 @@ impl BoardView {
             card_focus: HashMap::new(),
             card_menu: None,
             collapsed_focus: HashMap::new(),
+            column_lists: HashMap::new(),
+            column_ids: HashMap::new(),
+            card_slots: HashMap::new(),
+            item_heights: Rc::default(),
+            list_display: None,
+            #[cfg(test)]
+            rendered_cards: std::cell::Cell::new(0),
             column_counts: HashMap::new(),
             column_drop: None,
             error: None,
@@ -838,6 +865,10 @@ impl BoardView {
             this.commit_composer(cx)
         }));
         window.focus(&input.focus_handle(cx), cx);
+        // The composer is the column's last row: bring it into view.
+        if let Some(count) = self.column_ids.get(&column_id).map(Vec::len) {
+            self.reveal_item(&column_id, count);
+        }
         self.composer = Some(Composer { column_id, input });
         self.menu = None;
         cx.notify();
@@ -1007,12 +1038,19 @@ impl BoardView {
             }
             return;
         }
-        // Cards not painted yet have no bounds; slots still count them, so
-        // map the slot among measured cards back to the visible list.
+        // Only the cards the column's window painted have bounds; slots still
+        // count every card, so map the slot among painted cards back to the
+        // visible list. A focused card kept mounted off screen paints outside
+        // the column's view and is left out.
+        let viewport = self
+            .column_lists
+            .get(column_id)
+            .map(|state| state.viewport_bounds());
         let measured: Vec<(usize, gpui::Bounds<gpui::Pixels>)> = cards
             .iter()
             .enumerate()
             .filter_map(|(index, card)| Some((index, self.card_anchors.get(&card.id)?.get()?)))
+            .filter(|(_, bounds)| viewport.is_none_or(|view| view.intersects(bounds)))
             .collect();
         let tops: Vec<_> = measured.iter().map(|(_, b)| b.top()).collect();
         let heights: Vec<_> = measured.iter().map(|(_, b)| b.size.height).collect();
@@ -1468,6 +1506,31 @@ impl gpui::Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.forget_finished_drag(cx);
         self.display = self.effective_display();
+        #[cfg(test)]
+        self.rendered_cards.set(0);
+        // Bounds are only good for the frame that painted them: a card
+        // scrolled out of a column's window keeps none.
+        for anchor in self.card_anchors.values() {
+            anchor.set(None);
+        }
+        if self.list_display.as_ref() != Some(&self.display) {
+            // A density or card-face change: every card height is stale.
+            if self.list_display.is_some() {
+                for state in self.column_lists.values() {
+                    state.remeasure();
+                }
+                self.item_heights.borrow_mut().clear();
+            }
+            self.list_display = Some(self.display.clone());
+        }
+        if self.detail.as_ref().is_some_and(|detail| {
+            detail
+                .columns
+                .iter()
+                .any(|column| !self.column_lists.contains_key(&column.id))
+        }) {
+            self.sync_column_lists();
+        }
         let root =
             div()
                 .id("board-view")

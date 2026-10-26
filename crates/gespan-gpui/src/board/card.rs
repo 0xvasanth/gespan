@@ -40,6 +40,8 @@ impl BoardView {
         done: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        #[cfg(test)]
+        self.rendered_cards.set(self.rendered_cards.get() + 1);
         let number = card.number;
         let display = &self.display;
         let face = &display.face;

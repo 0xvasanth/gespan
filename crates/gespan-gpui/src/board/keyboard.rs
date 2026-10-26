@@ -228,7 +228,12 @@ impl BoardView {
                 })
             }
         };
-        if let Some(handle) = target.and_then(|id| self.card_focus.get(&id)) {
+        let Some(target) = target else {
+            return;
+        };
+        // A card outside its column's window scrolls into view first.
+        self.reveal_card(&target);
+        if let Some(handle) = self.card_focus.get(&target) {
             window.focus(handle, cx);
         }
     }
@@ -323,6 +328,9 @@ impl BoardView {
             }
         }
         self.drop_target = Some((drag.column_id.clone(), drag.slot));
+        // The drop line shows above the card at the slot (or above the
+        // composer row past the last card): keep it in view.
+        self.reveal_item(&drag.column_id, drag.slot);
         self.kb_drag = Some(drag);
         cx.notify();
     }

@@ -8457,3 +8457,4 @@ fn a_failed_template_list_still_lets_the_switcher_create_a_blank_board(cx: &mut 
 
 mod agent_wiring;
 mod link_run;
+mod scale;

@@ -118,6 +118,7 @@ impl BoardView {
         let result = self.run_query(cx);
         // A selection holds only cards on screen: ones the query now hides drop.
         self.prune_selection();
+        self.sync_column_lists();
         result
     }
 
@@ -160,6 +161,7 @@ impl BoardView {
             self.matched = None;
             self.rank.clear();
             self.error = Some(error);
+            self.sync_column_lists();
         }
         cx.notify();
     }

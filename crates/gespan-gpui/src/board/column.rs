@@ -1,10 +1,64 @@
 //! One board column: role ring, name, count, actions, cards and the composer.
-use super::{BoardView, DraggedCard, DraggedColumn};
+use super::{BoardView, CARD_LIST_OVERDRAW, DraggedCard, DraggedColumn};
 use crate::theme::*;
-use gespan_core::board::{BoardDetail, Column};
-use gpui::{AnyElement, Context, FontWeight, Hsla, MouseButton, Role, div, prelude::*, px, rgb};
+use gespan_core::board::{
+    BoardDetail, Column,
+    extras::{Density, DisplayOptions},
+};
+use gpui::{
+    AnyElement, Context, FontWeight, Hsla, ListAlignment, ListOffset, ListState, MouseButton,
+    Pixels, Role, canvas, div, list, prelude::*, px, rgb,
+};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 pub(in crate::board) const COLUMN_WIDTH: f32 = 280.;
+/// The space above each card in a column, and around the composer.
+const ITEM_GAP: f32 = 6.;
+/// The composer's "Add card" row, until it has been measured.
+const FOOTER_ESTIMATE: f32 = 40.;
+
+/// A first guess at a card's height until it has been painted.
+fn card_estimate(display: &DisplayOptions) -> Pixels {
+    match display.density {
+        Density::Comfortable => px(76.),
+        Density::Compact => px(44.),
+    }
+}
+
+/// The `item_heights` key of a column's composer row.
+fn footer_key(column_id: &str) -> String {
+    format!("footer:{column_id}")
+}
+
+/// Records the painted height of a column item, and asks for another frame
+/// when it changed so the column's own height catches up.
+fn height_probe(heights: Rc<RefCell<HashMap<String, Pixels>>>, key: String) -> impl IntoElement {
+    canvas(
+        move |bounds, window, _| {
+            let height = bounds.size.height;
+            let old = heights.borrow_mut().insert(key, height);
+            if old != Some(height) {
+                window.refresh();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+/// The length of the shared start and end of two id lists, so a reload
+/// replaces only what changed between them.
+fn common_ends(old: &[String], new: &[String]) -> (usize, usize) {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let suffix = old[prefix..]
+        .iter()
+        .rev()
+        .zip(new[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    (prefix, suffix)
+}
 
 /// The 14px ring that says what a column is for.
 pub(super) fn role_icon(role: Option<&str>) -> AnyElement {
@@ -43,6 +97,237 @@ pub(super) fn role_icon(role: Option<&str>) -> AnyElement {
 }
 
 impl BoardView {
+    /// One list per column for the column's visible cards. A list whose ids
+    /// are unchanged is kept as it is, scroll position included. Otherwise
+    /// only the changed run of ids is spliced, and the card that was at the
+    /// top of the view stays there while it still exists.
+    pub(crate) fn sync_column_lists(&mut self) {
+        let mut lists = std::mem::take(&mut self.column_lists);
+        let mut old_ids = std::mem::take(&mut self.column_ids);
+        let Some(detail) = &self.detail else {
+            self.card_slots.clear();
+            return;
+        };
+        let slots = detail
+            .cards
+            .iter()
+            .enumerate()
+            .map(|(index, card)| (card.id.clone(), index))
+            .collect();
+        let estimate = card_estimate(&self.effective_display()) + px(ITEM_GAP);
+        let focus = |ids: &[String]| -> Vec<Option<gpui::FocusHandle>> {
+            ids.iter()
+                .map(|id| self.card_focus.get(id).cloned())
+                .collect()
+        };
+        let mut new_lists = HashMap::new();
+        let mut new_ids = HashMap::new();
+        for column in &detail.columns {
+            let ids: Vec<String> = self
+                .column_cards(detail, &column.id)
+                .into_iter()
+                .map(|card| card.id.clone())
+                .collect();
+            let state = match (lists.remove(&column.id), old_ids.remove(&column.id)) {
+                (Some(state), Some(old)) => {
+                    if old != ids {
+                        let top = state.logical_scroll_top();
+                        // At the very start nothing is above the view to keep
+                        // in place: whatever lands first shows.
+                        let at_start = top.item_ix == 0 && top.offset_in_item <= px(0.);
+                        let top_id = old.get(top.item_ix).filter(|_| !at_start);
+                        let (prefix, suffix) = common_ends(&old, &ids);
+                        state.splice_focusable(
+                            prefix..old.len() - suffix,
+                            focus(&ids[prefix..ids.len() - suffix]),
+                        );
+                        // New items start from the estimate, not zero, so the
+                        // scroll range and a jump far down stay close.
+                        let _ = state.clone().with_uniform_item_height(estimate);
+                        if let Some(item_ix) =
+                            top_id.and_then(|id| ids.iter().position(|new| new == id))
+                        {
+                            state.scroll_to(ListOffset {
+                                item_ix,
+                                offset_in_item: top.offset_in_item,
+                            });
+                        }
+                    }
+                    state
+                }
+                _ => {
+                    let state = ListState::new(0, ListAlignment::Top, CARD_LIST_OVERDRAW);
+                    // The cards, then the composer row.
+                    state.splice_focusable(0..0, focus(&ids).into_iter().chain([None]));
+                    state.with_uniform_item_height(estimate)
+                }
+            };
+            new_lists.insert(column.id.clone(), state);
+            new_ids.insert(column.id.clone(), ids);
+        }
+        self.card_slots = slots;
+        self.column_lists = new_lists;
+        self.column_ids = new_ids;
+    }
+
+    /// Scroll a board column so the card is in view. A card that isn't in a
+    /// column's visible cards is left alone.
+    pub(crate) fn reveal_card(&mut self, card_id: &str) {
+        let found = self.column_ids.iter().find_map(|(column, ids)| {
+            ids.iter()
+                .position(|id| id == card_id)
+                .map(|ix| (column.clone(), ix))
+        });
+        if let Some((column, ix)) = found {
+            self.reveal_item(&column, ix);
+        }
+    }
+
+    /// Scroll a column so its item `ix` (a card, or the composer row past the
+    /// last card) is fully in view.
+    pub(crate) fn reveal_item(&self, column_id: &str, ix: usize) {
+        let Some(state) = self.column_lists.get(column_id) else {
+            return;
+        };
+        let viewport = state.viewport_bounds();
+        let shown = state
+            .bounds_for_item(ix)
+            .is_some_and(|item| item.top() >= viewport.top() && item.bottom() <= viewport.bottom());
+        if !shown {
+            state.scroll_to_reveal_item(ix.min(state.item_count().saturating_sub(1)));
+        }
+    }
+
+    /// The column body's natural height: every card's painted height (or a
+    /// guess until it paints) and the composer row. A taller column shrinks
+    /// to the board and scrolls.
+    fn column_body_height(&self, column_id: &str) -> Pixels {
+        let heights = self.item_heights.borrow();
+        let estimate = card_estimate(&self.display) + px(ITEM_GAP);
+        let cards = self.column_ids.get(column_id).map_or(px(0.), |ids| {
+            ids.iter().fold(px(0.), |sum, id| {
+                sum + heights.get(id).copied().unwrap_or(estimate)
+            })
+        });
+        cards
+            + heights
+                .get(&footer_key(column_id))
+                .copied()
+                .unwrap_or(px(FOOTER_ESTIMATE))
+    }
+
+    /// Item `ix` of a column's list: a card with the drop line above it when
+    /// a drop would land there, or, past the last card, the composer row.
+    fn render_column_item(&self, column_id: &str, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let Some(detail) = self.detail.as_ref() else {
+            return div().into_any_element();
+        };
+        let Some((index, column)) = detail
+            .columns
+            .iter()
+            .enumerate()
+            .find(|(_, column)| column.id == column_id)
+        else {
+            return div().into_any_element();
+        };
+        let ids = self
+            .column_ids
+            .get(column_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let card_target = self
+            .drop_target
+            .as_ref()
+            .filter(|(target, _)| target == column_id)
+            .map(|(_, slot)| *slot);
+        let drop_line = || {
+            div()
+                .flex_shrink_0()
+                .h(px(2.))
+                .mx(px(2.))
+                .rounded(px(2.))
+                .bg(accent_color())
+        };
+        let card = ids
+            .get(ix)
+            .and_then(|id| self.card_slots.get(id))
+            .and_then(|&slot| detail.cards.get(slot));
+        if let Some(card) = card {
+            let done = column.role.as_deref() == Some("done");
+            return div()
+                .relative()
+                .px(px(ITEM_GAP))
+                .pt(px(ITEM_GAP))
+                .flex()
+                .flex_col()
+                .gap(px(ITEM_GAP))
+                .when(card_target == Some(ix), |d| d.child(drop_line()))
+                .child(self.render_card(card, done, cx))
+                .child(height_probe(self.item_heights.clone(), card.id.clone()))
+                .into_any_element();
+        }
+        let composer = self
+            .composer
+            .as_ref()
+            .filter(|composer| composer.column_id == column.id)
+            .map(|composer| composer.input.clone());
+        let add_id = column.id.clone();
+        div()
+            .relative()
+            .p(px(ITEM_GAP))
+            .flex()
+            .flex_col()
+            .gap(px(ITEM_GAP))
+            .when(card_target.is_some_and(|slot| slot >= ids.len()), |d| {
+                d.child(drop_line())
+            })
+            .child(match composer {
+                Some(input) => div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .p(px(8.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(content(0.12))
+                    .bg(pane_fill())
+                    .child(input)
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(content(0.45))
+                            .child("Enter to add · Esc to close"),
+                    )
+                    .into_any_element(),
+                None => div()
+                    .id(("board-add-card", index))
+                    .debug_selector(move || format!("board-add-card-{index}"))
+                    .role(Role::Button)
+                    .aria_label("Add card")
+                    .px(px(8.))
+                    .py(px(6.))
+                    .rounded(px(6.))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .text_size(px(12.))
+                    .text_color(content(0.45))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(content(0.05)).text_color(content(0.75)))
+                    .child(icon("plus", 12.))
+                    .child("Add card")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_composer(add_id.clone(), window, cx)
+                    }))
+                    .into_any_element(),
+            })
+            .child(height_probe(
+                self.item_heights.clone(),
+                footer_key(column_id),
+            ))
+            .into_any_element()
+    }
+
     pub(super) fn render_column(
         &self,
         index: usize,
@@ -50,11 +335,9 @@ impl BoardView {
         detail: &BoardDetail,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let cards = self.column_cards(detail, &column.id);
         if column.collapsed {
             return self.render_collapsed(index, column, cx);
         }
-        let done = column.role.as_deref() == Some("done");
         let over = self.over_wip(column);
         let anchor = self
             .column_anchors
@@ -73,12 +356,6 @@ impl BoardView {
                 .child(column.name.clone())
                 .into_any_element(),
         };
-        let composer = self
-            .composer
-            .as_ref()
-            .filter(|composer| composer.column_id == column.id)
-            .map(|composer| composer.input.clone());
-        let add_id = column.id.clone();
         let menu_id = column.id.clone();
         let card_target = self
             .drop_target
@@ -87,25 +364,17 @@ impl BoardView {
             .map(|(_, slot)| *slot);
         let column_slot = self.column_drop;
         let last = index + 1 == detail.columns.len();
-        let drop_line = || {
-            div()
-                .flex_shrink_0()
-                .h(px(2.))
-                .mx(px(2.))
-                .rounded(px(2.))
-                .bg(accent_color())
-                .into_any_element()
-        };
-        let mut body: Vec<AnyElement> = Vec::new();
-        for (slot, card) in cards.iter().enumerate() {
-            if card_target == Some(slot) {
-                body.push(drop_line());
-            }
-            body.push(self.render_card(card, done, cx));
-        }
-        if card_target.is_some_and(|slot| slot >= cards.len()) {
-            body.push(drop_line());
-        }
+        let body_height = self.column_body_height(&column.id);
+        let cards = self.column_lists.get(&column.id).cloned().map(|state| {
+            let column_id = column.id.clone();
+            list(
+                state,
+                cx.processor(move |this, ix: usize, _, cx| {
+                    this.render_column_item(&column_id, ix, cx)
+                }),
+            )
+            .size_full()
+        });
         let header_payload = DraggedColumn {
             column_id: column.id.clone(),
             index,
@@ -273,54 +542,11 @@ impl BoardView {
                     .on_drop::<DraggedCard>(cx.listener(move |this, card: &DraggedCard, _, cx| {
                         this.drop_card(card, &drop_over_id, cx)
                     }))
-                    .flex_1()
+                    // As tall as its cards, shrinking to the board's height.
+                    .h(body_height)
+                    .flex_shrink(1.)
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .p(px(6.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .children(body)
-                    .child(match composer {
-                        Some(input) => div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .p(px(8.))
-                            .rounded(px(8.))
-                            .border_1()
-                            .border_color(content(0.12))
-                            .bg(pane_fill())
-                            .child(input)
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(content(0.45))
-                                    .child("Enter to add · Esc to close"),
-                            )
-                            .into_any_element(),
-                        None => div()
-                            .id(("board-add-card", index))
-                            .debug_selector(move || format!("board-add-card-{index}"))
-                            .role(Role::Button)
-                            .aria_label("Add card")
-                            .px(px(8.))
-                            .py(px(6.))
-                            .rounded(px(6.))
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .text_size(px(12.))
-                            .text_color(content(0.45))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(content(0.05)).text_color(content(0.75)))
-                            .child(icon("plus", 12.))
-                            .child("Add card")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_composer(add_id.clone(), window, cx)
-                            }))
-                            .into_any_element(),
-                    }),
+                    .children(cards),
             )
             .into_any_element()
     }
