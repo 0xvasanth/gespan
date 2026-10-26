@@ -307,7 +307,8 @@ struct BoardFacts {
     columns: HashSet<String>,
     labels: HashSet<String>,
     projects: HashSet<String>,
-    /// Field id → its select options, when it is a select field with options.
+    /// Field id → its options, when it is a select or multi-select field with
+    /// options.
     fields: HashMap<String, Option<Vec<String>>>,
 }
 
@@ -336,7 +337,7 @@ fn board_facts(conn: &Connection, board_id: &str, entries: &[Entry]) -> Result<B
         .map_err(db)?;
     for row in rows {
         let (id, kind, options) = row.map_err(db)?;
-        let options = (kind == "select")
+        let options = (kind == "select" || kind == "multi-select")
             .then(|| options.and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok()))
             .flatten();
         fields.insert(id, options);
@@ -482,11 +483,17 @@ fn any_value(test: &Test, entry: &Entry, now: &Now<'_>) -> bool {
             Linked::NeedsReview => entry.role.as_deref() == Some("review"),
             Linked::None => !entry.has_links,
         }),
+        // A multi-select value (an array) matches when it holds any wanted value.
         Test::Field(id, wanted) => row
             .fields
             .get(id)
             .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-            .is_some_and(|value| wanted.iter().any(|w| same_value(w, &value))),
+            .is_some_and(|value| match &value {
+                serde_json::Value::Array(items) => items
+                    .iter()
+                    .any(|item| wanted.iter().any(|w| same_value(w, item))),
+                value => wanted.iter().any(|w| same_value(w, value)),
+            }),
     }
 }
 
@@ -794,4 +801,72 @@ pub fn move_view(conn: &Connection, view_id: &str, index: usize) -> Result<Strin
     write_view_positions(&tx, &ids)?;
     tx.commit().map_err(db)?;
     Ok(board_id)
+}
+
+/// Rewrites every saved view on the board inside the caller's transaction:
+/// `edit` gets each view's parsed spec and layout and changes them in place.
+/// Only views that changed are written. A view whose stored JSON doesn't
+/// parse is left as it is (the engine already reads it as empty).
+pub(crate) fn rewrite_views(
+    conn: &Connection,
+    board_id: &str,
+    mut edit: impl FnMut(&mut serde_json::Value, &mut serde_json::Value),
+) -> Result<(), String> {
+    let views = list_views(conn, board_id)?;
+    let now = now_millis();
+    for view in views {
+        let (Ok(mut spec), Ok(mut layout)) = (
+            serde_json::from_str::<serde_json::Value>(&view.spec_json),
+            serde_json::from_str::<serde_json::Value>(&view.layout_json),
+        ) else {
+            continue;
+        };
+        let (spec_before, layout_before) = (spec.clone(), layout.clone());
+        edit(&mut spec, &mut layout);
+        if spec == spec_before && layout == layout_before {
+            continue;
+        }
+        conn.execute(
+            "UPDATE board_views SET spec_json = ?1, layout_json = ?2, updated_at = ?3
+             WHERE id = ?4",
+            params![spec.to_string(), layout.to_string(), now, view.id],
+        )
+        .map_err(db)?;
+    }
+    Ok(())
+}
+
+/// The filter rows of a parsed view spec, when it has any.
+pub(crate) fn spec_rows(spec: &mut serde_json::Value) -> Option<&mut Vec<serde_json::Value>> {
+    spec.get_mut("rows")
+        .and_then(serde_json::Value::as_array_mut)
+}
+
+/// Whether a parsed filter row is on `field`.
+pub(crate) fn row_is(row: &serde_json::Value, field: &str) -> bool {
+    row.get("field").and_then(serde_json::Value::as_str) == Some(field)
+}
+
+/// Maps each string in a JSON array through `each` (`None` drops it), then
+/// drops repeats, keeping the first. Not an array: left as it is.
+pub(crate) fn map_strings(
+    value: &mut serde_json::Value,
+    mut each: impl FnMut(&str) -> Option<String>,
+) {
+    let Some(items) = value.as_array_mut() else {
+        return;
+    };
+    let mut seen = HashSet::new();
+    items.retain_mut(|item| {
+        let Some(text) = item.as_str() else {
+            return true;
+        };
+        match each(text) {
+            Some(new) if seen.insert(new.clone()) => {
+                *item = serde_json::Value::String(new);
+                true
+            }
+            _ => false,
+        }
+    });
 }

@@ -22,9 +22,14 @@ mod views;
 pub use card_ops::{convert_subtask, duplicate_card, move_card_to_board};
 pub use comments::{add_comment, edit_comment, list_comments, Comment, COMMENT_AUTHORS};
 pub use fields::{
-    create_field, field_values, list_fields, set_field_value, Field, FieldValue, FIELD_KINDS,
+    create_field, delete_field, field_distinct_values, field_values, list_fields, move_field,
+    rename_field_option, set_field_value, update_field, validate_value, Field, FieldValue,
+    FIELD_KINDS,
 };
-pub use labels::{create_label, list_labels, set_card_labels, set_label_many, Label};
+pub use labels::{
+    create_label, delete_label, list_labels, merge_labels, move_label, set_card_labels,
+    set_label_many, update_label, Label,
+};
 pub use links::{add_link, board_tickets, card_links, remove_link, set_ticket, ticket, CardLink};
 pub use meta::{
     archive_card, archive_cards, archived_cards, card_extras, card_meta, column_card_count,
