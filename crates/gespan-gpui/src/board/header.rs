@@ -157,7 +157,8 @@ impl BoardView {
         self.active_rows() > 0 || !self.last_query.is_empty()
     }
 
-    /// A column's count: `shown/total` while searching or filtering, else the total.
+    /// A column's count: `total/limit` with a WIP limit; while searching or
+    /// filtering, `shown/total` (the limit still compares against the total).
     pub(crate) fn count_label(&self, column_id: &str) -> String {
         let Some(detail) = &self.detail else {
             return "0".into();
@@ -167,10 +168,29 @@ impl BoardView {
             .iter()
             .filter(|card| card.column_id == column_id)
             .count();
-        if !self.narrowing() {
-            return total.to_string();
+        if self.narrowing() {
+            return format!("{}/{total}", self.column_cards(detail, column_id).len());
         }
-        format!("{}/{total}", self.column_cards(detail, column_id).len())
+        match self.column(column_id).and_then(|column| column.wip_limit) {
+            Some(limit) => format!("{total}/{limit}"),
+            None => total.to_string(),
+        }
+    }
+
+    /// Whether the column holds more cards than its WIP limit (the total, not
+    /// the cards a filter leaves showing).
+    pub(crate) fn over_wip(&self, column: &gespan_core::board::Column) -> bool {
+        let Some(limit) = column.wip_limit else {
+            return false;
+        };
+        self.detail.as_ref().is_some_and(|detail| {
+            detail
+                .cards
+                .iter()
+                .filter(|card| card.column_id == column.id)
+                .count() as i64
+                > limit
+        })
     }
 
     /// Open or close the filter. The board takes focus so Escape closes it.
@@ -432,7 +452,8 @@ impl BoardView {
             }),
             "priority" => (0..PRIORITIES.len())
                 .rev()
-                .map(|priority| (priority.to_string(), PRIORITIES[priority].to_string()))
+                .filter(|&priority| !self.priority.hidden.contains(&(priority as u8)))
+                .map(|priority| (priority.to_string(), self.priority_name(priority as u8)))
                 .collect(),
             "labels" => self
                 .labels
@@ -457,7 +478,7 @@ impl BoardView {
             return Vec::new();
         };
         match found.kind.as_str() {
-            "select" => super::quick::field_options(found.options_json.as_deref())
+            "select" | "multi-select" => super::quick::field_options(found.options_json.as_deref())
                 .into_iter()
                 .map(|option| {
                     (
@@ -470,16 +491,75 @@ impl BoardView {
                 ("true".to_string(), "Yes".to_string()),
                 ("false".to_string(), "No".to_string()),
             ],
-            _ => held
-                .iter()
+            // Text, number, date and url: what the cards hold, then anything the
+            // row holds that no card has.
+            kind => self
+                .field_seen
+                .get(&found.id)
+                .into_iter()
+                .flatten()
+                .chain(held.iter().filter(|raw| {
+                    !self
+                        .field_seen
+                        .get(&found.id)
+                        .is_some_and(|seen| seen.contains(raw))
+                }))
                 .map(|raw| {
-                    let label = match serde_json::from_str::<serde_json::Value>(raw) {
-                        Ok(serde_json::Value::String(text)) => text,
-                        _ => raw.clone(),
-                    };
+                    let label = super::quick::field_text(kind, raw).unwrap_or_else(|| raw.clone());
                     (raw.clone(), label)
                 })
                 .collect(),
+        }
+    }
+
+    /// The custom field a filter row is on, when it is free-form (text,
+    /// number or date) and still on the board.
+    fn free_form_field(&self, row: usize) -> Option<&gespan_core::board::extras::Field> {
+        let id = self.spec.rows.get(row)?.field.strip_prefix("field:")?;
+        self.fields.iter().find(|field| {
+            field.id == id && matches!(field.kind.as_str(), "text" | "number" | "date" | "url")
+        })
+    }
+
+    /// Enter in the free-form value field: the typed value joins the open row.
+    pub(super) fn submit_filter_free(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.filter_row else {
+            return;
+        };
+        let Some(kind) = self.free_form_field(index).map(|field| field.kind.clone()) else {
+            return;
+        };
+        let text = self.filter_free.read(cx).content.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        let encoded = if kind == "date" {
+            chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d")
+                .map_err(|_| format!("“{text}” is not a date like 2026-11-02"))
+                .and_then(|day| {
+                    super::style::day_start(day)
+                        .map(|at| at.to_string())
+                        .ok_or_else(|| format!("{day} does not exist in this time zone"))
+                })
+        } else {
+            super::quick::encode_field(&kind, &text).map(|value| value.unwrap_or_default())
+        };
+        match encoded {
+            Ok(value) => {
+                if let Some(row) = self.spec.rows.get_mut(index)
+                    && !row.values.contains(&value)
+                {
+                    row.values.push(value);
+                }
+                self.error = None;
+                self.filter_free
+                    .update(cx, |input, cx| input.set_text(String::new(), cx));
+                self.spec_changed(cx);
+            }
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+            }
         }
     }
 
@@ -574,7 +654,13 @@ impl BoardView {
     /// What a filter row says, for its chip: "Priority is Urgent, High". Values
     /// that no longer exist on the board are left out.
     pub(crate) fn chip_text(&self, row: &FilterRow) -> String {
-        let choices = self.field_choices(&row.field, &row.values);
+        let mut choices = self.field_choices(&row.field, &row.values);
+        if row.field == "priority" {
+            // Only the picker hides a level: a chip still names it.
+            choices = (0..PRIORITIES.len())
+                .map(|level| (level.to_string(), self.priority_name(level as u8)))
+                .collect();
+        }
         let names: Vec<&str> = row
             .values
             .iter()
@@ -807,7 +893,8 @@ impl BoardView {
                 continue;
             }
             let choices = self.field_choices(&row.field, &row.values);
-            if choices.is_empty() {
+            let free_form = self.free_form_field(index).is_some();
+            if choices.is_empty() && !free_form {
                 rows.push(
                     div()
                         .px(px(8.))
@@ -833,6 +920,25 @@ impl BoardView {
                         this.toggle_filter_value(index, &value, cx)
                     }))
                     .into_any_element(),
+                );
+            }
+            if free_form {
+                let selector = format!("board-filter-row-{index}-free");
+                rows.push(
+                    div()
+                        .id(gpui::SharedString::from(selector.clone()))
+                        .debug_selector(move || selector.clone())
+                        .mx(px(8.))
+                        .my(px(2.))
+                        .h(px(26.))
+                        .px_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(content(0.12))
+                        .flex()
+                        .items_center()
+                        .child(div().flex_1().min_w_0().child(self.filter_free.clone()))
+                        .into_any_element(),
                 );
             }
         }

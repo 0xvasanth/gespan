@@ -4,7 +4,7 @@ use crate::theme::*;
 use gespan_core::board::{BoardDetail, Column};
 use gpui::{AnyElement, Context, FontWeight, Hsla, MouseButton, Role, div, prelude::*, px, rgb};
 
-pub(super) const COLUMN_WIDTH: f32 = 280.;
+pub(in crate::board) const COLUMN_WIDTH: f32 = 280.;
 
 /// The 14px ring that says what a column is for.
 pub(super) fn role_icon(role: Option<&str>) -> AnyElement {
@@ -55,6 +55,7 @@ impl BoardView {
             return self.render_collapsed(index, column, cx);
         }
         let done = column.role.as_deref() == Some("done");
+        let over = self.over_wip(column);
         let anchor = self
             .column_anchors
             .get(&column.id)
@@ -145,6 +146,17 @@ impl BoardView {
             .on_drop::<DraggedColumn>(
                 cx.listener(|this, column: &DraggedColumn, _, cx| this.drop_column(column, cx)),
             )
+            .children(column.color.as_deref().map(|color| {
+                div()
+                    .id(("board-column-stripe", index))
+                    .debug_selector(move || format!("board-column-stripe-{index}"))
+                    .h(px(3.))
+                    .mx(px(8.))
+                    .mt(px(2.))
+                    .flex_shrink_0()
+                    .rounded_full()
+                    .bg(super::style::label_color(color))
+            }))
             .child(
                 div()
                     .id(("board-column-header", index))
@@ -164,12 +176,28 @@ impl BoardView {
                     .gap(px(6.))
                     .child(role_icon(column.role.as_deref()))
                     .child(header_name)
+                    .when(over, |d| {
+                        d.child(
+                            div()
+                                .id(("board-column-over", index))
+                                .debug_selector(move || format!("board-column-over-{index}"))
+                                .aria_label("Over the WIP limit")
+                                .size(px(6.))
+                                .flex_shrink_0()
+                                .rounded_full()
+                                .bg(diff_foreground(false)),
+                        )
+                    })
                     .child(
                         div()
                             .id(("board-column-count", index))
                             .debug_selector(move || format!("board-column-count-{index}"))
                             .text_size(px(12.))
-                            .text_color(content(0.4))
+                            .text_color(if over {
+                                diff_foreground(false)
+                            } else {
+                                content(0.4)
+                            })
                             .child(self.count_label(&column.id)),
                     )
                     .child(div().flex_1())

@@ -8,7 +8,7 @@ use super::{
 };
 use crate::popover::{Menu, MenuAction, MenuEvent, MenuItem};
 use chrono::NaiveDate;
-use gespan_core::board::extras::{Label, PRIORITIES};
+use gespan_core::board::extras::{Label, PRIORITIES, PriorityScheme};
 use gpui::{Context, Window, prelude::*};
 
 /// Which quick-edit menu a card face opens.
@@ -21,11 +21,12 @@ pub(crate) enum Face {
     Labels,
 }
 
-/// Urgent first, then down to "No priority".
-pub(crate) fn priority_items() -> Vec<MenuItem> {
+/// Urgent first, then down to the lowest level. Hidden levels are left out.
+pub(crate) fn priority_items(scheme: &PriorityScheme) -> Vec<MenuItem> {
     (0..PRIORITIES.len())
         .rev()
-        .map(|p| MenuAction::new(format!("priority-{p}"), PRIORITIES[p]).into())
+        .filter(|&p| !scheme.hidden.contains(&(p as u8)))
+        .map(|p| MenuAction::new(format!("priority-{p}"), scheme.names[p].clone()).into())
         .collect()
 }
 
@@ -161,8 +162,31 @@ pub(crate) fn encode_field(kind: &str, text: &str) -> Result<Option<String>, Str
             };
             Ok(Some(number.to_string()))
         }
+        "url" => {
+            if !valid_field_url(text) {
+                return Err("A link must start with http:// or https://".into());
+            }
+            Ok(Some(
+                serde_json::Value::String(text.to_string()).to_string(),
+            ))
+        }
         _ => Err(format!("Can't type a {kind} value")),
     }
+}
+
+/// A url field holds an http or https address, at most 2,000 characters.
+fn valid_field_url(text: &str) -> bool {
+    text.chars().count() <= 2_000
+        && ["http://", "https://"].iter().any(|scheme| {
+            text.strip_prefix(scheme)
+                .is_some_and(|rest| !rest.is_empty())
+        })
+}
+
+/// A multi-select field's stored picks, in the order stored.
+pub(crate) fn field_picks(raw: Option<&str>) -> Vec<String> {
+    raw.and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
+        .unwrap_or_default()
 }
 
 /// The choices of a select field, from its `["a","b"]` options.
@@ -177,7 +201,11 @@ pub(crate) fn field_options(options_json: Option<&str>) -> Vec<String> {
 pub(crate) fn field_text(kind: &str, raw: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(raw).ok()?;
     match (kind, value) {
-        ("text" | "select", serde_json::Value::String(text)) => Some(text),
+        ("text" | "select" | "url", serde_json::Value::String(text)) => Some(text),
+        ("multi-select", serde_json::Value::Array(items)) => {
+            let picks: Vec<&str> = items.iter().filter_map(|item| item.as_str()).collect();
+            (!picks.is_empty()).then(|| picks.join(", "))
+        }
         ("number", serde_json::Value::Number(number)) => Some(number.to_string()),
         ("date", serde_json::Value::Number(at)) => {
             let day = super::style::local_day(at.as_i64()?)?;
@@ -413,7 +441,7 @@ impl BoardView {
         }
         let items = match face {
             Face::Status => self.status_items(&card_id),
-            Face::Priority => priority_items(),
+            Face::Priority => priority_items(&self.priority),
             Face::Due => due_items(),
             Face::Labels => label_items(&self.labels, &self.card_labels(&card_id)),
         };

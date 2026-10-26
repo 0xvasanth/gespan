@@ -1,5 +1,6 @@
 //! How the task drawer looks: gr8r's top bar, property grid, description,
 //! subtasks and Comments/Activity tabs, in the board's quiet type scale.
+use super::super::header::checked_row;
 use super::super::markdown_toolbar::Format;
 use super::{CardDetail, Choice, Picker, RelationKind, Tab, activity_text};
 use crate::{
@@ -12,7 +13,7 @@ use crate::{
     popover::{Anchor, menu_popover},
     theme::*,
 };
-use gespan_core::board::{Card, extras::PRIORITIES};
+use gespan_core::board::Card;
 use gpui::{
     AnyElement, Context, Focusable, FontWeight, MouseButton, Role, SharedString, div, prelude::*,
     px,
@@ -119,6 +120,28 @@ impl BoardView {
                     ),
             )
             .child(div().flex_1())
+            .when(self.run_with_shown(), |d| {
+                let card_id = card.id.clone();
+                d.child(
+                    // An icon, so the top bar's other actions keep their room.
+                    icon_button("board-drawer-run-with", "Run with…", "play")
+                        .debug_selector(|| "board-drawer-run-with".into())
+                        .tab_index(0)
+                        .focus_visible(|s| s.bg(content(0.06)))
+                        .on_key_down(cx.listener({
+                            let card_id = card_id.clone();
+                            move |this, event: &gpui::KeyDownEvent, window, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    cx.stop_propagation();
+                                    this.run_with(&card_id, window, cx);
+                                }
+                            }
+                        }))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.run_with(&card_id, window, cx)
+                        })),
+                )
+            })
             .child(
                 quiet_button(
                     "board-drawer-full-page",
@@ -322,7 +345,7 @@ impl BoardView {
                 .items_center()
                 .gap(px(6.))
                 .child(priority_glyph(extras.priority))
-                .child(PRIORITIES[extras.priority as usize])
+                .child(self.priority_name(extras.priority))
                 .into_any_element()
         };
         let due = extras.due_at.and_then(|at| due_label(at, now)).map_or_else(
@@ -882,10 +905,37 @@ impl BoardView {
                     );
                 }
             }
+            Picker::Field(field_index) => {
+                if let Some(field) = detail
+                    .fields
+                    .get(field_index)
+                    .filter(|field| field.kind == "multi-select")
+                {
+                    let picks =
+                        quick::field_picks(detail.field_values.get(&field.id).map(String::as_str));
+                    for (n, option) in quick::field_options(field.options_json.as_deref())
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let on = picks.contains(&option);
+                        let chosen = option.clone();
+                        rows.push(
+                            checked_row(
+                                format!("board-field-{field_index}-option-{n}").into(),
+                                option,
+                                on,
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_multi_option(field_index, &chosen, cx)
+                            }))
+                            .into_any_element(),
+                        );
+                    }
+                }
+            }
             Picker::DueDate
             | Picker::StartDate
             | Picker::Estimate
-            | Picker::Field(_)
             | Picker::PrUrl
             | Picker::WorktreePath => {}
         }

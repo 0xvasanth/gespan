@@ -1156,6 +1156,7 @@ impl Conversation {
                                 stopping,
                                 succeeded: update.succeeded,
                                 has_rows: !update.rows.is_empty(),
+                                reply: update.reply.clone(),
                             };
                             tracker.observe(store, *session, generation, turn, cx);
                         }

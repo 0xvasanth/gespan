@@ -1,6 +1,7 @@
 //! The Board app view, over the same `board*` tables the Tauri app uses.
 //! Writes from the Tauri app (or another window) show up when the view opens,
 //! when the window becomes active, and when SQLite's `data_version` moves.
+mod agent_fields;
 mod archive;
 mod card;
 mod column;
@@ -8,12 +9,16 @@ mod detail;
 mod drop;
 mod header;
 mod keyboard;
+pub(crate) mod link_status;
 mod list;
 mod markdown_toolbar;
 mod new_card;
 mod quick;
+pub(crate) mod run_with;
 mod selection;
+mod settings;
 pub(crate) mod style;
+mod swimlanes;
 mod switcher;
 mod table;
 #[cfg(test)]
@@ -33,7 +38,9 @@ use crate::{
 use gespan_core::{
     board::{
         BoardDetail, Service,
-        extras::{CardExtras, Label, ViewSpec},
+        extras::{
+            BoardSettings, CardExtras, CardLink, DisplayOptions, Label, PriorityScheme, ViewSpec,
+        },
     },
     tickets::{TicketRef, Tracker},
 };
@@ -42,7 +49,7 @@ use gpui::{
     SharedString, Subscription, Task, Window, div, prelude::*, px,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -68,9 +75,11 @@ pub(crate) enum Event {
     OpenPilot(String),
     /// The drawer asks to link (or edit the link of) this card's ticket.
     LinkTicket(String),
+    /// "Run with…" picked: start a session on the card.
+    RunWith(run_with::RunRequest),
 }
 
-/// What a card's link chip says about the work it points at.
+/// What the drawer's primary link row says about the work it points at.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum LinkLabel {
     Found(String),
@@ -109,6 +118,8 @@ pub(crate) struct KeyboardDrag {
     pub card_id: String,
     pub column_id: String,
     pub slot: usize,
+    /// The swimlane the card would drop into, on a board with lanes.
+    pub lane: Option<String>,
 }
 
 /// A column on the move, dragged by its header.
@@ -141,7 +152,41 @@ pub(crate) struct BoardView {
     pub(crate) dragging: bool,
     pub(crate) pending_reload: bool,
     pub(crate) last_data_version: i64,
-    links: HashMap<String, LinkLabel>,
+    /// Every non-ticket link of the board's live cards.
+    link_rows: Vec<CardLink>,
+    /// One chip per link, by card id, rebuilt from the reads below.
+    pub(crate) chips: HashMap<String, Vec<link_status::LinkChip>>,
+    /// The newest started/needs_input/completed/failed event per card.
+    last_events: HashMap<String, String>,
+    /// Linked sessions that exist, by session key.
+    link_sessions: HashMap<String, link_status::SessionInfo>,
+    /// Every Pilot as (id, name), `None` when there is no roster to read.
+    pilot_names: Option<Vec<(String, String)>>,
+    /// What the last background lookup found about PR and worktree links.
+    link_extras: HashMap<(String, String), link_status::LinkExtra>,
+    /// Where PR and worktree facts come from (`gh` and Git, or a test's).
+    pub(crate) link_source: Arc<dyn link_status::LinkSource>,
+    /// The board the PR and worktree lookup last ran for; cleared when the
+    /// view hides, so opening the board looks again.
+    status_board: Option<String>,
+    status_task: Option<Task<()>>,
+    /// A read connection for the latest run event per card.
+    run_reader: Option<rusqlite::Connection>,
+    /// A load asked for a PR and worktree lookup.
+    status_due: bool,
+    /// How many lookups started, for tests.
+    pub(crate) status_lookups: usize,
+    /// The running links and waiting sessions the chips and query last saw.
+    turns_seen: (Vec<(String, String)>, BTreeSet<String>),
+    /// The newest settled turn this view has looked at.
+    settle_seen: u64,
+    /// Blocked cards, by card id, to the numbers of their open blockers.
+    pub(crate) blocked: BTreeMap<String, Vec<i64>>,
+    /// Agent fields computed from each card's linked sessions.
+    pub(crate) agent: HashMap<String, agent_fields::AgentValues>,
+    run_options: run_with::RunOptions,
+    pub(crate) run_picker: Option<run_with::RunPicker>,
+    pub(crate) run_confirm: Option<run_with::RunConfirm>,
     /// The ticket each linked card shows a chip for.
     card_tickets: HashMap<String, TicketRef>,
     ticket_backend: Option<Arc<dyn TicketBackend>>,
@@ -234,6 +279,25 @@ pub(crate) struct BoardView {
     /// Whether the Archive view is open, and the archived cards it read.
     archive_open: bool,
     archived: Vec<gespan_core::board::Card>,
+    /// The settings page, when open, and the open board's settings.
+    settings: Option<settings::Page>,
+    pub(crate) board_settings: BoardSettings,
+    /// False until the board's settings were read; the automation switches
+    /// and rules stay disabled meanwhile.
+    pub(crate) settings_loaded: bool,
+    pub(crate) priority: PriorityScheme,
+    /// The display options in force, refreshed at the start of each render.
+    pub(crate) display: DisplayOptions,
+    /// Values on the board's cards for text, number and date fields, as the
+    /// stored JSON, by field id.
+    field_seen: HashMap<String, Vec<String>>,
+    /// The free-form value field in the filter list.
+    filter_free: Entity<Input>,
+    /// The swimlane cell (lane key, column id) a drag would drop into.
+    pub(crate) lane_drop: Option<(String, String)>,
+    /// The board whose default view was applied; it applies once per board.
+    default_view_applied: Option<String>,
+    pending_default_view: Option<String>,
     /// Runs between a reload's reads and the end of the load, so a test can
     /// commit from another connection exactly there.
     #[cfg(test)]
@@ -284,6 +348,12 @@ impl BoardView {
             .flatten()
             .as_deref()
             == Some("page");
+        let filter_free = cx.new(|cx| Input::field("Value", "Type a value", content(0.4), cx));
+        let free_submit = cx.subscribe(&filter_free, |this, _, _: &input::Submitted, cx| {
+            this.submit_filter_free(cx)
+        });
+        let live_turns = cx.observe_global::<turns::BoardTurns>(|this, cx| this.turns_changed(cx));
+        let settle_seen = turns::settle_seq(cx);
         Self {
             store,
             db_path,
@@ -300,7 +370,25 @@ impl BoardView {
             dragging: false,
             pending_reload: false,
             last_data_version: 0,
-            links: HashMap::new(),
+            link_rows: Vec::new(),
+            chips: HashMap::new(),
+            last_events: HashMap::new(),
+            link_sessions: HashMap::new(),
+            pilot_names: None,
+            link_extras: HashMap::new(),
+            link_source: Arc::new(link_status::GitSource),
+            status_board: None,
+            status_task: None,
+            run_reader: None,
+            status_due: false,
+            status_lookups: 0,
+            turns_seen: (Vec::new(), BTreeSet::new()),
+            settle_seen,
+            blocked: BTreeMap::new(),
+            agent: HashMap::new(),
+            run_options: run_with::RunOptions::default(),
+            run_picker: None,
+            run_confirm: None,
             card_tickets: HashMap::new(),
             ticket_backend: None,
             connected_trackers: None,
@@ -358,10 +446,20 @@ impl BoardView {
             undo: undo::UndoController::default(),
             archive_open: false,
             archived: Vec::new(),
+            settings: None,
+            board_settings: BoardSettings::default(),
+            settings_loaded: false,
+            priority: PriorityScheme::default(),
+            display: DisplayOptions::default(),
+            field_seen: HashMap::new(),
+            filter_free,
+            lane_drop: None,
+            default_view_applied: None,
+            pending_default_view: None,
             #[cfg(test)]
             after_load_reads: None,
             _poll: poll,
-            _subscriptions: vec![activation, searching],
+            _subscriptions: vec![activation, searching, free_submit, live_turns],
         }
     }
 
@@ -378,6 +476,9 @@ impl BoardView {
     /// The view came on screen: start polling and show the latest data.
     pub(crate) fn shown(&mut self, cx: &mut Context<Self>) {
         self.visible = true;
+        // Coming on screen is opening the board: PRs and worktrees are looked
+        // up again, even after a reload that ran while it was hidden.
+        self.status_board = None;
         self.reload(cx);
     }
 
@@ -392,6 +493,7 @@ impl BoardView {
         self.dragged_card = None;
         self.drop_target = None;
         self.column_drop = None;
+        self.lane_drop = None;
         true
     }
 
@@ -414,6 +516,11 @@ impl BoardView {
         self.views.naming = None;
         self.open_in_open = false;
         self.switcher = None;
+        self.settings = None;
+        self.run_picker = None;
+        self.run_confirm = None;
+        // Opening the board again looks PRs and worktrees up again.
+        self.status_board = None;
         cx.notify();
     }
 
@@ -434,9 +541,17 @@ impl BoardView {
         }
         self.pending_reload = false;
         self.load_error = self.load(cx).err();
+        if std::mem::take(&mut self.status_due) && self.load_error.is_none() {
+            self.refresh_link_status(cx);
+        }
         if self.load_error.is_none() && std::mem::take(&mut self.views.reapply) {
             let active = self.views.active.clone();
             self.select_view(active, cx);
+        }
+        if self.load_error.is_none()
+            && let Some(view) = self.pending_default_view.take()
+        {
+            self.select_view(Some(view), cx);
         }
         self.sync_card_detail(cx);
         if self.load_error.is_none() && self.card_detail.is_some() {
@@ -519,6 +634,21 @@ impl BoardView {
         let card_tickets = service.board_tickets(&board.id)?;
         let views = service.views(&board.id)?;
         let fields = service.list_fields(&board.id)?;
+        // A settings row that can't be read is not fatal to the board, but the
+        // automation section must not write over what it could not see.
+        let settings_read = service.settings(&board.id);
+        let settings_loaded = settings_read.is_ok();
+        let board_settings = settings_read.unwrap_or_default();
+        let mut field_seen = HashMap::new();
+        for field in fields
+            .iter()
+            .filter(|field| matches!(field.kind.as_str(), "text" | "number" | "date" | "url"))
+        {
+            field_seen.insert(
+                field.id.clone(),
+                service.field_distinct_values(&board.id, &field.id, 50)?,
+            );
+        }
         let index: HashMap<_, _> = service
             .card_index(&board.id)?
             .into_iter()
@@ -529,6 +659,15 @@ impl BoardView {
         } else {
             Vec::new()
         };
+        let link_rows = service.board_links(&board.id)?;
+        let blocked = service.blocked(&board.id)?;
+        // Only the "failed" chip state needs this; a read that fails leaves
+        // the chips without it rather than failing the whole board.
+        let last_events = self.read_run_events(&board.id).unwrap_or_else(|error| {
+            tracing::warn!(%error, "reading the board's run events failed");
+            self.run_reader = None;
+            HashMap::new()
+        });
         #[cfg(test)]
         if let Some(hook) = self.after_load_reads.as_mut() {
             hook();
@@ -544,7 +683,11 @@ impl BoardView {
         self.labels = labels;
         self.card_tickets = card_tickets;
         self.archived = archived;
-        self.links = self.resolve_links(cx)?;
+        self.link_rows = link_rows;
+        self.blocked = blocked;
+        self.last_events = last_events;
+        self.read_link_sessions(cx)?;
+        self.rebuild_chips(cx);
         self.sync_handles(cx);
         self.prune_selection();
         if self
@@ -555,8 +698,27 @@ impl BoardView {
             // The card was deleted or moved away elsewhere.
             self.table_edit = None;
         }
+        self.field_seen = field_seen;
         self.fields = fields;
+        self.priority = gespan_core::board::extras::priority_scheme(&board_settings);
         self.sync_views(views, cx);
+        // A board opens on its default view once. A view deleted since, or
+        // never saved, leaves "All cards".
+        let board_id = self.open_board_id.clone();
+        if self.default_view_applied != board_id {
+            self.default_view_applied = board_id;
+            self.pending_default_view = board_settings
+                .default_view_id
+                .clone()
+                .filter(|id| self.views.saved.iter().any(|view| &view.id == id));
+        }
+        self.board_settings = board_settings;
+        self.settings_loaded = settings_loaded;
+        if self.visible && self.status_board != self.open_board_id {
+            // The board opened (or another was picked): look PRs and
+            // worktrees up once the load is done.
+            self.status_due = true;
+        }
         // A label or column deleted elsewhere is dropped by the query itself,
         // so a saved filter never hides every card unseen.
         self.refresh_query(cx)
@@ -590,40 +752,23 @@ impl BoardView {
         }
     }
 
-    /// What each linked card's chip shows. A failed read is an error, not
-    /// every link reported as missing.
-    fn resolve_links(&self, cx: &App) -> Result<HashMap<String, LinkLabel>, String> {
-        let Some(detail) = &self.detail else {
-            return Ok(HashMap::new());
-        };
-        let store = locked(&self.store)?;
-        let sessions = store.sessions()?;
-        let pilots = turns::pilots(cx);
-        Ok(detail
-            .cards
-            .iter()
-            .filter_map(|card| {
-                let (kind, id) = (card.link_kind.as_deref()?, card.link_id.as_deref()?);
-                let label = match kind {
-                    "session" => store
-                        .resolve_existing_session_id(id)
-                        .and_then(|native| sessions.iter().find(|s| s.id == native))
-                        .map(|session| LinkLabel::Found(session.title.clone()))
-                        .unwrap_or(LinkLabel::Missing),
-                    "pilot" => pilots
-                        .iter()
-                        .find(|(pilot, _)| pilot == id)
-                        .map(|(_, name)| LinkLabel::Found(name.clone()))
-                        .unwrap_or(LinkLabel::Missing),
-                    _ => LinkLabel::Missing,
-                };
-                Some((card.id.clone(), label))
-            })
-            .collect())
-    }
-
+    /// The drawer's primary link: the session or Pilot it names, or missing.
     pub(crate) fn link_label(&self, card_id: &str) -> Option<LinkLabel> {
-        self.links.get(card_id).cloned()
+        let card = self.card(card_id)?;
+        let (kind, id) = (card.link_kind.as_deref()?, card.link_id.as_deref()?);
+        let found = match kind {
+            "session" => self
+                .link_sessions
+                .get(id)
+                .map(|session| session.title.clone()),
+            "pilot" => self
+                .pilot_names
+                .as_ref()
+                .and_then(|pilots| pilots.iter().find(|(pilot, _)| pilot == id))
+                .map(|(_, name)| name.clone()),
+            _ => None,
+        };
+        Some(found.map_or(LinkLabel::Missing, LinkLabel::Found))
     }
 
     /// Why a column can't be deleted, or `None` when it can. Archived cards
@@ -822,6 +967,7 @@ impl BoardView {
         self.dragged_card = None;
         self.drop_target = None;
         self.column_drop = None;
+        self.lane_drop = None;
         self.set_dragging(false, cx);
         cx.notify();
     }
@@ -1061,7 +1207,9 @@ impl BoardView {
             return;
         }
         // Innermost first: transient editors and menus, then the drawer.
-        if self.close_new_card(Some(window), cx)
+        if self.cancel_run_confirm(cx)
+            || self.close_run_picker(Some(window), cx)
+            || self.close_new_card(Some(window), cx)
             || self.composer.take().is_some()
             || std::mem::take(&mut self.filter_open)
             || std::mem::take(&mut self.sort_open)
@@ -1069,6 +1217,7 @@ impl BoardView {
             || self.views.naming.take().is_some()
             || std::mem::take(&mut self.open_in_open)
             || self.switcher.take().is_some()
+            || self.settings_escape(window, cx)
             || self.renaming.take().is_some()
             || self.pop.take().is_some()
             || self.table_edit.take().is_some()
@@ -1320,6 +1469,7 @@ use gpui::AnyElement;
 impl gpui::Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.forget_finished_drag(cx);
+        self.display = self.effective_display();
         let root =
             div()
                 .id("board-view")
@@ -1442,10 +1592,18 @@ impl gpui::Render for BoardView {
         let archive = self.render_archive(cx);
         let undo_toast = self.render_undo_toast(cx);
         let new_card = self.render_new_card(cx);
+        let run_picker = self.render_run_picker(cx);
+        let run_confirm = self.render_run_confirm(cx);
         let pop_menu = self.render_pop_menu(cx);
         let selection_bar = self.render_selection_bar(cx);
         let layout = self.layout_kind();
         let full_page = self.card_detail.as_ref().is_some_and(|d| d.full_page());
+        let settings_page = self.render_settings(cx);
+        let on_settings = settings_page.is_some();
+        let has_lanes = self.lane_mode().is_some();
+        let lanes = (!on_settings && layout == list::Layout::Board && has_lanes)
+            .then(|| self.render_swimlanes(cx))
+            .flatten();
         let board = div()
             .flex_1()
             .min_w_0()
@@ -1453,40 +1611,49 @@ impl gpui::Render for BoardView {
             .flex()
             .flex_col()
             .child(self.render_header(cx))
-            .child(self.render_views(cx))
-            .children(chips)
+            .when(!on_settings, |d| d.child(self.render_views(cx)))
+            .when(!on_settings, |d| d.children(chips))
             .children(error)
-            .when(full_page, |d| d.children(card_detail.take()))
-            .when(!full_page && layout == list::Layout::List, |d| {
-                d.child(self.render_list(cx))
+            .children(settings_page)
+            .when(!on_settings && full_page, |d| {
+                d.children(card_detail.take())
             })
-            .when(!full_page && layout == list::Layout::Table, |d| {
-                d.child(self.render_table(cx))
-            })
-            .when(!full_page && layout == list::Layout::Board, |d| {
-                d.child(
-                    div()
-                        .id("board-columns")
-                        .debug_selector(|| "board-columns".into())
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_x_scroll()
-                        .px_4()
-                        .py_3()
-                        .flex()
-                        .items_start()
-                        .gap_2()
-                        .children(columns)
-                        .child(
-                            icon_button("board-add-column", "Add column", "plus")
-                                .debug_selector(|| "board-add-column".into())
-                                .flex_shrink_0()
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.add_column(window, cx)),
-                                ),
-                        ),
-                )
-            });
+            .when(
+                !on_settings && !full_page && layout == list::Layout::List,
+                |d| d.child(self.render_list(cx)),
+            )
+            .when(
+                !on_settings && !full_page && layout == list::Layout::Table,
+                |d| d.child(self.render_table(cx)),
+            )
+            .when(!full_page, |d| d.children(lanes))
+            .when(
+                !on_settings && !full_page && layout == list::Layout::Board && !has_lanes,
+                |d| {
+                    d.child(
+                        div()
+                            .id("board-columns")
+                            .debug_selector(|| "board-columns".into())
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_x_scroll()
+                            .px_4()
+                            .py_3()
+                            .flex()
+                            .items_start()
+                            .gap_2()
+                            .children(columns)
+                            .child(
+                                icon_button("board-add-column", "Add column", "plus")
+                                    .debug_selector(|| "board-add-column".into())
+                                    .flex_shrink_0()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.add_column(window, cx)
+                                    })),
+                            ),
+                    )
+                },
+            );
         root.child(board)
             .children(archive)
             .children(card_detail)
@@ -1501,5 +1668,7 @@ impl gpui::Render for BoardView {
             .children(selection_bar)
             .children(undo_toast)
             .children(new_card)
+            .children(run_picker)
+            .children(run_confirm)
     }
 }

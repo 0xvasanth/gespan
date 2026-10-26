@@ -40,6 +40,7 @@ fn update(status: impl Into<String>, finished: bool) -> Update {
         // never moves a card.
         succeeded: false,
         ticket: None,
+        reply: None,
         finished,
     }
 }

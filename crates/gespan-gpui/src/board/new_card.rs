@@ -14,7 +14,7 @@ use crate::{
     theme::*,
 };
 use chrono::NaiveDate;
-use gespan_core::board::{Service, extras::PRIORITIES};
+use gespan_core::board::Service;
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Role,
     SharedString, Subscription, Toggled, Window, actions, div, prelude::*, px,
@@ -368,7 +368,7 @@ impl BoardView {
                     })
                     .collect(),
             ),
-            Property::Priority => ("Priority", quick::priority_items()),
+            Property::Priority => ("Priority", quick::priority_items(&self.priority)),
             Property::Due => ("Due date", quick::due_items()),
             Property::Labels => ("Labels", multi_keep(self.label_menu_items(&form.labels))),
             Property::Projects => (
@@ -545,7 +545,7 @@ impl BoardView {
         let priority = if form.priority == 0 {
             "Priority".to_string()
         } else {
-            PRIORITIES[form.priority as usize].to_string()
+            self.priority_name(form.priority)
         };
         let due = form.due.map_or("Due date".to_string(), |day| {
             day.format("%b %-d, %Y").to_string()

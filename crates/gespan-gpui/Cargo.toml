@@ -11,6 +11,8 @@ serde_json.workspace = true
 gespan-core = { path = "../gespan-core" }
 gespan-redact = { path = "../gespan-redact" }
 gespan-keep-awake = { path = "../keep-awake" }
+# The ticket tools' refusal rules, shared with the bridge and the Tauri app.
+gespan-tracker-client = { path = "../tracker-client" }
 pulldown-cmark = "0.13"
 syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
@@ -51,6 +53,9 @@ tree-sitter-toml-ng = "0.7"
 tree-sitter-ruby = "0.23"
 # Settings → Mobile draws the pairing code from the module matrix.
 qrcode = { version = "0.14", default-features = false }
+# The board's latest run event per card in one read (gespan-core already
+# links it); board tests also use raw SQL to stand in for the Tauri app.
+rusqlite.workspace = true
 
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false, features = ["test-support"] }
@@ -60,8 +65,6 @@ gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
 # Reading report bundles back in tests.
 url = "2"
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
-# Raw SQL in board tests, to stand in for the Tauri app or a broken schema.
-rusqlite.workspace = true
 # Test log capture: the real JSONL layer under a thread-local registry.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt"] }
 

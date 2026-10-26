@@ -11,6 +11,7 @@ use crate::{
     runtime::locked,
     theme::*,
 };
+use gespan_core::board::extras::TemplateInfo;
 use gpui::{
     AnyElement, Context, Entity, Focusable, FontWeight, Role, SharedString, Subscription, Window,
     div, prelude::*, px,
@@ -30,14 +31,21 @@ pub(super) struct Switcher {
     mode: Mode,
     /// The store's reason a name was refused, shown in the menu.
     error: Option<String>,
+    /// New board: the templates on offer and the one picked (Blank first).
+    templates: Vec<TemplateInfo>,
+    template: String,
     _submit: Option<Subscription>,
 }
+
+const BLANK: &str = "blank";
 
 impl Switcher {
     fn list() -> Self {
         Self {
             mode: Mode::List,
             error: None,
+            templates: Vec::new(),
+            template: BLANK.into(),
             _submit: None,
         }
     }
@@ -103,6 +111,8 @@ impl BoardView {
 
     fn reset_for_board(&mut self, cx: &mut Context<Self>) {
         self.reset_view(cx);
+        self.settings = None;
+        self.default_view_applied = None;
         self.filter_open = false;
         self.sort_open = false;
         self.card_menu = None;
@@ -114,12 +124,26 @@ impl BoardView {
 
     /// Make a board and open it. False when the name is blank or refused; the
     /// store's reason shows in the switcher.
-    pub(crate) fn create_board(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
+    /// Make a board from a template (`blank` is today's four columns) and
+    /// open it.
+    pub(crate) fn create_board_from(
+        &mut self,
+        name: &str,
+        template: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let name = name.trim();
         if name.is_empty() {
             return false;
         }
-        match self.service().and_then(|service| service.create(name)) {
+        let made = self.service().and_then(|service| {
+            if template == BLANK {
+                service.create(name)
+            } else {
+                service.create_from_template(name, template)
+            }
+        });
+        match made {
             Ok(board) => self.open_board(board.id, cx),
             Err(error) => {
                 self.switcher_error(error, cx);
@@ -190,9 +214,30 @@ impl BoardView {
             if renaming {
                 this.rename_open_board(&name, cx);
             } else {
-                this.create_board(&name, cx);
+                let template = this
+                    .switcher
+                    .as_ref()
+                    .map_or_else(|| BLANK.to_string(), |switcher| switcher.template.clone());
+                this.create_board_from(&name, &template, cx);
             }
         });
+        let (templates, error) = if renaming {
+            (Vec::new(), None)
+        } else {
+            match self.service().and_then(|service| service.templates()) {
+                Ok(templates) => (templates, None),
+                // Blank needs no stored template, so it is still offered
+                // (and created by Enter) without the list.
+                Err(error) => (
+                    vec![TemplateInfo {
+                        id: BLANK.into(),
+                        name: "Blank".into(),
+                        built_in: true,
+                    }],
+                    Some(error),
+                ),
+            }
+        };
         window.focus(&input.focus_handle(cx), cx);
         self.switcher = Some(Switcher {
             mode: if renaming {
@@ -200,7 +245,9 @@ impl BoardView {
             } else {
                 Mode::New(input)
             },
-            error: None,
+            error,
+            templates,
+            template: BLANK.into(),
             _submit: Some(submit),
         });
         cx.notify();
@@ -288,9 +335,49 @@ impl BoardView {
         }
         rows.push(div().h(px(1.)).my_1().bg(content(0.07)).into_any_element());
         match &switcher.mode {
-            Mode::New(input) => rows.push(name_field("board-new-name", input)),
+            Mode::New(input) => {
+                rows.push(name_field("board-new-name", input));
+                for template in &switcher.templates {
+                    let on = switcher.template == template.id;
+                    let id = template.id.clone();
+                    let field = input.clone();
+                    rows.push(
+                        checked_row(
+                            format!("board-template-{}", template.id).into(),
+                            template.name.clone(),
+                            on,
+                        )
+                        .flex()
+                        .gap_2()
+                        .child(div().size(px(12.)).flex_shrink_0().when(on, |d| {
+                            d.child(icon("check", 12.).text_color(accent_color()))
+                        }))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .child(template.name.clone()),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if let Some(switcher) = &mut this.switcher {
+                                switcher.template = id.clone();
+                            }
+                            // Enter still creates: the name field keeps focus.
+                            window.focus(&field.focus_handle(cx), cx);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                    );
+                }
+            }
             Mode::Rename(input) => rows.push(name_field("board-rename-name", input)),
             Mode::List => {
+                rows.push(
+                    menu_row("board-settings-open".into(), "Board settings")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)))
+                        .into_any_element(),
+                );
                 rows.push(
                     menu_row("board-new".into(), "New board")
                         .on_click(cx.listener(|this, _, window, cx| {

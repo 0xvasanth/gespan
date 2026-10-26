@@ -2242,6 +2242,7 @@ dependencies = [
  "gespan-core",
  "gespan-keep-awake",
  "gespan-redact",
+ "gespan-tracker-client",
  "gespan-tracker-secrets",
  "gpui-pre",
  "gpui-pre-apple",
