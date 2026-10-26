@@ -120,6 +120,28 @@ impl BoardView {
                     ),
             )
             .child(div().flex_1())
+            .when(self.run_with_shown(), |d| {
+                let card_id = card.id.clone();
+                d.child(
+                    // An icon, so the top bar's other actions keep their room.
+                    icon_button("board-drawer-run-with", "Run with…", "play")
+                        .debug_selector(|| "board-drawer-run-with".into())
+                        .tab_index(0)
+                        .focus_visible(|s| s.bg(content(0.06)))
+                        .on_key_down(cx.listener({
+                            let card_id = card_id.clone();
+                            move |this, event: &gpui::KeyDownEvent, window, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    cx.stop_propagation();
+                                    this.run_with(&card_id, window, cx);
+                                }
+                            }
+                        }))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.run_with(&card_id, window, cx)
+                        })),
+                )
+            })
             .child(
                 quiet_button(
                     "board-drawer-full-page",

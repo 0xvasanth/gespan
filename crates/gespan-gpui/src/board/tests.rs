@@ -795,6 +795,14 @@ fn events(
                 Event::OpenSession(id) => format!("session:{id}"),
                 Event::OpenPilot(id) => format!("pilot:{id}"),
                 Event::LinkTicket(id) => format!("link-ticket:{id}"),
+                Event::RunWith(run) => format!(
+                    "run:{}:{}:{}:{}:{}",
+                    run.card_id,
+                    run.provider,
+                    run.model.clone().unwrap_or_default(),
+                    run.project,
+                    run.new_worktree
+                ),
             })
         })
     });
@@ -8446,3 +8454,5 @@ fn a_failed_template_list_still_lets_the_switcher_create_a_blank_board(cx: &mut 
     let names: Vec<String> = column_names(&f, visual).into_iter().map(|c| c.0).collect();
     assert_eq!(names, ["Backlog", "In Progress", "Review", "Done"]);
 }
+
+mod link_run;

@@ -75,6 +75,8 @@ impl BoardView {
         self.kb_drag.is_some()
             || self.settings.is_some()
             || self.new_card.is_some()
+            || self.run_picker.is_some()
+            || self.run_confirm.is_some()
             || self.composer.is_some()
             || self.filter_open
             || self.sort_open

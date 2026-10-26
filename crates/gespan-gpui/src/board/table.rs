@@ -25,8 +25,10 @@ use std::rc::Rc;
 /// The narrowest a column can be dragged.
 pub(crate) const MIN_COLUMN: i64 = 60;
 
-/// The built-in columns as (id, label, default width).
-const COLUMNS: [(&str, &str, i64); 10] = [
+/// The built-in columns as (id, label, default width). The agent fields
+/// (provider, model, run time) are computed from the card's linked sessions;
+/// cost has no source yet, so it isn't offered.
+const COLUMNS: [(&str, &str, i64); 13] = [
     ("title", "Title", 320),
     ("status", "Status", 130),
     ("priority", "Priority", 110),
@@ -37,6 +39,9 @@ const COLUMNS: [(&str, &str, i64); 10] = [
     ("estimate", "Estimate", 90),
     ("created", "Created", 100),
     ("updated", "Updated", 100),
+    ("provider", "Provider", 130),
+    ("model", "Model", 150),
+    ("runTime", "Run time", 90),
 ];
 const DEFAULT_COLUMNS: [&str; 5] = ["title", "status", "priority", "due", "labels"];
 const FIELD_WIDTH: i64 = 140;
@@ -375,6 +380,15 @@ impl BoardView {
                     card.updated_at.max(0) as u64,
                     now,
                 )))
+                .into_any_element(),
+            agent @ ("provider" | "model" | "runTime") => cell
+                .child(text(
+                    self.agent
+                        .get(&card.id)
+                        .and_then(|values| values.get(agent))
+                        .unwrap_or_default()
+                        .to_string(),
+                ))
                 .into_any_element(),
             custom => {
                 let value = custom.strip_prefix("field:").and_then(|field_id| {

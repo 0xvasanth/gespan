@@ -134,11 +134,17 @@ impl BoardView {
             self.rank.clear();
             return Ok(());
         }
-        // No card shows a running state on the Native board yet, so none counts
-        // as running.
-        let ids = self
-            .service()
-            .and_then(|service| service.query(&board_id, &spec, &HashSet::new()))?;
+        // The cards whose linked session or Pilot has an open turn, or waits
+        // on the user (ruling C5-m), for the `linked: running` filter.
+        let links = super::turns::running_links(cx);
+        let ids = self.service().and_then(|service| {
+            let running = if links.is_empty() {
+                HashSet::new()
+            } else {
+                service.running_cards(&board_id, &links)?
+            };
+            service.query(&board_id, &spec, &running)
+        })?;
         self.rank = ids
             .iter()
             .enumerate()

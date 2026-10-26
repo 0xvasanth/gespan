@@ -14,7 +14,13 @@ use gespan_core::{
     pilot::Roster,
 };
 use gpui::{App, Global, WeakEntity};
-use std::path::PathBuf;
+use std::{
+    collections::{BTreeSet, VecDeque},
+    path::PathBuf,
+};
+
+/// How many settled turns `BoardTurns` remembers for boards that look late.
+const SETTLE_LOG: usize = 64;
 
 pub(crate) struct BoardTurns {
     turns: LinkedTurns,
@@ -22,6 +28,15 @@ pub(crate) struct BoardTurns {
     /// lands before its "completed" or "failed".
     queue: async_channel::Sender<Vec<LinkedCall>>,
     pilots: Option<WeakEntity<Pilots>>,
+    /// Session keys waiting on the user (an approval or a question).
+    waiting: BTreeSet<String>,
+    /// The newest settled turns as (sequence, session key), oldest first, so
+    /// a board refreshes link status only for sessions linked to its cards.
+    settles: VecDeque<(u64, String)>,
+    settle_seq: u64,
+    /// Pilots as `(id, name)` for tests, which have no live roster.
+    #[cfg(test)]
+    pub(crate) test_pilots: Option<Vec<(String, String)>>,
 }
 impl Global for BoardTurns {}
 
@@ -56,7 +71,81 @@ pub(crate) fn install(db_path: PathBuf, pilots: Option<WeakEntity<Pilots>>, cx: 
         turns: LinkedTurns::default(),
         queue,
         pilots,
+        waiting: BTreeSet::new(),
+        settles: VecDeque::new(),
+        settle_seq: 0,
+        #[cfg(test)]
+        test_pilots: None,
     });
+}
+
+/// The links whose work runs now, as `Service::running_cards` takes them:
+/// every session with an open turn, the Pilot behind it, and every session
+/// waiting on the user. A waiting session still counts as running for the
+/// `linked: running` filter (ruling C5-m); its chip says "waiting".
+pub(crate) fn running_links(cx: &App) -> Vec<(String, String)> {
+    let Some(board) = cx.try_global::<BoardTurns>() else {
+        return Vec::new();
+    };
+    let mut links = board.turns.open_links();
+    links.extend(
+        board
+            .waiting
+            .iter()
+            .map(|key| ("session".to_string(), key.clone())),
+    );
+    links.sort();
+    links.dedup();
+    links
+}
+
+/// Session keys whose turn waits on the user.
+pub(crate) fn waiting_sessions(cx: &App) -> BTreeSet<String> {
+    cx.try_global::<BoardTurns>()
+        .map(|board| board.waiting.clone())
+        .unwrap_or_default()
+}
+
+/// Record whether a session waits on the user. Only a change notifies the
+/// boards.
+pub(crate) fn set_waiting(store: &Database, session: i64, waiting: bool, cx: &mut App) {
+    let Some(board) = cx.try_global::<BoardTurns>() else {
+        return;
+    };
+    let Some(key) = session_key(store, session) else {
+        return;
+    };
+    if board.waiting.contains(&key) == waiting {
+        return;
+    }
+    let board = cx.global_mut::<BoardTurns>();
+    if waiting {
+        board.waiting.insert(key);
+    } else {
+        board.waiting.remove(&key);
+    }
+}
+
+/// The session keys whose turns settled after sequence `seen`, and the
+/// newest sequence. A board that fell more than `SETTLE_LOG` settles behind
+/// gets every remembered one.
+pub(crate) fn settled_since(seen: u64, cx: &App) -> (u64, Vec<String>) {
+    let Some(board) = cx.try_global::<BoardTurns>() else {
+        return (seen, Vec::new());
+    };
+    let keys = board
+        .settles
+        .iter()
+        .filter(|(seq, _)| *seq > seen)
+        .map(|(_, key)| key.clone())
+        .collect();
+    (board.settle_seq, keys)
+}
+
+/// The newest settle sequence, so a board starts from now.
+pub(crate) fn settle_seq(cx: &App) -> u64 {
+    cx.try_global::<BoardTurns>()
+        .map_or(0, |board| board.settle_seq)
 }
 
 /// The Pilot a session's turn counts for: its own chat, a habit run, or a
@@ -84,19 +173,30 @@ pub(crate) fn pilot_of_session(session: i64, cx: &App) -> Option<String> {
 
 /// Every Pilot as `(id, name)`, for linking cards and naming link chips.
 pub(crate) fn pilots(cx: &App) -> Vec<(String, String)> {
-    let Some(pilots) = cx
+    pilot_roster(cx).unwrap_or_default()
+}
+
+/// Every Pilot as `(id, name)`, or `None` when there is no roster to read.
+pub(crate) fn pilot_roster(cx: &App) -> Option<Vec<(String, String)>> {
+    #[cfg(test)]
+    if let Some(pilots) = cx
         .try_global::<BoardTurns>()
-        .and_then(|board| board.pilots.as_ref()?.upgrade())
-    else {
-        return Vec::new();
-    };
-    pilots
-        .read(cx)
-        .roster
-        .pilots
-        .iter()
-        .map(|pilot| (pilot.id.clone(), pilot.name.clone()))
-        .collect()
+        .and_then(|board| board.test_pilots.clone())
+    {
+        return Some(pilots);
+    }
+    let pilots = cx
+        .try_global::<BoardTurns>()
+        .and_then(|board| board.pilots.as_ref()?.upgrade())?;
+    Some(
+        pilots
+            .read(cx)
+            .roster
+            .pilots
+            .iter()
+            .map(|pilot| (pilot.id.clone(), pilot.name.clone()))
+            .collect(),
+    )
 }
 
 /// A session's turn began: record it for the Pilot behind the session. Pilot
@@ -149,13 +249,20 @@ pub(crate) fn turn_settled(
     let Some(key) = session_key(store, session) else {
         return;
     };
-    let turns = &mut cx.global_mut::<BoardTurns>().turns;
+    let board = cx.global_mut::<BoardTurns>();
     let calls = if stopped {
-        turns.cancelled(&key, turn);
+        board.turns.cancelled(&key, turn);
         Vec::new()
     } else {
-        turns.settled(&key, turn, ok)
+        board.turns.settled(&key, turn, ok)
     };
+    // A finished turn may also have answered what it was waiting on.
+    board.waiting.remove(&key);
+    board.settle_seq += 1;
+    board.settles.push_back((board.settle_seq, key));
+    while board.settles.len() > SETTLE_LOG {
+        board.settles.pop_front();
+    }
     dispatch(calls, cx);
 }
 

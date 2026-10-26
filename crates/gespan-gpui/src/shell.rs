@@ -1283,6 +1283,10 @@ impl Shell {
                     this.git.update(cx, |git, cx| git.reload(cx));
                 }
                 this.sync_search_session(id, cx);
+                // The Board's link chips show a session waiting on the user.
+                let waiting = this.session_metadata(id, cx).needs_approval();
+                let store = this.store.clone();
+                crate::board::turns::set_waiting(&store, id, waiting, cx);
                 this.orchestration_session_changed(id, cx);
                 this.automation_session_changed(id, cx);
                 this.flow_session_changed(id, cx);

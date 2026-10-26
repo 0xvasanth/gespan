@@ -284,6 +284,7 @@ impl Shell {
                             pilots.update(cx, |pilots, cx| pilots.open(id, window, cx));
                         }
                     }
+                    board::Event::RunWith(request) => this.start_card_run(request.clone(), cx),
                 },
             ));
             let backend = self.tickets.clone();
@@ -323,7 +324,103 @@ impl Shell {
                 (path.clone(), name)
             })
             .collect();
-        board.update(cx, |board, cx| board.set_projects(projects, cx));
+        let options = self.board_run_options();
+        board.update(cx, |board, cx| {
+            board.set_projects(projects, cx);
+            board.set_run_options(options);
+        });
+    }
+
+    /// What the Board's "Run with…" picker offers: every provider, starting
+    /// on the user's usual provider and its model for the current project.
+    fn board_run_options(&self) -> board::run_with::RunOptions {
+        let preferences = &self.workspace.preferences;
+        let project = preferences.project_providers.get(&self.workspace.project);
+        board::run_with::RunOptions {
+            providers: Kind::ALL
+                .iter()
+                .map(|kind| (kind.id().to_string(), kind.label().to_string()))
+                .collect(),
+            default_provider: Some(self.default_kind().id().to_string()),
+            default_models: Kind::ALL
+                .iter()
+                .filter_map(|kind| {
+                    let model = project
+                        .and_then(|project| project.models.get(kind.id()))
+                        .or(preferences.default_models.get(kind.id()))?;
+                    Some((kind.id().to_string(), model.clone()))
+                })
+                .collect(),
+        }
+    }
+
+    /// "Run with…" on a board card: make the session (prompt, ticket and card
+    /// link in `prepare_run`) off the UI thread, then open and start it. The
+    /// access mode is the user's default, as for any new session; plan mode
+    /// and the like stay off.
+    fn start_card_run(&mut self, request: board::run_with::RunRequest, cx: &mut Context<Self>) {
+        let kind = Kind::from_id(&request.provider);
+        let mut settings = gespan_core::agent::Settings {
+            model: request.model.clone(),
+            effort: crate::conversation::preferred_effort(kind.id(), cx),
+            access: self
+                .workspace
+                .preferences
+                .default_access
+                .as_deref()
+                .map(gespan_core::agent::AccessMode::from_id)
+                .unwrap_or_default(),
+            account: crate::accounts::get(cx)
+                .map(|accounts| accounts.read(cx).selected(kind, &request.project))
+                .unwrap_or_default(),
+            ..Default::default()
+        };
+        if request.new_worktree {
+            super::automation_runs::WorktreeChoice::New.apply(&mut settings);
+        }
+        let store = self.store.clone();
+        let db_path = match locked(&store) {
+            Ok(store) => store.database_path().to_path_buf(),
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        self.navigation_revision += 1;
+        let revision = self.navigation_revision;
+        let work = cx.background_executor().spawn(async move {
+            board::run_with::prepare_run(&store, &db_path, &request, settings)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update_in(cx, |this, window, cx| match result {
+                Ok(run) => {
+                    let id = run.summary.id;
+                    let linked = run.summary.work_item.clone();
+                    this.add(run.summary, cx);
+                    if let Some(linked) = linked {
+                        this.sessions[&id]
+                            .update(cx, |view, _| view.summary.work_item = Some(linked));
+                    }
+                    let (prompt, settings) = (run.prompt, run.settings);
+                    this.sessions[&id]
+                        .update(cx, |view, cx| view.quick_submit(prompt, settings, cx));
+                    if this.navigation_revision == revision {
+                        this.activate_session(id, window, cx);
+                    }
+                    if let Some(board) = &this.board {
+                        board.update(cx, |board, cx| board.reload(cx));
+                    }
+                    this.persist(cx);
+                }
+                Err(error) => {
+                    this.error = Some(error);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     pub(super) fn open_inbox(&mut self, window: &mut Window, cx: &mut Context<Self>) {
