@@ -641,3 +641,70 @@ fn a_completed_turn_hands_its_final_reply_to_write_back() {
     assert_eq!(status, "Ready");
     assert_eq!(LAST_REPLY.take().as_deref(), Some("Done."));
 }
+
+/// A ticket link and a write-back card on the session, both ready to be read.
+fn ticket_and_cards(p: &mut Prepared) {
+    linked_board(p, "Loud", Default::default());
+}
+
+fn calls_ticket_and_card() -> serde_json::Value {
+    serde_json::json!([
+        {"key": "ENG-1", "tool": {"tool": "get"}},
+        {"tool": {"tool": "card_subtasks"}},
+    ])
+}
+
+#[test]
+fn an_orchestration_lead_turn_gets_no_ticket_or_card_tools() {
+    let (record, _, status) = run_with(
+        linked(),
+        with_calls(
+            Settings {
+                orchestrator: true,
+                ..Settings::default()
+            },
+            calls_ticket_and_card(),
+        ),
+        ticket_and_cards,
+        |_, _| {},
+    );
+    assert_eq!(status, "Ready");
+    assert!(!record["argv"].to_string().contains("gespan_ticket"));
+    assert_eq!(record["env"], serde_json::json!([]));
+    assert!(!record["prompt"].as_str().unwrap().contains("ticket"));
+}
+
+#[test]
+fn an_orchestration_worker_session_gets_no_ticket_or_card_tools() {
+    let (record, _, status) = run_with(
+        linked(),
+        with_calls(
+            Settings {
+                orchestration_worker: true,
+                ..Settings::default()
+            },
+            calls_ticket_and_card(),
+        ),
+        ticket_and_cards,
+        |_, _| {},
+    );
+    assert_eq!(status, "Ready");
+    assert!(!record["argv"].to_string().contains("gespan_ticket"));
+    assert_eq!(record["env"], serde_json::json!([]));
+    assert!(!record["prompt"].as_str().unwrap().contains("ticket"));
+}
+
+#[test]
+fn an_ordinary_session_with_a_ticket_and_cards_gets_both_tools() {
+    let (record, _, status) = run_with(
+        linked(),
+        with_calls(Settings::default(), calls_ticket_and_card()),
+        ticket_and_cards,
+        |_, _| {},
+    );
+    assert_eq!(status, "Ready");
+    assert_eq!(record["env"].as_array().unwrap().len(), 4);
+    assert_eq!(record["scope"]["result"]["key"], "ENG-1");
+    assert_eq!(record["scope"]["result"]["cards"], true);
+    assert_eq!(record["replies"][1]["ok"], true, "{record}");
+}

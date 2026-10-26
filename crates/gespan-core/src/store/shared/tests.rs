@@ -1097,3 +1097,29 @@ fn desktop_work_item_reads_one_session_by_its_desktop_id() {
     // A session id the store never handed out is an error.
     assert!(store.work_item(i64::MAX - 7).is_err());
 }
+
+#[test]
+fn desktop_work_item_reads_a_sidebar_hidden_session_by_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_gespan(&dir.path().join("gespan.db")).unwrap();
+    let hidden = store.create("codex", "/project").unwrap();
+    let key = store.persisted_session_id(hidden.id).unwrap();
+    let item = crate::session_groups::WorkItem::Ticket(Box::new(crate::tickets::TicketRef {
+        tracker: crate::tickets::Tracker::Linear,
+        key: "ENG-7".into(),
+        url: None,
+        title: None,
+        status: None,
+        status_group: None,
+        fetched_at: None,
+    }));
+    store.set_work_item(hidden.id, Some(&item)).unwrap();
+    store
+        .conn
+        .execute("UPDATE sessions SET sidebar_hidden=1 WHERE id=?1", [&key])
+        .unwrap();
+    // A ticket tool's scope reads the link by id, not through the listing.
+    assert_eq!(store.work_item(hidden.id).unwrap(), Some(item));
+    store.set_work_item(hidden.id, None).unwrap();
+    assert_eq!(store.work_item(hidden.id).unwrap(), None);
+}

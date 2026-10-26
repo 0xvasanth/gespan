@@ -178,12 +178,14 @@ pub(crate) fn encode_field(kind: &str, text: &str) -> Result<Option<String>, Str
 /// The scheme matches in any case and needs something after it, as the
 /// board store checks (`HTTP://x` is fine, `https://  ` is not).
 fn valid_field_url(text: &str) -> bool {
+    if text.chars().count() > 2_000 {
+        return false;
+    }
     let lower = text.to_ascii_lowercase();
-    text.chars().count() <= 2_000
-        && lower
-            .strip_prefix("https://")
-            .or_else(|| lower.strip_prefix("http://"))
-            .is_some_and(|rest| !rest.trim().is_empty())
+    lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))
+        .is_some_and(|rest| !rest.trim().is_empty())
 }
 
 /// A multi-select field's stored picks, in the order stored.

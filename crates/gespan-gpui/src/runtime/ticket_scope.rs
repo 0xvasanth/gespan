@@ -25,10 +25,12 @@ pub(super) struct ScopeSource {
     key: Option<String>,
     board: Option<Mutex<Service>>,
     read_only: bool,
+    /// An orchestration lead or worker: never has a ticket or cards.
+    restricted: bool,
 }
 
 impl ScopeSource {
-    pub(super) fn new(store: Database, session: i64, read_only: bool) -> Self {
+    pub(super) fn new(store: Database, session: i64, read_only: bool, restricted: bool) -> Self {
         let key = crate::board::turns::session_key(&store, session);
         let board = locked(&store)
             .ok()
@@ -45,12 +47,16 @@ impl ScopeSource {
             key,
             board,
             read_only,
+            restricted,
         }
     }
 
     /// The ticket the session is linked to right now: one session's row,
     /// not the whole session list, since this runs on every scope poll.
     pub(super) fn ticket(&self) -> Result<Option<TicketRef>, String> {
+        if self.restricted {
+            return Ok(None);
+        }
         let item = locked(&self.store)?.work_item(self.session)?;
         Ok(item
             .as_ref()
@@ -62,6 +68,9 @@ impl ScopeSource {
     /// cards). Anything unreadable answers no: a session the board can't
     /// vouch for gets neither.
     pub(super) fn board_scope(&self) -> (bool, bool) {
+        if self.restricted {
+            return (false, false);
+        }
         let (Some(key), Some(board)) = (self.key.as_deref(), self.board.as_ref()) else {
             return (false, false);
         };
@@ -96,6 +105,9 @@ impl ScopeSource {
         &self,
         tool: &gespan_core::board::extras::CardTool,
     ) -> Result<serde_json::Value, String> {
+        if self.restricted {
+            return Err(NO_CARDS.into());
+        }
         let key = self.key.as_deref().ok_or(NO_CARDS)?;
         let board = self.board.as_ref().ok_or(NO_CARDS)?;
         board
@@ -300,7 +312,7 @@ mod tests {
                 .unwrap();
         };
         let store: Database = Arc::new(Mutex::new(store));
-        let source = ScopeSource::new(store.clone(), session, false);
+        let source = ScopeSource::new(store.clone(), session, false, false);
         assert_eq!(source.ticket(), Ok(None));
         // Another session's link is never this session's.
         link(&store, other, Some("ENG-9"));
@@ -353,7 +365,7 @@ mod tests {
         let backlog = board.get(&created.id).unwrap().columns[0].id.clone();
         let card = board.card_create(&backlog, "Remote work", "").unwrap();
         board.add_link(&card.id, "session", &key, None).unwrap();
-        let before = ScopeSource::new(store.clone(), summary.id, false).board_scope();
+        let before = ScopeSource::new(store.clone(), summary.id, false, false).board_scope();
         assert_eq!(
             before,
             (true, true),
@@ -369,14 +381,41 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            ScopeSource::new(store.clone(), summary.id, false).board_scope(),
+            ScopeSource::new(store.clone(), summary.id, false, false).board_scope(),
             (false, true)
         );
         board.set_session_status_setting(&key, Some(true)).unwrap();
         assert_eq!(
-            ScopeSource::new(store, summary.id, false).board_scope(),
+            ScopeSource::new(store, summary.id, false, false).board_scope(),
             (true, true),
             "the session's own choice beats the board"
         );
+    }
+
+    #[test]
+    fn a_restricted_source_reads_no_ticket_and_refuses_card_calls_at_answer_time() {
+        use gespan_core::session_groups::WorkItem;
+        let dir = tempfile::tempdir().unwrap();
+        let store = gespan_core::store::Store::open(&dir.path().join("gespan.db")).unwrap();
+        let session = store.create("codex", "/work").unwrap().id;
+        let item = WorkItem::Ticket(Box::new(TicketRef {
+            tracker: gespan_core::tickets::Tracker::Linear,
+            key: "ENG-1".into(),
+            url: None,
+            title: None,
+            status: None,
+            status_group: None,
+            fetched_at: None,
+        }));
+        store.set_work_item(session, Some(&item)).unwrap();
+        let store: Database = Arc::new(Mutex::new(store));
+        let open = ScopeSource::new(store.clone(), session, false, false);
+        assert_eq!(open.read().ticket.unwrap().key, "ENG-1");
+        let restricted = ScopeSource::new(store, session, false, true);
+        let scope = restricted.read();
+        assert!(scope.ticket.is_none() && !scope.cards);
+        assert_eq!(restricted.board_scope(), (false, false));
+        let tool = gespan_core::board::extras::CardTool::Subtasks;
+        assert_eq!(restricted.answer_card(&tool), Err(NO_CARDS.to_string()));
     }
 }

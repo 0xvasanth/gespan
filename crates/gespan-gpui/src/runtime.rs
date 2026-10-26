@@ -551,6 +551,10 @@ fn run_turn_using(
         let executable = std::env::current_exe()
             .inspect_err(|error| tracing::warn!(%error, "ticket tools need the app executable"))
             .ok();
+        // Leads and workers stay out of the ticket and card tools, as in the
+        // Tauri app: the same refusal is applied again to every answered call.
+        let restricted = settings.orchestrator || settings.orchestration_worker;
+        let ticket = ticket.filter(|_| !restricted);
         let tool_servers = !settings.text_only
             && !raw_native_command
             && !visual_discovery::lacks_tool_servers(kind, provider_id.as_deref());
@@ -563,6 +567,7 @@ fn run_turn_using(
                 store.clone(),
                 summary.id,
                 read_only,
+                restricted,
             ))
         });
         let (may_change_status, cards) = source
