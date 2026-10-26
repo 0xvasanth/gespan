@@ -106,8 +106,10 @@ fn read_wav(path: &Path) -> Vec<f32> {
         .expect("data chunk")
         + 8;
     bytes[data..]
-        .chunks_exact(2)
-        .map(|b| f32::from(i16::from_le_bytes([b[0], b[1]])) / 32768.0)
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| f32::from(i16::from_le_bytes(*b)) / 32768.0)
         .collect()
 }
 
