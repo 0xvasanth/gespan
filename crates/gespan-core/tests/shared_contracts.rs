@@ -409,7 +409,7 @@ fn board_error_strings_match_tauri() {
 }
 
 #[test]
-fn opening_the_gespan_store_then_the_board_service_creates_the_shared_v3_board_tables() {
+fn opening_the_gespan_store_then_the_board_service_creates_the_shared_board_tables() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gespan.db");
     drop(Store::open_gespan(&path).unwrap());
@@ -445,6 +445,7 @@ fn opening_the_gespan_store_then_the_board_service_creates_the_shared_v3_board_t
             "board_schema",
             "board_settings",
             "board_subtasks",
+            "board_views",
             "boards",
         ]
     );

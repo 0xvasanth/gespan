@@ -1,4 +1,4 @@
-use crate::meta::card_set;
+use crate::meta::{card_set, cards_on_one_board};
 use crate::ops::{clean_text, db, get_card, log_edit, new_id, touch, write_tx};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -142,14 +142,70 @@ pub fn set_card_labels(
         .map_err(db)?;
         names.push(name);
     }
-    names.sort_by_key(|name| name.to_lowercase());
     touch(&tx, card_id)?;
-    let detail = if names.is_empty() {
-        "labels: none".to_string()
-    } else {
-        format!("labels: {}", names.join(", "))
-    };
-    log_edit(&tx, &card.board_id, card_id, &detail)?;
+    log_edit(&tx, &card.board_id, card_id, &labels_detail(names))?;
     tx.commit().map_err(db)?;
     Ok(card.board_id)
+}
+
+/// The activity detail for a card's labels: "labels: A, b" (by name, case
+/// folded) or "labels: none".
+fn labels_detail(mut names: Vec<String>) -> String {
+    if names.is_empty() {
+        return "labels: none".into();
+    }
+    names.sort_by_key(|name| name.to_lowercase());
+    format!("labels: {}", names.join(", "))
+}
+
+/// Adds (`on`) or removes one label on several cards (all on the label's
+/// board) in one transaction. Each card that changed gets one row naming all
+/// its labels after the change. Returns the board id.
+pub fn set_label_many(
+    conn: &Connection,
+    card_ids: &[String],
+    label_id: &str,
+    on: bool,
+) -> Result<String, String> {
+    let tx = write_tx(conn)?;
+    let (board_id, cards) = cards_on_one_board(&tx, card_ids, "No cards to edit")?;
+    let on_board: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM board_labels WHERE id = ?1 AND board_id = ?2)",
+            params![label_id, board_id],
+            |r| r.get(0),
+        )
+        .map_err(db)?;
+    if !on_board {
+        return Err("Label not on this board".into());
+    }
+    for card in &cards {
+        let changed = if on {
+            tx.execute(
+                "INSERT OR IGNORE INTO board_card_labels (card_id, label_id) VALUES (?1, ?2)",
+                params![card.id, label_id],
+            )
+        } else {
+            tx.execute(
+                "DELETE FROM board_card_labels WHERE card_id = ?1 AND label_id = ?2",
+                params![card.id, label_id],
+            )
+        }
+        .map_err(db)?;
+        if changed == 0 {
+            continue;
+        }
+        let names: Vec<String> = card_set(
+            &tx,
+            "SELECT l.name FROM board_card_labels cl JOIN board_labels l ON l.id = cl.label_id
+             WHERE cl.card_id = ?1",
+            &card.id,
+        )?
+        .into_iter()
+        .collect();
+        touch(&tx, &card.id)?;
+        log_edit(&tx, &board_id, &card.id, &labels_detail(names))?;
+    }
+    tx.commit().map_err(db)?;
+    Ok(board_id)
 }

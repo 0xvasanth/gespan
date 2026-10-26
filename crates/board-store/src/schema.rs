@@ -1,7 +1,7 @@
 use crate::migrate;
 use rusqlite::Connection;
 
-pub const VERSION: i64 = 3;
+pub const VERSION: i64 = 4;
 
 /// The tables as both apps created them before `board_schema` existed.
 pub(crate) const V2_TABLES: &str = "
@@ -152,6 +152,22 @@ pub(crate) const V3_COLUMNS: [(&str, &str, &str); 3] = [
     ("board_columns", "wip_limit", "INTEGER"),
     ("board_columns", "collapsed", "INTEGER NOT NULL DEFAULT 0"),
 ];
+
+/// v4: saved views, one row per tab after the built-in "All cards".
+pub(crate) const V4_TABLES: &str = "
+CREATE TABLE IF NOT EXISTS board_views (
+  id TEXT PRIMARY KEY,
+  board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  spec_json TEXT NOT NULL,
+  layout_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS board_views_board_idx
+  ON board_views (board_id, position);
+";
 
 /// Brings the board tables to the current version. Both apps call this on
 /// every open, so it is cheap once the database is current.

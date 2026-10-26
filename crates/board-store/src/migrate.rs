@@ -1,10 +1,22 @@
-//! v2 → v3: the native app's `board_native_*` extras become the shared v3
-//! tables, and each card's single `link_kind`/`link_id` becomes a row in
-//! `board_card_links`. The old tables and columns stay as they are, so a build
-//! from before v3 still opens the database (its later writes there are not
-//! carried over).
-use crate::schema::{V2_TABLES, V3_COLUMNS, V3_TABLES, VERSION};
+//! Schema migrations, one step per version:
+//! - v2: the tables both apps created before `board_schema` existed.
+//! - v3: the native app's `board_native_*` extras become the shared v3
+//!   tables, and each card's single `link_kind`/`link_id` becomes a row in
+//!   `board_card_links`. The old tables and columns stay as they are, so a
+//!   build from before v3 still opens the database (its later writes there
+//!   are not carried over).
+//! - v4: the `board_views` table for saved views.
+//!
+//! A step runs only when the stored version is below it, so a v3 database
+//! moving to v4 does not copy the native extras again (which would bring back
+//! labels or values removed since).
+use crate::schema::{V2_TABLES, V3_COLUMNS, V3_TABLES, V4_TABLES, VERSION};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
+
+type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
+
+/// Each step with the version it brings the database to, oldest first.
+const STEPS: [(i64, Step); 3] = [(2, to_v2), (3, to_v3), (4, to_v4)];
 
 /// The stored board schema version; 0 when none was ever written.
 pub fn version(conn: &Connection) -> rusqlite::Result<i64> {
@@ -18,33 +30,50 @@ pub fn version(conn: &Connection) -> rusqlite::Result<i64> {
     )
 }
 
-/// Creates and fills the v3 tables, then records version 3. It holds the
-/// write lock throughout and re-reads the version once it has it, so when both
-/// apps open an old database at the same moment the second one finds the work
-/// done; the copies use `INSERT OR IGNORE` for the same reason.
+/// Runs every step above the stored version, then records the current one.
+/// It holds the write lock throughout and re-reads the version once it has
+/// it, so when both apps open an old database at the same moment the second
+/// one finds the work done; the copies use `INSERT OR IGNORE` for the same
+/// reason.
 pub fn run(conn: &Connection) -> rusqlite::Result<()> {
     let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
-    if version(&tx)? >= VERSION {
+    let from = version(&tx)?;
+    if from >= VERSION {
         return Ok(());
     }
-    tx.execute_batch(V2_TABLES)?;
+    for (to, step) in STEPS {
+        if from < to {
+            step(&tx)?;
+        }
+    }
+    tx.execute("DELETE FROM board_schema", [])?;
+    tx.execute("INSERT INTO board_schema (version) VALUES (?1)", [VERSION])?;
+    tx.commit()
+}
+
+fn to_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(V2_TABLES)
+}
+
+fn to_v3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(V3_TABLES)?;
     for (table, column, declaration) in V3_COLUMNS {
-        if !column_exists(&tx, table, column)? {
+        if !column_exists(tx, table, column)? {
             tx.execute_batch(&format!(
                 "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
             ))?;
         }
     }
-    copy_native_extras(&tx)?;
+    copy_native_extras(tx)?;
     tx.execute_batch(
         "INSERT OR IGNORE INTO board_card_links (card_id, kind, ref, role, created_at)
          SELECT id, link_kind, link_id, 'primary', updated_at FROM board_cards
          WHERE link_kind IS NOT NULL AND link_id IS NOT NULL;",
-    )?;
-    tx.execute("DELETE FROM board_schema", [])?;
-    tx.execute("INSERT INTO board_schema (version) VALUES (?1)", [VERSION])?;
-    tx.commit()
+    )
+}
+
+fn to_v4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(V4_TABLES)
 }
 
 fn copy_native_extras(tx: &Transaction<'_>) -> rusqlite::Result<()> {

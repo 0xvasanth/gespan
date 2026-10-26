@@ -16,18 +16,19 @@ mod relations;
 mod schema;
 mod settings;
 mod subtasks;
+mod views;
 
 pub use card_ops::{convert_subtask, duplicate_card, move_card_to_board};
 pub use comments::{add_comment, edit_comment, list_comments, Comment, COMMENT_AUTHORS};
 pub use fields::{
     create_field, field_values, list_fields, set_field_value, Field, FieldValue, FIELD_KINDS,
 };
-pub use labels::{create_label, list_labels, set_card_labels, Label};
+pub use labels::{create_label, list_labels, set_card_labels, set_label_many, Label};
 pub use links::{add_link, board_tickets, card_links, remove_link, set_ticket, ticket, CardLink};
 pub use meta::{
     archive_card, archive_cards, archived_cards, card_extras, card_meta, column_card_count,
-    restore_card, set_due, set_estimate, set_priority, set_projects, set_start, unarchive_card,
-    CardExtras, CardMeta, PRIORITIES,
+    restore_card, set_due, set_estimate, set_priority, set_priority_many, set_projects, set_start,
+    unarchive_card, CardExtras, CardMeta, PRIORITIES,
 };
 pub use ops::{
     cards_for_link, create_board, create_card, create_column, delete_archived_card, delete_board,
@@ -40,6 +41,10 @@ pub use schema::{ensure_tables, VERSION as SCHEMA_VERSION};
 pub use settings::{board_settings, set_board_settings, BoardSettings};
 pub use subtasks::{
     add_subtask, delete_subtask, list_subtasks, move_subtask, toggle_subtask, Subtask,
+};
+pub use views::{
+    card_index, create_view, delete_view, list_views, move_view, query_cards, update_view,
+    CardIndexRow, Dir, FilterRow, Op, SortKey, SortSpec, View, ViewSpec,
 };
 
 pub fn now_millis() -> i64 {

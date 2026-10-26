@@ -37,7 +37,7 @@ pub struct CardExtras {
     pub comments: usize,
 }
 
-fn priority_of(stored: i64) -> u8 {
+pub(crate) fn priority_of(stored: i64) -> u8 {
     stored.clamp(0, PRIORITIES.len() as i64 - 1) as u8
 }
 
@@ -273,23 +273,7 @@ pub fn unarchive_card(conn: &Connection, card_id: &str) -> Result<String, String
 /// are skipped. All cards must be on one board. Returns that board id.
 pub fn archive_cards(conn: &Connection, card_ids: &[String]) -> Result<String, String> {
     let tx = write_tx(conn)?;
-    let mut cards: Vec<Card> = Vec::new();
-    for card_id in card_ids {
-        if cards.iter().any(|card| &card.id == card_id) {
-            continue;
-        }
-        let card = get_card(&tx, card_id)?;
-        if cards
-            .first()
-            .is_some_and(|first| first.board_id != card.board_id)
-        {
-            return Err("Cards are not on one board".into());
-        }
-        cards.push(card);
-    }
-    let Some(board_id) = cards.first().map(|card| card.board_id.clone()) else {
-        return Err("No cards to archive".into());
-    };
+    let (board_id, cards) = cards_on_one_board(&tx, card_ids, "No cards to archive")?;
     let mut columns: Vec<String> = Vec::new();
     for card in &cards {
         if is_archived(&tx, &card.id)? {
@@ -305,6 +289,59 @@ pub fn archive_cards(conn: &Connection, card_ids: &[String]) -> Result<String, S
     for column_id in &columns {
         let ids = column_card_ids(&tx, column_id)?;
         write_card_positions(&tx, &ids)?;
+    }
+    tx.commit().map_err(db)?;
+    Ok(board_id)
+}
+
+/// The distinct cards named, in the order given, and the one board they are
+/// all on. Errors when a card is missing, the cards span boards, or there are
+/// none (with `none_error`).
+pub(crate) fn cards_on_one_board(
+    tx: &Transaction<'_>,
+    card_ids: &[String],
+    none_error: &str,
+) -> Result<(String, Vec<Card>), String> {
+    let mut cards: Vec<Card> = Vec::new();
+    for card_id in card_ids {
+        if cards.iter().any(|card| &card.id == card_id) {
+            continue;
+        }
+        let card = get_card(tx, card_id)?;
+        if cards
+            .first()
+            .is_some_and(|first| first.board_id != card.board_id)
+        {
+            return Err("Cards are not on one board".into());
+        }
+        cards.push(card);
+    }
+    let Some(board_id) = cards.first().map(|card| card.board_id.clone()) else {
+        return Err(none_error.into());
+    };
+    Ok((board_id, cards))
+}
+
+/// Sets one priority on several cards (all on one board) in one transaction,
+/// with one "priority: …" row per card that changed. Returns the board id.
+pub fn set_priority_many(
+    conn: &Connection,
+    card_ids: &[String],
+    priority: u8,
+) -> Result<String, String> {
+    if PRIORITIES.get(priority as usize).is_none() {
+        return Err(format!("Unknown priority: {priority}"));
+    }
+    let tx = write_tx(conn)?;
+    let (board_id, cards) = cards_on_one_board(&tx, card_ids, "No cards to edit")?;
+    let detail = format!("priority: {}", PRIORITIES[priority as usize]);
+    for card in &cards {
+        if card_meta(&tx, &card.id)?.priority == priority {
+            continue;
+        }
+        write_meta(&tx, &card.id, "priority", Some(i64::from(priority)))?;
+        touch(&tx, &card.id)?;
+        log_edit(&tx, &board_id, &card.id, &detail)?;
     }
     tx.commit().map_err(db)?;
     Ok(board_id)

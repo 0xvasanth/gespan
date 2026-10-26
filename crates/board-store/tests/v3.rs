@@ -94,7 +94,7 @@ fn last_detail(conn: &Connection, board: &str, card: &str) -> Option<String> {
 fn migrates_native_v2_data_keeping_every_value() {
     let conn = v2_db();
     ensure_tables(&conn).unwrap();
-    assert_eq!(version(&conn), 3);
+    assert_eq!(version(&conn), SCHEMA_VERSION);
 
     let meta = card_meta(&conn, "k1").unwrap();
     assert_eq!((meta.priority, meta.due_at), (3, Some(DUE)));
@@ -190,7 +190,7 @@ fn migration_is_idempotent() {
     ensure_tables(&conn).unwrap();
     migrate::run(&conn).unwrap();
     assert_eq!(counts(&conn), before);
-    assert_eq!(version(&conn), 3);
+    assert_eq!(version(&conn), SCHEMA_VERSION);
 
     // Edits made after the migration are not undone by the old rows.
     set_priority(&conn, "k1", 1).unwrap();
@@ -202,9 +202,9 @@ fn migration_is_idempotent() {
 }
 
 #[test]
-fn a_fresh_database_starts_at_v3_and_accepts_the_cancelled_role() {
+fn a_fresh_database_starts_at_the_current_version_and_accepts_the_cancelled_role() {
     let conn = fresh();
-    assert_eq!(version(&conn), 3);
+    assert_eq!(version(&conn), SCHEMA_VERSION);
     let (board, _, _) = board_with_cards(&conn, &[]);
     let column = create_column(&conn, &board.id, "Won't do", Some("cancelled")).unwrap();
     assert_eq!(column.role.as_deref(), Some("cancelled"));
