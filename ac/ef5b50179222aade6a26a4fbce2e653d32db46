@@ -1,0 +1,23 @@
+src/features/sessions/ui/NewSessionFromTicketDialog.test.ts
+  s_938a6e0c93b076::t_bd0fcf0b5b448f 255-284
+src/features/sessions/model/ticketSession.ts
+  s_938a6e0c93b076::t_fa99f4e5e4ada6 57-59
+src/features/sessions/ui/SessionPaneSeed.test.ts
+  s_938a6e0c93b076::t_389133b3fcdea6 1-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "acef5b50179222aade6a26a4fbce2e653d32db46",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
