@@ -28,6 +28,14 @@ using the subscriptions you already pay for. No new accounts and no token resale
 
 ---
 
+> **Gespan** (pronounced *guh-SPAHN*) is a Dutch word for a *span*: a team of
+> draught animals, horses or oxen, harnessed together to pull the plough and the
+> wagon on the farm before the work was mechanised. One driver, several animals,
+> all pulling in the same direction.
+>
+> That is what this app does for coding agents. You hold the reins, and a team of
+> agents does the pulling.
+
 ## Why Gespan?
 
 Coding agents are good now, and you probably use more than one. Each one comes
@@ -302,16 +310,6 @@ with new features, more agents and many fixes. Fixes still come in from
 upstream regularly. The original MIT copyright notice is kept in
 [LICENSE](LICENSE). If Gespan is useful to you, please give the original
 project a star too.
-
-## About the name
-
-**Gespan** (pronounced *guh-SPAHN*) is a Dutch word for a *span*: a team of
-draught animals, horses or oxen, harnessed together to pull the plough and the
-wagon on the farm before the work was mechanised. One driver, several animals,
-all pulling in the same direction.
-
-That is what this app does for coding agents. You hold the reins, and a team of
-agents does the pulling.
 
 ## License
 
