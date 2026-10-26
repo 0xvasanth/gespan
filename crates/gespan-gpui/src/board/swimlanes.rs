@@ -330,13 +330,18 @@ impl BoardView {
                 if let Some(id) = near {
                     return Some(id.clone());
                 }
+                // A card with several labels sits in several lanes of this
+                // column: moving on never lands back on the card itself.
                 let order: Vec<usize> = if down {
                     (lane_at + 1..lanes.len()).collect()
                 } else {
                     (0..lane_at).rev().collect()
                 };
                 order.into_iter().find_map(|lane| {
-                    let cards = cell(lane, column_at);
+                    let cards: Vec<String> = cell(lane, column_at)
+                        .into_iter()
+                        .filter(|id| id != card_id)
+                        .collect();
                     if down { cards.first() } else { cards.last() }.cloned()
                 })
             }
@@ -352,6 +357,18 @@ impl BoardView {
                 })
             }
         }
+    }
+
+    /// What a lifted card says about where it would land.
+    pub(crate) fn lane_announcement(&self) -> Option<String> {
+        let drag = self.kb_drag.as_ref()?;
+        let lane = drag.lane.as_ref()?;
+        let number = self.card(&drag.card_id)?.number;
+        Some(format!(
+            "Moving #{number} to {}, {}",
+            self.column_name(&drag.column_id),
+            self.lane_label(lane)
+        ))
     }
 
     // ---- drawing ----
@@ -504,15 +521,7 @@ impl BoardView {
                     .into_any_element(),
             );
         }
-        let announce = self.kb_drag.as_ref().and_then(|drag| {
-            let lane = drag.lane.as_ref()?;
-            let number = self.card(&drag.card_id)?.number;
-            Some(format!(
-                "Moving #{number} to {}, {}",
-                self.column_name(&drag.column_id),
-                self.lane_label(lane)
-            ))
-        });
+        let announce = self.lane_announcement();
         Some(
             div()
                 .id("board-lanes")

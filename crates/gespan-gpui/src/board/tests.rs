@@ -7298,10 +7298,15 @@ fn text_number_date_filter_rows_offer_distinct_card_values(cx: &mut TestAppConte
     assert!(shown(visual, "board-filter-row-0-value-1"));
     assert_gone(visual, "board-filter-row-0-value-2");
     assert!(shown(visual, "board-filter-row-0-free"));
-    // Picking a listed value filters.
-    click(visual, "board-filter-row-0-value-0");
-    let shown_now = shown_cards(visual, &[1, 2, 3]);
-    assert!(shown_now == [1, 3] || shown_now == [2], "{shown_now:?}");
+    // Picking the listed value "a" filters to the two cards that hold it.
+    let at = drawer(&f, visual, |view, _| {
+        view.field_choices("field:f-Note", &[])
+            .iter()
+            .position(|(raw, _)| raw == "\"a\"")
+            .unwrap()
+    });
+    click(visual, selector(format!("board-filter-row-0-value-{at}")));
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 3]);
 }
 
 #[gpui::test]
@@ -7337,6 +7342,116 @@ fn free_form_filter_value_matches(cx: &mut TestAppContext) {
     press_enter(visual);
     drawer(&f, visual, |view, _| {
         assert_eq!(view.spec.rows[0].values, ["5"]);
+        assert!(view.error.is_some());
+    });
+}
+
+#[gpui::test]
+fn free_form_date_filter_value_matches(cx: &mut TestAppContext) {
+    let f = three_cards_with_note_field(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-add-field-2");
+    // Today: no card ships today.
+    let today = chrono::Local::now().date_naive();
+    retype(
+        visual,
+        "board-filter-row-0-free",
+        &today.format("%Y-%m-%d").to_string(),
+    );
+    press_enter(visual);
+    drawer(&f, visual, |view, _| {
+        assert_eq!(
+            view.spec.rows[0].values,
+            [local_midnight(today).to_string()]
+        );
+    });
+    assert!(shown_cards(visual, &[1, 2, 3]).is_empty());
+    // Tomorrow: all three do.
+    let tomorrow = today.succ_opt().unwrap();
+    retype(
+        visual,
+        "board-filter-row-0-free",
+        &tomorrow.format("%Y-%m-%d").to_string(),
+    );
+    press_enter(visual);
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
+    // Not a date: refused, the row keeps its two values.
+    retype(visual, "board-filter-row-0-free", "next week");
+    press_enter(visual);
+    drawer(&f, visual, |view, _| {
+        assert_eq!(view.spec.rows[0].values.len(), 2);
+        assert!(view.error.is_some());
+    });
+}
+
+#[gpui::test]
+fn multi_select_filter_rows_offer_options_and_match_arrays(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["One", "Two", "Three"]);
+    add_field(&f, "Tags", "multi-select", Some(r#"["a","b","c"]"#), 0);
+    let ids: Vec<String> = ["One", "Two", "Three"]
+        .iter()
+        .map(|title| card_id(&f, cx, title))
+        .collect();
+    let mut service = Service::open(&f.db).unwrap();
+    service
+        .set_field_value(&ids[0], "f-Tags", Some(r#"["a","b"]"#))
+        .unwrap();
+    service
+        .set_field_value(&ids[1], "f-Tags", Some(r#"["c"]"#))
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-add-field-0");
+    assert!(shown(visual, "board-filter-row-0-value-2"));
+    assert_gone(visual, "board-filter-row-0-free");
+    click(visual, "board-filter-row-0-value-1");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1], "b is in One's array");
+    click(visual, "board-filter-row-0-value-2");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2]);
+    drawer(&f, visual, |view, _| {
+        assert_eq!(view.chip_text(&view.spec.rows[0]), "Tags is b, c");
+    });
+}
+
+#[gpui::test]
+fn url_filter_rows_offer_card_values_and_accept_free_form(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["One", "Two", "Three"]);
+    add_field(&f, "Link", "url", None, 0);
+    let ids: Vec<String> = ["One", "Two", "Three"]
+        .iter()
+        .map(|title| card_id(&f, cx, title))
+        .collect();
+    let mut service = Service::open(&f.db).unwrap();
+    service
+        .set_field_value(&ids[0], "f-Link", Some("\"https://a.example\""))
+        .unwrap();
+    service
+        .set_field_value(&ids[1], "f-Link", Some("\"https://b.example\""))
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-add-field-0");
+    drawer(&f, visual, |view, _| {
+        let mut labels: Vec<String> = view
+            .field_choices("field:f-Link", &[])
+            .into_iter()
+            .map(|(_, label)| label)
+            .collect();
+        labels.sort();
+        assert_eq!(labels, ["https://a.example", "https://b.example"]);
+    });
+    assert!(shown(visual, "board-filter-row-0-free"));
+    retype(visual, "board-filter-row-0-free", "https://b.example");
+    press_enter(visual);
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [2]);
+    // Only http and https are accepted.
+    retype(visual, "board-filter-row-0-free", "ftp://b.example");
+    press_enter(visual);
+    drawer(&f, visual, |view, _| {
+        assert_eq!(view.spec.rows[0].values.len(), 1);
         assert!(view.error.is_some());
     });
 }
@@ -7676,6 +7791,8 @@ fn swimlane_keyboard_lift_moves_between_cells_and_drops(cx: &mut TestAppContext)
     visual.simulate_keystrokes("space");
     visual.refresh().unwrap();
     assert!(shown(visual, "board-lane-announce"));
+    let said = drawer(&f, visual, |view, _| view.lane_announcement());
+    assert_eq!(said.as_deref(), Some("Moving #1 to Backlog, None"));
     // Right: next column; Up: the lane above (None -> Low).
     visual.simulate_keystrokes("right");
     visual.simulate_keystrokes("up");
@@ -7689,6 +7806,8 @@ fn swimlane_keyboard_lift_moves_between_cells_and_drops(cx: &mut TestAppContext)
     });
     assert!(announced.0);
     assert_eq!(announced.1.as_deref(), Some("p1"));
+    let said = drawer(&f, visual, |view, _| view.lane_announcement());
+    assert_eq!(said.as_deref(), Some("Moving #1 to In Progress, Low"));
     // Escape puts it back and writes nothing.
     visual.simulate_keystrokes("escape");
     visual.run_until_parked();
@@ -7703,6 +7822,66 @@ fn swimlane_keyboard_lift_moves_between_cells_and_drops(cx: &mut TestAppContext)
         view.undo.toast.as_ref().map(|t| t.label.clone())
     });
     assert_eq!(toast.as_deref(), Some("Moved #1 to In Progress, Low"));
+}
+
+#[gpui::test]
+fn a_lane_drop_appends_to_a_non_empty_cell(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["First", "Second"]);
+    let first = card_id(&f, cx, "First");
+    Service::open(&f.db)
+        .unwrap()
+        .card_move(&first, &detail(&f, cx).columns[1].id, 0, "user")
+        .unwrap();
+    lanes_by(&f, "priority");
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    // Both cards have no priority: the None row is the last of five.
+    let from = center(visual, "board-card-2");
+    let to = center(visual, "board-lane-cell-4-1");
+    drag(visual, from, to);
+    assert_eq!(
+        titles_in(&f, visual, "In Progress"),
+        ["First", "Second"],
+        "a lane drop appends; cells have no order of their own"
+    );
+}
+
+#[gpui::test]
+fn plain_arrows_cross_lanes_without_looping_on_a_multi_label_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Both", "Plain"]);
+    let both = card_id(&f, cx, "Both");
+    let plain = card_id(&f, cx, "Plain");
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    let bug = service.create_label(&board.id, "Bug", "e5534b").unwrap();
+    let docs = service.create_label(&board.id, "Docs", "4da3f5").unwrap();
+    service.set_labels(&both, &[bug.id, docs.id]).unwrap();
+    lanes_by(&f, "label");
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    // Lanes: Bug [Both], Docs [Both], No label [Plain].
+    focus_card(&f, visual, &both);
+    visual.simulate_keystrokes("down");
+    assert_eq!(
+        focused_card(&f, visual),
+        Some(plain.clone()),
+        "skips its own copy"
+    );
+    visual.simulate_keystrokes("up");
+    assert_eq!(focused_card(&f, visual), Some(both.clone()));
+    visual.simulate_keystrokes("up");
+    assert_eq!(
+        focused_card(&f, visual),
+        Some(both.clone()),
+        "nothing above: stays"
+    );
+    visual.simulate_keystrokes("down");
+    visual.simulate_keystrokes("down");
+    assert_eq!(
+        focused_card(&f, visual),
+        Some(plain),
+        "nothing below: stays"
+    );
 }
 
 // ---- templates and automation settings ----

@@ -571,7 +571,7 @@ impl BoardView {
         let mut field_seen = HashMap::new();
         for field in fields
             .iter()
-            .filter(|field| matches!(field.kind.as_str(), "text" | "number" | "date"))
+            .filter(|field| matches!(field.kind.as_str(), "text" | "number" | "date" | "url"))
         {
             field_seen.insert(
                 field.id.clone(),

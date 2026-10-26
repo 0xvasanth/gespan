@@ -478,7 +478,7 @@ impl BoardView {
             return Vec::new();
         };
         match found.kind.as_str() {
-            "select" => super::quick::field_options(found.options_json.as_deref())
+            "select" | "multi-select" => super::quick::field_options(found.options_json.as_deref())
                 .into_iter()
                 .map(|option| {
                     (
@@ -491,7 +491,7 @@ impl BoardView {
                 ("true".to_string(), "Yes".to_string()),
                 ("false".to_string(), "No".to_string()),
             ],
-            // Text, number and date: what the cards hold, then anything the
+            // Text, number, date and url: what the cards hold, then anything the
             // row holds that no card has.
             kind => self
                 .field_seen
@@ -517,7 +517,7 @@ impl BoardView {
     fn free_form_field(&self, row: usize) -> Option<&gespan_core::board::extras::Field> {
         let id = self.spec.rows.get(row)?.field.strip_prefix("field:")?;
         self.fields.iter().find(|field| {
-            field.id == id && matches!(field.kind.as_str(), "text" | "number" | "date")
+            field.id == id && matches!(field.kind.as_str(), "text" | "number" | "date" | "url")
         })
     }
 
