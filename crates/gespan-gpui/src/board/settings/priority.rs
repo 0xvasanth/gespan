@@ -16,15 +16,16 @@ impl BoardView {
 
     /// Change the scheme as stored right now (not the copy on screen, which
     /// reads as the defaults while settings are unreadable). Nothing is
-    /// written while the settings could not be read. True when the edit is
-    /// done (written, or dropped for that reason).
+    /// written while the settings could not be read: that is refused with a
+    /// message, so a name being typed stays open instead of vanishing. True
+    /// when the edit is done.
     fn edit_scheme(
         &mut self,
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut PriorityScheme) -> bool + 'static,
     ) -> bool {
-        if !self.settings_loaded {
-            return true;
+        if !self.refuse_unreadable_settings(cx) {
+            return false;
         }
         let Some(board_id) = self.open_board_id.clone() else {
             return true;

@@ -8056,12 +8056,37 @@ fn saved_template_deletes_and_built_ins_have_no_delete(cx: &mut TestAppContext) 
 fn agent_toggles_default_on_for_new_boards(cx: &mut TestAppContext) {
     let f = with_board(cx);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let switches = |visual: &mut VisualTestContext| {
+        f.window
+            .read_with(visual, |view, _| view.agent_switches())
+            .unwrap()
+    };
+    // Blank: the stored values and the Automation switches are all ON.
+    new_board_from(visual, None, "Fresh");
+    assert_eq!(open_name(&f, visual), "Fresh");
+    let blank = open_id(&f, visual);
+    let settings = Service::open(&f.db).unwrap().settings(&blank).unwrap();
+    assert!(settings.run_with && settings.write_back && settings.ticket_status_changes);
+    open_settings(visual, "automation");
+    assert!(!shown(visual, "settings-unreadable"));
+    assert_eq!(switches(visual), Some([true, true, true]));
+    for id in [
+        "settings-toggle-run-with",
+        "settings-toggle-write-back",
+        "settings-toggle-ticket-status",
+    ] {
+        assert!(shown(visual, id), "{id} is on screen");
+    }
+    click(visual, "settings-close");
+    // A template board starts the same way.
     new_board_from(visual, Some("bug-triage"), "Bugs");
     let board = open_id(&f, visual);
+    assert_ne!(board, blank);
     let settings = Service::open(&f.db).unwrap().settings(&board).unwrap();
     assert!(settings.run_with && settings.write_back && settings.ticket_status_changes);
     open_settings(visual, "automation");
     assert!(!shown(visual, "settings-unreadable"));
+    assert_eq!(switches(visual), Some([true, true, true]));
     click(visual, "settings-toggle-ticket-status");
     let settings = Service::open(&f.db).unwrap().settings(&board).unwrap();
     assert!(!settings.ticket_status_changes);
@@ -8189,4 +8214,235 @@ fn rule_picker_shows_stay_for_a_deleted_column(cx: &mut TestAppContext) {
         json["completed"],
         serde_json::json!({"column": "deleted-col"})
     );
+}
+
+/// Every board_settings column for `board`, as SQL literals, so "nothing was
+/// written" compares the raw row (not a parse of it).
+fn raw_settings_row(f: &Fixture, board: &str) -> String {
+    rusqlite::Connection::open(&f.db)
+        .unwrap()
+        .query_row(
+            "SELECT quote(run_with) || '|' || quote(write_back) || '|' ||
+                    quote(ticket_status_changes) || '|' || quote(auto_move_json) || '|' ||
+                    quote(icon) || '|' || quote(color) || '|' || quote(default_view_id) || '|' ||
+                    quote(display_json) || '|' || quote(priority_json)
+             FROM board_settings WHERE board_id = ?1",
+            [board],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+fn raw_layout(f: &Fixture, view: &str) -> String {
+    rusqlite::Connection::open(&f.db)
+        .unwrap()
+        .query_row(
+            "SELECT layout_json FROM board_views WHERE id = ?1",
+            [view],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+fn page_error(f: &Fixture, visual: &mut VisualTestContext) -> Option<String> {
+    f.window
+        .read_with(visual, |view, _| {
+            view.settings.as_ref().and_then(|page| page.error.clone())
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn an_unreadable_settings_row_writes_nothing_and_retry_recovers(cx: &mut TestAppContext) {
+    use gespan_core::board::extras::{RuleTarget, SettingsPatch};
+    const UNSAVED: &str = "Not saved: settings couldn't be loaded";
+    let f = seeded(cx, &["Alpha", "Beta"]);
+    let board = open_id(&f, cx);
+    let spec = serde_json::to_string(&ViewSpec::default()).unwrap();
+    let view = Service::open(&f.db)
+        .unwrap()
+        .view_create(&board, "Mine", &spec, r#"{"layout":"board"}"#)
+        .unwrap();
+    // Stored values that differ from the defaults, to see once readable.
+    Service::open(&f.db)
+        .unwrap()
+        .update_settings(
+            &board,
+            &SettingsPatch {
+                write_back: Some(false),
+                icon: Some(Some("rocket".into())),
+                auto_move_json: Some(Some(r#"{"completed":"stay"}"#.into())),
+                priority_json: Some(Some(
+                    r#"{"names":["None","Low","Medium","High","Blocker"],"hidden":[]}"#.into(),
+                )),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    // Break the row for real: text in an integer column fails the read.
+    let raw = rusqlite::Connection::open(&f.db).unwrap();
+    raw.execute(
+        "UPDATE board_settings SET run_with = 'garbage' WHERE board_id = ?1",
+        [&board],
+    )
+    .unwrap();
+    assert!(Service::open(&f.db).unwrap().settings(&board).is_err());
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let before = raw_settings_row(&f, &board);
+    let layout_before = raw_layout(&f, &view.id);
+
+    // The board still loads, with its cards.
+    drawer(&f, visual, |view, _| {
+        assert!(!view.settings_loaded);
+        assert_eq!(view.agent_switches(), None, "unknown, not ON");
+        assert_eq!(view.detail.as_ref().unwrap().cards.len(), 2);
+    });
+    assert!(shown(visual, "board-card-1"));
+    assert!(shown(visual, "board-card-2"));
+
+    // Automation: a toggle and rule pickers write nothing.
+    open_settings(visual, "automation");
+    assert!(shown(visual, "settings-unreadable"));
+    assert!(shown(visual, "settings-retry"));
+    click(visual, "settings-toggle-run-with");
+    click(visual, "settings-toggle-write-back");
+    click(visual, "settings-rule-started-stay");
+    click(visual, "settings-rule-completed-column-0");
+    assert_eq!(raw_settings_row(&f, &board), before, "automation wrote");
+
+    // Priority: a rename is refused, stays open with what was typed, and
+    // says why. Hide and reset write nothing either.
+    click(visual, "settings-nav-priority");
+    click(visual, "settings-priority-4-name");
+    retype(visual, "settings-edit", "Critical");
+    press_enter(visual);
+    assert!(shown(visual, "settings-edit"), "the field stays open");
+    assert!(shown(visual, "settings-error"));
+    assert_eq!(page_error(&f, visual).as_deref(), Some(UNSAVED));
+    f.window
+        .read_with(visual, |view, cx| {
+            let input = view
+                .editing(&settings::Edit::Priority(4))
+                .expect("still editing level 4");
+            assert_eq!(input.read(cx).content.as_ref(), "Critical");
+        })
+        .unwrap();
+    escape(visual);
+    click(visual, "settings-priority-2-hide");
+    assert_eq!(page_error(&f, visual).as_deref(), Some(UNSAVED));
+    click(visual, "settings-priority-reset");
+    assert_eq!(raw_settings_row(&f, &board), before, "priority wrote");
+
+    // Templates: "Save as template" copies settings it can't read; refused
+    // with the name kept.
+    click(visual, "settings-nav-templates");
+    click(visual, "settings-template-name");
+    visual.simulate_input("Kit");
+    press_enter(visual);
+    assert!(shown(visual, "settings-edit"), "the name stays");
+    assert_eq!(page_error(&f, visual).as_deref(), Some(UNSAVED));
+    assert!(
+        Service::open(&f.db)
+            .unwrap()
+            .templates()
+            .unwrap()
+            .iter()
+            .all(|t| t.built_in),
+        "no template saved"
+    );
+    escape(visual);
+
+    // General: icon and colour write nothing.
+    click(visual, "settings-nav-general");
+    click(visual, "settings-icon-bug");
+    click(visual, "settings-color-e5534b");
+    assert_eq!(page_error(&f, visual).as_deref(), Some(UNSAVED));
+    assert_eq!(raw_settings_row(&f, &board), before, "general wrote");
+
+    // Display: with a saved view open, neither the view override nor the
+    // board default changes.
+    click(visual, "settings-close");
+    click(visual, "board-view-tab-0");
+    open_display(&f, visual);
+    click(visual, "settings-display-target-view");
+    click(visual, "settings-display-face-due");
+    drawer(&f, visual, |view, cx| {
+        assert!(!view.view_dirty(cx), "the override did not change");
+        assert!(view.effective_display().face.due);
+    });
+    click(visual, "settings-display-target-board");
+    click(visual, "settings-display-density-compact");
+    assert_eq!(page_error(&f, visual).as_deref(), Some(UNSAVED));
+    assert_eq!(raw_settings_row(&f, &board), before, "display wrote");
+    assert_eq!(raw_layout(&f, &view.id), layout_before);
+
+    // Retry while still broken: still unknown.
+    click(visual, "settings-retry");
+    assert!(shown(visual, "settings-unreadable"));
+
+    // Repair the row; Retry shows the stored values and edits save again.
+    raw.execute(
+        "UPDATE board_settings SET run_with = 1 WHERE board_id = ?1",
+        [&board],
+    )
+    .unwrap();
+    click(visual, "settings-retry");
+    assert!(!shown(visual, "settings-unreadable"));
+    drawer(&f, visual, |view, _| {
+        assert!(view.settings_loaded);
+        assert_eq!(view.agent_switches(), Some([true, false, true]));
+        assert_eq!(view.displayed_rule("completed"), RuleTarget::Stay);
+        assert_eq!(view.priority_name(4), "Blocker");
+        assert_eq!(view.board_settings.icon.as_deref(), Some("rocket"));
+    });
+    click(visual, "settings-nav-automation");
+    click(visual, "settings-toggle-write-back");
+    let stored = Service::open(&f.db).unwrap().settings(&board).unwrap();
+    assert!(stored.write_back, "the toggle saved");
+    assert!(stored.run_with);
+    click(visual, "settings-nav-priority");
+    click(visual, "settings-priority-4-name");
+    retype(visual, "settings-edit", "Critical");
+    press_enter(visual);
+    assert!(
+        !shown(visual, "settings-edit"),
+        "the rename saved and closed"
+    );
+    assert_eq!(page_error(&f, visual), None);
+    let stored = Service::open(&f.db).unwrap().settings(&board).unwrap();
+    assert_eq!(
+        gespan_core::board::extras::priority_scheme(&stored).names[4],
+        "Critical"
+    );
+}
+
+#[gpui::test]
+fn a_failed_template_list_still_lets_the_switcher_create_a_blank_board(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let today = column_names(&f, visual);
+    // A saved template whose name is a blob: listing templates fails.
+    rusqlite::Connection::open(&f.db)
+        .unwrap()
+        .execute(
+            "INSERT INTO board_templates (id, name, spec_json, created_at)
+             VALUES ('broken', X'00ff', '{}', 0)",
+            [],
+        )
+        .unwrap();
+    assert!(Service::open(&f.db).unwrap().templates().is_err());
+    let before = boards(&f).len();
+    click(visual, "board-switcher");
+    click(visual, "board-new");
+    assert!(shown(visual, "board-switcher-error"), "the failure shows");
+    assert!(shown(visual, "board-template-blank"), "Blank is offered");
+    assert!(!shown(visual, "board-template-bug-triage"));
+    visual.simulate_input("Fallback");
+    press_enter(visual);
+    assert_eq!(boards(&f).len(), before + 1);
+    assert_eq!(open_name(&f, visual), "Fallback");
+    assert_eq!(column_names(&f, visual), today);
+    let names: Vec<String> = column_names(&f, visual).into_iter().map(|c| c.0).collect();
+    assert_eq!(names, ["Backlog", "In Progress", "Review", "Done"]);
 }

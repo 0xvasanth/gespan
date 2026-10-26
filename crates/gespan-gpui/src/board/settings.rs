@@ -23,6 +23,10 @@ use gpui::{
     div, prelude::*, px,
 };
 
+/// Shown when an edit can't be saved because the settings it builds on could
+/// not be read.
+pub(crate) const UNSAVED_UNREADABLE: &str = "Not saved: settings couldn't be loaded";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Section {
     General,
@@ -267,9 +271,26 @@ impl BoardView {
         ok
     }
 
+    /// False (with "Not saved: settings couldn't be loaded" on the page) when
+    /// the settings could not be read, so an edit built on them must not be
+    /// written; true when it may go ahead.
+    pub(super) fn refuse_unreadable_settings(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.settings_loaded {
+            return true;
+        }
+        if let Some(page) = &mut self.settings {
+            page.error = Some(UNSAVED_UNREADABLE.into());
+        }
+        cx.notify();
+        false
+    }
+
     pub(super) fn patch_settings(&mut self, patch: SettingsPatch, cx: &mut Context<Self>) -> bool {
         // A patch built from settings that could not be read must not land.
-        let Some(board_id) = self.open_board_id.clone().filter(|_| self.settings_loaded) else {
+        if !self.refuse_unreadable_settings(cx) {
+            return false;
+        }
+        let Some(board_id) = self.open_board_id.clone() else {
             return false;
         };
         self.settings_write(cx, |service| {

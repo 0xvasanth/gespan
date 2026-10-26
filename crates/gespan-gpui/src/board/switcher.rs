@@ -226,8 +226,16 @@ impl BoardView {
         } else {
             match self.service().and_then(|service| service.templates()) {
                 Ok(templates) => (templates, None),
-                // Blank still works without the list.
-                Err(error) => (Vec::new(), Some(error)),
+                // Blank needs no stored template, so it is still offered
+                // (and created by Enter) without the list.
+                Err(error) => (
+                    vec![TemplateInfo {
+                        id: BLANK.into(),
+                        name: "Blank".into(),
+                        built_in: true,
+                    }],
+                    Some(error),
+                ),
             }
         };
         window.focus(&input.focus_handle(cx), cx);

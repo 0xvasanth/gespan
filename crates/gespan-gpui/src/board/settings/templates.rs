@@ -30,6 +30,11 @@ impl BoardView {
             }
             return false;
         }
+        // A template copies the board's settings, which could not be read:
+        // keep the name and say so rather than fail on the store's error.
+        if !self.refuse_unreadable_settings(cx) {
+            return false;
+        }
         let Some(board_id) = self.open_board_id.clone() else {
             return true;
         };

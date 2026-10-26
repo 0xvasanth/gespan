@@ -83,7 +83,7 @@ impl BoardView {
         // The defaults on screen are not the stored ones while settings are
         // unreadable: neither a view override nor the board default is built
         // from them.
-        if !self.settings_loaded {
+        if !self.refuse_unreadable_settings(cx) {
             return;
         }
         if self.editing_view_display() {
