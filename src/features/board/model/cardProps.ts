@@ -160,7 +160,12 @@ export function encodeField(
 ): Parsed<{ value: string | null }> {
   const text = input.trim();
   if (!text) return { ok: true, value: null };
-  if (kind === "text") return { ok: true, value: JSON.stringify(text) };
+  if (kind === "text") {
+    if (text.length > FIELD_TEXT_MAX) {
+      return { ok: false, error: `Text is at most ${FIELD_TEXT_MAX} characters` };
+    }
+    return { ok: true, value: JSON.stringify(text) };
+  }
   if (kind === "number") {
     const number = Number(text);
     if (!Number.isFinite(number)) {
@@ -168,7 +173,49 @@ export function encodeField(
     }
     return { ok: true, value: JSON.stringify(number) };
   }
+  if (kind === "url") {
+    if (!validFieldUrl(text)) {
+      return {
+        ok: false,
+        error: `“${text}” is not a URL: it must start with http:// or https://`,
+      };
+    }
+    return { ok: true, value: JSON.stringify(text) };
+  }
   return { ok: false, error: `Can't type a ${kind} value` };
+}
+
+/** Text and URL values hold at most this many characters. */
+export const FIELD_TEXT_MAX = 2000;
+
+/** A URL field takes `http://` or `https://` text with a host, no spaces, at most 2,000 characters. */
+export function validFieldUrl(text: string): boolean {
+  return (
+    text.length <= FIELD_TEXT_MAX &&
+    /^https?:\/\/[^/\s]\S*$/i.test(text)
+  );
+}
+
+/** The options a multi-select field value holds, from its stored JSON array. */
+export function fieldPicks(raw: string | undefined): string[] {
+  if (raw === undefined) return [];
+  try {
+    const value: unknown = JSON.parse(raw);
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The stored value for a multi-select: distinct picks in option order; none clears it. */
+export function encodePicks(
+  options: readonly string[],
+  picks: readonly string[],
+): string | null {
+  const chosen = options.filter((option) => picks.includes(option));
+  return chosen.length ? JSON.stringify(chosen) : null;
 }
 
 /** The choices of a select field, from its `["a","b"]` options. */
@@ -207,8 +254,15 @@ export function fieldText(kind: BoardFieldKind, raw: string): string | null {
   } catch {
     return null;
   }
-  if ((kind === "text" || kind === "select") && typeof value === "string") {
+  if (
+    (kind === "text" || kind === "select" || kind === "url") &&
+    typeof value === "string"
+  ) {
     return value;
+  }
+  if (kind === "multi-select" && Array.isArray(value)) {
+    const picks = value.filter((item): item is string => typeof item === "string");
+    return picks.length ? picks.join(", ") : null;
   }
   if (kind === "number" && typeof value === "number") return String(value);
   if (kind === "date" && typeof value === "number") {

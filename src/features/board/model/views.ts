@@ -115,6 +115,11 @@ function selectOptions(field: BoardField): string[] {
   }
 }
 
+/** Fields whose values are free-form: a filter row offers the values cards hold, or typed input. */
+export function isFreeFormField(kind: BoardField["kind"]): boolean {
+  return kind === "text" || kind === "number" || kind === "date" || kind === "url";
+}
+
 /** A held custom-field value as text: strings bare, dates as a day. */
 function heldLabel(kind: BoardField["kind"], raw: string): string {
   try {
@@ -178,6 +183,7 @@ export function fieldChoices(
   if (!custom) return [];
   switch (custom.kind) {
     case "select":
+    case "multi-select":
       return selectOptions(custom).map((option) => [
         JSON.stringify(option),
         option,

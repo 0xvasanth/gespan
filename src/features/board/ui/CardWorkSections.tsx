@@ -25,6 +25,8 @@ import {
 import {
   RELATION_CHOICES,
   encodeField,
+  encodePicks,
+  fieldPicks,
   fieldChecked,
   fieldOptions,
   fieldText,
@@ -423,7 +425,8 @@ function FieldRow({
 }) {
   const [error, setError] = useState<string | null>(null);
   const shown = raw === undefined ? null : fieldText(field.kind, raw);
-  const editable = field.kind === "text" || field.kind === "number";
+  const editable =
+    field.kind === "text" || field.kind === "number" || field.kind === "url";
   const [text, setText] = useState(shown ?? "");
   useEffect(() => setText(shown ?? ""), [shown]);
 
@@ -457,7 +460,13 @@ function FieldRow({
       <input
         aria-label={field.name}
         value={text}
-        inputMode={field.kind === "number" ? "decimal" : undefined}
+        inputMode={
+          field.kind === "number"
+            ? "decimal"
+            : field.kind === "url"
+              ? "url"
+              : undefined
+        }
         onChange={(event) => {
           setText(event.target.value);
           setError(null);
@@ -481,6 +490,43 @@ function FieldRow({
         onChange={(event) => write(String(event.target.checked))}
         className="size-4 accent-accent"
       />
+    );
+  } else if (field.kind === "multi-select") {
+    const options = fieldOptions(field.optionsJson);
+    const picks = fieldPicks(raw);
+    // A pick whose option was removed still shows, so it can be unticked.
+    const shownOptions = [...options, ...picks.filter((p) => !options.includes(p))];
+    editor = (
+      <div
+        role="group"
+        aria-label={field.name}
+        className="flex flex-wrap gap-x-3 gap-y-1"
+      >
+        {shownOptions.map((option) => (
+          <label key={option} className="flex items-center gap-1.5 text-[12px] text-content/80">
+            <input
+              type="checkbox"
+              aria-label={`${field.name}: ${option}`}
+              checked={picks.includes(option)}
+              onChange={(event) =>
+                write(
+                  encodePicks(
+                    shownOptions,
+                    event.target.checked
+                      ? [...picks, option]
+                      : picks.filter((pick) => pick !== option),
+                  ),
+                )
+              }
+              className="size-3.5 accent-accent"
+            />
+            {option}
+          </label>
+        ))}
+        {shownOptions.length === 0 ? (
+          <span className="text-[12px] text-content/45">No options</span>
+        ) : null}
+      </div>
     );
   } else if (field.kind === "select") {
     const options = fieldOptions(field.optionsJson);

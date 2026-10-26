@@ -3,6 +3,7 @@ import {
   updateBoardSettings,
   type Board,
   type BoardCard,
+  type BoardField,
   type BoardColumn,
   type BoardLabel,
   type BoardSettings as Settings,
@@ -11,6 +12,8 @@ import {
 } from "../../model/board";
 import { errorText } from "../boardFormat";
 import { ColumnsSection } from "./ColumnsSection";
+import { DisplaySection } from "./DisplaySection";
+import { FieldsSection } from "./FieldsSection";
 import { GeneralSection } from "./GeneralSection";
 import { LabelsSection } from "./LabelsSection";
 import { PrioritySection } from "./PrioritySection";
@@ -27,6 +30,7 @@ export function BoardSettings({
   columns,
   cards,
   labels,
+  fields,
   views,
   onClose,
   onRename,
@@ -40,6 +44,7 @@ export function BoardSettings({
   columns: readonly BoardColumn[];
   cards: readonly BoardCard[];
   labels: readonly BoardLabel[];
+  fields: readonly BoardField[];
   views: readonly BoardView[];
   onClose: () => void;
   onRename: (name: string) => void;
@@ -110,7 +115,9 @@ export function BoardSettings({
           onPatch={patch}
           onError={onError}
         />
-      </div>
+
+        <FieldsSection boardId={board.id} fields={fields} onError={onError} />
+        <DisplaySection settings={settings} fields={fields} onPatch={patch} />      </div>
     </div>
   );
 }

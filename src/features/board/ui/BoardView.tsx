@@ -37,7 +37,10 @@ import {
   listFields,
   listLabels,
   listBoards,
+  fieldDistinctValues,
   getBoardSettings,
+  setFieldValue,
+  updateBoardSettings,
   listViews,
   moveCard,
   moveColumn,
@@ -66,6 +69,7 @@ import {
   type BoardView as SavedView,
   type CardExtras,
   type CardIndexRow,
+  type DisplayOptions,
   type ColumnRole,
   type FilterRow,
   type SortSpec,
@@ -134,6 +138,16 @@ import { ViewTabs } from "./ViewTabs";
 import { BoardSettings } from "./settings/BoardSettings";
 import { PriorityContext } from "./priorityScheme";
 import { overLimitMessage, parsePriorityScheme } from "../model/boardSettings";
+import {
+  laneBy,
+  resolveDisplay,
+  serializeDisplay,
+  withLayoutDisplay,
+} from "../model/display";
+import { buildLanes, laneValue } from "../model/swimlanes";
+import { fieldText } from "../model/cardProps";
+import { DisplayEditor } from "./settings/DisplayEditor";
+import { Swimlanes } from "./kanban/Swimlanes";
 import {
   MenuButton,
   MenuItem,
@@ -743,6 +757,19 @@ function BoardContent({
   });
 
   const layoutState = useMemo(() => parseLayout(layout), [layout]);
+  // The board's display, with the showing view's override over it. "All
+  // cards" has no override, so it draws with the board default.
+  const display = useMemo(
+    () =>
+      resolveDisplay(settings?.displayJson ?? null, activeView ? layout : null),
+    [settings?.displayJson, activeView, layout],
+  );
+  const lanesBy = useMemo(() => laneBy(display, fields), [display, fields]);
+  const cardFieldValues = useMemo(() => {
+    const out: Record<string, Record<string, string>> = {};
+    for (const [id, row] of cardIndex) out[id] = row.fields;
+    return out;
+  }, [cardIndex]);
   const editLayout = useCallback(
     (patch: (current: LayoutState) => Partial<LayoutState>) =>
       setLayout((json) => patchLayout(json, patch(parseLayout(json)))),
@@ -819,8 +846,14 @@ function BoardContent({
   }, [detail, displayOrder]);
 
   const isTable = layoutState.layout === "table";
+  // Field values come from the card index: the table, the field chips on
+  // faces and a field-lane board all need it.
+  const needsIndex =
+    isTable ||
+    display.face.fields.length > 0 ||
+    lanesBy?.kind === "field";
   useEffect(() => {
-    if (!isTable || !openId || detail?.board.id !== openId) return;
+    if (!needsIndex || !openId || detail?.board.id !== openId) return;
     let stale = false;
     getCardIndex(openId)
       .then((rows) => {
@@ -831,7 +864,7 @@ function BoardContent({
     return () => {
       stale = true;
     };
-  }, [isTable, openId, detail]);
+  }, [needsIndex, openId, detail]);
 
   /** ⌘/Ctrl-click toggles a card, Shift-click selects a range; true when it was one. */
   const selectClick = (
@@ -1559,6 +1592,15 @@ function BoardContent({
       );
     };
 
+  /** The custom fields the display lists that this card holds a value for. */
+  const fieldChipsOf = (cardId: string) =>
+    display.face.fields.flatMap((id) => {
+      const field = fields.find((found) => found.id === id);
+      const raw = cardIndex.get(cardId)?.fields[id];
+      const text = field && raw !== undefined ? fieldText(field.kind, raw) : null;
+      return field && text ? [{ id, name: field.name, text }] : [];
+    });
+
   const renderCard = (card: BoardCard) => (
     <BoardCardItem
       card={card}
@@ -1601,6 +1643,8 @@ function BoardContent({
       moreItems={moreItemsFor(card)}
       selected={selectedSet.has(card.id)}
       onSelectClick={(event) => selectClick(event, card)}
+      display={display}
+      fieldChips={fieldChipsOf(card.id)}
     />
   );
 
@@ -1639,6 +1683,49 @@ function BoardContent({
         ? heldAction.items
         : [];
   const heldIds = heldPlaces.map(([cardId]) => cardId);
+
+  /**
+   * A drop into a lane changes the column, and sets the lane's value only for
+   * a priority or select-field lane; label and project lanes change the
+   * column alone.
+   */
+  const onLaneDrop = (cardId: string, laneKey: string, columnId: string) => {
+    const card = detailRef.current?.cards.find((other) => other.id === cardId);
+    if (!card || !lanesBy) return;
+    if (card.columnId !== columnId) {
+      moveFromDrawer(card, columnId, wholeColumn(columnId).length);
+    }
+    const value = laneValue(lanesBy, laneKey);
+    if (value?.kind === "priority") {
+      if ((extras[card.id]?.priority ?? 0) !== value.priority) {
+        void setCardPriority(card.id, value.priority).catch(
+          fail(`Couldn't set the priority of card #${card.number}`),
+        );
+      }
+    } else if (value?.kind === "field") {
+      const encoded = value.option === null ? null : JSON.stringify(value.option);
+      const held = cardIndex.get(card.id)?.fields[value.fieldId] ?? null;
+      if (held !== encoded) {
+        void setFieldValue(card.id, value.fieldId, encoded).catch(
+          fail(`Couldn't set the field of card #${card.number}`),
+        );
+      }
+    }
+  };
+
+  /**
+   * The toolbar's Display edits: on a saved view they are its override (kept
+   * with Save changes); on "All cards" they change the board default.
+   */
+  const changeDisplay = (next: DisplayOptions) => {
+    if (activeView) {
+      setLayout((json) => withLayoutDisplay(json, next));
+    } else if (openId) {
+      void updateBoardSettings(openId, { displayJson: serializeDisplay(next) })
+        .then(setSettings)
+        .catch(fail("Couldn't save the display"));
+    }
+  };
 
   const renderColumnHeader = (column: BoardColumn, shown: number) => (
     <BoardColumnHeader
@@ -1864,6 +1951,13 @@ function BoardContent({
                 count={effectiveRows.length}
                 sources={sources}
                 onChange={setRows}
+                distinctValues={(fieldKey) =>
+                  fieldDistinctValues(
+                    openId!,
+                    fieldKey.slice("field:".length),
+                    50,
+                  )
+                }
               />
               <BoardSortMenu sort={sort} onChange={setSort} />
               <MenuButton
@@ -1886,6 +1980,27 @@ function BoardContent({
                     </MenuItem>
                   ))
                 }
+              </MenuButton>
+              <MenuButton
+                label="Display"
+                width={340}
+                className={BUTTON}
+                trigger="Display"
+              >
+                {() => (
+                  <div className="p-2">
+                    <DisplayEditor
+                      display={display}
+                      fields={fields}
+                      onChange={changeDisplay}
+                    />
+                    <div className="pt-2 text-[11px] text-content/45">
+                      {activeView
+                        ? "Saved with this view."
+                        : "Changes the board default."}
+                    </div>
+                  </div>
+                )}
               </MenuButton>
               {layoutState.layout === "list" ? (
                 <MenuButton
@@ -2037,6 +2152,7 @@ function BoardContent({
             columns={detail.columns}
             cards={detail.cards}
             labels={labels}
+            fields={fields}
             views={views}
             onClose={() => {
               setSettingsOpen(false);
@@ -2121,6 +2237,24 @@ function BoardContent({
                   )
                 }
                 onCreateLabel={addLabelTo}
+              />
+            ) : shownDetail && lanesBy ? (
+              <Swimlanes
+                columns={shownDetail.columns}
+                cards={shownDetail.cards}
+                lanes={buildLanes({
+                  by: lanesBy,
+                  cards: shownDetail.cards,
+                  extras,
+                  labels,
+                  projects,
+                  fieldValues: cardFieldValues,
+                  priorities: scheme,
+                })}
+                renderCard={renderCard}
+                renderColumnHeader={renderColumnHeader}
+                onDrop={onLaneDrop}
+                trailing={trailing}
               />
             ) : shownDetail ? (
               <KanbanBoard
