@@ -174,6 +174,14 @@ impl Preferences {
         self.workspace_theme = id;
     }
 
+    pub(crate) fn wayland_decorations(&self, compositor: &str) -> Option<gpui::WindowDecorations> {
+        (compositor == "Wayland").then_some(if self.wayland_window_decorations {
+            gpui::WindowDecorations::Server
+        } else {
+            gpui::WindowDecorations::Client
+        })
+    }
+
     /// SettingsView's Restore defaults: the Appearance page only.
     pub(crate) fn restore_appearance(&mut self) {
         let d = Self::default();
@@ -230,6 +238,27 @@ impl Preferences {
 #[cfg(test)]
 mod decoration_tests {
     use super::Preferences;
+
+    #[test]
+    fn decoration_requests_are_scoped_to_the_wayland_backend() {
+        for enabled in [true, false] {
+            let prefs = Preferences {
+                wayland_window_decorations: enabled,
+                ..Default::default()
+            };
+            for compositor in ["X11", "Headless", ""] {
+                assert_eq!(prefs.wayland_decorations(compositor), None);
+            }
+            assert_eq!(
+                prefs.wayland_decorations("Wayland"),
+                Some(if enabled {
+                    gpui::WindowDecorations::Server
+                } else {
+                    gpui::WindowDecorations::Client
+                })
+            );
+        }
+    }
 
     #[test]
     fn decorations_default_persist_and_restore() {

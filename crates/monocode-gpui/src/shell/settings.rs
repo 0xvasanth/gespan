@@ -171,13 +171,9 @@ impl Shell {
                     #[cfg(target_os = "linux")]
                     if this.workspace.preferences.wayland_window_decorations
                         != prefs.wayland_window_decorations
-                        && std::env::var_os("WAYLAND_DISPLAY").is_some()
+                        && let Some(decorations) = prefs.wayland_decorations(cx.compositor_name())
                     {
-                        window.request_decorations(if prefs.wayland_window_decorations {
-                            gpui::WindowDecorations::Server
-                        } else {
-                            gpui::WindowDecorations::Client
-                        });
+                        window.request_decorations(decorations);
                     }
                     this.workspace.preferences = *prefs.clone();
                     this.apply_preferences(cx);

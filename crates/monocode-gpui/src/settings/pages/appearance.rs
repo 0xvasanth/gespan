@@ -140,7 +140,7 @@ impl SettingsView {
             )],
         ));
         #[cfg(target_os = "linux")]
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if cx.compositor_name() == "Wayland" {
             theme.push(self.row(
                 Some("wayland-window-decorations"),
                 false,

@@ -435,11 +435,9 @@ fn main() {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(820.), px(520.))),
-                    window_decorations: Some(if workspace.preferences.wayland_window_decorations {
-                        gpui::WindowDecorations::Server
-                    } else {
-                        gpui::WindowDecorations::Client
-                    }),
+                    window_decorations: workspace
+                        .preferences
+                        .wayland_decorations(cx.compositor_name()),
                     // Linux desktops match this to the .desktop file's
                     // StartupWMClass to show the app icon.
                     app_id: Some("dev.usemono.gpui".into()),
