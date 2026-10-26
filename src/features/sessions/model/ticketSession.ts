@@ -54,7 +54,9 @@ export async function startSessionFromTicket(
     linked?.kind === "ticket" &&
     linked.ticket.tracker === ticket.tracker &&
     linked.ticket.key === key;
-  if (title && stillLinked && (host.draft(id) ?? key) === key) {
+  // Strict: createSession put the key in the draft. An unset draft was sent
+  // or cleared (the cache drops empty text) and must stay that way.
+  if (title && stillLinked && host.draft(id) === key) {
     host.setDraft(id, title);
   }
   return id;

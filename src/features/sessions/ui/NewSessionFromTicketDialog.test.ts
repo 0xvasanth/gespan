@@ -252,6 +252,36 @@ it("keeps a draft the user edited while the ticket was loading", async () => {
   expect(linked?.kind === "ticket" && linked.ticket.title).toBe("Fix login");
 });
 
+it.each([
+  ["sent, so the draft cache no longer has it", undefined],
+  ["cleared to nothing", ""],
+])(
+  "new_session_from_ticket_does_not_draft_the_title_once_the_key_was_%s",
+  async (_case, after) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const real = vi.mocked(invoke).getMockImplementation()!;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === "ticket_fetch") await gate;
+      return real(command, args);
+    });
+    await openDialog();
+    await type("ENG-7");
+    await submit();
+    const [id] = sessions.keys();
+    expect(sessions.get(id)!.draft).toBe("ENG-7");
+    // setComposerDraft drops the entry for empty text, which the host then
+    // reads as unset.
+    (sessions.get(id) as { draft: string | undefined }).draft = after;
+    release();
+    await settled;
+
+    expect(sessions.get(id)!.draft).toBe(after);
+    const linked = sessions.get(id)!.linked;
+    expect(linked?.kind === "ticket" && linked.ticket.title).toBe("Fix login");
+  },
+);
+
 it("new_session_from_ticket_refuses_a_github_url_and_creates_nothing", async () => {
   const { onClose } = await openDialog();
   await type("https://github.com/acme/app/issues/5");
