@@ -1,0 +1,21 @@
+crates/tracker-client/src/tools.rs
+  s_938a6e0c93b076::t_1576bb447776e8 137-141,143-146,152,293-295
+crates/tracker-client/src/provider_boards/jira.rs
+  s_938a6e0c93b076::t_1576bb447776e8 1118-1165,1168,1170,1175,1180,1182,1188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e41ce1b6f3e17e6040cbe86b5bdf71f9806d982",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
