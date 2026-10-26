@@ -42,8 +42,10 @@ fn saved_turn_metrics_reload_with_the_same_revision() {
     let store = Store::open_monocode(Path::new(":memory:")).unwrap();
     let id = store.create("codex", "/project").unwrap().id;
     let blocks = [95.12525746447635, 99.55200675204587, 98.15813953488373]
-        .map(|percent| json!({"id":percent.to_string(),"role":"assistant","text":"Done",
-            "turnMetrics":{"cacheHitPercent":percent}}))
+        .map(|percent| {
+            json!({"id":percent.to_string(),"role":"assistant","text":"Done",
+            "turnMetrics":{"cacheHitPercent":percent}})
+        })
         .to_vec();
     store.shared_store_blocks(id, &blocks).unwrap();
     assert!(HistoryRevision::of(&blocks).matches(&store.shared_blocks(id).unwrap()));
