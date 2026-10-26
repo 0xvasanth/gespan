@@ -6,6 +6,7 @@ mod btw;
 mod commands;
 pub(crate) mod composer_features;
 mod composer_shelf;
+pub(crate) mod dictation;
 mod edit_last_turn;
 #[cfg(test)]
 mod empty_arcade_tests;
@@ -163,6 +164,8 @@ pub(crate) struct Conversation {
     _command_removal: Subscription,
     _draft_observation: Subscription,
     _input_focus: Option<[Subscription; 2]>,
+    pub(crate) dictation: Entity<dictation::Dictation>,
+    _dictation: Subscription,
     draft_has_value: bool,
     folder_selected: bool,
     follow_ups: follow_up::FollowUps,
@@ -533,6 +536,8 @@ impl Conversation {
             this.open_typed_btw(cx);
         });
         let submission = cx.subscribe(&input, |this, _, _: &input::Submitted, cx| this.send(cx));
+        let dictation = cx.new(|cx| dictation::Dictation::new(input.downgrade(), cx));
+        let dictation_observation = cx.observe(&dictation, |_, _, cx| cx.notify());
         let review =
             cx.new(|_| crate::session_review::SessionReview::new(summary.id, summary.cwd.clone()));
         let review_events = cx.subscribe(&review, |this, review, event, cx| match event {
@@ -603,6 +608,8 @@ impl Conversation {
             _command_removal: command_removal,
             _draft_observation: draft_observation,
             _input_focus: None,
+            dictation,
+            _dictation: dictation_observation,
             draft_has_value: false,
             folder_selected: false,
             follow_ups: Default::default(),
@@ -2733,6 +2740,7 @@ impl Conversation {
         } else {
             Vec::new()
         };
+        self.dictation_context(cx);
         let input = self.input.read(cx);
         let has_value = input.has_message_text() || !self.attachments.is_empty();
         self.completion.update(cx, |completion, cx| {
@@ -2835,6 +2843,39 @@ impl Conversation {
                             cx.stop_propagation();
                         }
                     }))
+                    .on_action(cx.listener(|this, _: &input::Dictate, _, cx| {
+                        this.dictation.update(cx, |d, cx| d.shortcut_down(cx));
+                    }))
+                    .on_key_up(cx.listener(|this, _: &gpui::KeyUpEvent, _, cx| {
+                        this.dictation.update(cx, |d, cx| d.shortcut_up(cx));
+                    }))
+                    .on_modifiers_changed(cx.listener(
+                        |this, event: &gpui::ModifiersChangedEvent, _, cx| {
+                            // macOS sends no key-up while Command is down, so
+                            // letting go of the modifiers ends a hold too.
+                            let held = event.modifiers.secondary() && event.modifiers.shift;
+                            if !held && this.dictation.read(cx).chord_held() {
+                                this.dictation.update(cx, |d, cx| d.shortcut_up(cx));
+                            }
+                        },
+                    ))
+                    // Escape cancels dictation before the field or a menu sees
+                    // it, and still works while the composer is disabled. The
+                    // shell binds it to DismissMenu; unbound, it is a key.
+                    .capture_action(cx.listener(|this, _: &crate::shell::DismissMenu, _, cx| {
+                        if this.dictation.read(cx).cancellable() {
+                            this.dictation.update(cx, |d, cx| d.cancel(cx));
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "escape"
+                            && this.dictation.read(cx).cancellable()
+                        {
+                            this.dictation.update(cx, |d, cx| d.cancel(cx));
+                            cx.stop_propagation();
+                        }
+                    }))
                     .relative()
                     .rounded(px(radius))
                     .border_1()
@@ -2876,6 +2917,7 @@ impl Conversation {
                         .size_full(),
                     )
                     .children(self.attachment_chips(cx))
+                    .children(dictation::bar(&self.dictation, &self.input, cx))
                     .child(
                         div()
                             .px_3()
@@ -2910,6 +2952,7 @@ impl Conversation {
                                             }),
                                     ),
                             )
+                            .child(dictation::mic_button(&self.dictation, &self.input, cx))
                             .child(
                                 div()
                                     .flex_1()
@@ -3668,7 +3711,11 @@ impl Render for Conversation {
             let focus = self.input.focus_handle(cx);
             self._input_focus = Some([
                 cx.on_focus(&focus, window, |_, _, cx| cx.notify()),
-                cx.on_blur(&focus, window, |_, _, cx| cx.notify()),
+                cx.on_blur(&focus, window, |this, _, cx| {
+                    // A hold that ends outside the field still ends.
+                    this.dictation.update(cx, |d, cx| d.shortcut_up(cx));
+                    cx.notify()
+                }),
             ]);
         }
         if self.response_events.is_none() {

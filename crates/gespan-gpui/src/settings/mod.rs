@@ -252,6 +252,7 @@ pub(crate) struct SettingsView {
     accent_anchor: AnchorSlot,
     mobile: pages::MobileState,
     diagnostics: pages::DiagnosticsState,
+    dictation: pages::DictationState,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<SettingsEvent> for SettingsView {}
@@ -388,9 +389,11 @@ impl SettingsView {
             accent_anchor: AnchorSlot::default(),
             mobile: pages::MobileState::default(),
             diagnostics: pages::DiagnosticsState::new(),
+            dictation: Default::default(),
             _subscriptions: subscriptions,
         };
         this.watch_mobile(cx);
+        this.watch_dictation(cx);
         this.watch_connections(cx);
         if this.prefs.notifications {
             this.probe_notification_permission(false, cx);
@@ -465,6 +468,7 @@ impl SettingsView {
             self.diagnostics.counters = None;
             self.watch_mobile(cx);
             self.watch_connections(cx);
+            self.watch_dictation(cx);
             if section == Section::Mcp {
                 self.refresh_mcp_health(cx);
             }

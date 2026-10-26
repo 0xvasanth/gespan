@@ -88,6 +88,7 @@ fi
   curl \
   wget \
   file \
+  alsa-lib-devel \
   gtk3-devel \
   webkit2gtk4.1-devel \
   javascriptcoregtk4.1-devel \

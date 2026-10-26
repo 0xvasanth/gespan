@@ -4,6 +4,7 @@ mod archive;
 mod chat;
 mod connections;
 mod diagnostics;
+mod dictation;
 mod general;
 mod inbox;
 mod keybindings;
@@ -17,6 +18,7 @@ mod worktrees;
 pub(super) use appearance::parse_hex;
 pub(super) use connections::ConnectionsState;
 pub(super) use diagnostics::DiagnosticsState;
+pub(super) use dictation::DictationState;
 pub(crate) use keybindings::command_shortcut;
 pub(super) use mobile::MobileState;
 
@@ -37,6 +39,7 @@ impl SettingsView {
             }
             Section::Appearance => self.appearance_page(window, cx),
             Section::Keybindings => self.keybindings_page(cx),
+            Section::Dictation => self.dictation_page(cx),
             Section::Chat => self.chat_page(cx),
             Section::Providers => self.providers_page(cx),
             Section::Mcp => self.mcp_page(cx),

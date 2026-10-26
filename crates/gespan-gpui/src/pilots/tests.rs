@@ -4360,6 +4360,41 @@ mod roadmap {
         assert!(badges(&roadmap, visual).is_empty());
     }
     #[gpui::test]
+    fn each_run_edit_is_drawn_after_its_write_lands(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let flow_id = save_pilot_flow(&s, "save", "Login", visual);
+        let run_id = start_pilot_run(&s, &flow_id, "Ship login", "Fix the form", visual);
+        let roadmap = open_roadmap(&s, visual);
+        roadmap.update(visual, |r, cx| r.select_run(Some(run_id.clone()), cx));
+        visual.run_until_parked();
+
+        // The reload the edit triggers waits for the run's own write, so no
+        // edit is drawn from the snapshot before it.
+        for n in 0..20 {
+            let detail = flows_ok(
+                &s,
+                &format!("run-{n}"),
+                "flows.run",
+                json!({ "runId": run_id }),
+                visual,
+            );
+            let mut edited = detail["run"]["flow"].clone();
+            let brief = format!("build {{{{inputs.task}}}} pass {n}");
+            edited["states"][1]["brief"] = json!(brief);
+            flows_ok(
+                &s,
+                &format!("edit-{n}"),
+                "flows.editRun",
+                json!({"runId":run_id,"flow":edited,"note":format!("pass {n}")}),
+                visual,
+            );
+            assert_eq!(brief_of(&roadmap, "build", visual), brief, "edit {n}");
+        }
+    }
+    #[gpui::test]
     fn a_step_event_repaints_status_without_relayout(cx: &mut TestAppContext) {
         let s = setup(cx);
         hold_flow_launches(&s, cx);

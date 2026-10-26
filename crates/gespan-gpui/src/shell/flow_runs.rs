@@ -468,6 +468,26 @@ impl Shell {
             });
         }));
     }
+
+    /// Resolves once every run write queued so far has finished, so a reader
+    /// that follows a change (a roadmap reloading after `flows.editRun`)
+    /// sees it in the store.
+    pub(crate) fn flow_writes_saved(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl std::future::Future<Output = ()> + use<> {
+        let (done, saved) = async_channel::bounded::<()>(1);
+        let previous = self.flows_state.writes.take();
+        self.flows_state.writes = Some(cx.spawn(async move |_, _| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            drop(done);
+        }));
+        async move {
+            let _ = saved.recv().await;
+        }
+    }
 }
 
 #[cfg(test)]

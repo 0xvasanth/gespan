@@ -55,6 +55,11 @@ test("Finder launches use development data for dev bundles and installed data fo
       assert.ok(plist.includes(`<key>CFBundleDisplayName</key><string>${name}</string>`));
       // macOS rejects menu bar items from a process that exec'd after launch.
       assert.ok(plist.includes("<key>CFBundleExecutable</key><string>gespan-gpui</string>"));
+      // Dictation asks for the microphone with the desktop app's wording.
+      const tauriPlist = await readFile(new URL("../src-tauri/Info.plist", import.meta.url), "utf8");
+      const microphone = /<key>NSMicrophoneUsageDescription<\/key>\s*<string>([^<]+)<\/string>/;
+      assert.equal(plist.match(microphone)?.[1], tauriPlist.match(microphone)?.[1]);
+      assert.ok(plist.match(microphone));
       await assert.rejects(access(join(bundle, "MacOS/gespan-launcher")));
       const launched = spawnSync(join(bundle, "MacOS/gespan-gpui"), ["--cwd", "a project with spaces"], {
         encoding: "utf8",

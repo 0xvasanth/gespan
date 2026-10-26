@@ -75,12 +75,12 @@ describe("resolveAppShortcut", () => {
   });
 
   it("ignores a rebound chord while composing", () => {
-    saveKeybindingOverride("App: Search", { shortcut: "Command+Shift+KeyM" });
+    saveKeybindingOverride("App: Search", { shortcut: "Command+Shift+KeyY" });
     expect(
       resolveAppShortcut(
         key({
-          key: "M",
-          code: "KeyM",
+          key: "Y",
+          code: "KeyY",
           metaKey: true,
           shiftKey: true,
           isComposing: true,
@@ -90,10 +90,10 @@ describe("resolveAppShortcut", () => {
   });
 
   it("fires a rebound chord and drops the default it replaced", () => {
-    saveKeybindingOverride("App: Search", { shortcut: "Command+Shift+KeyM" });
+    saveKeybindingOverride("App: Search", { shortcut: "Command+Shift+KeyY" });
     expect(
       resolveAppShortcut(
-        key({ key: "M", code: "KeyM", metaKey: true, shiftKey: true }),
+        key({ key: "Y", code: "KeyY", metaKey: true, shiftKey: true }),
       ),
     ).toBe("App: Search");
     expect(resolveAppShortcut(key({ key: "k", metaKey: true }))).toBeNull();

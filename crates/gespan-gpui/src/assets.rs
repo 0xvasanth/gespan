@@ -117,6 +117,7 @@ impl AssetSource for Assets {
    "chevron-down-2"=>include_bytes!("../assets/hugeicons/chevron-down-2.svg"),
    "wand"=>include_bytes!("../assets/hugeicons/wand.svg"),
    "x"=>include_bytes!("../assets/hugeicons/x.svg"),
+   "mic-01"=>include_bytes!("../assets/hugeicons/mic-01.svg"),
    "terminal"=>include_bytes!("../assets/hugeicons/terminal.svg"),
    "panel-bottom"=>include_bytes!("../assets/hugeicons/panel-bottom.svg"),
    "panel-top"=>include_bytes!("../assets/hugeicons/panel-top.svg"),

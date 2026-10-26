@@ -683,6 +683,7 @@ mod tests {
             "settings-nav-connections",
             "settings-nav-appearance",
             "settings-nav-keybindings",
+            "settings-nav-dictation",
             "settings-nav-chat",
             "settings-nav-providers",
             "settings-nav-mcp",

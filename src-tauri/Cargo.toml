@@ -19,6 +19,8 @@ tauri-build = { version = "2", features = [] }
 gespan-mobile-link = { path = "../crates/mobile-link" }
 gespan-keep-awake = { path = "../crates/keep-awake" }
 gespan-tracker-secrets = { path = "../crates/tracker-secrets" }
+gespan-models = { path = "../crates/gespan-models" }
+gespan-speech = { path = "../crates/gespan-speech" }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = ["sync", "time"] }
 if-addrs = "0.15"
