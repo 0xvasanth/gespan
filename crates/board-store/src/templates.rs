@@ -6,7 +6,7 @@
 //! label and field ids inside view specs, layouts, display options and
 //! auto-move rules are remapped to the new ids; a value with no match is
 //! dropped (the saved-view rule), and an auto-move target with no match stays.
-use crate::ops::{clean_text, db, new_id, write_tx};
+use crate::ops::{clean_text, db, new_id, write_tx, MAX_NAME};
 use crate::settings::{board_settings, BoardSettings};
 use crate::{list_fields, list_labels, list_views, now_millis, Board};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -18,7 +18,6 @@ use std::collections::HashMap;
 pub const BUILT_IN_TEMPLATES: [&str; 4] =
     ["blank", "agent-pipeline", "bug-triage", "release-checklist"];
 const MAX_TEMPLATE_NAME: usize = 60;
-const MAX_BOARD_NAME: usize = 200;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -489,7 +488,7 @@ pub fn create_board_from_template(
     name: &str,
     template_id: &str,
 ) -> Result<Board, String> {
-    let name = clean_text(name, "Board name", MAX_BOARD_NAME)?;
+    let name = clean_text(name, "Board name", MAX_NAME)?;
     let tx = write_tx(conn)?;
     let spec = match built_in_spec(template_id) {
         Some(spec) => spec,

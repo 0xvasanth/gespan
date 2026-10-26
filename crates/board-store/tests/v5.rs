@@ -334,6 +334,13 @@ fn settings_round_trip_icon_colour_default_view_display_priority() {
             },
             "Auto-move rules are not valid JSON",
         ),
+        (
+            SettingsPatch {
+                auto_move_json: Some(Some(format!(r#"{{"x":"{}"}}"#, "a".repeat(20_000)))),
+                ..SettingsPatch::default()
+            },
+            "Auto-move rules are too long",
+        ),
     ];
     for (patch, error) in refused {
         let mut with_toggle = patch;
@@ -486,10 +493,16 @@ fn priority_scheme_refuses_empty_names_and_hiding_none() {
     );
 
     // 20 characters (not bytes) is fine, as is hiding every other level.
+    // Names are stored trimmed, as normalised JSON (unknown keys dropped).
     let twenty = "é".repeat(20);
-    let raw =
-        format!(r#"{{"names":["None","{twenty}","Medium","High","Urgent"],"hidden":[4,1,3,2]}}"#);
+    let raw = format!(
+        r#"{{"names":[" None","  {twenty}  ","Medium","High","Urgent "],"hidden":[4,1,3,2],"x":1}}"#
+    );
     let settings = write(&raw).unwrap();
+    assert_eq!(
+        json_of(settings.priority_json.as_deref().unwrap()),
+        json!({"names": ["None", twenty, "Medium", "High", "Urgent"], "hidden": [4, 1, 3, 2]})
+    );
     let scheme = priority_scheme(&settings);
     assert_eq!(scheme.names[1], twenty);
     assert_eq!(scheme.hidden, [4, 1, 3, 2]);
@@ -617,6 +630,60 @@ fn session_override_wins_else_strictest_linked_board_else_on() {
     remove_link(&conn, &on_strict.id, "session", "s1").unwrap();
     assert!(may_change_ticket_status(&conn, "s1"));
     assert!(set_session_status_setting(&conn, " ", Some(true)).is_err());
+}
+
+#[test]
+fn session_link_on_an_archived_card_still_counts() {
+    let conn = fresh();
+    let open_board = create_board(&conn, "Open").unwrap();
+    let strict = create_board(&conn, "Strict").unwrap();
+    update_board_settings(
+        &conn,
+        &strict.id,
+        &SettingsPatch {
+            ticket_status_changes: Some(false),
+            ..SettingsPatch::default()
+        },
+    )
+    .unwrap();
+    let column = |board: &Board| get_board(&conn, &board.id).unwrap().columns[0].id.clone();
+    let live = create_card(&conn, &column(&open_board), "a", "").unwrap();
+    let archived = create_card(&conn, &column(&strict), "b", "").unwrap();
+    add_link(&conn, &live.id, "session", "s1", None).unwrap();
+    add_link(&conn, &archived.id, "session", "s1", None).unwrap();
+    archive_card(&conn, &archived.id).unwrap();
+    assert!(!may_change_ticket_status(&conn, "s1"));
+    // Unarchiving changes nothing; unlinking it does.
+    unarchive_card(&conn, &archived.id).unwrap();
+    assert!(!may_change_ticket_status(&conn, "s1"));
+    archive_card(&conn, &archived.id).unwrap();
+    remove_link(&conn, &archived.id, "session", "s1").unwrap();
+    assert!(may_change_ticket_status(&conn, "s1"));
+}
+
+#[test]
+fn an_unreadable_session_override_refuses() {
+    let conn = fresh();
+    let board = create_board(&conn, "Open").unwrap();
+    let column = get_board(&conn, &board.id).unwrap().columns[0].id.clone();
+    let card = create_card(&conn, &column, "a", "").unwrap();
+    // The board alone would allow it; the override says no.
+    add_link(&conn, &card.id, "session", "s1", None).unwrap();
+    set_session_status_setting(&conn, "s1", Some(false)).unwrap();
+    assert!(!may_change_ticket_status(&conn, "s1"));
+
+    // When the override can't be read, the answer is no, never the boards'.
+    conn.execute_batch("ALTER TABLE board_session_settings RENAME TO moved")
+        .unwrap();
+    assert_eq!(session_status_setting(&conn, "s1"), None);
+    assert!(!may_change_ticket_status(&conn, "s1"));
+    // That includes a session with no override that would otherwise be on.
+    assert!(!may_change_ticket_status(&conn, "s2"));
+
+    conn.execute_batch("ALTER TABLE moved RENAME TO board_session_settings")
+        .unwrap();
+    assert!(!may_change_ticket_status(&conn, "s1"));
+    assert!(may_change_ticket_status(&conn, "s2"));
 }
 
 #[test]

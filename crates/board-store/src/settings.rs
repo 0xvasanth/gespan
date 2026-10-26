@@ -264,10 +264,15 @@ pub fn board_settings(conn: &Connection, board_id: &str) -> Result<BoardSettings
     row.ok_or_else(|| "Board not found".into())
 }
 
-/// Checks every value the patch sets that needs no database.
-fn check_patch(patch: &SettingsPatch) -> Result<(), String> {
+/// Checks every value the patch sets that needs no database. Returns the
+/// priority scheme to store when the patch sets one: its names trimmed, as
+/// normalised JSON.
+fn check_patch(patch: &SettingsPatch) -> Result<Option<Option<String>>, String> {
     if let Some(Some(raw)) = &patch.auto_move_json {
-        parse_json::<serde_json::Value>(raw, "Auto-move rules")
+        if raw.len() > MAX_SETTINGS_JSON {
+            return Err("Auto-move rules are too long".into());
+        }
+        serde_json::from_str::<serde_json::Value>(raw)
             .map_err(|_| "Auto-move rules are not valid JSON".to_string())?;
     }
     if let Some(Some(icon)) = &patch.icon {
@@ -281,10 +286,20 @@ fn check_patch(patch: &SettingsPatch) -> Result<(), String> {
     if let Some(Some(raw)) = &patch.display_json {
         check_display(&parse_json(raw, "Display options")?)?;
     }
-    if let Some(Some(raw)) = &patch.priority_json {
-        check_priority(&parse_json(raw, "Priority scheme")?)?;
-    }
-    Ok(())
+    let priority = match &patch.priority_json {
+        Some(Some(raw)) => {
+            let mut scheme: PriorityScheme = parse_json(raw, "Priority scheme")?;
+            check_priority(&scheme)?;
+            for name in &mut scheme.names {
+                *name = name.trim().to_string();
+            }
+            Some(Some(
+                serde_json::to_string(&scheme).map_err(|error| error.to_string())?,
+            ))
+        }
+        other => other.clone(),
+    };
+    Ok(priority)
 }
 
 /// Changes only the fields `patch` names and returns the settings after.
@@ -293,7 +308,7 @@ pub fn update_board_settings(
     board_id: &str,
     patch: &SettingsPatch,
 ) -> Result<BoardSettings, String> {
-    check_patch(patch)?;
+    let priority_json = check_patch(patch)?;
     let tx = write_tx(conn)?;
     let exists: bool = tx
         .query_row(
@@ -339,7 +354,7 @@ pub fn update_board_settings(
             set(&patch.default_view_id).map(Into::into),
         ),
         ("display_json", set(&patch.display_json).map(Into::into)),
-        ("priority_json", set(&patch.priority_json).map(Into::into)),
+        ("priority_json", priority_json.map(Into::into)),
     ];
     for (column, value) in assignments {
         if let Some(value) = value {
@@ -355,7 +370,9 @@ pub fn update_board_settings(
     Ok(settings)
 }
 
-/// Writes every field of `settings` (a patch naming all of them).
+/// Overwrites every field of the board's settings with `settings` (a patch
+/// naming all of them), including any another app changed meanwhile. For a
+/// partial change, call [`update_board_settings`] with just those fields.
 pub fn set_board_settings(
     conn: &Connection,
     board_id: &str,
@@ -371,19 +388,23 @@ fn check_session_key(session_key: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn override_of(conn: &Connection, session_key: &str) -> rusqlite::Result<Option<bool>> {
+    Ok(conn
+        .query_row(
+            "SELECT may_change_status FROM board_session_settings WHERE session_key = ?1",
+            [session_key],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .flatten()
+        .map(|value| value != 0))
+}
+
 /// The session's own "may change ticket status" override; `None` when it
-/// follows its boards (or cannot be read).
+/// follows its boards (or cannot be read: [`may_change_ticket_status`]
+/// refuses in that case rather than falling back to the boards).
 pub fn session_status_setting(conn: &Connection, session_key: &str) -> Option<bool> {
-    conn.query_row(
-        "SELECT may_change_status FROM board_session_settings WHERE session_key = ?1",
-        [session_key],
-        |r| r.get::<_, Option<i64>>(0),
-    )
-    .optional()
-    .ok()
-    .flatten()
-    .flatten()
-    .map(|value| value != 0)
+    override_of(conn, session_key).ok().flatten()
 }
 
 /// Sets the session's override, or with `None` makes it follow its boards.
@@ -415,8 +436,10 @@ pub fn set_session_status_setting(
 /// the boards whose cards link the session; else `true`. A read that fails
 /// answers `false`.
 pub fn may_change_ticket_status(conn: &Connection, session_key: &str) -> bool {
-    if let Some(value) = session_status_setting(conn, session_key) {
-        return value;
+    match override_of(conn, session_key) {
+        Ok(Some(value)) => return value,
+        Ok(None) => {}
+        Err(_) => return false,
     }
     conn.query_row(
         "SELECT COALESCE(MIN(COALESCE(s.ticket_status_changes, 1)), 1)
