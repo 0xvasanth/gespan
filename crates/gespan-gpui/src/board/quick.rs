@@ -162,8 +162,31 @@ pub(crate) fn encode_field(kind: &str, text: &str) -> Result<Option<String>, Str
             };
             Ok(Some(number.to_string()))
         }
+        "url" => {
+            if !valid_field_url(text) {
+                return Err("A link must start with http:// or https://".into());
+            }
+            Ok(Some(
+                serde_json::Value::String(text.to_string()).to_string(),
+            ))
+        }
         _ => Err(format!("Can't type a {kind} value")),
     }
+}
+
+/// A url field holds an http or https address, at most 2,000 characters.
+fn valid_field_url(text: &str) -> bool {
+    text.chars().count() <= 2_000
+        && ["http://", "https://"].iter().any(|scheme| {
+            text.strip_prefix(scheme)
+                .is_some_and(|rest| !rest.is_empty())
+        })
+}
+
+/// A multi-select field's stored picks, in the order stored.
+pub(crate) fn field_picks(raw: Option<&str>) -> Vec<String> {
+    raw.and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
+        .unwrap_or_default()
 }
 
 /// The choices of a select field, from its `["a","b"]` options.
@@ -178,7 +201,11 @@ pub(crate) fn field_options(options_json: Option<&str>) -> Vec<String> {
 pub(crate) fn field_text(kind: &str, raw: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(raw).ok()?;
     match (kind, value) {
-        ("text" | "select", serde_json::Value::String(text)) => Some(text),
+        ("text" | "select" | "url", serde_json::Value::String(text)) => Some(text),
+        ("multi-select", serde_json::Value::Array(items)) => {
+            let picks: Vec<&str> = items.iter().filter_map(|item| item.as_str()).collect();
+            (!picks.is_empty()).then(|| picks.join(", "))
+        }
         ("number", serde_json::Value::Number(number)) => Some(number.to_string()),
         ("date", serde_json::Value::Number(at)) => {
             let day = super::style::local_day(at.as_i64()?)?;

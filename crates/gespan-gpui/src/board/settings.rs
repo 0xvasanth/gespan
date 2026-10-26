@@ -3,6 +3,8 @@
 //! through `Service` (settings writes are patches, so a toggle the other app
 //! just set survives).
 mod columns;
+mod display;
+mod fields;
 mod general;
 mod labels;
 mod priority;
@@ -24,14 +26,18 @@ pub(crate) enum Section {
     Columns,
     Labels,
     Priority,
+    Fields,
+    Display,
 }
 
 impl Section {
-    const ALL: [(Section, &'static str, &'static str); 4] = [
+    const ALL: [(Section, &'static str, &'static str); 6] = [
         (Section::General, "general", "General"),
         (Section::Columns, "columns", "Columns"),
         (Section::Labels, "labels", "Labels"),
         (Section::Priority, "priority", "Priority"),
+        (Section::Fields, "fields", "Fields"),
+        (Section::Display, "display", "Display"),
     ];
 }
 
@@ -44,6 +50,10 @@ pub(crate) enum Edit {
     LabelName(String),
     LabelNew,
     Priority(u8),
+    FieldNew(String),
+    FieldName(String),
+    FieldOption(String, String),
+    FieldOptionNew(String),
 }
 
 struct Editing {
@@ -64,6 +74,9 @@ pub(crate) struct Page {
     /// The label picked to merge into, awaiting confirmation.
     merge_into: Option<String>,
     deleting_label: Option<String>,
+    deleting_field: Option<String>,
+    /// Display options being edited: the open saved view's, not the board's.
+    display_view: bool,
 }
 
 impl Page {
@@ -76,6 +89,8 @@ impl Page {
             merging: None,
             merge_into: None,
             deleting_label: None,
+            deleting_field: None,
+            display_view: false,
         }
     }
 
@@ -85,6 +100,7 @@ impl Page {
         self.merging = None;
         self.merge_into = None;
         self.deleting_label = None;
+        self.deleting_field = None;
     }
 }
 
@@ -197,6 +213,7 @@ impl BoardView {
             || page.moving.is_some()
             || page.merging.is_some()
             || page.deleting_label.is_some()
+            || page.deleting_field.is_some()
         {
             page.clear_prompts();
             // The field is gone: keys go to the board again.
@@ -319,6 +336,10 @@ impl BoardView {
                 _ => true,
             },
             Edit::Priority(level) => self.commit_priority_name(level, &text, cx),
+            Edit::FieldNew(kind) => self.commit_field_new(&kind, &text, cx),
+            Edit::FieldName(id) => self.commit_field_name(&id, &text, cx),
+            Edit::FieldOption(id, from) => self.commit_field_option(&id, &from, &text, cx),
+            Edit::FieldOptionNew(id) => self.commit_field_option_new(&id, &text, cx),
         };
         if ok {
             // The field is gone: keys (Escape) go to the board again.
@@ -356,6 +377,8 @@ impl BoardView {
             Section::Columns => self.render_columns(cx),
             Section::Labels => self.render_labels(cx),
             Section::Priority => self.render_priority(cx),
+            Section::Fields => self.render_fields(cx),
+            Section::Display => self.render_display(cx),
         };
         let error = page.error.clone().map(|error| {
             div()

@@ -15,6 +15,7 @@ mod quick;
 mod selection;
 mod settings;
 pub(crate) mod style;
+mod swimlanes;
 mod switcher;
 mod table;
 #[cfg(test)]
@@ -34,7 +35,7 @@ use crate::{
 use gespan_core::{
     board::{
         BoardDetail, Service,
-        extras::{BoardSettings, CardExtras, Label, PriorityScheme, ViewSpec},
+        extras::{BoardSettings, CardExtras, DisplayOptions, Label, PriorityScheme, ViewSpec},
     },
     tickets::{TicketRef, Tracker},
 };
@@ -110,6 +111,8 @@ pub(crate) struct KeyboardDrag {
     pub card_id: String,
     pub column_id: String,
     pub slot: usize,
+    /// The swimlane the card would drop into, on a board with lanes.
+    pub lane: Option<String>,
 }
 
 /// A column on the move, dragged by its header.
@@ -239,6 +242,15 @@ pub(crate) struct BoardView {
     settings: Option<settings::Page>,
     pub(crate) board_settings: BoardSettings,
     pub(crate) priority: PriorityScheme,
+    /// The display options in force, refreshed at the start of each render.
+    pub(crate) display: DisplayOptions,
+    /// Values on the board's cards for text, number and date fields, as the
+    /// stored JSON, by field id.
+    field_seen: HashMap<String, Vec<String>>,
+    /// The free-form value field in the filter list.
+    filter_free: Entity<Input>,
+    /// The swimlane cell (lane key, column id) a drag would drop into.
+    pub(crate) lane_drop: Option<(String, String)>,
     /// The board whose default view was applied; it applies once per board.
     default_view_applied: Option<String>,
     pending_default_view: Option<String>,
@@ -292,6 +304,10 @@ impl BoardView {
             .flatten()
             .as_deref()
             == Some("page");
+        let filter_free = cx.new(|cx| Input::field("Value", "Type a value", content(0.4), cx));
+        let free_submit = cx.subscribe(&filter_free, |this, _, _: &input::Submitted, cx| {
+            this.submit_filter_free(cx)
+        });
         Self {
             store,
             db_path,
@@ -369,12 +385,16 @@ impl BoardView {
             settings: None,
             board_settings: BoardSettings::default(),
             priority: PriorityScheme::default(),
+            display: DisplayOptions::default(),
+            field_seen: HashMap::new(),
+            filter_free,
+            lane_drop: None,
             default_view_applied: None,
             pending_default_view: None,
             #[cfg(test)]
             after_load_reads: None,
             _poll: poll,
-            _subscriptions: vec![activation, searching],
+            _subscriptions: vec![activation, searching, free_submit],
         }
     }
 
@@ -405,6 +425,7 @@ impl BoardView {
         self.dragged_card = None;
         self.drop_target = None;
         self.column_drop = None;
+        self.lane_drop = None;
         true
     }
 
@@ -539,6 +560,16 @@ impl BoardView {
         let views = service.views(&board.id)?;
         let fields = service.list_fields(&board.id)?;
         let board_settings = service.settings(&board.id)?;
+        let mut field_seen = HashMap::new();
+        for field in fields
+            .iter()
+            .filter(|field| matches!(field.kind.as_str(), "text" | "number" | "date"))
+        {
+            field_seen.insert(
+                field.id.clone(),
+                service.field_distinct_values(&board.id, &field.id, 50)?,
+            );
+        }
         let index: HashMap<_, _> = service
             .card_index(&board.id)?
             .into_iter()
@@ -575,6 +606,7 @@ impl BoardView {
             // The card was deleted or moved away elsewhere.
             self.table_edit = None;
         }
+        self.field_seen = field_seen;
         self.fields = fields;
         self.priority = gespan_core::board::extras::priority_scheme(&board_settings);
         self.sync_views(views, cx);
@@ -854,6 +886,7 @@ impl BoardView {
         self.dragged_card = None;
         self.drop_target = None;
         self.column_drop = None;
+        self.lane_drop = None;
         self.set_dragging(false, cx);
         cx.notify();
     }
@@ -1353,6 +1386,7 @@ use gpui::AnyElement;
 impl gpui::Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.forget_finished_drag(cx);
+        self.display = self.effective_display();
         let root =
             div()
                 .id("board-view")
@@ -1481,6 +1515,10 @@ impl gpui::Render for BoardView {
         let full_page = self.card_detail.as_ref().is_some_and(|d| d.full_page());
         let settings_page = self.render_settings(cx);
         let on_settings = settings_page.is_some();
+        let has_lanes = self.lane_mode().is_some();
+        let lanes = (!on_settings && layout == list::Layout::Board && has_lanes)
+            .then(|| self.render_swimlanes(cx))
+            .flatten();
         let board = div()
             .flex_1()
             .min_w_0()
@@ -1503,8 +1541,9 @@ impl gpui::Render for BoardView {
                 !on_settings && !full_page && layout == list::Layout::Table,
                 |d| d.child(self.render_table(cx)),
             )
+            .when(!full_page, |d| d.children(lanes))
             .when(
-                !on_settings && !full_page && layout == list::Layout::Board,
+                !on_settings && !full_page && layout == list::Layout::Board && !has_lanes,
                 |d| {
                     d.child(
                         div()

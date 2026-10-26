@@ -74,6 +74,9 @@ pub(super) struct LayoutSpec {
     pub columns: Option<Vec<String>>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub widths: BTreeMap<String, i64>,
+    /// This view's own display options, over the board's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<serde_json::Value>,
     #[serde(flatten)]
     rest: serde_json::Map<String, serde_json::Value>,
 }
@@ -86,6 +89,7 @@ impl Default for LayoutSpec {
             collapsed: Vec::new(),
             columns: None,
             widths: BTreeMap::new(),
+            display: None,
             rest: serde_json::Map::new(),
         }
     }

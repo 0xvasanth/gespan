@@ -25,7 +25,7 @@ pub(crate) fn bind(cx: &mut App) {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Arrow {
+pub(super) enum Arrow {
     Up,
     Down,
     Left,
@@ -197,6 +197,15 @@ impl BoardView {
         let Some(column_id) = self.column_of_card(card_id) else {
             return;
         };
+        if self.lane_mode().is_some() {
+            if let Some(handle) = self
+                .lane_focus_target(card_id, direction)
+                .and_then(|id| self.card_focus.get(&id))
+            {
+                window.focus(handle, cx);
+            }
+            return;
+        }
         let here = self.visible_ids(&column_id);
         let index = here.iter().position(|id| id == card_id).unwrap_or(0);
         let target = match direction {
@@ -239,11 +248,14 @@ impl BoardView {
                 cx.notify();
             })
         });
+        let lane = self.lane_mode().and_then(|_| self.first_lane_of(card_id));
+        self.lane_drop = lane.clone().map(|lane| (lane, column_id.clone()));
         self.drop_target = Some((column_id.clone(), slot));
         self.kb_drag = Some(KeyboardDrag {
             card_id: card_id.to_string(),
             column_id,
             slot,
+            lane,
         });
         cx.notify();
         true
@@ -253,6 +265,9 @@ impl BoardView {
         let Some(mut drag) = self.kb_drag.clone() else {
             return;
         };
+        if drag.lane.is_some() {
+            return self.move_lane_target(direction, cx);
+        }
         let origin = self.column_of_card(&drag.card_id);
         let old_slot = |this: &Self, column: &str| {
             (origin.as_deref() == Some(column))
@@ -318,12 +333,20 @@ impl BoardView {
             return;
         }
         self.drop_target = None;
+        self.lane_drop = None;
         if self.pending_reload {
             self.reload(cx);
         }
     }
 
     fn drop_keyboard_card(&mut self, cx: &mut Context<Self>) {
+        if self
+            .kb_drag
+            .as_ref()
+            .is_some_and(|drag| drag.lane.is_some())
+        {
+            return self.drop_keyboard_lane_card(cx);
+        }
         let Some(drag) = self.kb_drag.take() else {
             return;
         };

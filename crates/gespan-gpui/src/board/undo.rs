@@ -295,6 +295,24 @@ impl BoardView {
             .unwrap_or_default()
     }
 
+    /// The toast for a move that lands past the destination's WIP limit.
+    pub(crate) fn wip_label(&self, card_id: &str, column_id: &str) -> Option<String> {
+        let card = self.card(card_id)?;
+        if card.column_id == column_id {
+            return None;
+        }
+        let limit = self.column(column_id)?.wip_limit?;
+        let after = self.detail.as_ref().map_or(0, |detail| {
+            detail
+                .cards
+                .iter()
+                .filter(|card| card.column_id == column_id)
+                .count()
+        }) as i64
+            + 1;
+        (after > limit).then(|| format!("Over the WIP limit ({after}/{limit})"))
+    }
+
     /// Move one card as the user, with an undo toast. True when it moved.
     pub(crate) fn move_with_undo(
         &mut self,
@@ -303,26 +321,29 @@ impl BoardView {
         index: usize,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.move_with_undo_labeled(card_id, column_id, index, None, cx)
+    }
+
+    /// `move_with_undo` naming the swimlane the card dropped into. A move
+    /// past a WIP limit still saves; the toast says so instead.
+    pub(crate) fn move_with_undo_labeled(
+        &mut self,
+        card_id: &str,
+        column_id: &str,
+        index: usize,
+        lane: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(((_, from_column, from_index), number)) = self.place_of(card_id) else {
             return false;
         };
-        let mut label = moved_label(&[number], &self.column_name(column_id));
-        // A move past a WIP limit still saves; the toast says so.
-        if from_column != column_id
-            && let Some(limit) = self.column(column_id).and_then(|column| column.wip_limit)
-        {
-            let after = self.detail.as_ref().map_or(0, |detail| {
-                detail
-                    .cards
-                    .iter()
-                    .filter(|card| card.column_id == column_id)
-                    .count()
-            }) as i64
-                + 1;
-            if after > limit {
-                label = format!("Over the WIP limit ({after}/{limit})");
+        let label = self.wip_label(card_id, column_id).unwrap_or_else(|| {
+            let moved = moved_label(&[number], &self.column_name(column_id));
+            match lane {
+                Some(lane) => format!("{moved}, {lane}"),
+                None => moved,
             }
-        }
+        });
         self.commit_pending(cx);
         let moved = self.write(cx, |service| {
             service.card_move(card_id, column_id, index, "user")

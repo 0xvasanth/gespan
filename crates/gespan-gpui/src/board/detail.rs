@@ -772,6 +772,8 @@ impl BoardView {
             Picker::Field(index) => match detail.fields.get(index).map(|f| f.kind.as_str()) {
                 Some("number") => "A number, then Enter",
                 Some("date") => "YYYY-MM-DD, then Enter",
+                Some("url") => "https://…, then Enter",
+                Some("multi-select") => "Pick options below",
                 _ => "Type a value, then Enter",
             },
             Picker::PrUrl => "https://…, then Enter",
@@ -782,7 +784,7 @@ impl BoardView {
             Picker::Field(index) => detail
                 .fields
                 .get(index)
-                .filter(|field| matches!(field.kind.as_str(), "text" | "number"))
+                .filter(|field| matches!(field.kind.as_str(), "text" | "number" | "url"))
                 .and_then(|field| {
                     quick::field_text(&field.kind, detail.field_values.get(&field.id)?)
                 })
@@ -1014,6 +1016,47 @@ impl BoardView {
         }
         match quick::encode_field(&kind, query) {
             Ok(value) => self.set_field(index, value, cx),
+            Err(error) => self.inline_error(error, cx),
+        }
+    }
+
+    /// Add or drop one option of a multi-select field; the pick list stays
+    /// open for the next one. Built on the value stored now.
+    fn toggle_multi_option(&mut self, index: usize, option: &str, cx: &mut Context<Self>) {
+        let Some(detail) = &self.card_detail else {
+            return;
+        };
+        let Some(field) = detail.fields.get(index) else {
+            return;
+        };
+        let (card_id, field_id) = (detail.card_id.clone(), field.id.clone());
+        let option = option.to_string();
+        let result = self.service().and_then(|service| {
+            let current = service
+                .field_values(&card_id)?
+                .into_iter()
+                .find(|value| value.field_id == field_id)
+                .map(|value| value.value_json);
+            let mut picks = quick::field_picks(current.as_deref());
+            match picks.iter().position(|pick| *pick == option) {
+                Some(at) => {
+                    picks.remove(at);
+                }
+                None => picks.push(option),
+            }
+            let value = (!picks.is_empty()).then(|| serde_json::json!(picks).to_string());
+            service.set_field_value(&card_id, &field_id, value.as_deref())
+        });
+        match result {
+            Ok(()) => {
+                self.error = None;
+                if let Some(detail) = &mut self.card_detail {
+                    detail.inline_error = None;
+                }
+                self.reload(cx);
+                self.refresh_detail_lists();
+                cx.notify();
+            }
             Err(error) => self.inline_error(error, cx),
         }
     }

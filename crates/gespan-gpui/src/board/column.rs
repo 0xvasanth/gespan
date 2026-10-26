@@ -4,7 +4,7 @@ use crate::theme::*;
 use gespan_core::board::{BoardDetail, Column};
 use gpui::{AnyElement, Context, FontWeight, Hsla, MouseButton, Role, div, prelude::*, px, rgb};
 
-pub(super) const COLUMN_WIDTH: f32 = 280.;
+pub(in crate::board) const COLUMN_WIDTH: f32 = 280.;
 
 /// The 14px ring that says what a column is for.
 pub(super) fn role_icon(role: Option<&str>) -> AnyElement {

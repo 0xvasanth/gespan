@@ -37,6 +37,9 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let number = card.number;
+        let display = &self.display;
+        let face = &display.face;
+        let compact = display.density == gespan_core::board::extras::Density::Compact;
         let extras = self.extras.get(&card.id).cloned().unwrap_or_default();
         let now = gespan_core::time::now_ms();
         let labels: Vec<_> = extras
@@ -44,24 +47,29 @@ impl BoardView {
             .iter()
             .filter_map(|id| self.labels.iter().find(|label| &label.id == id))
             .collect();
-        let chip = card.link_kind.as_deref().map(|kind| {
-            let glyph = if kind == "pilot" { "bot" } else { "chatting" };
-            let (text, alpha) = match self.link_label(&card.id) {
-                Some(LinkLabel::Found(title)) => (title, 0.65),
-                _ => ("Linked work no longer exists".to_string(), 0.4),
-            };
-            div()
-                .max_w(px(120.))
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap(px(4.))
-                .text_color(content(alpha))
-                .child(icon(glyph, 11.))
-                .child(div().min_w_0().truncate().child(text))
-        });
+        let chip = card
+            .link_kind
+            .as_deref()
+            .filter(|_| face.link_status)
+            .map(|kind| {
+                let glyph = if kind == "pilot" { "bot" } else { "chatting" };
+                let (text, alpha) = match self.link_label(&card.id) {
+                    Some(LinkLabel::Found(title)) => (title, 0.65),
+                    _ => ("Linked work no longer exists".to_string(), 0.4),
+                };
+                div()
+                    .max_w(px(120.))
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .text_color(content(alpha))
+                    .child(icon(glyph, 11.))
+                    .child(div().min_w_0().truncate().child(text))
+            });
         let due = extras
             .due_at
+            .filter(|_| face.due)
             .and_then(|at| due_label(at, now as i64))
             .map(|(text, overdue)| {
                 let control = div()
@@ -102,7 +110,7 @@ impl BoardView {
             .aria_label(card.title.clone())
             .flex_shrink_0()
             .px(px(12.))
-            .py(px(10.))
+            .py(px(if compact { 5. } else { 10. }))
             .rounded(px(8.))
             .border_1()
             .border_color(content(0.07))
@@ -116,7 +124,7 @@ impl BoardView {
             })
             .flex()
             .flex_col()
-            .gap(px(6.))
+            .gap(px(if compact { 2. } else { 6. }))
             .cursor_grab()
             .on_drag(payload, move |payload, _, _, cx| {
                 let card_id = payload.card_id.clone();
@@ -153,7 +161,7 @@ impl BoardView {
                 }),
             )
             .child(anchor.probe())
-            .when(!labels.is_empty(), |d| {
+            .when(face.labels && !labels.is_empty(), |d| {
                 let row = div()
                     .id(("board-card-labels", number as u64))
                     .debug_selector(move || format!("board-card-labels-{number}"))
@@ -198,7 +206,7 @@ impl BoardView {
                             .child(card.title.clone()),
                     ),
             )
-            .when(extras.subtasks_total > 0, |d| {
+            .when(face.subtasks && extras.subtasks_total > 0, |d| {
                 let share = extras.subtasks_done as f32 / extras.subtasks_total as f32;
                 d.child(
                     div()
@@ -230,6 +238,7 @@ impl BoardView {
                         ),
                 )
             })
+            .children(self.field_chips(card, number))
             .when_some(
                 self.ticket_chip(format!("card-{number}"), &card.id, false, true, cx),
                 |d, chip| d.child(div().flex().min_w_0().child(chip)),
@@ -241,8 +250,10 @@ impl BoardView {
                     .gap(px(8.))
                     .text_size(px(11.))
                     .text_color(content(0.45))
-                    .child(div().font_family("Menlo").child(format!("#{number}")))
-                    .when(extras.priority > 0, |d| {
+                    .when(face.number, |d| {
+                        d.child(div().font_family("Menlo").child(format!("#{number}")))
+                    })
+                    .when(face.priority && extras.priority > 0, |d| {
                         let glyph = div()
                             .id(("board-card-priority", number as u64))
                             .debug_selector(move || format!("board-card-priority-{number}"))
@@ -255,7 +266,7 @@ impl BoardView {
                         d.child(face_control(glyph, &card.id, Face::Priority, cx))
                     })
                     // A faint target, shown on hover, for a card with no priority.
-                    .when(extras.priority == 0, |d| {
+                    .when(face.priority && extras.priority == 0, |d| {
                         let target = div()
                             .id(("board-card-priority-target", number as u64))
                             .debug_selector(move || format!("board-card-priority-target-{number}"))
@@ -269,7 +280,7 @@ impl BoardView {
                         d.child(face_control(target, &card.id, Face::Priority, cx))
                     })
                     .children(due)
-                    .when(extras.comments > 0, |d| {
+                    .when(face.comments && extras.comments > 0, |d| {
                         d.child(
                             div()
                                 .flex()
@@ -309,5 +320,37 @@ impl BoardView {
                     })),
             )
             .into_any_element()
+    }
+}
+
+impl BoardView {
+    /// One chip per custom field the face shows and the card has a value for.
+    /// A field deleted since is skipped without a word.
+    fn field_chips(&self, card: &Card, number: i64) -> Vec<AnyElement> {
+        let Some(row) = self.index.get(&card.id) else {
+            return Vec::new();
+        };
+        self.display
+            .face
+            .fields
+            .iter()
+            .enumerate()
+            .filter_map(|(at, id)| {
+                let field = self.fields.iter().find(|field| &field.id == id)?;
+                let text = super::quick::field_text(&field.kind, row.fields.get(id)?)?;
+                Some(
+                    div()
+                        .id(("board-card-field", number as u64 * 100 + at as u64))
+                        .debug_selector(move || format!("board-card-field-{number}-{at}"))
+                        .flex()
+                        .gap(px(4.))
+                        .text_size(px(11.))
+                        .text_color(content(0.55))
+                        .child(div().text_color(content(0.4)).child(field.name.clone()))
+                        .child(div().min_w_0().truncate().child(text))
+                        .into_any_element(),
+                )
+            })
+            .collect()
     }
 }

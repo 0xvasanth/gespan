@@ -1,5 +1,6 @@
 //! How the task drawer looks: gr8r's top bar, property grid, description,
 //! subtasks and Comments/Activity tabs, in the board's quiet type scale.
+use super::super::header::checked_row;
 use super::super::markdown_toolbar::Format;
 use super::{CardDetail, Choice, Picker, RelationKind, Tab, activity_text};
 use crate::{
@@ -882,10 +883,37 @@ impl BoardView {
                     );
                 }
             }
+            Picker::Field(field_index) => {
+                if let Some(field) = detail
+                    .fields
+                    .get(field_index)
+                    .filter(|field| field.kind == "multi-select")
+                {
+                    let picks =
+                        quick::field_picks(detail.field_values.get(&field.id).map(String::as_str));
+                    for (n, option) in quick::field_options(field.options_json.as_deref())
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let on = picks.contains(&option);
+                        let chosen = option.clone();
+                        rows.push(
+                            checked_row(
+                                format!("board-field-{field_index}-option-{n}").into(),
+                                option,
+                                on,
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_multi_option(field_index, &chosen, cx)
+                            }))
+                            .into_any_element(),
+                        );
+                    }
+                }
+            }
             Picker::DueDate
             | Picker::StartDate
             | Picker::Estimate
-            | Picker::Field(_)
             | Picker::PrUrl
             | Picker::WorktreePath => {}
         }
