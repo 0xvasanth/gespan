@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+import { colorName } from "../../model/boardSettings";
 import { LABEL_COLORS } from "../boardFormat";
 
 export const FIELD =
@@ -90,6 +98,82 @@ export function CommitInput({
   );
 }
 
+/** One choice of a {@link RadioGroup}. */
+export type RadioOption = {
+  value: string;
+  /** The accessible name. */
+  label: string;
+  title?: string;
+  className: string;
+  style?: CSSProperties;
+  content?: ReactNode;
+};
+
+/**
+ * A radio group with a roving tab stop: Tab reaches the checked radio (or the
+ * first), arrow keys move to the next or previous one and choose it.
+ */
+export function RadioGroup({
+  label,
+  value,
+  options,
+  onChange,
+  className = "flex items-center gap-1",
+}: {
+  label: string;
+  /** The checked option's value, or null when none is. */
+  value: string | null;
+  options: readonly RadioOption[];
+  onChange: (value: string) => void;
+  className?: string;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const checked = options.findIndex((option) => option.value === value);
+  const stop = checked >= 0 ? checked : 0;
+  const step = (event: KeyboardEvent<HTMLDivElement>) => {
+    const delta =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (!delta || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    const from = refs.current.findIndex((el) => el === event.target);
+    const next = (Math.max(from, 0) + delta + options.length) % options.length;
+    refs.current[next]?.focus();
+    onChange(options[next].value);
+  };
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className={className}
+      onKeyDown={step}
+    >
+      {options.map((option, index) => (
+        <button
+          key={option.value}
+          ref={(el) => {
+            refs.current[index] = el;
+          }}
+          type="button"
+          role="radio"
+          aria-checked={index === checked}
+          aria-label={option.label}
+          title={option.title ?? option.label}
+          tabIndex={index === stop ? 0 : -1}
+          onClick={() => onChange(option.value)}
+          style={option.style}
+          className={option.className}
+        >
+          {option.content}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** The palette as a radio group; `none` adds a "No colour" choice. */
 export function Swatches({
   label,
@@ -102,37 +186,31 @@ export function Swatches({
   onChange: (color: string | null) => void;
   none?: boolean;
 }) {
+  const options: RadioOption[] = [
+    ...(none
+      ? [
+          {
+            value: "",
+            label: "No colour",
+            className: `${SWATCH} border-dashed border-content/35 ${RING(value === null)}`,
+          },
+        ]
+      : []),
+    ...LABEL_COLORS.map((color) => ({
+      value: color,
+      label: colorName(color),
+      title: `${colorName(color)} (#${color})`,
+      style: { backgroundColor: `#${color}` },
+      className: `${SWATCH} border-transparent ${RING(value === color)}`,
+    })),
+  ];
   return (
-    <div
-      role="radiogroup"
-      aria-label={label}
-      className="flex items-center gap-1"
-    >
-      {none ? (
-        <button
-          type="button"
-          role="radio"
-          aria-checked={value === null}
-          aria-label="No colour"
-          title="No colour"
-          onClick={() => onChange(null)}
-          className={`${SWATCH} border-dashed border-content/35 ${RING(value === null)}`}
-        />
-      ) : null}
-      {LABEL_COLORS.map((color) => (
-        <button
-          key={color}
-          type="button"
-          role="radio"
-          aria-checked={value === color}
-          aria-label={color}
-          title={`#${color}`}
-          onClick={() => onChange(color)}
-          style={{ backgroundColor: `#${color}` }}
-          className={`${SWATCH} border-transparent ${RING(value === color)}`}
-        />
-      ))}
-    </div>
+    <RadioGroup
+      label={label}
+      value={value ?? (none ? "" : null)}
+      options={options}
+      onChange={(next) => onChange(next || null)}
+    />
   );
 }
 

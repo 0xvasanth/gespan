@@ -3,6 +3,7 @@ import { BOARD_ICONS } from "../../model/boardSettings";
 import {
   CommitInput,
   FIELD,
+  RadioGroup,
   SettingsSection,
   Swatches,
 } from "./settingsControls";
@@ -20,7 +21,7 @@ export function GeneralSection({
   settings: BoardSettings | null;
   views: readonly BoardView[];
   onRename: (name: string) => void;
-  onPatch: (patch: Partial<BoardSettings>, what: string) => void;
+  onPatch: (patch: Partial<BoardSettings>, what: string) => Promise<unknown>;
   onError: (message: string) => void;
 }) {
   const ordered = [...views].sort((a, b) => a.position - b.position);
@@ -50,29 +51,22 @@ export function GeneralSection({
       </label>
       <div className="flex items-center gap-3 text-[12px] text-content/70">
         <span className="w-28 shrink-0">Icon</span>
-        <div
-          role="radiogroup"
-          aria-label="Icon"
+        <RadioGroup
+          label="Icon"
           className="flex flex-wrap gap-1"
-        >
-          {BOARD_ICONS.map((icon) => (
-            <button
-              key={icon}
-              type="button"
-              role="radio"
-              aria-checked={settings?.icon === icon}
-              aria-label={icon}
-              onClick={() => onPatch({ icon }, "set the icon")}
-              className={`h-7 rounded-md border px-2 text-[12px] capitalize outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-                settings?.icon === icon
-                  ? "border-accent/60 bg-content/10 text-content"
-                  : "border-content/15 text-content/70 hover:bg-content/10"
-              }`}
-            >
-              {icon}
-            </button>
-          ))}
-        </div>
+          value={settings?.icon ?? null}
+          onChange={(icon) => onPatch({ icon }, "set the icon")}
+          options={BOARD_ICONS.map((icon) => ({
+            value: icon,
+            label: icon,
+            content: icon,
+            className: `h-7 rounded-md border px-2 text-[12px] capitalize outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+              settings?.icon === icon
+                ? "border-accent/60 bg-content/10 text-content"
+                : "border-content/15 text-content/70 hover:bg-content/10"
+            }`,
+          }))}
+        />
       </div>
       <div className="flex items-center gap-3 text-[12px] text-content/70">
         <span className="w-28 shrink-0">Colour</span>

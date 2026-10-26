@@ -360,7 +360,7 @@ describe("settings page: general", () => {
       boardId: "b1",
       patch: { icon: "rocket" },
     });
-    await click(byLabel(byLabel(general, "Colour"), "4da3f5"));
+    await click(byLabel(byLabel(general, "Colour"), "Blue"));
     expect(lastArgs("board_settings_update")).toEqual({
       boardId: "b1",
       patch: { color: "4da3f5" },
@@ -377,7 +377,7 @@ describe("settings page: general", () => {
       "true",
     );
     expect(byLabel(page()!, "bug").getAttribute("aria-checked")).toBe("false");
-    expect(byLabel(page()!, "4da3f5").getAttribute("aria-checked")).toBe(
+    expect(byLabel(page()!, "Blue").getAttribute("aria-checked")).toBe(
       "true",
     );
 
@@ -410,14 +410,14 @@ describe("settings page: general", () => {
     ].map((el) => el.getAttribute("aria-label"));
     expect(colours).toEqual([
       "No colour",
-      "8a867e",
-      "e5534b",
-      "e0823d",
-      "e8c547",
-      "3fb950",
-      "2bb3a8",
-      "4da3f5",
-      "a371f7",
+      "Grey",
+      "Red",
+      "Orange",
+      "Yellow",
+      "Green",
+      "Teal",
+      "Blue",
+      "Purple",
     ]);
   });
 
@@ -524,7 +524,7 @@ describe("settings page: columns", () => {
       ["board_column_create", { boardId: "b1", name: "QA", role: null }],
     ]);
 
-    await click(byLabel(byLabel(row("backlog"), "Column colour"), "e5534b"));
+    await click(byLabel(byLabel(row("backlog"), "Column colour"), "Red"));
     expect(commands("board_column_set_display")).toEqual([
       [
         "board_column_set_display",
@@ -658,31 +658,26 @@ describe("settings page: columns", () => {
     expect(row("review").querySelector("[data-move-cards]")).toBeNull();
   });
 
-  it("keeps the store's refusal when archived cards remain", async () => {
-    handlers.board_column_card_count = () => ({ live: 1, archived: 2 });
-    handlers.board_column_delete = () => {
-      throw "Column has archived cards";
-    };
+  it("says up front that archived cards block the delete, and moves nothing", async () => {
+    handlers.board_column_card_count = () => ({ live: 2, archived: 2 });
     await renderBoard();
     await openSettings();
     await click(buttonNamed(row("backlog"), "Delete column"));
-    const panel =
-      row("backlog").querySelector<HTMLElement>("[data-move-cards]")!;
-    await choose(byLabel<HTMLSelectElement>(panel, "Move cards to…"), "done");
-    await click(buttonNamed(panel, "Move and delete"));
-    expect(alertText()).toContain("Column has archived cards");
+    // No "Move cards to…" panel, no move, no delete: nothing half-happens.
+    expect(row("backlog").querySelector("[data-move-cards]")).toBeNull();
+    expect(commands("board_cards_move")).toEqual([]);
+    expect(commands("board_column_delete")).toEqual([]);
+    expect(alertText()).toContain("2 archived cards");
   });
 
-  it("a column holding only archived cards is refused by the store, not moved", async () => {
-    handlers.board_column_card_count = () => ({ live: 0, archived: 3 });
-    handlers.board_column_delete = () => {
-      throw "Column has archived cards";
-    };
+  it("a column holding only archived cards is refused before any call", async () => {
+    handlers.board_column_card_count = () => ({ live: 0, archived: 1 });
     await renderBoard();
     await openSettings();
     await click(buttonNamed(row("review"), "Delete column"));
     expect(commands("board_cards_move")).toEqual([]);
-    expect(alertText()).toContain("Column has archived cards");
+    expect(commands("board_column_delete")).toEqual([]);
+    expect(alertText()).toContain("1 archived card.");
   });
 });
 
@@ -832,7 +827,7 @@ describe("settings page: labels", () => {
       color: null,
     });
 
-    await click(byLabel(byLabel(row("l1"), "Label colour"), "a371f7"));
+    await click(byLabel(byLabel(row("l1"), "Label colour"), "Purple"));
     expect(lastArgs("board_label_update")).toEqual({
       labelId: "l1",
       name: null,
@@ -1024,5 +1019,108 @@ describe("priority scheme", () => {
       boardId: "b1",
       patch: { priorityJson: null },
     });
+  });
+});
+
+describe("settings accessibility and rapid edits", () => {
+  it("two quick priority renames both survive, written in order", async () => {
+    const replies: (() => void)[] = [];
+    handlers.board_settings_update = (args) =>
+      new Promise((resolve) => {
+        replies.push(() => {
+          settings = { ...settings, ...(args.patch as Partial<BoardSettings>) };
+          resolve(settings);
+        });
+      });
+    await renderBoard();
+    await openSettings();
+    const name = (level: number) =>
+      byLabel<HTMLInputElement>(
+        section("Priority").querySelector<HTMLElement>(
+          `[data-settings-priority="${level}"]`,
+        )!,
+        "Priority name",
+      );
+    await type(name(1), "Minor");
+    await type(name(2), "Normal");
+    // The second waits for the first reply, then builds on the first edit.
+    expect(replies).toHaveLength(1);
+    replies.shift()!();
+    await flush();
+    expect(replies).toHaveLength(1);
+    replies.shift()!();
+    await flush();
+    const writes = commands("board_settings_update").map(
+      ([, args]) =>
+        JSON.parse(
+          (args as { patch: { priorityJson: string } }).patch.priorityJson,
+        ).names,
+    );
+    expect(writes[0]).toEqual(["None", "Minor", "Medium", "High", "Urgent"]);
+    expect(writes[1]).toEqual(["None", "Minor", "Normal", "High", "Urgent"]);
+    expect(JSON.parse(settings.priorityJson!).names[1]).toBe("Minor");
+  });
+
+  it("closing the page returns focus to Board actions", async () => {
+    await renderBoard();
+    await openSettings();
+    await click(byLabel(page()!, "Back to board"));
+    expect(document.activeElement).toBe(
+      container.querySelector('button[aria-label="Board actions"]'),
+    );
+  });
+
+  it("names the palette colours instead of hex codes", async () => {
+    await renderBoard();
+    await openSettings();
+    const names = [
+      ...byLabel(section("General"), "Colour").querySelectorAll("[role=radio]"),
+    ].map((el) => el.getAttribute("aria-label"));
+    expect(names).toEqual([
+      "No colour",
+      "Grey",
+      "Red",
+      "Orange",
+      "Yellow",
+      "Green",
+      "Teal",
+      "Blue",
+      "Purple",
+    ]);
+  });
+
+  it("radio groups have one tab stop and move and choose with the arrow keys", async () => {
+    settings = { ...DEFAULTS, icon: "bug" };
+    await renderBoard();
+    await openSettings();
+    const group = byLabel(section("General"), "Icon");
+    const radios = () => [...group.querySelectorAll<HTMLElement>("[role=radio]")];
+    // The checked one is the tab stop.
+    expect(radios().map((el) => el.tabIndex)).toEqual([-1, 0, -1, -1, -1, -1, -1, -1]);
+    const key = async (target: HTMLElement, k: string) => {
+      act(() => {
+        target.dispatchEvent(
+          new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+        );
+      });
+      await flush();
+    };
+    await key(radios()[1], "ArrowRight");
+    expect(lastArgs("board_settings_update")).toEqual({
+      boardId: "b1",
+      patch: { icon: "rocket" },
+    });
+    expect(document.activeElement).toBe(radios()[2]);
+    // Wraps from the first back to the last.
+    await key(radios()[0], "ArrowLeft");
+    expect(lastArgs("board_settings_update")).toEqual({
+      boardId: "b1",
+      patch: { icon: "book" },
+    });
+    // With nothing checked, the first radio is the tab stop.
+    settings = { ...DEFAULTS };
+    emitBoardChanged();
+    await flush();
+    expect(radios().map((el) => el.tabIndex)[0]).toBe(0);
   });
 });

@@ -2038,7 +2038,15 @@ function BoardContent({
             cards={detail.cards}
             labels={labels}
             views={views}
-            onClose={() => setSettingsOpen(false)}
+            onClose={() => {
+              setSettingsOpen(false);
+              // Back where the page was opened from.
+              rootRef.current
+                ?.querySelector<HTMLElement>(
+                  'button[aria-label="Board actions"]',
+                )
+                ?.focus();
+            }}
             onRename={(name) => void renameOpenBoard(detail.board, name)}
             onError={setError}
             onSettings={setSettings}

@@ -55,7 +55,7 @@ export function BoardSettings({
 
   /** A patch changes only the settings it names, so the other app's survive. */
   const patch = (changes: Partial<Settings>, what: string) =>
-    void updateBoardSettings(board.id, changes).then(onSettings, (cause) =>
+    updateBoardSettings(board.id, changes).then(onSettings, (cause) =>
       onError(`Couldn't ${what}: ${errorText(cause)}`),
     );
 

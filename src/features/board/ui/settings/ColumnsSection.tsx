@@ -58,6 +58,16 @@ export function ColumnsSection({
       onError(`Couldn't check the column's cards: ${errorText(cause)}`);
       return;
     }
+    // The store refuses while archived cards remain, so say so before moving
+    // any live card: a move that then fails to delete would only half-act.
+    if (counts.archived > 0) {
+      onError(
+        `Couldn't delete the column: it has ${counts.archived} archived ${
+          counts.archived === 1 ? "card" : "cards"
+        }. Delete them from the Archive first`,
+      );
+      return;
+    }
     if (counts.live > 0) {
       if (ordered.length < 2) {
         onError(

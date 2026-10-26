@@ -138,3 +138,19 @@ export function labelNameTaken(
       label.id !== exceptId && label.name.trim().toLowerCase() === wanted,
   );
 }
+
+/** Palette colours by name, for assistive tech and tooltips. */
+export const COLOR_NAMES: Record<string, string> = {
+  "8a867e": "Grey",
+  e5534b: "Red",
+  e0823d: "Orange",
+  e8c547: "Yellow",
+  "3fb950": "Green",
+  "2bb3a8": "Teal",
+  "4da3f5": "Blue",
+  a371f7: "Purple",
+};
+
+export function colorName(hex: string): string {
+  return COLOR_NAMES[hex] ?? `#${hex}`;
+}

@@ -1,5 +1,7 @@
+import { useEffect, useRef } from "react";
 import type { BoardSettings, PriorityScheme } from "../../model/board";
 import {
+  DEFAULT_PRIORITY_SCHEME,
   PRIORITY_NAME_MAX,
   priorityName,
   serializePriorityScheme,
@@ -23,14 +25,30 @@ export function PrioritySection({
   scheme: PriorityScheme;
   /** Whether the board holds its own scheme (so Reset has something to clear). */
   stored: boolean;
-  onPatch: (patch: Partial<BoardSettings>, what: string) => void;
+  onPatch: (patch: Partial<BoardSettings>, what: string) => Promise<unknown>;
   onError: (message: string) => void;
 }) {
-  const save = (next: PriorityScheme) =>
-    onPatch(
-      { priorityJson: serializePriorityScheme(next) },
-      "save the priorities",
-    );
+  // Every edit builds on the latest scheme, saved or not yet: two quick edits
+  // can't undo each other. Writes go one at a time, in order.
+  const latest = useRef(scheme);
+  const pending = useRef(0);
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  useEffect(() => {
+    // The board's read wins once nothing is in flight.
+    if (pending.current === 0) latest.current = scheme;
+  }, [scheme]);
+  const write = (patch: Partial<BoardSettings>, what: string) => {
+    pending.current += 1;
+    queue.current = queue.current
+      .then(() => onPatch(patch, what))
+      .finally(() => {
+        pending.current -= 1;
+      });
+  };
+  const save = (next: PriorityScheme) => {
+    latest.current = next;
+    write({ priorityJson: serializePriorityScheme(next) }, "save the priorities");
+  };
   return (
     <SettingsSection
       title="Priority"
@@ -54,8 +72,8 @@ export function PrioritySection({
                   );
                   return false;
                 }
-                if (text.trim() !== scheme.names[level]) {
-                  save(withName(scheme, level, text));
+                if (text.trim() !== latest.current.names[level]) {
+                  save(withName(latest.current, level, text));
                 }
               }}
             />
@@ -66,7 +84,7 @@ export function PrioritySection({
                 checked={!scheme.hidden.includes(level)}
                 disabled={level === 0}
                 onChange={(event) =>
-                  save(withHidden(scheme, level, !event.target.checked))
+                  save(withHidden(latest.current, level, !event.target.checked))
                 }
               />
               Show in pickers
@@ -79,9 +97,10 @@ export function PrioritySection({
           type="button"
           className={SETTINGS_BUTTON}
           disabled={!stored}
-          onClick={() =>
-            onPatch({ priorityJson: null }, "reset the priorities")
-          }
+          onClick={() => {
+            latest.current = DEFAULT_PRIORITY_SCHEME;
+            write({ priorityJson: null }, "reset the priorities");
+          }}
         >
           Reset to defaults
         </button>
