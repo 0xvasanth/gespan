@@ -1,9 +1,13 @@
-//! Session-scoped ticket tools for coding agents. The stdio server forwards
-//! each call over loopback to the app, which acts through `Tickets` with the
-//! keychain credentials; the agent only ever holds a per-session token.
-use crate::provider_boards::RequiredField;
-use crate::tickets::{TicketError, TicketRef, Tickets};
-use serde::{Deserialize, Serialize};
+//! Session-scoped ticket and card tools for coding agents. The stdio server
+//! forwards each call over loopback to the app, which acts through `Tickets`
+//! with the keychain credentials (or the board store, for card tools); the
+//! agent only ever holds a per-session token. The tools themselves and their
+//! refusal rules live in `gespan_tracker_client::tools`, shared with Tauri.
+use crate::tickets::TicketRef;
+use gespan_board_store::CardTool;
+pub use gespan_tracker_client::tools::{answer, Answered, Effect, TicketTool};
+use gespan_tracker_client::tools::{refusal, READ_ONLY};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -24,63 +28,118 @@ const ENV_TOKEN: &str = "GESPAN_TICKET_TOKEN";
 const ENV_SESSION: &str = "GESPAN_TICKET_SESSION";
 const ENV_EXECUTABLE: &str = "GESPAN_TICKET_EXECUTABLE";
 pub(crate) const ENV_KEYS: [&str; 4] = [ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE];
-const STATUS_OFF: &str = "Changing ticket status is turned off for this session";
-const READ_ONLY: &str = "This session is read-only";
 const APP_GONE: &str = "Gespan stopped handling this session's ticket tools";
+const NO_TICKET: &str = "This session isn't linked to a ticket";
+const NO_CARDS: &str = "Card tools aren't available in this session";
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "tool", rename_all = "snake_case")]
-pub enum TicketTool {
-    Get,
-    Comment {
-        markdown: String,
-    },
-    Statuses,
-    SetStatus {
-        target: String,
-        #[serde(default)]
-        fields: BTreeMap<String, Value>,
-    },
+/// What one turn may reach, set by the app and never by the agent. The
+/// ticket tools exist only with a `ticket`; the card tools only with `cards`.
+/// `read_only` sessions (read-only access or plan mode) may read and list
+/// but never comment, move the ticket or tick a subtask.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Scope {
+    pub ticket: Option<TicketRef>,
+    pub may_change_status: bool,
+    pub read_only: bool,
+    pub cards: bool,
+}
+
+/// A tool call as it crosses the bridge: a ticket tool or a card tool.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BridgeTool {
+    Ticket(TicketTool),
+    Card(CardTool),
+}
+
+impl From<TicketTool> for BridgeTool {
+    fn from(tool: TicketTool) -> Self {
+        Self::Ticket(tool)
+    }
+}
+
+impl From<CardTool> for BridgeTool {
+    fn from(tool: CardTool) -> Self {
+        Self::Card(tool)
+    }
+}
+
+impl Serialize for BridgeTool {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Ticket(tool) => tool.serialize(serializer),
+            Self::Card(CardTool::Subtasks) => json!({"tool":"card_subtasks"}).serialize(serializer),
+            Self::Card(CardTool::SubtaskDone { subtask_id, done }) => {
+                json!({"tool":"card_subtask_done","subtaskId":subtask_id,"done":done})
+                    .serialize(serializer)
+            }
+        }
+    }
+}
+
+/// The token is in the agent's environment, so the hub reads this wire from
+/// a caller it can't trust: every tool refuses keys it doesn't define.
+impl<'de> Deserialize<'de> for BridgeTool {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        let name = value
+            .get("tool")
+            .and_then(Value::as_str)
+            .ok_or_else(|| serde::de::Error::custom("a tool needs a name"))?;
+        if name.starts_with("card_") {
+            return serde_json::from_value(value)
+                .map(Self::Card)
+                .map_err(serde::de::Error::custom);
+        }
+        let allowed: &[&str] = match name {
+            "get" | "statuses" => &["tool"],
+            "comment" => &["tool", "markdown"],
+            "set_status" => &["tool", "target", "fields"],
+            _ => return Err(serde::de::Error::custom("unknown ticket tool")),
+        };
+        if let Some(extra) = value
+            .as_object()
+            .into_iter()
+            .flat_map(|object| object.keys())
+            .find(|key| !allowed.contains(&key.as_str()))
+        {
+            return Err(serde::de::Error::custom(format!("unknown field `{extra}`")));
+        }
+        serde_json::from_value(value)
+            .map(Self::Ticket)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Why a card tool may not run in this turn, before it reaches the app.
+fn card_refusal(tool: &CardTool, read_only: bool) -> Option<&'static str> {
+    (read_only && matches!(tool, CardTool::SubtaskDone { .. })).then_some(READ_ONLY)
 }
 
 pub struct Call {
-    pub tool: TicketTool,
+    pub tool: BridgeTool,
+    /// The session's ticket when the hub accepted the call, for ticket tools;
+    /// the app answers on this link, never on a key the agent named.
+    pub ticket: Option<TicketRef>,
     pub reply: mpsc::Sender<Result<Value, String>>,
     generation: u64,
 }
 
-/// A request without a tool asks which ticket the session is linked to.
+/// A request without a tool asks for the session's scope.
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Wire {
     session: i64,
     token: String,
     #[serde(default)]
     key: Option<String>,
     #[serde(default)]
-    tool: Option<TicketTool>,
+    tool: Option<BridgeTool>,
 }
 
 struct ActiveTurn {
     generation: u64,
     send: mpsc::SyncSender<Call>,
-    key: String,
-    may_change_status: bool,
-    read_only: bool,
-}
-
-/// Why a tool may not run in this turn, before it reaches the app.
-fn refusal(tool: &TicketTool, may_change_status: bool, read_only: bool) -> Option<&'static str> {
-    let writes = matches!(
-        tool,
-        TicketTool::Comment { .. } | TicketTool::SetStatus { .. }
-    );
-    if writes && read_only {
-        Some(READ_ONLY)
-    } else if matches!(tool, TicketTool::SetStatus { .. }) && !may_change_status {
-        Some(STATUS_OFF)
-    } else {
-        None
-    }
+    scope: Scope,
 }
 
 struct SessionCapability {
@@ -136,13 +195,12 @@ fn hub() -> Result<Arc<Hub>, String> {
 }
 
 /// One turn's ticket capability. The token outlives turns so a long-lived
-/// provider keeps working; the ticket and permission are this turn's.
+/// provider keeps working; the scope is this turn's, read at each call.
 pub struct Server {
     hub: Arc<Hub>,
     token: String,
     session: i64,
     generation: u64,
-    ticket: TicketRef,
     calls: mpsc::Receiver<Call>,
 }
 
@@ -159,26 +217,18 @@ impl Drop for Server {
 }
 
 impl Server {
-    /// `read_only` sessions (read-only access or plan mode) may read and list
-    /// statuses but never comment or move the ticket.
-    pub fn start(
-        session: i64,
-        ticket: TicketRef,
-        may_change_status: bool,
-        read_only: bool,
-    ) -> Result<Self, String> {
+    /// Refuses a scope with neither a ticket nor cards: there would be no tools.
+    pub fn start(session: i64, scope: Scope) -> Result<Self, String> {
         let _span =
             tracing::info_span!("mcp_start", server = "ticket", session_id = session).entered();
-        Self::open(session, ticket, may_change_status, read_only)
+        Self::open(session, scope)
             .inspect_err(|error| tracing::warn!(%error, "could not start a tool server"))
     }
 
-    fn open(
-        session: i64,
-        ticket: TicketRef,
-        may_change_status: bool,
-        read_only: bool,
-    ) -> Result<Self, String> {
+    fn open(session: i64, scope: Scope) -> Result<Self, String> {
+        if scope.ticket.is_none() && !scope.cards {
+            return Err("No ticket or cards for this session's tools".into());
+        }
         let hub = hub()?;
         let (send, calls) = mpsc::sync_channel(16);
         let (token, generation) = {
@@ -204,9 +254,7 @@ impl Server {
             capability.active = Some(ActiveTurn {
                 generation: capability.generation,
                 send,
-                key: ticket.key.clone(),
-                may_change_status,
-                read_only,
+                scope,
             });
             (capability.token.clone(), capability.generation)
         };
@@ -215,7 +263,6 @@ impl Server {
             token,
             session,
             generation,
-            ticket,
             calls,
         })
     }
@@ -232,8 +279,35 @@ impl Server {
         ])
     }
 
-    pub fn ticket(&self) -> &TicketRef {
-        &self.ticket
+    /// The session's ticket as of now.
+    pub fn ticket(&self) -> Option<TicketRef> {
+        self.hub
+            .sessions
+            .lock()
+            .ok()?
+            .get(&self.session)?
+            .active
+            .as_ref()
+            .filter(|active| active.generation == self.generation)?
+            .scope
+            .ticket
+            .clone()
+    }
+
+    /// Replaces this turn's scope, for a link or permission the user changes
+    /// while the turn runs. Calls from then on use the new scope. A turn that
+    /// has already ended changes nothing.
+    pub fn set_scope(&self, scope: Scope) {
+        let Ok(mut sessions) = self.hub.sessions.lock() else {
+            return;
+        };
+        if let Some(active) = sessions
+            .get_mut(&self.session)
+            .and_then(|session| session.active.as_mut())
+            .filter(|active| active.generation == self.generation)
+        {
+            active.scope = scope;
+        }
     }
 
     pub fn drain(&self) -> Vec<Call> {
@@ -311,28 +385,48 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
             return Err("Invalid ticket capability".into());
         }
         let active = capability.active.as_ref().ok_or(APP_GONE)?;
+        let scope = &active.scope;
         // The token is in the agent's environment, so scope is enforced here
         // and not only by the stdio server.
         if let Some(key) = &wire.key {
-            if !same_key(key, &active.key) {
-                return Err(format!("This session is linked to {}", active.key));
+            match &scope.ticket {
+                Some(ticket) if same_key(key, &ticket.key) => {}
+                Some(ticket) => return Err(format!("This session is linked to {}", ticket.key)),
+                None => return Err(NO_TICKET.into()),
             }
         }
         let Some(tool) = wire.tool else {
             return Ok(json!({
-                "key": active.key,
-                "mayChangeStatus": active.may_change_status,
-                "readOnly": active.read_only,
+                "key": scope.ticket.as_ref().map(|ticket| &ticket.key),
+                "mayChangeStatus": scope.may_change_status,
+                "readOnly": scope.read_only,
+                "cards": scope.cards,
             }));
         };
-        if let Some(refused) = refusal(&tool, active.may_change_status, active.read_only) {
-            return Err(refused.into());
-        }
+        let ticket = match &tool {
+            BridgeTool::Ticket(tool) => {
+                let ticket = scope.ticket.clone().ok_or(NO_TICKET)?;
+                if let Some(refused) = refusal(tool, scope.may_change_status, scope.read_only) {
+                    return Err(refused.into());
+                }
+                Some(ticket)
+            }
+            BridgeTool::Card(tool) => {
+                if !scope.cards {
+                    return Err(NO_CARDS.into());
+                }
+                if let Some(refused) = card_refusal(tool, scope.read_only) {
+                    return Err(refused.into());
+                }
+                None
+            }
+        };
         let (reply, result) = mpsc::channel();
         active
             .send
             .try_send(Call {
                 tool,
+                ticket,
                 reply,
                 generation: active.generation,
             })
@@ -353,106 +447,11 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
     }
 }
 
-/// What a successful call did to the ticket, so the app can update its chip
-/// without fetching again, or know it needs nothing.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Effect {
-    None,
-    Commented,
-    Moved(TicketRef),
-}
-
-pub struct Answered {
-    pub value: Value,
-    pub effect: Effect,
-}
-
-/// The app's side of a call. Errors are the user-facing tracker messages,
-/// never credentials or raw responses.
-pub fn answer(
-    tickets: &Tickets,
-    ticket: &TicketRef,
-    tool: &TicketTool,
-) -> Result<Answered, String> {
-    let unchanged = |value| Answered {
-        value,
-        effect: Effect::None,
-    };
-    let result = match tool {
-        TicketTool::Get => tickets.read(ticket).map(|(fresh, description)| {
-            json!({
-                "key": fresh.key,
-                "tracker": fresh.tracker.label(),
-                "title": fresh.title,
-                "status": fresh.status,
-                "url": fresh.url,
-                "description": description,
-            })
-        })
-        .map(unchanged),
-        TicketTool::Comment { markdown } => tickets
-            .comment(ticket, markdown)
-            .map(|url| Answered {
-                value: json!({"commented":true,"url":url}),
-                effect: Effect::Commented,
-            }),
-        TicketTool::Statuses => tickets.statuses(ticket).map(|choices| {
-            json!({
-                "key": ticket.key,
-                "statuses": choices
-                    .into_iter()
-                    .map(|choice| json!({
-                        "id": choice.id,
-                        "name": choice.name,
-                        "group": choice.group,
-                        "requiredFields": choice
-                            .required_fields
-                            .iter()
-                            .map(|field| json!({"key":field.key,"name":field.name,"allowed":field.allowed}))
-                            .collect::<Vec<_>>(),
-                    }))
-                    .collect::<Vec<_>>(),
-            })
-        })
-        .map(unchanged),
-        TicketTool::SetStatus { target, fields } => tickets
-            .set_status(ticket, target, fields.clone())
-            .map(|moved| Answered {
-                value: json!({"key":moved.key,"status":moved.status,"url":moved.url}),
-                effect: Effect::Moved(moved),
-            }),
-    };
-    result.map_err(|error| match &error {
-        TicketError::NeedsFields(fields) => format!(
-            "{error}. Pass them in fields by key: {}",
-            fields
-                .iter()
-                .map(describe_field)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        _ => error.to_string(),
-    })
-}
-
-fn describe_field(field: &RequiredField) -> String {
-    if field.allowed.is_empty() {
-        format!("{} ({})", field.key, field.name)
-    } else {
-        format!(
-            "{} ({}; one of: {})",
-            field.key,
-            field.name,
-            field.allowed.join(", ")
-        )
-    }
-}
-
 /// One loopback round trip. `tool: None` asks for the session's scope.
 fn request(
     environment: &HashMap<String, String>,
     key: Option<&str>,
-    tool: Option<TicketTool>,
+    tool: Option<BridgeTool>,
 ) -> Result<Value, String> {
     let get = |name| {
         environment
@@ -508,7 +507,27 @@ fn current_environment() -> HashMap<String, String> {
         .collect()
 }
 
-pub fn tool_definitions() -> Vec<Value> {
+/// The tools a session's scope offers: ticket tools with a ticket, card
+/// tools with cards.
+pub fn tool_definitions(ticket: bool, cards: bool) -> Vec<Value> {
+    let mut tools = Vec::new();
+    if ticket {
+        tools.extend(ticket_definitions());
+    }
+    if cards {
+        tools.extend(card_definitions());
+    }
+    tools
+}
+
+fn card_definitions() -> Vec<Value> {
+    vec![
+        json!({"name":"card_subtasks","description":"List the subtasks of the board cards linked to this session, with each subtask's id and whether it is done.","inputSchema":{"type":"object","properties":{},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}),
+        json!({"name":"card_subtask_done","description":"Mark a subtask on a board card linked to this session as done or not done. Use a subtask id from card_subtasks.","inputSchema":{"type":"object","properties":{"subtaskId":{"type":"string"},"done":{"type":"boolean"}},"required":["subtaskId","done"],"additionalProperties":false},"annotations":{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":false}}),
+    ]
+}
+
+fn ticket_definitions() -> Vec<Value> {
     let key = json!({"type":"string","description":"Optional. Must be this session's ticket key."});
     vec![
         json!({"name":"ticket_get","description":"Read the ticket linked to this session: key, title, status, link and description (Markdown).","inputSchema":{"type":"object","properties":{"key":key},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":true}}),
@@ -539,6 +558,23 @@ impl Client {
                 Some(_) => Err(format!("{field} must be a string")),
             }
         };
+        if name.starts_with("card_") {
+            return self.call_card(CardTool::from_call(name, arguments)?);
+        }
+        let allowed: &[&str] = match name {
+            "ticket_get" => &["key"],
+            "ticket_comment" => &["body", "key"],
+            "ticket_status" => &["target", "fields", "key"],
+            _ => return Err("Unknown ticket tool".into()),
+        };
+        if let Some(extra) = arguments
+            .as_object()
+            .into_iter()
+            .flat_map(|object| object.keys())
+            .find(|key| !allowed.contains(&key.as_str()))
+        {
+            return Err(format!("Unknown argument: {extra}"));
+        }
         let key = text("key")?;
         let tool = match name {
             "ticket_get" => TicketTool::Get,
@@ -570,7 +606,7 @@ impl Client {
         };
         // Read per call: the link may change between turns of a long-lived provider.
         let scope = request(&self.environment, None, None)?;
-        let linked = scope["key"].as_str().unwrap_or_default();
+        let linked = scope["key"].as_str().ok_or(NO_TICKET)?;
         if key.is_some_and(|key| !same_key(key, linked)) {
             return Err(format!("This session is linked to {linked}"));
         }
@@ -580,11 +616,30 @@ impl Client {
             return Err(refused.into());
         }
         let statuses = matches!(tool, TicketTool::Statuses);
-        let mut result = request(&self.environment, key, Some(tool))?;
+        let mut result = request(&self.environment, key, Some(tool.into()))?;
         if statuses {
             result["mayChangeStatus"] = (may_change_status && !read_only).into();
         }
         Ok(result)
+    }
+
+    fn call_card(&self, tool: CardTool) -> Result<Value, String> {
+        // Read per call, like the ticket link: cards may be linked mid-session.
+        let scope = request(&self.environment, None, None)?;
+        if scope["cards"] != true {
+            return Err(NO_CARDS.into());
+        }
+        if let Some(refused) = card_refusal(&tool, scope["readOnly"] == true) {
+            return Err(refused.into());
+        }
+        request(&self.environment, None, Some(tool.into()))
+    }
+
+    /// The scope decides the catalog, so a session without a ticket or cards
+    /// is never offered tools that can only refuse.
+    fn catalog(&self) -> Result<Value, String> {
+        let scope = request(&self.environment, None, None)?;
+        Ok(json!({"tools":tool_definitions(scope["key"].is_string(), scope["cards"] == true)}))
     }
 
     fn mcp_response(&self, request: Value) -> Option<Value> {
@@ -594,7 +649,9 @@ impl Client {
                 json!({"protocolVersion":request["params"]["protocolVersion"].as_str().unwrap_or("2024-11-05"),"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"gespan_ticket","version":env!("CARGO_PKG_VERSION")}}),
             ),
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({"tools":tool_definitions()})),
+            "tools/list" => self
+                .catalog()
+                .map_err(|error| json!({"code":-32603,"message":error})),
             "tools/call" => Ok(
                 match self.call(
                     request["params"]["name"].as_str().unwrap_or(""),
@@ -654,7 +711,8 @@ mod tests {
         BoardProvider, ProviderResult, RemoteIssue, RequiredField, StateGroup, Transition,
         WorkflowState,
     };
-    use crate::tickets::{Connection, Tracker};
+    use crate::tickets::{Connection, Tickets, Tracker};
+    use gespan_board_store::CardTool;
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -724,18 +782,75 @@ mod tests {
     /// Runs the call on a worker, as the stdio process would, while this
     /// thread plays the app and answers through `tickets`.
     fn call_answered(server: &Server, tickets: &Tickets, request: Value) -> Value {
+        answered_by(server, request, |call| match &call.tool {
+            BridgeTool::Ticket(tool) => {
+                let ticket = call
+                    .ticket
+                    .as_ref()
+                    .expect("a ticket call carries its link");
+                answer(tickets, ticket, tool).map(|answered| answered.value)
+            }
+            BridgeTool::Card(_) => Err("not a ticket call".into()),
+        })
+    }
+
+    /// Like `call_answered`, with the app's answer supplied by `app`.
+    fn answered_by(
+        server: &Server,
+        request: Value,
+        app: impl Fn(&Call) -> Result<Value, String>,
+    ) -> Value {
         let client = client(server);
         let worker = std::thread::spawn(move || client.mcp_response(request).unwrap());
         let deadline = Instant::now() + Duration::from_secs(3);
         while !worker.is_finished() && Instant::now() < deadline {
             for call in server.drain() {
-                let _ = call.reply.send(
-                    answer(tickets, server.ticket(), &call.tool).map(|answered| answered.value),
-                );
+                let _ = call.reply.send(app(&call));
             }
             std::thread::sleep(Duration::from_millis(5));
         }
         worker.join().unwrap()["result"].clone()
+    }
+
+    fn scope(key: &str, may_change_status: bool, read_only: bool) -> Scope {
+        Scope {
+            ticket: Some(linked(key)),
+            may_change_status,
+            read_only,
+            cards: false,
+        }
+    }
+
+    fn with_cards(ticket: Option<&str>, read_only: bool) -> Scope {
+        Scope {
+            ticket: ticket.map(linked),
+            may_change_status: true,
+            read_only,
+            cards: true,
+        }
+    }
+
+    fn listed(server: &Server) -> Vec<Value> {
+        let catalog = client(server)
+            .mcp_response(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
+            .unwrap();
+        catalog["result"]["tools"].as_array().unwrap().clone()
+    }
+
+    fn names(tools: &[Value]) -> Vec<String> {
+        tools
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// One raw line to the hub, as a caller holding the token could send.
+    fn raw(server: &Server, wire: Value) -> Result<Value, String> {
+        let environment = server.environment(Path::new("/test/app"));
+        let mut wire = wire;
+        wire["session"] = environment[ENV_SESSION].parse::<i64>().unwrap().into();
+        wire["token"] = environment[ENV_TOKEN].clone().into();
+        handle(&format!("{wire}\n"), &hub().unwrap())
     }
 
     fn text(result: &Value) -> &str {
@@ -744,7 +859,7 @@ mod tests {
 
     #[test]
     fn ticket_tools_list_three_tools() {
-        let server = Server::start(401, linked("ENG-1"), true, false).unwrap();
+        let server = Server::start(401, scope("ENG-1", true, false)).unwrap();
         let catalog = client(&server)
             .mcp_response(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
             .unwrap();
@@ -772,7 +887,7 @@ mod tests {
 
     #[test]
     fn ticket_get_returns_key_title_status_description() {
-        let server = Server::start(402, linked("ENG-1"), true, false).unwrap();
+        let server = Server::start(402, scope("ENG-1", true, false)).unwrap();
         let tickets = tickets(
             Arc::new(FakeProvider::new().with_issue(issue("ENG-1"))),
             None,
@@ -802,7 +917,7 @@ mod tests {
 
     #[test]
     fn ticket_comment_reaches_the_app_and_returns_url() {
-        let server = Server::start(403, linked("ENG-1"), true, false).unwrap();
+        let server = Server::start(403, scope("ENG-1", true, false)).unwrap();
         let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
         let tickets = tickets(fake.clone(), None);
         let result = call_answered(
@@ -828,7 +943,7 @@ mod tests {
 
     #[test]
     fn ticket_tools_refuse_another_key() {
-        let server = Server::start(404, linked("ABC-1"), true, false).unwrap();
+        let server = Server::start(404, scope("ABC-1", true, false)).unwrap();
         for request in [
             tool_call("ticket_get", json!({"key":"ABC-99"})),
             tool_call("ticket_comment", json!({"key":"ABC-99","body":"hi"})),
@@ -844,16 +959,17 @@ mod tests {
     #[test]
     fn hub_refuses_another_key_without_the_stdio_process() {
         // The token is in the agent's environment, so the hub is the boundary.
-        let server = Server::start(405, linked("ABC-1"), true, false).unwrap();
+        let server = Server::start(405, scope("ABC-1", true, false)).unwrap();
         let environment = server.environment(Path::new("/test/app"));
-        let error = request(&environment, Some("ABC-99"), Some(TicketTool::Get)).unwrap_err();
+        let error =
+            request(&environment, Some("ABC-99"), Some(TicketTool::Get.into())).unwrap_err();
         assert_eq!(error, "This session is linked to ABC-1");
         assert!(server.drain().is_empty());
     }
 
     #[test]
     fn status_change_refused_when_not_allowed() {
-        let server = Server::start(406, linked("ENG-1"), false, false).unwrap();
+        let server = Server::start(406, scope("ENG-1", false, false)).unwrap();
         let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
         let tickets = tickets(fake.clone(), None);
         let listing = call_answered(&server, &tickets, tool_call("ticket_status", json!({})));
@@ -881,10 +997,13 @@ mod tests {
         let error = request(
             &environment,
             None,
-            Some(TicketTool::SetStatus {
-                target: "Done".into(),
-                fields: BTreeMap::new(),
-            }),
+            Some(
+                TicketTool::SetStatus {
+                    target: "Done".into(),
+                    fields: BTreeMap::new(),
+                }
+                .into(),
+            ),
         )
         .unwrap_err();
         assert_eq!(
@@ -897,7 +1016,7 @@ mod tests {
 
     #[test]
     fn allowed_status_change_moves_the_ticket() {
-        let server = Server::start(407, linked("ENG-1"), true, false).unwrap();
+        let server = Server::start(407, scope("ENG-1", true, false)).unwrap();
         let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
         let tickets = tickets(fake.clone(), None);
         let result = call_answered(
@@ -913,7 +1032,7 @@ mod tests {
 
     #[test]
     fn needs_fields_is_reported_as_tool_error_with_field_list() {
-        let server = Server::start(408, linked("ENG-1"), true, false).unwrap();
+        let server = Server::start(408, scope("ENG-1", true, false)).unwrap();
         let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
         let transition = Transition {
             // The fake moves by state id, so the transition shares it.
@@ -964,7 +1083,7 @@ mod tests {
 
     #[test]
     fn bad_token_is_rejected() {
-        let server = Server::start(409, linked("ENG-1"), true, false).unwrap();
+        let server = Server::start(409, scope("ENG-1", true, false)).unwrap();
         let mut environment = server.environment(Path::new("/test/app"));
         let token = environment[ENV_TOKEN].clone();
         assert!(token.len() >= 32, "at least 128 bits");
@@ -977,16 +1096,16 @@ mod tests {
         assert_eq!(response["result"]["isError"], true);
         assert_eq!(text(&response["result"]), "Invalid ticket capability");
         environment.insert(ENV_TOKEN.into(), token[..8].into());
-        assert!(request(&environment, None, Some(TicketTool::Get)).is_err());
+        assert!(request(&environment, None, Some(TicketTool::Get.into())).is_err());
         environment.insert(ENV_TOKEN.into(), token);
         environment.insert(ENV_SESSION.into(), "999409".into());
-        assert!(request(&environment, None, Some(TicketTool::Get)).is_err());
+        assert!(request(&environment, None, Some(TicketTool::Get.into())).is_err());
         assert!(server.drain().is_empty());
     }
 
     #[test]
     fn app_gone_returns_error_not_hang() {
-        let server = Server::start(410, linked("ENG-1"), true, false).unwrap();
+        let server = Server::start(410, scope("ENG-1", true, false)).unwrap();
         let client = client(&server);
         let worker = std::thread::spawn(move || {
             client
@@ -1014,30 +1133,30 @@ mod tests {
         drop(held);
         // With the turn over, a new call fails at once instead of waiting.
         let started = Instant::now();
-        let environment = Server::start(411, linked("ENG-1"), true, false)
+        let environment = Server::start(411, scope("ENG-1", true, false))
             .unwrap()
             .environment(Path::new("/test/app"));
-        assert!(request(&environment, None, Some(TicketTool::Get)).is_err());
+        assert!(request(&environment, None, Some(TicketTool::Get.into())).is_err());
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
     fn a_restarted_turn_keeps_the_token_but_takes_the_new_ticket() {
-        let first = Server::start(412, linked("ENG-1"), true, false).unwrap();
+        let first = Server::start(412, scope("ENG-1", true, false)).unwrap();
         let environment = first.environment(Path::new("/test/app"));
-        assert!(Server::start(412, linked("ENG-1"), true, false).is_err());
+        assert!(Server::start(412, scope("ENG-1", true, false)).is_err());
         drop(first);
-        let next = Server::start(412, linked("ENG-2"), false, false).unwrap();
+        let next = Server::start(412, scope("ENG-2", false, false)).unwrap();
         assert_eq!(environment, next.environment(Path::new("/test/app")));
         assert_eq!(
             request(&environment, None, None).unwrap(),
-            json!({"key":"ENG-2","mayChangeStatus":false,"readOnly":false})
+            json!({"key":"ENG-2","mayChangeStatus":false,"readOnly":false,"cards":false})
         );
     }
 
     #[test]
     fn tool_results_and_server_logs_never_carry_the_token() {
-        let server = Server::start(413, linked("ENG-1"), true, false).unwrap();
+        let server = Server::start(413, scope("ENG-1", true, false)).unwrap();
         let environment = server.environment(Path::new("/test/app"));
         let tickets = tickets(
             Arc::new(FakeProvider::new().with_issue(issue("ENG-1"))),
@@ -1053,7 +1172,7 @@ mod tests {
 
     #[test]
     fn read_only_sessions_can_read_and_list_but_not_write() {
-        let server = Server::start(414, linked("ENG-1"), true, true).unwrap();
+        let server = Server::start(414, scope("ENG-1", true, true)).unwrap();
         let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
         let tickets = tickets(fake.clone(), None);
         for request in [
@@ -1077,14 +1196,14 @@ mod tests {
             },
         ] {
             assert_eq!(
-                request(&environment, None, Some(tool)).unwrap_err(),
+                request(&environment, None, Some(tool.into())).unwrap_err(),
                 "This session is read-only"
             );
         }
         assert!(server.drain().is_empty());
         assert_eq!(
             request(&environment, None, None).unwrap(),
-            json!({"key":"ENG-1","mayChangeStatus":true,"readOnly":true})
+            json!({"key":"ENG-1","mayChangeStatus":true,"readOnly":true,"cards":false})
         );
         let read = call_answered(&server, &tickets, tool_call("ticket_get", json!({})));
         assert_eq!(read["isError"], false, "{read}");
@@ -1097,28 +1216,277 @@ mod tests {
     }
 
     #[test]
-    fn answers_report_what_changed_on_the_ticket() {
-        let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
-        let tickets = tickets(fake, None);
-        let ticket = linked("ENG-1");
-        let effect = |tool: TicketTool| answer(&tickets, &ticket, &tool).unwrap().effect;
-        assert_eq!(effect(TicketTool::Get), Effect::None);
-        assert_eq!(effect(TicketTool::Statuses), Effect::None);
+    fn card_tools_listed_only_when_scope_has_cards() {
+        let tickets_only = Server::start(420, scope("ENG-1", true, false)).unwrap();
         assert_eq!(
-            effect(TicketTool::Comment {
-                markdown: "Note".into()
-            }),
-            Effect::Commented
+            names(&listed(&tickets_only)),
+            ["ticket_get", "ticket_comment", "ticket_status"]
         );
-        let Effect::Moved(moved) = effect(TicketTool::SetStatus {
-            target: "Doing".into(),
-            fields: BTreeMap::new(),
-        }) else {
-            panic!("a status move returns the moved ticket");
+        // Without cards in scope, a card call is refused before the app,
+        // whether it comes through the stdio process or straight to the hub.
+        let response = client(&tickets_only)
+            .mcp_response(tool_call("card_subtasks", json!({})))
+            .unwrap();
+        assert_eq!(response["result"]["isError"], true);
+        assert_eq!(
+            text(&response["result"]),
+            "Card tools aren't available in this session"
+        );
+        let environment = tickets_only.environment(Path::new("/test/app"));
+        assert_eq!(
+            request(&environment, None, Some(CardTool::Subtasks.into())).unwrap_err(),
+            "Card tools aren't available in this session"
+        );
+        assert!(tickets_only.drain().is_empty());
+
+        let both = Server::start(421, with_cards(Some("ENG-1"), false)).unwrap();
+        let tools = listed(&both);
+        assert_eq!(
+            names(&tools),
+            [
+                "ticket_get",
+                "ticket_comment",
+                "ticket_status",
+                "card_subtasks",
+                "card_subtask_done"
+            ]
+        );
+        for tool in &tools {
+            assert_eq!(tool["inputSchema"]["additionalProperties"], false, "{tool}");
+        }
+        assert_eq!(tools[3]["inputSchema"]["properties"], json!({}));
+        assert_eq!(
+            tools[4]["inputSchema"]["required"],
+            json!(["subtaskId", "done"])
+        );
+        assert_eq!(
+            tools[4]["inputSchema"]["properties"]["subtaskId"]["type"],
+            "string"
+        );
+        assert_eq!(
+            tools[4]["inputSchema"]["properties"]["done"]["type"],
+            "boolean"
+        );
+
+        let cards_only = Server::start(422, with_cards(None, false)).unwrap();
+        assert_eq!(
+            names(&listed(&cards_only)),
+            ["card_subtasks", "card_subtask_done"]
+        );
+        // A card call reaches the app as a card tool, with no ticket attached.
+        let result = answered_by(
+            &cards_only,
+            tool_call("card_subtask_done", json!({"subtaskId":"t-1","done":true})),
+            |call| {
+                assert_eq!(
+                    call.tool,
+                    BridgeTool::Card(CardTool::SubtaskDone {
+                        subtask_id: "t-1".into(),
+                        done: true
+                    })
+                );
+                assert_eq!(call.ticket, None);
+                Ok(json!({"ticked":true}))
+            },
+        );
+        assert_eq!(result["isError"], false, "{result}");
+        assert_eq!(text(&result), r#"{"ticked":true}"#);
+    }
+
+    #[test]
+    fn ticket_tools_absent_without_a_ticket() {
+        let server = Server::start(423, with_cards(None, false)).unwrap();
+        let tools = names(&listed(&server));
+        assert!(
+            tools.iter().all(|name| !name.starts_with("ticket_")),
+            "{tools:?}"
+        );
+        for request in [
+            tool_call("ticket_get", json!({})),
+            tool_call("ticket_get", json!({"key":"ENG-1"})),
+            tool_call("ticket_comment", json!({"body":"hi"})),
+            tool_call("ticket_status", json!({"target":"Done"})),
+        ] {
+            let response = client(&server).mcp_response(request).unwrap();
+            assert_eq!(response["result"]["isError"], true);
+            assert_eq!(
+                text(&response["result"]),
+                "This session isn't linked to a ticket"
+            );
+        }
+        // The hub refuses too, even when the agent names a key itself.
+        let environment = server.environment(Path::new("/test/app"));
+        for key in [None, Some("ENG-1")] {
+            assert_eq!(
+                request(&environment, key, Some(TicketTool::Get.into())).unwrap_err(),
+                "This session isn't linked to a ticket"
+            );
+        }
+        assert_eq!(
+            request(&environment, None, None).unwrap(),
+            json!({"key":null,"mayChangeStatus":true,"readOnly":false,"cards":true})
+        );
+        assert!(server.drain().is_empty(), "No call may reach the app");
+        // With neither a ticket nor cards there is nothing to serve.
+        assert!(Server::start(
+            424,
+            Scope {
+                ticket: None,
+                may_change_status: true,
+                read_only: false,
+                cards: false
+            }
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn card_subtask_done_refused_for_read_only_before_reaching_the_app() {
+        let server = Server::start(425, with_cards(Some("ENG-1"), true)).unwrap();
+        let response = client(&server)
+            .mcp_response(tool_call(
+                "card_subtask_done",
+                json!({"subtaskId":"t-1","done":true}),
+            ))
+            .unwrap();
+        assert_eq!(response["result"]["isError"], true);
+        assert_eq!(text(&response["result"]), "This session is read-only");
+        assert!(server.drain().is_empty(), "Refused before reaching the app");
+        // A caller that skips the stdio process meets the same refusal.
+        let environment = server.environment(Path::new("/test/app"));
+        let untick = CardTool::SubtaskDone {
+            subtask_id: "t-1".into(),
+            done: false,
         };
-        assert_eq!(moved.key, "ENG-1");
-        assert_eq!(moved.status.as_deref(), Some("Doing"));
-        assert_eq!(moved.status_group, Some(StateGroup::Started));
-        assert!(answer(&tickets, &linked("ENG-404"), &TicketTool::Get).is_err());
+        assert_eq!(
+            request(&environment, None, Some(untick.into())).unwrap_err(),
+            "This session is read-only"
+        );
+        assert!(server.drain().is_empty());
+        // Listing subtasks is a read, so it still goes through.
+        let result = answered_by(&server, tool_call("card_subtasks", json!({})), |call| {
+            assert_eq!(call.tool, BridgeTool::Card(CardTool::Subtasks));
+            Ok(json!({"cards":[]}))
+        });
+        assert_eq!(result["isError"], false, "{result}");
+    }
+
+    #[test]
+    fn unknown_arguments_are_rejected() {
+        let server = Server::start(426, with_cards(Some("ENG-1"), false)).unwrap();
+        for request in [
+            tool_call("ticket_get", json!({"ticket":"ENG-9"})),
+            tool_call("ticket_comment", json!({"body":"hi","sessionKey":"s-2"})),
+            tool_call("ticket_status", json!({"target":"Done","tracker":"jira"})),
+            tool_call("ticket_status", json!({"fields":{},"session":7})),
+            tool_call("card_subtasks", json!({"cardId":"c-9"})),
+            tool_call(
+                "card_subtask_done",
+                json!({"subtaskId":"t-1","done":true,"sessionKey":"s-2"}),
+            ),
+            tool_call("card_subtask_done", json!({"subtaskId":"t-1"})),
+            tool_call("ticket_get", json!("ENG-1")),
+        ] {
+            let response = client(&server).mcp_response(request.clone()).unwrap();
+            assert_eq!(response["result"]["isError"], true, "{request}");
+        }
+        let response = client(&server)
+            .mcp_response(tool_call(
+                "ticket_comment",
+                json!({"body":"hi","cardId":"c"}),
+            ))
+            .unwrap();
+        assert_eq!(text(&response["result"]), "Unknown argument: cardId");
+        assert!(server.drain().is_empty(), "No call may reach the app");
+        // The hub rejects unknown keys on its own wire too.
+        for wire in [
+            json!({"tool":{"tool":"get","key":"ENG-9"}}),
+            json!({"tool":{"tool":"statuses","session":1}}),
+            json!({"tool":{"tool":"comment","markdown":"hi","ticket":"ENG-9"}}),
+            json!({"tool":{"tool":"set_status","target":"Done","fields":{},"key":"ENG-9"}}),
+            json!({"tool":{"tool":"card_subtasks","cardId":"c-9"}}),
+            json!({"tool":{"tool":"card_subtask_done","subtaskId":"t","done":true,"sessionKey":"s"}}),
+            json!({"tool":{"tool":"card_delete"}}),
+            json!({"sessionKey":"s-2"}),
+            json!({"tool":{"tool":"get"},"ticket":"ENG-9"}),
+        ] {
+            assert_eq!(
+                raw(&server, wire.clone()).unwrap_err(),
+                "Invalid ticket request",
+                "{wire}"
+            );
+        }
+        assert!(server.drain().is_empty());
+        // The same wire without the extra keys is accepted.
+        assert_eq!(
+            raw(&server, json!({})).unwrap(),
+            json!({"key":"ENG-1","mayChangeStatus":true,"readOnly":false,"cards":true})
+        );
+    }
+
+    #[test]
+    fn a_relink_mid_turn_applies_to_the_next_call_not_the_agents_key() {
+        let server = Server::start(427, scope("ENG-1", true, false)).unwrap();
+        let fake = Arc::new(
+            FakeProvider::new()
+                .with_issue(issue("ENG-1"))
+                .with_issue(issue("ENG-2")),
+        );
+        let tickets = tickets(fake.clone(), None);
+        // The user relinks the session while the turn runs.
+        server.set_scope(scope("ENG-2", true, false));
+        assert_eq!(
+            server.ticket().map(|ticket| ticket.key),
+            Some("ENG-2".into())
+        );
+        // The agent still names the old key: refused, naming the new link.
+        let response = client(&server)
+            .mcp_response(tool_call(
+                "ticket_comment",
+                json!({"key":"ENG-1","body":"hi"}),
+            ))
+            .unwrap();
+        assert_eq!(response["result"]["isError"], true);
+        assert_eq!(text(&response["result"]), "This session is linked to ENG-2");
+        assert!(server.drain().is_empty());
+        // Without a key, the call goes to the ticket linked at call time.
+        let result = call_answered(
+            &server,
+            &tickets,
+            tool_call("ticket_comment", json!({"body":"Relinked"})),
+        );
+        assert_eq!(result["isError"], false, "{result}");
+        assert!(fake.comments("ENG-1").is_empty());
+        assert_eq!(fake.comments("ENG-2")[0].1, "Relinked");
+        // The permission is read at call time as well.
+        server.set_scope(scope("ENG-2", false, false));
+        let response = client(&server)
+            .mcp_response(tool_call("ticket_status", json!({"target":"Done"})))
+            .unwrap();
+        assert_eq!(
+            text(&response["result"]),
+            "Changing ticket status is turned off for this session"
+        );
+        // Unlinked mid-turn: ticket tools stop at once.
+        server.set_scope(Scope {
+            ticket: None,
+            may_change_status: true,
+            read_only: false,
+            cards: false,
+        });
+        assert_eq!(server.ticket(), None);
+        let response = client(&server)
+            .mcp_response(tool_call("ticket_get", json!({})))
+            .unwrap();
+        assert_eq!(
+            text(&response["result"]),
+            "This session isn't linked to a ticket"
+        );
+        assert!(server.drain().is_empty());
+        // A finished turn's server no longer changes the session's scope.
+        drop(server);
+        let next = Server::start(427, scope("ENG-3", true, false)).unwrap();
+        let environment = next.environment(Path::new("/test/app"));
+        assert_eq!(request(&environment, None, None).unwrap()["key"], "ENG-3");
     }
 }

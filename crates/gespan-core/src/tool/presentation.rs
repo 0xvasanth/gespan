@@ -276,8 +276,8 @@ pub(super) fn present(call: &ToolCall, fallback_cwd: Option<&str>) -> ToolPresen
     shown.target = shown.target.lines().next().unwrap_or("").into();
     shown
 }
-/// The app's own ticket tools, as Claude (`mcp__server__tool`) and Codex
-/// (`server:tool`) name them.
+/// The app's own ticket and card tools, as Claude (`mcp__server__tool`) and
+/// Codex (`server:tool`) name them.
 fn ticket_tool(name: &str, input: &Value) -> Option<ToolPresentation> {
     let tool = name
         .strip_prefix("mcp__gespan_ticket__")
@@ -288,6 +288,8 @@ fn ticket_tool(name: &str, input: &Value) -> Option<ToolPresentation> {
         "ticket_comment" => ("Comment on ticket", None),
         "ticket_status" if target.is_some() => ("Change ticket status", target),
         "ticket_status" => ("Ticket statuses", None),
+        "card_subtasks" => ("List card subtasks", None),
+        "card_subtask_done" => ("Tick card subtask", None),
         _ => return None,
     };
     Some(ToolPresentation {
@@ -821,6 +823,32 @@ mod tests {
         assert_eq!(
             shown("mcp__other__ticket_get", json!({})).0,
             "mcp__other__ticket_get"
+        );
+    }
+    #[test]
+    fn card_tools_have_friendly_labels() {
+        let shown = |name: &str, input: Value| {
+            let shown = call(name, input).presentation();
+            (shown.action, shown.target)
+        };
+        for prefix in ["mcp__gespan_ticket__", "gespan_ticket:"] {
+            let name = |tool: &str| format!("{prefix}{tool}");
+            assert_eq!(
+                shown(&name("card_subtasks"), json!({})),
+                ("List card subtasks".into(), String::new())
+            );
+            assert_eq!(
+                shown(
+                    &name("card_subtask_done"),
+                    json!({"subtaskId":"t-1","done":true})
+                ),
+                ("Tick card subtask".into(), String::new())
+            );
+        }
+        // Another server's tool of the same name is not ours.
+        assert_eq!(
+            shown("mcp__other__card_subtasks", json!({})).0,
+            "mcp__other__card_subtasks"
         );
     }
     #[test]

@@ -555,9 +555,12 @@ fn run_turn_using(
                 settings.plan || settings.access == gespan_core::agent::AccessMode::ReadOnly;
             if let Ok(server) = gespan_core::ticket_bridge::Server::start(
                 summary.id,
-                ticket.clone(),
-                may_change_status,
-                read_only,
+                gespan_core::ticket_bridge::Scope {
+                    ticket: Some(ticket.clone()),
+                    may_change_status,
+                    read_only,
+                    cards: false,
+                },
             ) {
                 settings.environment.extend(server.environment(&executable));
                 ticket_introduction = ticket_context::TicketContext::prepare(
@@ -1143,11 +1146,21 @@ impl TicketTools {
     /// Tracker calls are network round trips, so each runs off the provider loop.
     fn answer_pending(&self) {
         for call in self.server.drain() {
+            // Card tools are not in this turn's scope, so the hub refuses
+            // them; a ticket call carries the link it was accepted under.
+            let (gespan_core::ticket_bridge::BridgeTool::Ticket(tool), Some(ticket)) =
+                (&call.tool, &call.ticket)
+            else {
+                let _ = call
+                    .reply
+                    .send(Err("This tool isn't available here".into()));
+                continue;
+            };
+            let (tool, ticket) = (tool.clone(), ticket.clone());
             let tickets = self.tickets.clone();
-            let ticket = self.server.ticket().clone();
             let changes = self.changes.clone();
             std::thread::spawn(move || {
-                match gespan_core::ticket_bridge::answer(&tickets, &ticket, &call.tool) {
+                match gespan_core::ticket_bridge::answer(&tickets, &ticket, &tool) {
                     Ok(answered) => {
                         let _ = call.reply.send(Ok(answered.value));
                         record_ticket_change(&changes, answered.effect);
