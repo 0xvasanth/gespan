@@ -111,6 +111,9 @@ struct Message {
     /// The turn this message belongs to, as `Body::Actions` numbers it.
     turn: usize,
     attachments: Arc<[attachments::Attachment]>,
+    /// A user message's displayed chunks and attachments, which its cached
+    /// bubble width depends on.
+    prompt_fingerprint: u64,
 }
 struct RenderedBlock {
     source: Arc<crate::markdown_model::TopBlock>,
@@ -189,6 +192,14 @@ const TOP_INSET: f32 = 20.;
 const SAVED_DRAFT_START: usize = usize::MAX - 1;
 const BOTTOM_INSET: f32 = 40.;
 const TOP_FADE: f32 = 24.;
+/// AgentTranscript.tsx's user bubble: `text-sm`, `max-w-[36rem]` and `px-3`.
+/// Measurement, line counting and render share these.
+const PROMPT_TEXT_SIZE: Pixels = px(14.);
+const PROMPT_BUBBLE_MAX: Pixels = px(576.);
+/// Horizontal padding on both sides together.
+const PROMPT_PAD_X: Pixels = px(24.);
+/// Text width that leaves room for "Show less" on a blank last chunk.
+const PROMPT_DISCLOSURE_MIN: Pixels = px(72.);
 /// `.turn-actions-hover`'s 120ms opacity transition, in seconds.
 const HOVER_FADE: f32 = 0.12;
 
@@ -3459,6 +3470,11 @@ impl TranscriptView {
             if self.rows.len() > first {
                 self.rows.last_mut().unwrap().last = true;
             }
+            let prompt_fingerprint = if role == "user" {
+                measurements::prompt_fingerprint(&self.rows[first..], &attachments)
+            } else {
+                0
+            };
             self.messages.push(Message {
                 start: at,
                 display_start: first,
@@ -3472,6 +3488,7 @@ impl TranscriptView {
                     turn
                 },
                 attachments,
+                prompt_fingerprint,
             });
             let last_prompt = self.source.iter().rposition(|r| r.is_prompt());
             if self.mono
@@ -3697,7 +3714,7 @@ impl TranscriptView {
         self.index_messages();
         // Preserve surviving indices and scroll offsets while the tail reflows.
         let common = old_count.min(self.rows.len());
-        self.measurements.rows_changed(source_start);
+        self.measurements.rows_changed();
         for ix in display_start..common {
             let (old, after_receipt) = &old_layouts[ix - display_start];
             if !measurements::same_layout(old, &self.rows[ix])
@@ -4895,8 +4912,11 @@ impl TranscriptView {
                     })
                     .when(user, |d| {
                         // AgentTranscript.tsx: text-sm (14px / 20px), px-3 py-2.
-                        d.line_height(px(20.))
-                            .px_3()
+                        // Measurement shapes this font at the same size.
+                        d.font(gpui::font(crate::fonts::UI))
+                            .text_size(PROMPT_TEXT_SIZE)
+                            .line_height(px(20.))
+                            .px(PROMPT_PAD_X * 0.5)
                             .pt(px(if first { 8. } else { 0. }))
                             .pb(px(if last { 8. } else { 0. }))
                             .child(
@@ -5163,7 +5183,7 @@ impl TranscriptView {
                                 div()
                                     .relative()
                                     .min_w_0()
-                                    .when(user && self.chat_layout, |d| d.max_w(px(576.)))
+                                    .when(user && self.chat_layout, |d| d.max_w(PROMPT_BUBBLE_MAX))
                                     .when_some(prompt_width, |d, width| d.w(width))
                                     .when(user && !self.chat_layout, |d| d.w_full())
                                     .when(!user, |d| d.w_full())
@@ -5352,28 +5372,14 @@ impl TranscriptView {
         // Row padding (`pl-14 pr-4` in the chat layout, `px-4` otherwise),
         // the bubble's 36rem cap and its `px-3`.
         let bubble = if self.chat_layout {
-            (column - px(72.)).min(px(576.))
+            (column - px(72.)).min(PROMPT_BUBBLE_MAX)
         } else {
             column - px(32.)
         };
         let text = SharedString::from(text.trim_end().to_owned());
-        let run = gpui::TextRun {
-            len: text.len(),
-            font: window.text_style().font(),
-            color: Default::default(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        window
-            .text_system()
-            .shape_text(text, px(14.), &[run], Some(bubble - px(24.)), None)
-            .map_or(0, |lines| {
-                lines
-                    .iter()
-                    .map(|line| line.wrap_boundaries.len() + 1)
-                    .sum()
-            })
+        measurements::shape_prompt(text, Some(bubble - PROMPT_PAD_X), window)
+            .map(|line| line.wrap_boundaries.len() + 1)
+            .sum()
     }
     fn toggle_phase(&mut self, group: usize, open: bool, cx: &mut Context<Self>) {
         self.phase_toggle = Some(group);
