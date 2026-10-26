@@ -534,3 +534,119 @@ export function moveCardToBoard(
 ): Promise<BoardCard> {
   return invoke<BoardCard>("board_card_move_to_board", { cardId, boardId });
 }
+
+export type FilterOp = "is" | "is_not";
+
+export type FilterRow = {
+  field: string;
+  op: FilterOp;
+  values: string[];
+};
+
+export type SortKey =
+  "manual" | "priority" | "due" | "start" | "title" | "created" | "updated";
+
+export type SortSpec = { key: SortKey; dir: "asc" | "desc" };
+
+/** What a view shows. No time-zone data: the Rust side supplies the clock. */
+export type ViewSpec = {
+  query: string;
+  rows: FilterRow[];
+  sort: SortSpec;
+};
+
+export type CardIndexRow = {
+  cardId: string;
+  columnId: string;
+  number: number;
+  title: string;
+  priority: number;
+  dueAt: number | null;
+  startAt: number | null;
+  estimateMinutes: number | null;
+  labels: string[];
+  projects: string[];
+  createdAt: number;
+  updatedAt: number;
+  fields: Record<string, string>;
+};
+
+export type BoardView = {
+  id: string;
+  boardId: string;
+  name: string;
+  position: number;
+  specJson: string;
+  layoutJson: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/** Card ids matching `spec`, in display order. `running` is the set of card
+ * ids whose linked session or Pilot is running now. */
+export function queryBoard(
+  boardId: string,
+  spec: ViewSpec,
+  running: string[] = [],
+): Promise<string[]> {
+  return invoke<string[]>("board_query", { boardId, spec, running });
+}
+
+export function getCardIndex(boardId: string): Promise<CardIndexRow[]> {
+  return invoke<CardIndexRow[]>("board_card_index", { boardId });
+}
+
+export function listViews(boardId: string): Promise<BoardView[]> {
+  return invoke<BoardView[]>("board_views", { boardId });
+}
+
+export function createView(
+  boardId: string,
+  name: string,
+  specJson: string,
+  layoutJson: string,
+): Promise<BoardView> {
+  return invoke<BoardView>("board_view_create", {
+    boardId,
+    name,
+    specJson,
+    layoutJson,
+  });
+}
+
+/** Pass only the parts to change; omitted parts stay as they are. */
+export function updateView(
+  viewId: string,
+  patch: { name?: string; specJson?: string; layoutJson?: string },
+): Promise<void> {
+  return invoke("board_view_update", {
+    viewId,
+    name: patch.name ?? null,
+    specJson: patch.specJson ?? null,
+    layoutJson: patch.layoutJson ?? null,
+  });
+}
+
+export function deleteView(viewId: string): Promise<void> {
+  return invoke("board_view_delete", { viewId });
+}
+
+export function moveView(viewId: string, index: number): Promise<void> {
+  return invoke("board_view_move", { viewId, index });
+}
+
+export function setCardsPriority(
+  cardIds: string[],
+  priority: number,
+): Promise<void> {
+  return invoke("board_cards_set_priority", { cardIds, priority });
+}
+
+/** Adds (`on`) or removes one label on every card. */
+export function setCardsLabel(
+  cardIds: string[],
+  labelId: string,
+  on: boolean,
+): Promise<void> {
+  return invoke("board_cards_set_label", { cardIds, labelId, on });
+}

@@ -4,11 +4,11 @@
 use super::{validate_id, Board, Card, Service};
 use gespan_board_store as store;
 use rusqlite::Connection;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub use gespan_board_store::{
-    CardExtras, CardLink, CardMeta, Comment, Field, FieldValue, Label, Relation, Subtask,
-    PRIORITIES,
+    CardExtras, CardIndexRow, CardLink, CardMeta, Comment, Dir, Field, FieldValue, FilterRow,
+    Label, Op, Relation, SortKey, SortSpec, Subtask, View, ViewSpec, PRIORITIES,
 };
 
 /// The pre-v3 native tables. Nothing reads them now that board-store has
@@ -177,6 +177,88 @@ impl Service {
     pub fn set_labels(&mut self, card_id: &str, label_ids: &[String]) -> Result<(), String> {
         validate_id(card_id, "card")?;
         store::set_card_labels(&self.conn, card_id, label_ids).map(drop)
+    }
+
+    /// Card ids matching `spec`, in display order. `running` holds the cards
+    /// whose linked session or Pilot runs now. The clock and the local day
+    /// are read here.
+    pub fn query(
+        &mut self,
+        board_id: &str,
+        spec: &ViewSpec,
+        running: &HashSet<String>,
+    ) -> Result<Vec<String>, String> {
+        validate_id(board_id, "board")?;
+        store::query_cards(
+            &self.conn,
+            board_id,
+            spec,
+            store::now_millis(),
+            &store::local_day_chrono,
+            running,
+        )
+    }
+
+    pub fn card_index(&mut self, board_id: &str) -> Result<Vec<CardIndexRow>, String> {
+        validate_id(board_id, "board")?;
+        store::card_index(&self.conn, board_id)
+    }
+
+    pub fn views(&mut self, board_id: &str) -> Result<Vec<View>, String> {
+        validate_id(board_id, "board")?;
+        store::list_views(&self.conn, board_id)
+    }
+
+    pub fn view_create(
+        &mut self,
+        board_id: &str,
+        name: &str,
+        spec_json: &str,
+        layout_json: &str,
+    ) -> Result<View, String> {
+        validate_id(board_id, "board")?;
+        store::create_view(&self.conn, board_id, name, spec_json, layout_json)
+    }
+
+    pub fn view_update(
+        &mut self,
+        view_id: &str,
+        name: Option<&str>,
+        spec_json: Option<&str>,
+        layout_json: Option<&str>,
+    ) -> Result<(), String> {
+        validate_id(view_id, "view")?;
+        store::update_view(&self.conn, view_id, name, spec_json, layout_json).map(drop)
+    }
+
+    pub fn view_delete(&mut self, view_id: &str) -> Result<(), String> {
+        validate_id(view_id, "view")?;
+        store::delete_view(&self.conn, view_id).map(drop)
+    }
+
+    pub fn view_move(&mut self, view_id: &str, index: usize) -> Result<(), String> {
+        validate_id(view_id, "view")?;
+        store::move_view(&self.conn, view_id, index).map(drop)
+    }
+
+    pub fn set_priority_many(&mut self, card_ids: &[String], priority: u8) -> Result<(), String> {
+        for id in card_ids {
+            validate_id(id, "card")?;
+        }
+        store::set_priority_many(&self.conn, card_ids, priority).map(drop)
+    }
+
+    pub fn set_label_many(
+        &mut self,
+        card_ids: &[String],
+        label_id: &str,
+        on: bool,
+    ) -> Result<(), String> {
+        for id in card_ids {
+            validate_id(id, "card")?;
+        }
+        validate_id(label_id, "label")?;
+        store::set_label_many(&self.conn, card_ids, label_id, on).map(drop)
     }
 
     pub fn subtasks(&mut self, card_id: &str) -> Result<Vec<Subtask>, String> {
@@ -348,6 +430,76 @@ mod tests {
         service.activity(board, Some(card), 1).unwrap()[0]
             .detail
             .clone()
+    }
+
+    #[test]
+    fn query_views_and_bulk_edits_go_through_the_service() {
+        use super::{Dir, FilterRow, Op, SortKey, SortSpec, ViewSpec};
+        use std::collections::HashSet;
+        let (_dir, mut service, _) = service();
+        let board = service.default_board().unwrap();
+        let backlog = service.get(&board.id).unwrap().columns[0].id.clone();
+        let ids: Vec<String> = ["Fix login", "Write docs", "Ship"]
+            .iter()
+            .map(|t| service.card_create(&backlog, t, "").unwrap().id)
+            .collect();
+        service.set_priority_many(&ids[1..], 3).unwrap();
+        let label = service.create_label(&board.id, "Bug", "e5534b").unwrap();
+        service.set_label_many(&ids[..2], &label.id, true).unwrap();
+        service.set_label_many(&ids[..1], &label.id, false).unwrap();
+
+        let spec = ViewSpec {
+            query: String::new(),
+            rows: vec![FilterRow {
+                field: "priority".into(),
+                op: Op::Is,
+                values: vec!["3".into()],
+            }],
+            sort: SortSpec {
+                key: SortKey::Title,
+                dir: Dir::Desc,
+            },
+        };
+        let none = HashSet::new();
+        assert_eq!(
+            service.query(&board.id, &spec, &none).unwrap(),
+            vec![ids[1].clone(), ids[2].clone()]
+        );
+        let running: HashSet<String> = [ids[0].clone()].into();
+        let linked = ViewSpec {
+            rows: vec![FilterRow {
+                field: "linked".into(),
+                op: Op::Is,
+                values: vec!["running".into()],
+            }],
+            ..ViewSpec::default()
+        };
+        assert_eq!(
+            service.query(&board.id, &linked, &running).unwrap(),
+            vec![ids[0].clone()]
+        );
+
+        let index = service.card_index(&board.id).unwrap();
+        let row = |id: &String| index.iter().find(|r| &r.card_id == id).unwrap();
+        assert_eq!(row(&ids[1]).labels, vec![label.id.clone()]);
+        assert!(row(&ids[0]).labels.is_empty());
+        assert_eq!(row(&ids[2]).priority, 3);
+
+        let view = service
+            .view_create(&board.id, "High", r#"{"query":"x"}"#, "{}")
+            .unwrap();
+        service
+            .view_update(&view.id, Some("Renamed"), None, None)
+            .unwrap();
+        assert_eq!(service.views(&board.id).unwrap()[0].name, "Renamed");
+        assert!(service
+            .view_update(&view.id, None, Some("not json"), None)
+            .is_err());
+        service.view_move(&view.id, 0).unwrap();
+        service.view_delete(&view.id).unwrap();
+        assert!(service.views(&board.id).unwrap().is_empty());
+        assert!(service.set_priority_many(&ids, 9).is_err());
+        assert!(service.query("bad id!", &spec, &none).is_err());
     }
 
     #[test]

@@ -48,6 +48,15 @@ import {
   setCardPriority,
   setCardProjects,
   subscribeBoard,
+  createView,
+  deleteView,
+  getCardIndex,
+  listViews,
+  moveView,
+  queryBoard,
+  setCardsLabel,
+  setCardsPriority,
+  updateView,
   toggleSubtask,
 } from "./board";
 
@@ -369,6 +378,79 @@ describe("card extras wrappers", () => {
       () => moveCardToBoard("c1", "b2"),
       "board_card_move_to_board",
       { cardId: "c1", boardId: "b2" },
+    ],
+    [
+      "queryBoard",
+      () =>
+        queryBoard(
+          "b1",
+          { query: "x", rows: [], sort: { key: "manual", dir: "asc" } },
+          ["c1"],
+        ),
+      "board_query",
+      {
+        boardId: "b1",
+        spec: { query: "x", rows: [], sort: { key: "manual", dir: "asc" } },
+        running: ["c1"],
+      },
+    ],
+    [
+      "queryBoard defaults running to empty",
+      () =>
+        queryBoard("b1", {
+          query: "",
+          rows: [],
+          sort: { key: "manual", dir: "asc" },
+        }),
+      "board_query",
+      {
+        boardId: "b1",
+        spec: { query: "", rows: [], sort: { key: "manual", dir: "asc" } },
+        running: [],
+      },
+    ],
+    [
+      "getCardIndex",
+      () => getCardIndex("b1"),
+      "board_card_index",
+      { boardId: "b1" },
+    ],
+    ["listViews", () => listViews("b1"), "board_views", { boardId: "b1" }],
+    [
+      "createView",
+      () => createView("b1", "Mine", "{}", "{}"),
+      "board_view_create",
+      { boardId: "b1", name: "Mine", specJson: "{}", layoutJson: "{}" },
+    ],
+    [
+      "updateView sends null for parts left out",
+      () => updateView("v1", { name: "New" }),
+      "board_view_update",
+      { viewId: "v1", name: "New", specJson: null, layoutJson: null },
+    ],
+    [
+      "deleteView",
+      () => deleteView("v1"),
+      "board_view_delete",
+      { viewId: "v1" },
+    ],
+    [
+      "moveView",
+      () => moveView("v1", 2),
+      "board_view_move",
+      { viewId: "v1", index: 2 },
+    ],
+    [
+      "setCardsPriority",
+      () => setCardsPriority(["c1", "c2"], 3),
+      "board_cards_set_priority",
+      { cardIds: ["c1", "c2"], priority: 3 },
+    ],
+    [
+      "setCardsLabel",
+      () => setCardsLabel(["c1"], "l1", false),
+      "board_cards_set_label",
+      { cardIds: ["c1"], labelId: "l1", on: false },
     ],
   ])(
     "%s invokes the command with camelCase args",

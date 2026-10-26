@@ -15,12 +15,17 @@ use gespan_board_store::{
     move_subtask, record_card, remove_link, remove_relation, rename_board, restore_card,
     set_card_labels, set_column_display, set_due, set_estimate, set_field_value, set_priority,
     set_projects, set_start, toggle_subtask, unarchive_card, update_card, update_column,
-    validate_id, Activity, Board, BoardDetail, Card, CardExtras, CardLink, CardMeta, Column,
-    Comment, Field, FieldValue, Label, Relation, Subtask,
+    validate_id, Activity, Board, BoardDetail, Card, CardExtras, CardIndexRow, CardLink, CardMeta,
+    Column, Comment, Field, FieldValue, Label, Relation, Subtask, View, ViewSpec,
+};
+use gespan_board_store::{
+    card_index, create_view, delete_view, list_views, local_day_chrono, move_view, now_millis,
+    query_cards, set_label_many, set_priority_many, update_view,
 };
 use gespan_tracker_client::tickets::TicketRef;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::session_store::SessionStore;
@@ -573,6 +578,159 @@ pub fn board_card_set_labels(
     validate_id(&card_id, "card")?;
     let conn = store.lock_conn()?;
     let board_id = set_card_labels(&conn, &card_id, &label_ids)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+/// The card ids matching `spec`, in display order. The clock and the local
+/// day come from this side, so the front end never sends time-zone data.
+fn query_inner(
+    conn: &rusqlite::Connection,
+    board_id: &str,
+    spec: &ViewSpec,
+    running: Vec<String>,
+) -> Result<Vec<String>, String> {
+    validate_id(board_id, "board")?;
+    let running: HashSet<String> = running.into_iter().collect();
+    query_cards(
+        conn,
+        board_id,
+        spec,
+        now_millis(),
+        &local_day_chrono,
+        &running,
+    )
+}
+
+#[tauri::command(async)]
+pub fn board_query(
+    store: State<'_, SessionStore>,
+    board_id: String,
+    spec: ViewSpec,
+    running: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let conn = store.lock_conn()?;
+    query_inner(&conn, &board_id, &spec, running)
+}
+
+#[tauri::command(async)]
+pub fn board_card_index(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<Vec<CardIndexRow>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    card_index(&conn, &board_id)
+}
+
+#[tauri::command(async)]
+pub fn board_views(store: State<'_, SessionStore>, board_id: String) -> Result<Vec<View>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    list_views(&conn, &board_id)
+}
+
+#[tauri::command(async)]
+pub fn board_view_create(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    board_id: String,
+    name: String,
+    spec_json: String,
+    layout_json: String,
+) -> Result<View, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    let view = create_view(&conn, &board_id, &name, &spec_json, &layout_json)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(view)
+}
+
+#[tauri::command(async)]
+pub fn board_view_update(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    view_id: String,
+    name: Option<String>,
+    spec_json: Option<String>,
+    layout_json: Option<String>,
+) -> Result<(), String> {
+    validate_id(&view_id, "view")?;
+    let conn = store.lock_conn()?;
+    let board_id = update_view(
+        &conn,
+        &view_id,
+        name.as_deref(),
+        spec_json.as_deref(),
+        layout_json.as_deref(),
+    )?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_view_delete(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    view_id: String,
+) -> Result<(), String> {
+    validate_id(&view_id, "view")?;
+    let conn = store.lock_conn()?;
+    let board_id = delete_view(&conn, &view_id)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_view_move(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    view_id: String,
+    index: usize,
+) -> Result<(), String> {
+    validate_id(&view_id, "view")?;
+    let conn = store.lock_conn()?;
+    let board_id = move_view(&conn, &view_id, index)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_cards_set_priority(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_ids: Vec<String>,
+    priority: u8,
+) -> Result<(), String> {
+    for id in &card_ids {
+        validate_id(id, "card")?;
+    }
+    let conn = store.lock_conn()?;
+    let board_id = set_priority_many(&conn, &card_ids, priority)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_cards_set_label(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    card_ids: Vec<String>,
+    label_id: String,
+    on: bool,
+) -> Result<(), String> {
+    for id in &card_ids {
+        validate_id(id, "card")?;
+    }
+    validate_id(&label_id, "label")?;
+    let conn = store.lock_conn()?;
+    let board_id = set_label_many(&conn, &card_ids, &label_id, on)?;
     drop(conn);
     notify(&app, &board_id);
     Ok(())
@@ -1606,5 +1764,60 @@ mod tests {
         assert_ne!(source, moved.board_id);
         assert!(move_to_board_inner(&conn, &card.id, "bad id!").is_err());
         assert!(move_to_board_inner(&conn, "bad id!", &target.id).is_err());
+    }
+
+    #[test]
+    fn a_camel_case_spec_from_the_front_end_filters_and_sorts_through_the_command_path() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let cards = add_cards(&conn, &columns[0].id, &["Fix login", "Write docs", "Ship"]);
+        set_priority_many(&conn, &[cards[1].id.clone(), cards[2].id.clone()], 3).unwrap();
+        let spec: ViewSpec = serde_json::from_str(
+            r#"{"query":"","rows":[{"field":"priority","op":"is","values":["3"]}],
+                "sort":{"key":"title","dir":"desc"}}"#,
+        )
+        .unwrap();
+        let ids = query_inner(&conn, &board.id, &spec, vec![]).unwrap();
+        assert_eq!(ids, vec![cards[1].id.clone(), cards[2].id.clone()]);
+
+        let negated: ViewSpec =
+            serde_json::from_str(r#"{"rows":[{"field":"priority","op":"is_not","values":["3"]}]}"#)
+                .unwrap();
+        assert_eq!(
+            query_inner(&conn, &board.id, &negated, vec![]).unwrap(),
+            vec![cards[0].id.clone()]
+        );
+        // The running set arrives as a plain id list.
+        let linked: ViewSpec =
+            serde_json::from_str(r#"{"rows":[{"field":"linked","op":"is","values":["running"]}]}"#)
+                .unwrap();
+        assert_eq!(
+            query_inner(&conn, &board.id, &linked, vec![cards[0].id.clone()]).unwrap(),
+            vec![cards[0].id.clone()]
+        );
+        assert!(query_inner(&conn, "bad id!", &spec, vec![]).is_err());
+    }
+
+    #[test]
+    fn views_serialize_camel_case_and_bulk_edits_apply_to_every_card() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let cards = add_cards(&conn, &columns[0].id, &["A", "B"]);
+        let view = create_view(&conn, &board.id, "Mine", r#"{"query":"a"}"#, "{}").unwrap();
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["boardId"], board.id.as_str());
+        assert_eq!(json["specJson"], r#"{"query":"a"}"#);
+        assert_eq!(list_views(&conn, &board.id).unwrap().len(), 1);
+
+        let ids: Vec<String> = cards.iter().map(|c| c.id.clone()).collect();
+        set_priority_many(&conn, &ids, 4).unwrap();
+        let label = create_label(&conn, &board.id, "Bug", "e5534b").unwrap();
+        set_label_many(&conn, &ids, &label.id, true).unwrap();
+        let index = card_index(&conn, &board.id).unwrap();
+        assert!(index
+            .iter()
+            .all(|r| r.priority == 4 && r.labels == [label.id.clone()]));
+        let row = serde_json::to_value(&index[0]).unwrap();
+        assert!(row.get("cardId").is_some() && row.get("dueAt").is_some());
     }
 }
