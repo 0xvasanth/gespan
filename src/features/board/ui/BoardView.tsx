@@ -87,6 +87,7 @@ import {
 import { sortedCardIds, type SortKey } from "../model/columnActions";
 import {
   GROUP_BYS,
+  buildGroups,
   LAYOUTS,
   TABLE_COLUMNS,
   parseLayout,
@@ -703,19 +704,55 @@ function BoardContent({
     return [...ranked, ...manual.filter((card) => !seen.has(card.id))];
   }, [detail, matched, narrowing]);
   const selectedSet = useMemo(() => new Set(selection.ids), [selection.ids]);
-  const visibleCardsRef = useRef(visibleCards);
+
+  // The cards on screen in the order they appear, which differs by layout:
+  // the board reads column by column (collapsed columns hide their cards),
+  // the list group by group (collapsed groups hide theirs; a card in two
+  // groups counts once, at its first place), the table row by row. Ranges,
+  // pruning and bulk actions all follow it.
+  const displayOrder = useMemo(() => {
+    if (!detail) return [];
+    if (layoutState.layout === "table") return visibleCards;
+    if (layoutState.layout === "list") {
+      const byId = new Map(visibleCards.map((card) => [card.id, card]));
+      const seen = new Set<string>();
+      const out: BoardCard[] = [];
+      for (const group of buildGroups({
+        by: layoutState.groupBy,
+        cards: visibleCards,
+        columns: detail.columns,
+        extras,
+        labels,
+        projects,
+      })) {
+        if (layoutState.collapsed.includes(group.key)) continue;
+        for (const id of group.cardIds) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          out.push(byId.get(id)!);
+        }
+      }
+      return out;
+    }
+    const shown = shownDetail ?? detail;
+    return [...shown.columns]
+      .sort((a, b) => a.position - b.position)
+      .filter((column) => !column.collapsed)
+      .flatMap((column) => columnCards(shown, column.id));
+  }, [detail, shownDetail, visibleCards, layoutState, extras, labels, projects]);
+  const displayOrderRef = useRef(displayOrder);
   useLayoutEffect(() => {
-    visibleCardsRef.current = visibleCards;
+    displayOrderRef.current = displayOrder;
   });
 
   // A selection holds only cards on screen: a filter, search or view change
   // that hides some drops them, so "N selected" and bulk actions match it.
   useEffect(() => {
     if (!detail) return;
-    const shown = new Set(visibleCards.map((card) => card.id));
+    const shown = new Set(displayOrder.map((card) => card.id));
     const exists = new Set(detail.cards.map((card) => card.id));
     setSelection((current) => pruneSelection(current, shown, exists));
-  }, [detail, visibleCards]);
+  }, [detail, displayOrder]);
 
   const isTable = layoutState.layout === "table";
   useEffect(() => {
@@ -742,7 +779,7 @@ function BoardContent({
       return true;
     }
     if (event.shiftKey) {
-      const order = visibleCardsRef.current.map((other) => other.id);
+      const order = displayOrderRef.current.map((other) => other.id);
       setSelection((current) => rangeSelect(current, card.id, order));
       return true;
     }
@@ -1067,7 +1104,7 @@ function BoardContent({
   /** The selected cards in the order shown. */
   const selectedCards = () => {
     const chosen = new Set(selection.ids);
-    return visibleCardsRef.current.filter((card) => chosen.has(card.id));
+    return displayOrderRef.current.filter((card) => chosen.has(card.id));
   };
 
   const bulkStatus = (column: BoardColumn) => {
@@ -1883,6 +1920,7 @@ function BoardContent({
               onCardOpen={(card) => showCard({ id: card.id })}
               onColumnExpand={(column) => setCollapsed(column, false)}
               sorted={sorted}
+              selectedIds={selectedSet}
               trailing={trailing}
             />
           ) : null}

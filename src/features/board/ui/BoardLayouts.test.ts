@@ -373,56 +373,85 @@ describe("List layout", () => {
   });
 
   it("groups by status, in column order, leaving empty columns out", () => {
-    expect(groupKeys()).toEqual(["backlog", "progress", "done"]);
+    expect(groupKeys()).toEqual([
+      "status:backlog",
+      "status:progress",
+      "status:done",
+    ]);
     expect(rowKeys()).toEqual([
-      "backlog/c1",
-      "backlog/c2",
-      "progress/c3",
-      "done/c4",
+      "status:backlog/c1",
+      "status:backlog/c2",
+      "status:progress/c3",
+      "status:done/c4",
     ]);
   });
 
   it("groups by priority, urgent first", async () => {
     await pick("Group by", "Priority");
-    expect(groupKeys()).toEqual(["p3", "p2", "p1", "p0"]);
-    expect(rowKeys()).toEqual(["p3/c1", "p2/c4", "p1/c2", "p0/c3"]);
+    expect(groupKeys()).toEqual([
+      "priority:p3",
+      "priority:p2",
+      "priority:p1",
+      "priority:p0",
+    ]);
+    expect(rowKeys()).toEqual([
+      "priority:p3/c1",
+      "priority:p2/c4",
+      "priority:p1/c2",
+      "priority:p0/c3",
+    ]);
   });
 
   it("lists a card with two labels in both groups, with unique keys, and No label last", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await pick("Group by", "Label");
-    expect(groupKeys()).toEqual(["l1", "l2", "none"]);
-    expect(rowKeys()).toEqual(["l1/c1", "l1/c2", "l2/c2", "none/c3", "none/c4"]);
+    expect(groupKeys()).toEqual(["label:l1", "label:l2", "label:none"]);
+    expect(rowKeys()).toEqual([
+      "label:l1/c1",
+      "label:l1/c2",
+      "label:l2/c2",
+      "label:none/c3",
+      "label:none/c4",
+    ]);
     expect(new Set(rowKeys()).size).toBe(rowKeys().length);
-    expect(q('[data-list-group="none"]').textContent).toContain("No label");
+    expect(q('[data-list-group="label:none"]').textContent).toContain("No label");
     // React warns about duplicate keys through console.error.
     expect(errors).not.toHaveBeenCalled();
   });
 
   it("groups by project and by due bucket, with the catch-all groups", async () => {
     await pick("Group by", "Project");
-    expect(groupKeys()).toEqual(["none"]);
-    expect(q('[data-list-group="none"]').textContent).toContain("No project");
+    expect(groupKeys()).toEqual(["project:none"]);
+    expect(q('[data-list-group="project:none"]').textContent).toContain(
+      "No project",
+    );
     await pick("Group by", "Due date");
-    expect(groupKeys()).toEqual(["next7", "none"]);
-    expect(rowKeys()).toEqual(["next7/c1", "none/c2", "none/c3", "none/c4"]);
-    expect(q('[data-list-group="none"]').textContent).toContain("No due date");
+    expect(groupKeys()).toEqual(["due:next7", "due:none"]);
+    expect(rowKeys()).toEqual([
+      "due:next7/c1",
+      "due:none/c2",
+      "due:none/c3",
+      "due:none/c4",
+    ]);
+    expect(q('[data-list-group="due:none"]').textContent).toContain(
+      "No due date",
+    );
   });
 
   it("collapses and expands a group", async () => {
-    const header = q('[data-list-group="backlog"]');
+    const header = q('[data-list-group="status:backlog"]');
     expect(header.getAttribute("aria-expanded")).toBe("true");
     await click(header);
-    expect(q('[data-list-group="backlog"]').getAttribute("aria-expanded")).toBe(
+    expect(q('[data-list-group="status:backlog"]').getAttribute("aria-expanded")).toBe(
       "false",
     );
-    expect(rowKeys()).toEqual(["progress/c3", "done/c4"]);
-    await click(q('[data-list-group="backlog"]'));
-    expect(rowKeys()).toContain("backlog/c1");
+    expect(rowKeys()).toEqual(["status:progress/c3", "status:done/c4"]);
+    await click(q('[data-list-group="status:backlog"]'));
+    expect(rowKeys()).toContain("status:backlog/c1");
   });
 
   it("a plain click on a row opens the card", async () => {
-    await click(listRow("backlog/c1"));
+    await click(listRow("status:backlog/c1"));
     expect(q("[data-card-drawer]")).not.toBeNull();
   });
 });
@@ -447,10 +476,14 @@ describe("layout state in the view", () => {
     ];
     await renderBoard();
     await click(q('[data-view-tab="v1"]'));
-    expect(groupKeys()).toEqual(["backlog", "progress", "done"]);
+    expect(groupKeys()).toEqual([
+      "status:backlog",
+      "status:progress",
+      "status:done",
+    ]);
     expect(q("[data-view-dot]")).toBeNull();
     await pick("Group by", "Priority");
-    await click(q('[data-list-group="p3"]'));
+    await click(q('[data-list-group="priority:p3"]'));
     expect(q("[data-view-dot]")).not.toBeNull();
     const save = [...q("[data-view-tabs]").querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "Save",
@@ -463,7 +496,7 @@ describe("layout state in the view", () => {
     expect(layout).toEqual({
       layout: "list",
       groupBy: "priority",
-      collapsed: ["p3"],
+      collapsed: ["priority:p3"],
       future: { x: 1 },
     });
   });
@@ -669,7 +702,7 @@ describe("bulk select", () => {
   it("works in list and table the same way", async () => {
     await renderBoard();
     await pick("Layout", "List");
-    await click(listRow("backlog/c1"), MOD);
+    await click(listRow("status:backlog/c1"), MOD);
     expect(selectedCount()).toBe("1 selected");
     await pick("Layout", "Table");
     // The selection carries over to the table's rows.
@@ -686,15 +719,79 @@ describe("bulk select", () => {
     expect(selectedCount()).toBe("3 selected");
     expect(boardCard("c2").hasAttribute("data-selected")).toBe(true);
     expect(boardCard("c4").hasAttribute("data-selected")).toBe(false);
-    // Title order: Deploy, Fix login, Ship board, Write docs.
+    // Title order: Deploy (c4), Fix login (c1), Ship board (c3), Write docs (c2).
+    // Columns still read left to right, so the board's range is by column.
     await click(bar("Clear"));
     await pick("Sort", "Title");
     await click(boardCard("c4"), MOD);
     await click(boardCard("c3"), { shiftKey: true });
-    // Deploy..Ship board covers c4, c1, c3 but not c2 (Write docs).
+    // On screen c3 (In Progress) comes before c4 (Done): the range is {c3, c4}.
+    expect(selectedCount()).toBe("2 selected");
+    expect(boardCard("c3").hasAttribute("data-selected")).toBe(true);
+    expect(boardCard("c4").hasAttribute("data-selected")).toBe(true);
+    expect(boardCard("c1").hasAttribute("data-selected")).toBe(false);
+  });
+
+  it("a range follows the sort inside a column", async () => {
+    await renderBoard();
+    // Backlog sorted by title: Fix login (c1), Write docs (c2). Descending flips it.
+    await pick("Sort", "Title");
+    await pick("Sort", "Descending");
+    await click(boardCard("c2"), MOD);
+    await click(boardCard("c3"), { shiftKey: true });
+    // Backlog reads c2, c1; then In Progress c3: the range is c2, c1, c3.
     expect(selectedCount()).toBe("3 selected");
-    expect(boardCard("c2").hasAttribute("data-selected")).toBe(false);
-    expect(boardCard("c1").hasAttribute("data-selected")).toBe(true);
+  });
+
+  it("a list range follows the groups on screen, and a card in two groups counts once", async () => {
+    await renderBoard();
+    await pick("Layout", "List");
+    await pick("Group by", "Priority");
+    // Groups: Urgent..: p3 c1, p2 c4, p1 c2, p0 c3.
+    await click(listRow("priority:p3/c1"), MOD);
+    await click(listRow("priority:p1/c2"), { shiftKey: true });
+    expect(selectedCount()).toBe("3 selected");
+    expect(listRow("priority:p2/c4").hasAttribute("data-selected")).toBe(true);
+    expect(listRow("priority:p0/c3").hasAttribute("data-selected")).toBe(false);
+    await click(bar("Clear"));
+    await pick("Group by", "Label");
+    // c2 has two labels: Bug (c1, c2), UI (c2), No label (c3, c4).
+    await click(listRow("label:l1/c1"), MOD);
+    await click(listRow("label:none/c3"), { shiftKey: true });
+    expect(selectedCount()).toBe("3 selected");
+  });
+
+  it("collapsing a list group drops its cards from the selection, and a range skips them", async () => {
+    await renderBoard();
+    await pick("Layout", "List");
+    await click(listRow("status:backlog/c1"), MOD);
+    await click(listRow("status:done/c4"), { shiftKey: true });
+    expect(selectedCount()).toBe("4 selected");
+    await click(q('[data-list-group="status:progress"]'));
+    expect(selectedCount()).toBe("3 selected");
+    await click(bar("Clear"));
+    await click(listRow("status:backlog/c1"), MOD);
+    await click(listRow("status:done/c4"), { shiftKey: true });
+    expect(selectedCount()).toBe("3 selected");
+    await click(q('[data-list-group="status:backlog"]'));
+    expect(selectedCount()).toBe("1 selected");
+  });
+
+  it("collapsing a board column drops its cards from the selection", async () => {
+    await renderBoard();
+    await click(boardCard("c1"), MOD);
+    await click(boardCard("c3"), MOD);
+    expect(selectedCount()).toBe("2 selected");
+    handlers.board_get = () => ({
+      board: BOARD,
+      columns: COLUMNS.map((c) =>
+        c.id === "progress" ? { ...c, collapsed: true } : c,
+      ),
+      cards: live(),
+    });
+    emitBoardChanged();
+    await flush();
+    expect(selectedCount()).toBe("1 selected");
   });
 
   it("prunes selected cards a search hides, so only what is on screen is counted", async () => {
@@ -875,6 +972,26 @@ describe("bulk select", () => {
       );
       expect(container.textContent).not.toContain("Fix login");
     });
+  });
+});
+
+describe("selection announcements", () => {
+  it("marks selected rows with valid ARIA in each layout", async () => {
+    await renderBoard();
+    await click(boardCard("c1"), MOD);
+    // Board cards are buttons that report pressed once a selection exists.
+    expect(q('[data-kanban-card="c1"]').getAttribute("aria-pressed")).toBe("true");
+    expect(q('[data-kanban-card="c2"]').getAttribute("aria-pressed")).toBe("false");
+    await pick("Layout", "List");
+    expect(listRow("status:backlog/c1").getAttribute("aria-pressed")).toBe("true");
+    expect(listRow("status:backlog/c1").hasAttribute("aria-selected")).toBe(false);
+    await pick("Layout", "Table");
+    expect(q("[data-board-table]").getAttribute("role")).toBe("grid");
+    expect(tableRow("c1").getAttribute("aria-selected")).toBe("true");
+    // The header is row 1; windowed rows keep their place in the whole table.
+    expect(tableRow("c1").getAttribute("aria-rowindex")).toBe("2");
+    expect(tableRow("c3").getAttribute("aria-rowindex")).toBe("4");
+    expect(q('[data-table-cell="title"]').getAttribute("role")).toBe("gridcell");
   });
 });
 

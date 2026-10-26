@@ -87,9 +87,30 @@ describe("buildGroups", () => {
   it("groups by status in column order and leaves empty groups out", () => {
     const groups = buildGroups({ ...base, by: "status", extras: {} });
     expect(groups.map((g) => [g.key, g.cardIds])).toEqual([
-      ["todo", ["a", "b"]],
-      ["done", ["c"]],
+      ["status:todo", ["a", "b"]],
+      ["status:done", ["c"]],
     ]);
+  });
+
+  it("prefixes keys with the mode so No label and No project never collide", () => {
+    const keys = (by: "label" | "project") =>
+      buildGroups({ ...base, by, extras: {} }).map((g) => g.key);
+    expect(keys("label")).toEqual(["label:none"]);
+    expect(keys("project")).toEqual(["project:none"]);
+  });
+
+  it("puts a card whose column isn't listed under No status", () => {
+    const groups = buildGroups({
+      ...base,
+      by: "status",
+      cards: [...cards, card("z", "gone")],
+      extras: {},
+    });
+    expect(groups.at(-1)).toMatchObject({
+      key: "status:none",
+      label: "No status",
+      cardIds: ["z"],
+    });
   });
 
   it("groups by priority, urgent first, none last", () => {

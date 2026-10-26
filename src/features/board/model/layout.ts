@@ -169,6 +169,7 @@ const DUE_GROUPS: readonly (readonly [string, string])[] = [
   ["none", "No due date"],
 ];
 
+/** `key` is `mode:value` (e.g. `label:none`), unique across group-by modes. */
 export type Group = { key: string; label: string; cardIds: string[] };
 
 /**
@@ -212,17 +213,26 @@ export function buildGroups(input: {
       heads = DUE_GROUPS.map(([key, label]): [string, string] => [key, label]);
       break;
     default:
-      heads = [...columns]
-        .sort((a, b) => a.position - b.position)
-        .map((c): [string, string] => [c.id, c.name]);
+      heads = [
+        ...[...columns]
+          .sort((a, b) => a.position - b.position)
+          .map((c): [string, string] => [c.id, c.name]),
+        ["none", "No status"],
+      ];
   }
+  // Keys carry the mode, so what a view remembers as collapsed ("No label",
+  // "No project") never matches a group of another mode.
   const groups = new Map<string, Group>(
-    heads.map(([key, label]) => [key, { key, label, cardIds: [] }]),
+    heads.map(([key, label]) => [
+      `${by}:${key}`,
+      { key: `${by}:${key}`, label, cardIds: [] },
+    ]),
   );
-  const put = (keys: readonly string[], card: BoardCard) => {
-    const found = keys.filter((key) => groups.has(key));
+  const put = (raw: readonly string[], card: BoardCard) => {
+    const found = raw.map((key) => `${by}:${key}`).filter((key) => groups.has(key));
     // Nothing the board still lists: the card goes in the catch-all group.
-    const into = found.length ? found : groups.has("none") ? ["none"] : [];
+    const none = `${by}:none`;
+    const into = found.length ? found : groups.has(none) ? [none] : [];
     for (const key of into) groups.get(key)!.cardIds.push(card.id);
   };
   for (const card of cards) {

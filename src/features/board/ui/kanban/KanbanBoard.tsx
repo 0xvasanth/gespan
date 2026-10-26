@@ -73,6 +73,8 @@ export type KanbanBoardProps = {
    * caller appends it.
    */
   sorted?: boolean;
+  /** Cards in the bulk selection: each card announces it is pressed. */
+  selectedIds?: ReadonlySet<string>;
 };
 
 // Cards collide with cards and column bodies; columns only with columns.
@@ -122,6 +124,7 @@ export function KanbanBoard({
   onColumnMove,
   onCardOpen,
   onColumnExpand,
+  selectedIds,
   trailing,
   sorted = false,
 }: KanbanBoardProps) {
@@ -272,6 +275,7 @@ export function KanbanBoard({
               isDropTarget={activeCard?.columnId === column.id}
               reducedMotion={reducedMotion}
               renderCard={renderCard}
+              selectedIds={selectedIds}
               onCardOpen={drag ? undefined : onCardOpen}
               renderColumnHeader={renderColumnHeader}
               renderColumnFooter={renderColumnFooter}

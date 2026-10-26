@@ -84,7 +84,7 @@ export function BoardList({
       ref={win.ref}
       onScroll={win.onScroll}
       data-board-list=""
-      role="list"
+      role="group"
       aria-label="Cards"
       className="h-full min-h-0 overflow-y-auto"
     >
@@ -100,7 +100,7 @@ export function BoardList({
           if (row.kind === "header") {
             const Chevron = row.collapsed ? ChevronRight : ChevronDown;
             return (
-              <div key={row.key} style={style} role="listitem">
+              <div key={row.key} style={style}>
                 <button
                   type="button"
                   data-list-group={row.group.key}
@@ -125,11 +125,11 @@ export function BoardList({
             <div
               key={row.key}
               style={style}
-              role="listitem"
+              role="button"
               data-list-row={row.key}
               data-card-id={card.id}
               data-selected={isSelected ? "" : undefined}
-              aria-selected={isSelected}
+              aria-pressed={isSelected}
               aria-label={`Card #${card.number}, ${card.title}`}
               tabIndex={0}
               onClick={(event) => onRowClick(event, card)}

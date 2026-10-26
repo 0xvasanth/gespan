@@ -13,11 +13,14 @@ import type { KanbanDragData } from "./kanbanMove";
 export function KanbanCard({
   card,
   renderCard,
+  selected,
   onOpen,
   reducedMotion,
 }: {
   card: BoardCard;
   renderCard: (card: BoardCard) => ReactNode;
+  /** Set while a selection exists: whether this card is in it. */
+  selected?: boolean;
   onOpen?: (card: BoardCard) => void;
   reducedMotion: boolean;
 }) {
@@ -53,6 +56,7 @@ export function KanbanCard({
         }
       }}
       aria-roledescription="card"
+      aria-pressed={selected}
       aria-label={`Card #${card.number}, ${card.title}`}
       data-kanban-card={card.id}
       data-dragging={isDragging ? "" : undefined}

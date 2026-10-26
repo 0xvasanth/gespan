@@ -35,9 +35,10 @@ export function rangeSelect(
 }
 
 /**
- * Keeps only the cards still shown. The anchor goes only when its card is
- * gone from the board (`exists`), so a range can still start from a card a
- * filter has hidden. Returns the same object when nothing changed.
+ * Keeps only the cards still shown. The anchor is kept while its card is on
+ * the board (`exists`), shown or not; a range from an anchor that isn't in
+ * the order then selects only the clicked card (see `rangeSelect`). Returns
+ * the same object when nothing changed.
  */
 export function pruneSelection(
   selection: Selection,

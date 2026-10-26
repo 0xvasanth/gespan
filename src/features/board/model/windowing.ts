@@ -29,10 +29,13 @@ export function useWindowedRows({
   count,
   rowHeight,
   overscan = 6,
+  topOffset = 0,
 }: {
   count: number;
   rowHeight: number;
   overscan?: number;
+  /** Height of what sits above the first row inside the scroller (a sticky header). */
+  topOffset?: number;
 }) {
   const element = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -65,6 +68,6 @@ export function useWindowedRows({
     ref,
     onScroll: measure,
     totalHeight: count * rowHeight,
-    ...visibleRange(scrollTop, viewport, rowHeight, count, overscan),
+    ...visibleRange(scrollTop - topOffset, viewport, rowHeight, count, overscan),
   };
 }

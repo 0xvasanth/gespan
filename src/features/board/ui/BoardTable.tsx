@@ -84,7 +84,12 @@ export function BoardTable({
   onSetLabels: (card: BoardCard, labelIds: string[]) => void;
   onCreateLabel: (card: BoardCard, name: string) => void;
 }) {
-  const win = useWindowedRows({ count: cards.length, rowHeight: ROW_HEIGHT });
+  const win = useWindowedRows({
+    count: cards.length,
+    rowHeight: ROW_HEIGHT,
+    // The sticky header sits above the first row inside the scroller.
+    topOffset: ROW_HEIGHT,
+  });
   const [edit, setEdit] = useState<Edit | null>(null);
   const editRef = useRef<Edit | null>(null);
   editRef.current = edit;
@@ -312,7 +317,7 @@ export function BoardTable({
       ref={win.ref}
       onScroll={win.onScroll}
       data-board-table=""
-      role="table"
+      role="grid"
       aria-label="Cards"
       aria-rowcount={cards.length + 1}
       className="h-full min-h-0 overflow-auto"
@@ -320,6 +325,7 @@ export function BoardTable({
       <div style={{ width, minWidth: "100%" }}>
         <div
           role="row"
+          aria-rowindex={1}
           className="sticky top-0 z-10 flex border-b border-stroke bg-background-base text-[11px] font-medium text-content/55"
           style={{ height: ROW_HEIGHT }}
         >
@@ -352,6 +358,7 @@ export function BoardTable({
                 data-table-row={card.id}
                 data-selected={isSelected ? "" : undefined}
                 aria-selected={isSelected}
+                aria-rowindex={win.start + offset + 2}
                 aria-label={`Card #${card.number}, ${card.title}`}
                 tabIndex={0}
                 onClick={(event) => onRowClick(event, card)}
@@ -377,7 +384,7 @@ export function BoardTable({
                 {columns.map((column) => (
                   <div
                     key={column.id}
-                    role="cell"
+                    role="gridcell"
                     data-table-cell={column.id}
                     style={{ width: column.width }}
                     className="flex min-w-0 shrink-0 items-center gap-1 px-3"
