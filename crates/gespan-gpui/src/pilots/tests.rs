@@ -4949,3 +4949,198 @@ mod roadmap {
         assert!(last.ends_with(']'));
     }
 }
+
+// Default provider: start on an installed CLI; switching provider retries.
+fn only_installed(kinds: &[Kind], cx: &mut TestAppContext) {
+    let kinds = kinds.to_vec();
+    cx.update(|cx| {
+        cx.set_global(crate::installed_providers::InstalledProviders::probed(
+            kinds,
+        ))
+    });
+}
+#[gpui::test]
+fn new_pilot_starts_on_the_installed_provider_not_codex(cx: &mut TestAppContext) {
+    only_installed(&[Kind::Kiro], cx);
+    let s = setup(cx);
+    cx.update(|cx| {
+        let m = s.manager.read(cx);
+        assert_eq!(m.chats[&s.id].read(cx).summary.provider, "kiro");
+    });
+    let saved = locked(&s.store)
+        .unwrap()
+        .pilot_session(s.session)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.provider, "kiro");
+    // A missing default is skipped too, and the model follows the picked
+    // provider: Codex's model id never reaches Kiro.
+    cx.update(|cx| {
+        s.manager.update(cx, |m, _| {
+            m.prefs.default_provider = Some("codex".into());
+            m.prefs.default_models = HashMap::from([
+                ("codex".into(), "gpt-codex-model".into()),
+                ("kiro".into(), "kiro-model".into()),
+            ]);
+        })
+    });
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager
+                .update(cx, |m, cx| m.create(vec![s.project.clone()], w, cx))
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let m = s.manager.read(cx);
+        let second = m.current().unwrap().id.clone();
+        assert_ne!(second, s.id);
+        let chat = m.chats[&second].read(cx);
+        assert_eq!(chat.summary.provider, "kiro");
+        assert_eq!(chat.pilot_model().as_deref(), Some("kiro-model"));
+    });
+}
+#[gpui::test]
+fn switching_a_pilot_chat_provider_retries_its_failed_messages(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    // Held: dispatching leaves messages in the mailbox, so no CLI runs.
+    hold_app(cx);
+    let queued = |id: &str, error: Option<&str>| Message {
+        sent_at: None,
+        id: id.into(),
+        text: format!("message {id}"),
+        internal: false,
+        error: error.map(Into::into),
+        attachments: Vec::new(),
+        report: Vec::new(),
+    };
+    cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            let pilot = m.roster.get_mut(&s.id).unwrap();
+            pilot
+                .outbox
+                .push(queued("head", Some("Codex CLI not found.")));
+            pilot.outbox.push(queued("next", None));
+            m.save(cx);
+            m.configure_chat(&s.id, cx);
+        })
+    });
+    cx.run_until_parked();
+    let errors = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            s.manager
+                .read(cx)
+                .roster
+                .get(&s.id)
+                .unwrap()
+                .outbox
+                .iter()
+                .map(|m| (m.id.clone(), m.error.clone()))
+                .collect::<Vec<_>>()
+        })
+    };
+    let next = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            s.manager
+                .read(cx)
+                .next_outbox_message(&s.id, false)
+                .map(|m| m.id)
+        })
+    };
+    assert_eq!(next(cx), None, "the failed head holds the queue");
+    // A change that keeps the provider and model retries nothing.
+    cx.update(|cx| {
+        let chat = s.manager.read(cx).chats[&s.id].clone();
+        chat.update(cx, |_, cx| cx.emit(SessionChanged));
+    });
+    cx.run_until_parked();
+    assert_eq!(errors(cx)[0].1.as_deref(), Some("Codex CLI not found."));
+    cx.update(|cx| {
+        let chat = s.manager.read(cx).chats[&s.id].clone();
+        chat.update(cx, |v, cx| {
+            v.pilot_config(Kind::Kiro, None, HashMap::new(), cx)
+        })
+        .unwrap();
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        errors(cx),
+        vec![("head".into(), None), ("next".into(), None)],
+        "both retried, order kept"
+    );
+    assert_eq!(next(cx).as_deref(), Some("head"), "the head goes first");
+    let saved = Roster::load(&locked(&s.store).unwrap()).unwrap();
+    assert!(saved.pilots[0].outbox.iter().all(|m| m.error.is_none()));
+    // A later failure on Kiro, then a model change on the same provider,
+    // retries again.
+    cx.update(|cx| {
+        s.manager.update(cx, |m, _| {
+            m.roster.get_mut(&s.id).unwrap().outbox[0].error = Some("Kiro failed".into());
+        });
+        let chat = s.manager.read(cx).chats[&s.id].clone();
+        chat.update(cx, |v, cx| {
+            v.pilot_config(Kind::Kiro, Some("kiro-model".into()), HashMap::new(), cx)
+        })
+        .unwrap();
+    });
+    cx.run_until_parked();
+    assert_eq!(errors(cx)[0].1, None);
+}
+#[gpui::test]
+fn pilot_sessions_start_without_a_harness_uses_an_installed_provider(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    only_installed(&[Kind::Kiro], cx);
+    // No `harness` input and no source chat to copy a provider from.
+    cx.update(|cx| {
+        s.manager.update(cx, |m, _| {
+            m.chats.remove(&s.id);
+            m.prefs.default_provider = Some("codex".into());
+        })
+    });
+    let start = call(
+        &s,
+        "start-no-harness",
+        "sessions.start",
+        json!({"project":s.project,"prompt":"Review","title":"No harness","draft":true}),
+        cx,
+    )
+    .try_recv()
+    .unwrap()
+    .unwrap();
+    let child = start["sessionId"].as_i64().unwrap();
+    let sessions = locked(&s.store).unwrap().sessions().unwrap();
+    let started = sessions.iter().find(|x| x.id == child).unwrap();
+    assert_eq!(started.provider, "kiro");
+}
+#[gpui::test]
+fn a_habit_run_before_the_chat_loads_starts_on_an_installed_provider(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    only_installed(&[Kind::Kiro], cx);
+    let task = cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            // The chat is not loaded yet, so nothing to inherit from.
+            m.chats.remove(&s.id);
+            m.prefs.default_provider = Some("codex".into());
+            m.spawn_hidden_run(
+                &s.id,
+                "Habit".into(),
+                "Scheduled work".into(),
+                AccessMode::Auto,
+                |_, _, _, _| {},
+                cx,
+            )
+        })
+    });
+    task.detach();
+    cx.run_until_parked();
+    // Tests hold hidden runs: the prompt is recorded, no CLI starts.
+    let (session, prompt) =
+        cx.update(|cx| s.manager.read(cx).hidden_prompts.last().cloned().unwrap());
+    assert_eq!(prompt, "Scheduled work");
+    let sessions = locked(&s.store).unwrap().sessions().unwrap();
+    assert_eq!(
+        sessions.iter().find(|x| x.id == session).unwrap().provider,
+        "kiro"
+    );
+}

@@ -643,7 +643,7 @@ impl Changes {
         }
     }
     /// pickTextHarness: the conversation's provider when installed, else
-    /// Claude Code, then Codex.
+    /// a vetted fallback (Claude Code, Codex, Cursor, Grok, OpenCode, Kiro).
     fn text_harness(&self) -> Option<(Kind, PathBuf)> {
         pick_text_harness(self.text_provider)
     }
@@ -1801,11 +1801,28 @@ impl Changes {
     }
 }
 
-/// pickTextHarness: `preferred` when installed, else Claude Code, then Codex.
+/// pickTextHarness: `preferred` when installed (the user chose it), else the
+/// first installed of [`TEXT_FALLBACKS`]. Other providers are never picked
+/// silently: they are not vetted for one-shot text turns.
 pub(crate) fn pick_text_harness(preferred: Kind) -> Option<(Kind, PathBuf)> {
-    [preferred, Kind::Claude, Kind::Codex]
-        .into_iter()
-        .find_map(|kind| provider::resolve(kind).map(|binary| (kind, binary)))
+    pick_text_harness_with(preferred, provider::resolve)
+}
+/// The desktop's vetted text harnesses, plus Kiro CLI.
+const TEXT_FALLBACKS: [Kind; 6] = [
+    Kind::Claude,
+    Kind::Codex,
+    Kind::Cursor,
+    Kind::Grok,
+    Kind::OpenCode,
+    Kind::Kiro,
+];
+fn pick_text_harness_with(
+    preferred: Kind,
+    resolve: impl Fn(Kind) -> Option<PathBuf>,
+) -> Option<(Kind, PathBuf)> {
+    std::iter::once(preferred)
+        .chain(TEXT_FALLBACKS.into_iter().filter(|kind| *kind != preferred))
+        .find_map(|kind| resolve(kind).map(|binary| (kind, binary)))
 }
 
 /// generateCommitMessage: a message for the staged changes, written by a
@@ -2031,5 +2048,121 @@ mod tests {
         assert_eq!(status_letter("untracked"), "U");
         assert_eq!(dirname("a/b/c.rs"), "a/b");
         assert_eq!(dirname("c.rs"), "");
+    }
+    /// A fake `kiro-cli` speaking just enough ACP for a one-shot turn: it
+    /// records the prompt it was sent and answers with a commit message.
+    #[cfg(unix)]
+    fn fake_kiro(dir: &std::path::Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("kiro-cli");
+        let script = r#"#!/usr/bin/env python3
+import json, os, sys
+here = os.path.dirname(sys.argv[0])
+def send(value):
+    print(json.dumps(value), flush=True)
+for line in sys.stdin:
+    m = json.loads(line)
+    method = m.get('method')
+    if 'id' not in m:
+        continue
+    if method == 'session/new':
+        send({'jsonrpc': '2.0', 'id': m['id'], 'result': {'sessionId': 'k1'}})
+    elif method == 'session/prompt':
+        with open(os.path.join(here, 'prompt'), 'w') as f:
+            f.write(json.dumps(m['params']['prompt']))
+        text = json.dumps({'subject': 'Add the greeting', 'body': ''})
+        send({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': 'k1', 'update': {'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': text}}}})
+        send({'jsonrpc': '2.0', 'id': m['id'], 'result': {'stopReason': 'end_turn'}})
+    else:
+        send({'jsonrpc': '2.0', 'id': m['id'], 'result': {}})
+"#;
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    }
+    #[cfg(unix)]
+    #[test]
+    fn commit_message_uses_kiro_when_it_is_the_only_cli() {
+        let bin = tempfile::tempdir().unwrap();
+        let kiro = fake_kiro(bin.path());
+        // Only Kiro is installed; the panel prefers Claude Code, Codex next.
+        let only_kiro = |kind: Kind| (kind == Kind::Kiro).then(|| kiro.clone());
+        for preferred in [Kind::Claude, Kind::Codex, Kind::Hermes] {
+            assert_eq!(
+                pick_text_harness_with(preferred, only_kiro),
+                Some((Kind::Kiro, kiro.clone())),
+                "{preferred:?}"
+            );
+        }
+        // An installed preference and the Claude, Codex order still win.
+        let all = |kind: Kind| Some(PathBuf::from(kind.id()));
+        assert_eq!(
+            pick_text_harness_with(Kind::Kiro, all).unwrap().0,
+            Kind::Kiro
+        );
+        let late =
+            |kind: Kind| matches!(kind, Kind::Codex | Kind::Cursor).then(|| kind.id().into());
+        assert_eq!(
+            pick_text_harness_with(Kind::Kiro, late).unwrap().0,
+            Kind::Codex
+        );
+        // Fallbacks in their vetted order: Grok before Kiro.
+        let others = |kind: Kind| matches!(kind, Kind::Kiro | Kind::Grok).then(|| kind.id().into());
+        assert_eq!(
+            pick_text_harness_with(Kind::Claude, others).unwrap().0,
+            Kind::Grok
+        );
+        // The user's own choice wins whatever it is, Hermes included.
+        let hermes =
+            |kind: Kind| matches!(kind, Kind::Hermes | Kind::Claude).then(|| kind.id().into());
+        assert_eq!(
+            pick_text_harness_with(Kind::Hermes, hermes).unwrap().0,
+            Kind::Hermes
+        );
+        // Never a silent fall back to an unvetted provider.
+        for unvetted in [
+            Kind::Devin,
+            Kind::Antigravity,
+            Kind::Fx,
+            Kind::Omp,
+            Kind::Pi,
+            Kind::Hermes,
+        ] {
+            let only = move |kind: Kind| (kind == unvetted).then(|| kind.id().into());
+            assert_eq!(
+                pick_text_harness_with(Kind::Claude, only),
+                None,
+                "{unvetted:?}"
+            );
+        }
+        assert_eq!(pick_text_harness_with(Kind::Claude, |_| None), None);
+
+        // And the read-only one-shot turn really writes the message over ACP.
+        let repo = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .args(args)
+                .current_dir(repo.path())
+                .output()
+                .unwrap();
+            assert!(status.status.success(), "{args:?}: {status:?}");
+        };
+        git(&["init", "-q"]);
+        std::fs::write(repo.path().join("hello.txt"), "hello\n").unwrap();
+        git(&["add", "hello.txt"]);
+        let (kind, binary) = pick_text_harness_with(Kind::Claude, only_kiro).unwrap();
+        let message = generate_commit_message(
+            kind,
+            binary,
+            repo.path().into(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(message, "Add the greeting");
+        let prompt = std::fs::read_to_string(bin.path().join("prompt")).unwrap();
+        assert!(
+            prompt.contains("hello.txt"),
+            "the staged diff reached Kiro: {prompt}"
+        );
     }
 }

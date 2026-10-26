@@ -177,13 +177,14 @@ impl QuickComposer {
                 };
                 this.cwd = path.clone();
                 let p = cx.global::<crate::settings::Preferences>();
-                this.kind = p
-                    .project_providers
-                    .get(&this.cwd)
-                    .and_then(|v| v.provider.as_deref())
-                    .or(p.default_provider.as_deref())
-                    .map(Kind::from_id)
-                    .unwrap_or(Kind::Codex);
+                this.kind = crate::installed_providers::pick(
+                    p.project_providers
+                        .get(&this.cwd)
+                        .and_then(|v| v.provider.as_deref())
+                        .or(p.default_provider.as_deref())
+                        .map(Kind::from_id),
+                    cx,
+                );
                 this.model = p
                     .project_providers
                     .get(&this.cwd)
@@ -222,11 +223,10 @@ impl QuickComposer {
                         this.projects.push(this.cwd.clone());
                     }
                     let p = cx.global::<crate::settings::Preferences>();
-                    this.kind = p
-                        .default_provider
-                        .as_deref()
-                        .map(Kind::from_id)
-                        .unwrap_or(Kind::Codex);
+                    this.kind = crate::installed_providers::pick(
+                        p.default_provider.as_deref().map(Kind::from_id),
+                        cx,
+                    );
                     this.model = p.default_models.get(this.kind.id()).cloned();
                     this.completion.update(cx, |c, cx| {
                         c.set_cwd(&this.cwd, cx);

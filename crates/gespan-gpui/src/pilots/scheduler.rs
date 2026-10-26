@@ -1412,13 +1412,20 @@ impl Pilots {
             .get(pilot_id)
             .map(|v| v.read(cx).settings.clone())
             .unwrap_or_default();
-        let provider = self
+        let chat_provider = self
             .chats
             .get(pilot_id)
-            .map(|v| v.read(cx).summary.provider.clone())
-            .unwrap_or_else(|| "codex".into());
+            .map(|v| v.read(cx).summary.provider.clone());
+        // The chat is still loading: start where it will.
+        let preferred = self.prefs.default_provider.as_deref().and_then(Kind::parse);
+        let known = crate::installed_providers::snapshot(cx);
         let store = self.store.clone();
         let work = cx.background_executor().spawn(async move {
+            let provider = chat_provider.unwrap_or_else(|| {
+                crate::installed_providers::pick_resolving(&known, preferred)
+                    .id()
+                    .into()
+            });
             let db = locked(&store)?;
             let cwd = std::env::var("HOME").unwrap_or_else(|_| ".".into());
             let mut s = db.create(&provider, &cwd)?;

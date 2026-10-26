@@ -61,7 +61,7 @@ mod tasks;
 pub use rewind::{rewind_last_turn, supports_rewind, RewindError};
 #[cfg(all(test, unix))]
 mod text_tests;
-pub use kind::Kind;
+pub use kind::{pick_installed, Kind};
 
 const BATCH_BYTES: usize = 64 * 1024;
 const TICK: Duration = Duration::from_millis(16);

@@ -135,9 +135,48 @@ impl Kind {
     }
 }
 
+/// The provider to start with: the preferred one if installed, else the first
+/// installed in `Kind::ALL` order, else the preferred one (or Codex), so the
+/// existing "not found" guidance still shows. Mirrors the desktop app's
+/// `firstEnabledHarness`.
+pub fn pick_installed(preferred: Option<Kind>, installed: impl Fn(Kind) -> bool) -> Kind {
+    let preferred = preferred.unwrap_or(Kind::Codex);
+    if installed(preferred) {
+        return preferred;
+    }
+    Kind::ALL
+        .into_iter()
+        .find(|kind| installed(*kind))
+        .unwrap_or(preferred)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pick_installed_keeps_an_installed_preference() {
+        let installed = |k: Kind| matches!(k, Kind::Claude | Kind::Kiro);
+        assert_eq!(pick_installed(Some(Kind::Kiro), installed), Kind::Kiro);
+        // Claude comes first in `Kind::ALL`, but an installed preference wins.
+        assert_eq!(pick_installed(Some(Kind::Kiro), |_| true), Kind::Kiro);
+    }
+    #[test]
+    fn pick_installed_skips_a_missing_preference_for_the_first_installed() {
+        let only_kiro = |k: Kind| k == Kind::Kiro;
+        assert_eq!(pick_installed(Some(Kind::Codex), only_kiro), Kind::Kiro);
+        assert_eq!(pick_installed(None, only_kiro), Kind::Kiro);
+        // Several installed: the first in `Kind::ALL` order.
+        let two = |k: Kind| matches!(k, Kind::Devin | Kind::Cursor);
+        assert_eq!(pick_installed(Some(Kind::Codex), two), Kind::Cursor);
+    }
+    #[test]
+    fn pick_installed_falls_back_to_the_preference_when_nothing_is_installed() {
+        assert_eq!(pick_installed(Some(Kind::Kiro), |_| false), Kind::Kiro);
+        assert_eq!(pick_installed(None, |_| false), Kind::Codex);
+        // With no preference and everything installed (not probed yet), the
+        // historic default holds rather than jumping to `Kind::ALL[0]`.
+        assert_eq!(pick_installed(None, |_| true), Kind::Codex);
+    }
     #[test]
     fn registry_matches_the_react_harnesses() {
         let source = include_str!("../../../../src/integrations/harness/core/register.ts");
