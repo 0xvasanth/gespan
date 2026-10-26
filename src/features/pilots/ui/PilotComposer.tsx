@@ -70,6 +70,8 @@ type Props = {
   controls?: ReactNode;
   /** Sits beside attach and emoji, on the left under the input. */
   tools?: ReactNode;
+  /** Blocks sending, e.g. when no coding agent is installed; the tooltip. */
+  blockedReason?: string;
 };
 
 /**
@@ -91,6 +93,7 @@ export function PilotComposer({
   onFocus,
   controls,
   tools,
+  blockedReason,
 }: Props) {
   const [text, setText] = useState(() => getComposerDraft(sessionId) ?? "");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -110,6 +113,7 @@ export function PilotComposer({
   const [submitting, setSubmitting] = useState(false);
   const ready =
     enabled &&
+    !blockedReason &&
     !submitting &&
     pendingReads === 0 &&
     (text.trim().length > 0 || attachments.length > 0);
@@ -265,8 +269,15 @@ export function PilotComposer({
     read: readDropped,
     onError: setDropError,
   });
+  const blockedRef = useRef(blockedReason);
+  blockedRef.current = blockedReason;
   const send = () => {
-    if (!enabled || submittingRef.current || pendingReadsRef.current > 0)
+    if (
+      !enabled ||
+      blockedRef.current ||
+      submittingRef.current ||
+      pendingReadsRef.current > 0
+    )
       return;
     const message = textRef.current.trim();
     const draft = textRef.current;
@@ -358,7 +369,9 @@ export function PilotComposer({
     <button
       type="submit"
       aria-label="Send"
-      title={pendingReads ? "Reading attachments…" : "Send"}
+      title={
+        blockedReason ?? (pendingReads ? "Reading attachments…" : "Send")
+      }
       disabled={!ready}
       className={`primary-action grid size-6.5 place-items-center rounded-md transition-[background-color,color,transform] duration-150 active:scale-90 disabled:cursor-default ${className}`}
     >

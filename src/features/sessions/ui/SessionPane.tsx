@@ -100,6 +100,11 @@ import {
 } from "../../settings/model/settings";
 import { getComposerDraft, setComposerDraft } from "../model/draftCache";
 import { resolveModel } from "../model/models";
+import { NO_CODING_AGENT_HINT } from "../model/noCodingAgent";
+import {
+  NoCodingAgentSettingsButton,
+  useNoCodingAgentDetected,
+} from "./NoCodingAgent";
 import { isAstraModel } from "../model/astraWelcome";
 import { isOpus55Model } from "../model/opusWelcome";
 import { AstraWelcome } from "./AstraWelcome";
@@ -402,6 +407,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
   );
   const recallLastTurnRef = useRef<(() => void) | null>(null);
   const remote = remoteSession;
+  const noCodingAgent = useNoCodingAgentDetected() && !remoteSession;
   // A Pilot's chat is a running conversation; what was said stays said.
   const editLastTurnSupported =
     !remote && !pilotForSession(session.id) && canEditLastTurn(session);
@@ -1217,6 +1223,9 @@ const LocalSessionPane = memo(function LocalSessionPane({
                     onSubmit={(text, attachments) =>
                       onSubmit(session.id, text, attachments)
                     }
+                    blockedReason={
+                      noCodingAgent ? NO_CODING_AGENT_HINT : undefined
+                    }
                     // The plan's usage, as the session footer shows it,
                     // which a Pilot in full view covers. Its account moves
                     // with the usage-limit notice, not here. A narrow chat
@@ -1251,6 +1260,9 @@ const LocalSessionPane = memo(function LocalSessionPane({
                           hotkeys={focused && !btw.open}
                           variant="text"
                           labelClassName="@max-sm:hidden"
+                          disabledReason={
+                            noCodingAgent ? NO_CODING_AGENT_HINT : undefined
+                          }
                           onChange={(harness, model) =>
                             onModelChange(session.id, harness, model)
                           }
@@ -1258,6 +1270,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                             onModelSettingsChange(session.id, settings)
                           }
                         />
+                        {noCodingAgent ? <NoCodingAgentSettingsButton /> : null}
                         <ModelControlPills
                           harness={session.harness}
                           model={session.model}

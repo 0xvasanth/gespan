@@ -1,5 +1,11 @@
 import { parseQuickAttachments } from "./quickAttachments";
 import { isHarnessAvailable } from "../../../integrations/harness/core/availability";
+import {
+  emitHarnessAvailability,
+  markHarnessAvailabilityProbed,
+  setHarnessAvailability,
+  type HarnessAvailability,
+} from "../../../integrations/harness/core/availabilityState";
 import { invoke } from "@tauri-apps/api/core";
 import { IS_MAC } from "../../../platform/tauri/platform";
 import { loadQuickComposerShortcut } from "../../settings/model/settings";
@@ -196,7 +202,17 @@ export function applyQuickCatalog(value: unknown): HarnessId[] | null {
     );
     setHarnessModels(harness, valid);
   }
-  return raw.availableHarnesses.filter(isHarnessId);
+  const available = raw.availableHarnesses.filter(isHarnessId);
+  // The workspace probed the CLIs; record it here too, so this panel's
+  // new-session choice skips providers that are not installed.
+  setHarnessAvailability(
+    Object.fromEntries(
+      HARNESSES.map((id) => [id, available.includes(id)]),
+    ) as HarnessAvailability,
+  );
+  markHarnessAvailabilityProbed();
+  emitHarnessAvailability();
+  return available;
 }
 
 /**

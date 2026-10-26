@@ -11,8 +11,10 @@ const native = vi.hoisted(() => ({
   invoke: vi.fn(),
   listen: vi.fn(),
   hide: vi.fn(),
+  emit: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ emit: native.emit }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ hide: native.hide }),
 }));
@@ -276,6 +278,54 @@ it("keeps the draft when the workspace rejects delivery", async () => {
   expect(container.querySelector('[role="alert"]')?.textContent).toContain(
     "Workspace unavailable",
   );
+});
+
+it("disables send with the settings hint when the owner reports no coding agent", async () => {
+  const hint = "No coding agent detected. Set one up in Settings → Agent CLIs.";
+  native.emit.mockReset().mockResolvedValue(undefined);
+  await render();
+  const blocked = snapshot(0);
+  act(() =>
+    receive({
+      payload: { ...blocked, session: { ...blocked.session!, noCodingAgent: true } },
+    }),
+  );
+  const field = container.querySelector<HTMLTextAreaElement>(
+    '[aria-label="Message Captain"]',
+  )!;
+  const props = Object.entries(field).find(([key]) =>
+    key.startsWith("__reactProps"),
+  )![1];
+  act(() => props.onChange({ target: { value: "Ship it" } }));
+  const send = container.querySelector<HTMLButtonElement>(
+    'button[aria-label="Send"]',
+  )!;
+  expect(send.disabled).toBe(true);
+  expect(send.title).toBe(hint);
+  await act(async () =>
+    container
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+  );
+  expect(native.invoke).not.toHaveBeenCalledWith(
+    "pilot_chat_action",
+    expect.anything(),
+  );
+  expect(field.value).toBe("Ship it");
+
+  const settings = container.querySelector<HTMLButtonElement>(
+    'button[data-no-coding-agent="settings"]',
+  )!;
+  expect(settings.title).toBe(hint);
+  await act(async () => settings.click());
+  expect(native.emit).toHaveBeenCalledWith("open_agent_clis_settings");
+
+  // A CLI appears: the next publish drops the flag and send re-enables.
+  act(() => receive({ payload: snapshot(0) }));
+  expect(send.disabled).toBe(false);
+  expect(
+    container.querySelector('button[data-no-coding-agent="settings"]'),
+  ).toBeNull();
 });
 
 it("ignores a stale initial snapshot after a newer update arrives", async () => {

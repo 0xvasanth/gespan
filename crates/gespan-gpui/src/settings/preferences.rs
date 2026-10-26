@@ -67,8 +67,18 @@ pub(crate) struct Preferences {
     pub binary_paths: HashMap<String, String>,
     pub disabled_skill_paths: Vec<String>,
     pub skill_source_paths: Vec<String>,
+    /// The Settings default from before last-used existed; it now only seeds
+    /// `last_provider` for preferences saved without one.
     pub default_provider: Option<String>,
+    /// Each provider's last picked model (desktop `saveDefaultModel`).
     pub default_models: HashMap<String, String>,
+    /// The provider last picked in any picker or Settings → Providers
+    /// (desktop `gespan.lastModel`); new sessions start there.
+    pub last_provider: Option<String>,
+    /// Last changed composer controls other than effort, keyed as the desktop's
+    /// `gespan.lastModelSettings` (`fast`, `thinking`, `serviceTier`, model
+    /// control ids). Effort is per provider in `provider_efforts`.
+    pub last_model_settings: HashMap<String, String>,
     pub hidden_providers: Vec<String>,
     pub project_providers: HashMap<String, ProviderDefaults>,
     pub favorite_models: Vec<ModelChoice>,
@@ -152,6 +162,8 @@ impl Default for Preferences {
             skill_source_paths: Vec::new(),
             default_provider: None,
             default_models: HashMap::new(),
+            last_provider: None,
+            last_model_settings: HashMap::new(),
             hidden_providers: Vec::new(),
             project_providers: HashMap::new(),
             favorite_models: Vec::new(),
@@ -204,6 +216,82 @@ impl Preferences {
     }
 }
 
+/// [`Preferences::apply_last_controls`] for work holding only the controls:
+/// the chosen model is looked up in the cached catalog by `settings.account`
+/// and `settings.model`, so set those first.
+pub(crate) fn apply_last_controls_to(
+    last: &HashMap<String, String>,
+    settings: &mut gespan_core::agent::Settings,
+    kind: gespan_core::provider::Kind,
+) {
+    let model =
+        gespan_core::catalog::cached_models_for(kind, &settings.account).and_then(|models| {
+            match settings.model.as_deref() {
+                Some(id) => models
+                    .into_iter()
+                    .find(|m| m.id == id || m.alias_target.as_deref() == Some(id)),
+                None => {
+                    let default = models.iter().position(|m| m.default).unwrap_or(0);
+                    models.into_iter().nth(default)
+                }
+            }
+        });
+    apply_controls(last, settings, kind, model.as_ref());
+}
+
+/// Merges remembered controls only where the chosen model defines them with
+/// a valid value (desktop `mergeModelSettings`). Without a catalog, only the
+/// provider's known controls apply; anything else is dropped. Effort lives in
+/// `provider_efforts` and is never merged here.
+pub(crate) fn apply_controls(
+    last: &HashMap<String, String>,
+    settings: &mut gespan_core::agent::Settings,
+    kind: gespan_core::provider::Kind,
+    model: Option<&gespan_core::catalog::Model>,
+) {
+    use gespan_core::provider::Kind;
+    let boolean = |value: &str| matches!(value, "true" | "false");
+    for (key, value) in last {
+        let key = key.as_str();
+        if matches!(
+            key,
+            "effort" | "reasoning" | "reasoningEffort" | "reasoning_effort"
+        ) {
+            continue;
+        }
+        match model {
+            Some(model) => match key {
+                "fast" if model.fast && boolean(value) => settings.fast = value == "true",
+                "thinking" if model.thinking && boolean(value) => {
+                    settings.thinking = value.parse().ok()
+                }
+                "serviceTier" if model.tiers.iter().any(|(id, _)| id == value) => {
+                    settings.service_tier = Some(value.clone())
+                }
+                _ if model
+                    .controls
+                    .iter()
+                    .any(|c| c.id == key && c.choices.iter().any(|(v, _)| v == value)) =>
+                {
+                    settings.model_settings.insert(key.into(), value.clone());
+                }
+                _ => {}
+            },
+            None => match (kind, key) {
+                (Kind::Claude, "fast") if boolean(value) => settings.fast = value == "true",
+                (Kind::Claude, "thinking") if boolean(value) => {
+                    settings.thinking = value.parse().ok()
+                }
+                (Kind::Claude, "context") => {
+                    settings.model_settings.insert(key.into(), value.clone());
+                }
+                (Kind::Codex, "serviceTier") => settings.service_tier = Some(value.clone()),
+                _ => {}
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct ProviderDefaults {
@@ -220,6 +308,47 @@ pub(crate) struct ModelChoice {
 
 impl gpui::Global for Preferences {}
 impl Preferences {
+    /// The last used provider; older preferences fall back to their default.
+    pub(crate) fn last_used_provider(&self) -> Option<gespan_core::provider::Kind> {
+        self.last_provider
+            .as_deref()
+            .or(self.default_provider.as_deref())
+            .and_then(gespan_core::provider::Kind::parse)
+    }
+    /// A user's pick in any picker: it becomes the last used provider, and the
+    /// model that provider's last model (`None`, its Default, forgets it).
+    pub(crate) fn remember_choice(
+        &mut self,
+        kind: gespan_core::provider::Kind,
+        model: Option<String>,
+    ) {
+        self.last_provider = Some(kind.id().into());
+        match model {
+            Some(model) => self.default_models.insert(kind.id().into(), model),
+            None => self.default_models.remove(kind.id()),
+        };
+    }
+    /// Settings → Providers "Use by default": also the last used choice.
+    pub(crate) fn use_by_default(&mut self, kind: gespan_core::provider::Kind) {
+        self.default_provider = Some(kind.id().into());
+        self.last_provider = Some(kind.id().into());
+    }
+    /// A composer control changed; `None` clears it.
+    pub(crate) fn remember_control(&mut self, key: &str, value: Option<String>) {
+        match value {
+            Some(value) => self.last_model_settings.insert(key.into(), value),
+            None => self.last_model_settings.remove(key),
+        };
+    }
+    /// Merges the last used controls the chosen model supports into a new
+    /// session's settings (desktop `preferredModelSettings`).
+    pub(crate) fn apply_last_controls(
+        &self,
+        settings: &mut gespan_core::agent::Settings,
+        kind: gespan_core::provider::Kind,
+    ) {
+        apply_last_controls_to(&self.last_model_settings, settings, kind);
+    }
     pub(crate) fn hidden_for(&self, project: &str) -> Vec<String> {
         let mut hidden = self.hidden_providers.clone();
         if let Some(settings) = self.project_providers.get(project) {
@@ -244,5 +373,94 @@ mod keep_awake_tests {
         let saved: Preferences =
             serde_json::from_str(r#"{"keep_awake":"agents_running"}"#).unwrap();
         assert_eq!(Mode::parse(&saved.keep_awake), Some(Mode::AgentsRunning));
+    }
+}
+
+#[cfg(test)]
+mod last_controls_tests {
+    use super::apply_controls;
+    use gespan_core::agent::Settings;
+    use gespan_core::catalog::{Model, ModelControl};
+    use gespan_core::provider::Kind;
+    use std::collections::HashMap;
+
+    fn model(fast: bool, tiers: &[&str], controls: &[(&str, &[&str])]) -> Model {
+        Model {
+            id: "m".into(),
+            name: "M".into(),
+            alias_target: None,
+            efforts: Vec::new(),
+            default_effort: None,
+            fast,
+            thinking: false,
+            default: true,
+            tiers: tiers
+                .iter()
+                .map(|t| (t.to_string(), t.to_string()))
+                .collect(),
+            controls: controls
+                .iter()
+                .map(|(id, choices)| ModelControl {
+                    id: id.to_string(),
+                    name: id.to_string(),
+                    current: String::new(),
+                    choices: choices
+                        .iter()
+                        .map(|c| (c.to_string(), c.to_string()))
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn remembered_controls_apply_only_where_the_model_supports_them() {
+        let last: HashMap<String, String> = [
+            ("fast", "true"),
+            ("thinking", "true"),
+            ("context", "1m"),
+            ("serviceTier", "flex"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.into(), v.into()))
+        .collect();
+        let apply = |kind: Kind, model: Option<&Model>| {
+            let mut settings = Settings::default();
+            apply_controls(&last, &mut settings, kind, model);
+            settings
+        };
+        // A Cursor model defining a boolean thinking control and other
+        // context sizes: only the valid thinking value carries over.
+        let cursor = model(
+            false,
+            &[],
+            &[("thinking", &["false", "true"]), ("context", &["200k"])],
+        );
+        let s = apply(Kind::Cursor, Some(&cursor));
+        assert_eq!(
+            s.model_settings,
+            HashMap::from([("thinking".into(), "true".into())])
+        );
+        assert!(!s.fast && s.thinking.is_none() && s.service_tier.is_none());
+        // A model with fast and the remembered tier takes both.
+        let codex = model(true, &["flex"], &[]);
+        let s = apply(Kind::Codex, Some(&codex));
+        assert!(s.fast);
+        assert_eq!(s.service_tier.as_deref(), Some("flex"));
+        assert!(s.model_settings.is_empty());
+        // No catalog yet: only the provider's known controls.
+        let s = apply(Kind::Claude, None);
+        assert!(s.fast);
+        assert_eq!(s.thinking, Some(true));
+        assert_eq!(s.model_settings["context"], "1m");
+        for unknown in [Kind::Omp, Kind::Pi, Kind::Cursor, Kind::Kiro] {
+            let s = apply(unknown, None);
+            assert!(!s.fast, "{unknown:?}");
+            assert_eq!(s.thinking, None, "{unknown:?}");
+            assert!(s.model_settings.is_empty(), "{unknown:?}");
+        }
+        // A level-valued thinking (Pi, Omp) is not Claude's boolean.
+        let pi = model(false, &[], &[("thinking", &["low", "high"])]);
+        assert!(apply(Kind::Pi, Some(&pi)).model_settings.is_empty());
     }
 }

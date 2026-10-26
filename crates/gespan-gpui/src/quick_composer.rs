@@ -30,6 +30,7 @@ pub(crate) struct Controller {
     pub error: Option<String>,
     pub task: Option<Task<()>>,
     pub events: Option<Subscription>,
+    pub settings_events: Option<Subscription>,
     config: String,
     #[cfg(all(target_os = "macos", not(test)))]
     registration: Option<hotkey::Registration>,
@@ -85,6 +86,8 @@ pub(crate) struct QuickComposer {
     picker_events: Option<Subscription>,
 }
 impl EventEmitter<Launch> for QuickComposer {}
+/// The model button while no coding agent is detected: Settings → Agent CLIs.
+impl EventEmitter<crate::conversation::OpenAgentSettings> for QuickComposer {}
 impl QuickComposer {
     pub fn new(
         projects: Vec<String>,
@@ -110,6 +113,9 @@ impl QuickComposer {
                 this.launch(false, cx)
             }),
             cx.observe(&input, |_, _, cx| cx.notify()),
+            cx.observe_global::<crate::installed_providers::InstalledProviders>(|_, cx| {
+                cx.notify()
+            }),
             cx.subscribe(
                 &completion,
                 |this, _, picked: &crate::composer_completion::ModePicked, cx| {
@@ -140,7 +146,7 @@ impl QuickComposer {
         }
     }
     fn launch(&mut self, foreground: bool, cx: &mut Context<Self>) {
-        if self.input.read(cx).is_composing() {
+        if self.input.read(cx).is_composing() || crate::installed_providers::none_detected(cx) {
             return;
         }
         let prompt = self.input.read(cx).content.trim().to_owned();
@@ -176,21 +182,11 @@ impl QuickComposer {
                     return;
                 };
                 this.cwd = path.clone();
-                let p = cx.global::<crate::settings::Preferences>();
-                this.kind = crate::installed_providers::pick(
-                    p.project_providers
-                        .get(&this.cwd)
-                        .and_then(|v| v.provider.as_deref())
-                        .or(p.default_provider.as_deref())
-                        .map(Kind::from_id),
+                (this.kind, this.model) = crate::installed_providers::new_session_choice(
+                    cx.global::<crate::settings::Preferences>(),
+                    Some(&this.cwd),
                     cx,
                 );
-                this.model = p
-                    .project_providers
-                    .get(&this.cwd)
-                    .and_then(|v| v.models.get(this.kind.id()))
-                    .or(p.default_models.get(this.kind.id()))
-                    .cloned();
                 this.completion.update(cx, |c, cx| {
                     c.set_cwd(&this.cwd, cx);
                     c.set_provider(this.kind.id(), cx);
@@ -222,12 +218,11 @@ impl QuickComposer {
                     if !this.projects.contains(&this.cwd) {
                         this.projects.push(this.cwd.clone());
                     }
-                    let p = cx.global::<crate::settings::Preferences>();
-                    this.kind = crate::installed_providers::pick(
-                        p.default_provider.as_deref().map(Kind::from_id),
+                    (this.kind, this.model) = crate::installed_providers::new_session_choice(
+                        cx.global::<crate::settings::Preferences>(),
+                        Some(&this.cwd),
                         cx,
                     );
-                    this.model = p.default_models.get(this.kind.id()).cloned();
                     this.completion.update(cx, |c, cx| {
                         c.set_cwd(&this.cwd, cx);
                         c.set_provider(this.kind.id(), cx);
@@ -246,6 +241,10 @@ impl QuickComposer {
             cx.notify();
             return;
         }
+        if crate::installed_providers::none_detected(cx) {
+            cx.emit(crate::conversation::OpenAgentSettings);
+            return;
+        }
         let profile = crate::accounts::get(cx)
             .map(|a| a.read(cx).selected(self.kind, &self.cwd))
             .unwrap_or_default();
@@ -262,6 +261,7 @@ impl QuickComposer {
             |this, _, picked: &ModelPicked, window, cx| {
                 this.kind = picked.0;
                 this.model = picked.1.clone();
+                crate::pickers::remember_last_used(picked.0, picked.1.clone(), cx);
                 this.completion.update(cx, |completion, cx| {
                     completion.set_provider(this.kind.id(), cx)
                 });
@@ -282,6 +282,14 @@ impl Focusable for QuickComposer {
 }
 impl Render for QuickComposer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let no_agent = crate::installed_providers::none_detected(cx)
+            .then_some(crate::installed_providers::NO_AGENT_HINT);
+        let hint = move |d: gpui::Stateful<gpui::Div>| match no_agent {
+            Some(hint) => d
+                .aria_description(hint)
+                .tooltip(move |_, cx| cx.new(|_| crate::conversation::HintTooltip(hint)).into()),
+            None => d,
+        };
         let mut root = div()
             .id("quick-composer")
             .size_full()
@@ -351,6 +359,8 @@ impl Render for QuickComposer {
                             &model_name(self.kind, self.model.as_deref()),
                         ))
                         .child(icon("chevron-down", 12.))
+                        .when(no_agent.is_some(), |d| d.opacity(0.5))
+                        .map(hint)
                         .on_click(cx.listener(|this, _, window, cx| this.models(window, cx))),
                     )
                     .child(
@@ -380,8 +390,9 @@ impl Render for QuickComposer {
                         crate::settings::widgets::primary_button(
                             "quick-send",
                             "Start session",
-                            self.input.read(cx).content.trim().is_empty(),
+                            self.input.read(cx).content.trim().is_empty() || no_agent.is_some(),
                         )
+                        .map(hint)
                         .child(icon("arrow-up", 14.))
                         .on_click(cx.listener(|this, _, _, cx| this.launch(false, cx))),
                     ),
@@ -465,5 +476,77 @@ impl Render for QuickComposer {
             );
         }
         root
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::installed_providers::InstalledProviders;
+    use std::{cell::RefCell, rc::Rc, sync::Arc, sync::Mutex};
+
+    #[gpui::test]
+    fn no_agent_detected_blocks_the_quick_composer_and_points_to_settings(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let store = gespan_core::store::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let store = Arc::new(Mutex::new(store));
+        let events = Rc::new(RefCell::new(Vec::<&'static str>::new()));
+        let window = cx.update(|cx| {
+            input::bind(cx);
+            cx.set_global(crate::settings::Preferences::default());
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    QuickComposer::new(
+                        vec!["/work".into()],
+                        Launch {
+                            cwd: "/work".into(),
+                            kind: Kind::Kiro,
+                            model: None,
+                            access: AccessMode::default(),
+                            prompt: String::new(),
+                            foreground: false,
+                        },
+                        store,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        let view = window.update(cx, |_, _, cx| cx.entity()).unwrap();
+        let _subscriptions = cx.update(|cx| {
+            let launched = events.clone();
+            let settings = events.clone();
+            [
+                cx.subscribe(&view, move |_, _: &Launch, _| {
+                    launched.borrow_mut().push("launch")
+                }),
+                cx.subscribe(
+                    &view,
+                    move |_, _: &crate::conversation::OpenAgentSettings, _| {
+                        settings.borrow_mut().push("settings")
+                    },
+                ),
+            ]
+        });
+        cx.update(|cx| cx.set_global(InstalledProviders::probed([])));
+        window
+            .update(cx, |this, window, cx| {
+                this.input
+                    .update(cx, |input, cx| input.set_text("Fix the bug".into(), cx));
+                this.launch(false, cx);
+                this.models(window, cx);
+                assert!(this.models.is_none(), "no model list opens");
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), vec!["settings"]);
+        cx.update(|cx| cx.set_global(InstalledProviders::probed([Kind::Kiro])));
+        window
+            .update(cx, |this, _, cx| this.launch(false, cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), vec!["settings", "launch"]);
     }
 }

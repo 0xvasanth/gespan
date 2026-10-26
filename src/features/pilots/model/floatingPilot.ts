@@ -4,6 +4,10 @@ import type { UserQuestionReply } from "../../sessions/model/userQuestion";
 import { displayAttachments } from "../../sessions/model/attachments";
 import { listPilots, pilotLook, pilotState, type PilotStatus } from "./pilot";
 import { pixelLayers } from "../../projects/model/pixelMascots";
+import {
+  NO_CODING_AGENT_HINT,
+  noCodingAgentDetected,
+} from "../../sessions/model/noCodingAgent";
 
 export const FLOATING_PILOT_CHANGED = "pilot_chat_changed";
 export const FLOATING_PILOT_REQUEST = "pilot_chat_request";
@@ -15,10 +19,15 @@ export type FloatingPilotEntry = {
   sessionId: string | null;
   status: PilotStatus;
 };
+/**
+ * The window never probes CLIs, so the owner marks a session published while
+ * no coding agent is detected.
+ */
+export type FloatingPilotSession = Session & { noCodingAgent?: true };
 export type FloatingPilotView = {
   pilots: FloatingPilotEntry[];
   pilotId: string | null;
-  session: Session | null;
+  session: FloatingPilotSession | null;
   error: string | null;
 };
 export type FloatingPilotAction =
@@ -65,9 +74,10 @@ export function floatingPilotMenuMascots(pilots: FloatingPilotEntry[]) {
 }
 
 /** Blob URLs belong to their webview; send attachment bytes/paths instead. */
-export function floatingPilotSession(session: Session): Session {
+export function floatingPilotSession(session: Session): FloatingPilotSession {
   return {
     ...session,
+    ...(noCodingAgentDetected() ? { noCodingAgent: true as const } : {}),
     blocks: session.blocks.map((block) =>
       block.attachments?.length
         ? { ...block, attachments: floatingPilotAttachments(block.attachments) }
@@ -129,6 +139,7 @@ export async function deliverFloatingPilotRequest(
     case "open":
       break;
     case "submit":
+      if (noCodingAgentDetected()) throw new Error(NO_CODING_AGENT_HINT);
       if (host.submit(session.id, action.text, action.attachments) === false)
         throw new Error(
           "The message could not be sent. Try again in a moment.",

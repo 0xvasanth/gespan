@@ -327,20 +327,12 @@ impl Automations {
     }
     fn begin(&mut self, template: Option<Template>, cx: &mut Context<Self>) {
         let preferences = cx.try_global::<crate::settings::Preferences>();
-        let kind = crate::installed_providers::pick(
-            preferences
-                .and_then(|p| p.project_providers.get(&self.cwd))
-                .and_then(|p| p.provider.as_deref())
-                .or_else(|| preferences.and_then(|p| p.default_provider.as_deref()))
-                .map(Kind::from_id),
+        let (kind, model) = crate::installed_providers::new_session_choice(
+            preferences.unwrap_or(&Default::default()),
+            Some(&self.cwd),
             cx,
         );
-        let model = preferences
-            .and_then(|p| p.project_providers.get(&self.cwd))
-            .and_then(|p| p.models.get(kind.id()))
-            .or_else(|| preferences.and_then(|p| p.default_models.get(kind.id())))
-            .cloned()
-            .unwrap_or_default();
+        let model = model.unwrap_or_default();
         let mut draft = AutomationUpsert::new(self.cwd.clone(), kind.id().into(), model);
         if let Some(template) = template {
             draft.name = template.name;

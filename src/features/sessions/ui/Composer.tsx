@@ -204,6 +204,11 @@ import {
   type McpSettingsSnapshot,
 } from "../../settings/model/mcpSettingsCache";
 import type { LastTurnRecall } from "../model/editLastTurn";
+import { NO_CODING_AGENT_HINT } from "../model/noCodingAgent";
+import {
+  NoCodingAgentSettingsButton,
+  useNoCodingAgentDetected,
+} from "./NoCodingAgent";
 import { useComposerAutocorrect } from "../../settings/model/displayPrefs";
 import {
   INSET_LAYOUT_DEFAULT,
@@ -425,6 +430,8 @@ export function Composer({
   onEditingLastTurnChange,
   children,
 }: Props) {
+  // A host session runs the host's CLIs, so this computer's matter only here.
+  const noCodingAgent = useNoCodingAgentDetected() && !remoteSession;
   const ref = useRef<HTMLTextAreaElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const plusRef = useRef<HTMLDivElement>(null);
@@ -1322,7 +1329,8 @@ export function Composer({
   }, [editLastTurnSupported, onRecallLastTurnReady, recallLastTurn]);
 
   const submit = (value: string) => {
-    if (disabled || worktreeRemoved || submitLockRef.current) return;
+    if (disabled || noCodingAgent || worktreeRemoved || submitLockRef.current)
+      return;
     submitLockRef.current = true;
     void completeSubmit(value).finally(() => {
       submitLockRef.current = false;
@@ -2479,6 +2487,9 @@ export function Composer({
                   project={cwd}
                   hideSettings={controlsBeside}
                   hotkeys={hotkeys && enabled}
+                  disabledReason={
+                    noCodingAgent ? NO_CODING_AGENT_HINT : undefined
+                  }
                   onChange={onModelChange}
                   onSettingsChange={(settings) =>
                     onModelSettingsChange?.(settings)
@@ -2496,6 +2507,7 @@ export function Composer({
                     onClose={() => ref.current?.focus()}
                   />
                 ) : null}
+                {noCodingAgent ? <NoCodingAgentSettingsButton /> : null}
                 {!compact && harness !== "fx" ? (
                   <AccessPicker
                     value={runtimeMode}
@@ -2523,8 +2535,10 @@ export function Composer({
             <div className="flex shrink-0 items-center gap-1">
               <ComposerAction
                 busy={busy}
-                disabled={disabled}
-                hasValue={hasValue && !worktreeRemoved}
+                // A running turn keeps its Stop button.
+                disabled={disabled || (noCodingAgent && !busy)}
+                disabledReason={noCodingAgent ? NO_CODING_AGENT_HINT : undefined}
+                hasValue={hasValue && !worktreeRemoved && !noCodingAgent}
                 allowBusySubmit={allowBusySubmit}
                 label={draftActive ? "Save draft" : "Send"}
                 onSend={() => submit(ref.current?.value ?? "")}
@@ -2659,6 +2673,7 @@ function FileMentionRuns({
 export function ComposerAction({
   busy,
   disabled = false,
+  disabledReason,
   hasValue,
   allowBusySubmit = true,
   label = "Send",
@@ -2667,6 +2682,8 @@ export function ComposerAction({
 }: {
   busy: boolean;
   disabled?: boolean;
+  /** Tooltip for a disabled button, in place of its label. */
+  disabledReason?: string;
   hasValue: boolean;
   allowBusySubmit?: boolean;
   label?: string;
@@ -2677,7 +2694,7 @@ export function ComposerAction({
     return (
       <button
         type="button"
-        title={label}
+        title={disabledReason ?? label}
         aria-label={label}
         disabled
         className="composer-send primary-action grid size-6.5 place-items-center rounded-md disabled:cursor-default"

@@ -233,3 +233,24 @@ it("inserts a picked emoji where the cursor was, beside attach", async () => {
   render();
   expect(container.querySelector('button[aria-label="Add emoji"]')).toBeNull();
 });
+
+it("disables send with the settings hint when no agent is detected", () => {
+  const onSubmit = vi.fn(() => true);
+  const hint = "No coding agent detected. Set one up in Settings → Agent CLIs.";
+  render({ onSubmit, blockedReason: hint });
+  type("Plan the release");
+  const send = container.querySelector<HTMLButtonElement>(
+    'button[aria-label="Send"]',
+  )!;
+  expect(send.disabled).toBe(true);
+  expect(send.title).toBe(hint);
+  act(submit);
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(field().value).toBe("Plan the release");
+
+  // Detection finds a CLI: the same draft sends.
+  render({ onSubmit });
+  expect(send.disabled).toBe(false);
+  act(submit);
+  expect(onSubmit).toHaveBeenCalledWith("Plan the release", []);
+});

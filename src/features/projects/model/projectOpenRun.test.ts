@@ -107,16 +107,19 @@ describe("planning a run of folders", () => {
     });
   });
 
-  it("seeds every new session from the active session, not the first one", () => {
-    const state = workspace();
+  it("seeds every new session's access mode from the active session, not the first one", () => {
+    const state = workspace([
+      { ...chat("a1", "/alpha", "codex"), runtimeMode: "supervised" },
+      { ...chat("b1", "/beta"), runtimeMode: "auto" },
+    ]);
     const steps = planProjectOpenRun({
       ...state,
       paths: ["/one", "/two"],
     });
 
-    expect(creates(steps).map((step) => step.session.harness)).toEqual([
-      "cursor",
-      "cursor",
+    expect(creates(steps).map((step) => step.session.runtimeMode)).toEqual([
+      "auto",
+      "auto",
     ]);
   });
 

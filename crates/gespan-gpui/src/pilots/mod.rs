@@ -723,18 +723,18 @@ impl Pilots {
             let home = std::env::var("HOME")
                 .or_else(|_| std::env::var("USERPROFILE"))
                 .unwrap_or_else(|_| ".".into());
-            let provider = crate::installed_providers::pick_resolving(
-                &known,
-                prefs.default_provider.as_deref().and_then(Kind::parse),
-            );
+            // A new Pilot's chat starts where a new session would.
+            let (provider, model) =
+                crate::installed_providers::new_session_choice_resolving(&known, &prefs, None);
             let mut summary = db.create(provider.id(), &home)?;
             summary.title = pilot.label();
             db.title(summary.id, &summary.title)?;
-            let settings = Settings {
+            let mut settings = Settings {
                 access: AccessMode::Auto,
-                model: prefs.default_models.get(provider.id()).cloned(),
+                model,
                 ..Default::default()
             };
+            prefs.apply_last_controls(&mut settings, provider);
             db.configure_agent(summary.id, provider.id(), &settings)?;
             Ok((summary, Some(settings), Vec::new()))
         });

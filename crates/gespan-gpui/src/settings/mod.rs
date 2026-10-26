@@ -19,7 +19,7 @@ pub(crate) mod widgets;
 pub(crate) use keymap::apply as apply_keybindings;
 pub(crate) use model::Section;
 pub(crate) use pages::command_shortcut;
-pub(crate) use preferences::{ModelChoice, Preferences};
+pub(crate) use preferences::{ModelChoice, Preferences, apply_last_controls_to};
 
 use crate::{
     input::{self, Input},

@@ -1417,12 +1417,13 @@ impl Pilots {
             .get(pilot_id)
             .map(|v| v.read(cx).summary.provider.clone());
         // The chat is still loading: start where it will.
-        let preferred = self.prefs.default_provider.as_deref().and_then(Kind::parse);
+        let prefs = self.prefs.clone();
         let known = crate::installed_providers::snapshot(cx);
         let store = self.store.clone();
         let work = cx.background_executor().spawn(async move {
             let provider = chat_provider.unwrap_or_else(|| {
-                crate::installed_providers::pick_resolving(&known, preferred)
+                crate::installed_providers::new_session_choice_resolving(&known, &prefs, None)
+                    .0
                     .id()
                     .into()
             });

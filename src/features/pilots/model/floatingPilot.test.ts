@@ -1,4 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const probe = vi.hoisted(() => ({ probed: false, installed: [] as string[] }));
+vi.mock(
+  "../../../integrations/harness/core/availabilityState",
+  async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    hasProbedHarnessAvailability: () => probe.probed,
+    isHarnessAvailable: (id: string) => probe.installed.includes(id),
+  }),
+);
 import { newSession } from "../../sessions/model/session";
 import {
   deliverFloatingPilotRequest,
@@ -21,7 +31,51 @@ function host(): FloatingPilotHost {
   };
 }
 
+beforeEach(() => {
+  probe.probed = false;
+  probe.installed = [];
+});
+
 describe("floating Pilot delivery", () => {
+  it("rejects a send with the settings hint when no agent is detected", async () => {
+    const runtime = host();
+    probe.probed = true;
+    const send = () =>
+      deliverFloatingPilotRequest(
+        {
+          id: 1,
+          pilotId: "pilot",
+          action: { kind: "submit", text: "hello", attachments: [] },
+        },
+        runtime,
+        async () => true,
+      );
+    // Rejected, so the floating composer keeps the draft.
+    await expect(send()).rejects.toThrow(
+      "No coding agent detected. Set one up in Settings → Agent CLIs.",
+    );
+    expect(runtime.submit).not.toHaveBeenCalled();
+    // Other actions still reach the owner.
+    await deliverFloatingPilotRequest(
+      { id: 2, pilotId: "pilot", action: { kind: "stop" } },
+      runtime,
+      async () => true,
+    );
+    expect(runtime.stop).toHaveBeenCalled();
+
+    probe.installed = ["codex"];
+    await send();
+    expect(runtime.submit).toHaveBeenCalledOnce();
+  });
+
+  it("tells the floating window when no agent is detected", () => {
+    expect(floatingPilotSession(session).noCodingAgent).toBeUndefined();
+    probe.probed = true;
+    expect(floatingPilotSession(session).noCodingAgent).toBe(true);
+    probe.installed = ["codex"];
+    expect(floatingPilotSession(session).noCodingAgent).toBeUndefined();
+  });
+
   it("asks the workspace to add a Pilot for the chat that requested it", async () => {
     const runtime = host();
     runtime.create = vi.fn().mockResolvedValue(undefined);

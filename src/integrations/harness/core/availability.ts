@@ -198,11 +198,12 @@ export function probeHarnessAvailability(
       const next = {} as HarnessAvailability;
       for (const [id, ok] of entries) next[id] = ok;
       setHarnessAvailability(next);
-      emitHarnessAvailability();
     })
     .finally(() => {
+      // Mark before notifying, so subscribers re-read a finished probe.
       markHarnessAvailabilityProbed();
       inflight = null;
+      emitHarnessAvailability();
     });
   return inflight;
 }
