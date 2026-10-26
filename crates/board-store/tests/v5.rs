@@ -662,6 +662,47 @@ fn session_link_on_an_archived_card_still_counts() {
 }
 
 #[test]
+fn a_legacy_card_column_session_link_counts_for_status_permission() {
+    let conn = fresh();
+    let open_board = create_board(&conn, "Open").unwrap();
+    let strict = create_board(&conn, "Strict").unwrap();
+    update_board_settings(
+        &conn,
+        &strict.id,
+        &SettingsPatch {
+            ticket_status_changes: Some(false),
+            ..SettingsPatch::default()
+        },
+    )
+    .unwrap();
+    let column = |board: &Board| get_board(&conn, &board.id).unwrap().columns[0].id.clone();
+    let on_open = create_card(&conn, &column(&open_board), "a", "").unwrap();
+    let legacy = create_card(&conn, &column(&strict), "b", "").unwrap();
+    // The only link to the strict board is in the card's own columns.
+    let set_legacy = |kind: &str, id: &str| {
+        conn.execute(
+            "UPDATE board_cards SET link_kind = ?2, link_id = ?3 WHERE id = ?1",
+            rusqlite::params![legacy.id, kind, id],
+        )
+        .unwrap();
+    };
+    set_legacy("session", "s1");
+    assert!(!may_change_ticket_status(&conn, "s1"));
+    // Also when another card links the session through the links table.
+    add_link(&conn, &on_open.id, "session", "s1", None).unwrap();
+    assert!(!may_change_ticket_status(&conn, "s1"));
+    // Another session's legacy link, or a pilot one, is not this session's.
+    set_legacy("session", "s2");
+    assert!(may_change_ticket_status(&conn, "s1"));
+    set_legacy("pilot", "s1");
+    assert!(may_change_ticket_status(&conn, "s1"));
+    // The session override still wins over a legacy link.
+    set_legacy("session", "s1");
+    set_session_status_setting(&conn, "s1", Some(true)).unwrap();
+    assert!(may_change_ticket_status(&conn, "s1"));
+}
+
+#[test]
 fn an_unreadable_session_override_refuses() {
     let conn = fresh();
     let board = create_board(&conn, "Open").unwrap();

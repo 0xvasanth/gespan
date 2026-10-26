@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 
 pub const STATUS_OFF: &str = "Changing ticket status is turned off for this session";
 pub const READ_ONLY: &str = "This session is read-only";
+/// A ticket tool called by a session with no ticket linked right now.
+pub const NO_TICKET: &str = "This session isn't linked to a ticket";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "tool", rename_all = "snake_case")]
@@ -250,6 +252,7 @@ mod tests {
             "Changing ticket status is turned off for this session"
         );
         assert_eq!(READ_ONLY, "This session is read-only");
+        assert_eq!(NO_TICKET, "This session isn't linked to a ticket");
     }
 
     #[test]

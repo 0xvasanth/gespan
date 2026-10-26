@@ -6,7 +6,7 @@
 use crate::tickets::TicketRef;
 use gespan_board_store::CardTool;
 pub use gespan_tracker_client::tools::{answer, Answered, Effect, TicketTool};
-use gespan_tracker_client::tools::{refusal, READ_ONLY};
+use gespan_tracker_client::tools::{refusal, NO_TICKET, READ_ONLY};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 use std::{
@@ -29,7 +29,6 @@ const ENV_SESSION: &str = "GESPAN_TICKET_SESSION";
 const ENV_EXECUTABLE: &str = "GESPAN_TICKET_EXECUTABLE";
 pub(crate) const ENV_KEYS: [&str; 4] = [ENV_ENDPOINT, ENV_TOKEN, ENV_SESSION, ENV_EXECUTABLE];
 const APP_GONE: &str = "Gespan stopped handling this session's ticket tools";
-const NO_TICKET: &str = "This session isn't linked to a ticket";
 const NO_CARDS: &str = "Card tools aren't available in this session";
 
 /// What one turn may reach, set by the app and never by the agent. The
@@ -386,9 +385,23 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
         }
         let active = capability.active.as_ref().ok_or(APP_GONE)?;
         let scope = &active.scope;
+        // Card tools come first: their scope is the session's cards, so a
+        // key (which only names tickets) neither helps nor refuses them.
+        if let Some(BridgeTool::Card(tool)) = &wire.tool {
+            if !scope.cards {
+                return Err(NO_CARDS.into());
+            }
+            if let Some(refused) = card_refusal(tool, scope.read_only) {
+                return Err(refused.into());
+            }
+        }
         // The token is in the agent's environment, so scope is enforced here
         // and not only by the stdio server.
-        if let Some(key) = &wire.key {
+        if let Some(key) = wire
+            .key
+            .as_ref()
+            .filter(|_| !matches!(wire.tool, Some(BridgeTool::Card(_))))
+        {
             match &scope.ticket {
                 Some(ticket) if same_key(key, &ticket.key) => {}
                 Some(ticket) => return Err(format!("This session is linked to {}", ticket.key)),
@@ -411,15 +424,8 @@ fn handle(line: &str, hub: &Hub) -> Result<Value, String> {
                 }
                 Some(ticket)
             }
-            BridgeTool::Card(tool) => {
-                if !scope.cards {
-                    return Err(NO_CARDS.into());
-                }
-                if let Some(refused) = card_refusal(tool, scope.read_only) {
-                    return Err(refused.into());
-                }
-                None
-            }
+            // Checked above.
+            BridgeTool::Card(_) => None,
         };
         let (reply, result) = mpsc::channel();
         active
@@ -636,10 +642,15 @@ impl Client {
     }
 
     /// The scope decides the catalog, so a session without a ticket or cards
-    /// is never offered tools that can only refuse.
-    fn catalog(&self) -> Result<Value, String> {
-        let scope = request(&self.environment, None, None)?;
-        Ok(json!({"tools":tool_definitions(scope["key"].is_string(), scope["cards"] == true)}))
+    /// is never offered tools that can only refuse. When the scope can't be
+    /// read (no active turn yet, say), every tool is listed: each call is
+    /// checked against the live scope anyway.
+    fn catalog(&self) -> Value {
+        let tools = match request(&self.environment, None, None) {
+            Ok(scope) => tool_definitions(scope["key"].is_string(), scope["cards"] == true),
+            Err(_) => tool_definitions(true, true),
+        };
+        json!({ "tools": tools })
     }
 
     fn mcp_response(&self, request: Value) -> Option<Value> {
@@ -649,9 +660,7 @@ impl Client {
                 json!({"protocolVersion":request["params"]["protocolVersion"].as_str().unwrap_or("2024-11-05"),"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"gespan_ticket","version":env!("CARGO_PKG_VERSION")}}),
             ),
             "ping" => Ok(json!({})),
-            "tools/list" => self
-                .catalog()
-                .map_err(|error| json!({"code":-32603,"message":error})),
+            "tools/list" => Ok(self.catalog()),
             "tools/call" => Ok(
                 match self.call(
                     request["params"]["name"].as_str().unwrap_or(""),
@@ -1488,5 +1497,76 @@ mod tests {
         let next = Server::start(427, scope("ENG-3", true, false)).unwrap();
         let environment = next.environment(Path::new("/test/app"));
         assert_eq!(request(&environment, None, None).unwrap()["key"], "ENG-3");
+    }
+
+    #[test]
+    fn tools_list_falls_back_to_every_tool_without_a_scope() {
+        let server = Server::start(428, scope("ENG-1", true, false)).unwrap();
+        let environment = server.environment(Path::new("/test/app"));
+        let every = [
+            "ticket_get",
+            "ticket_comment",
+            "ticket_status",
+            "card_subtasks",
+            "card_subtask_done",
+        ];
+        let listed_by = |environment: HashMap<String, String>| {
+            let catalog = Client::new(environment)
+                .mcp_response(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
+                .unwrap();
+            assert!(catalog["error"].is_null(), "{catalog}");
+            names(catalog["result"]["tools"].as_array().unwrap())
+        };
+        // With no active turn the scope can't be read: list every tool.
+        drop(server);
+        assert_eq!(listed_by(environment.clone()), every);
+        // A forged token reads no scope either.
+        let mut forged = environment.clone();
+        forged.insert(ENV_TOKEN.into(), "0".repeat(64));
+        assert_eq!(listed_by(forged), every);
+        // The calls themselves are still refused.
+        let response = Client::new(environment.clone())
+            .mcp_response(tool_call("ticket_get", json!({})))
+            .unwrap();
+        assert_eq!(response["result"]["isError"], true);
+        let response = Client::new(environment)
+            .mcp_response(tool_call("card_subtasks", json!({})))
+            .unwrap();
+        assert_eq!(response["result"]["isError"], true);
+    }
+
+    #[test]
+    fn card_calls_are_checked_before_the_ticket_key() {
+        // A card-only session: a key on a card call is not a ticket refusal.
+        let cards_only = Server::start(429, with_cards(None, false)).unwrap();
+        let worker = {
+            let environment = cards_only.environment(Path::new("/test/app"));
+            std::thread::spawn(move || {
+                request(&environment, Some("ENG-1"), Some(CardTool::Subtasks.into()))
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !worker.is_finished() && Instant::now() < deadline {
+            for call in cards_only.drain() {
+                assert_eq!(call.tool, BridgeTool::Card(CardTool::Subtasks));
+                let _ = call.reply.send(Ok(json!({"cards":[]})));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(worker.join().unwrap().unwrap(), json!({"cards":[]}));
+        // A ticket-only session refuses the card tool as a card tool,
+        // whatever key comes with it.
+        let tickets_only = Server::start(430, scope("ENG-1", true, false)).unwrap();
+        let environment = tickets_only.environment(Path::new("/test/app"));
+        assert_eq!(
+            request(&environment, Some("ENG-9"), Some(CardTool::Subtasks.into())).unwrap_err(),
+            "Card tools aren't available in this session"
+        );
+        assert!(tickets_only.drain().is_empty());
+        // Ticket calls still check the key first.
+        assert_eq!(
+            request(&environment, Some("ENG-9"), Some(TicketTool::Get.into())).unwrap_err(),
+            "This session is linked to ENG-1"
+        );
     }
 }

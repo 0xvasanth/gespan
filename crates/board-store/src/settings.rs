@@ -439,8 +439,9 @@ pub fn set_session_status_setting(
 
 /// Whether the agent in this session may change its ticket's status: the
 /// session override when set; else the strictest `ticket_status_changes` of
-/// the boards whose cards link the session; else `true`. A read that fails
-/// answers `false`.
+/// the boards whose cards link the session (through `board_card_links` or
+/// the card's own legacy `link_kind`/`link_id` columns); else `true`. A read
+/// that fails answers `false`.
 pub fn may_change_ticket_status(conn: &Connection, session_key: &str) -> bool {
     match override_of(conn, session_key) {
         Ok(Some(value)) => return value,
@@ -449,10 +450,11 @@ pub fn may_change_ticket_status(conn: &Connection, session_key: &str) -> bool {
     }
     conn.query_row(
         "SELECT COALESCE(MIN(COALESCE(s.ticket_status_changes, 1)), 1)
-         FROM board_card_links l
-         JOIN board_cards c ON c.id = l.card_id
+         FROM board_cards c
          LEFT JOIN board_settings s ON s.board_id = c.board_id
-         WHERE l.kind = 'session' AND l.ref = ?1",
+         WHERE c.id IN (SELECT card_id FROM board_card_links
+                        WHERE kind = 'session' AND ref = ?1)
+            OR (c.link_kind = 'session' AND c.link_id = ?1)",
         [session_key],
         |r| r.get::<_, i64>(0),
     )
