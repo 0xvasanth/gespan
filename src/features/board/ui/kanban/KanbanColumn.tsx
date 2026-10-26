@@ -5,8 +5,14 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback, useMemo } from "react";
 import type { BoardCard, BoardColumn } from "../../model/board";
+import {
+  CARD_ESTIMATE,
+  CARD_GAP,
+  CARD_OVERSCAN,
+  useMeasuredWindow,
+} from "../../model/windowing";
 import { KanbanCard } from "./KanbanCard";
 import { columnBodyId, type KanbanDragData } from "./kanbanMove";
 
@@ -21,9 +27,14 @@ const COLUMN_CLASS = [
 
 const COLLAPSED_CLASS = COLUMN_CLASS.replace("w-[280px]", "w-9");
 
+const NO_IDS: readonly string[] = [];
+
 /**
  * One column: sortable by its header, with a droppable body (so empty columns
- * accept cards) holding a vertical sortable list of cards.
+ * accept cards) holding a vertical sortable list of cards. The body is
+ * windowed: only the cards in view (plus overscan and the `pinned` ones) are
+ * mounted, with spacers standing in for the rest, while the sortable list
+ * keeps every card id so drops resolve among all of them.
  */
 export function KanbanColumn({
   column,
@@ -36,6 +47,8 @@ export function KanbanColumn({
   renderColumnHeader,
   renderColumnFooter,
   onExpand,
+  density = "comfortable",
+  pinned = NO_IDS,
 }: {
   column: BoardColumn;
   cards: BoardCard[];
@@ -48,6 +61,10 @@ export function KanbanColumn({
   renderColumnFooter: (column: BoardColumn) => ReactNode;
   /** Click or Enter on a collapsed column's strip. */
   onExpand?: (column: BoardColumn) => void;
+  /** Sets the first-guess card height until each card is measured. */
+  density?: keyof typeof CARD_ESTIMATE;
+  /** Card ids kept mounted wherever they are (focus, a drag, an open drawer). */
+  pinned?: readonly string[];
 }) {
   const data: KanbanDragData = { kind: "column", columnId: column.id };
   const {
@@ -65,6 +82,24 @@ export function KanbanColumn({
   });
   const bodyData: KanbanDragData = { kind: "column-body", columnId: column.id };
   const body = useDroppable({ id: columnBodyId(column.id), data: bodyData });
+  const ids = useMemo(() => cards.map((card) => card.id), [cards]);
+  // A collapsed strip mounts no cards, so it has nothing to window.
+  const windowed = useMeasuredWindow({
+    ids: column.collapsed ? NO_IDS : ids,
+    estimate: CARD_ESTIMATE[density],
+    gap: CARD_GAP,
+    overscan: CARD_OVERSCAN,
+    pinned,
+  });
+  const { setNodeRef: setBodyNodeRef } = body;
+  const { ref: windowRef } = windowed;
+  const bodyRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setBodyNodeRef(node);
+      windowRef(node);
+    },
+    [setBodyNodeRef, windowRef],
+  );
 
   if (column.collapsed) {
     // A 36px strip. Its body stays the droppable, so a card dropped on it
@@ -140,23 +175,39 @@ export function KanbanColumn({
         {renderColumnHeader(column, cards.length)}
       </div>
       <div
-        ref={body.setNodeRef}
-        className="flex min-h-10 flex-1 flex-col gap-1.5 overflow-y-auto p-1.5"
+        ref={bodyRef}
+        onScroll={windowed.onScroll}
+        className="flex min-h-10 flex-1 flex-col gap-1.5 overflow-y-auto p-1.5 [overflow-anchor:none]"
       >
-        <SortableContext
-          items={cards.map((card) => card.id)}
-          strategy={verticalListSortingStrategy}
-        >
-          {cards.map((card) => (
-            <KanbanCard
-              key={card.id}
-              card={card}
-              renderCard={renderCard}
-              selected={selectedIds?.has(card.id)}
-              onOpen={onCardOpen}
-              reducedMotion={reducedMotion}
-            />
-          ))}
+        <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+          {windowed.slots.map((slot, i, slots) => {
+            if (slot.kind === "gap") {
+              const next = slots[i + 1];
+              return (
+                <div
+                  // One spacer per run of unmounted cards, named by what follows it.
+                  key={`gap:${next?.kind === "item" ? cards[next.index].id : "end"}`}
+                  aria-hidden="true"
+                  data-window-gap=""
+                  className="shrink-0"
+                  style={{ height: slot.height }}
+                />
+              );
+            }
+            const card = cards[slot.index];
+            return (
+              <KanbanCard
+                key={card.id}
+                card={card}
+                renderCard={renderCard}
+                selected={selectedIds?.has(card.id)}
+                onOpen={onCardOpen}
+                reducedMotion={reducedMotion}
+                description={`${slot.index + 1} of ${cards.length} in ${column.name}`}
+                measureRef={windowed.measureRef(card.id)}
+              />
+            );
+          })}
         </SortableContext>
       </div>
       {renderColumnFooter(column)}

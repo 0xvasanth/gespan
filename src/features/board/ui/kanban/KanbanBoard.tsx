@@ -76,6 +76,12 @@ export type KanbanBoardProps = {
   sorted?: boolean;
   /** Cards in the bulk selection: each card announces it is pressed. */
   selectedIds?: ReadonlySet<string>;
+  /** Card density: the first-guess height of a card before it is measured. */
+  density?: "comfortable" | "compact";
+  /** The card with keyboard focus, kept mounted when scrolled away. */
+  focusedCardId?: string | null;
+  /** The card whose drawer is open, kept mounted when scrolled away. */
+  openCardId?: string | null;
 };
 
 // Cards collide with cards and column bodies; columns only with columns.
@@ -101,6 +107,15 @@ const lockColumnsToRow: Modifier = ({ active, transform }) =>
 const MEASURING = { droppable: { strategy: MeasuringStrategy.Always } };
 
 
+/** The card a focus event's target sits in, if any. */
+function cardIdOf(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  return (
+    target.closest("[data-kanban-card]")?.getAttribute("data-kanban-card") ??
+    null
+  );
+}
+
 const OVERLAY_CLASS =
   "rounded-lg rotate-[1.5deg] shadow-[0_16px_36px_-10px_rgb(0_0_0/0.45)] motion-reduce:rotate-0";
 
@@ -122,6 +137,9 @@ export function KanbanBoard({
   selectedIds,
   trailing,
   sorted = false,
+  density = "comfortable",
+  focusedCardId = null,
+  openCardId = null,
 }: KanbanBoardProps) {
   const reducedMotion = useReducedMotion();
   const [session, setSession] = useState(() => createSession(detail));
@@ -187,6 +205,17 @@ export function KanbanBoard({
     [columns, shown],
   );
   const drag = session.drag;
+  // The card focus is on, as the board sees it: kept mounted while it holds
+  // focus, so scrolling its column never drops focus to the page.
+  const [focusedHere, setFocusedHere] = useState<string | null>(null);
+  const draggedId = drag?.kind === "card" ? drag.id : null;
+  const pinned = useMemo(
+    () =>
+      [...new Set([draggedId, focusedHere, focusedCardId, openCardId])].filter(
+        (id): id is string => !!id,
+      ),
+    [draggedId, focusedHere, focusedCardId, openCardId],
+  );
   const activeCard =
     drag?.kind === "card"
       ? (shown.cards.find((c) => c.id === drag.id) ?? null)
@@ -256,6 +285,8 @@ export function KanbanBoard({
       <div
         data-kanban-board=""
         data-dragging={drag ? drag.kind : undefined}
+        onFocus={(event) => setFocusedHere(cardIdOf(event.target))}
+        onBlur={(event) => setFocusedHere(cardIdOf(event.relatedTarget))}
         className="flex h-full min-h-0 items-start gap-2 overflow-x-auto px-4 py-3"
       >
         <SortableContext
@@ -275,6 +306,8 @@ export function KanbanBoard({
               renderColumnHeader={renderColumnHeader}
               renderColumnFooter={renderColumnFooter}
               onExpand={onColumnExpand}
+              density={density}
+              pinned={pinned}
             />
           ))}
         </SortableContext>

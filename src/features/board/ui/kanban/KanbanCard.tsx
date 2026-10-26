@@ -1,6 +1,6 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback } from "react";
 import type { BoardCard } from "../../model/board";
 import type { KanbanDragData } from "./kanbanMove";
 
@@ -16,6 +16,8 @@ export function KanbanCard({
   selected,
   onOpen,
   reducedMotion,
+  description,
+  measureRef,
 }: {
   card: BoardCard;
   renderCard: (card: BoardCard) => ReactNode;
@@ -23,6 +25,10 @@ export function KanbanCard({
   selected?: boolean;
   onOpen?: (card: BoardCard) => void;
   reducedMotion: boolean;
+  /** "{i} of {total} in {column}", counted over the column's visible cards. */
+  description?: string;
+  /** The column's window measures the card's height through this. */
+  measureRef?: (node: HTMLElement | null) => void;
 }) {
   const data: KanbanDragData = { kind: "card", cardId: card.id };
   const {
@@ -37,9 +43,16 @@ export function KanbanCard({
     data,
     transition: reducedMotion ? null : undefined,
   });
+  const ref = useCallback(
+    (node: HTMLElement | null) => {
+      setNodeRef(node);
+      measureRef?.(node);
+    },
+    [setNodeRef, measureRef],
+  );
   return (
     <div
-      ref={setNodeRef}
+      ref={ref}
       {...attributes}
       {...listeners}
       onKeyDown={(event) => {
@@ -58,6 +71,7 @@ export function KanbanCard({
       aria-roledescription="card"
       aria-pressed={selected}
       aria-label={`Card #${card.number}, ${card.title}`}
+      aria-description={description}
       data-kanban-card={card.id}
       data-dragging={isDragging ? "" : undefined}
       style={{

@@ -2617,6 +2617,8 @@ function BoardContent({
                 sorted={sorted}
                 selectedIds={selectedSet}
                 trailing={trailing}
+                density={display.density}
+                openCardId={shownCard?.id ?? null}
               />
             ) : null}
             {detail && selection.ids.length ? (
