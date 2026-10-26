@@ -747,7 +747,9 @@ impl Shell {
                                 div()
                                     .relative()
                                     .size_full()
+                                    .child(self.mono_bounds.layout_probe())
                                     .child(monos)
+                                    .children(self.drop_hint(super::mono_panes::MONO_VIEW))
                                     .children(linked.map(|notice| {
                                         div()
                                             .absolute()

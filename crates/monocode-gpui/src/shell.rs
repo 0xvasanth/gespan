@@ -14,6 +14,7 @@ mod image_lightbox_tests;
 mod layout;
 mod live_agents;
 mod mobile_host;
+mod mono_panes;
 pub(crate) mod monos;
 mod notifications;
 mod orchestration;
@@ -408,6 +409,8 @@ enum DragSource {
     Review(i64),
     Tab(i64),
     Session(i64),
+    /// A Mono tab pulled down out of the strip; it has no pane yet.
+    MonoTab,
 }
 impl DragSource {
     fn session(self) -> i64 {
@@ -416,6 +419,7 @@ impl DragSource {
             | DragSource::Review(id)
             | DragSource::Tab(id)
             | DragSource::Session(id) => id,
+            DragSource::MonoTab => i64::MIN,
         }
     }
 }
@@ -484,6 +488,8 @@ enum PaneMark {
     Session(String, Option<i64>),
     /// A file's name, or `None` for changes and commits.
     File(Option<String>),
+    /// A Mono's mascot and colour.
+    Mono(String, u32),
 }
 /// A split tab's headline rolling to the newly focused pane: the next pane
 /// rises from below, the previous one drops from above.
@@ -702,6 +708,8 @@ pub(crate) struct Shell {
     review_drag: bool,
     split_bounds: HashMap<i64, AnchorSlot>,
     pane_bounds: AnchorSlot,
+    /// The visible Mono's view, a drop target for tabs and panes.
+    mono_bounds: AnchorSlot,
     pane_drag: Option<PaneDrag>,
     pane_sash: Option<SashDrag>,
     pane_motion: Option<PaneMotion>,
@@ -1037,6 +1045,7 @@ impl Shell {
             review_drag: false,
             split_bounds: HashMap::new(),
             pane_bounds: AnchorSlot::default(),
+            mono_bounds: AnchorSlot::default(),
             pane_drag: None,
             pane_sash: None,
             pane_motion: None,
@@ -2133,6 +2142,7 @@ impl Shell {
             .sessions
             .get(&id)
             .map(|s| s.read(cx).display_title())
+            .or_else(|| self.mono_pane_title(id, cx))
             .unwrap_or_default();
         let focused = self.workspace.active == Some(id) && !self.review_focused;
         div()
@@ -2512,6 +2522,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if self.workspace.mono_panes.contains_key(&id) {
+            return self.mono_pane_surface(id, split, cx);
+        }
         let in_split = split.is_some();
         let chat = self.sessions.get(&id).cloned();
         let now = std::time::Instant::now();
@@ -3215,6 +3228,12 @@ impl Shell {
             self.open_file_pane(id, window, cx);
             return;
         }
+        if self.workspace.mono_panes.contains_key(&id) {
+            if self.workspace.active != Some(id) {
+                self.open_mono_pane(id, window, cx);
+            }
+            return;
+        }
         if self.workspace.active == Some(id) {
             return;
         }
@@ -3248,6 +3267,11 @@ impl Shell {
         self.navigation_revision += 1;
         self.begin_pane_motion(before, cx);
         self.fit_sidebar(cx);
+        // A Mono left alone becomes its tab again, and shows when focused.
+        self.settle_mono_panes(window, cx);
+        if self.mono_active(cx) {
+            return;
+        }
         if self.workspace.active != active {
             if let Some(active) = self.workspace.active {
                 self.open(active, window, cx);
@@ -3405,9 +3429,13 @@ impl Shell {
         });
     }
     /// The pane under a point and the edge it would take, in the active tab.
-    fn pane_hit(&self, position: Point<Pixels>) -> Option<(i64, Edge)> {
+    fn pane_hit(&self, position: Point<Pixels>, cx: &App) -> Option<(i64, Edge)> {
         if self.app_view_open() {
             return None;
+        }
+        // The visible Mono hides the tab's panes and stands in for them.
+        if self.mono_active(cx) {
+            return self.mono_view_hit(position, cx);
         }
         let bounds = self.pane_bounds.get()?;
         if !bounds.contains(&position) {
@@ -3478,7 +3506,7 @@ impl Shell {
         let over = if insert.is_some() {
             None
         } else {
-            self.pane_hit(event.position)
+            self.pane_hit(event.position, cx)
                 .and_then(|(id, edge)| {
                     if id != source.session()
                         || matches!(source, DragSource::Review(id) if self.workspace.reviews.get(&id).is_some_and(|r| !r.chat_hidden))
@@ -3535,9 +3563,15 @@ impl Shell {
             self.apply_sidebar_drop(drag.source.session(), target, window, cx);
             return;
         }
+        let mono = match drag.source {
+            DragSource::Pane(pane) => self.workspace.mono_panes.get(&pane).cloned(),
+            _ => None,
+        };
+        let mut over = drag
+            .over
+            .map(|(target, edge)| (self.resolve_mono_target(target, cx), edge));
         let mut before = self.active_leaves();
         let id = drag.source.session();
-        let mut over = drag.over;
         if matches!(drag.source, DragSource::Pane(_))
             && (over.is_some() || drag.insert.is_some())
             && let Some(review) = self.separate_session_review(id, cx)
@@ -3592,6 +3626,17 @@ impl Shell {
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
         self.fit_sidebar(cx);
+        // A Mono pulled out of its split onto the strip is its tab again.
+        self.settle_mono_panes(window, cx);
+        if let (Some(mono), Some(to)) = (mono, drag.insert)
+            && self.workspace.title_order.contains(&mono)
+        {
+            self.reorder_title_tab(&mono, to, cx);
+        }
+        if self.mono_active(cx) {
+            self.persist(cx);
+            return;
+        }
         if let Some(active) = self.workspace.active {
             self.open(active, window, cx);
         }
@@ -3797,6 +3842,9 @@ impl Shell {
             monos.update(cx, |m, cx| m.focus_active(window, cx));
             return;
         }
+        if self.focus_mono_pane(window, cx) {
+            return;
+        }
         if let Some(review) = self
             .active_review(cx)
             .filter(|review| review.read(cx).state.chat_hidden)
@@ -3814,6 +3862,10 @@ impl Shell {
     pub(crate) fn open(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.review_owners.contains_key(&id) {
             self.open_file_pane(id, window, cx);
+            return;
+        }
+        if self.workspace.mono_panes.contains_key(&id) {
+            self.open_mono_pane(id, window, cx);
             return;
         }
         if !self.session_summaries.contains_key(&id) || self.deleting.contains(&id) {
@@ -3869,6 +3921,10 @@ impl Shell {
     fn activate_session(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.review_owners.contains_key(&id) {
             self.open_file_pane(id, window, cx);
+            return;
+        }
+        if self.workspace.mono_panes.contains_key(&id) {
+            self.open_mono_pane(id, window, cx);
             return;
         }
         if let Some(monos) = &self.monos {
@@ -4052,17 +4108,17 @@ impl Shell {
                         self.session_summaries.contains_key(
                             &self
                                 .workspace
-                                .session_for_pane(self.workspace.tab_focus(**id)),
+                                .session_for_pane(self.workspace.scope_pane(**id)),
                         ) && self
                             .session_metadata(
                                 self.workspace
-                                    .session_for_pane(self.workspace.tab_focus(**id)),
+                                    .session_for_pane(self.workspace.scope_pane(**id)),
                                 cx,
                             )
                             .summary
                             .cwd
                             == path
-                            && self.in_worktree_scope(self.workspace.tab_focus(**id), cx)
+                            && self.in_worktree_scope(self.workspace.scope_pane(**id), cx)
                     })
                     .map(|tab| self.workspace.tab_focus(*tab))
             });
@@ -6636,7 +6692,11 @@ impl Shell {
             }
         }
         let file_panes = leaves.iter().filter(|id| review(id).is_some()).count();
-        let multi_pane = sessions.len() + file_panes > 1;
+        let mono_panes = leaves
+            .iter()
+            .filter(|id| self.workspace.mono_panes.contains_key(id))
+            .count();
+        let multi_pane = sessions.len() + file_panes + mono_panes > 1;
         let session_focused = sessions.first() == Some(&focus);
         let file_focused =
             !session_focused || (self.tab_review_focused(tab, cx) && review(&focus).is_some());
@@ -6651,7 +6711,10 @@ impl Shell {
         let conversation = sessions.first().map(title).unwrap_or_default();
         let file = files.first().cloned().unwrap_or_default();
         let untitled = "New session".to_owned();
-        let headline = if multi_pane && file_focused && !file.is_empty() {
+        let mono = self.mono_pane_title(focus, cx);
+        let headline = if let Some(mono) = mono {
+            mono
+        } else if multi_pane && file_focused && !file.is_empty() {
             file
         } else {
             [conversation, file]
@@ -6663,6 +6726,15 @@ impl Shell {
         // right or down rolls the headline up.
         let mut panes = Vec::new();
         for id in self.workspace.layout(tab).leaf_ids() {
+            if let (Some(title), Some(mark)) =
+                (self.mono_pane_title(id, cx), self.mono_pane_mark(id, cx))
+            {
+                panes.push(TabPane {
+                    key: (id, false),
+                    title,
+                    mark,
+                });
+            }
             if sessions.contains(&id) {
                 let session = self.session_metadata(id, cx);
                 let lit = session.responding()
@@ -6717,6 +6789,12 @@ impl Shell {
                 crate::file_icons::file_type_icon(name, false, false, 14.)
             }
             PaneMark::File(None) => icon("git-compare", 14.).text_color(ink).into_any_element(),
+            PaneMark::Mono(mascot, color) => div()
+                .opacity(if active { 1. } else { 0.55 })
+                .child(crate::monos::avatar::avatar(
+                    mascot, *color, "idle", 14., true,
+                ))
+                .into_any_element(),
         };
         div()
             .size(px(14.))
@@ -6965,17 +7043,22 @@ impl Shell {
         let (id, armed) = (drag.id.clone(), drag.armed);
         // The active tab has no other pane to land on, but its title still
         // follows the pointer.
-        let own = self.workspace.active_tab() == id.session();
+        let own = self.active_title_tab(cx).as_ref() == Some(&id);
+        let source = match &id {
+            TitleTab::Session(tab) => Some(DragSource::Tab(*tab)),
+            TitleTab::Mono { .. } => Some(DragSource::MonoTab),
+            TitleTab::Search | TitleTab::App(_) => None,
+        };
         let was = self.pane_drag.is_some();
-        self.pane_drag = id.session().filter(|_| armed).map(|id| PaneDrag {
-            source: DragSource::Tab(id),
+        self.pane_drag = source.filter(|_| armed).map(|source| PaneDrag {
+            source,
             start: event.position,
             position: event.position,
             active: true,
             over: if own {
                 None
             } else {
-                self.pane_hit(event.position)
+                self.pane_hit(event.position, cx)
             },
             insert: None,
         });
@@ -6987,13 +7070,20 @@ impl Shell {
     fn finish_tab_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(drag) = self.tab_drag.take() {
             let onto_pane = self.pane_drag.as_ref().is_some_and(|d| {
-                Some(d.source.session()) == drag.id.session()
-                    && matches!(d.source, DragSource::Tab(_))
-                    && d.over.is_some()
+                d.over.is_some()
+                    && match d.source {
+                        DragSource::Tab(tab) => drag.id.session() == Some(tab),
+                        DragSource::MonoTab => matches!(drag.id, TitleTab::Mono { .. }),
+                        _ => false,
+                    }
             });
             if onto_pane {
                 self.skip_tab_click = true;
-                self.finish_pane_drag(window, cx);
+                if matches!(drag.id, TitleTab::Mono { .. }) {
+                    self.drop_mono_tab(drag.id, window, cx);
+                } else {
+                    self.finish_pane_drag(window, cx);
+                }
             } else if drag.active {
                 self.cancel_pane_drag(cx);
                 // Each tab glides from where it is drawn into its new slot.
@@ -7720,6 +7810,12 @@ impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.keep_visible_idle_agents(cx);
         self.sync_ui_scale(window, cx);
+        if self.mono_panes_unsettled(cx) {
+            let this = cx.entity();
+            window.defer(cx, move |window, cx| {
+                this.update(cx, |this, cx| this.settle_mono_panes(window, cx));
+            });
+        }
         if let Some(id) = self.pending_composer_focus.take()
             && self
                 .workspace
