@@ -1,0 +1,25 @@
+crates/board-store/tests/views.rs
+  s_938a6e0c93b076::t_ffaa07178d2252 259-263,290-293,298-301,306-309,311-318,324-331,345-349,354-362
+  s_938a6e0c93b076::t_bc88a9b3ca5f65 375
+  s_938a6e0c93b076::t_96fdabc157bbea 50,58,61-75,221,227,257-258,264-289,294-297,302-305,310,319-323,332-344,350-353,363-374,376-381,398,419,455
+crates/board-store/src/lib.rs
+  s_938a6e0c93b076::t_ffaa07178d2252 46-47
+crates/board-store/src/views.rs
+  s_938a6e0c93b076::t_ffaa07178d2252 4-6,53-54,104-105,251,296-297,432-441,444-446,450,458,533-542,548,561-562
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9565ef1a2c3e912be9dca49663617cf495025fc9",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
