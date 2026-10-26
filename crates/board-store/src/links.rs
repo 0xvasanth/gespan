@@ -146,6 +146,48 @@ pub fn card_links(conn: &Connection, card_id: &str) -> Result<Vec<CardLink>, Str
     rows
 }
 
+/// Every non-ticket link of the board's live cards: rows in
+/// `board_card_links` of a kind other than a tracker, plus a link an older
+/// build wrote only into the card's `link_kind`/`link_id` columns (as role
+/// `primary`). For link status chips and the running set.
+pub fn board_links(conn: &Connection, board_id: &str) -> Result<Vec<CardLink>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT l.card_id, l.kind, l.ref, l.role, l.created_at
+             FROM board_card_links l JOIN board_cards c ON c.id = l.card_id
+             WHERE c.board_id = ?1
+               AND l.kind NOT IN ('jira', 'linear', 'plane')
+               AND NOT EXISTS (SELECT 1 FROM board_card_meta m
+                 WHERE m.card_id = c.id AND m.archived_at IS NOT NULL)
+             UNION ALL
+             SELECT c.id, c.link_kind, c.link_id, 'primary', c.updated_at
+             FROM board_cards c
+             WHERE c.board_id = ?1
+               AND c.link_kind IS NOT NULL AND c.link_id IS NOT NULL
+               AND c.link_kind NOT IN ('jira', 'linear', 'plane')
+               AND NOT EXISTS (SELECT 1 FROM board_card_links l
+                 WHERE l.card_id = c.id AND l.kind = c.link_kind AND l.ref = c.link_id)
+               AND NOT EXISTS (SELECT 1 FROM board_card_meta m
+                 WHERE m.card_id = c.id AND m.archived_at IS NOT NULL)
+             ORDER BY 1, 2, 3",
+        )
+        .map_err(db)?;
+    let rows = statement
+        .query_map([board_id], |r| {
+            Ok(CardLink {
+                card_id: r.get(0)?,
+                kind: r.get(1)?,
+                reference: r.get(2)?,
+                role: r.get(3)?,
+                created_at: r.get(4)?,
+            })
+        })
+        .map_err(db)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db);
+    rows
+}
+
 const TICKET_KINDS: [&str; 3] = ["jira", "linear", "plane"];
 /// The `board_card_links` role of a ticket link. The queries below match on
 /// it, so a plain link of the same kind is never read as a ticket.

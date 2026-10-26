@@ -24,7 +24,14 @@ pub(crate) const LIVE: &str = "NOT EXISTS (SELECT 1 FROM board_card_meta m
 const ACTORS: [&str; 2] = ["user", "system"];
 /// Kinds `board_card_record` may append. Every other kind is written by the
 /// mutation that causes it.
-const RECORD_KINDS: [&str; 3] = ["started", "completed", "failed"];
+const RECORD_KINDS: [&str; 6] = [
+    "started",
+    "needs_input",
+    "completed",
+    "failed",
+    "pr_opened",
+    "pr_merged",
+];
 
 pub fn db(error: rusqlite::Error) -> String {
     error.to_string()
@@ -580,16 +587,30 @@ pub fn move_card(
         return Err(format!("Unknown actor: {actor}"));
     }
     let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    if is_archived(&tx, card_id)? {
+    let board_id = move_card_in(&tx, card_id, column_id, index, actor)?;
+    tx.commit().map_err(db)?;
+    Ok(board_id)
+}
+
+/// [`move_card`] inside the caller's write transaction, which it leaves
+/// uncommitted. `actor` is not checked here.
+pub(crate) fn move_card_in(
+    tx: &Transaction<'_>,
+    card_id: &str,
+    column_id: &str,
+    index: usize,
+    actor: &str,
+) -> Result<String, String> {
+    let card = get_card(tx, card_id)?;
+    if is_archived(tx, card_id)? {
         return Err("Card is archived".into());
     }
-    let target = get_column(&tx, column_id)?;
+    let target = get_column(tx, column_id)?;
     if target.board_id != card.board_id {
         return Err("Column not on this board".into());
     }
     let same_column = card.column_id == column_id;
-    let mut target_ids = column_card_ids(&tx, column_id)?;
+    let mut target_ids = column_card_ids(tx, column_id)?;
     let old_index = target_ids.iter().position(|id| id == card_id);
     target_ids.retain(|id| id != card_id);
     let new_index = index.min(target_ids.len());
@@ -598,25 +619,25 @@ pub fn move_card(
     }
     target_ids.insert(new_index, card_id.to_string());
 
-    let source = get_column(&tx, &card.column_id)?;
+    let source = get_column(tx, &card.column_id)?;
     if !same_column {
         tx.execute(
             "UPDATE board_cards SET column_id = ?1 WHERE id = ?2",
             params![column_id, card_id],
         )
         .map_err(db)?;
-        let mut source_ids = column_card_ids(&tx, &card.column_id)?;
+        let mut source_ids = column_card_ids(tx, &card.column_id)?;
         source_ids.retain(|id| id != card_id);
-        write_card_positions(&tx, &source_ids)?;
+        write_card_positions(tx, &source_ids)?;
     }
-    write_card_positions(&tx, &target_ids)?;
+    write_card_positions(tx, &target_ids)?;
     tx.execute(
         "UPDATE board_cards SET updated_at = ?1 WHERE id = ?2",
         params![now_millis(), card_id],
     )
     .map_err(db)?;
     log_activity(
-        &tx,
+        tx,
         NewActivity {
             board_id: &card.board_id,
             card_id: Some(card_id),
@@ -627,7 +648,6 @@ pub fn move_card(
             detail: None,
         },
     )?;
-    tx.commit().map_err(db)?;
     Ok(card.board_id)
 }
 

@@ -4,6 +4,8 @@
 //! the same SQL, validation and error strings.
 use serde::Serialize;
 
+mod agent;
+mod auto_move;
 mod card_ops;
 mod comments;
 mod fields;
@@ -19,8 +21,17 @@ mod subtasks;
 mod templates;
 mod views;
 
+pub use agent::{
+    answer_card, run_prompt, running_card_ids, write_back, CardTool, NOT_LINKED, READ_ONLY,
+    WRITE_BACK_OFF,
+};
+pub use auto_move::{
+    auto_move_rules, auto_move_target, on_linked_work, AutoMoveRules, LinkedEvent, RuleTarget,
+};
 pub use card_ops::{convert_subtask, duplicate_card, move_card_to_board};
-pub use comments::{add_comment, edit_comment, list_comments, Comment, COMMENT_AUTHORS};
+pub use comments::{
+    add_comment, edit_comment, is_comment_author, list_comments, Comment, COMMENT_AUTHORS,
+};
 pub use fields::{
     create_field, delete_field, field_distinct_values, field_values, list_fields, move_field,
     rename_field_option, set_field_value, update_field, validate_value, Field, FieldValue,
@@ -30,7 +41,9 @@ pub use labels::{
     create_label, delete_label, list_labels, merge_labels, move_label, set_card_labels,
     set_label_many, update_label, Label,
 };
-pub use links::{add_link, board_tickets, card_links, remove_link, set_ticket, ticket, CardLink};
+pub use links::{
+    add_link, board_links, board_tickets, card_links, remove_link, set_ticket, ticket, CardLink,
+};
 pub use meta::{
     archive_card, archive_cards, archived_cards, card_extras, card_meta, column_card_count,
     restore_card, set_due, set_estimate, set_priority, set_priority_many, set_projects, set_start,
@@ -42,7 +55,9 @@ pub use ops::{
     move_card, move_cards, move_column, record_card, rename_board, set_column_display, update_card,
     update_column, LINK_KINDS,
 };
-pub use relations::{add_relation, card_relations, remove_relation, Relation, RELATION_KINDS};
+pub use relations::{
+    add_relation, blocked_cards, card_relations, remove_relation, Relation, RELATION_KINDS,
+};
 pub use schema::{ensure_tables, VERSION as SCHEMA_VERSION};
 pub use settings::{
     board_settings, display_options, may_change_ticket_status, priority_scheme,

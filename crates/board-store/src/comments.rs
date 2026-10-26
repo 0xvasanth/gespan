@@ -4,8 +4,24 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 const MAX_COMMENT: usize = 20_000;
-/// Who wrote a comment; agent write-back marks its comments `agent`.
+/// Who wrote a comment. Besides these, `agent:<id>` names the agent session
+/// that wrote it (write-back marks its comments `agent:<session_key>`); see
+/// [`is_comment_author`]. Readers label every `agent*` author "Agent".
 pub const COMMENT_AUTHORS: [&str; 2] = ["user", "agent"];
+const AGENT_PREFIX: &str = "agent:";
+const MAX_AUTHOR_ID: usize = 500;
+
+/// Whether `author` may write a comment: one of [`COMMENT_AUTHORS`], or
+/// `agent:<id>` where `<id>` is a valid id (letters, digits, `-`, `_`) of at
+/// most 500 bytes.
+pub fn is_comment_author(author: &str) -> bool {
+    if COMMENT_AUTHORS.contains(&author) {
+        return true;
+    }
+    author
+        .strip_prefix(AGENT_PREFIX)
+        .is_some_and(|id| id.len() <= MAX_AUTHOR_ID && crate::validate_id(id, "agent").is_ok())
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,7 +74,7 @@ pub fn add_comment(
     body: &str,
     author: &str,
 ) -> Result<Comment, String> {
-    if !COMMENT_AUTHORS.contains(&author) {
+    if !is_comment_author(author) {
         return Err(format!("Unknown comment author: {author}"));
     }
     let body = check_body(body)?;

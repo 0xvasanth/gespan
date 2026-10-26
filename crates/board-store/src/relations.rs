@@ -1,6 +1,7 @@
 use crate::ops::{db, get_card, log_edit, touch, write_tx};
 use rusqlite::{params, Connection};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 pub const RELATION_KINDS: [&str; 3] = ["blocks", "relates", "duplicates"];
 
@@ -148,4 +149,43 @@ pub fn card_relations(conn: &Connection, card_id: &str) -> Result<Vec<Relation>,
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(db);
     rows
+}
+
+/// The board's blocked cards: each live card that a `blocks` relation points
+/// at from a live card whose column role is not `done` or `cancelled`, mapped
+/// to those blockers' numbers, sorted.
+pub fn blocked_cards(
+    conn: &Connection,
+    board_id: &str,
+) -> Result<BTreeMap<String, Vec<i64>>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT r.related_card_id, blocker.number
+             FROM board_card_relations r
+             JOIN board_cards blocker ON blocker.id = r.card_id
+             JOIN board_cards blocked ON blocked.id = r.related_card_id
+             JOIN board_columns col ON col.id = blocker.column_id
+             WHERE r.kind = 'blocks'
+               AND blocked.board_id = ?1
+               AND blocker.board_id = ?1
+               AND COALESCE(col.role, '') NOT IN ('done', 'cancelled')
+               AND NOT EXISTS (SELECT 1 FROM board_card_meta m
+                 WHERE m.card_id = blocker.id AND m.archived_at IS NOT NULL)
+               AND NOT EXISTS (SELECT 1 FROM board_card_meta m
+                 WHERE m.card_id = blocked.id AND m.archived_at IS NOT NULL)
+             ORDER BY r.related_card_id, blocker.number",
+        )
+        .map_err(db)?;
+    let rows = statement
+        .query_map([board_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })
+        .map_err(db)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db)?;
+    let mut blocked: BTreeMap<String, Vec<i64>> = BTreeMap::new();
+    for (card_id, number) in rows {
+        blocked.entry(card_id).or_default().push(number);
+    }
+    Ok(blocked)
 }

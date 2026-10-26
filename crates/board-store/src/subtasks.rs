@@ -1,5 +1,7 @@
-use crate::ops::{clean_text, db, get_card, log_edit, new_id, touch, write_tx};
-use rusqlite::{params, Connection, OptionalExtension};
+use crate::ops::{
+    clean_text, db, get_card, log_activity, log_edit, new_id, touch, write_tx, NewActivity,
+};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Serialize;
 
 const MAX_SUBTASK: usize = 500;
@@ -24,7 +26,7 @@ fn subtask_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Subtask> {
     })
 }
 
-fn get_subtask(conn: &Connection, subtask_id: &str) -> Result<Option<Subtask>, String> {
+pub(crate) fn get_subtask(conn: &Connection, subtask_id: &str) -> Result<Option<Subtask>, String> {
     conn.query_row(
         "SELECT id, card_id, title, done, position FROM board_subtasks WHERE id = ?1",
         [subtask_id],
@@ -90,24 +92,43 @@ pub fn toggle_subtask(conn: &Connection, subtask_id: &str, done: bool) -> Result
     let Some(subtask) = get_subtask(&tx, subtask_id)? else {
         return Err("Subtask not found".into());
     };
-    let card = get_card(&tx, &subtask.card_id)?;
+    let board_id = toggle_subtask_in(&tx, &subtask, done, "user")?;
+    tx.commit().map_err(db)?;
+    Ok(board_id)
+}
+
+/// Sets `subtask` done or not inside the caller's write transaction, logging
+/// the change as `actor`. Setting the state it already has changes nothing.
+/// Returns the owning board id.
+pub(crate) fn toggle_subtask_in(
+    tx: &Transaction<'_>,
+    subtask: &Subtask,
+    done: bool,
+    actor: &str,
+) -> Result<String, String> {
+    let card = get_card(tx, &subtask.card_id)?;
     if subtask.done == done {
         return Ok(card.board_id);
     }
     tx.execute(
         "UPDATE board_subtasks SET done = ?1 WHERE id = ?2",
-        params![i64::from(done), subtask_id],
+        params![i64::from(done), subtask.id],
     )
     .map_err(db)?;
-    touch(&tx, &card.id)?;
+    touch(tx, &card.id)?;
     let verb = if done { "done" } else { "reopened" };
-    log_edit(
-        &tx,
-        &card.board_id,
-        &card.id,
-        &format!("subtask {verb}: {}", subtask.title),
+    log_activity(
+        tx,
+        NewActivity {
+            board_id: &card.board_id,
+            card_id: Some(&card.id),
+            kind: "edited",
+            actor,
+            from_column: None,
+            to_column: None,
+            detail: Some(&format!("subtask {verb}: {}", subtask.title)),
+        },
     )?;
-    tx.commit().map_err(db)?;
     Ok(card.board_id)
 }
 
