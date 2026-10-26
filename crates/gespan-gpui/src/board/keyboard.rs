@@ -2,7 +2,7 @@
 //! lifted, arrows move the drop line, Space or Enter drops and Escape (handled
 //! by the board's `on_key`) puts it back. Only cards the search and filter show
 //! count; the drop maps the visible slot to the whole column like a mouse drop.
-use super::{BoardView, KeyboardDrag, drop};
+use super::{BoardView, KeyboardDrag};
 use gpui::{App, Context, KeyDownEvent, Window};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -25,7 +25,7 @@ fn arrow(key: &str) -> Option<Arrow> {
 
 impl BoardView {
     /// The ids of the visible cards in a column, top to bottom.
-    fn visible_ids(&self, column_id: &str, cx: &App) -> Vec<String> {
+    fn visible_ids(&self, column_id: &str, _cx: &App) -> Vec<String> {
         let Some(detail) = &self.detail else {
             return Vec::new();
         };
@@ -34,13 +34,7 @@ impl BoardView {
         if self.is_collapsed(column_id) {
             return Vec::new();
         }
-        let query = self.query(cx);
-        let mut cards: Vec<_> = detail
-            .cards
-            .iter()
-            .filter(|card| card.column_id == column_id && self.card_matches(card, &query))
-            .collect();
-        cards.sort_by_key(|card| card.position);
+        let cards = self.column_cards(detail, column_id);
         cards.into_iter().map(|card| card.id.clone()).collect()
     }
 
@@ -244,9 +238,7 @@ impl BoardView {
         self.kb_blur = None;
         self.drop_target = None;
         let slot = self.full_slot(&drag.column_id, drag.slot, cx);
-        let resolved = self.detail.as_ref().and_then(|detail| {
-            drop::resolve_card_drop(detail, &drag.card_id, &drag.column_id, slot)
-        });
+        let resolved = self.resolve_drop(&drag.card_id, &drag.column_id, slot);
         match resolved {
             Some((column, index)) => {
                 self.move_with_undo(&drag.card_id, &column, index, cx);

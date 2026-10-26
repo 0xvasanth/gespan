@@ -18,6 +18,7 @@ mod tests;
 mod tickets;
 pub(crate) mod turns;
 mod undo;
+mod views;
 
 use crate::{
     input::{self, Input},
@@ -29,7 +30,7 @@ use crate::{
 use gespan_core::{
     board::{
         BoardDetail, Service,
-        extras::{CardExtras, Label},
+        extras::{CardExtras, Label, ViewSpec},
     },
     tickets::{TicketRef, Tracker},
 };
@@ -38,7 +39,7 @@ use gpui::{
     SharedString, Subscription, Task, Window, div, prelude::*, px,
 };
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -118,20 +119,6 @@ enum Renaming {
     Column(String),
 }
 
-/// What the header's Filter narrows the board to. Empty sets match everything.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Filter {
-    pub projects: BTreeSet<String>,
-    pub labels: BTreeSet<String>,
-    pub priorities: BTreeSet<u8>,
-}
-
-impl Filter {
-    pub(crate) fn len(&self) -> usize {
-        self.projects.len() + self.labels.len() + self.priorities.len()
-    }
-}
-
 pub(crate) struct BoardView {
     store: Database,
     db_path: PathBuf,
@@ -176,8 +163,22 @@ pub(crate) struct BoardView {
     /// Workspace projects as (path, name), for tagging and filtering.
     projects: Vec<(String, String)>,
     search: Entity<Input>,
-    pub(crate) filter: Filter,
+    /// The filter rows and sort the board shows; the search text lives in
+    /// `search` and joins them in `current_spec`.
+    pub(crate) spec: ViewSpec,
+    /// Cards `Service::query` matched, or `None` while nothing narrows.
+    matched: Option<HashSet<String>>,
+    /// A card's place in the query's order, for the sorted columns.
+    rank: HashMap<String, usize>,
+    /// The search text the last query ran with.
+    last_query: String,
+    pub(crate) views: views::Views,
     filter_open: bool,
+    /// The filter row showing its values to pick from.
+    filter_row: Option<usize>,
+    sort_open: bool,
+    sort_anchor: AnchorSlot,
+    sort_focus: FocusHandle,
     /// "Open cards in" (setting `board-card-open`): cards open as a full page
     /// instead of the drawer.
     pub(crate) open_in_page: bool,
@@ -244,7 +245,12 @@ impl BoardView {
             }
         });
         let search = cx.new(|cx| Input::field("Search tasks", "Search tasks", content(0.4), cx));
-        let searching = cx.observe(&search, |_, _, cx| cx.notify());
+        let searching = cx.observe(&search, |this, _, cx| {
+            if this.query(cx) != this.last_query.trim().to_lowercase() {
+                this.requery(cx);
+            }
+            cx.notify();
+        });
         let activation = cx.observe_window_activation(window, |this, window, cx| {
             if !window.is_window_active() {
                 this.cancel_keyboard_drag(cx);
@@ -293,8 +299,16 @@ impl BoardView {
             labels: Vec::new(),
             projects: Vec::new(),
             search,
-            filter: Filter::default(),
+            spec: ViewSpec::default(),
+            matched: None,
+            rank: HashMap::new(),
+            last_query: String::new(),
+            views: views::Views::default(),
             filter_open: false,
+            filter_row: None,
+            sort_open: false,
+            sort_anchor: AnchorSlot::default(),
+            sort_focus: cx.focus_handle(),
             open_in_page,
             open_in_open: false,
             open_in_anchor: AnchorSlot::default(),
@@ -354,6 +368,9 @@ impl BoardView {
         self.card_menu = None;
         self.renaming = None;
         self.filter_open = false;
+        self.sort_open = false;
+        self.views.menu = None;
+        self.views.naming = None;
         self.open_in_open = false;
         self.switcher = None;
         cx.notify();
@@ -455,6 +472,7 @@ impl BoardView {
         let extras = service.extras(&board.id)?;
         let labels = service.labels(&board.id)?;
         let card_tickets = service.board_tickets(&board.id)?;
+        let views = service.views(&board.id)?;
         let archived = if archive_open {
             service.archived(&board.id)?
         } else {
@@ -476,12 +494,10 @@ impl BoardView {
         self.archived = archived;
         self.links = self.resolve_links(cx)?;
         self.sync_handles(cx);
-        // A selected label deleted elsewhere would hide every card unseen.
-        let labels = &self.labels;
-        self.filter
-            .labels
-            .retain(|id| labels.iter().any(|label| &label.id == id));
-        Ok(())
+        self.sync_views(views);
+        // A label or column deleted elsewhere is dropped by the query itself,
+        // so a saved filter never hides every card unseen.
+        self.refresh_query(cx)
     }
 
     /// One anchor per column and card, and one focus handle per card, for
@@ -770,12 +786,21 @@ impl BoardView {
         let Some(detail) = &self.detail else {
             return;
         };
-        let mut cards: Vec<_> = detail
-            .cards
-            .iter()
-            .filter(|card| card.column_id == column_id && self.card_visible(card, cx))
-            .collect();
-        cards.sort_by_key(|card| card.position);
+        let cards = self.column_cards(detail, column_id);
+        if self.sorted() {
+            // Sorted columns keep their order: a card can't be placed inside
+            // its own column, only appended to another.
+            let own = self
+                .dragged_card
+                .as_ref()
+                .is_some_and(|id| cards.iter().any(|card| &card.id == id));
+            let target = (!own).then(|| (column_id.to_string(), cards.len()));
+            if self.drop_target != target {
+                self.drop_target = target;
+                cx.notify();
+            }
+            return;
+        }
         // Cards not painted yet have no bounds; slots still count them, so
         // map the slot among measured cards back to the visible list.
         let measured: Vec<(usize, gpui::Bounds<gpui::Pixels>)> = cards
@@ -798,7 +823,7 @@ impl BoardView {
 
     /// A slot among the cards on screen, as a slot in the whole column: before
     /// the visible card it points at, or after the last visible one.
-    fn full_slot(&self, column_id: &str, slot: usize, cx: &App) -> usize {
+    fn full_slot(&self, column_id: &str, slot: usize, _cx: &App) -> usize {
         let Some(detail) = &self.detail else {
             return slot;
         };
@@ -808,19 +833,33 @@ impl BoardView {
             .filter(|card| card.column_id == column_id)
             .collect();
         cards.sort_by_key(|card| card.position);
-        if self.is_collapsed(column_id) {
+        if self.is_collapsed(column_id) || self.sorted() {
             return cards.len();
         }
         let visible: Vec<usize> = cards
             .iter()
             .enumerate()
-            .filter(|(_, card)| self.card_visible(card, cx))
+            .filter(|(_, card)| self.card_matches(card))
             .map(|(index, _)| index)
             .collect();
         match visible.get(slot) {
             Some(&index) => index,
             None => visible.last().map_or(cards.len(), |&last| last + 1),
         }
+    }
+
+    /// Where a drop lands, or `None` when it changes nothing. A sorted board
+    /// has no order inside a column to change.
+    fn resolve_drop(&self, card_id: &str, column_id: &str, slot: usize) -> Option<(String, usize)> {
+        let detail = self.detail.as_ref()?;
+        let inside = detail
+            .cards
+            .iter()
+            .any(|card| card.id == card_id && card.column_id == column_id);
+        if self.sorted() && inside {
+            return None;
+        }
+        drop::resolve_card_drop(detail, card_id, column_id, slot)
     }
 
     fn drop_card(&mut self, card: &DraggedCard, column_id: &str, cx: &mut Context<Self>) {
@@ -830,10 +869,7 @@ impl BoardView {
                 d.cards.iter().filter(|c| c.column_id == column_id).count()
             }),
         };
-        let resolved = self
-            .detail
-            .as_ref()
-            .and_then(|detail| drop::resolve_card_drop(detail, &card.card_id, column_id, slot));
+        let resolved = self.resolve_drop(&card.card_id, column_id, slot);
         self.dragging = false;
         self.dragged_card = None;
         self.drop_target = None;
@@ -966,6 +1002,9 @@ impl BoardView {
         if self.close_new_card(Some(window), cx)
             || self.composer.take().is_some()
             || std::mem::take(&mut self.filter_open)
+            || std::mem::take(&mut self.sort_open)
+            || self.views.menu.take().is_some()
+            || self.views.naming.take().is_some()
             || std::mem::take(&mut self.open_in_open)
             || self.switcher.take().is_some()
             || self.renaming.take().is_some()
@@ -1292,6 +1331,9 @@ impl gpui::Render for BoardView {
         });
         let mut card_detail = self.render_card_detail(cx);
         let filter = self.render_filter(cx);
+        let sort = self.render_sort(cx);
+        let view_menu = self.render_view_menu(cx);
+        let chips = self.render_chips(cx);
         let open_in = self.render_open_in(cx);
         let switcher = self.render_switcher(cx);
         let archive = self.render_archive(cx);
@@ -1305,6 +1347,8 @@ impl gpui::Render for BoardView {
             .flex()
             .flex_col()
             .child(self.render_header(cx))
+            .child(self.render_views(cx))
+            .children(chips)
             .children(error)
             .when(full_page, |d| d.children(card_detail.take()))
             .when(!full_page, |d| {
@@ -1335,6 +1379,8 @@ impl gpui::Render for BoardView {
             .children(archive)
             .children(card_detail)
             .children(filter)
+            .children(sort)
+            .children(view_menu)
             .children(open_in)
             .children(switcher)
             .children(menu)

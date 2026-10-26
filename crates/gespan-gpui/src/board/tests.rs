@@ -362,8 +362,8 @@ fn switching_boards_clears_search_filter_drawer_and_menus(cx: &mut TestAppContex
         })
         .unwrap();
     f.window
-        .update(visual, |view, _, _| {
-            view.filter.priorities.insert(0);
+        .update(visual, |view, _, cx| {
+            filter_by_priority(view, 0, cx);
         })
         .unwrap();
     click(visual, "board-switcher");
@@ -372,7 +372,7 @@ fn switching_boards_clears_search_filter_drawer_and_menus(cx: &mut TestAppContex
     f.window
         .read_with(visual, |view, cx| {
             assert_eq!(view.query(cx), "");
-            assert_eq!(view.filter.len(), 0);
+            assert_eq!(view.spec.rows.len(), 0);
             assert!(view.card_detail.is_none());
         })
         .unwrap();
@@ -1462,7 +1462,8 @@ fn a_project_filter_shows_tagged_cards_and_clear_restores(cx: &mut TestAppContex
         .unwrap();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-filter");
-    click(visual, "board-filter-project-0");
+    click(visual, "board-filter-add-projects");
+    click(visual, "board-filter-row-0-value-0");
     assert_eq!(shown_cards(visual, &[1, 2, 3]), [1]);
     f.window
         .read_with(visual, |view, cx| {
@@ -1628,7 +1629,8 @@ fn tagging_two_projects_stores_both_and_the_filter_finds_either(cx: &mut TestApp
     visual.run_until_parked();
     click(visual, "board-drawer-close");
     click(visual, "board-filter");
-    click(visual, "board-filter-project-1");
+    click(visual, "board-filter-add-projects");
+    click(visual, "board-filter-row-0-value-1");
     assert_eq!(shown_cards(visual, &[1, 2]), [1]);
 }
 
@@ -1756,7 +1758,8 @@ fn a_project_no_longer_in_the_workspace_can_still_be_untagged_and_filtered(
         .unwrap();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-filter");
-    click(visual, "board-filter-project-1");
+    click(visual, "board-filter-add-projects");
+    click(visual, "board-filter-row-0-value-1");
     assert_eq!(shown_cards(visual, &[1, 2]), [1]);
     click(visual, "board-filter-clear");
     visual.simulate_keystrokes("escape");
@@ -2003,16 +2006,20 @@ fn label_and_priority_filters_narrow_the_cards_and_combine(cx: &mut TestAppConte
     f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-filter");
-    click(visual, "board-filter-priority-3");
+    click(visual, "board-filter-add-priority");
+    // Priorities list Urgent first: High is the second value, None the last.
+    click(visual, "board-filter-row-0-value-1");
     assert_eq!(shown_cards(visual, &[1, 2, 3]), [1]);
     // A card with no priority set counts as None.
-    click(visual, "board-filter-priority-0");
+    click(visual, "board-filter-row-0-value-4");
     assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
     click(visual, "board-filter-clear");
-    click(visual, "board-filter-label-0");
+    click(visual, "board-filter-add-labels");
+    click(visual, "board-filter-row-0-value-0");
     assert_eq!(shown_cards(visual, &[1, 2, 3]), [2]);
     // Different filters must all match.
-    click(visual, "board-filter-priority-3");
+    click(visual, "board-filter-add-priority");
+    click(visual, "board-filter-row-1-value-1");
     assert_eq!(shown_cards(visual, &[1, 2, 3]), Vec::<i64>::new());
 }
 
@@ -2182,8 +2189,10 @@ fn a_filter_never_hides_cards_behind_a_choice_that_is_gone(cx: &mut TestAppConte
         .unwrap();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-filter");
-    click(visual, "board-filter-label-0");
-    click(visual, "board-filter-project-0");
+    click(visual, "board-filter-add-labels");
+    click(visual, "board-filter-row-0-value-0");
+    click(visual, "board-filter-add-projects");
+    click(visual, "board-filter-row-1-value-0");
     // The label is deleted elsewhere and the project leaves the workspace.
     rusqlite::Connection::open(&f.db)
         .unwrap()
@@ -2196,8 +2205,14 @@ fn a_filter_never_hides_cards_behind_a_choice_that_is_gone(cx: &mut TestAppConte
     visual.run_until_parked();
     drawer(&f, visual, |view, _| {
         assert!(
-            view.filter.labels.is_empty(),
-            "a deleted label is unselected"
+            !view.chip_text(&view.spec.rows[0]).contains("Bug"),
+            "a deleted label is no longer listed"
+        );
+        assert!(
+            view.detail
+                .as_ref()
+                .is_some_and(|d| d.cards.iter().all(|card| view.card_matches(card))),
+            "a deleted label never hides cards"
         );
         assert!(
             view.project_choices()
@@ -2206,7 +2221,7 @@ fn a_filter_never_hides_cards_behind_a_choice_that_is_gone(cx: &mut TestAppConte
         );
     });
     visual.refresh().unwrap();
-    assert!(visual.debug_bounds("board-filter-project-0").is_some());
+    assert!(visual.debug_bounds("board-filter-row-1-value-0").is_some());
 }
 
 #[gpui::test]
@@ -2235,7 +2250,8 @@ fn a_card_dropped_while_filtered_lands_beside_the_visible_card(cx: &mut TestAppC
     f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     click(visual, "board-filter");
-    click(visual, "board-filter-priority-3");
+    click(visual, "board-filter-add-priority");
+    click(visual, "board-filter-row-0-value-1");
     visual.simulate_keystrokes("escape");
     visual.run_until_parked();
     assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 3]);
@@ -2882,6 +2898,15 @@ fn a_keyboard_drop_onto_a_collapsed_column_lands_at_the_end(cx: &mut TestAppCont
     assert_eq!(titles_in(&f, visual, "Backlog"), ["B"]);
 }
 
+fn filter_by_priority(view: &mut BoardView, priority: u8, cx: &mut Context<BoardView>) {
+    view.spec.rows.push(gespan_core::board::extras::FilterRow {
+        field: "priority".into(),
+        op: gespan_core::board::extras::Op::Is,
+        values: vec![priority.to_string()],
+    });
+    view.requery(cx);
+}
+
 fn set_priorities(f: &Fixture, cx: &mut TestAppContext, priorities: &[(&str, u8)]) {
     let mut service = Service::open(&f.db).unwrap();
     for (title, priority) in priorities {
@@ -2898,8 +2923,7 @@ fn sort_by_priority_orders_the_whole_column_even_when_filtered(cx: &mut TestAppC
     // Only A is visible while the filter is on.
     f.window
         .update(cx, |view, _, cx| {
-            view.filter.priorities.insert(1);
-            cx.notify();
+            filter_by_priority(view, 1, cx);
         })
         .unwrap();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
@@ -3169,8 +3193,7 @@ fn sort_undo_restores_the_exact_previous_order(cx: &mut TestAppContext) {
     // Sorting with a filter on still sorts, and undoes, the whole column.
     f.window
         .update(cx, |view, _, cx| {
-            view.filter.priorities.insert(1);
-            cx.notify();
+            filter_by_priority(view, 1, cx);
         })
         .unwrap();
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
@@ -4747,4 +4770,369 @@ fn a_rapid_double_submit_makes_one_card(cx: &mut TestAppContext) {
     visual.run_until_parked();
     assert_eq!(cards_titled(&f, "Twice").len(), 1);
     assert_eq!(card_count(&f), 2);
+}
+
+// ---- Filter builder, sort and saved views ----
+
+fn visible_titles(f: &Fixture, cx: &mut impl gpui::AppContext, column: &str) -> Vec<String> {
+    let column_id = column_id(f, cx, column);
+    f.window
+        .read_with(cx, |view, _| {
+            let detail = view.detail.as_ref().unwrap();
+            view.column_cards(detail, &column_id)
+                .iter()
+                .map(|card| card.title.clone())
+                .collect()
+        })
+        .unwrap()
+}
+
+fn stored_views(f: &Fixture) -> Vec<gespan_core::board::extras::View> {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    service.views(&board.id).unwrap()
+}
+
+fn due_in(f: &Fixture, cx: &mut TestAppContext, title: &str, days: i64) {
+    let now = gespan_core::time::now_ms() as i64;
+    let id = card_id(f, cx, title);
+    Service::open(&f.db)
+        .unwrap()
+        .set_due(&id, Some(now + days * 86_400_000))
+        .unwrap();
+}
+
+#[gpui::test]
+fn search_finds_text_in_the_description(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let backlog = detail(&f, cx).columns[0].id.clone();
+    let mut service = Service::open(&f.db).unwrap();
+    service
+        .card_create(&backlog, "Plain title", "the needle is in here")
+        .unwrap();
+    service.card_create(&backlog, "Other", "nothing").unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-search");
+    visual.simulate_input("NEEDLE");
+    visual.run_until_parked();
+    assert_eq!(shown_cards(visual, &[1, 2]), [1]);
+    f.window
+        .read_with(visual, |view, cx| {
+            assert_eq!(
+                view.count_label(&view.detail.as_ref().unwrap().columns[0].id, cx),
+                "1/2"
+            )
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn filter_builder_adds_where_and_rows_and_shows_chips(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["High", "Low", "Plain"]);
+    set_priorities(&f, cx, &[("High", 3), ("Low", 1)]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-add-priority");
+    // Urgent first, so High is the second value.
+    click(visual, "board-filter-row-0-value-1");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1]);
+    click(visual, "board-filter-add-status");
+    assert_eq!(BoardView::lead_label(0), "Where");
+    assert_eq!(BoardView::lead_label(1), "and");
+    click(visual, "board-filter-row-1-value-0");
+    // The second row ANDs with the first: High and in Backlog.
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1]);
+    drawer(&f, visual, |view, _| {
+        assert_eq!(view.spec.rows.len(), 2);
+        assert_eq!(view.chip_text(&view.spec.rows[0]), "Priority is High");
+        assert_eq!(view.chip_text(&view.spec.rows[1]), "Status is Backlog");
+    });
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("board-chip-0").is_some());
+    assert!(visual.debug_bounds("board-chip-1").is_some());
+    // "is not" flips the first row: everything but High.
+    click(visual, "board-filter");
+    click(visual, "board-filter-row-0-op");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [2, 3]);
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    // A chip's x removes just its row.
+    click(visual, "board-chip-0-remove");
+    drawer(&f, visual, |view, _| {
+        assert_eq!(view.spec.rows.len(), 1);
+        assert_eq!(view.chip_text(&view.spec.rows[0]), "Status is Backlog");
+    });
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
+}
+
+#[gpui::test]
+fn clear_all_removes_every_row(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["High", "Plain"]);
+    set_priorities(&f, cx, &[("High", 3)]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-add-priority");
+    click(visual, "board-filter-row-0-value-1");
+    click(visual, "board-filter-add-status");
+    click(visual, "board-filter-row-1-value-3");
+    assert_eq!(shown_cards(visual, &[1, 2]), Vec::<i64>::new());
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    click(visual, "board-chips-clear");
+    drawer(&f, visual, |view, _| assert!(view.spec.rows.is_empty()));
+    assert_eq!(shown_cards(visual, &[1, 2]), [1, 2]);
+    assert!(visual.debug_bounds("board-chips").is_none());
+}
+
+fn sort_by(visual: &mut VisualTestContext, key: &'static str) {
+    click(visual, "board-sort");
+    click(visual, key);
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+}
+
+#[gpui::test]
+fn sort_by_due_orders_columns_and_disables_in_column_drag(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Later", "Soon", "Undated", "Sooner"]);
+    due_in(&f, cx, "Later", 9);
+    due_in(&f, cx, "Soon", 3);
+    due_in(&f, cx, "Sooner", 1);
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    sort_by(visual, "board-sort-due");
+    assert_eq!(
+        visible_titles(&f, visual, "Backlog"),
+        ["Sooner", "Soon", "Later", "Undated"],
+        "undated cards sort last"
+    );
+    assert!(visual.debug_bounds("board-sorted-by").is_some());
+    drawer(&f, visual, |view, _| assert!(view.sorted()));
+    // Descending keeps undated cards last.
+    click(visual, "board-sort");
+    click(visual, "board-sort-dir-desc");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert_eq!(
+        visible_titles(&f, visual, "Backlog"),
+        ["Later", "Soon", "Sooner", "Undated"]
+    );
+    // Dragging the last card to the top of its own column changes nothing.
+    let stored = titles_in(&f, visual, "Backlog");
+    let top = visual.debug_bounds("board-card-1").unwrap();
+    let from = center(visual, "board-card-3");
+    drag(
+        visual,
+        from,
+        gpui::point(top.center().x, top.top() + px(2.)),
+    );
+    assert_eq!(titles_in(&f, visual, "Backlog"), stored);
+    let (backlog, moved) = (
+        column_id(&f, visual, "Backlog"),
+        card_id(&f, visual, "Undated"),
+    );
+    drawer(&f, visual, |view, _| {
+        assert_eq!(view.resolve_drop(&moved, &backlog, 0), None);
+    });
+    // Back to manual: reordering inside the column works again.
+    sort_by(visual, "board-sort-manual");
+    drawer(&f, visual, |view, _| {
+        assert!(!view.sorted());
+        assert_eq!(
+            view.resolve_drop(&moved, &backlog, 0),
+            Some((backlog.clone(), 0))
+        );
+    });
+}
+
+#[gpui::test]
+fn cross_column_drop_still_works_while_sorted(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    due_in(&f, cx, "A", 5);
+    due_in(&f, cx, "B", 2);
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    // Put one card in Review so the drop has something to append after.
+    let review = column_id(&f, visual, "Review");
+    let seeded_card = card_id(&f, visual, "C");
+    Service::open(&f.db)
+        .unwrap()
+        .card_move(&seeded_card, &review, 0, "user")
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    sort_by(visual, "board-sort-due");
+    assert_eq!(visible_titles(&f, visual, "Backlog"), ["B", "A"]);
+    // B is first on screen (card number 2); drop it on the Review column.
+    let from = center(visual, "board-card-2");
+    let to = center(visual, "board-column-body-2");
+    drag(visual, from, to);
+    assert_eq!(titles_in(&f, visual, "Review"), ["C", "B"], "appended");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A"]);
+    drawer(&f, visual, |view, _| assert!(view.sorted()));
+}
+
+#[gpui::test]
+fn save_view_creates_a_tab_and_switching_restores_spec_and_layout(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["High one", "High two", "Low"]);
+    set_priorities(&f, cx, &[("High one", 3), ("High two", 3), ("Low", 1)]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-add-priority");
+    click(visual, "board-filter-row-0-value-1");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    sort_by(visual, "board-sort-title");
+    click(visual, "board-search");
+    visual.simulate_input("two");
+    visual.run_until_parked();
+    // A layout the view carries comes back as it was saved.
+    let layout = r#"{"layout":"board","widths":{"title":220}}"#;
+    f.window
+        .update(visual, |view, _, _| view.views.layout = layout.to_string())
+        .unwrap();
+    click(visual, "board-view-new");
+    visual.simulate_input("Urgent");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    let saved = stored_views(&f);
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].name, "Urgent");
+    assert_eq!(saved[0].layout_json, layout);
+    let spec: gespan_core::board::extras::ViewSpec =
+        serde_json::from_str(&saved[0].spec_json).unwrap();
+    assert_eq!(spec.query, "two");
+    assert_eq!(spec.rows.len(), 1);
+    assert!(visual.debug_bounds("board-view-tab-0").is_some());
+    // Saving shows the new tab as the active, unchanged view.
+    drawer(&f, visual, |view, cx| {
+        assert_eq!(view.views.active.as_deref(), Some(saved[0].id.as_str()));
+        assert!(!view.view_dirty(cx));
+    });
+    // All cards: nothing searched, filtered or sorted, default layout.
+    click(visual, "board-view-tab-all");
+    drawer(&f, visual, |view, cx| {
+        assert_eq!(view.current_spec(cx), Default::default());
+        assert_eq!(view.views.layout, views::DEFAULT_LAYOUT);
+        assert_eq!(view.search.read(cx).content, "");
+    });
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
+    // The saved tab brings everything back.
+    click(visual, "board-view-tab-0");
+    drawer(&f, visual, |view, cx| {
+        assert_eq!(view.current_spec(cx), spec);
+        assert_eq!(view.views.layout, layout);
+        assert_eq!(view.search.read(cx).content, "two");
+    });
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [2]);
+}
+
+#[gpui::test]
+fn unsaved_changes_show_a_dot_with_save_and_revert(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Alpha", "Beta"]);
+    let board = Service::open(&f.db).unwrap().default_board().unwrap();
+    let spec = serde_json::to_string(&Default::default() as &gespan_core::board::extras::ViewSpec)
+        .unwrap();
+    Service::open(&f.db)
+        .unwrap()
+        .view_create(&board.id, "Mine", &spec, views::DEFAULT_LAYOUT)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-view-tab-0");
+    assert!(visual.debug_bounds("board-view-dot-0").is_none());
+    assert!(visual.debug_bounds("board-view-save-changes").is_none());
+    sort_by(visual, "board-sort-title");
+    assert!(
+        visual.debug_bounds("board-view-dot-0").is_some(),
+        "a change shows the dot"
+    );
+    assert!(visual.debug_bounds("board-view-revert").is_some());
+    // Revert goes back to what was saved.
+    click(visual, "board-view-revert");
+    assert!(visual.debug_bounds("board-view-dot-0").is_none());
+    drawer(&f, visual, |view, _| assert!(!view.sorted()));
+    // Save writes the change and clears the dot.
+    sort_by(visual, "board-sort-title");
+    click(visual, "board-view-save-changes");
+    assert!(visual.debug_bounds("board-view-dot-0").is_none());
+    let stored: gespan_core::board::extras::ViewSpec =
+        serde_json::from_str(&stored_views(&f)[0].spec_json).unwrap();
+    assert_eq!(stored.sort.key, gespan_core::board::extras::SortKey::Title);
+    // Typing in the search is a change too.
+    click(visual, "board-search");
+    visual.simulate_input("alp");
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("board-view-dot-0").is_some());
+}
+
+#[gpui::test]
+fn all_cards_tab_cannot_be_deleted(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Alpha"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-view-tab-all").is_some());
+    assert!(
+        visual.debug_bounds("board-view-menu-all").is_none(),
+        "the built-in tab has no menu"
+    );
+    // Even asked to, nothing is deleted and the tab stays first.
+    f.window
+        .update(visual, |view, _, cx| view.delete_view("all", cx))
+        .unwrap();
+    drawer(&f, visual, |view, _| assert_eq!(view.views.active, None));
+    // A saved tab does have Rename, Duplicate and Delete.
+    click(visual, "board-view-new");
+    visual.simulate_input("Temp");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    click(visual, "board-view-menu-0");
+    assert!(visual.debug_bounds("board-view-rename").is_some());
+    assert!(visual.debug_bounds("board-view-duplicate").is_some());
+    click(visual, "board-view-duplicate");
+    assert_eq!(stored_views(&f).len(), 2);
+    assert_eq!(stored_views(&f)[1].name, "Temp copy");
+    click(visual, "board-view-menu-1");
+    click(visual, "board-view-delete");
+    assert_eq!(stored_views(&f).len(), 1);
+    // Deleting the showing view falls back to All cards.
+    click(visual, "board-view-tab-0");
+    click(visual, "board-view-menu-0");
+    click(visual, "board-view-delete");
+    assert!(stored_views(&f).is_empty());
+    drawer(&f, visual, |view, _| assert_eq!(view.views.active, None));
+    assert!(visual.debug_bounds("board-view-tab-all").is_some());
+}
+
+#[gpui::test]
+fn a_view_with_a_deleted_label_still_loads(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["One", "Two"]);
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    let bug = service.create_label(&board.id, "Bug", "e5534b").unwrap();
+    let spec = format!(
+        r#"{{"query":"","rows":[{{"field":"labels","op":"is","values":["{}"]}}],"sort":{{"key":"manual","dir":"asc"}}}}"#,
+        bug.id
+    );
+    service
+        .view_create(&board.id, "Bugs", &spec, views::DEFAULT_LAYOUT)
+        .unwrap();
+    rusqlite::Connection::open(&f.db)
+        .unwrap()
+        .execute("DELETE FROM board_labels", [])
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-view-tab-0");
+    drawer(&f, visual, |view, _| {
+        assert_eq!(view.error, None);
+        assert_eq!(view.load_error, None);
+        assert_eq!(view.spec.rows.len(), 1, "the row stays as it was saved");
+    });
+    assert_eq!(
+        shown_cards(visual, &[1, 2]),
+        [1, 2],
+        "a row whose values are all gone is ignored, not zero results"
+    );
 }

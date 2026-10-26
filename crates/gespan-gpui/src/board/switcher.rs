@@ -54,6 +54,7 @@ impl BoardView {
     fn toggle_switcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
         self.filter_open = false;
+        self.sort_open = false;
         self.menu = None;
         self.switcher = match self.switcher {
             Some(_) => None,
@@ -92,10 +93,9 @@ impl BoardView {
     }
 
     fn reset_for_board(&mut self, cx: &mut Context<Self>) {
-        self.filter = Default::default();
-        self.search
-            .update(cx, |input, cx| input.set_text(String::new(), cx));
+        self.reset_view(cx);
         self.filter_open = false;
+        self.sort_open = false;
         self.card_menu = None;
         self.menu = None;
         self.composer = None;
