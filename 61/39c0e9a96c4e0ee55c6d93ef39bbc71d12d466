@@ -1,0 +1,36 @@
+crates/tracker-client/src/tickets/parse.rs
+  s_938a6e0c93b076::t_bc2c5bab759114 74-77,84,169-178,181-184
+  s_938a6e0c93b076::t_ff0633cea9d406 179-180
+  s_938a6e0c93b076::t_021286c251cea8 185
+crates/tracker-client/src/provider_boards/linear.rs
+  s_938a6e0c93b076::t_bc2c5bab759114 315-317,319-322,331
+  s_938a6e0c93b076::t_c289990f9cae6b 318
+  s_938a6e0c93b076::t_1023df09fbd923 314
+crates/tracker-client/src/tools.rs
+  s_938a6e0c93b076::t_ff0633cea9d406 130,135-150,275-298
+  s_938a6e0c93b076::t_0f990dda93bbb4 299
+crates/tracker-client/src/tickets/service.rs
+  s_938a6e0c93b076::t_c289990f9cae6b 644-661
+  s_938a6e0c93b076::t_bc2c5bab759114 361-373
+  s_938a6e0c93b076::t_29fd4836f469cc 643
+crates/tracker-client/src/provider_boards/jira.rs
+  s_938a6e0c93b076::t_c289990f9cae6b 1113-1153,1161-1166
+  s_938a6e0c93b076::t_ff0633cea9d406 1155-1157,1159-1160
+  s_938a6e0c93b076::t_a93638115bd0ca 1154,1158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6139c0e9a96c4e0ee55c6d93ef39bbc71d12d466",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
