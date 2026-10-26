@@ -38,6 +38,12 @@ import {
   listLabels,
   listBoards,
   fieldDistinctValues,
+  getBlockedCards,
+  getRunningCards,
+  listActivity,
+  listBoardLinks,
+  type CardLinkRow,
+  type CardLinkKind,
   getBoardSettings,
   setFieldValue,
   updateBoardSettings,
@@ -149,6 +155,18 @@ import { fieldText } from "../model/cardProps";
 import { DisplayEditor } from "./settings/DisplayEditor";
 import { Swimlanes } from "./kanban/Swimlanes";
 import { NewBoardDialog } from "./NewBoardDialog";
+import { RunWithDialog } from "./RunWithDialog";
+import { agentValues, AGENT_FIELD_LABEL } from "../model/agentFields";
+import {
+  extraKey,
+  latestEventByCard,
+  pilotState,
+  runningPairs,
+  sessionState,
+  settledSince,
+  type LinkChipView,
+  type LinkExtra,
+} from "../model/linkStatus";
 import {
   MenuButton,
   MenuItem,
@@ -162,6 +180,7 @@ import {
   resolveLink,
   type BoardLinkTarget,
   type LinkRef,
+  type RunRequest,
 } from "./boardFormat";
 import { CardComposer } from "./CardComposer";
 import { loadBoardCardOpen } from "../../settings/model/settings";
@@ -240,6 +259,16 @@ type Props = {
   lookupLinkTargets: (links: LinkRef[]) => Promise<BoardLinkTarget[]>;
   /** The workspace's projects, for the filter. */
   projects: readonly { path: string; name: string }[];
+  /**
+   * Reads the state of PR and worktree links (state, checks, branch, diff
+   * stats), keyed by `extraKey`. Called when the board opens and when a
+   * linked turn settles, never on a timer.
+   */
+  lookupLinkStatus?: (
+    links: { kind: "pr" | "worktree"; reference: string }[],
+  ) => Promise<Record<string, LinkExtra>>;
+  /** Starts a session for a card (the app builds it from the store's prompt). */
+  onRunWith?: (request: RunRequest) => Promise<void>;
   /** A palette command for the board; `nonce` tells repeats apart. */
   command?: BoardCommand | null;
   /** Called once the board has acted on (or dropped) `command`. */
@@ -258,6 +287,8 @@ export function BoardView({
   onOpenLinkedWork,
   lookupLinkTargets,
   projects,
+  lookupLinkStatus,
+  onRunWith,
   command,
   onCommandHandled,
 }: Props) {
@@ -294,6 +325,8 @@ export function BoardView({
         onOpenLinkedWork={onOpenLinkedWork}
         lookupLinkTargets={lookupLinkTargets}
         projects={projects}
+        lookupLinkStatus={lookupLinkStatus}
+        onRunWith={onRunWith}
         command={command}
         onCommandHandled={onCommandHandled}
       />
@@ -306,6 +339,8 @@ function BoardContent({
   onOpenLinkedWork,
   lookupLinkTargets,
   projects,
+  lookupLinkStatus,
+  onRunWith,
   command,
   onCommandHandled,
 }: Pick<
@@ -314,6 +349,8 @@ function BoardContent({
   | "onOpenLinkedWork"
   | "lookupLinkTargets"
   | "projects"
+  | "lookupLinkStatus"
+  | "onRunWith"
   | "command"
   | "onCommandHandled"
 >) {
@@ -352,6 +389,15 @@ function BoardContent({
   const [pageCardId, setPageCardId] = useState<string | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Link status: every link on the board, what blocks which card, each
+  // card's latest linked-work event, and what PR and worktree links report.
+  const [boardLinks, setBoardLinks] = useState<CardLinkRow[]>([]);
+  const [blocked, setBlocked] = useState<Record<string, number[]>>({});
+  const [latestEvent, setLatestEvent] = useState<Record<string, string>>({});
+  const [linkExtra, setLinkExtra] = useState<Record<string, LinkExtra>>({});
+  const [realRunning, setRealRunning] = useState<string[] | null>(null);
+  const [settleTick, setSettleTick] = useState(0);
+  const [runFor, setRunFor] = useState<BoardCard | null>(null);
   const [settings, setSettings] = useState<StoredSettings | null>(null);
   // The board whose default view has been looked at: it applies once per open.
   const defaultViewSeen = useRef<string | null>(null);
@@ -517,6 +563,9 @@ function BoardContent({
         boardFields,
         boardViews,
         boardSettings,
+        links,
+        blockers,
+        activity,
       ] = await Promise.all([
           getBoard(id),
           // A failed ticket read leaves the cards without chips, not the board unloaded.
@@ -528,6 +577,10 @@ function BoardContent({
           listViews(id).catch(() => null),
           // Without them the board shows with its defaults.
           getBoardSettings(id).catch(() => null),
+          // Chips, locks and failed marks are left as they were if these fail.
+          listBoardLinks(id).catch(() => null),
+          getBlockedCards(id).catch(() => null),
+          listActivity(id, null, 200).catch(() => null),
         ]);
       if (ticket !== request.current || openIdRef.current !== id) return;
       setDetail(next);
@@ -537,6 +590,9 @@ function BoardContent({
       if (boardFields) setFields(boardFields);
       if (boardViews) syncViews(boardViews);
       if (boardSettings) setSettings(boardSettings);
+      if (links) setBoardLinks(links);
+      if (blockers) setBlocked(blockers);
+      if (activity) setLatestEvent(latestEventByCard(activity));
       if (defaultViewSeen.current !== id) {
         defaultViewSeen.current = id;
         const wanted = boardViews?.find(
@@ -592,6 +648,12 @@ function BoardContent({
     // So are its views, search, filter and sort.
     setViews([]);
     setSettings(null);
+    setBoardLinks([]);
+    setBlocked({});
+    setLatestEvent({});
+    setLinkExtra({});
+    setRealRunning(null);
+    setRunFor(null);
     setSettingsOpen(false);
     defaultViewSeen.current = null;
     setActiveView(null);
@@ -633,6 +695,14 @@ function BoardContent({
       if (targetsByValue.has(value) || asked.current.has(value)) continue;
       wanted.set(value, { kind: card.linkKind, id: card.linkId });
     }
+    // The cards' other session and Pilot links need their targets too.
+    for (const link of boardLinks) {
+      if (link.kind !== "session" && link.kind !== "pilot") continue;
+      const value = linkValue(link.kind, link.reference);
+      if (targetsByValue.has(value)) asked.current.delete(value);
+      if (targetsByValue.has(value) || asked.current.has(value)) continue;
+      wanted.set(value, { kind: link.kind, id: link.reference });
+    }
     if (!wanted.size) return;
     for (const value of wanted.keys()) asked.current.add(value);
     lookupLinkTargets([...wanted.values()])
@@ -650,7 +720,7 @@ function BoardContent({
       })
       // Left unconfirmed: a failed lookup says nothing about the work.
       .catch(fail("Couldn't check linked work"));
-  }, [detail, targetsByValue, lookupLinkTargets, fail]);
+  }, [detail, boardLinks, targetsByValue, lookupLinkTargets, fail]);
 
   // What the app has loaded wins over a lookup: it carries live status.
   const linkStates = useMemo(() => {
@@ -683,16 +753,82 @@ function BoardContent({
   const sorted = sort.key !== "manual";
   const narrowing = query.trim() !== "" || effectiveRows.length > 0;
 
-  const runningIds = useMemo(
+  // The cards whose linked work is running now. The store answers it for
+  // every link on every card; the primary links alone stand in until it has.
+  const runningNow = useMemo(
+    () => runningPairs([...linkStates.values()].flatMap((t) => (t ? [t] : []))),
+    [linkStates],
+  );
+  const runningKey = JSON.stringify(runningNow);
+  const fallbackRunning = useMemo(
     () =>
       runningCardIds(
         detail?.cards ?? [],
         (kind, id) =>
           kind !== "flow-run" &&
-          linkStates.get(linkValue(kind, id))?.status === "running",
+          ["running", "waiting"].includes(
+            linkStates.get(linkValue(kind, id))?.status ?? "",
+          ),
       ),
     [detail, linkStates],
   );
+  const runningIds = realRunning ?? fallbackRunning;
+  useEffect(() => {
+    if (!openId || detail?.board.id !== openId) return;
+    let stale = false;
+    getRunningCards(openId, JSON.parse(runningKey))
+      .then((ids) => {
+        if (!stale) setRealRunning(ids);
+      })
+      // The primary links stand in.
+      .catch(() => {
+        if (!stale) setRealRunning(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [openId, detail, runningKey]);
+
+  // A linked turn settling (something that ran no longer does) re-reads the
+  // board's link status once. Nothing here polls.
+  const lastRunning = useRef<[CardLinkKind, string][]>([]);
+  useEffect(() => {
+    if (settledSince(lastRunning.current, runningNow)) {
+      setSettleTick((tick) => tick + 1);
+      void refresh();
+    }
+    lastRunning.current = runningNow;
+  }, [runningNow, refresh]);
+
+  // PR and worktree status: on open, on a changed set of such links, and on settle.
+  const lookupStatusRef = useRef(lookupLinkStatus);
+  lookupStatusRef.current = lookupLinkStatus;
+  const statusLinks = useMemo(
+    () =>
+      boardLinks.flatMap((link) =>
+        link.kind === "pr" || link.kind === "worktree"
+          ? [{ kind: link.kind as "pr" | "worktree", reference: link.reference }]
+          : [],
+      ),
+    [boardLinks],
+  );
+  const statusKey = JSON.stringify(statusLinks);
+  useEffect(() => {
+    const lookup = lookupStatusRef.current;
+    const links = JSON.parse(statusKey) as typeof statusLinks;
+    if (!lookup || !openId || !links.length) return;
+    let stale = false;
+    lookup(links).then(
+      (found) => {
+        if (!stale) setLinkExtra(found);
+      },
+      // The chips keep what they had (unknown at first).
+      () => undefined,
+    );
+    return () => {
+      stale = true;
+    };
+  }, [openId, statusKey, settleTick]);
 
   // Matching, filtering and ordering all come from the board query. A newer
   // request, a board switch or a new board read wins over a late answer.
@@ -1626,11 +1762,123 @@ function BoardContent({
       return field && text ? [{ id, name: field.name, text }] : [];
     });
 
+  const basenameOf = (path: string) => {
+    const parts = path.split("/").filter(Boolean);
+    return parts[parts.length - 1] ?? path;
+  };
+
+  /** The link of a card as its chip shows it: a failed latest event marks finished work. */
+  const linkOf = (card: BoardCard) => {
+    const link = resolveLink(card, linkStates);
+    const target = link?.target;
+    return link &&
+      target &&
+      target.kind === "session" &&
+      target.status === "completed" &&
+      latestEvent[card.id] === "failed"
+      ? { ...link, target: { ...target, status: "failed" as const } }
+      : link;
+  };
+
+  /** One chip for each link besides the primary one. */
+  const linkChipsOf = (card: BoardCard): LinkChipView[] =>
+    boardLinks.flatMap((link): LinkChipView[] => {
+      if (link.cardId !== card.id || link.role === "primary") return [];
+      if (link.kind === "pr" || link.kind === "worktree") {
+        const found = linkExtra[extraKey(link)];
+        const base = {
+          kind: link.kind,
+          reference: link.reference,
+          state: found?.state ?? "unknown",
+          checks: found?.checks,
+          diff: found?.diff,
+        } as const;
+        return [
+          {
+            ...base,
+            label:
+              link.kind === "worktree"
+                ? (found?.branch ?? basenameOf(link.reference))
+                : (link.reference.match(/\/pull\/(\d+)/)?.[1]
+                    ? `PR #${link.reference.match(/\/pull\/(\d+)/)![1]}`
+                    : "PR"),
+          },
+        ];
+      }
+      if (link.kind !== "session" && link.kind !== "pilot") return [];
+      const target = linkStates.get(linkValue(link.kind, link.reference));
+      const state =
+        target === null
+          ? "missing"
+          : link.kind === "pilot"
+            ? pilotState(target?.status === "running")
+            : sessionState({
+                running: target?.status === "running",
+                waiting: target?.status === "waiting",
+                failed: latestEvent[card.id] === "failed",
+              });
+      return [
+        {
+          kind: link.kind,
+          reference: link.reference,
+          label: target?.label ?? (link.kind === "pilot" ? "Pilot" : "Session"),
+          state,
+        },
+      ];
+    });
+
+  /** The sessions linked to a card (primary and extra), as the app knows them. */
+  const agentFactsOf = (card: BoardCard) => {
+    const ids = new Set<string>();
+    if (card.linkKind === "session" && card.linkId) ids.add(card.linkId);
+    for (const link of boardLinks) {
+      if (link.cardId === card.id && link.kind === "session") ids.add(link.reference);
+    }
+    return [...ids].flatMap((id) => {
+      const facts = linkStates.get(linkValue("session", id))?.agent;
+      return facts ? [facts] : [];
+    });
+  };
+  const agentOf = (cardId: string) => {
+    const card = detail?.cards.find((other) => other.id === cardId);
+    return agentValues(card ? agentFactsOf(card) : []);
+  };
+  const faceChipsOf = (card: BoardCard) => {
+    const values = agentOf(card.id);
+    return [
+      ...fieldChipsOf(card.id),
+      ...display.face.agentFields.flatMap((field) =>
+        values[field]
+          ? [{ id: `agent:${field}`, name: AGENT_FIELD_LABEL[field], text: values[field]! }]
+          : [],
+      ),
+    ];
+  };
+
+  /** Asks first when open cards block this one, then lets the user pick what runs. */
+  const startRunWith = async (card: BoardCard) => {
+    const blockers = blocked[card.id] ?? [];
+    if (blockers.length) {
+      const confirmed = await ask(
+        `#${card.number} is blocked by ${blockers.map((n) => `#${n}`).join(", ")}. Run anyway?`,
+        {
+          title: "Blocked card",
+          kind: "warning",
+          okLabel: "Run anyway",
+          cancelLabel: "Cancel",
+        },
+      ).catch(() => false);
+      if (!confirmed) return;
+    }
+    setRunFor(card);
+  };
+  const runWithOn = !!onRunWith && settings?.runWith === true;
+
   const renderCard = (card: BoardCard) => (
     <BoardCardItem
       card={card}
       done={columnsById.get(card.columnId)?.role === "done"}
-      link={resolveLink(card, linkStates)}
+      link={linkOf(card)}
       ticket={tickets[card.id] ?? null}
       extras={extras[card.id]}
       labels={labelsOf(card.id)}
@@ -1669,7 +1917,9 @@ function BoardContent({
       selected={selectedSet.has(card.id)}
       onSelectClick={(event) => selectClick(event, card)}
       display={display}
-      fieldChips={fieldChipsOf(card.id)}
+      fieldChips={faceChipsOf(card)}
+      linkChips={linkChipsOf(card)}
+      blockedBy={blocked[card.id] ?? []}
     />
   );
 
@@ -2252,6 +2502,7 @@ function BoardContent({
               />
             ) : detail && layoutState.layout === "table" ? (
               <BoardTable
+                agent={agentOf}
                 cards={visibleCards}
                 existing={new Set(detail.cards.map((card) => card.id))}
                 columns={tableColumns(layoutState, fields)}
@@ -2355,7 +2606,9 @@ function BoardContent({
               extras={extras[shownCard.id]}
               labels={labels}
               projects={projects}
-              link={resolveLink(shownCard, linkStates)}
+              link={linkOf(shownCard)}
+              onRunWith={runWithOn ? () => void startRunWith(shownCard) : undefined}
+              blockedBy={blocked[shownCard.id] ?? []}
               ticket={tickets[shownCard.id] ?? null}
               linkTargets={linkTargets}
               boardCards={(detail?.cards ?? []).map((other) => ({
@@ -2412,6 +2665,17 @@ function BoardContent({
               );
             }}
             onClose={() => setTicketCardOpen(false)}
+          />
+        ) : null}
+        {runFor && onRunWith ? (
+          <RunWithDialog
+            cardId={runFor.id}
+            projects={projects}
+            onClose={() => setRunFor(null)}
+            onRun={(request) => {
+              setRunFor(null);
+              onRunWith(request).catch(fail("Couldn't start the session"));
+            }}
           />
         ) : null}
         {newCardOpen && detail ? (

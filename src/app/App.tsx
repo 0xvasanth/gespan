@@ -225,6 +225,9 @@ import {
 } from "../features/sessions/model/attachments";
 import {
   basename,
+  gitBranches,
+  gitDiffStats,
+  gitPrStatus,
   homeDir,
   notifyGitChanged,
   pickFolders,
@@ -732,7 +735,22 @@ import {
   sessionLinkTarget,
   type BoardLinkTarget,
   type LinkRef,
+  type RunRequest,
 } from "../features/board/ui/boardFormat";
+import { prepareRun } from "../features/board/model/runWith";
+import {
+  addCardLink,
+  getCardTicket,
+  getRunPrompt,
+} from "../features/board/model/board";
+import {
+  checksState,
+  extraKey,
+  parsePrUrl,
+  prState,
+  type LinkExtra,
+} from "../features/board/model/linkStatus";
+import { fetchGithubPrChecks } from "../features/inbox/model/githubPrChecks";
 import { onLinkedWork } from "../features/board/model/autoMove";
 import {
   createLinkedTurns,
@@ -14056,9 +14074,17 @@ function Workspace({
         .map((session) => session.id)
         .join("\n")
     : "";
+  // Sessions waiting on an approval or a question, for the cards' "waiting" chips.
+  const waitingSessionKey = boardShown
+    ? sessions
+        .filter((session) => sessionNeedsInput(session))
+        .map((session) => session.id)
+        .join("\n")
+    : "";
   const boardLinkTargets = useMemo((): BoardLinkTarget[] => {
     if (!boardShown) return [];
     const busy = new Set(busySessionKey.split("\n"));
+    const waiting = new Set(waitingSessionKey.split("\n"));
     // Archived and draft sessions stay targets (a card linked to one still
     // finds it) but are unlisted, so the picker leaves them out.
     const targets: BoardLinkTarget[] = history
@@ -14066,7 +14092,12 @@ function Workspace({
       .map((session) =>
         sessionLinkTarget(
           session,
-          busy.has(session.id) ? "running" : "completed",
+          // A turn waiting on the user is still open: it reads "waiting".
+          waiting.has(session.id)
+            ? "waiting"
+            : busy.has(session.id)
+              ? "running"
+              : "completed",
         ),
       );
     if (pilotsEnabled) {
@@ -14083,7 +14114,15 @@ function Workspace({
     return targets;
     // The Pilot roster is read through its snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boardShown, busySessionKey, history, pilotsEnabled, pilotRail, pilotsSnap]);
+  }, [
+    boardShown,
+    busySessionKey,
+    waitingSessionKey,
+    history,
+    pilotsEnabled,
+    pilotRail,
+    pilotsSnap,
+  ]);
   const boardProjects = useMemo(
     () =>
       boardShown
@@ -14123,6 +14162,90 @@ function Workspace({
       return targets;
     },
     [],
+  );
+  // PR checks and diff stats for the board's PR and worktree links. Read when
+  // the board opens and when a linked turn settles; never on a timer. Remote
+  // workspaces refuse `gh` checks, so those read as unknown, not as an error.
+  const lookupBoardLinkStatus = useCallback(
+    async (
+      links: { kind: "pr" | "worktree"; reference: string }[],
+    ): Promise<Record<string, LinkExtra>> => {
+      const out: Record<string, LinkExtra> = {};
+      const local = !remoteProjectFor(projectCwd);
+      await Promise.all(
+        links.map(async (link) => {
+          const key = extraKey(link);
+          if (link.kind === "worktree") {
+            const [branches, stats] = await Promise.allSettled([
+              gitBranches(link.reference),
+              gitDiffStats(link.reference),
+            ]);
+            out[key] = {
+              state: "idle",
+              ...(branches.status === "fulfilled" && branches.value.current
+                ? { branch: branches.value.current }
+                : {}),
+              ...(stats.status === "fulfilled"
+                ? {
+                    diff: {
+                      additions: stats.value.additions,
+                      deletions: stats.value.deletions,
+                    },
+                  }
+                : {}),
+            };
+            return;
+          }
+          const pr = parsePrUrl(link.reference);
+          if (!pr || !local) {
+            out[key] = { state: "unknown" };
+            return;
+          }
+          const [status, checks] = await Promise.allSettled([
+            gitPrStatus(projectCwd),
+            fetchGithubPrChecks(projectCwd, pr.repo, pr.number),
+          ]);
+          const sameBranchPr =
+            status.status === "fulfilled" &&
+            status.value?.url === link.reference
+              ? status.value
+              : null;
+          out[key] = {
+            state: prState(sameBranchPr?.state),
+            ...(checks.status === "fulfilled" &&
+            checksState(checks.value.checks)
+              ? { checks: checksState(checks.value.checks) }
+              : {}),
+          };
+        }),
+      );
+      return out;
+    },
+    [projectCwd],
+  );
+  // "Run with…": a session with the store's prompt for the card, linked to
+  // it, carrying the card's cached ticket (so a disconnected tracker still
+  // starts), then sent. Everything else about the card stays in the store.
+  const onBoardRunWith = useCallback(
+    async (request: RunRequest) => {
+      const { session, prompt } = await prepareRun(request, {
+        getRunPrompt,
+        getCardTicket,
+      });
+      const nextSessions = [...sessionsRef.current, session];
+      sessionsRef.current = nextSessions;
+      setSessions(nextSessions);
+      const tab = newTab(session.id);
+      appendTab(tab, request.cwd);
+      // The link goes in before the turn starts, so write-back finds the card.
+      await addCardLink(request.cardId, "session", session.id);
+      setBoardViewOpen(false);
+      setSidebarTab("sessions", session.cwd);
+      setActiveTabId(tab.id);
+      setComposerFocused(false);
+      submitSession(session.id, prompt, [], { refreshTitle: true });
+    },
+    [appendTab, submitSession],
   );
   // Rejections reach the board's error toast.
   const onOpenBoardLinkedWork = useCallback(
@@ -14982,6 +15105,8 @@ function Workspace({
                         linkTargets={boardLinkTargets}
                         onOpenLinkedWork={onOpenBoardLinkedWork}
                         lookupLinkTargets={lookupBoardLinkTargets}
+                        lookupLinkStatus={lookupBoardLinkStatus}
+                        onRunWith={onBoardRunWith}
                         projects={boardProjects}
                         command={boardCommand}
                         onCommandHandled={onBoardCommandHandled}

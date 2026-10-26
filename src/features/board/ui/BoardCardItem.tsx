@@ -3,6 +3,7 @@ import { Popover, type PopoverAnchor } from "../../../shared/ui/Popover";
 import {
   Bot,
   ExternalLink,
+  Lock,
   MessageSquare,
   Play,
 } from "../../../shared/ui/icons";
@@ -17,6 +18,7 @@ import {
   type DisplayOptions,
 } from "../model/board";
 import { DEFAULT_DISPLAY } from "../model/display";
+import { chipStatusText, type LinkChipView } from "../model/linkStatus";
 import { applyFetchedTicket } from "../model/ticketCards";
 import { ICON_BUTTON, MenuButton, MenuItem, noDrag } from "./boardControls";
 import { LabelPicker, toggled } from "./CardDrawerParts";
@@ -40,6 +42,7 @@ const KIND_ICON: Record<CardLinkKind, typeof MessageSquare> = {
 
 const DOT: Record<NonNullable<BoardLinkTarget["status"]>, string> = {
   running: "bg-accent animate-pulse motion-reduce:animate-none",
+  waiting: "bg-amber-400",
   completed: "bg-diff-add",
   failed: "bg-diff-del-fg",
 };
@@ -180,6 +183,50 @@ function CardExtrasRow({
   );
 }
 
+const CHIP_DOT: Record<LinkChipView["state"], string> = {
+  running: DOT.running,
+  waiting: DOT.waiting,
+  failed: DOT.failed,
+  completed: DOT.completed,
+  idle: "bg-content/30",
+  open: "bg-accent",
+  merged: "bg-purple-400",
+  closed: "bg-content/40",
+  unknown: "bg-content/25",
+  missing: "bg-content/25",
+};
+
+const CHECKS_TEXT = { passing: "checks passing", failing: "checks failing", pending: "checks pending" };
+
+/** One chip for a link beyond the primary: its label, state, checks or diff. */
+function ExtraLinkChip({ chip }: { chip: LinkChipView }) {
+  return (
+    <span
+      data-link-chip-kind={chip.kind}
+      data-link-state={chip.state}
+      title={chipStatusText(chip)}
+      className="inline-flex min-w-0 items-center gap-1 text-content/70"
+    >
+      <span className="max-w-[120px] truncate">{chip.label}</span>
+      <span
+        role="img"
+        aria-label={chip.state}
+        className={`size-1.5 shrink-0 rounded-full ${CHIP_DOT[chip.state]}`}
+      />
+      {chip.checks ? (
+        <span data-link-checks={chip.checks} className="shrink-0 text-content/55">
+          {CHECKS_TEXT[chip.checks]}
+        </span>
+      ) : null}
+      {chip.diff ? (
+        <span data-link-diff="" className="shrink-0 tabular-nums text-content/55">
+          +{chip.diff.additions} −{chip.diff.deletions}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 /** `full` drops the card's 140px label cap, for roomier places. */
 export function LinkChip({
   link,
@@ -240,7 +287,13 @@ export function BoardCardItem({
   onSelectClick,
   display = DEFAULT_DISPLAY,
   fieldChips = [],
+  linkChips = [],
+  blockedBy = [],
 }: {
+  /** One chip for each link besides the primary one (sessions, Pilots, PRs, worktrees). */
+  linkChips?: readonly LinkChipView[];
+  /** Numbers of the open cards blocking this one; any means a lock. */
+  blockedBy?: readonly number[];
   card: BoardCard;
   /** What the face shows and how tight it is; the board's default when absent. */
   display?: DisplayOptions;
@@ -410,6 +463,17 @@ export function BoardCardItem({
             #{card.number}
           </span>
         ) : null}
+        {blockedBy.length ? (
+          <span
+            data-card-blocked=""
+            role="img"
+            aria-label={`Blocked by ${blockedBy.map((n) => `#${n}`).join(", ")}`}
+            title={`Blocked by ${blockedBy.map((n) => `#${n}`).join(", ")}`}
+            className="inline-flex shrink-0 text-amber-400"
+          >
+            <Lock className="size-3" strokeWidth={1.75} />
+          </span>
+        ) : null}
         <CardExtrasRow
           number={card.number}
           face={display.face}
@@ -418,6 +482,11 @@ export function BoardCardItem({
           onSetDue={onSetDue}
         />
         {display.face.linkStatus && link ? <LinkChip link={link} /> : null}
+        {display.face.linkStatus
+          ? linkChips.map((chip) => (
+              <ExtraLinkChip key={`${chip.kind}\n${chip.reference}`} chip={chip} />
+            ))
+          : null}
         <span className="ml-auto shrink-0 text-content/45">
           {relativeTime(card.updatedAt)}
         </span>

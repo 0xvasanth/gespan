@@ -3,7 +3,7 @@ import {
   SearchableSelect,
   type SearchableSelectOption,
 } from "../../../shared/ui/SearchableSelect";
-import { ExternalLink, Maximize2, Trash2 } from "../../../shared/ui/icons";
+import { ExternalLink, Maximize2, Play, Trash2 } from "../../../shared/ui/icons";
 import { applyFetchedTicket } from "../model/ticketCards";
 import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItemDialog";
 import { SessionTicketChip } from "../../sessions/ui/SessionTicketChip";
@@ -92,7 +92,13 @@ export function CardDetail({
   onDelete,
   renderMore,
   onError,
+  onRunWith,
+  blockedBy = [],
 }: {
+  /** Absent when the board turns "Run with…" off. */
+  onRunWith?: () => void;
+  /** Numbers of the open cards blocking this one. */
+  blockedBy?: readonly number[];
   card: BoardCard;
   /** The board's columns in order, with how many cards each holds. */
   columns: readonly { id: string; name: string; cardCount: number }[];
@@ -595,6 +601,24 @@ export function CardDetail({
                   </button>
                 ) : null}
               </div>
+              {onRunWith ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    data-run-with=""
+                    onClick={onRunWith}
+                    className={`${SMALL_BUTTON} gap-1.5`}
+                  >
+                    <Play className="size-3.5" strokeWidth={1.75} />
+                    Run with…
+                  </button>
+                  {blockedBy.length ? (
+                    <span data-card-blocked="" className="text-[11px] text-amber-400">
+                      Blocked by {blockedBy.map((n) => `#${n}`).join(", ")}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
               {link ? (
                 <div className="text-[11px]">
                   <LinkChip link={link} full />

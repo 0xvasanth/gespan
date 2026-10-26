@@ -15,6 +15,8 @@ import {
   type CardExtras,
   type CardIndexRow,
 } from "../model/board";
+import type { AgentValues } from "../model/agentFields";
+import type { AgentField } from "../model/board";
 import { fieldText, formatEstimate } from "../model/cardProps";
 import { MIN_COLUMN, ROW_HEIGHT, type TableColumn } from "../model/layout";
 import { useWindowedRows } from "../model/windowing";
@@ -63,7 +65,10 @@ export function BoardTable({
   onSetDue,
   onSetLabels,
   onCreateLabel,
+  agent,
 }: {
+  /** The agent fields of a card, worked out from its linked sessions. */
+  agent?: (cardId: string) => AgentValues;
   /** The cards shown, in display order. */
   cards: readonly BoardCard[];
   /** Every card id on the board: an edit closes when its card is gone from it. */
@@ -302,6 +307,17 @@ export function BoardTable({
         return <span className="truncate">{day(card.createdAt)}</span>;
       case "updated":
         return <span className="truncate">{day(card.updatedAt)}</span>;
+      case "agent:provider":
+      case "agent:model":
+      case "agent:cost":
+      case "agent:runTime": {
+        const key = column.id.slice("agent:".length) as AgentField;
+        return (
+          <span data-agent-field={key} className="truncate">
+            {agent?.(card.id)[key] ?? ""}
+          </span>
+        );
+      }
       default: {
         const field = fields.find((found) => `field:${found.id}` === column.id);
         const raw = field ? row?.fields[field.id] : undefined;

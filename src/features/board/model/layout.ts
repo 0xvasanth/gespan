@@ -34,6 +34,11 @@ export const TABLE_COLUMNS: readonly (readonly [string, string, number])[] = [
   ["estimate", "Estimate", 90],
   ["created", "Created", 110],
   ["updated", "Updated", 110],
+  // Worked out from the linked sessions; never stored.
+  ["agent:provider", "Provider", 110],
+  ["agent:model", "Model", 130],
+  ["agent:cost", "Cost", 80],
+  ["agent:runTime", "Run time", 90],
 ];
 export const DEFAULT_COLUMNS = ["title", "status", "priority", "due", "labels"];
 export const FIELD_WIDTH = 140;
