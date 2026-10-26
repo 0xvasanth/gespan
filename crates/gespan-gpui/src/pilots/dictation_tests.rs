@@ -314,3 +314,143 @@ fn pilot_escape_cancels_dictation_before_a_composer_menu(cx: &mut TestAppContext
     );
     assert!(speech.take().is_empty());
 }
+
+// One dictation at a time across Pilot and session composers.
+
+/// The window's session (not a Pilot's), opened, with its field focused.
+fn open_session(s: &Setup, visual: &mut VisualTestContext) -> Entity<Conversation> {
+    let session = s
+        .window
+        .update(visual, |shell, w, cx| {
+            let id = shell.workspace.active.expect("the window has a session");
+            shell.open(id, w, cx);
+            shell.session_view(id).unwrap()
+        })
+        .unwrap();
+    visual.run_until_parked();
+    focus(&session, visual);
+    session
+}
+
+fn open_pilot(s: &Setup, id: &str, visual: &mut VisualTestContext) -> Entity<Conversation> {
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(visual, |_, w, cx| {
+            s.manager.update(cx, |m, cx| {
+                m.open(id, w, cx);
+                m.dismiss_settings(w, cx);
+            })
+        })
+        .unwrap();
+    visual.run_until_parked();
+    let chat = visual.update(|_, cx| s.manager.read(cx).open_chat(id).unwrap());
+    focus(&chat, visual);
+    chat
+}
+
+/// Starts dictating in `chat` through the shortcut, as the user would.
+fn listen(speech: &Speech, chat: &Entity<Conversation>, visual: &mut VisualTestContext) {
+    focus(chat, visual);
+    visual.simulate_keystrokes(SHORTCUT);
+    visual.simulate_modifiers_change(Modifiers::none());
+    speech.emit(Event::Listening, visual);
+    assert_eq!(state(chat, visual), DictationState::Listening);
+    speech.take();
+}
+
+/// The helper's tail of a cancelled take, still in flight.
+fn late_final(speech: &Speech, visual: &mut VisualTestContext) {
+    speech.emit(final_text("stray"), visual);
+    speech.emit(Event::Cancelled, visual);
+}
+
+#[gpui::test]
+fn opening_a_pilot_cancels_session_dictation(cx: &mut TestAppContext) {
+    let speech = Speech::new(true, cx);
+    let s = setup(cx);
+    let (mut visual, _) = pilot_chat(&s, cx);
+    let visual = &mut visual;
+    let session = open_session(&s, visual);
+    assert_ne!(session.read_with(visual, |c, _| c.summary.id), s.session);
+    listen(&speech, &session, visual);
+
+    let pilot = open_pilot(&s, &s.id, visual);
+    assert_eq!(state(&session, visual), DictationState::Idle);
+    assert_eq!(speech.take(), vec![Request::Cancel]);
+    late_final(&speech, visual);
+    assert_eq!(text(&session, visual), "");
+    assert_eq!(text(&pilot, visual), "");
+}
+
+#[gpui::test]
+fn opening_a_session_cancels_pilot_dictation(cx: &mut TestAppContext) {
+    let speech = Speech::new(true, cx);
+    let s = setup(cx);
+    let (mut visual, pilot) = pilot_chat(&s, cx);
+    let visual = &mut visual;
+    listen(&speech, &pilot, visual);
+
+    let session = open_session(&s, visual);
+    assert_eq!(state(&pilot, visual), DictationState::Idle);
+    assert_eq!(speech.take(), vec![Request::Cancel]);
+    late_final(&speech, visual);
+    assert_eq!(text(&pilot, visual), "");
+    assert_eq!(text(&session, visual), "");
+}
+
+#[gpui::test]
+fn switching_pilots_cancels_the_first_pilots_dictation(cx: &mut TestAppContext) {
+    let speech = Speech::new(true, cx);
+    let s = setup(cx);
+    let (mut visual, _) = pilot_chat(&s, cx);
+    let visual = &mut visual;
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    let second = handle
+        .update(visual, |_, w, cx| {
+            s.manager.update(cx, |m, cx| {
+                m.create(vec![s.project.clone()], w, cx);
+                m.current().unwrap().id.clone()
+            })
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert_ne!(second, s.id);
+    let first = open_pilot(&s, &s.id, visual);
+    listen(&speech, &first, visual);
+
+    let other = open_pilot(&s, &second, visual);
+    assert_eq!(state(&first, visual), DictationState::Idle);
+    assert_eq!(speech.take(), vec![Request::Cancel]);
+    late_final(&speech, visual);
+    assert_eq!(text(&first, visual), "");
+    assert_eq!(text(&other, visual), "");
+}
+
+#[gpui::test]
+fn opening_a_pilot_whose_chat_still_loads_cancels_dictation(cx: &mut TestAppContext) {
+    let speech = Speech::new(true, cx);
+    let s = setup(cx);
+    let (mut visual, _) = pilot_chat(&s, cx);
+    let visual = &mut visual;
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    let second = handle
+        .update(visual, |_, w, cx| {
+            s.manager.update(cx, |m, cx| {
+                m.create(vec![s.project.clone()], w, cx);
+                m.current().unwrap().id.clone()
+            })
+        })
+        .unwrap();
+    visual.run_until_parked();
+    let session = open_session(&s, visual);
+    listen(&speech, &session, visual);
+    // As after a restart: the Pilot's chat is not loaded until it opens.
+    s.manager.update(visual, |m, _| m.chats.remove(&second));
+
+    let pilot = open_pilot(&s, &second, visual);
+    assert_eq!(state(&session, visual), DictationState::Idle);
+    assert_eq!(speech.take(), vec![Request::Cancel]);
+    late_final(&speech, visual);
+    assert_eq!(text(&session, visual), "");
+    assert_eq!(text(&pilot, visual), "");
+}

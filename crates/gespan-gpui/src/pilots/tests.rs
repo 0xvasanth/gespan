@@ -8,7 +8,7 @@ pub(super) struct Setup {
     pub(super) manager: Entity<Pilots>,
     pub(super) id: String,
     pub(super) project: String,
-    session: i64,
+    pub(super) session: i64,
     root: PathBuf,
     pub(super) store: Database,
 }
