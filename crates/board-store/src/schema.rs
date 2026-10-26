@@ -1,7 +1,7 @@
 use crate::migrate;
 use rusqlite::Connection;
 
-pub const VERSION: i64 = 4;
+pub const VERSION: i64 = 5;
 
 /// The tables as both apps created them before `board_schema` existed.
 pub(crate) const V2_TABLES: &str = "
@@ -168,6 +168,30 @@ CREATE TABLE IF NOT EXISTS board_views (
 CREATE INDEX IF NOT EXISTS board_views_board_idx
   ON board_views (board_id, position);
 ";
+
+/// v5: board appearance and display settings, templates, and per-session
+/// ticket status overrides.
+pub(crate) const V5_TABLES: &str = "
+CREATE TABLE IF NOT EXISTS board_templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  spec_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS board_session_settings (
+  session_key TEXT PRIMARY KEY,
+  may_change_status INTEGER
+);
+";
+
+/// Columns v5 adds to `board_settings`. NULL means the default.
+pub(crate) const V5_COLUMNS: [(&str, &str, &str); 5] = [
+    ("board_settings", "icon", "TEXT"),
+    ("board_settings", "color", "TEXT"),
+    ("board_settings", "default_view_id", "TEXT"),
+    ("board_settings", "display_json", "TEXT"),
+    ("board_settings", "priority_json", "TEXT"),
+];
 
 /// Brings the board tables to the current version. Both apps call this on
 /// every open, so it is cheap once the database is current.

@@ -16,6 +16,7 @@ mod relations;
 mod schema;
 mod settings;
 mod subtasks;
+mod templates;
 mod views;
 
 pub use card_ops::{convert_subtask, duplicate_card, move_card_to_board};
@@ -38,9 +39,17 @@ pub use ops::{
 };
 pub use relations::{add_relation, card_relations, remove_relation, Relation, RELATION_KINDS};
 pub use schema::{ensure_tables, VERSION as SCHEMA_VERSION};
-pub use settings::{board_settings, set_board_settings, BoardSettings};
+pub use settings::{
+    board_settings, display_options, may_change_ticket_status, priority_scheme,
+    session_status_setting, set_board_settings, set_session_status_setting, update_board_settings,
+    BoardSettings, CardFace, Density, DisplayOptions, PriorityScheme, SettingsPatch, BOARD_ICONS,
+};
 pub use subtasks::{
     add_subtask, delete_subtask, list_subtasks, move_subtask, toggle_subtask, Subtask,
+};
+pub use templates::{
+    create_board_from_template, delete_template, list_templates, save_board_as_template,
+    TemplateInfo, BUILT_IN_TEMPLATES,
 };
 pub use views::{
     card_index, create_view, delete_view, list_views, local_day_chrono, move_view, query_cards,

@@ -6,17 +6,19 @@
 //!   build from before v3 still opens the database (its later writes there
 //!   are not carried over).
 //! - v4: the `board_views` table for saved views.
+//! - v5: board icon, colour, default view, display and priority settings;
+//!   `board_templates`; `board_session_settings`.
 //!
 //! A step runs only when the stored version is below it, so a v3 database
 //! moving to v4 does not copy the native extras again (which would bring back
 //! labels or values removed since).
-use crate::schema::{V2_TABLES, V3_COLUMNS, V3_TABLES, V4_TABLES, VERSION};
+use crate::schema::{V2_TABLES, V3_COLUMNS, V3_TABLES, V4_TABLES, V5_COLUMNS, V5_TABLES, VERSION};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 type Step = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
 /// Each step with the version it brings the database to, oldest first.
-const STEPS: [(i64, Step); 3] = [(2, to_v2), (3, to_v3), (4, to_v4)];
+const STEPS: [(i64, Step); 4] = [(2, to_v2), (3, to_v3), (4, to_v4), (5, to_v5)];
 
 /// The stored board schema version; 0 when none was ever written.
 pub fn version(conn: &Connection) -> rusqlite::Result<i64> {
@@ -57,13 +59,7 @@ fn to_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 
 fn to_v3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(V3_TABLES)?;
-    for (table, column, declaration) in V3_COLUMNS {
-        if !column_exists(tx, table, column)? {
-            tx.execute_batch(&format!(
-                "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
-            ))?;
-        }
-    }
+    add_columns(tx, &V3_COLUMNS)?;
     copy_native_extras(tx)?;
     tx.execute_batch(
         "INSERT OR IGNORE INTO board_card_links (card_id, kind, ref, role, created_at)
@@ -74,6 +70,23 @@ fn to_v3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 
 fn to_v4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(V4_TABLES)
+}
+
+fn to_v5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(V5_TABLES)?;
+    add_columns(tx, &V5_COLUMNS)
+}
+
+/// Adds each (table, column, declaration) the table does not have yet.
+fn add_columns(tx: &Transaction<'_>, columns: &[(&str, &str, &str)]) -> rusqlite::Result<()> {
+    for (table, column, declaration) in columns {
+        if !column_exists(tx, table, column)? {
+            tx.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+            ))?;
+        }
+    }
+    Ok(())
 }
 
 fn copy_native_extras(tx: &Transaction<'_>) -> rusqlite::Result<()> {

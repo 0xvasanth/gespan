@@ -765,12 +765,19 @@ pub fn update_view(
     Ok(board_id)
 }
 
-/// Returns the owning board id.
+/// Returns the owning board id. A board whose default view this was goes
+/// back to "All cards".
 pub fn delete_view(conn: &Connection, view_id: &str) -> Result<String, String> {
     let tx = write_tx(conn)?;
     let board_id = view_board(&tx, view_id)?;
     tx.execute("DELETE FROM board_views WHERE id = ?1", [view_id])
         .map_err(db)?;
+    tx.execute(
+        "UPDATE board_settings SET default_view_id = NULL
+         WHERE board_id = ?1 AND default_view_id = ?2",
+        params![board_id, view_id],
+    )
+    .map_err(db)?;
     write_view_positions(&tx, &view_ids(&tx, &board_id)?)?;
     tx.commit().map_err(db)?;
     Ok(board_id)

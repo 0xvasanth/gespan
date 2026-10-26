@@ -25,12 +25,6 @@ const ACTORS: [&str; 2] = ["user", "system"];
 /// Kinds `board_card_record` may append. Every other kind is written by the
 /// mutation that causes it.
 const RECORD_KINDS: [&str; 3] = ["started", "completed", "failed"];
-const DEFAULT_COLUMNS: [(&str, &str); 4] = [
-    ("Backlog", "todo"),
-    ("In Progress", "doing"),
-    ("Review", "review"),
-    ("Done", "done"),
-];
 
 pub fn db(error: rusqlite::Error) -> String {
     error.to_string()
@@ -337,35 +331,11 @@ pub fn write_tx(conn: &Connection) -> Result<Transaction<'_>, String> {
     Transaction::new_unchecked(conn, TransactionBehavior::Immediate).map_err(db)
 }
 
+/// A board with the four default columns (the "blank" template).
 pub fn create_board(conn: &Connection, name: &str) -> Result<Board, String> {
     let name = clean_text(name, "Board name", MAX_NAME)?;
-    let now = now_millis();
-    let board = Board {
-        id: new_id(),
-        name,
-        created_at: now,
-        updated_at: now,
-    };
     let tx = write_tx(conn)?;
-    tx.execute(
-        "INSERT INTO boards (id, name, card_seq, created_at, updated_at)
-         VALUES (?1, ?2, 0, ?3, ?3)",
-        params![board.id, board.name, now],
-    )
-    .map_err(db)?;
-    for (position, (column_name, role)) in DEFAULT_COLUMNS.iter().enumerate() {
-        tx.execute(
-            "INSERT INTO board_columns (id, board_id, name, position, role)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![new_id(), board.id, column_name, position as i64, role],
-        )
-        .map_err(db)?;
-    }
-    tx.execute(
-        "INSERT INTO board_settings (board_id) VALUES (?1)",
-        [&board.id],
-    )
-    .map_err(db)?;
+    let board = crate::templates::create_blank(&tx, &name)?;
     tx.commit().map_err(db)?;
     Ok(board)
 }

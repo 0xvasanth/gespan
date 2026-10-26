@@ -443,8 +443,10 @@ fn opening_the_gespan_store_then_the_board_service_creates_the_shared_board_tabl
             "board_fields",
             "board_labels",
             "board_schema",
+            "board_session_settings",
             "board_settings",
             "board_subtasks",
+            "board_templates",
             "board_views",
             "boards",
         ]

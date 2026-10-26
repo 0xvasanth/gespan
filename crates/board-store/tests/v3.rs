@@ -487,6 +487,7 @@ fn new_board_settings_default_run_with_and_write_back_on() {
         write_back: true,
         ticket_status_changes: false,
         auto_move_json: Some("{\"started\":\"doing\"}".into()),
+        ..BoardSettings::default()
     };
     set_board_settings(&conn, &board.id, &off).unwrap();
     assert_eq!(board_settings(&conn, &board.id).unwrap(), off);

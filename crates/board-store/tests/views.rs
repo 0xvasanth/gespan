@@ -774,8 +774,7 @@ fn v4_migration_is_idempotent_and_keeps_v3_data() {
     assert_eq!(migrate::version(&conn).unwrap(), 3);
 
     ensure_tables(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), 4);
-    assert_eq!(SCHEMA_VERSION, 4);
+    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema"), 1);
     // v3 data is untouched, and the v2 → v3 copy did not run again.
     assert_eq!(card_meta(&conn, &cards[0].id).unwrap().priority, 3);
@@ -788,7 +787,7 @@ fn v4_migration_is_idempotent_and_keeps_v3_data() {
 
     ensure_tables(&conn).unwrap();
     migrate::run(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), 4);
+    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
     assert_eq!(list_views(&conn, &board.id).unwrap(), [view]);
 
     // A second connection opening the same file finds the work done.
