@@ -1034,17 +1034,25 @@ describe("Escape layering", () => {
 });
 
 describe("windowing", () => {
-  function thousand() {
+  // The board layout is not windowed, so mounting it with 1,000 cards costs
+  // seconds and is not what these tests cover. Open the layout under test on
+  // the small seed first, then grow the backend to 1,000 cards and let the
+  // board-changed refresh feed them to the windowed layout.
+  async function openWithThousand(layout: "List" | "Table") {
+    await renderBoard();
+    await pick("Layout", layout);
     cards = Array.from({ length: 1000 }, (_, i) =>
       card(`k${i}`, "backlog", i, i + 1, `Card ${i + 1}`),
     );
     extras = {};
+    expect(cards).toHaveLength(1000);
+    emitBoardChanged();
+    await flush();
+    await flush();
   }
 
   it("renders_only_visible_rows in the list", async () => {
-    thousand();
-    await renderBoard();
-    await pick("Layout", "List");
+    await openWithThousand("List");
     const rendered = rowKeys().length;
     expect(rendered).toBeGreaterThan(0);
     expect(rendered).toBeLessThan(60);
@@ -1055,17 +1063,13 @@ describe("windowing", () => {
   });
 
   it("renders_only_visible_rows in the table", async () => {
-    thousand();
-    await renderBoard();
-    await pick("Layout", "Table");
+    await openWithThousand("Table");
     expect(tableRows().length).toBeGreaterThan(0);
     expect(tableRows().length).toBeLessThan(60);
   });
 
   it("renders the rows at the scroll position", async () => {
-    thousand();
-    await renderBoard();
-    await pick("Layout", "Table");
+    await openWithThousand("Table");
     expect(tableRows()[0]).toBe("k0");
     const scroller = q("[data-board-table]");
     act(() => {
@@ -1079,9 +1083,7 @@ describe("windowing", () => {
   });
 
   it("selects a range across rows that are not rendered", async () => {
-    thousand();
-    await renderBoard();
-    await pick("Layout", "Table");
+    await openWithThousand("Table");
     await click(tableRow("k0"), MOD);
     const scroller = q("[data-board-table]");
     act(() => {
