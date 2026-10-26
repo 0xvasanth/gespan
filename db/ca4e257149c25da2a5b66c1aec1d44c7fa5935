@@ -1,0 +1,45 @@
+src/features/board/ui/settings/PrioritySection.tsx
+  s_938a6e0c93b076::t_8d86d17069f7ee 28
+  s_938a6e0c93b076::t_6a465a7ea85be9 34-35,46,48-49
+src/features/board/ui/settings/fieldsDisplay.test.ts
+  s_938a6e0c93b076::t_44884867f85f60 844,853-856,883-937,1010-1039
+  s_938a6e0c93b076::t_606ea20d187954 1040
+src/features/board/ui/kanban/Swimlanes.tsx
+  s_938a6e0c93b076::t_f2ba3abbfc96a8 57-69
+  s_938a6e0c93b076::t_d88be20436647a 2,7,10,28-56,70-74,87-88,97-100,114-117,119-166,179-182,238-239,259-260,266-267,282-288,299-300,305-306,319-337,339
+  s_938a6e0c93b076::t_4468f93ec67b5c 17
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_645cb64551f89e 767-776,783-797,1721-1727,1752,1756-1760,1772,1775-1780,2050,2300,2304-2305
+  s_938a6e0c93b076::t_d8e70f384ebbdf 1761-1771,1773-1774
+src/features/board/ui/settings/GeneralSection.tsx
+  s_938a6e0c93b076::t_8d86d17069f7ee 24
+src/features/board/ui/settings/BoardSettings.tsx
+  s_938a6e0c93b076::t_9bb15eb7c96218 63-71,126-127
+src/features/board/ui/settings/DisplaySection.tsx
+  s_938a6e0c93b076::t_8d86d17069f7ee 15
+  s_938a6e0c93b076::t_6a465a7ea85be9 23-24,32-35,37-40
+src/features/board/ui/kanban/keyboardCodes.ts
+  s_938a6e0c93b076::t_56bbfb527c4b05 2
+  s_938a6e0c93b076::t_4468f93ec67b5c 1,3-6
+src/features/board/ui/kanban/Swimlanes.test.ts
+  s_938a6e0c93b076::t_353bccc7b0538b 1-148,151-206
+  s_938a6e0c93b076::t_0209678b47d5d8 149-150
+src/features/board/ui/kanban/KanbanBoard.tsx
+  s_938a6e0c93b076::t_4468f93ec67b5c 55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbca4e257149c25da2a5b66c1aec1d44c7fa5935",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
