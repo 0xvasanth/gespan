@@ -6596,6 +6596,17 @@ fn deleting_a_column_with_archived_cards_is_refused_before_anything_moves(cx: &m
     );
     assert_gone(visual, "settings-move-cards");
     assert!(shown(visual, "settings-error"));
+    f.window
+        .read_with(visual, |view, _| {
+            let error = view.settings.as_ref().and_then(|page| page.error.clone());
+            assert_eq!(
+                error.as_deref(),
+                Some(
+                    "Couldn't delete the column: it has 1 archived card. Delete them from the Archive first"
+                )
+            );
+        })
+        .unwrap();
     assert_eq!(titles_in(&f, visual, "Backlog"), ["Live"], "no card moved");
     assert!(titles_in(&f, visual, "In Progress").is_empty());
 }

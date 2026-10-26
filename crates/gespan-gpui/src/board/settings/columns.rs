@@ -89,15 +89,16 @@ impl BoardView {
     /// A column that still holds archived cards can't be deleted (the store's
     /// refusal), so say so before anything moves. True when refused.
     fn refuse_archived_column_delete(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
-        let (live, archived) = self.column_counts.get(id).copied().unwrap_or((0, 0));
+        let archived = self.column_counts.get(id).map_or(0, |counts| counts.1);
         if archived == 0 {
             return false;
         }
-        let total = live + archived;
-        let plural = if total == 1 { "card" } else { "cards" };
+        let plural = if archived == 1 { "card" } else { "cards" };
         if let Some(page) = &mut self.settings {
             page.clear_prompts();
-            page.error = Some(format!("Column has {total} {plural}"));
+            page.error = Some(format!(
+                "Couldn't delete the column: it has {archived} archived {plural}. Delete them from the Archive first"
+            ));
         }
         cx.notify();
         true

@@ -56,7 +56,7 @@ pub(crate) struct Page {
     section: Section,
     edit: Option<Editing>,
     /// The store's reason the last write was refused.
-    error: Option<String>,
+    pub(in crate::board) error: Option<String>,
     /// A column being deleted while it still holds cards: "Move cards to…".
     moving: Option<String>,
     /// A label being merged into another, or asked to confirm its delete.
