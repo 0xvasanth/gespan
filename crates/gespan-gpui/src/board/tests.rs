@@ -6581,9 +6581,7 @@ fn delete_column_with_cards_offers_move_cards_to(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn deleting_a_column_with_archived_cards_moves_the_live_ones_and_then_refuses(
-    cx: &mut TestAppContext,
-) {
+fn deleting_a_column_with_archived_cards_is_refused_before_anything_moves(cx: &mut TestAppContext) {
     let f = seeded(cx, &["Live", "Old"]);
     let old = card_id(&f, cx, "Old");
     Service::open(&f.db).unwrap().archive(&old).unwrap();
@@ -6591,14 +6589,15 @@ fn deleting_a_column_with_archived_cards_moves_the_live_ones_and_then_refuses(
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     open_settings(visual, "columns");
     click(visual, "settings-col-0-delete");
-    click(visual, "settings-col-0-move-1");
     assert_eq!(
         board_columns(&f).len(),
         4,
         "the archived card keeps the column"
     );
-    assert_eq!(titles_in(&f, visual, "In Progress"), ["Live"]);
+    assert_gone(visual, "settings-move-cards");
     assert!(shown(visual, "settings-error"));
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["Live"], "no card moved");
+    assert!(titles_in(&f, visual, "In Progress").is_empty());
 }
 
 fn set_limit(f: &Fixture, cx: &mut TestAppContext, column: usize, limit: Option<i64>) {
@@ -6665,20 +6664,20 @@ fn wip_count_uses_total_while_filtered(cx: &mut TestAppContext) {
     assert_eq!(count_of(&f, cx, 0), ("2/5".to_string(), false));
     // Three cards in all, one shown: under the limit of four.
     let mut service = Service::open(&f.db).unwrap();
-    for title in ["C", "D", "E"] {
+    for title in ["D", "E"] {
         let id = card_id(&f, cx, title);
         service.card_delete(&id).unwrap();
     }
+    let b = card_id(&f, cx, "B");
+    service.set_priority(&b, 0).unwrap();
     set_limit(&f, cx, 0, Some(4));
     f.window
         .update(cx, |view, _, cx| {
             view.spec.rows.clear();
             filter_by_priority(view, 1, cx);
-            view.spec.rows[0].values = vec!["1".into()];
-            view.requery(cx);
         })
         .unwrap();
-    assert_eq!(count_of(&f, cx, 0), ("2/2".to_string(), false));
+    assert_eq!(count_of(&f, cx, 0), ("1/3".to_string(), false));
 }
 
 #[gpui::test]
@@ -6781,6 +6780,13 @@ fn label_manager_creates_renames_recolours_reorders_merges_deletes(cx: &mut Test
     reload(&f, visual);
     click(visual, "settings-label-2-merge");
     click(visual, "settings-label-2-merge-into-1");
+    assert_eq!(
+        labels_of(&f).len(),
+        3,
+        "picking a target alone merges nothing"
+    );
+    assert_eq!(extras_of(&f, &tagged).labels, [id_of("Bugs")]);
+    click(visual, "settings-label-2-merge-confirm");
     let names: Vec<String> = labels_of(&f).into_iter().map(|(name, _)| name).collect();
     assert_eq!(names, ["Documentation", "Bug"]);
     assert_eq!(extras_of(&f, &tagged).labels, [id_of("Bug")]);
@@ -6901,4 +6907,91 @@ fn hidden_priority_leaves_pickers_but_cards_keep_showing_it(cx: &mut TestAppCont
     visual.simulate_keystrokes("escape");
     click(visual, "board-card-priority-1");
     assert!(shown(visual, "menu-action-priority-3"));
+}
+
+#[gpui::test]
+fn the_settings_page_takes_the_board_shortcuts_and_clears_what_sat_over_it(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded(cx, &["Keep me"]);
+    let card = card_id(&f, cx, "Keep me");
+    f.window
+        .update(cx, |view, window, cx| {
+            view.open_card_detail(card.clone(), window, cx);
+            view.selection.ids.insert(card.clone());
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "general");
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.card_detail.is_none(), "the drawer closed");
+            assert!(view.selection.ids.is_empty(), "the selection cleared");
+            assert!(view.card_menu.is_none() && view.pop.is_none());
+        })
+        .unwrap();
+    visual.simulate_keystrokes("delete");
+    visual.simulate_keystrokes("n");
+    visual.run_until_parked();
+    assert_eq!(
+        detail(&f, visual).cards.len(),
+        1,
+        "Delete did not delete the card"
+    );
+    assert!(
+        !f.window
+            .read_with(visual, |v, _| v.new_card_open())
+            .unwrap()
+    );
+    assert!(shown(visual, "board-settings"));
+}
+
+#[gpui::test]
+fn escape_leaves_an_open_edit_first_and_then_the_page(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "general");
+    click(visual, "settings-name");
+    assert!(shown(visual, "settings-edit"));
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert_gone(visual, "settings-edit");
+    assert!(shown(visual, "board-settings"));
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert_gone(visual, "board-settings");
+}
+
+#[gpui::test]
+fn a_filter_chip_names_a_hidden_priority_level(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let board = open_id(&f, cx);
+    Service::open(&f.db)
+        .unwrap()
+        .update_settings(
+            &board,
+            &gespan_core::board::extras::SettingsPatch {
+                priority_json: Some(Some(
+                    r#"{"names":["None","Low","Medium","High","Urgent"],"hidden":[3]}"#.into(),
+                )),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    reload(&f, cx);
+    f.window
+        .read_with(cx, |view, _| {
+            let row = gespan_core::board::extras::FilterRow {
+                field: "priority".into(),
+                op: gespan_core::board::extras::Op::Is,
+                values: vec!["3".into()],
+            };
+            assert_eq!(view.chip_text(&row), "Priority is High");
+            assert!(
+                view.field_choices("priority", &[])
+                    .iter()
+                    .all(|(v, _)| v != "3")
+            );
+        })
+        .unwrap();
 }

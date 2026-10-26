@@ -595,7 +595,13 @@ impl BoardView {
     /// What a filter row says, for its chip: "Priority is Urgent, High". Values
     /// that no longer exist on the board are left out.
     pub(crate) fn chip_text(&self, row: &FilterRow) -> String {
-        let choices = self.field_choices(&row.field, &row.values);
+        let mut choices = self.field_choices(&row.field, &row.values);
+        if row.field == "priority" {
+            // Only the picker hides a level: a chip still names it.
+            choices = (0..PRIORITIES.len())
+                .map(|level| (level.to_string(), self.priority_name(level as u8)))
+                .collect();
+        }
         let names: Vec<&str> = row
             .values
             .iter()

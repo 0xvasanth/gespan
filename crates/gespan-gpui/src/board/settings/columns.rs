@@ -68,6 +68,9 @@ impl BoardView {
     /// Delete a column. One that holds cards asks where they go first.
     fn delete_settings_column(&mut self, id: &str, cx: &mut Context<Self>) {
         self.commit_pending(cx);
+        if self.refuse_archived_column_delete(id, cx) {
+            return;
+        }
         let live = self.detail.as_ref().map_or(0, |detail| {
             detail.cards.iter().filter(|c| c.column_id == id).count()
         });
@@ -83,9 +86,29 @@ impl BoardView {
         self.settings_write(cx, |service| service.column_delete(id));
     }
 
-    /// Move the live cards to `target`, then delete. Archived cards left
-    /// behind make the store refuse the delete; the page says so.
+    /// A column that still holds archived cards can't be deleted (the store's
+    /// refusal), so say so before anything moves. True when refused.
+    fn refuse_archived_column_delete(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
+        let (live, archived) = self.column_counts.get(id).copied().unwrap_or((0, 0));
+        if archived == 0 {
+            return false;
+        }
+        let total = live + archived;
+        let plural = if total == 1 { "card" } else { "cards" };
+        if let Some(page) = &mut self.settings {
+            page.clear_prompts();
+            page.error = Some(format!("Column has {total} {plural}"));
+        }
+        cx.notify();
+        true
+    }
+
+    /// Move the live cards to `target`, then delete. A column with archived
+    /// cards is refused first, so nothing is moved for a delete that can't happen.
     fn delete_column_moving_cards(&mut self, id: &str, target: &str, cx: &mut Context<Self>) {
+        if self.refuse_archived_column_delete(id, cx) {
+            return;
+        }
         let ids: Vec<String> = self.detail.as_ref().map_or_else(Vec::new, |detail| {
             let mut cards: Vec<_> = detail.cards.iter().filter(|c| c.column_id == id).collect();
             cards.sort_by_key(|card| card.position);

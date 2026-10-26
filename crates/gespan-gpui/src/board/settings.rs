@@ -61,6 +61,8 @@ pub(crate) struct Page {
     moving: Option<String>,
     /// A label being merged into another, or asked to confirm its delete.
     merging: Option<String>,
+    /// The label picked to merge into, awaiting confirmation.
+    merge_into: Option<String>,
     deleting_label: Option<String>,
 }
 
@@ -72,6 +74,7 @@ impl Page {
             error: None,
             moving: None,
             merging: None,
+            merge_into: None,
             deleting_label: None,
         }
     }
@@ -80,6 +83,7 @@ impl Page {
         self.edit = None;
         self.moving = None;
         self.merging = None;
+        self.merge_into = None;
         self.deleting_label = None;
     }
 }
@@ -157,6 +161,16 @@ impl BoardView {
         if self.open_board_id.is_none() {
             return;
         }
+        // Nothing of the board may sit over (or answer keys under) the page.
+        if self.card_detail.is_some() {
+            self.close_card_detail(cx);
+            if self.card_detail.is_some() {
+                return;
+            }
+        }
+        self.clear_selection();
+        self.card_menu = None;
+        self.pop = None;
         self.switcher = None;
         self.menu = None;
         self.filter_open = false;
@@ -175,7 +189,7 @@ impl BoardView {
     }
 
     /// Escape on the settings page: the innermost prompt first, then the page.
-    pub(super) fn settings_escape(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(super) fn settings_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(page) = &mut self.settings else {
             return false;
         };
@@ -185,6 +199,8 @@ impl BoardView {
             || page.deleting_label.is_some()
         {
             page.clear_prompts();
+            // The field is gone: keys go to the board again.
+            window.focus(&self.focus, cx);
         } else {
             self.settings = None;
         }

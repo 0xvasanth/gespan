@@ -23,6 +23,7 @@ impl BoardView {
     pub(super) fn render_labels(&self, cx: &mut Context<Self>) -> AnyElement {
         let page = self.settings.as_ref();
         let merging = page.and_then(|page| page.merging.clone());
+        let merge_into = page.and_then(|page| page.merge_into.clone());
         let deleting = page.and_then(|page| page.deleting_label.clone());
         let last = self.labels.len().saturating_sub(1);
         let mut rows: Vec<AnyElement> = Vec::new();
@@ -109,24 +110,27 @@ impl BoardView {
                     .child(div().flex().gap(px(6.)).children(colors)),
             );
             if merging.as_deref() == Some(id.as_str()) {
-                let targets: Vec<AnyElement> =
-                    self.labels
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, other)| other.id != id)
-                        .map(|(to, other)| {
-                            let (from_id, to_id) = (id.clone(), other.id.clone());
-                            button(
-                                format!("settings-label-{index}-merge-into-{to}"),
-                                &other.name,
-                                false,
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.merge_label(&from_id, &to_id, cx)
-                            }))
-                            .into_any_element()
-                        })
-                        .collect();
+                let targets: Vec<AnyElement> = self
+                    .labels
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, other)| other.id != id)
+                    .map(|(to, other)| {
+                        let to_id = other.id.clone();
+                        button(
+                            format!("settings-label-{index}-merge-into-{to}"),
+                            &other.name,
+                            false,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(page) = &mut this.settings {
+                                page.merge_into = Some(to_id.clone());
+                            }
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    })
+                    .collect();
                 row = row.child(
                     div()
                         .px(px(10.))
@@ -142,6 +146,26 @@ impl BoardView {
                         )
                         .children(targets),
                 );
+            }
+            let target_label = merge_into
+                .as_deref()
+                .filter(|_| merging.as_deref() == Some(id.as_str()))
+                .and_then(|to| self.labels.iter().find(|other| other.id == to));
+            if let Some(into) = target_label {
+                let (from_id, to_id) = (id.clone(), into.id.clone());
+                row =
+                    row.child(
+                        div().px(px(10.)).child(
+                            button(
+                                format!("settings-label-{index}-merge-confirm"),
+                                &format!("Merge \"{}\" into \"{}\"", label.name, into.name),
+                                false,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| this.merge_label(&from_id, &to_id, cx),
+                            )),
+                        ),
+                    );
             }
             if deleting.as_deref() == Some(id.as_str()) {
                 let confirm_id = id.clone();

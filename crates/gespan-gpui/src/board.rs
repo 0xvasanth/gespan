@@ -1101,7 +1101,7 @@ impl BoardView {
             || self.views.naming.take().is_some()
             || std::mem::take(&mut self.open_in_open)
             || self.switcher.take().is_some()
-            || self.settings_escape(cx)
+            || self.settings_escape(window, cx)
             || self.renaming.take().is_some()
             || self.pop.take().is_some()
             || self.table_edit.take().is_some()

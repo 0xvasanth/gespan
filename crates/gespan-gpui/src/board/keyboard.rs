@@ -73,6 +73,7 @@ impl BoardView {
     /// keys leave it alone.
     pub(super) fn shortcuts_blocked(&self) -> bool {
         self.kb_drag.is_some()
+            || self.settings.is_some()
             || self.new_card.is_some()
             || self.composer.is_some()
             || self.filter_open
