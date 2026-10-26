@@ -387,6 +387,7 @@ impl BoardView {
                 self.lane_row_handles.clear();
                 self.lane_settling = None;
                 self.lane_header_refocus = None;
+                self.lane_reveal_pending = None;
             }
             return;
         }
@@ -449,6 +450,9 @@ impl BoardView {
         self.lane_rows_cache = rows;
         self.lanes_cache = lanes;
         self.lane_cell_ids = cells;
+        if let Some(card_id) = self.lane_reveal_pending.take() {
+            self.reveal_lane_card(&card_id);
+        }
     }
 
     /// The focused card left the cells: pick who takes focus on the next
@@ -698,11 +702,16 @@ impl BoardView {
 
     // ---- keyboard ----
 
-    /// The lane a lifted card is in when it is picked up.
+    /// The lane a lifted card is in when it is picked up: its first lane in
+    /// the order on screen, where focus, the pin and Shift ranges place it.
     pub(super) fn first_lane_of(&self, card_id: &str) -> Option<String> {
         let card = self.card(card_id)?;
         let lanes = self.lanes();
-        self.card_lane_keys(card, &lanes).into_iter().next()
+        let keys = self.card_lane_keys(card, &lanes);
+        lanes
+            .into_iter()
+            .find(|lane| keys.contains(&lane.key))
+            .map(|lane| lane.key)
     }
 
     /// Arrows while a card is lifted: Left and Right pick the column, Up and
@@ -788,6 +797,9 @@ impl BoardView {
             self.lane_place(&dragged.card_id, &lane, &drag.column_id)
         ));
         self.drop_card_in_lane(&dragged, &lane, &drag.column_id, cx);
+        // The card keeps focus: once the lanes hold it in its new cell,
+        // scroll it into view (`sync_lane_list`).
+        self.lane_reveal_pending = Some(dragged.card_id);
     }
 
     /// Plain arrows on a focused card in a lane board: Left and Right to the

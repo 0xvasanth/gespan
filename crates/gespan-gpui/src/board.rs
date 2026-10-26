@@ -350,6 +350,8 @@ pub(crate) struct BoardView {
     /// A focused card a reload or filter hid, and the lane whose header
     /// takes focus instead on the next render.
     lane_header_refocus: Option<(String, String)>,
+    /// A card a keyboard lane drop moved, revealed once the lanes hold it.
+    lane_reveal_pending: Option<String>,
     /// The board whose default view was applied; it applies once per board.
     default_view_applied: Option<String>,
     pending_default_view: Option<String>,
@@ -529,6 +531,7 @@ impl BoardView {
             lane_header_focus: HashMap::new(),
             lane_settling: None,
             lane_header_refocus: None,
+            lane_reveal_pending: None,
             default_view_applied: None,
             pending_default_view: None,
             #[cfg(test)]

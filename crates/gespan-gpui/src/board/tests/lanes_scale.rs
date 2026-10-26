@@ -543,35 +543,171 @@ fn up_and_down_skip_lanes_with_no_cards_in_that_column(cx: &mut TestAppContext) 
 fn a_reload_that_moves_the_focused_card_across_a_band_edge_keeps_focus_on_it(
     cx: &mut TestAppContext,
 ) {
-    let titles = ["K1", "K2", "K3", "K4", "K5", "K6"];
-    let f = seeded(cx, &titles);
-    lanes_by(&f, "priority");
-    reload(&f, cx);
-    let k4 = card_id(&f, cx, "K4");
+    let f = seeded_lanes(cx);
+    // Urgent × Backlog: 9, 29, 49, 69 in band 0, then 89, …
+    let sixty_nine = id_of(&f, cx, 69);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     visual.refresh().unwrap();
-    focus_card(&f, visual, &k4);
+    focus_card(&f, visual, &sixty_nine);
     visual.refresh().unwrap();
-    // The other app adds a card at the top of None × Backlog: K4 moves from
-    // band 0 to band 1.
+    // Scrolled far away to None's last bands: 69's band is off screen.
+    let last = rows(&f, visual).len() - 3;
+    scroll_lanes_to(&f, visual, last);
+    // The other app adds an Urgent card at the top of Backlog: 69 moves from
+    // band 0 to band 1 while its band is off screen.
     let backlog = detail(&f, visual).columns[0].id.clone();
     let mut service = Service::open(&f.db).unwrap();
-    let new = service.card_create(&backlog, "K0", "").unwrap();
+    let new = service
+        .card_create(&backlog, "Urgent newcomer", "")
+        .unwrap();
     service.card_move(&new.id, &backlog, 0, "user").unwrap();
+    service.set_priority(&new.id, 4).unwrap();
     poll_tick(visual);
     frames(&f, visual);
     let cell = drawer(&f, visual, |view, _| {
-        view.lane_cell_ids[&("p0".to_string(), backlog.clone())].clone()
+        view.lane_cell_ids[&("p4".to_string(), backlog.clone())].clone()
     });
     assert_eq!(
-        cell.iter().position(|id| *id == k4),
+        cell.iter().position(|id| *id == sixty_nine),
         Some(4),
         "now in band 1"
     );
-    assert_eq!(focused_card(&f, visual), Some(k4.clone()));
-    assert!(painted(visual, 4));
+    assert_eq!(focused_card(&f, visual), Some(sixty_nine.clone()));
+    assert!(painted(visual, 69), "its new band stays mounted off screen");
+    assert!(!painted(visual, 9), "its old band does not");
     press(visual, "down");
-    assert_eq!(focused_card(&f, visual), Some(card_id(&f, visual, "K5")));
+    frames(&f, visual);
+    assert_eq!(focused_card(&f, visual), Some(id_of(&f, visual, 89)));
+    assert!(in_lane_view(&f, visual, 89));
+}
+
+#[gpui::test]
+fn a_keyboard_drop_into_a_far_cell_reveals_the_dropped_card(cx: &mut TestAppContext) {
+    let f = seeded_lanes(cx);
+    let nine = id_of(&f, cx, 9);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &nine);
+    // Lift, down to None (its header scrolls in), right, drop: card 9 lands
+    // last in None × In Progress, in that cell's last band.
+    press(visual, "space");
+    press_n(visual, "down", 4);
+    press(visual, "right");
+    press(visual, "enter");
+    frames(&f, visual);
+    let progress = detail(&f, visual).columns[1].id.clone();
+    let cell = drawer(&f, visual, |view, _| {
+        view.lane_cell_ids[&("p0".to_string(), progress.clone())].clone()
+    });
+    assert_eq!(cell.last(), Some(&nine));
+    assert_eq!(focused_card(&f, visual), Some(nine.clone()));
+    assert!(in_lane_view(&f, visual, 9), "the dropped card is on screen");
+}
+
+#[gpui::test]
+fn collapsed_columns_draw_as_strips_in_swimlanes_and_take_drops(cx: &mut TestAppContext) {
+    let titles = ["C1", "C2", "C3", "C4", "C5", "Hidden"];
+    let f = seeded(cx, &titles);
+    let progress = detail(&f, cx).columns[1].id.clone();
+    let hidden = card_id(&f, cx, "Hidden");
+    let mut service = Service::open(&f.db).unwrap();
+    service
+        .card_move(&hidden, &progress, usize::MAX, "user")
+        .unwrap();
+    service
+        .set_column_display(&progress, None, None, true)
+        .unwrap();
+    lanes_by(&f, "priority");
+    reload(&f, cx);
+    // None × Backlog holds C1–C5: two bands. In Progress is collapsed.
+    let none: Vec<LaneRow> = rows(&f, cx)
+        .into_iter()
+        .filter(|row| row.lane() == "p0")
+        .collect();
+    assert_eq!(none, [header("p0"), band("p0", 0), band("p0", 1)]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    // The strip mounts no cards: "Hidden" (#6) is not drawn.
+    assert!(!painted(visual, 6));
+    let strip = visual
+        .debug_bounds("board-lane-band-4-1-1")
+        .expect("the strip has a band-1 piece");
+    assert!(strip.size.width <= px(36.), "{:?}", strip.size);
+    // Shift order skips the collapsed column.
+    let order = drawer(&f, visual, |view, _| view.display_order());
+    assert!(!order.contains(&hidden));
+    assert_eq!(order.len(), 5);
+    // A pointer drop on the strip's band-1 piece moves C1 into In Progress.
+    let from = center(visual, "board-card-1");
+    drag(visual, from, strip.center());
+    assert_eq!(column_of(&f, visual, "C1"), "In Progress");
+    assert!(
+        !painted(visual, 1),
+        "a card in a collapsed column is not drawn"
+    );
+    // A keyboard drop onto it says that column, counted over the whole cell.
+    let c2 = card_id(&f, visual, "C2");
+    focus_card(&f, visual, &c2);
+    press(visual, "space right");
+    assert_eq!(
+        said(&f, visual).as_deref(),
+        Some("Card #2, C2 is over lane None, column In Progress, position 3 of 3.")
+    );
+    press(visual, "enter");
+    assert_eq!(
+        said(&f, visual).as_deref(),
+        Some("Dropped card #2 in lane None, column In Progress, position 3 of 3.")
+    );
+    assert_eq!(column_of(&f, visual, "C2"), "In Progress");
+}
+
+#[gpui::test]
+fn a_card_in_two_lanes_lifts_from_its_first_lane_on_screen(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Both"]);
+    let both = card_id(&f, cx, "Both");
+    // Path order (/a before /z) differs from the lane order (Zed, Alpha).
+    Service::open(&f.db)
+        .unwrap()
+        .set_projects(&both, &["/a".into(), "/z".into()])
+        .unwrap();
+    lanes_by(&f, "project");
+    reload(&f, cx);
+    f.window
+        .update(cx, |view, _, cx| {
+            view.set_projects(
+                vec![("/z".into(), "Zed".into()), ("/a".into(), "Alpha".into())],
+                cx,
+            )
+        })
+        .unwrap();
+    let labels: Vec<String> = f
+        .window
+        .read_with(cx, |view, _| {
+            view.lanes().into_iter().map(|lane| lane.label).collect()
+        })
+        .unwrap();
+    assert_eq!(labels, ["Zed", "Alpha", "No project"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &both);
+    press(visual, "space");
+    let lane = drawer(&f, visual, |view, _| view.kb_drag.clone().unwrap().lane);
+    assert_eq!(
+        lane.as_deref(),
+        Some("/z"),
+        "Zed is its first lane on screen"
+    );
+    assert_eq!(
+        said(&f, visual).as_deref(),
+        Some("Picked up card #1, Both. Lane Zed, column Backlog, position 1 of 1.")
+    );
+    // Escape puts it back in that same lane.
+    press(visual, "escape");
+    assert_eq!(
+        said(&f, visual).as_deref(),
+        Some(
+            "Moving card #1 was cancelled. It is back in lane Zed, column Backlog, position 1 of 1."
+        )
+    );
 }
 
 #[gpui::test]
