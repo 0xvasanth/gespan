@@ -8,6 +8,9 @@ import { describe, expect, it } from "vitest";
  * names from coming back anywhere in the repository: in file contents, in file
  * and folder names, in identifiers, in docs.
  *
+ * The one exception is the README's credit to the project Gespan was forked
+ * from, which may name it as a link to the original repository.
+ *
  * The old names are assembled from pieces below so that this file does not
  * contain them itself.
  */
@@ -18,6 +21,19 @@ const FIRST_NAME = cat("mo", "no", "co", "de"); // the original product name
 const FIRST_SITE = cat("use", "mo", "no"); // its website
 const FIRST_WORD = cat("mo", "no"); // what its agent feature was called
 const SECOND_NAME = cat("re", "ba", "se"); // the name used before Gespan
+
+// ---------------------------------------------------------------------------
+// Gespan is a fork, and the README says so. The credit must link to the
+// original repository; a bare mention, or one in any other file, still fails.
+
+const CREDITED_IN = "README.md";
+const UPSTREAM_URL = `https://github.com/hardbeat920/${FIRST_NAME}`;
+const CREDIT_LINK = new RegExp(
+  String.raw`\[${FIRST_NAME}\]\(${UPSTREAM_URL.replaceAll(".", String.raw`\.`)}\)`,
+  "gi",
+);
+const withoutCredit = (line: string, file: string) =>
+  file === CREDITED_IN ? line.replace(CREDIT_LINK, "") : line;
 
 // ---------------------------------------------------------------------------
 // Words that legitimately contain the first name's stem: typography and
@@ -157,7 +173,12 @@ describe("the first product name", () => {
   const names = new RegExp(`${FIRST_NAME}|${FIRST_SITE}`, "i");
 
   it("appears nowhere: not in code, docs, comments or vendored notices", () => {
-    expect(scan((rel) => readable(rel) && own(rel), (l) => names.test(l))).toEqual([]);
+    expect(
+      scan(
+        (rel) => readable(rel) && own(rel),
+        (l, rel) => names.test(withoutCredit(l, rel)),
+      ),
+    ).toEqual([]);
   });
 
   it("appears in no file or folder name", () => {
@@ -166,7 +187,31 @@ describe("the first product name", () => {
 
   it("is not in the upstream repository URL either", () => {
     const upstream = new RegExp(`hardbeat920/${FIRST_NAME}`, "i");
-    expect(scan(ownCode, (l) => upstream.test(l))).toEqual([]);
+    expect(scan(ownCode, (l, rel) => upstream.test(withoutCredit(l, rel)))).toEqual([]);
+  });
+
+  it("is credited in the README, as a link to the original repository", () => {
+    const readme = readFileSync(join(root, CREDITED_IN), "utf8");
+    expect(readme.match(CREDIT_LINK)?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("is allowed only as that credit link, and only in the README", () => {
+    const Name = cat("Mo", "no", "Co", "de");
+    const credit = `Gespan is a fork of [${Name}](${UPSTREAM_URL}).`;
+    expect(names.test(withoutCredit(credit, CREDITED_IN))).toBe(false);
+    const stem = new RegExp(FIRST_WORD, "i");
+    expect(stem.test(stripTypography(withoutCredit(credit, CREDITED_IN)))).toBe(false);
+
+    for (const [line, file] of [
+      [credit, "docs/providers.md"],
+      [credit, "src/app/App.tsx"],
+      [`Open ${Name} and pick an agent.`, CREDITED_IN],
+      [`[${Name}](https://example.com)`, CREDITED_IN],
+      [`${credit} ${Name} also runs Codex.`, CREDITED_IN],
+      [`See ${UPSTREAM_URL} for details.`, CREDITED_IN],
+    ]) {
+      expect(names.test(withoutCredit(line, file)), `${file}: ${line}`).toBe(true);
+    }
   });
 });
 
@@ -175,7 +220,7 @@ describe("the old name for the agent feature", () => {
 
   it("is gone, apart from typography such as monospace fonts", () => {
     expect(
-      scan(ownCode, (l) => stem.test(stripTypography(l))),
+      scan(ownCode, (l, rel) => stem.test(stripTypography(withoutCredit(l, rel)))),
     ).toEqual([]);
   });
 
