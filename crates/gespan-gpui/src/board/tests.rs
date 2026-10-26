@@ -905,7 +905,7 @@ fn a_move_reads_from_and_to_with_actor() {
     };
     assert_eq!(
         activity_text(&row),
-        "Moved from In Progress to Review · system"
+        "Moved from In Progress to Review · System"
     );
 }
 
@@ -8455,4 +8455,5 @@ fn a_failed_template_list_still_lets_the_switcher_create_a_blank_board(cx: &mut 
     assert_eq!(names, ["Backlog", "In Progress", "Review", "Done"]);
 }
 
+mod agent_wiring;
 mod link_run;

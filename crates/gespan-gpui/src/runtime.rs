@@ -15,6 +15,7 @@ mod handoff;
 mod persistence;
 pub(crate) mod remote;
 mod ticket_context;
+pub(crate) mod ticket_scope;
 #[cfg(all(test, unix))]
 mod ticket_tests;
 mod visual_discovery;
@@ -58,6 +59,9 @@ pub(crate) struct Update {
     pub(crate) succeeded: bool,
     /// A ticket tool call changed the linked ticket.
     pub(crate) ticket: Option<TicketChange>,
+    /// On the final update of a completed turn: its last assistant or plan
+    /// block, which write-back posts to the session's cards.
+    pub(crate) reply: Option<String>,
     pub(crate) finished: bool,
 }
 fn publish(
@@ -285,6 +289,7 @@ fn run_turn_using(
                 .into(),
                 succeeded: false,
                 ticket: None,
+                reply: None,
                 finished: false,
             },
         )?;
@@ -334,6 +339,7 @@ fn run_turn_using(
                     status: "Connecting…".into(),
                     succeeded: false,
                     ticket: None,
+                    reply: None,
                     finished: false,
                 },
             )?;
@@ -389,6 +395,7 @@ fn run_turn_using(
                     status: "Connecting…".into(),
                     succeeded: false,
                     ticket: None,
+                    reply: None,
                     finished: false,
                 },
             )?;
@@ -537,48 +544,63 @@ fn run_turn_using(
         let ticket = summary
             .work_item
             .as_ref()
-            .and_then(gespan_core::session_groups::WorkItem::ticket)
-            .filter(|_| {
-                !settings.text_only
-                    && !raw_native_command
-                    && !visual_discovery::lacks_tool_servers(kind, provider_id.as_deref())
-            });
+            .and_then(gespan_core::session_groups::WorkItem::ticket);
         let data_dir = locked(&store)?.data_dir().map(std::path::Path::to_path_buf);
         // Ticket tools are optional: a refused start (logged by the bridge) or
         // an unknown executable skips them and the turn goes on.
         let executable = std::env::current_exe()
             .inspect_err(|error| tracing::warn!(%error, "ticket tools need the app executable"))
             .ok();
-        if let (Some(ticket), Some(data_dir), Some(executable)) = (ticket, data_dir, executable) {
-            let may_change_status = may_change_ticket_status(&summary);
-            let read_only =
-                settings.plan || settings.access == gespan_core::agent::AccessMode::ReadOnly;
-            if let Ok(server) = gespan_core::ticket_bridge::Server::start(
+        let tool_servers = !settings.text_only
+            && !raw_native_command
+            && !visual_discovery::lacks_tool_servers(kind, provider_id.as_deref());
+        let read_only =
+            settings.plan || settings.access == gespan_core::agent::AccessMode::ReadOnly;
+        // The board's half of the scope: the status permission (session
+        // override, else the strictest linked board) and the write-back cards.
+        let source = tool_servers.then(|| {
+            Arc::new(ticket_scope::ScopeSource::new(
+                store.clone(),
                 summary.id,
-                gespan_core::ticket_bridge::Scope {
-                    ticket: Some(ticket.clone()),
-                    may_change_status,
-                    read_only,
-                    cards: false,
-                },
-            ) {
+                read_only,
+            ))
+        });
+        let (may_change_status, cards) = source
+            .as_ref()
+            .map_or((false, false), |source| source.board_scope());
+        if let (Some(source), Some(data_dir), Some(executable)) = (source, data_dir, executable)
+            && (ticket.is_some() || cards)
+        {
+            let scope = gespan_core::ticket_bridge::Scope {
+                ticket: ticket.cloned(),
+                may_change_status,
+                read_only,
+                cards,
+            };
+            if let Ok(server) = gespan_core::ticket_bridge::Server::start(summary.id, scope.clone())
+            {
                 settings.environment.extend(server.environment(&executable));
-                ticket_introduction = ticket_context::TicketContext::prepare(
-                    &*locked(&store)?,
-                    summary.id,
-                    ticket,
-                    may_change_status,
-                    read_only,
-                    provider_id.as_deref(),
-                )?;
+                if let Some(ticket) = ticket {
+                    ticket_introduction = ticket_context::TicketContext::prepare(
+                        &*locked(&store)?,
+                        summary.id,
+                        ticket,
+                        may_change_status,
+                        read_only,
+                        provider_id.as_deref(),
+                    )?;
+                }
                 if let Some(introduction) = &ticket_introduction {
                     prompt = introduction.prepend(prompt);
                 }
-                ticket_tools = Some(TicketTools {
+                ticket_tools = Some(TicketTools::new(
+                    summary.id,
                     server,
-                    tickets: Arc::new(gespan_core::tickets::Tickets::new(data_dir)),
-                    changes: ticket_changes.clone(),
-                });
+                    Arc::new(gespan_core::tickets::Tickets::new(data_dir)),
+                    ticket_changes.clone(),
+                    source,
+                    scope,
+                ));
             }
         }
         if kind == Kind::Claude {
@@ -614,6 +636,7 @@ fn run_turn_using(
                     .map(|bridge| bridge.drain())
                     .unwrap_or_default();
                 if let Some(tools) = &ticket_tools {
+                    tools.refresh_scope();
                     tools.answer_pending();
                 }
                 let ticket_change = take_ticket_change(&ticket_changes);
@@ -907,6 +930,7 @@ fn run_turn_using(
                             status,
                             succeeded: false,
                             ticket: ticket_change,
+                            reply: None,
                             finished: false,
                         },
                     )
@@ -996,6 +1020,13 @@ fn run_turn_using(
         log_turn_failure(error);
     }
     let succeeded = history_loaded && result.is_ok();
+    // Write-back takes only a completed turn's reply: never a failed or
+    // stopped one's.
+    let reply = (succeeded && !cancelled)
+        .then(|| {
+            ticket_scope::final_reply(&transcript.rows[turn_start.min(transcript.rows.len())..])
+        })
+        .flatten();
     let (start, rows, mut status) = if !history_loaded {
         // A rejected preflight has no row baseline. Writing an error at row 0
         // would replace a real conversation's first saved message.
@@ -1087,6 +1118,7 @@ fn run_turn_using(
         status,
         succeeded,
         ticket: take_ticket_change(&ticket_changes),
+        reply,
         finished: true,
     });
 }
@@ -1098,11 +1130,6 @@ const LOGGED_ERROR_CHARS: usize = 200;
 /// mid-turn; up to 8 KB of the CLI's stderr follows after a space. The log
 /// keeps only this part; the stderr stays in the transcript.
 const PROVIDER_EXITED: &str = "Provider exited before completing the turn.";
-
-// #174: the per-board "Agent may change ticket status" setting arrives with the board store.
-fn may_change_ticket_status(_session: &Session) -> bool {
-    true
-}
 
 /// What the view does with the linked ticket after the agent's tool calls.
 #[derive(Clone, Debug, PartialEq)]
@@ -1135,42 +1162,137 @@ fn record_ticket_change(changes: &TicketChanges, effect: gespan_core::ticket_bri
     }
 }
 
-/// A turn's ticket capability and the service that answers its calls.
+/// How often a turn re-reads its scope when only another connection's write
+/// (not a reported change) suggests it may have moved.
+const SCOPE_POLL: Duration = Duration::from_secs(1);
+
+/// A turn's ticket and card capability and the services that answer its calls.
 struct TicketTools {
     server: gespan_core::ticket_bridge::Server,
     tickets: Arc<gespan_core::tickets::Tickets>,
     changes: TicketChanges,
+    source: Arc<ticket_scope::ScopeSource>,
+    watch: ticket_scope::Watch,
+    /// The scope the bridge holds now.
+    scope: std::cell::RefCell<gespan_core::ticket_bridge::Scope>,
+    version: std::cell::Cell<Option<i64>>,
+    polled: std::cell::Cell<std::time::Instant>,
 }
 
 impl TicketTools {
-    /// Tracker calls are network round trips, so each runs off the provider loop.
+    fn new(
+        session: i64,
+        server: gespan_core::ticket_bridge::Server,
+        tickets: Arc<gespan_core::tickets::Tickets>,
+        changes: TicketChanges,
+        source: Arc<ticket_scope::ScopeSource>,
+        scope: gespan_core::ticket_bridge::Scope,
+    ) -> Self {
+        let watch = ticket_scope::Watch::new(session);
+        let version = source.data_version();
+        Self {
+            server,
+            tickets,
+            changes,
+            source,
+            watch,
+            scope: std::cell::RefCell::new(scope),
+            version: std::cell::Cell::new(version),
+            polled: std::cell::Cell::new(std::time::Instant::now()),
+        }
+    }
+
+    /// Gives the bridge the current scope when the app reported a change to
+    /// the session's ticket link, status override or card links, or another
+    /// connection wrote to the database (at most once a `SCOPE_POLL`).
+    fn refresh_scope(&self) {
+        let reported = self.watch.take();
+        let version = self.source.data_version();
+        let moved = version != self.version.get() && self.polled.get().elapsed() >= SCOPE_POLL;
+        if reported || moved {
+            self.version.set(version);
+            self.polled.set(std::time::Instant::now());
+            self.apply(self.source.read());
+        }
+    }
+
+    fn apply(&self, scope: gespan_core::ticket_bridge::Scope) {
+        if *self.scope.borrow() != scope {
+            self.server.set_scope(scope.clone());
+            *self.scope.borrow_mut() = scope;
+        }
+    }
+
+    /// Answers the calls the bridge accepted, against the scope read now:
+    /// the link a call was accepted under must still be the session's link,
+    /// and the permission and cards are this moment's. Tracker and board
+    /// calls run off the provider loop.
     fn answer_pending(&self) {
-        for call in self.server.drain() {
-            // Card tools are not in this turn's scope, so the hub refuses
-            // them; a ticket call carries the link it was accepted under.
-            let (gespan_core::ticket_bridge::BridgeTool::Ticket(tool), Some(ticket)) =
-                (&call.tool, &call.ticket)
-            else {
-                let _ = call
-                    .reply
-                    .send(Err("This tool isn't available here".into()));
-                continue;
-            };
-            let (tool, ticket) = (tool.clone(), ticket.clone());
-            let tickets = self.tickets.clone();
-            let changes = self.changes.clone();
-            std::thread::spawn(move || {
-                match gespan_core::ticket_bridge::answer(&tickets, &ticket, &tool) {
-                    Ok(answered) => {
-                        let _ = call.reply.send(Ok(answered.value));
-                        record_ticket_change(&changes, answered.effect);
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, "ticket tool call failed");
-                        let _ = call.reply.send(Err(error));
-                    }
+        use gespan_core::ticket_bridge::BridgeTool;
+        let calls = self.server.drain();
+        if calls.is_empty() {
+            return;
+        }
+        let current = self.source.read();
+        self.apply(current.clone());
+        for call in calls {
+            match &call.tool {
+                BridgeTool::Ticket(tool) => {
+                    let ticket = match (&current.ticket, &call.ticket) {
+                        (None, _) | (_, None) => {
+                            Err(gespan_tracker_client::tools::NO_TICKET.to_string())
+                        }
+                        (Some(now), Some(accepted))
+                            if !ticket_scope::same_ticket(now, accepted) =>
+                        {
+                            Err(format!("This session is linked to {}", now.key))
+                        }
+                        (Some(now), Some(_)) => gespan_tracker_client::tools::refusal(
+                            tool,
+                            current.may_change_status,
+                            current.read_only,
+                        )
+                        .map_or(Ok(now.clone()), |refused| Err(refused.to_string())),
+                    };
+                    let ticket = match ticket {
+                        Ok(ticket) => ticket,
+                        Err(refused) => {
+                            let _ = call.reply.send(Err(refused));
+                            continue;
+                        }
+                    };
+                    let tool = tool.clone();
+                    let tickets = self.tickets.clone();
+                    let changes = self.changes.clone();
+                    std::thread::spawn(move || {
+                        match gespan_core::ticket_bridge::answer(&tickets, &ticket, &tool) {
+                            Ok(answered) => {
+                                let _ = call.reply.send(Ok(answered.value));
+                                record_ticket_change(&changes, answered.effect);
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, "ticket tool call failed");
+                                let _ = call.reply.send(Err(error));
+                            }
+                        }
+                    });
                 }
-            });
+                BridgeTool::Card(tool) => {
+                    if !current.cards {
+                        let _ = call.reply.send(Err(ticket_scope::NO_CARDS.into()));
+                        continue;
+                    }
+                    let tool = tool.clone();
+                    let source = self.source.clone();
+                    std::thread::spawn(move || {
+                        let result = source.answer_card(&tool);
+                        if let Err(error) = &result {
+                            tracing::warn!(%error, "card tool call failed");
+                        }
+                        let _ = call.reply.send(result);
+                    });
+                }
+            }
         }
     }
 }

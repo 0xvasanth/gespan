@@ -11,25 +11,25 @@ use gespan_core::{
     session_groups::WorkItem,
 };
 
-fn new_session(f: &Fixture) -> (i64, String) {
+pub(super) fn new_session(f: &Fixture) -> (i64, String) {
     let store = f.store.lock().unwrap();
     let id = store.create("codex", "/work").unwrap().id;
     (id, store.persisted_session_id(id).unwrap())
 }
 
-fn add_link(f: &Fixture, card: &str, kind: &str, reference: &str) {
+pub(super) fn add_link(f: &Fixture, card: &str, kind: &str, reference: &str) {
     Service::open(&f.db)
         .unwrap()
         .add_link(card, kind, reference, None)
         .unwrap();
 }
 
-fn install_turns(f: &Fixture, cx: &mut TestAppContext) {
+pub(super) fn install_turns(f: &Fixture, cx: &mut TestAppContext) {
     let db = f.db.clone();
     cx.update(|cx| turns::install(db, None, cx));
 }
 
-fn started(f: &Fixture, cx: &mut TestAppContext, session: i64, pilot: Option<&str>) {
+pub(super) fn started(f: &Fixture, cx: &mut TestAppContext, session: i64, pilot: Option<&str>) {
     let store = f.store.clone();
     let pilot = pilot.map(str::to_string);
     cx.update(|cx| turns::turn_started(&store, session, pilot, 1, cx));
@@ -38,11 +38,11 @@ fn started(f: &Fixture, cx: &mut TestAppContext, session: i64, pilot: Option<&st
 
 fn settled(f: &Fixture, cx: &mut TestAppContext, session: i64, ok: bool) {
     let store = f.store.clone();
-    cx.update(|cx| turns::turn_settled(&store, session, 1, false, ok, cx));
+    cx.update(|cx| turns::turn_settled(&store, session, 1, false, ok, None, cx));
     cx.run_until_parked();
 }
 
-fn waiting(f: &Fixture, cx: &mut TestAppContext, session: i64, on: bool) {
+pub(super) fn waiting(f: &Fixture, cx: &mut TestAppContext, session: i64, on: bool) {
     let store = f.store.clone();
     cx.update(|cx| turns::set_waiting(&store, session, on, cx));
     cx.run_until_parked();
@@ -58,12 +58,12 @@ fn states(f: &Fixture, cx: &mut TestAppContext, card: &str) -> Vec<LinkState> {
 
 /// A stand-in for `gh` and Git that records every call.
 #[derive(Clone, Default)]
-struct FakeSource {
-    calls: Arc<Mutex<Vec<String>>>,
-    pr: Option<(String, i64, String)>,
-    checks: Vec<String>,
-    branch: Option<String>,
-    diff: Option<(i64, i64)>,
+pub(super) struct FakeSource {
+    pub(super) calls: Arc<Mutex<Vec<String>>>,
+    pub(super) pr: Option<(String, i64, String)>,
+    pub(super) checks: Vec<String>,
+    pub(super) branch: Option<String>,
+    pub(super) diff: Option<(i64, i64)>,
 }
 
 impl LinkSource for FakeSource {
@@ -98,7 +98,7 @@ impl LinkSource for FakeSource {
 }
 
 /// Use `source` and look links up as on opening the board.
-fn look_up_with(f: &Fixture, cx: &mut TestAppContext, source: FakeSource) {
+pub(super) fn look_up_with(f: &Fixture, cx: &mut TestAppContext, source: FakeSource) {
     f.window
         .update(cx, |view, _, cx| {
             view.link_source = Arc::new(source);

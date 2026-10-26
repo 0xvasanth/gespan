@@ -509,6 +509,7 @@ impl Shell {
                         .disabled(ticket.url.is_none())
                         .into(),
                     MenuAction::new("ticket-refresh", "Refresh ticket").into(),
+                    ticket_status_menu(crate::board::turns::status_setting(&self.store, id)),
                     MenuAction::new("ticket-unlink", "Unlink ticket").into(),
                 ]);
             }
@@ -615,6 +616,16 @@ impl Shell {
             }
             "ticket-refresh" => self.refresh_ticket(id, true, cx),
             "ticket-unlink" => self.set_work_item(id, None, cx),
+            "ticket-status:board" | "ticket-status:on" | "ticket-status:off" => {
+                let choice = match action {
+                    "ticket-status:on" => Some(true),
+                    "ticket-status:off" => Some(false),
+                    _ => None,
+                };
+                self.store_write("save the ticket status setting", cx, move |s| {
+                    crate::board::turns::set_status_setting(s, id, choice)
+                });
+            }
             "reminder:cancel" => {
                 let occurrences: Vec<_> = self
                     .reminders
@@ -2023,7 +2034,10 @@ impl Shell {
             self.ticket_drafts.remove(&id);
         }
         self.store_write("link the session", cx, move |s| {
-            s.set_work_item(id, item.as_ref())
+            s.set_work_item(id, item.as_ref())?;
+            // A running turn's ticket tools follow the new link at once.
+            crate::runtime::ticket_scope::changed(Some(id));
+            Ok(())
         });
         self.invalidate_chrome(cx);
     }
@@ -2384,6 +2398,26 @@ impl Shell {
                 .into_any_element(),
         )
     }
+}
+
+/// "Agent may change ticket status" for one session: follow its boards, or
+/// on or off whatever they say. A setting that can't be read offers no
+/// choice to tick, and says so.
+fn ticket_status_menu(setting: Result<Option<bool>, String>) -> MenuItem {
+    let label = "Agent may change ticket status";
+    let choices = match setting {
+        Ok(current) => vec![
+            MenuAction::new("ticket-status:board", "Board default").checked(current.is_none()),
+            MenuAction::new("ticket-status:on", "On").checked(current == Some(true)),
+            MenuAction::new("ticket-status:off", "Off").checked(current == Some(false)),
+        ],
+        Err(_) => vec![
+            MenuAction::new("ticket-status:error", "Couldn't read this setting").disabled(true),
+        ],
+    };
+    MenuAction::new("ticket-status", label)
+        .submenu(choices)
+        .into()
 }
 
 #[cfg(test)]
@@ -3694,5 +3728,87 @@ mod tests {
             cx.opened_url().as_deref(),
             Some("https://tracker.test/ENG-7")
         );
+    }
+
+    /// The ticket items' "Agent may change ticket status" choices, as
+    /// (label, checked).
+    fn status_choices(shell: &Shell, id: i64, cx: &App) -> Vec<(String, bool, bool)> {
+        shell
+            .session_menu_items(id, cx)
+            .into_iter()
+            .find_map(|item| match item {
+                MenuItem::Action(action) if action.label == "Agent may change ticket status" => {
+                    Some(action.submenu)
+                }
+                _ => None,
+            })
+            .expect("the ticket menu offers the status setting")
+            .into_iter()
+            .map(|choice| (choice.label.to_string(), choice.checked, choice.disabled))
+            .collect()
+    }
+
+    #[gpui::test]
+    fn ticket_menu_sets_agent_status_permission_on_off_or_board_default(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        // A database file, so the board store reads back what it saved.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let (store, key) = {
+            let store = gespan_core::store::Store::open(&path).unwrap();
+            while store.create("codex", "/work/gespan").unwrap().id < a {}
+            let key = store.persisted_session_id(a).unwrap();
+            (Arc::new(Mutex::new(store)), key)
+        };
+        window
+            .update(cx, |shell, _, _| shell.store = store.clone())
+            .unwrap();
+        fake_tickets(window, cx, &[Tracker::Linear]);
+        submit_link(window, cx, a, "ENG-7");
+        let read = || {
+            gespan_core::board::Service::open(&path)
+                .unwrap()
+                .session_status_setting(&key)
+        };
+        let choices = |on: [bool; 3]| -> Vec<(String, bool, bool)> {
+            ["Board default", "On", "Off"]
+                .into_iter()
+                .zip(on)
+                .map(|(label, checked)| (label.to_string(), checked, false))
+                .collect()
+        };
+        window
+            .update(cx, |shell, _, cx| {
+                assert_eq!(status_choices(shell, a, cx), choices([true, false, false]))
+            })
+            .unwrap();
+        for (action, saved, checked) in [
+            ("ticket-status:off", Some(false), [false, false, true]),
+            ("ticket-status:on", Some(true), [false, true, false]),
+            ("ticket-status:board", None, [true, false, false]),
+        ] {
+            window
+                .update(cx, |shell, w, cx| {
+                    shell.run_menu(MenuTarget::Session(a), action, None, w, cx)
+                })
+                .unwrap();
+            cx.run_until_parked();
+            assert_eq!(read(), saved, "{action}");
+            window
+                .update(cx, |shell, _, cx| {
+                    assert_eq!(status_choices(shell, a, cx), choices(checked), "{action}")
+                })
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn an_unreadable_status_setting_offers_no_choice() {
+        let MenuItem::Action(action) = ticket_status_menu(Err("locked".into())) else {
+            panic!("an action")
+        };
+        assert_eq!(action.submenu.len(), 1);
+        assert_eq!(action.submenu[0].label, "Couldn't read this setting");
+        assert!(action.submenu[0].disabled && !action.submenu[0].checked);
     }
 }

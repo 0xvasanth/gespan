@@ -174,7 +174,17 @@ pub(crate) fn activity_text(row: &Activity) -> String {
                 .unwrap_or_default()
         }
     };
-    format!("{what} · {}", row.actor)
+    format!("{what} · {}", actor_label(&row.actor))
+}
+
+/// Who wrote an activity row, as Tauri's `actorLabel` names it: "You",
+/// "System", or "Agent" for any other writer (`agent`, `agent:<session>`).
+pub(crate) fn actor_label(actor: &str) -> &'static str {
+    match actor {
+        "user" => "You",
+        "system" => "System",
+        _ => "Agent",
+    }
 }
 
 /// Something a card can link to: link kind, link id, what to call it.

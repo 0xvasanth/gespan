@@ -3,7 +3,7 @@
 //! `gh` and Git, which is slow, so that lookup runs on the background executor
 //! when the board opens and when a turn of a session linked to one of its
 //! cards settles. Never on a timer.
-use gespan_core::board::extras::CardLink;
+use gespan_core::board::{auto_move::LinkedWorkEvent, extras::CardLink};
 use std::{
     collections::{BTreeSet, HashMap},
     path::Path,
@@ -640,6 +640,16 @@ impl super::BoardView {
             let extras = found.await;
             let _ = this.update(cx, |this, cx| {
                 if this.status_board == board {
+                    // A PR this refresh sees open or merged is the linked
+                    // cards' pr_opened / pr_merged (sent once).
+                    for ((kind, url), extra) in &extras {
+                        let event = match extra.state {
+                            Some(LinkState::Open) if kind == "pr" => LinkedWorkEvent::PrOpened,
+                            Some(LinkState::Merged) if kind == "pr" => LinkedWorkEvent::PrMerged,
+                            _ => continue,
+                        };
+                        super::turns::pr_seen(url, event, cx);
+                    }
                     this.link_extras = extras;
                     this.rebuild_chips(cx);
                     cx.notify();

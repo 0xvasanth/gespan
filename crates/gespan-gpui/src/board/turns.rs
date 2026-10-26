@@ -8,7 +8,7 @@ use crate::{
 use gespan_core::{
     board::{
         Service,
-        auto_move::on_linked_work,
+        auto_move::{LinkedWorkEvent, on_linked_work},
         linked_turns::{LinkedCall, LinkedTurns, turn_pilot_id},
     },
     pilot::Roster,
@@ -22,11 +22,20 @@ use std::{
 /// How many settled turns `BoardTurns` remembers for boards that look late.
 const SETTLE_LOG: usize = 64;
 
+/// One write the board worker makes, in queue order.
+pub(crate) enum BoardJob {
+    /// An auto-move event for every card linked to the work.
+    Event(LinkedCall),
+    /// A completed turn's reply, as one agent comment on each card linked to
+    /// the session whose board has write-back on (the store checks that).
+    WriteBack { session_key: String, reply: String },
+}
+
 pub(crate) struct BoardTurns {
     turns: LinkedTurns,
     /// One worker applies batches in order, so a turn's "started" always
     /// lands before its "completed" or "failed".
-    queue: async_channel::Sender<Vec<LinkedCall>>,
+    queue: async_channel::Sender<Vec<BoardJob>>,
     pilots: Option<WeakEntity<Pilots>>,
     /// Session keys waiting on the user (an approval or a question).
     waiting: BTreeSet<String>,
@@ -34,6 +43,10 @@ pub(crate) struct BoardTurns {
     /// a board refreshes link status only for sessions linked to its cards.
     settles: VecDeque<(u64, String)>,
     settle_seq: u64,
+    /// PR events already sent this run, as (PR url, event), so a refresh
+    /// that sees the same state again writes nothing. The store also fires
+    /// each at most once per card.
+    pr_events: BTreeSet<(String, &'static str)>,
     /// Pilots as `(id, name)` for tests, which have no live roster.
     #[cfg(test)]
     pub(crate) test_pilots: Option<Vec<(String, String)>>,
@@ -42,7 +55,7 @@ impl Global for BoardTurns {}
 
 /// Start moving cards with turns, against the board tables at `db_path`.
 pub(crate) fn install(db_path: PathBuf, pilots: Option<WeakEntity<Pilots>>, cx: &mut App) {
-    let (queue, batches) = async_channel::unbounded::<Vec<LinkedCall>>();
+    let (queue, batches) = async_channel::unbounded::<Vec<BoardJob>>();
     cx.background_executor()
         .spawn(async move {
             let mut service = None;
@@ -59,9 +72,18 @@ pub(crate) fn install(db_path: PathBuf, pilots: Option<WeakEntity<Pilots>>, cx: 
                 let Some(service) = service.as_mut() else {
                     continue;
                 };
-                for (kind, id, event) in calls {
-                    if let Err(error) = on_linked_work(service, kind, &id, event) {
-                        tracing::warn!(%error, ?kind, %id, "moving board cards failed");
+                for job in calls {
+                    match job {
+                        BoardJob::Event((kind, id, event)) => {
+                            if let Err(error) = on_linked_work(service, kind, &id, event) {
+                                tracing::warn!(%error, ?kind, %id, "moving board cards failed");
+                            }
+                        }
+                        BoardJob::WriteBack { session_key, reply } => {
+                            if let Err(error) = service.write_back(&session_key, &reply) {
+                                tracing::warn!(%error, "writing the turn back to its cards failed");
+                            }
+                        }
                     }
                 }
             }
@@ -74,6 +96,7 @@ pub(crate) fn install(db_path: PathBuf, pilots: Option<WeakEntity<Pilots>>, cx: 
         waiting: BTreeSet::new(),
         settles: VecDeque::new(),
         settle_seq: 0,
+        pr_events: BTreeSet::new(),
         #[cfg(test)]
         test_pilots: None,
     });
@@ -107,7 +130,7 @@ pub(crate) fn waiting_sessions(cx: &App) -> BTreeSet<String> {
 }
 
 /// Record whether a session waits on the user. Only a change notifies the
-/// boards.
+/// boards; starting to wait is the cards' `needs_input` event.
 pub(crate) fn set_waiting(store: &Database, session: i64, waiting: bool, cx: &mut App) {
     let Some(board) = cx.try_global::<BoardTurns>() else {
         return;
@@ -120,10 +143,33 @@ pub(crate) fn set_waiting(store: &Database, session: i64, waiting: bool, cx: &mu
     }
     let board = cx.global_mut::<BoardTurns>();
     if waiting {
-        board.waiting.insert(key);
+        board.waiting.insert(key.clone());
+        dispatch(
+            vec![BoardJob::Event((
+                "session",
+                key,
+                LinkedWorkEvent::NeedsInput,
+            ))],
+            cx,
+        );
     } else {
         board.waiting.remove(&key);
     }
+}
+
+/// A link-status refresh saw a linked PR open or merged: the cards linked to
+/// it get `pr_opened` or `pr_merged`, once.
+pub(crate) fn pr_seen(url: &str, event: LinkedWorkEvent, cx: &mut App) {
+    if !matches!(event, LinkedWorkEvent::PrOpened | LinkedWorkEvent::PrMerged)
+        || !cx.has_global::<BoardTurns>()
+    {
+        return;
+    }
+    let board = cx.global_mut::<BoardTurns>();
+    if !board.pr_events.insert((url.to_string(), event.as_str())) {
+        return;
+    }
+    dispatch(vec![BoardJob::Event(("pr", url.to_string(), event))], cx);
 }
 
 /// The session keys whose turns settled after sequence `seen`, and the
@@ -209,7 +255,32 @@ pub(crate) fn turn_began(store: Database, session: i64, turn: u64, cx: &mut App)
     });
 }
 
-fn session_key(store: &Database, session: i64) -> Option<String> {
+/// The session's own "Agent may change ticket status" choice: `Some(on)`,
+/// or `None` to follow its boards. An error when the board store can't be
+/// opened. (The store reads an unreadable override as `None`, so a failed
+/// read past opening still shows as following the boards.)
+pub(crate) fn status_setting(store: &Database, session: i64) -> Result<Option<bool>, String> {
+    let key = session_key(store, session).ok_or("Session no longer exists")?;
+    let path = locked(store)?.database_path().to_path_buf();
+    Ok(Service::open(&path)?.session_status_setting(&key))
+}
+
+/// Saves the session's choice (`None`: follow the boards) and tells its
+/// running turn, so the turn's status permission follows at once.
+pub(crate) fn set_status_setting(
+    store: &gespan_core::store::Store,
+    session: i64,
+    may_change: Option<bool>,
+) -> Result<(), String> {
+    let key = store.persisted_session_id(session)?;
+    Service::open(store.database_path())?.set_session_status_setting(&key, may_change)?;
+    crate::runtime::ticket_scope::changed(Some(session));
+    Ok(())
+}
+
+/// The key the board store knows a session by: its persisted id, or
+/// `remote:{env}:{session}` for a remote session (ruling C5-d).
+pub(crate) fn session_key(store: &Database, session: i64) -> Option<String> {
     locked(store).ok()?.persisted_session_id(session).ok()
 }
 
@@ -230,17 +301,19 @@ pub(crate) fn turn_started(
         .global_mut::<BoardTurns>()
         .turns
         .started(&key, turn, pilot);
-    dispatch(calls, cx);
+    dispatch(events(calls), cx);
 }
 
 /// A finished turn: `stopped` when the user stopped it, else `ok` when it
-/// ended without an error.
+/// ended without an error. A completed turn's `reply` is written back to
+/// its cards, once: a turn that settles again finds itself closed.
 pub(crate) fn turn_settled(
     store: &Database,
     session: i64,
     turn: u64,
     stopped: bool,
     ok: bool,
+    reply: Option<String>,
     cx: &mut App,
 ) {
     if !cx.has_global::<BoardTurns>() {
@@ -256,6 +329,16 @@ pub(crate) fn turn_settled(
     } else {
         board.turns.settled(&key, turn, ok)
     };
+    let write_back = (ok && !stopped && !calls.is_empty())
+        .then_some(reply)
+        .flatten()
+        .filter(|reply| !reply.trim().is_empty())
+        .map(|reply| BoardJob::WriteBack {
+            session_key: key.clone(),
+            reply,
+        });
+    let mut jobs = events(calls);
+    jobs.extend(write_back);
     // A finished turn may also have answered what it was waiting on.
     board.waiting.remove(&key);
     board.settle_seq += 1;
@@ -263,7 +346,7 @@ pub(crate) fn turn_settled(
     while board.settles.len() > SETTLE_LOG {
         board.settles.pop_front();
     }
-    dispatch(calls, cx);
+    dispatch(jobs, cx);
 }
 
 /// What one runtime update says about a local turn, for the Board.
@@ -275,6 +358,8 @@ pub(crate) struct TurnUpdate {
     pub succeeded: bool,
     /// The update carries transcript rows, so the prompt was taken.
     pub has_rows: bool,
+    /// A completed turn's last assistant or plan block (final update only).
+    pub reply: Option<String>,
 }
 
 /// One local turn's life on the Board, fed every runtime update the
@@ -310,14 +395,22 @@ impl TurnTracker {
             turn_began(store.clone(), session, turn, cx);
         }
         if update.finished {
-            self.settle(store, session, turn, update.stopping, update.succeeded, cx);
+            let ok = update.succeeded;
+            self.settle(
+                store,
+                session,
+                turn,
+                (update.stopping, ok),
+                update.reply,
+                cx,
+            );
         }
     }
 
     /// The conversation stopped reading updates before the final one.
     pub(crate) fn abandon(&mut self, store: &Database, session: i64, turn: u64, cx: &mut App) {
         if self.began && !self.settled {
-            self.settle(store, session, turn, true, false, cx);
+            self.settle(store, session, turn, (true, false), None, cx);
         }
     }
 
@@ -326,18 +419,22 @@ impl TurnTracker {
         store: &Database,
         session: i64,
         turn: u64,
-        stopped: bool,
-        ok: bool,
+        (stopped, ok): (bool, bool),
+        reply: Option<String>,
         cx: &mut App,
     ) {
         self.settled = true;
         let store = store.clone();
         // Deferred like `turn_began`, so a turn's start is always queued first.
-        cx.defer(move |cx| turn_settled(&store, session, turn, stopped, ok, cx));
+        cx.defer(move |cx| turn_settled(&store, session, turn, stopped, ok, reply, cx));
     }
 }
 
-fn dispatch(calls: Vec<LinkedCall>, cx: &mut App) {
+fn events(calls: Vec<LinkedCall>) -> Vec<BoardJob> {
+    calls.into_iter().map(BoardJob::Event).collect()
+}
+
+fn dispatch(calls: Vec<BoardJob>, cx: &mut App) {
     if !calls.is_empty() {
         let _ = cx.global::<BoardTurns>().queue.try_send(calls);
     }
@@ -431,7 +528,7 @@ mod tests {
         cx.update(|cx| turn_started(&s.store, s.session, None, 1, cx));
         cx.run_until_parked();
         assert_eq!(state(&s).0, "In Progress");
-        cx.update(|cx| turn_settled(&s.store, s.session, 1, false, true, cx));
+        cx.update(|cx| turn_settled(&s.store, s.session, 1, false, true, None, cx));
         cx.run_until_parked();
         let (column, kinds) = state(&s);
         assert_eq!(column, "Review");
@@ -442,7 +539,7 @@ mod tests {
     fn an_error_finish_logs_failed_and_the_card_stays(cx: &mut TestAppContext) {
         let s = setup(cx, None);
         cx.update(|cx| turn_started(&s.store, s.session, None, 1, cx));
-        cx.update(|cx| turn_settled(&s.store, s.session, 1, false, false, cx));
+        cx.update(|cx| turn_settled(&s.store, s.session, 1, false, false, None, cx));
         cx.run_until_parked();
         let (column, kinds) = state(&s);
         assert_eq!(column, "In Progress");
@@ -453,7 +550,7 @@ mod tests {
     fn a_stopped_turn_logs_only_started(cx: &mut TestAppContext) {
         let s = setup(cx, None);
         cx.update(|cx| turn_started(&s.store, s.session, None, 1, cx));
-        cx.update(|cx| turn_settled(&s.store, s.session, 1, true, false, cx));
+        cx.update(|cx| turn_settled(&s.store, s.session, 1, true, false, None, cx));
         cx.run_until_parked();
         let (column, kinds) = state(&s);
         assert_eq!(column, "In Progress");
@@ -483,6 +580,7 @@ mod tests {
             stopping: false,
             succeeded,
             has_rows,
+            reply: None,
         }
     }
 
