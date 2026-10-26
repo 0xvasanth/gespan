@@ -1,13 +1,12 @@
 //! The 1,000-card fixture and the read budgets it guards: every board-wide
 //! read runs the same number of SQL statements at 10 and at 1,000 cards (no
-//! per-card queries), and `query_cards` stays within its time budget.
+//! per-card queries). The time budget is in `scale_timing.rs`.
 use gespan_board_store::seed::{seed_board, SeedReport, SeedSpec};
 use gespan_board_store::*;
 use rusqlite::trace::{TraceEvent, TraceEventCodes};
 use rusqlite::Connection;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::time::{Duration, Instant};
 
 #[allow(dead_code)]
 #[path = "../examples/seed_board.rs"]
@@ -327,38 +326,6 @@ fn board_wide_reads_use_the_same_statements_at_10_and_1000_cards() {
 }
 
 #[test]
-fn query_cards_on_1000_cards_meets_the_budget() {
-    let conn = fresh();
-    let report = seeded(&conn, 1000);
-    let spec = budget_spec(&report);
-    let now = 1_793_404_800_000;
-    let running = HashSet::new();
-    let started = Instant::now();
-    let shown = query_cards(
-        &conn,
-        &report.board_id,
-        &spec,
-        now,
-        &local_day_chrono,
-        &running,
-    )
-    .unwrap();
-    let took = started.elapsed();
-    // The filter really ran: some cards match, not all, sorted by priority.
-    assert!(!shown.is_empty() && shown.len() < 1000, "{}", shown.len());
-    let extras = card_extras(&conn, &report.board_id).unwrap();
-    let priorities: Vec<u8> = shown.iter().map(|id| extras[id].priority).collect();
-    assert!(priorities.windows(2).all(|w| w[0] >= w[1]));
-    assert!(priorities.iter().all(|&p| p >= 2));
-    let runs = latest_run_events(&conn, &report.board_id).unwrap();
-    assert!(shown.iter().all(|id| runs[id] == "failed"));
-    assert!(
-        took <= Duration::from_millis(150),
-        "query_cards on 1,000 cards took {took:?}, budget 150 ms"
-    );
-}
-
-#[test]
 fn column_card_counts_equal_per_column_counts() {
     let conn = fresh();
     let report = seeded(&conn, 1000);
@@ -479,4 +446,114 @@ fn seed_example_refuses_a_missing_database() {
         format!("No database at {}. Open Gespan once first.", path.display())
     );
     assert!(!path.exists(), "the example never creates a database");
+}
+
+fn existing_board(path: &std::path::Path) -> Board {
+    let conn = Connection::open(path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    ensure_tables(&conn).unwrap();
+    let board = create_board(&conn, "Mine").unwrap();
+    let column = get_board(&conn, &board.id).unwrap().columns[0].id.clone();
+    create_card(&conn, &column, "Keep me", "").unwrap();
+    board
+}
+
+#[test]
+fn seed_example_refuses_a_file_that_is_not_a_gespan_database() {
+    let dir = tempfile::tempdir().unwrap();
+    // A real SQLite database, but someone else's.
+    let plain = dir.path().join("notes.db");
+    {
+        let conn = Connection::open(&plain).unwrap();
+        conn.execute_batch("CREATE TABLE notes (body TEXT); INSERT INTO notes VALUES ('hi');")
+            .unwrap();
+    }
+    // And a file that isn't SQLite at all.
+    let text = dir.path().join("readme.txt");
+    std::fs::write(
+        &text,
+        "not a database, just text that is long enough to matter\n",
+    )
+    .unwrap();
+    for path in [&plain, &text] {
+        let before = std::fs::read(path).unwrap();
+        let error = seed_example::run(args(&["--db", path.to_str().unwrap()])).unwrap_err();
+        assert!(
+            error.starts_with(&format!("{} is not a Gespan database", path.display())),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            before,
+            "{} changed",
+            path.display()
+        );
+        let wal = format!("{}-wal", path.display());
+        assert!(!std::path::Path::new(&wal).exists(), "{wal} was created");
+    }
+    let tables: Vec<String> = Connection::open(&plain)
+        .unwrap()
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(tables, ["notes"]);
+}
+
+#[test]
+fn seed_example_removes_only_its_board_when_the_seed_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    let mine = existing_board(&path);
+    let before = fingerprint(&Connection::open(&path).unwrap(), &mine.id);
+    let mut seen = None;
+    let error = seed_example::run_with(args(&["--db", path.to_str().unwrap()]), |conn, id, _| {
+        // The board exists when the seed runs.
+        assert!(get_board(conn, id).is_ok());
+        seen = Some(id.to_string());
+        Err("Seed failed".into())
+    })
+    .unwrap_err();
+    assert_eq!(error, "Seed failed");
+    let conn = Connection::open(&path).unwrap();
+    let boards = list_boards(&conn).unwrap();
+    assert_eq!(boards.len(), 1);
+    assert_eq!(boards[0].id, mine.id);
+    assert!(get_board(&conn, &seen.unwrap()).is_err());
+    let orphans: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM board_columns WHERE board_id NOT IN (SELECT id FROM boards)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(orphans, 0, "the removed board's columns went with it");
+    assert_eq!(fingerprint(&conn, &mine.id), before);
+}
+
+#[test]
+fn seed_example_reports_a_failed_cleanup() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    existing_board(&path);
+    let mut seen = String::new();
+    let error = seed_example::run_with(args(&["--db", path.to_str().unwrap()]), |conn, id, _| {
+        // Block the cleanup on this connection only.
+        conn.execute_batch(
+            "CREATE TEMP TRIGGER keep_boards BEFORE DELETE ON boards
+             BEGIN SELECT RAISE(ABORT, 'boards are kept'); END;",
+        )
+        .unwrap();
+        seen = id.to_string();
+        Err("Seed failed".into())
+    })
+    .unwrap_err();
+    assert_eq!(
+        error,
+        format!("Seed failed. The new board {seen} could not be removed: boards are kept")
+    );
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(list_boards(&conn).unwrap().len(), 2);
 }

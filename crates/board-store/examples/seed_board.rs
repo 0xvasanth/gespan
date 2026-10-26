@@ -7,10 +7,10 @@
 //!
 //! It always creates a new board (from the blank template) and never edits an
 //! existing one. Prints the new board's id.
-use gespan_board_store::seed::{seed_board, SeedSpec};
+use gespan_board_store::seed::{seed_board, SeedReport, SeedSpec};
 use gespan_board_store::{create_board_from_template, delete_board, ensure_tables};
 use rusqlite::{Connection, OpenFlags};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const USAGE: &str =
@@ -28,6 +28,15 @@ fn main() {
 
 /// Seeds a new board as the command line asks. Returns its id.
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<String, String> {
+    run_with(args, seed_board)
+}
+
+/// `run`, with the seed step passed in so tests can make it fail after the
+/// board exists.
+pub fn run_with(
+    args: impl IntoIterator<Item = String>,
+    seed: impl FnOnce(&Connection, &str, &SeedSpec) -> Result<SeedReport, String>,
+) -> Result<String, String> {
     let mut db: Option<PathBuf> = None;
     let mut cards = SeedSpec::default().cards;
     let mut name: Option<String> = None;
@@ -55,6 +64,14 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<String, String> {
             db.display()
         ));
     }
+    // Check it is Gespan's database before writing anything: read-only, so a
+    // file that isn't one is left exactly as it was (no WAL, no tables).
+    if !is_gespan_db(&db)? {
+        return Err(format!(
+            "{} is not a Gespan database (it has no boards table). Nothing was changed.",
+            db.display()
+        ));
+    }
     // Open without CREATE, so a path that vanished is never made anew.
     let conn = Connection::open_with_flags(
         &db,
@@ -72,10 +89,31 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<String, String> {
         cards,
         ..SeedSpec::default()
     };
-    if let Err(error) = seed_board(&conn, &board.id, &spec) {
-        // Leave no half-made board behind; the seed itself wrote nothing.
-        let _ = delete_board(&conn, &board.id);
+    if let Err(error) = seed(&conn, &board.id, &spec) {
+        // Leave no half-made board behind: remove the one just created.
+        if let Err(cleanup) = delete_board(&conn, &board.id) {
+            return Err(format!(
+                "{error}. The new board {} could not be removed: {cleanup}",
+                board.id
+            ));
+        }
         return Err(error);
     }
     Ok(board.id)
+}
+
+/// Whether the file is a SQLite database with Gespan's `boards` table, read
+/// without changing it.
+fn is_gespan_db(path: &Path) -> Result<bool, String> {
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| e.to_string())?;
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'boards')",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("{} is not a Gespan database: {e}", path.display()))
 }
