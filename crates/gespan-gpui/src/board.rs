@@ -8,11 +8,14 @@ mod detail;
 mod drop;
 mod header;
 mod keyboard;
+mod list;
 mod markdown_toolbar;
 mod new_card;
 mod quick;
+mod selection;
 pub(crate) mod style;
 mod switcher;
+mod table;
 #[cfg(test)]
 mod tests;
 mod tickets;
@@ -172,6 +175,17 @@ pub(crate) struct BoardView {
     matched: Option<HashSet<String>>,
     /// A card's place in the query's order, for the sorted columns.
     rank: HashMap<String, usize>,
+    /// Everything the list and table show for each card, by card id.
+    index: HashMap<String, gespan_core::board::extras::CardIndexRow>,
+    /// The cards picked for a bulk change.
+    pub(crate) selection: selection::Selection,
+    /// The bulk bar's menus and the layouts' own (columns, group by).
+    pop: Option<selection::PopMenu>,
+    pop_anchors: selection::PopAnchors,
+    /// The table title being typed.
+    table_edit: Option<table::TableEdit>,
+    /// A table column being dragged wider or narrower.
+    resizing: Option<table::Resize>,
     /// The search text the last query ran with.
     last_query: String,
     pub(crate) views: views::Views,
@@ -305,6 +319,12 @@ impl BoardView {
             spec: ViewSpec::default(),
             matched: None,
             rank: HashMap::new(),
+            index: HashMap::new(),
+            selection: selection::Selection::default(),
+            pop: None,
+            pop_anchors: selection::PopAnchors::default(),
+            table_edit: None,
+            resizing: None,
             last_query: String::new(),
             views: views::Views::default(),
             filter_open: false,
@@ -369,6 +389,9 @@ impl BoardView {
         self.new_card = None;
         self.menu = None;
         self.card_menu = None;
+        self.pop = None;
+        self.table_edit = None;
+        self.resizing = None;
         self.renaming = None;
         self.filter_open = false;
         self.sort_open = false;
@@ -481,6 +504,11 @@ impl BoardView {
         let card_tickets = service.board_tickets(&board.id)?;
         let views = service.views(&board.id)?;
         let fields = service.list_fields(&board.id)?;
+        let index: HashMap<_, _> = service
+            .card_index(&board.id)?
+            .into_iter()
+            .map(|row| (row.card_id.clone(), row))
+            .collect();
         let archived = if archive_open {
             service.archived(&board.id)?
         } else {
@@ -497,11 +525,21 @@ impl BoardView {
         self.detail = Some(detail);
         self.column_counts = column_counts;
         self.extras = extras;
+        self.index = index;
         self.labels = labels;
         self.card_tickets = card_tickets;
         self.archived = archived;
         self.links = self.resolve_links(cx)?;
         self.sync_handles(cx);
+        self.prune_selection();
+        if self
+            .table_edit
+            .as_ref()
+            .is_some_and(|edit| self.card(&edit.card_id).is_none())
+        {
+            // The card was deleted or moved away elsewhere.
+            self.table_edit = None;
+        }
         self.fields = fields;
         self.sync_views(views, cx);
         // A label or column deleted elsewhere is dropped by the query itself,
@@ -590,8 +628,8 @@ impl BoardView {
                 (live, 0)
             });
         // A card whose delete the toast is holding goes when the column does.
-        let held = self.undo.pending_delete_column() == Some(column_id);
-        let count = live + archived - usize::from(held && archived > 0);
+        let held = self.undo.pending_delete_count_in(column_id);
+        let count = live + archived - held.min(archived);
         (count > 0).then(|| {
             let plural = if count == 1 { "card" } else { "cards" };
             format!("Move or delete its {count} {plural} first")
@@ -720,7 +758,7 @@ impl BoardView {
             return;
         }
         self.menu = None;
-        if self.undo.pending_delete_column() == Some(column_id.as_str()) {
+        if self.undo.pending_delete_count_in(&column_id) > 0 {
             self.commit_pending(cx);
         }
         self.write(cx, |service| service.column_delete(&column_id));
@@ -1017,10 +1055,13 @@ impl BoardView {
             || std::mem::take(&mut self.open_in_open)
             || self.switcher.take().is_some()
             || self.renaming.take().is_some()
+            || self.pop.take().is_some()
+            || self.table_edit.take().is_some()
             || self.menu.take().is_some()
             || self.close_detail_layer(cx)
             || self.leave_full_page(cx)
             || self.close_card_detail(cx)
+            || self.clear_selection()
         {
             cx.notify();
         } else {
@@ -1285,9 +1326,19 @@ impl gpui::Render for BoardView {
                         }
                     }),
                 )
+                .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
+                    if this.resizing.is_some() {
+                        if event.dragging() {
+                            this.drag_resize(f32::from(event.position.x), cx);
+                        } else {
+                            this.resizing = None;
+                        }
+                    }
+                }))
                 .on_mouse_up(
                     gpui::MouseButton::Left,
                     cx.listener(|this, _, _, cx| {
+                        this.resizing = None;
                         if this.dragging {
                             this.end_drag(cx);
                         }
@@ -1348,6 +1399,9 @@ impl gpui::Render for BoardView {
         let archive = self.render_archive(cx);
         let undo_toast = self.render_undo_toast(cx);
         let new_card = self.render_new_card(cx);
+        let pop_menu = self.render_pop_menu(cx);
+        let selection_bar = self.render_selection_bar(cx);
+        let layout = self.layout_kind();
         let full_page = self.card_detail.as_ref().is_some_and(|d| d.full_page());
         let board = div()
             .flex_1()
@@ -1360,7 +1414,13 @@ impl gpui::Render for BoardView {
             .children(chips)
             .children(error)
             .when(full_page, |d| d.children(card_detail.take()))
-            .when(!full_page, |d| {
+            .when(!full_page && layout == list::Layout::List, |d| {
+                d.child(self.render_list(cx))
+            })
+            .when(!full_page && layout == list::Layout::Table, |d| {
+                d.child(self.render_table(cx))
+            })
+            .when(!full_page && layout == list::Layout::Board, |d| {
                 d.child(
                     div()
                         .id("board-columns")
@@ -1394,6 +1454,8 @@ impl gpui::Render for BoardView {
             .children(switcher)
             .children(menu)
             .children(card_menu)
+            .children(pop_menu)
+            .children(selection_bar)
             .children(undo_toast)
             .children(new_card)
     }

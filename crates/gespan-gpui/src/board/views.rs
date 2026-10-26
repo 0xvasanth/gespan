@@ -558,6 +558,9 @@ impl BoardView {
                         .on_click(cx.listener(|this, _, _, cx| this.revert_view_changes(cx))),
                 );
         }
+        strip = strip
+            .child(div().flex_1())
+            .child(self.render_layout_switch(cx));
         strip = match &self.views.naming {
             Some(naming) => strip.child(
                 div()

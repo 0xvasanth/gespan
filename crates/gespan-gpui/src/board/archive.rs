@@ -20,10 +20,10 @@ impl BoardView {
 
     /// The archived cards the view lists.
     pub(crate) fn archived_cards(&self) -> Vec<&Card> {
-        let pending = self.undo.pending_delete();
+        let pending = self.undo.pending_deletes();
         self.archived
             .iter()
-            .filter(|card| Some(card.id.as_str()) != pending)
+            .filter(|card| !pending.contains(&card.id.as_str()))
             .collect()
     }
 

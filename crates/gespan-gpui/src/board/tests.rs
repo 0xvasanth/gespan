@@ -5260,3 +5260,624 @@ fn a_view_changed_elsewhere_reapplies_unless_there_are_local_edits(cx: &mut Test
     assert!(visual.debug_bounds("board-view-dot-0").is_some());
     assert!(visual.debug_bounds("board-view-save-changes").is_some());
 }
+
+// ---- C4-4: List and Table layouts, bulk select ----
+
+fn click_with(visual: &mut VisualTestContext, target: &'static str, modifiers: gpui::Modifiers) {
+    visual.refresh().unwrap();
+    let bounds = visual
+        .debug_bounds(target)
+        .unwrap_or_else(|| panic!("{target} is not on screen"));
+    visual.simulate_click(bounds.center(), modifiers);
+    visual.run_until_parked();
+}
+
+fn cmd_click(visual: &mut VisualTestContext, number: usize) {
+    click_with(
+        visual,
+        selector(format!("board-card-{number}")),
+        gpui::Modifiers::secondary_key(),
+    );
+}
+
+fn shift_click(visual: &mut VisualTestContext, number: usize) {
+    click_with(
+        visual,
+        selector(format!("board-card-{number}")),
+        gpui::Modifiers::shift(),
+    );
+}
+
+/// The numbers of the selected cards, ascending.
+fn selected_numbers(f: &Fixture, cx: &mut impl gpui::AppContext) -> Vec<i64> {
+    let detail = detail(f, cx);
+    let mut numbers: Vec<i64> = f
+        .window
+        .read_with(cx, |view, _| {
+            detail
+                .cards
+                .iter()
+                .filter(|card| view.is_selected(&card.id))
+                .map(|card| card.number)
+                .collect()
+        })
+        .unwrap();
+    numbers.sort();
+    numbers
+}
+
+fn layout_of(f: &Fixture, cx: &mut impl gpui::AppContext) -> serde_json::Value {
+    let json = drawer(f, cx, |view, _| view.views.layout.clone());
+    serde_json::from_str(&json).unwrap()
+}
+
+fn move_card(f: &Fixture, cx: &mut TestAppContext, title: &str, column: &str) {
+    let (card, column) = (card_id(f, cx, title), column_id(f, cx, column));
+    Service::open(&f.db)
+        .unwrap()
+        .card_move(&card, &column, 0, "user")
+        .unwrap();
+    reload(f, cx);
+}
+
+#[gpui::test]
+fn list_groups_by_status_and_priority_and_collapses_groups(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    set_priorities(&f, cx, &[("A", 3), ("B", 3), ("C", 1)]);
+    move_card(&f, cx, "C", "Review");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-list");
+    assert_eq!(layout_of(&f, visual)["layout"], "list");
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-columns").is_none());
+    // Status: Backlog holds A and B, Review holds C; empty steps are left out.
+    assert!(visual.debug_bounds("board-list-group-0").is_some());
+    assert!(visual.debug_bounds("board-list-group-1").is_some());
+    assert!(visual.debug_bounds("board-list-group-2").is_none());
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
+    // Collapsing a group hides its cards and is remembered in the layout.
+    click(visual, "board-list-group-0");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [3]);
+    let backlog = column_id(&f, visual, "Backlog");
+    assert_eq!(
+        layout_of(&f, visual)["collapsed"],
+        serde_json::json!([backlog])
+    );
+    drawer(&f, visual, |view, cx| assert!(view.view_dirty(cx)));
+    click(visual, "board-list-group-0");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
+    // Priority: High holds A and B, Low holds C.
+    click(visual, "board-list-group-by");
+    click(visual, "menu-action-group-priority");
+    assert_eq!(layout_of(&f, visual)["groupBy"], "priority");
+    assert!(visual.debug_bounds("board-list-group-1").is_some());
+    assert!(visual.debug_bounds("board-list-group-2").is_none());
+    click(visual, "board-list-group-1");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2]);
+    // Grouping by label puts an unlabelled card under "No label".
+    click(visual, "board-list-group-by");
+    click(visual, "menu-action-group-label");
+    click(visual, "board-list-group-by");
+    click(visual, "menu-action-group-due");
+    assert_eq!(layout_of(&f, visual)["groupBy"], "due");
+}
+
+#[gpui::test]
+fn table_shows_chosen_columns_and_resizes(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-table");
+    for column in ["title", "status", "priority", "due", "labels"] {
+        assert!(
+            visual
+                .debug_bounds(selector(format!("board-table-col-{column}")))
+                .is_some(),
+            "{column} is a default column"
+        );
+    }
+    assert!(visual.debug_bounds("board-table-col-estimate").is_none());
+    click(visual, "board-table-columns");
+    click(visual, "menu-action-column-estimate");
+    assert!(visual.debug_bounds("board-table-col-estimate").is_some());
+    click(visual, "board-table-columns");
+    click(visual, "menu-action-column-labels");
+    assert_gone(visual, "board-table-col-labels");
+    assert_eq!(
+        layout_of(&f, visual)["columns"],
+        serde_json::json!(["title", "status", "priority", "due", "estimate"])
+    );
+    // Title can't be hidden: the picker doesn't offer it.
+    click(visual, "board-table-columns");
+    assert_gone(visual, "menu-action-column-title");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("board-table-col-title").is_some());
+
+    let width = |visual: &mut VisualTestContext| {
+        visual.refresh().unwrap();
+        f32::from(
+            visual
+                .debug_bounds("board-table-col-title")
+                .unwrap()
+                .size
+                .width,
+        )
+    };
+    assert_eq!(width(visual), 320.);
+    let handle = visual
+        .debug_bounds("board-table-resize-title")
+        .unwrap()
+        .center();
+    let drag = |visual: &mut VisualTestContext, by: f32| {
+        visual.simulate_mouse_down(handle, gpui::MouseButton::Left, gpui::Modifiers::default());
+        visual.simulate_mouse_move(
+            point(handle.x + px(by), handle.y),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        visual.simulate_mouse_up(
+            point(handle.x + px(by), handle.y),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        visual.run_until_parked();
+    };
+    drag(visual, 50.);
+    assert_eq!(width(visual), 370.);
+    assert_eq!(layout_of(&f, visual)["widths"]["title"], 370);
+    drawer(&f, visual, |view, cx| assert!(view.view_dirty(cx)));
+    // Never narrower than 60 px: 370 down to 70, then 30 further.
+    for by in [-300., -30.] {
+        let handle = visual
+            .debug_bounds("board-table-resize-title")
+            .unwrap()
+            .center();
+        let to = point(handle.x + px(by), handle.y);
+        visual.simulate_mouse_down(handle, gpui::MouseButton::Left, Default::default());
+        visual.simulate_mouse_move(to, gpui::MouseButton::Left, Default::default());
+        visual.simulate_mouse_up(to, gpui::MouseButton::Left, Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        if by == -300. {
+            assert_eq!(width(visual), 70.);
+        }
+    }
+    assert_eq!(width(visual), 60.);
+    assert_eq!(layout_of(&f, visual)["widths"]["title"], 60);
+    // A move after the button is up resizes nothing.
+    visual.simulate_mouse_move(point(px(500.), px(500.)), None, Default::default());
+    assert_eq!(width(visual), 60.);
+}
+
+#[gpui::test]
+fn table_inline_edits_title_and_priority(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Alpha", "Beta"]);
+    let (alpha, beta) = (card_id(&f, cx, "Alpha"), card_id(&f, cx, "Beta"));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-table");
+    click(visual, "board-table-edit-1");
+    visual.simulate_input(" two");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(cards_titled(&f, "Alpha two").len(), 1);
+    drawer(&f, visual, |view, _| assert!(view.table_edit.is_none()));
+    // A blank title is refused and stays in its field.
+    click(visual, "board-table-edit-2");
+    retype(visual, "board-table-title-input-2", "");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, _| {
+        assert!(view.table_edit.is_some());
+        assert_eq!(view.error.as_deref(), Some("A card needs a title"));
+    });
+    assert_eq!(cards_titled(&f, "Beta").len(), 1);
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, _| assert!(view.table_edit.is_none()));
+    // Priority and status from their cells; neither opens the card.
+    click(visual, "board-table-cell-priority-1");
+    click(visual, "menu-action-priority-4");
+    assert_eq!(extras_of(&f, &alpha).priority, 4);
+    let review = column_id(&f, visual, "Review");
+    click(visual, "board-table-cell-status-2");
+    click(visual, selector(format!("menu-action-status-{review}")));
+    assert_eq!(column_of(&f, visual, "Beta"), "Review");
+    assert_eq!(
+        card_of(&f, &beta).column_id,
+        review,
+        "the move is written to the store"
+    );
+    drawer(&f, visual, |view, _| assert!(view.card_detail.is_none()));
+    // Due from its cell.
+    click(visual, "board-table-cell-due-1");
+    click(visual, "menu-action-due-tomorrow");
+    assert!(extras_of(&f, &alpha).due_at.is_some());
+}
+
+fn card_of(f: &Fixture, id: &str) -> gespan_core::board::Card {
+    Service::open(&f.db).unwrap().card(id).unwrap()
+}
+
+#[gpui::test]
+fn inline_edit_survives_a_refresh_until_commit(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Alpha", "Beta"]);
+    let (alpha, beta) = (card_id(&f, cx, "Alpha"), card_id(&f, cx, "Beta"));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-table");
+    click(visual, "board-table-edit-1");
+    visual.simulate_input(" typed");
+    // The other app edits the same card and another one, then the view reloads.
+    {
+        let mut service = Service::open(&f.db).unwrap();
+        service
+            .card_update(&alpha, "Changed elsewhere", "")
+            .unwrap();
+        service.card_update(&beta, "Beta elsewhere", "").unwrap();
+        service.set_priority(&beta, 3).unwrap();
+    }
+    reload(&f, visual);
+    drawer(&f, visual, |view, cx| {
+        let edit = view.table_edit.as_ref().expect("the edit is still open");
+        assert_eq!(edit.card_id, alpha);
+        assert_eq!(edit.input.read(cx).content, "Alpha typed");
+        assert_eq!(view.card(&beta).unwrap().title, "Beta elsewhere");
+    });
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-table-title-input-1").is_some());
+    // Commit writes what was typed.
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(card_of(&f, &alpha).title, "Alpha typed");
+    drawer(&f, visual, |view, _| assert!(view.table_edit.is_none()));
+    // Escape drops the typed text, whatever a reload brought.
+    click(visual, "board-table-edit-2");
+    visual.simulate_input("!!");
+    Service::open(&f.db)
+        .unwrap()
+        .card_update(&beta, "Beta again", "")
+        .unwrap();
+    reload(&f, visual);
+    drawer(&f, visual, |view, _| assert!(view.table_edit.is_some()));
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, _| assert!(view.table_edit.is_none()));
+    assert_eq!(card_of(&f, &beta).title, "Beta again");
+    // A card deleted elsewhere takes its edit with it.
+    click(visual, "board-table-edit-1");
+    Service::open(&f.db).unwrap().card_delete(&alpha).unwrap();
+    reload(&f, visual);
+    drawer(&f, visual, |view, _| assert!(view.table_edit.is_none()));
+}
+
+#[gpui::test]
+fn cmd_click_toggles_and_shift_click_selects_a_range_in_current_order(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C", "D", "E"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    cmd_click(visual, 2);
+    assert_eq!(selected_numbers(&f, visual), [2]);
+    cmd_click(visual, 4);
+    assert_eq!(selected_numbers(&f, visual), [2, 4]);
+    cmd_click(visual, 2);
+    assert_eq!(selected_numbers(&f, visual), [4]);
+    // The anchor is the last card toggled: 2.
+    shift_click(visual, 5);
+    assert_eq!(selected_numbers(&f, visual), [2, 3, 4, 5]);
+    // A plain click opens the card and leaves the selection alone.
+    click(visual, "board-card-1");
+    drawer(&f, visual, |view, _| assert!(view.card_detail.is_some()));
+    assert_eq!(selected_numbers(&f, visual), [2, 3, 4, 5]);
+    // Shift-click with nothing anchored selects just that card.
+    click(visual, "board-bulk-clear");
+    shift_click(visual, 3);
+    assert_eq!(selected_numbers(&f, visual), [3]);
+    shift_click(visual, 1);
+    assert_eq!(selected_numbers(&f, visual), [1, 2, 3]);
+    // The same gestures work in the list and the table.
+    for layout in ["board-layout-list", "board-layout-table"] {
+        click(visual, layout);
+        click(visual, "board-bulk-clear");
+        cmd_click(visual, 5);
+        shift_click(visual, 3);
+        assert_eq!(selected_numbers(&f, visual), [3, 4, 5], "{layout}");
+        cmd_click(visual, 4);
+        assert_eq!(selected_numbers(&f, visual), [3, 5], "{layout}");
+    }
+}
+
+#[gpui::test]
+fn range_follows_a_new_sort(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C", "D"]);
+    set_priorities(&f, cx, &[("A", 3), ("B", 1), ("C", 4), ("D", 2)]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    // Manual order: 1 to 3 is A, B, C.
+    cmd_click(visual, 1);
+    shift_click(visual, 3);
+    assert_eq!(selected_numbers(&f, visual), [1, 2, 3]);
+    click(visual, "board-bulk-clear");
+    sort_by(visual, "board-sort-priority");
+    let order = visible_titles(&f, visual, "Backlog");
+    assert_ne!(order[..3], ["A", "B", "C"], "the sort changed the order");
+    // The first to the third card on screen, whichever they are now.
+    let numbers: std::collections::HashMap<String, usize> = detail(&f, visual)
+        .cards
+        .iter()
+        .map(|card| (card.title.clone(), card.number as usize))
+        .collect();
+    let number = |title: &str| numbers[title];
+    let (first, third) = (number(&order[0]), number(&order[2]));
+    cmd_click(visual, first);
+    shift_click(visual, third);
+    let mut expected: Vec<i64> = order[..3].iter().map(|t| number(t) as i64).collect();
+    expected.sort();
+    assert_eq!(selected_numbers(&f, visual), expected);
+    assert_ne!(expected, [1, 2, 3]);
+    // A filter narrows the range to what is shown.
+    click(visual, "board-bulk-clear");
+    f.window
+        .update(visual, |view, _, cx| {
+            view.spec.sort = Default::default();
+            view.spec.rows.push(gespan_core::board::extras::FilterRow {
+                field: "priority".into(),
+                op: gespan_core::board::extras::Op::Is,
+                values: vec!["3".into(), "4".into()],
+            });
+            view.requery(cx);
+        })
+        .unwrap();
+    // Only A (#1) and C (#3) show; B in between is hidden.
+    cmd_click(visual, 1);
+    shift_click(visual, 3);
+    assert_eq!(selected_numbers(&f, visual), [1, 3]);
+}
+
+#[gpui::test]
+fn floating_bar_sets_priority_and_labels_for_all_selected(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let (a, b, c) = (
+        card_id(&f, cx, "A"),
+        card_id(&f, cx, "B"),
+        card_id(&f, cx, "C"),
+    );
+    let board = detail(&f, cx).board.id.clone();
+    let (bug, docs) = {
+        let mut service = Service::open(&f.db).unwrap();
+        (
+            service.create_label(&board, "Bug", "e5534b").unwrap(),
+            service.create_label(&board, "Docs", "4da3f5").unwrap(),
+        )
+    };
+    // B already has Bug and Docs; C is untouched by everything below.
+    Service::open(&f.db)
+        .unwrap()
+        .set_labels(&b, std::slice::from_ref(&docs.id))
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-bulk-bar").is_none());
+    cmd_click(visual, 1);
+    cmd_click(visual, 2);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-bulk-bar").is_some());
+    for button in [
+        "board-bulk-status",
+        "board-bulk-priority",
+        "board-bulk-labels",
+        "board-bulk-archive",
+        "board-bulk-delete",
+        "board-bulk-clear",
+    ] {
+        assert!(visual.debug_bounds(button).is_some(), "{button}");
+    }
+    drawer(&f, visual, |view, _| assert_eq!(view.selected_count(), 2));
+    click(visual, "board-bulk-priority");
+    click(visual, "menu-action-priority-3");
+    assert_eq!(extras_of(&f, &a).priority, 3);
+    assert_eq!(extras_of(&f, &b).priority, 3);
+    assert_eq!(
+        extras_of(&f, &c).priority,
+        0,
+        "an unselected card is untouched"
+    );
+    assert_eq!(selected_numbers(&f, visual), [1, 2], "the selection stays");
+    // A label not on every selected card goes on all of them...
+    click(visual, "board-bulk-labels");
+    click(visual, selector(format!("menu-action-label-{}", bug.id)));
+    assert_eq!(extras_of(&f, &a).labels, std::slice::from_ref(&bug.id));
+    assert_eq!(extras_of(&f, &b).labels, [bug.id.clone(), docs.id.clone()]);
+    assert!(extras_of(&f, &c).labels.is_empty());
+    // ...and comes off all of them once they all have it.
+    click(visual, "board-bulk-labels");
+    click(visual, selector(format!("menu-action-label-{}", bug.id)));
+    assert!(extras_of(&f, &a).labels.is_empty());
+    assert_eq!(extras_of(&f, &b).labels, std::slice::from_ref(&docs.id));
+    // Status moves them all, with the undo toast.
+    let review = column_id(&f, visual, "Review");
+    click(visual, "board-bulk-status");
+    click(visual, selector(format!("menu-action-status-{review}")));
+    assert_eq!(titles_in(&f, visual, "Review"), ["A", "B"]);
+    assert_eq!(
+        toast(&f, visual).as_deref(),
+        Some("Moved 2 cards to Review")
+    );
+    assert!(selected_numbers(&f, visual).is_empty());
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "C"]);
+}
+
+#[gpui::test]
+fn bulk_archive_and_bulk_delete_undo(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C", "D"]);
+    let ids: Vec<String> = ["A", "B", "C", "D"]
+        .iter()
+        .map(|title| card_id(&f, cx, title))
+        .collect();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    cmd_click(visual, 1);
+    cmd_click(visual, 2);
+    click(visual, "board-bulk-archive");
+    assert_eq!(toast(&f, visual).as_deref(), Some("Archived 2 cards"));
+    let mut archived = archived_ids(&f, visual);
+    archived.sort();
+    let mut expected = vec![ids[0].clone(), ids[1].clone()];
+    expected.sort();
+    assert_eq!(archived, expected);
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["C", "D"]);
+    assert!(selected_numbers(&f, visual).is_empty());
+    assert_gone(visual, "board-bulk-bar");
+    click(visual, "board-undo");
+    assert!(archived_ids(&f, visual).is_empty());
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "C", "D"]);
+
+    // Delete is held for every selected card, then undone.
+    cmd_click(visual, 3);
+    cmd_click(visual, 4);
+    click(visual, "board-bulk-delete");
+    assert!(!visual.has_pending_prompt(), "a held delete never prompts");
+    assert_eq!(toast(&f, visual).as_deref(), Some("Deleted 2 cards"));
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B"]);
+    assert!(
+        card_exists(&f, &ids[2]) && card_exists(&f, &ids[3]),
+        "held, not deleted"
+    );
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(view.archived_cards().len(), 0, "held cards are not listed");
+        })
+        .unwrap();
+    click(visual, "board-undo");
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B", "C", "D"]);
+    assert!(archived_ids(&f, visual).is_empty());
+
+    // Left alone, the toast deletes them both for good.
+    cmd_click(visual, 3);
+    cmd_click(visual, 4);
+    click(visual, "board-bulk-delete");
+    visual
+        .executor()
+        .advance_clock(Duration::from_millis(7_900));
+    visual.run_until_parked();
+    assert!(card_exists(&f, &ids[2]) && card_exists(&f, &ids[3]));
+    visual.executor().advance_clock(Duration::from_millis(200));
+    visual.run_until_parked();
+    assert!(!card_exists(&f, &ids[2]) && !card_exists(&f, &ids[3]));
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B"]);
+    // One card selected: the label names it.
+    cmd_click(visual, 1);
+    click(visual, "board-bulk-delete");
+    assert_eq!(toast(&f, visual).as_deref(), Some("Deleted #1"));
+}
+
+#[gpui::test]
+fn escape_clears_the_selection_after_menus(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    cmd_click(visual, 1);
+    cmd_click(visual, 2);
+    // A bulk menu closes first and keeps the selection.
+    click(visual, "board-bulk-priority");
+    drawer(&f, visual, |view, _| assert!(view.pop.is_some()));
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, _| assert!(view.pop.is_none()));
+    assert_eq!(selected_numbers(&f, visual), [1, 2]);
+    // Then the drawer, still keeping it.
+    cmd_click(visual, 1);
+    cmd_click(visual, 1);
+    click(visual, "board-card-1");
+    drawer(&f, visual, |view, _| assert!(view.card_detail.is_some()));
+    focus_board(&f, visual);
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, _| assert!(view.card_detail.is_none()));
+    assert_eq!(selected_numbers(&f, visual), [1, 2]);
+    // Last, the selection itself.
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(selected_numbers(&f, visual).is_empty());
+    assert_gone(visual, "board-bulk-bar");
+    // With nothing left, Escape leaves the board as before.
+    let closed = Rc::new(std::cell::Cell::new(false));
+    let flag = closed.clone();
+    let _watch = f
+        .window
+        .update(visual, |_, _, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event: &Event, _| {
+                if matches!(event, Event::Close) {
+                    flag.set(true);
+                }
+            })
+        })
+        .unwrap();
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(closed.get());
+}
+
+#[gpui::test]
+fn list_and_table_render_only_visible_rows(cx: &mut TestAppContext) {
+    let titles: Vec<String> = (1..=1000).map(|n| format!("Card {n}")).collect();
+    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+    let f = seeded(cx, &refs);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let rendered = |visual: &mut VisualTestContext| {
+        visual.refresh().unwrap();
+        (1..=1000)
+            .filter(|n| {
+                visual
+                    .debug_bounds(selector(format!("board-card-{n}")))
+                    .is_some()
+            })
+            .count()
+    };
+    for layout in ["board-layout-list", "board-layout-table"] {
+        click(visual, layout);
+        let count = rendered(visual);
+        assert!(count > 5, "{layout} shows rows, got {count}");
+        assert!(count < 80, "{layout} rendered {count} of 1000 rows");
+        assert!(visual.debug_bounds("board-card-1").is_some(), "{layout}");
+        assert!(visual.debug_bounds("board-card-1000").is_none(), "{layout}");
+    }
+}
+
+#[gpui::test]
+fn layout_state_marks_the_view_dirty_and_saves_with_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-table");
+    click(visual, "board-table-columns");
+    click(visual, "menu-action-column-start");
+    click(visual, "board-view-new");
+    visual.simulate_input("Grid");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    let saved = stored_views(&f);
+    let layout: serde_json::Value = serde_json::from_str(&saved[0].layout_json).unwrap();
+    assert_eq!(layout["layout"], "table");
+    assert_eq!(
+        layout["columns"],
+        serde_json::json!(["title", "status", "priority", "due", "labels", "start"])
+    );
+    drawer(&f, visual, |view, cx| assert!(!view.view_dirty(cx)));
+    // Another layout is an unsaved change; Revert brings the table back.
+    click(visual, "board-layout-list");
+    drawer(&f, visual, |view, cx| assert!(view.view_dirty(cx)));
+    assert!(visual.debug_bounds("board-view-dot-0").is_some());
+    click(visual, "board-view-revert");
+    assert_eq!(layout_of(&f, visual)["layout"], "table");
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-table").is_some());
+    // The saved view comes back as a table after a restart.
+    let again = reopen(&f, visual);
+    again
+        .update(visual, |view, _, cx| {
+            view.select_view(Some(saved[0].id.clone()), cx)
+        })
+        .unwrap();
+    assert_eq!(
+        again
+            .read_with(visual, |view, _| view.layout_kind())
+            .unwrap(),
+        list::Layout::Table
+    );
+}

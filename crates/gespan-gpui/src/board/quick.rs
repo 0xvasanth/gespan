@@ -14,6 +14,8 @@ use gpui::{Context, Window, prelude::*};
 /// Which quick-edit menu a card face opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Face {
+    /// Moves the card to the picked column. Only the table offers it.
+    Status,
     Priority,
     Due,
     Labels,
@@ -394,10 +396,23 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_face_menu_at(card_id, face, None, window, cx)
+    }
+
+    /// `open_face_menu` opening at `anchor`, for rows with no card face.
+    pub(crate) fn open_face_menu_at(
+        &mut self,
+        card_id: String,
+        face: Face,
+        anchor: Option<crate::popover::Anchor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.dragging {
             return;
         }
         let items = match face {
+            Face::Status => self.status_items(&card_id),
             Face::Priority => priority_items(),
             Face::Due => due_items(),
             Face::Labels => label_items(&self.labels, &self.card_labels(&card_id)),
@@ -406,6 +421,7 @@ impl BoardView {
             return;
         }
         let title = match face {
+            Face::Status => "Status",
             Face::Priority => "Priority",
             Face::Due => "Due date",
             Face::Labels => "Labels",
@@ -427,11 +443,32 @@ impl BoardView {
         );
         self.card_menu = Some(CardMenu {
             card_id,
-            anchor: None,
+            anchor,
             menu,
             _events: events,
         });
         cx.notify();
+    }
+
+    /// One row per column, ticked for the card's own.
+    fn status_items(&self, card_id: &str) -> Vec<MenuItem> {
+        let Some(detail) = &self.detail else {
+            return Vec::new();
+        };
+        let current = detail
+            .cards
+            .iter()
+            .find(|card| card.id == card_id)
+            .map(|card| card.column_id.as_str());
+        detail
+            .columns
+            .iter()
+            .map(|column| {
+                MenuAction::new(format!("status-{}", column.id), column.name.clone())
+                    .checked(current == Some(column.id.as_str()))
+                    .into()
+            })
+            .collect()
     }
 
     fn apply_face(
@@ -444,6 +481,11 @@ impl BoardView {
     ) {
         let card_id = card_id.to_string();
         match face {
+            Face::Status => {
+                if let Some(column_id) = id.strip_prefix("status-") {
+                    self.move_with_undo(&card_id, column_id, usize::MAX, cx);
+                }
+            }
             Face::Priority => {
                 if let Some(priority) = parse_priority(id) {
                     self.write(cx, |service| service.set_priority(&card_id, priority));

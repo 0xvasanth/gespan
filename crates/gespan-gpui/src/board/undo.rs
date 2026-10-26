@@ -30,6 +30,8 @@ pub(crate) enum Undo {
         column_id: String,
         index: usize,
     },
+    /// A bulk delete: every card is archived and held until the toast goes.
+    DeleteMany(Vec<Place>),
     Sort {
         column_id: String,
         order: Vec<String>,
@@ -37,11 +39,12 @@ pub(crate) enum Undo {
 }
 
 impl Undo {
-    /// The card a held delete will delete.
-    fn pending_delete(&self) -> Option<&str> {
+    /// The cards a held delete will delete.
+    fn pending_deletes(&self) -> Vec<&str> {
         match self {
-            Undo::Delete { card_id, .. } => Some(card_id),
-            _ => None,
+            Undo::Delete { card_id, .. } => vec![card_id],
+            Undo::DeleteMany(places) => places.iter().map(|(id, ..)| id.as_str()).collect(),
+            _ => Vec::new(),
         }
     }
 }
@@ -61,16 +64,26 @@ pub(crate) struct UndoController {
 }
 
 impl UndoController {
-    /// The card whose delete is being held, if any.
-    pub(crate) fn pending_delete(&self) -> Option<&str> {
-        self.toast.as_ref()?.undo.as_ref()?.pending_delete()
+    /// The cards whose delete is being held.
+    pub(crate) fn pending_deletes(&self) -> Vec<&str> {
+        self.toast
+            .as_ref()
+            .and_then(|toast| toast.undo.as_ref())
+            .map(Undo::pending_deletes)
+            .unwrap_or_default()
     }
 
-    /// The column the held delete's card was archived from, if any.
-    pub(crate) fn pending_delete_column(&self) -> Option<&str> {
-        match self.toast.as_ref()?.undo.as_ref()? {
-            Undo::Delete { column_id, .. } => Some(column_id),
-            _ => None,
+    /// How many held-delete cards were archived from this column.
+    pub(crate) fn pending_delete_count_in(&self, column_id: &str) -> usize {
+        match self.toast.as_ref().and_then(|toast| toast.undo.as_ref()) {
+            Some(Undo::Delete {
+                column_id: held, ..
+            }) => usize::from(held == column_id),
+            Some(Undo::DeleteMany(places)) => places
+                .iter()
+                .filter(|(_, column, _)| column == column_id)
+                .count(),
+            _ => 0,
         }
     }
 }
@@ -91,6 +104,13 @@ pub(crate) fn moved_label(numbers: &[i64], column: &str) -> String {
     match numbers {
         [number] => format!("Moved #{number} to {column}"),
         _ => format!("Moved {} cards to {column}", numbers.len()),
+    }
+}
+
+pub(crate) fn deleted_label(numbers: &[i64]) -> String {
+    match numbers {
+        [number] => format!("Deleted #{number}"),
+        _ => format!("Deleted {} cards", numbers.len()),
     }
 }
 
@@ -139,9 +159,11 @@ fn run(service: &mut Service, board_id: &str, undo: &Undo) -> Result<(), String>
         Undo::MoveMany(places) => put_back(places, |card, column, index| {
             service.card_move(card, column, index, "user")
         }),
-        Undo::Archive(places) => put_back(places, |card, column, index| {
-            service.restore(card, column, index)
-        }),
+        Undo::Archive(places) | Undo::DeleteMany(places) => {
+            put_back(places, |card, column, index| {
+                service.restore(card, column, index)
+            })
+        }
         Undo::Delete {
             card_id,
             column_id,
@@ -191,7 +213,7 @@ impl BoardView {
         if self.undo.generation != generation {
             return;
         }
-        let held = self.undo.pending_delete().is_some();
+        let held = !self.undo.pending_deletes().is_empty();
         self.commit_pending(cx);
         if held {
             self.reload(cx);
@@ -206,7 +228,17 @@ impl BoardView {
             return;
         };
         self.undo.generation += 1;
-        if let Some(card_id) = toast.undo.as_ref().and_then(Undo::pending_delete) {
+        let held: Vec<String> = toast
+            .undo
+            .as_ref()
+            .map(|undo| {
+                undo.pending_deletes()
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for card_id in &held {
             match self
                 .service()
                 .and_then(|service| delete_if_archived(service, card_id))

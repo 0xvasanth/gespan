@@ -110,6 +110,10 @@ impl BoardView {
             .hover(|s| s.border_color(content(0.14)))
             .when(lifted, |d| d.opacity(0.35))
             .when(held, |d| d.border_color(accent_color()).bg(content(0.08)))
+            .when(self.is_selected(&card.id), |d| {
+                d.border_color(accent_color())
+                    .bg(accent_color().opacity(0.14))
+            })
             .flex()
             .flex_col()
             .gap(px(6.))
@@ -136,7 +140,7 @@ impl BoardView {
             }))
             .on_click(cx.listener({
                 let id = card.id.clone();
-                move |this, _, window, cx| this.open_card_detail(id.clone(), window, cx)
+                move |this, event, window, cx| this.card_click(&id, event, window, cx)
             }))
             .on_mouse_down(
                 MouseButton::Right,
