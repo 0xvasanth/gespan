@@ -175,12 +175,15 @@ pub(crate) fn encode_field(kind: &str, text: &str) -> Result<Option<String>, Str
 }
 
 /// A url field holds an http or https address, at most 2,000 characters.
+/// The scheme matches in any case and needs something after it, as the
+/// board store checks (`HTTP://x` is fine, `https://  ` is not).
 fn valid_field_url(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
     text.chars().count() <= 2_000
-        && ["http://", "https://"].iter().any(|scheme| {
-            text.strip_prefix(scheme)
-                .is_some_and(|rest| !rest.is_empty())
-        })
+        && lower
+            .strip_prefix("https://")
+            .or_else(|| lower.strip_prefix("http://"))
+            .is_some_and(|rest| !rest.trim().is_empty())
 }
 
 /// A multi-select field's stored picks, in the order stored.
@@ -678,6 +681,45 @@ mod tests {
         assert!(field_options(Some("nope")).is_empty());
         assert_eq!(field_text("checkbox", "true").as_deref(), Some("Yes"));
         assert_eq!(field_text("number", "\"x\""), None);
+    }
+
+    #[test]
+    fn field_urls_take_the_scheme_in_any_case_like_the_board_store() {
+        for good in [
+            "https://example.com",
+            "http://x",
+            "HTTP://x",
+            "HTTPS://Example.com/Path",
+            "hTtPs://x",
+        ] {
+            assert!(valid_field_url(good), "{good:?}");
+            // What is saved is the text as typed, scheme case and all.
+            assert_eq!(
+                encode_field("url", good).unwrap(),
+                Some(serde_json::Value::String(good.into()).to_string())
+            );
+        }
+        for bad in [
+            "",
+            "example.com",
+            "ftp://x",
+            "FTP://x",
+            "HTTP://",
+            "https://",
+            "https://   ",
+            "HTTPS:/x",
+            "mailto:a@b.c",
+        ] {
+            assert!(!valid_field_url(bad), "{bad:?}");
+            // An empty entry clears the field instead.
+            if !bad.is_empty() {
+                assert!(encode_field("url", bad).is_err(), "{bad:?}");
+            }
+        }
+        // The length cap still applies, counted in characters.
+        let longest = format!("HTTP://{}", "é".repeat(2_000 - 7));
+        assert!(valid_field_url(&longest));
+        assert!(!valid_field_url(&format!("{longest}x")));
     }
 
     #[test]
