@@ -33,9 +33,7 @@ use gespan_board_store::{
 };
 use gespan_tracker_client::tickets::TicketRef;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::session_store::SessionStore;
@@ -1667,408 +1665,148 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn create_board_makes_four_default_columns_with_roles() {
-        let conn = setup();
-        let (board, columns) = board_with_columns(&conn);
-        assert_eq!(board.name, "Work");
-        let summary: Vec<(&str, i64, Option<&str>)> = columns
-            .iter()
-            .map(|column| {
-                (
-                    column.name.as_str(),
-                    column.position,
-                    column.role.as_deref(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            summary,
-            vec![
-                ("Backlog", 0, Some("todo")),
-                ("In Progress", 1, Some("doing")),
-                ("Review", 2, Some("review")),
-                ("Done", 3, Some("done")),
-            ]
-        );
-        assert_eq!(list_boards(&conn).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn board_serializes_without_card_seq() {
-        let conn = setup();
-        let board = create_board(&conn, "Work").unwrap();
-        let value = serde_json::to_value(&board).unwrap();
-        let mut keys: Vec<&str> = value
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(String::as_str)
-            .collect();
+    /// The camelCase keys a serialized value has, sorted.
+    fn keys_of(value: &impl Serialize) -> Vec<String> {
+        let value = serde_json::to_value(value).unwrap();
+        let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
         keys.sort_unstable();
-        assert_eq!(keys, vec!["createdAt", "id", "name", "updatedAt"]);
+        keys
     }
 
+    // One smoke test per command group. Each runs the store calls its
+    // commands make, in the order a user would, and checks what the front
+    // end reads back. The behaviour of each call is tested in board-store.
+
     #[test]
-    fn card_create_appends_at_end_and_logs_created() {
+    fn board_commands_smoke() {
         let conn = setup();
         let (board, columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a", "b", "c"]);
+        assert_eq!(keys_of(&board), ["createdAt", "id", "name", "updatedAt"]);
+        let roles: Vec<Option<&str>> = columns.iter().map(|c| c.role.as_deref()).collect();
         assert_eq!(
-            cards.iter().map(|card| card.position).collect::<Vec<_>>(),
-            vec![0, 1, 2]
+            roles,
+            [Some("todo"), Some("doing"), Some("review"), Some("done")]
         );
-        assert_eq!(titles(&conn, &columns[0].id), vec!["a", "b", "c"]);
-
-        let log = list_activity(&conn, &board.id, Some(&cards[2].id), 50).unwrap();
-        assert_eq!(log.len(), 1);
-        assert_eq!(log[0].kind, "created");
-        assert_eq!(log[0].actor, "user");
-        assert_eq!(log[0].card_id.as_deref(), Some(cards[2].id.as_str()));
-        assert_eq!(log[0].to_column.as_deref(), Some("Backlog"));
-    }
-
-    #[test]
-    fn card_numbers_increase_per_board_and_are_never_reused() {
-        let conn = setup();
-        let (_, columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a", "b", "c"]);
-        assert_eq!(
-            cards.iter().map(|card| card.number).collect::<Vec<_>>(),
-            vec![1, 2, 3]
-        );
-        delete_card(&conn, &cards[2].id).unwrap();
-        let next = create_card(&conn, &columns[0].id, "d", "").unwrap();
-        assert_eq!(next.number, 4);
-
-        let (_, other_columns) = board_with_columns(&conn);
-        let first = create_card(&conn, &other_columns[0].id, "x", "").unwrap();
-        assert_eq!(first.number, 1);
-    }
-
-    #[test]
-    fn move_within_column_renumbers_contiguously() {
-        let conn = setup();
-        let (_, columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a", "b", "c", "d"]);
-        move_card(&conn, &cards[0].id, &columns[0].id, 2, "user").unwrap();
-        assert_eq!(titles(&conn, &columns[0].id), vec!["b", "c", "a", "d"]);
-        assert_contiguous(&conn, &columns[0].id);
-    }
-
-    #[test]
-    fn move_across_columns_renumbers_both_and_logs_from_to() {
-        let conn = setup();
-        let (board, columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a", "b", "c"]);
-        add_cards(&conn, &columns[1].id, &["x", "y"]);
-        move_card(&conn, &cards[1].id, &columns[1].id, 1, "system").unwrap();
-
-        assert_eq!(titles(&conn, &columns[0].id), vec!["a", "c"]);
-        assert_eq!(titles(&conn, &columns[1].id), vec!["x", "b", "y"]);
-        assert_contiguous(&conn, &columns[0].id);
-        assert_contiguous(&conn, &columns[1].id);
-        assert_eq!(
-            get_card(&conn, &cards[1].id).unwrap().column_id,
-            columns[1].id
-        );
-
-        let log = list_activity(&conn, &board.id, Some(&cards[1].id), 50).unwrap();
-        assert_eq!(log[0].kind, "moved");
-        assert_eq!(log[0].actor, "system");
-        assert_eq!(log[0].from_column.as_deref(), Some("Backlog"));
-        assert_eq!(log[0].to_column.as_deref(), Some("In Progress"));
-    }
-
-    #[test]
-    fn move_index_past_end_clamps_to_end() {
-        let conn = setup();
-        let (_, columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a", "b"]);
-        add_cards(&conn, &columns[1].id, &["x"]);
-        move_card(&conn, &cards[0].id, &columns[1].id, 99, "user").unwrap();
-        assert_eq!(titles(&conn, &columns[1].id), vec!["x", "a"]);
-        move_card(&conn, &cards[1].id, &columns[1].id, 1_000, "user").unwrap();
-        assert_eq!(titles(&conn, &columns[1].id), vec!["x", "a", "b"]);
-        assert_contiguous(&conn, &columns[1].id);
-        assert_contiguous(&conn, &columns[0].id);
-    }
-
-    #[test]
-    fn move_to_same_position_writes_no_activity() {
-        let conn = setup();
-        let (board, columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a", "b", "c"]);
-        let before = list_activity(&conn, &board.id, None, 500).unwrap().len();
-        move_card(&conn, &cards[1].id, &columns[0].id, 1, "user").unwrap();
-        // Dropping onto the end of its own column when it is already last.
-        move_card(&conn, &cards[2].id, &columns[0].id, 50, "user").unwrap();
-        assert_eq!(
-            list_activity(&conn, &board.id, None, 500).unwrap().len(),
-            before
-        );
-        assert_eq!(titles(&conn, &columns[0].id), vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn move_to_column_of_other_board_rejected() {
-        let conn = setup();
-        let (board, columns) = board_with_columns(&conn);
-        let (_, other_columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a"]);
-        let error = move_card(&conn, &cards[0].id, &other_columns[0].id, 0, "user").unwrap_err();
-        assert_eq!(error, "Column not on this board");
-        assert_eq!(titles(&conn, &columns[0].id), vec!["a"]);
-        assert!(list_activity(&conn, &board.id, Some(&cards[0].id), 50)
-            .unwrap()
-            .iter()
-            .all(|row| row.kind != "moved"));
-    }
-
-    #[test]
-    fn move_rejects_unknown_actor() {
-        let conn = setup();
-        let (_, columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a"]);
-        assert!(move_card(&conn, &cards[0].id, &columns[1].id, 0, "robot").is_err());
-    }
-
-    #[test]
-    fn interleaved_moves_keep_positions_contiguous() {
-        let conn = setup();
-        let (_, columns) = board_with_columns(&conn);
-        let mut cards = add_cards(&conn, &columns[0].id, &["a", "b", "c", "d", "e", "f"]);
-        cards.extend(add_cards(&conn, &columns[2].id, &["g", "h"]));
-        // Deterministic xorshift so a failure is reproducible.
-        let mut state: u64 = 0x2545_F491_4F6C_DD1D;
-        let mut next = move |bound: usize| {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            (state % bound as u64) as usize
-        };
-        for _ in 0..20 {
-            let card = &cards[next(cards.len())];
-            let column = &columns[next(columns.len())];
-            move_card(&conn, &card.id, &column.id, next(6), "user").unwrap();
-            for column in &columns {
-                assert_contiguous(&conn, &column.id);
-            }
-        }
-        let total: usize = columns
-            .iter()
-            .map(|column| col_positions(&conn, &column.id).len())
-            .sum();
-        assert_eq!(total, cards.len());
-    }
-
-    #[test]
-    fn column_move_renumbers_columns_contiguously() {
-        let conn = setup();
-        let (board, columns) = board_with_columns(&conn);
-        move_column(&conn, &columns[3].id, 0).unwrap();
+        rename_board(&conn, &board.id, "Renamed").unwrap();
         let detail = get_board(&conn, &board.id).unwrap();
-        let order: Vec<(&str, i64)> = detail
-            .columns
-            .iter()
-            .map(|column| (column.name.as_str(), column.position))
-            .collect();
+        assert_eq!(keys_of(&detail), ["board", "cards", "columns"]);
+        assert_eq!(detail.board.name, "Renamed");
+        add_cards(&conn, &columns[0].id, &["a"]);
+        delete_board(&conn, &board.id).unwrap();
+        assert!(list_boards(&conn).unwrap().is_empty());
+        assert!(get_board(&conn, &board.id).is_err());
         assert_eq!(
-            order,
-            vec![
-                ("Done", 0),
-                ("Backlog", 1),
-                ("In Progress", 2),
-                ("Review", 3)
-            ]
+            validate_id("bad id", "board").unwrap_err(),
+            "Invalid board id"
         );
-        move_column(&conn, &columns[3].id, 99).unwrap();
-        let detail = get_board(&conn, &board.id).unwrap();
-        assert_eq!(detail.columns.last().unwrap().name, "Done");
-        let positions: Vec<i64> = detail
-            .columns
-            .iter()
-            .map(|column| column.position)
-            .collect();
-        assert_eq!(positions, vec![0, 1, 2, 3]);
     }
 
     #[test]
-    fn column_create_appends_and_delete_closes_the_gap() {
+    fn column_commands_smoke() {
         let conn = setup();
         let (board, columns) = board_with_columns(&conn);
         let created = create_column(&conn, &board.id, "QA", None).unwrap();
-        assert_eq!((created.position, created.role.as_deref()), (4, None));
+        assert_eq!(
+            keys_of(&created),
+            [
+                "boardId",
+                "collapsed",
+                "color",
+                "id",
+                "name",
+                "position",
+                "role",
+                "wipLimit"
+            ]
+        );
+        assert_eq!(
+            update_column(&conn, &created.id, "Testing", None).unwrap(),
+            board.id
+        );
+        move_column(&conn, &created.id, 0).unwrap();
+        add_cards(&conn, &columns[0].id, &["a"]);
+        assert_eq!(
+            delete_column(&conn, &columns[0].id).unwrap_err(),
+            "Column has 1 card"
+        );
         delete_column(&conn, &columns[1].id).unwrap();
-        let detail = get_board(&conn, &board.id).unwrap();
-        let positions: Vec<i64> = detail
+        let names: Vec<String> = get_board(&conn, &board.id)
+            .unwrap()
             .columns
-            .iter()
-            .map(|column| column.position)
-            .collect();
-        assert_eq!(positions, vec![0, 1, 2, 3]);
-        assert_eq!(detail.columns.last().unwrap().name, "QA");
-    }
-
-    #[test]
-    fn column_delete_refused_when_not_empty() {
-        let conn = setup();
-        let (_, columns) = board_with_columns(&conn);
-        add_cards(&conn, &columns[0].id, &["a", "b"]);
-        let error = delete_column(&conn, &columns[0].id).unwrap_err();
-        assert_eq!(error, "Column has 2 cards");
-    }
-
-    #[test]
-    fn duplicate_role_rejected() {
-        let conn = setup();
-        let (board, columns) = board_with_columns(&conn);
-        let error = create_column(&conn, &board.id, "Also done", Some("done")).unwrap_err();
-        assert!(error.contains("role"), "{error}");
-        let error = update_column(&conn, &columns[0].id, "Backlog", Some("review")).unwrap_err();
-        assert!(error.contains("role"), "{error}");
-        // Re-saving a column with its own role is fine, and clearing frees it.
-        update_column(&conn, &columns[0].id, "Todo", Some("todo")).unwrap();
-        update_column(&conn, &columns[3].id, "Done", None).unwrap();
-        create_column(&conn, &board.id, "Shipped", Some("done")).unwrap();
-        assert!(create_column(&conn, &board.id, "Bad", Some("nonsense")).is_err());
-    }
-
-    #[test]
-    fn board_delete_cascades_columns_cards_activity() {
-        let conn = setup();
-        let (board, columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a", "b"]);
-        move_card(&conn, &cards[0].id, &columns[1].id, 0, "user").unwrap();
-        delete_card(&conn, &cards[1].id).unwrap();
-        let (_, other_columns) = board_with_columns(&conn);
-        add_cards(&conn, &other_columns[0].id, &["keep"]);
-
-        delete_board(&conn, &board.id).unwrap();
-        let count = |sql: &str| -> i64 {
-            conn.query_row(sql, [board.id.as_str()], |row| row.get(0))
-                .unwrap()
-        };
-        assert_eq!(count("SELECT COUNT(*) FROM boards WHERE id = ?1"), 0);
-        assert_eq!(
-            count("SELECT COUNT(*) FROM board_columns WHERE board_id = ?1"),
-            0
-        );
-        assert_eq!(
-            count("SELECT COUNT(*) FROM board_cards WHERE board_id = ?1"),
-            0
-        );
-        assert_eq!(
-            count("SELECT COUNT(*) FROM board_activity WHERE board_id = ?1"),
-            0
-        );
-        assert_eq!(list_boards(&conn).unwrap().len(), 1);
-        assert_eq!(col_positions(&conn, &other_columns[0].id).len(), 1);
-    }
-
-    #[test]
-    fn card_delete_logs_deleted_with_number_title_and_null_card_id() {
-        let conn = setup();
-        let (board, columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a", "Fix login", "c"]);
-        delete_card(&conn, &cards[1].id).unwrap();
-
-        assert_eq!(titles(&conn, &columns[0].id), vec!["a", "c"]);
-        assert_contiguous(&conn, &columns[0].id);
-        let log = list_activity(&conn, &board.id, None, 50).unwrap();
-        assert_eq!(log[0].kind, "deleted");
-        assert_eq!(log[0].card_id, None);
-        assert_eq!(log[0].detail.as_deref(), Some("#2 Fix login"));
-        // The deleted card's own history goes with it; only the tombstone stays.
-        assert!(log
-            .iter()
-            .all(|row| row.card_id.as_deref() != Some(cards[1].id.as_str())));
-    }
-
-    #[test]
-    fn cards_for_link_finds_linked_cards() {
-        let conn = setup();
-        let (_, columns) = board_with_columns(&conn);
-        let (_, other_columns) = board_with_columns(&conn);
-        let cards = add_cards(&conn, &columns[0].id, &["a", "b"]);
-        let other = add_cards(&conn, &other_columns[0].id, &["c"]);
-        link_card(&conn, &cards[0].id, Some("session"), Some("s-1")).unwrap();
-        link_card(&conn, &other[0].id, Some("session"), Some("s-1")).unwrap();
-        link_card(&conn, &cards[1].id, Some("pilot"), Some("s-1")).unwrap();
-
-        let found = cards_for_link(&conn, "session", "s-1").unwrap();
-        let mut ids: Vec<&str> = found.iter().map(|card| card.id.as_str()).collect();
-        ids.sort_unstable();
-        let mut expected = vec![cards[0].id.as_str(), other[0].id.as_str()];
-        expected.sort_unstable();
-        assert_eq!(ids, expected);
-        assert!(cards_for_link(&conn, "session", "nope").unwrap().is_empty());
-    }
-
-    #[test]
-    fn link_and_unlink_log_and_validate() {
-        let conn = setup();
-        let (board, columns) = board_with_columns(&conn);
-        let card = add_cards(&conn, &columns[0].id, &["a"]).remove(0);
-        assert!(link_card(&conn, &card.id, Some("session"), None).is_err());
-        assert!(link_card(&conn, &card.id, Some("bogus"), Some("x")).is_err());
-
-        link_card(&conn, &card.id, Some("session"), Some("s-1")).unwrap();
-        link_card(&conn, &card.id, Some("session"), Some("s-1")).unwrap();
-        link_card(&conn, &card.id, None, None).unwrap();
-        link_card(&conn, &card.id, None, None).unwrap();
-        let kinds: Vec<String> = list_activity(&conn, &board.id, Some(&card.id), 50)
-            .unwrap()
             .into_iter()
-            .map(|row| row.kind)
+            .map(|c| c.name)
             .collect();
-        assert_eq!(kinds, vec!["unlinked", "linked", "created"]);
-        let card = get_card(&conn, &card.id).unwrap();
-        assert_eq!((card.link_kind, card.link_id), (None, None));
+        assert_eq!(names, ["Testing", "Backlog", "Review", "Done"]);
     }
 
     #[test]
-    fn update_logs_edited_only_when_changed() {
+    fn card_commands_smoke() {
         let conn = setup();
         let (board, columns) = board_with_columns(&conn);
-        let card = add_cards(&conn, &columns[0].id, &["a"]).remove(0);
-        update_card(&conn, &card.id, "a", "").unwrap();
-        update_card(&conn, &card.id, "  b  ", "notes").unwrap();
-        let saved = get_card(&conn, &card.id).unwrap();
-        assert_eq!((saved.title.as_str(), saved.body.as_str()), ("b", "notes"));
-        assert!(update_card(&conn, &card.id, "   ", "x").is_err());
-        let edited = list_activity(&conn, &board.id, Some(&card.id), 50)
-            .unwrap()
-            .iter()
-            .filter(|row| row.kind == "edited")
-            .count();
-        assert_eq!(edited, 1);
+        let cards = add_cards(&conn, &columns[0].id, &["a", "b", "c"]);
+        assert_eq!(
+            keys_of(&cards[0]),
+            [
+                "boardId",
+                "body",
+                "columnId",
+                "createdAt",
+                "id",
+                "linkId",
+                "linkKind",
+                "number",
+                "position",
+                "title",
+                "updatedAt"
+            ]
+        );
+        assert_eq!(
+            update_card(&conn, &cards[0].id, "A", "notes").unwrap(),
+            board.id
+        );
+        assert_eq!(
+            move_card(&conn, &cards[0].id, &columns[1].id, 0, "user").unwrap(),
+            board.id
+        );
+        let ids = vec![cards[1].id.clone(), cards[2].id.clone()];
+        move_cards(&conn, &ids, &columns[1].id, 99, "system").unwrap();
+        assert_eq!(titles(&conn, &columns[1].id), ["A", "b", "c"]);
+        assert_contiguous(&conn, &columns[1].id);
+        assert!(move_card(&conn, &cards[0].id, &columns[2].id, 0, "robot").is_err());
+        record_card(&conn, &cards[1].id, "failed", Some("exit 1")).unwrap();
+        delete_card(&conn, &cards[2].id).unwrap();
+        assert_eq!(titles(&conn, &columns[1].id), ["A", "b"]);
+        assert_eq!(validate_id("../x", "card").unwrap_err(), "Invalid card id");
     }
 
     #[test]
-    fn record_appends_system_row_without_moving() {
+    fn link_and_activity_commands_smoke() {
         let conn = setup();
         let (board, columns) = board_with_columns(&conn);
         let card = add_cards(&conn, &columns[0].id, &["a"]).remove(0);
-        record_card(&conn, &card.id, "failed", Some("exit 1")).unwrap();
-        let log = list_activity(&conn, &board.id, Some(&card.id), 50).unwrap();
-        assert_eq!(log[0].kind, "failed");
-        assert_eq!(log[0].actor, "system");
-        assert_eq!(log[0].detail.as_deref(), Some("exit 1"));
-        assert_eq!(get_card(&conn, &card.id).unwrap().column_id, columns[0].id);
-        assert!(record_card(&conn, &card.id, "deleted", None).is_err());
-    }
-
-    #[test]
-    fn activity_is_newest_first_and_limited() {
-        let conn = setup();
-        let (board, columns) = board_with_columns(&conn);
-        let card = add_cards(&conn, &columns[0].id, &["a"]).remove(0);
-        record_card(&conn, &card.id, "started", None).unwrap();
-        record_card(&conn, &card.id, "completed", None).unwrap();
-        let log = list_activity(&conn, &board.id, None, 2).unwrap();
+        link_card(&conn, &card.id, Some("session"), Some("s-1")).unwrap();
+        let found = cards_for_link(&conn, "session", "s-1").unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].link_kind.as_deref(), Some("session"));
+        assert!(link_card(&conn, &card.id, Some("session"), None).is_err());
+        link_card(&conn, &card.id, None, None).unwrap();
+        let log = list_activity(&conn, &board.id, Some(&card.id), 2).unwrap();
         let kinds: Vec<&str> = log.iter().map(|row| row.kind.as_str()).collect();
-        assert_eq!(kinds, vec!["completed", "started"]);
+        assert_eq!(kinds, ["unlinked", "linked"]);
+        assert_eq!(
+            keys_of(&log[0]),
+            [
+                "actor",
+                "boardId",
+                "cardId",
+                "createdAt",
+                "detail",
+                "fromColumn",
+                "id",
+                "kind",
+                "toColumn"
+            ]
+        );
     }
 
     /// A database board-store wrote, with v3 extras the Tauri UI doesn't show

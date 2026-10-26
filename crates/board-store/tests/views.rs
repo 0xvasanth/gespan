@@ -331,23 +331,40 @@ fn due_buckets_use_each_dates_own_offset_across_dst() {
     );
 }
 
+/// The first instant at or after `local` that exists on the machine's clock.
+/// A zone whose summer time starts at midnight (America/Havana) skips the
+/// first hour of that day, so `earliest()` is `None` there; the next valid
+/// minute is used instead of unwrapping.
+fn first_instant_from(local: chrono::NaiveDateTime) -> i64 {
+    use chrono::{Local, TimeZone};
+    (0..=24 * 60)
+        .find_map(|minute| {
+            Local
+                .from_local_datetime(&(local + chrono::Duration::minutes(minute)))
+                .earliest()
+        })
+        .expect("a valid local time within a day")
+        .timestamp_millis()
+}
+
 #[test]
 fn local_day_chrono_counts_local_calendar_days() {
-    use chrono::{Local, NaiveDate, TimeZone};
+    use chrono::NaiveDate;
     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
-    // Noon and the first minute of each day around both 2026 US changes fall
-    // on that local date, whatever zone the machine is in.
+    // The start, half past midnight, noon and the last minute of each day
+    // around both 2026 US changes fall on that local date, whatever zone the
+    // machine is in. In Havana, 2026-03-08 runs 23:59 to 01:00: half past
+    // midnight does not exist there.
     for (month, day) in [(3, 7), (3, 8), (3, 9), (10, 31), (11, 1), (11, 2)] {
         let date = NaiveDate::from_ymd_opt(2026, month, day).unwrap();
         let expected = (date - epoch).num_days();
-        for (hour, minute) in [(0, 0), (12, 0), (23, 59)] {
+        for (hour, minute) in [(0, 0), (0, 30), (12, 0), (23, 59)] {
             let local = date.and_hms_opt(hour, minute, 0).unwrap();
-            let ms = Local
-                .from_local_datetime(&local)
-                .earliest()
-                .unwrap()
-                .timestamp_millis();
-            assert_eq!(local_day_chrono(ms), expected, "{local}");
+            assert_eq!(
+                local_day_chrono(first_instant_from(local)),
+                expected,
+                "{local}"
+            );
         }
     }
     // Before the epoch too.
@@ -355,12 +372,76 @@ fn local_day_chrono_counts_local_calendar_days() {
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
-    let ms = Local
-        .from_local_datetime(&old)
-        .earliest()
-        .unwrap()
-        .timestamp_millis();
-    assert_eq!(local_day_chrono(ms), -1);
+    assert_eq!(local_day_chrono(first_instant_from(old)), -1);
+}
+
+/// Runs `local_day_chrono_counts_local_calendar_days` again in a child
+/// process whose clock skips local midnight on one of the tested days, so
+/// the test can't pass only because this machine's zone has no such gap.
+#[test]
+fn local_day_chrono_counts_days_in_a_zone_that_skips_midnight() {
+    for zone in ["America/Havana"] {
+        if !std::path::Path::new("/usr/share/zoneinfo")
+            .join(zone)
+            .exists()
+        {
+            eprintln!("no zoneinfo for {zone}; skipped");
+            continue;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "local_day_chrono_counts_local_calendar_days",
+                "--test-threads=1",
+            ])
+            .env("TZ", zone)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{zone}: {stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn checkbox_field_filter_matches_cards() {
+    let conn = fresh();
+    let (board, _, cards) = board_with_cards(&conn, &["on", "off", "unset", "on again"]);
+    let done = create_field(&conn, &board.id, "Done", "checkbox", None).unwrap();
+    set_field_value(&conn, &cards[0].id, &done.id, Some("true")).unwrap();
+    set_field_value(&conn, &cards[1].id, &done.id, Some("false")).unwrap();
+    set_field_value(&conn, &cards[3].id, &done.id, Some("true")).unwrap();
+    let key = format!("field:{}", done.id);
+    let filter =
+        |op: Op, values: &[&str]| run(&conn, &board, &spec("", vec![row(&key, op, values)]));
+
+    // The values the filter menus offer: "true" (Yes) and "false" (No).
+    assert_eq!(filter(Op::Is, &["true"]), ids(&[&cards[0], &cards[3]]));
+    assert_eq!(filter(Op::Is, &["false"]), ids(&[&cards[1]]));
+    assert_eq!(
+        filter(Op::Is, &["true", "false"]),
+        ids(&[&cards[0], &cards[1], &cards[3]])
+    );
+    // A card never set is neither Yes nor No, and is always "is not".
+    assert_eq!(filter(Op::IsNot, &["true"]), ids(&[&cards[1], &cards[2]]));
+    assert_eq!(
+        filter(Op::IsNot, &["false"]),
+        ids(&[&cards[0], &cards[2], &cards[3]])
+    );
+    // Text that isn't JSON true or false matches nothing, so the row is ignored.
+    assert_eq!(
+        filter(Op::Is, &["yes"]),
+        ids(&cards.iter().collect::<Vec<_>>())
+    );
+    // Unchecking a card takes it out of Yes.
+    set_field_value(&conn, &cards[3].id, &done.id, Some("false")).unwrap();
+    assert_eq!(filter(Op::Is, &["true"]), ids(&[&cards[0]]));
+    // Clearing the value leaves it in neither.
+    set_field_value(&conn, &cards[1].id, &done.id, None).unwrap();
+    assert_eq!(filter(Op::Is, &["false"]), ids(&[&cards[3]]));
 }
 
 #[test]

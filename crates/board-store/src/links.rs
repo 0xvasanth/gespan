@@ -7,6 +7,8 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 
 const MAX_REF: usize = 10_000;
+/// The role of the card's single link, which only `link_card` writes.
+const PRIMARY_ROLE: &str = "primary";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,8 +42,9 @@ fn log_link(
     )
 }
 
-/// Adds a link; adding one the card already has changes nothing. Returns the
-/// owning board id.
+/// Adds an extra link; adding one the card already has changes nothing.
+/// The primary link is set only through `link_card`, which keeps the legacy
+/// link columns in step. Returns the owning board id.
 pub fn add_link(
     conn: &Connection,
     card_id: &str,
@@ -61,6 +64,9 @@ pub fn add_link(
     if reference.len() > MAX_REF {
         return Err("Link id is too long".into());
     }
+    if role == Some(PRIMARY_ROLE) {
+        return Err("Use link_card for the primary link".into());
+    }
     let tx = write_tx(conn)?;
     let card = get_card(&tx, card_id)?;
     let added = tx
@@ -73,6 +79,7 @@ pub fn add_link(
     if added == 0 {
         return Ok(card.board_id);
     }
+    touch(&tx, card_id)?;
     log_link(
         &tx,
         &card.board_id,
@@ -111,6 +118,9 @@ pub fn remove_link(
     }
     if removed == 0 && !legacy {
         return Ok(card.board_id);
+    }
+    if !legacy {
+        touch(&tx, card_id)?;
     }
     log_link(
         &tx,

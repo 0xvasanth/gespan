@@ -697,11 +697,13 @@ pub fn link_card(
         params![card_id, PRIMARY],
     )
     .map_err(db)?;
+    // A link the card already has as an extra link stays an extra link: if
+    // it were promoted, unlinking would delete the row the user added.
     if let Some((kind, id)) = link {
         tx.execute(
             "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT (card_id, kind, ref) DO UPDATE SET role = excluded.role",
+             ON CONFLICT (card_id, kind, ref) DO NOTHING",
             params![card_id, kind, id, PRIMARY, now],
         )
         .map_err(db)?;

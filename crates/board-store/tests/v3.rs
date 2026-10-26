@@ -703,7 +703,7 @@ fn restore_card_into_another_column() {
 }
 
 #[test]
-fn restore_card_after_its_column_was_deleted_errors() {
+fn restore_card_into_a_deleted_or_foreign_column_is_refused() {
     let conn = fresh();
     let (board, columns, cards) = board_with_cards(&conn, &["a", "b"]);
     let spare = create_column(&conn, &board.id, "Spare", None).unwrap();
@@ -734,7 +734,7 @@ fn archive_cards_is_one_transaction_and_keeps_positions_contiguous() {
     let conn = fresh();
     let (board, columns, cards) = board_with_cards(&conn, &["a", "b", "c", "d", "e"]);
     let doing = create_card(&conn, &columns[1].id, "x", "").unwrap();
-    let doing2 = create_card(&conn, &columns[1].id, "y", "").unwrap();
+    create_card(&conn, &columns[1].id, "y", "").unwrap();
     archive_card(&conn, &cards[4].id).unwrap();
     let before_e = activity_count(&conn, &board.id, &cards[4].id);
 
@@ -774,7 +774,6 @@ fn archive_cards_is_one_transaction_and_keeps_positions_contiguous() {
     assert!(archive_cards(&conn, &mixed).is_err());
     assert_eq!(column_titles(&conn, &board.id, &columns[0].id), ["a", "c"]);
     assert_eq!(column_titles(&conn, &board.id, &columns[1].id), ["y"]);
-    let _ = doing2;
 }
 
 #[test]
@@ -1240,4 +1239,386 @@ fn move_to_board_of_an_archived_card_is_refused_and_changes_nothing() {
         ),
         0
     );
+}
+
+// ── C6-3: ordering, link role and migration fixes ───────────────────────────
+
+/// `V2_DDL` without the `board_native_*` tables: the four tables (and their
+/// indexes) the Tauri app created before v3.
+fn tauri_only_ddl() -> String {
+    V2_DDL
+        .lines()
+        .filter(|line| !line.contains("board_native"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn ids_in_order(conn: &Connection, sql: &str, card: &str) -> Vec<String> {
+    let mut statement = conn.prepare(sql).unwrap();
+    let rows = statement
+        .query_map([card], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<String>>>()
+        .unwrap();
+    rows
+}
+
+#[test]
+fn v3_copies_comments_and_subtasks_in_rowid_order_on_ties() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    conn.execute_batch(V2_DDL).unwrap();
+    // An index the copy can scan by: without `ORDER BY rowid` the rows come
+    // out by id, not in the order they were written.
+    conn.execute_batch(
+        "CREATE INDEX native_comments_by_card ON board_native_comments (card_id, id);
+         CREATE INDEX native_subtasks_by_card ON board_native_subtasks (card_id, id);
+         INSERT INTO boards VALUES ('b1', 'Work', 1, 10, 10);
+         INSERT INTO board_columns VALUES ('c1', 'b1', 'Backlog', 0, 'todo');
+         INSERT INTO board_cards VALUES ('k1', 'b1', 'c1', 1, 'Card', '', 0, NULL, NULL, 20, 20);
+         INSERT INTO board_native_comments VALUES ('m-z', 'k1', 'written first', 30);
+         INSERT INTO board_native_comments VALUES ('m-m', 'k1', 'written second', 30);
+         INSERT INTO board_native_comments VALUES ('m-a', 'k1', 'written third', 30);
+         INSERT INTO board_native_subtasks VALUES ('s-z', 'k1', 'first', 0, 0);
+         INSERT INTO board_native_subtasks VALUES ('s-m', 'k1', 'second', 0, 0);
+         INSERT INTO board_native_subtasks VALUES ('s-a', 'k1', 'third', 0, 0);",
+    )
+    .unwrap();
+    // The old tables, read the way the native app read them.
+    assert_eq!(
+        ids_in_order(
+            &conn,
+            "SELECT id FROM board_native_comments WHERE card_id = ?1 ORDER BY created_at, rowid",
+            "k1"
+        ),
+        ["m-z", "m-m", "m-a"]
+    );
+
+    ensure_tables(&conn).unwrap();
+    let comments: Vec<String> = list_comments(&conn, "k1")
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(comments, ["m-z", "m-m", "m-a"]);
+    let subtasks: Vec<String> = list_subtasks(&conn, "k1")
+        .unwrap()
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    assert_eq!(subtasks, ["s-z", "s-m", "s-a"]);
+}
+
+#[test]
+fn add_link_refuses_role_primary() {
+    let conn = fresh();
+    let (board, _, cards) = board_with_cards(&conn, &["a"]);
+    let card = &cards[0].id;
+    let before = activity_count(&conn, &board.id, card);
+    assert_eq!(
+        add_link(&conn, card, "session", "s-1", Some("primary")).unwrap_err(),
+        "Use link_card for the primary link"
+    );
+    assert!(card_links(&conn, card).unwrap().is_empty());
+    assert_eq!(activity_count(&conn, &board.id, card), before);
+    let saved = get_card(&conn, card).unwrap();
+    assert_eq!((saved.link_kind, saved.link_id), (None, None));
+    // Any other role, or none, is still a plain extra link.
+    add_link(&conn, card, "session", "s-1", None).unwrap();
+    add_link(&conn, card, "pr", "r#1", Some("review")).unwrap();
+    let roles: Vec<Option<String>> = card_links(&conn, card)
+        .unwrap()
+        .into_iter()
+        .map(|l| l.role)
+        .collect();
+    assert_eq!(roles, [Some("review".to_string()), None]);
+}
+
+fn set_updated_at(conn: &Connection, card: &str, at: i64) {
+    conn.execute(
+        "UPDATE board_cards SET updated_at = ?1 WHERE id = ?2",
+        params![at, card],
+    )
+    .unwrap();
+}
+
+#[test]
+fn add_and_remove_link_touch_card_updated_at() {
+    let conn = fresh();
+    let (_, _, cards) = board_with_cards(&conn, &["a"]);
+    let card = &cards[0].id;
+    let updated = |conn: &Connection| get_card(conn, card).unwrap().updated_at;
+
+    set_updated_at(&conn, card, 1);
+    add_link(&conn, card, "pr", "r#1", None).unwrap();
+    assert!(updated(&conn) > 1, "adding a link touches the card");
+
+    // Adding the same link again changes nothing, so it does not touch.
+    set_updated_at(&conn, card, 1);
+    add_link(&conn, card, "pr", "r#1", None).unwrap();
+    assert_eq!(updated(&conn), 1);
+
+    remove_link(&conn, card, "pr", "r#1").unwrap();
+    assert!(updated(&conn) > 1, "removing a link touches the card");
+
+    // Removing a link the card doesn't have changes nothing.
+    set_updated_at(&conn, card, 1);
+    remove_link(&conn, card, "pr", "r#1").unwrap();
+    assert_eq!(updated(&conn), 1);
+}
+
+#[test]
+fn link_card_does_not_promote_then_delete_a_secondary_link() {
+    let conn = fresh();
+    let (_, _, cards) = board_with_cards(&conn, &["a"]);
+    let card = &cards[0].id;
+    let links = |conn: &Connection| -> Vec<(String, String, Option<String>)> {
+        card_links(conn, card)
+            .unwrap()
+            .into_iter()
+            .map(|l| (l.kind, l.reference, l.role))
+            .collect()
+    };
+    add_link(&conn, card, "session", "s-1", None).unwrap();
+    // The same session becomes the primary link, then the card is unlinked.
+    link_card(&conn, card, Some("session"), Some("s-1")).unwrap();
+    assert_eq!(
+        get_card(&conn, card).unwrap().link_id.as_deref(),
+        Some("s-1")
+    );
+    link_card(&conn, card, None, None).unwrap();
+    assert_eq!(links(&conn), [("session".into(), "s-1".into(), None)]);
+    let saved = get_card(&conn, card).unwrap();
+    assert_eq!((saved.link_kind, saved.link_id), (None, None));
+
+    // Replacing the primary link keeps the extra link too.
+    link_card(&conn, card, Some("session"), Some("s-1")).unwrap();
+    link_card(&conn, card, Some("pilot"), Some("p-1")).unwrap();
+    assert_eq!(
+        links(&conn),
+        [
+            ("pilot".into(), "p-1".into(), Some("primary".into())),
+            ("session".into(), "s-1".into(), None),
+        ]
+    );
+    assert_eq!(cards_for_link(&conn, "session", "s-1").unwrap().len(), 1);
+}
+
+#[test]
+fn pre_v3_tauri_only_database_migrates_every_card() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    conn.execute_batch(&tauri_only_ddl()).unwrap();
+    conn.execute_batch(
+        "INSERT INTO boards VALUES ('b1', 'Work', 3, 10, 10);
+         INSERT INTO boards VALUES ('b2', 'Side', 1, 11, 11);
+         INSERT INTO board_columns VALUES ('c-todo', 'b1', 'Backlog', 0, 'todo');
+         INSERT INTO board_columns VALUES ('c-done', 'b1', 'Done', 1, 'done');
+         INSERT INTO board_columns VALUES ('c-side', 'b2', 'Only', 0, NULL);
+         INSERT INTO board_cards VALUES ('k1', 'b1', 'c-todo', 1, 'One', 'body', 0, 'session', 's-1', 20, 21);
+         INSERT INTO board_cards VALUES ('k2', 'b1', 'c-todo', 2, 'Two', '', 1, NULL, NULL, 22, 23);
+         INSERT INTO board_cards VALUES ('k3', 'b1', 'c-done', 3, 'Three', '', 0, 'pilot', 'p-1', 24, 25);
+         INSERT INTO board_cards VALUES ('k4', 'b2', 'c-side', 1, 'Four', '', 0, NULL, NULL, 26, 27);
+         INSERT INTO board_activity VALUES ('a1', 'b1', 'k1', 'created', 'user', NULL, 'Backlog', NULL, 20);
+         INSERT INTO board_activity VALUES ('a2', 'b1', 'k3', 'moved', 'system', 'Backlog', 'Done', NULL, 24);",
+    )
+    .unwrap();
+    assert_eq!(migrate::version(&conn).unwrap(), 0);
+
+    ensure_tables(&conn).unwrap();
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    // No native extras to copy: none appear.
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_labels"), 0);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_subtasks"), 0);
+
+    let mut cards: Vec<(String, String, i64, String)> = ["b1", "b2"]
+        .iter()
+        .flat_map(|board| get_board(&conn, board).unwrap().cards)
+        .map(|c| (c.id, c.column_id, c.number, c.title))
+        .collect();
+    cards.sort();
+    assert_eq!(
+        cards,
+        [
+            ("k1".into(), "c-todo".into(), 1, "One".into()),
+            ("k2".into(), "c-todo".into(), 2, "Two".into()),
+            ("k3".into(), "c-done".into(), 3, "Three".into()),
+            ("k4".into(), "c-side".into(), 1, "Four".into()),
+        ]
+    );
+    // Every card reads its (default) extras, and both links became rows.
+    let extras = card_extras(&conn, "b1").unwrap();
+    for id in ["k1", "k2", "k3"] {
+        assert_eq!(card_meta(&conn, id).unwrap().priority, 0, "{id}");
+        assert!(extras.get(id).is_none_or(|e| e.labels.is_empty()), "{id}");
+    }
+    let link = |id: &str| -> Vec<(String, String, Option<String>)> {
+        card_links(&conn, id)
+            .unwrap()
+            .into_iter()
+            .map(|l| (l.kind, l.reference, l.role))
+            .collect()
+    };
+    assert_eq!(
+        link("k1"),
+        [("session".into(), "s-1".into(), Some("primary".into()))]
+    );
+    assert_eq!(
+        link("k3"),
+        [("pilot".into(), "p-1".into(), Some("primary".into()))]
+    );
+    assert!(link("k2").is_empty() && link("k4").is_empty());
+    // History is kept and numbering continues after the stored sequence.
+    assert_eq!(list_activity(&conn, "b1", None, 50).unwrap().len(), 2);
+    let next = create_card(&conn, "c-todo", "Five", "").unwrap();
+    assert_eq!(next.number, 4);
+    let spec = ViewSpec::default();
+    let all = query_cards(
+        &conn,
+        "b1",
+        &spec,
+        0,
+        &|ms| ms / 86_400_000,
+        &Default::default(),
+    )
+    .unwrap();
+    assert_eq!(all.len(), 4);
+}
+
+#[test]
+fn duplicates_relation_cycle_is_refused() {
+    let conn = fresh();
+    let (_, _, cards) = board_with_cards(&conn, &["a", "b", "c"]);
+    let (a, b, c) = (&cards[0].id, &cards[1].id, &cards[2].id);
+    add_relation(&conn, a, b, "duplicates").unwrap();
+    assert_eq!(
+        add_relation(&conn, b, a, "duplicates").unwrap_err(),
+        "That would make a cycle"
+    );
+    add_relation(&conn, b, c, "duplicates").unwrap();
+    assert_eq!(
+        add_relation(&conn, c, a, "duplicates").unwrap_err(),
+        "That would make a cycle"
+    );
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT COUNT(*) FROM board_card_relations WHERE kind = 'duplicates'"
+        ),
+        2
+    );
+    // Each kind is its own graph: a blocking edge back is not a duplicates cycle.
+    add_relation(&conn, c, a, "blocks").unwrap();
+    // Once the chain is broken the reverse edge is fine.
+    remove_relation(&conn, b, c, "duplicates").unwrap();
+    add_relation(&conn, c, a, "duplicates").unwrap();
+}
+
+#[test]
+fn failing_copy_leaves_the_version_unwritten() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    // A native comments table missing `created_at`: the comment copy fails
+    // after the meta, project, label and subtask copies have run.
+    let broken = V2_DDL.replace(
+        "body TEXT NOT NULL, created_at INTEGER NOT NULL);",
+        "body TEXT NOT NULL);",
+    );
+    assert_ne!(broken, V2_DDL);
+    conn.execute_batch(&broken).unwrap();
+    conn.execute_batch(
+        "INSERT INTO boards VALUES ('b1', 'Work', 1, 10, 10);
+         INSERT INTO board_columns VALUES ('c1', 'b1', 'Backlog', 0, 'todo');
+         INSERT INTO board_cards VALUES ('k1', 'b1', 'c1', 1, 'Card', '', 0, 'session', 's-1', 20, 20);
+         INSERT INTO board_native_meta VALUES ('k1', 3, NULL);
+         INSERT INTO board_native_subtasks VALUES ('s1', 'k1', 'One', 0, 0);
+         INSERT INTO board_native_comments VALUES ('m1', 'k1', 'hi');",
+    )
+    .unwrap();
+
+    assert!(ensure_tables(&conn).is_err());
+    // The whole step rolled back: no version and none of the earlier copies.
+    assert_eq!(migrate::version(&conn).unwrap(), 0);
+    let exists = |table: &str| -> bool {
+        count(
+            &conn,
+            &format!(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '{table}'"
+            ),
+        ) == 1
+    };
+    for table in [
+        "board_schema",
+        "board_card_meta",
+        "board_subtasks",
+        "board_card_links",
+    ] {
+        assert!(!exists(table), "{table} left behind");
+    }
+    assert!(
+        ensure_tables(&conn).is_err(),
+        "still fails, still unwritten"
+    );
+    assert_eq!(migrate::version(&conn).unwrap(), 0);
+
+    // Once the table is readable the migration runs in full, once.
+    conn.execute_batch(
+        "ALTER TABLE board_native_comments ADD COLUMN created_at INTEGER NOT NULL DEFAULT 30",
+    )
+    .unwrap();
+    ensure_tables(&conn).unwrap();
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    assert_eq!(card_meta(&conn, "k1").unwrap().priority, 3);
+    assert_eq!(list_subtasks(&conn, "k1").unwrap().len(), 1);
+    assert_eq!(list_comments(&conn, "k1").unwrap().len(), 1);
+    assert_eq!(card_links(&conn, "k1").unwrap().len(), 1);
+}
+
+fn subtask_positions(conn: &Connection, card: &str) -> Vec<i64> {
+    list_subtasks(conn, card)
+        .unwrap()
+        .into_iter()
+        .map(|s| s.position)
+        .collect()
+}
+
+#[test]
+fn subtask_positions_stay_contiguous_after_delete() {
+    let conn = fresh();
+    let (_, _, cards) = board_with_cards(&conn, &["a"]);
+    let card = &cards[0].id;
+    let subtasks: Vec<Subtask> = ["one", "two", "three", "four", "five"]
+        .iter()
+        .map(|title| add_subtask(&conn, card, title).unwrap())
+        .collect();
+
+    delete_subtask(&conn, &subtasks[1].id).unwrap();
+    assert_eq!(subtask_positions(&conn, card), [0, 1, 2, 3]);
+    assert_eq!(
+        subtask_titles(&conn, card),
+        [
+            ("one".into(), 0),
+            ("three".into(), 1),
+            ("four".into(), 2),
+            ("five".into(), 3)
+        ]
+    );
+    // The first and the last.
+    delete_subtask(&conn, &subtasks[0].id).unwrap();
+    delete_subtask(&conn, &subtasks[4].id).unwrap();
+    assert_eq!(subtask_positions(&conn, card), [0, 1]);
+    // A new subtask goes straight after the rest, with no gap.
+    add_subtask(&conn, card, "six").unwrap();
+    assert_eq!(
+        subtask_titles(&conn, card),
+        [("three".into(), 0), ("four".into(), 1), ("six".into(), 2)]
+    );
+    // Deleting one that is gone changes nothing; the last one leaves none.
+    assert_eq!(delete_subtask(&conn, &subtasks[1].id).unwrap(), None);
+    for subtask in list_subtasks(&conn, card).unwrap() {
+        delete_subtask(&conn, &subtask.id).unwrap();
+        let positions = subtask_positions(&conn, card);
+        assert_eq!(positions, (0..positions.len() as i64).collect::<Vec<_>>());
+    }
+    assert!(list_subtasks(&conn, card).unwrap().is_empty());
 }

@@ -142,6 +142,7 @@ pub fn delete_subtask(conn: &Connection, subtask_id: &str) -> Result<Option<Stri
     let card = get_card(&tx, &subtask.card_id)?;
     tx.execute("DELETE FROM board_subtasks WHERE id = ?1", [subtask_id])
         .map_err(db)?;
+    renumber_subtasks(&tx, &card.id)?;
     touch(&tx, &card.id)?;
     log_edit(
         &tx,
@@ -151,6 +152,20 @@ pub fn delete_subtask(conn: &Connection, subtask_id: &str) -> Result<Option<Stri
     )?;
     tx.commit().map_err(db)?;
     Ok(Some(card.board_id))
+}
+
+/// Rewrites a card's subtask positions to 0..n-1 in their current order.
+fn renumber_subtasks(tx: &Transaction<'_>, card_id: &str) -> Result<(), String> {
+    for (position, subtask) in list_subtasks(tx, card_id)?.iter().enumerate() {
+        if subtask.position != position as i64 {
+            tx.execute(
+                "UPDATE board_subtasks SET position = ?1 WHERE id = ?2",
+                params![position as i64, subtask.id],
+            )
+            .map_err(db)?;
+        }
+    }
+    Ok(())
 }
 
 /// Moves a subtask to `index` among its card's subtasks (clamped to the end)

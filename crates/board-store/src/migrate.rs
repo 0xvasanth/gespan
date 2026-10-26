@@ -91,7 +91,9 @@ fn add_columns(tx: &Transaction<'_>, columns: &[(&str, &str, &str)]) -> rusqlite
 
 fn copy_native_extras(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     // Rows whose card or label is gone (a delete made with foreign keys off)
-    // are skipped rather than failing the whole migration.
+    // are skipped rather than failing the whole migration. Subtasks and
+    // comments are listed by position or time, then rowid, so they are
+    // copied in the old rowid order to keep ties in the order they were made.
     let live_card = "card_id IN (SELECT id FROM board_cards)";
     let copies = [
         (
@@ -129,7 +131,7 @@ fn copy_native_extras(tx: &Transaction<'_>) -> rusqlite::Result<()> {
             format!(
                 "INSERT OR IGNORE INTO board_subtasks (id, card_id, title, done, position)
                  SELECT id, card_id, title, done, position FROM board_native_subtasks
-                 WHERE {live_card}"
+                 WHERE {live_card} ORDER BY rowid"
             ),
         ),
         (
@@ -137,7 +139,7 @@ fn copy_native_extras(tx: &Transaction<'_>) -> rusqlite::Result<()> {
             format!(
                 "INSERT OR IGNORE INTO board_comments (id, card_id, body, author, created_at)
                  SELECT id, card_id, body, 'user', created_at FROM board_native_comments
-                 WHERE {live_card}"
+                 WHERE {live_card} ORDER BY rowid"
             ),
         ),
     ];
