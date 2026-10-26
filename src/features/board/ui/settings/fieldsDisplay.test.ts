@@ -841,6 +841,7 @@ describe("display options", () => {
         }),
       },
     ];
+    cardExtras = { c1: extrasOf(4) };
     await renderBoard();
     const tab = (id: string) =>
       container.querySelector<HTMLElement>(`[data-view-tab="${id}"]`)!;
@@ -849,8 +850,10 @@ describe("display options", () => {
     await click(tab("v1"));
     expect(numberShown()).toBe(false);
     expect(faceOf("c1").getAttribute("data-density")).toBe("compact");
-    // Parts the override doesn't name keep the board default.
-    expect(faceOf("c1").querySelector("[data-card-priority]")).toBeNull();
+    // Parts the override doesn't name keep the board default: the priority shows.
+    expect(
+      faceOf("c1").querySelector("[data-card-priority]")?.textContent,
+    ).toBe("Urgent");
     await click(tab("all"));
     expect(numberShown()).toBe(true);
     expect(faceOf("c1").getAttribute("data-density")).toBe("comfortable");
@@ -875,6 +878,61 @@ describe("display options", () => {
     // On a view it is unsaved view state: no settings write, the view is dirty.
     expect(commands("board_settings_update")).toHaveLength(writes);
     expect(container.querySelector("[data-view-dot]")).not.toBeNull();
+  });
+
+  it("two quick toggles in the Display menu on All cards both land, written in order", async () => {
+    const replies: (() => void)[] = [];
+    handlers.board_settings_update = (args) =>
+      new Promise((resolve) => {
+        replies.push(() => {
+          settings = { ...settings, ...(args.patch as Partial<BoardSettings>) };
+          resolve(settings);
+        });
+      });
+    await renderBoard();
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Display"]')!;
+    act(() => trigger.click());
+    const box = (name: string) =>
+      document.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)!;
+    act(() => box("Show Card number").click());
+    act(() => box("Show Priority").click());
+    await flush();
+    // The second waits for the first reply, then builds on the first edit.
+    expect(replies).toHaveLength(1);
+    replies.shift()!();
+    await flush();
+    expect(replies).toHaveLength(1);
+    replies.shift()!();
+    await flush();
+    const written = commands("board_settings_update").map(
+      ([, args]) =>
+        JSON.parse((args as { patch: { displayJson: string } }).patch.displayJson).face,
+    );
+    expect(written[0]).toMatchObject({ number: false, priority: true });
+    expect(written[1]).toMatchObject({ number: false, priority: false });
+  });
+
+  it("a failed Display save on the settings page isn't built on by the next edit", async () => {
+    let calls = 0;
+    handlers.board_settings_update = (args) => {
+      calls += 1;
+      if (calls === 1) throw "store is locked";
+      settings = { ...settings, ...(args.patch as Partial<BoardSettings>) };
+      return settings;
+    };
+    await renderBoard();
+    await openSettings();
+    const box = (name: string) => byLabel<HTMLInputElement>(section("Display"), name);
+    await click(box("Show Comments"));
+    expect(alertText()).toContain("store is locked");
+    await click(box("Show Subtasks"));
+    const second = JSON.parse(
+      (lastArgs("board_settings_update") as { patch: { displayJson: string } }).patch
+        .displayJson,
+    );
+    expect(second.face.subtasks).toBe(false);
+    // The failed change was not carried into the next write.
+    expect(second.face.comments).toBe(true);
   });
 
   it("the settings page writes only the display and keeps quick toggles", async () => {
@@ -947,6 +1005,37 @@ describe("swimlanes", () => {
     await renderBoard();
     expect(lane("Low")).toBeNull();
     expect(lane("Medium")).not.toBeNull();
+  });
+
+  it("a lane drop into a column past its WIP limit warns, and the card stays put while it saves", async () => {
+    detail.columns[1] = column("progress", "In Progress", 1, "doing", { wipLimit: 1 });
+    settings = settingsWith({ swimlane: "priority" });
+    let finish!: () => void;
+    handlers.board_card_move = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    await renderBoard();
+    act(() => lanes.props!.onDrop("c1", "p0", "progress"));
+    await flush();
+    // Optimistic: the lane board already shows c1 in In Progress, before the save returns.
+    expect(lanes.props!.cards.find((c) => c.id === "c1")?.columnId).toBe("progress");
+    expect(commands("board_card_move")).toHaveLength(1);
+    finish();
+    await flush();
+    expect(toastText()).toContain("Over the WIP limit (2/1)");
+  });
+
+  it("a failed lane drop puts the card back and says so", async () => {
+    settings = settingsWith({ swimlane: "priority" });
+    handlers.board_card_move = () => {
+      throw "store is locked";
+    };
+    await renderBoard();
+    act(() => lanes.props!.onDrop("c1", "p0", "review"));
+    await flush();
+    expect(lanes.props!.cards.find((c) => c.id === "c1")?.columnId).toBe("backlog");
+    expect(alertText()).toContain("store is locked");
   });
 
   it("label_lane_drop_changes_only_the_column", async () => {

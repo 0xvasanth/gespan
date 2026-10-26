@@ -12,7 +12,7 @@ export function DisplaySection({
 }: {
   settings: BoardSettings | null;
   fields: readonly BoardField[];
-  onPatch: (patch: Partial<BoardSettings>, what: string) => Promise<unknown>;
+  onPatch: (patch: Partial<BoardSettings>, what: string) => Promise<boolean>;
 }) {
   const display = parseDisplay(settings?.displayJson ?? null);
   // Quick toggles build on the latest display, saved or not, and write in order.
@@ -20,6 +20,8 @@ export function DisplaySection({
   const pending = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const json = settings?.displayJson ?? null;
+  const stored = useRef(json);
+  stored.current = json;
   useEffect(() => {
     if (pending.current === 0) latest.current = parseDisplay(json);
   }, [json]);
@@ -27,9 +29,15 @@ export function DisplaySection({
     latest.current = next;
     pending.current += 1;
     queue.current = queue.current
-      .then(() => onPatch({ displayJson: serializeDisplay(next) }, "save the display"))
-      .finally(() => {
+      .then(() =>
+        onPatch({ displayJson: serializeDisplay(next) }, "save the display"),
+      )
+      .then((saved) => {
         pending.current -= 1;
+        // A save that failed leaves what is stored; edits stop building on it.
+        if (!saved && pending.current === 0) {
+          latest.current = parseDisplay(stored.current);
+        }
       });
   };
   return (

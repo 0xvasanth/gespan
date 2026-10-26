@@ -25,12 +25,14 @@ export function PrioritySection({
   scheme: PriorityScheme;
   /** Whether the board holds its own scheme (so Reset has something to clear). */
   stored: boolean;
-  onPatch: (patch: Partial<BoardSettings>, what: string) => Promise<unknown>;
+  onPatch: (patch: Partial<BoardSettings>, what: string) => Promise<boolean>;
   onError: (message: string) => void;
 }) {
   // Every edit builds on the latest scheme, saved or not yet: two quick edits
   // can't undo each other. Writes go one at a time, in order.
   const latest = useRef(scheme);
+  const storedScheme = useRef(scheme);
+  storedScheme.current = scheme;
   const pending = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   useEffect(() => {
@@ -41,8 +43,10 @@ export function PrioritySection({
     pending.current += 1;
     queue.current = queue.current
       .then(() => onPatch(patch, what))
-      .finally(() => {
+      .then((saved) => {
         pending.current -= 1;
+        // A save that failed leaves what is stored; edits stop building on it.
+        if (!saved && pending.current === 0) latest.current = storedScheme.current;
       });
   };
   const save = (next: PriorityScheme) => {

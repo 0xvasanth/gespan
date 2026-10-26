@@ -764,12 +764,37 @@ function BoardContent({
       resolveDisplay(settings?.displayJson ?? null, activeView ? layout : null),
     [settings?.displayJson, activeView, layout],
   );
+  // Quick Display edits build on the latest display, saved or not, and write
+  // in order, so two toggles in a row can't undo each other.
+  const displayBase = useRef(display);
+  const displayPending = useRef(0);
+  const displayQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  useEffect(() => {
+    if (displayPending.current === 0) displayBase.current = display;
+  }, [display]);
   const lanesBy = useMemo(() => laneBy(display, fields), [display, fields]);
   const cardFieldValues = useMemo(() => {
     const out: Record<string, Record<string, string>> = {};
     for (const [id, row] of cardIndex) out[id] = row.fields;
     return out;
   }, [cardIndex]);
+  const lanes = useMemo(
+    () =>
+      lanesBy && shownDetail
+        ? buildLanes({
+            by: lanesBy,
+            cards: shownDetail.cards,
+            extras,
+            labels,
+            projects,
+            fieldValues: cardFieldValues,
+            priorities: scheme,
+          })
+        : [],
+    [lanesBy, shownDetail, extras, labels, projects, cardFieldValues, scheme],
+  );
   const editLayout = useCallback(
     (patch: (current: LayoutState) => Partial<LayoutState>) =>
       setLayout((json) => patchLayout(json, patch(parseLayout(json)))),
@@ -1693,7 +1718,13 @@ function BoardContent({
     const card = detailRef.current?.cards.find((other) => other.id === cardId);
     if (!card || !lanesBy) return;
     if (card.columnId !== columnId) {
-      moveFromDrawer(card, columnId, wholeColumn(columnId).length);
+      // The same path as a column drop: optimistic move, undo, WIP warning.
+      onCardMove(card.id, {
+        columnId,
+        index: wholeColumn(columnId).filter(
+          (other) => other.id !== card.id && matches(other),
+        ).length,
+      });
     }
     const value = laneValue(lanesBy, laneKey);
     if (value?.kind === "priority") {
@@ -1718,12 +1749,35 @@ function BoardContent({
    * with Save changes); on "All cards" they change the board default.
    */
   const changeDisplay = (next: DisplayOptions) => {
+    displayBase.current = next;
     if (activeView) {
       setLayout((json) => withLayoutDisplay(json, next));
     } else if (openId) {
-      void updateBoardSettings(openId, { displayJson: serializeDisplay(next) })
-        .then(setSettings)
-        .catch(fail("Couldn't save the display"));
+      displayPending.current += 1;
+      displayQueue.current = displayQueue.current
+        .then(() =>
+          updateBoardSettings(openId, { displayJson: serializeDisplay(next) }),
+        )
+        .then(
+          (saved) => {
+            setSettings(saved);
+            return true;
+          },
+          (cause) => {
+            fail("Couldn't save the display")(cause);
+            return false;
+          },
+        )
+        .then((saved) => {
+          displayPending.current -= 1;
+          // A failed save leaves what is stored; edits stop building on it.
+          if (!saved && displayPending.current === 0) {
+            displayBase.current = resolveDisplay(
+              settingsRef.current?.displayJson ?? null,
+              null,
+            );
+          }
+        });
     }
   };
 
@@ -1993,6 +2047,7 @@ function BoardContent({
                       display={display}
                       fields={fields}
                       onChange={changeDisplay}
+                      base={() => displayBase.current}
                     />
                     <div className="pt-2 text-[11px] text-content/45">
                       {activeView
@@ -2242,18 +2297,12 @@ function BoardContent({
               <Swimlanes
                 columns={shownDetail.columns}
                 cards={shownDetail.cards}
-                lanes={buildLanes({
-                  by: lanesBy,
-                  cards: shownDetail.cards,
-                  extras,
-                  labels,
-                  projects,
-                  fieldValues: cardFieldValues,
-                  priorities: scheme,
-                })}
+                lanes={lanes}
                 renderCard={renderCard}
                 renderColumnHeader={renderColumnHeader}
                 onDrop={onLaneDrop}
+                onCardOpen={(card) => showCard({ id: card.id })}
+                selectedIds={selectedSet}
                 trailing={trailing}
               />
             ) : shownDetail ? (

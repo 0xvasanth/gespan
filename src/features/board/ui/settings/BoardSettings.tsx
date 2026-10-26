@@ -60,8 +60,15 @@ export function BoardSettings({
 
   /** A patch changes only the settings it names, so the other app's survive. */
   const patch = (changes: Partial<Settings>, what: string) =>
-    updateBoardSettings(board.id, changes).then(onSettings, (cause) =>
-      onError(`Couldn't ${what}: ${errorText(cause)}`),
+    updateBoardSettings(board.id, changes).then(
+      (next) => {
+        onSettings(next);
+        return true;
+      },
+      (cause) => {
+        onError(`Couldn't ${what}: ${errorText(cause)}`);
+        return false;
+      },
     );
 
   return (
@@ -115,9 +122,9 @@ export function BoardSettings({
           onPatch={patch}
           onError={onError}
         />
-
         <FieldsSection boardId={board.id} fields={fields} onError={onError} />
-        <DisplaySection settings={settings} fields={fields} onPatch={patch} />      </div>
+        <DisplaySection settings={settings} fields={fields} onPatch={patch} />
+      </div>
     </div>
   );
 }

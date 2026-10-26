@@ -21,7 +21,7 @@ export function GeneralSection({
   settings: BoardSettings | null;
   views: readonly BoardView[];
   onRename: (name: string) => void;
-  onPatch: (patch: Partial<BoardSettings>, what: string) => Promise<unknown>;
+  onPatch: (patch: Partial<BoardSettings>, what: string) => Promise<boolean>;
   onError: (message: string) => void;
 }) {
   const ordered = [...views].sort((a, b) => a.position - b.position);

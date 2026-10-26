@@ -52,6 +52,7 @@ import {
   sessionStart,
   shownBoard,
 } from "./kanbanSession";
+import { KEYBOARD_CODES } from "./keyboardCodes";
 import { useReducedMotion } from "./useReducedMotion";
 
 export type KanbanBoardProps = {
@@ -99,12 +100,6 @@ const lockColumnsToRow: Modifier = ({ active, transform }) =>
 
 const MEASURING = { droppable: { strategy: MeasuringStrategy.Always } };
 
-// Space picks up and drops; Enter is left to open a focused card.
-const KEYBOARD_CODES = {
-  start: ["Space"],
-  cancel: ["Escape"],
-  end: ["Space", "Enter"],
-};
 
 const OVERLAY_CLASS =
   "rounded-lg rotate-[1.5deg] shadow-[0_16px_36px_-10px_rgb(0_0_0/0.45)] motion-reduce:rotate-0";
