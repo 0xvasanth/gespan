@@ -78,6 +78,42 @@ describe("fieldChoices", () => {
   });
 });
 
+describe("priority choices with a scheme", () => {
+  const scheme = {
+    names: ["None", "Minor", "Normal", "Major", "Blocker"] as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ],
+    hidden: [1, 2],
+  };
+  const withScheme: FilterSources = { ...sources, priorities: scheme };
+
+  it("names the levels and leaves hidden ones out", () => {
+    expect(fieldChoices("priority", withScheme)).toEqual([
+      ["4", "Blocker"],
+      ["3", "Major"],
+      ["0", "None"],
+    ]);
+  });
+
+  it("keeps a hidden level a row already holds, so a saved filter still matches", () => {
+    expect(fieldChoices("priority", withScheme, ["1"]).map(([v]) => v)).toEqual(
+      ["4", "3", "1", "0"],
+    );
+    const kept = liveRows(
+      [{ field: "priority", op: "is", values: ["1", "3"] }],
+      withScheme,
+    );
+    expect(kept[0].values).toEqual(["1", "3"]);
+    expect(
+      chipText({ field: "priority", op: "is", values: ["1"] }, withScheme),
+    ).toBe("Priority is Minor");
+  });
+});
+
 describe("chipText and fieldTitle", () => {
   it("says the field, the op and the names", () => {
     expect(

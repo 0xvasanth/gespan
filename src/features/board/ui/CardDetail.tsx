@@ -9,7 +9,6 @@ import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItem
 import { SessionTicketChip } from "../../sessions/ui/SessionTicketChip";
 import type { LinkedWorkItem, TicketRef } from "../../sessions/model/session";
 import {
-  PRIORITIES,
   createLabel,
   linkCard,
   listActivity,
@@ -60,6 +59,8 @@ import {
   type BoardLinkTarget,
   type ResolvedLink,
 } from "./boardFormat";
+import { priorityName } from "../model/boardSettings";
+import { usePriorityScheme } from "./priorityScheme";
 
 const ACTIVITY_LIMIT = 50;
 const NO_LINK = "";
@@ -128,6 +129,7 @@ export function CardDetail({
   ) => ReactNode;
   onError: (message: string) => void;
 }) {
+  const scheme = usePriorityScheme();
   const [title, setTitle] = useState(card.title);
   const [body, setBody] = useState(card.body);
   const [tab, setTab] = useState<Tab>("comments");
@@ -465,7 +467,7 @@ export function CardDetail({
               className={PROPERTY_TRIGGER}
               trigger={
                 <span className="truncate">
-                  {PRIORITIES[priority] ?? PRIORITIES[0]}
+                  {priorityName(scheme, priority)}
                 </span>
               }
             >

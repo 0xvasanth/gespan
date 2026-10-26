@@ -1,4 +1,5 @@
-import { PRIORITIES, type BoardCard, type BoardColumn, type BoardField, type BoardLabel, type CardExtras } from "./board";
+import { DEFAULT_PRIORITY_SCHEME } from "./boardSettings";
+import { type BoardCard, type BoardColumn, type BoardField, type BoardLabel, type CardExtras, type PriorityScheme } from "./board";
 
 export type LayoutKind = "board" | "list" | "table";
 export const LAYOUTS: readonly (readonly [LayoutKind, string])[] = [
@@ -185,14 +186,17 @@ export function buildGroups(input: {
   extras: Readonly<Record<string, CardExtras | undefined>>;
   labels: readonly Pick<BoardLabel, "id" | "name">[];
   projects: readonly { path: string; name: string }[];
+  /** Names the priority groups; a hidden level keeps its group while a card holds it. */
+  priorities?: PriorityScheme;
   now?: number;
 }): Group[] {
   const { by, cards, columns, extras, labels, projects, now } = input;
+  const priorities = input.priorities ?? DEFAULT_PRIORITY_SCHEME;
   const roles = new Map(columns.map((column) => [column.id, column.role]));
   let heads: [string, string][];
   switch (by) {
     case "priority":
-      heads = PRIORITIES.map((name, p): [string, string] => [`p${p}`, name]).reverse();
+      heads = priorities.names.map((name, p): [string, string] => [`p${p}`, name]).reverse();
       break;
     case "label":
       heads = [...labels.map((l): [string, string] => [l.id, l.name]), ["none", "No label"]];

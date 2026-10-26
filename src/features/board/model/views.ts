@@ -1,5 +1,5 @@
+import { DEFAULT_PRIORITY_SCHEME, offeredPriorities } from "./boardSettings";
 import {
-  PRIORITIES,
   type BoardCard,
   type BoardColumn,
   type CardLinkKind,
@@ -8,6 +8,7 @@ import {
   type BoardView,
   type FilterOp,
   type FilterRow,
+  type PriorityScheme,
   type SortKey,
   type SortSpec,
   type ViewSpec,
@@ -92,6 +93,8 @@ export type FilterSources = {
   labels: readonly Pick<BoardLabel, "id" | "name">[];
   projects: readonly { path: string; name: string }[];
   fields: readonly BoardField[];
+  /** The board's priority names and hidden levels; the defaults when absent. */
+  priorities?: PriorityScheme;
 };
 
 export const customFieldKey = (id: string) => `field:${id}`;
@@ -146,10 +149,19 @@ export function fieldChoices(
         .map((column) => [column.id, column.name]);
     case "priority":
       // Urgent first, as the menu always listed them.
-      return PRIORITIES.map((name, priority): Choice => [
-        String(priority),
-        name,
-      ]).reverse();
+      {
+        // A hidden level is no new choice, but a row that already holds one
+        // keeps it, so a saved filter doesn't change what it matches.
+        const scheme = sources.priorities ?? DEFAULT_PRIORITY_SCHEME;
+        const levels = [0, 1, 2, 3, 4].filter(
+          (level) =>
+            offeredPriorities(scheme).includes(level) ||
+            held.includes(String(level)),
+        );
+        return levels
+          .map((level): Choice => [String(level), scheme.names[level]])
+          .reverse();
+      }
     case "labels":
       return sources.labels.map((label) => [label.id, label.name]);
     case "projects":

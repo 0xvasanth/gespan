@@ -37,6 +37,7 @@ import {
   listFields,
   listLabels,
   listBoards,
+  getBoardSettings,
   listViews,
   moveCard,
   moveColumn,
@@ -61,6 +62,7 @@ import {
   type BoardDetail,
   type BoardField,
   type BoardLabel,
+  type BoardSettings as StoredSettings,
   type BoardView as SavedView,
   type CardExtras,
   type CardIndexRow,
@@ -129,6 +131,9 @@ import { SelectionBar } from "./SelectionBar";
 import { BoardColumnHeader } from "./BoardColumnHeader";
 import { BoardFilterMenu, BoardSortMenu, FilterChips } from "./BoardFilter";
 import { ViewTabs } from "./ViewTabs";
+import { BoardSettings } from "./settings/BoardSettings";
+import { PriorityContext } from "./priorityScheme";
+import { overLimitMessage, parsePriorityScheme } from "../model/boardSettings";
 import {
   MenuButton,
   MenuItem,
@@ -330,6 +335,11 @@ function BoardContent({
   // The card shown as a full page, if any; opening one follows the setting.
   const [pageCardId, setPageCardId] = useState<string | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<StoredSettings | null>(null);
+  // The board whose default view has been looked at: it applies once per open.
+  const defaultViewSeen = useRef<string | null>(null);
+  const showViewRef = useRef<(view: SavedView | null) => void>(() => {});
   const [newCardOpen, setNewCardOpen] = useState(false);
   const [switchSignal, setSwitchSignal] = useState(0);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
@@ -483,8 +493,15 @@ function BoardContent({
     if (!id) return;
     const ticket = ++request.current;
     try {
-      const [next, linked, cardExtras, boardLabels, boardFields, boardViews] =
-        await Promise.all([
+      const [
+        next,
+        linked,
+        cardExtras,
+        boardLabels,
+        boardFields,
+        boardViews,
+        boardSettings,
+      ] = await Promise.all([
           getBoard(id),
           // A failed ticket read leaves the cards without chips, not the board unloaded.
           getCardTickets(id).catch(() => null),
@@ -493,6 +510,8 @@ function BoardContent({
           listLabels(id).catch(() => null),
           listFields(id).catch(() => null),
           listViews(id).catch(() => null),
+          // Without them the board shows with its defaults.
+          getBoardSettings(id).catch(() => null),
         ]);
       if (ticket !== request.current || openIdRef.current !== id) return;
       setDetail(next);
@@ -501,6 +520,15 @@ function BoardContent({
       if (boardLabels) setLabels(boardLabels);
       if (boardFields) setFields(boardFields);
       if (boardViews) syncViews(boardViews);
+      if (boardSettings) setSettings(boardSettings);
+      if (defaultViewSeen.current !== id) {
+        defaultViewSeen.current = id;
+        const wanted = boardViews?.find(
+          (view) => view.id === boardSettings?.defaultViewId,
+        );
+        // A default that is gone, or one the user already moved off, is skipped.
+        if (wanted && !live.current.activeView) showViewRef.current(wanted);
+      }
       setBoards(
         (list) =>
           list &&
@@ -547,6 +575,9 @@ function BoardContent({
     setFields([]);
     // So are its views, search, filter and sort.
     setViews([]);
+    setSettings(null);
+    setSettingsOpen(false);
+    defaultViewSeen.current = null;
     setActiveView(null);
     setBaseline({ spec: EMPTY_SPEC, layout: DEFAULT_LAYOUT });
     applySpec(EMPTY_SPEC, DEFAULT_LAYOUT);
@@ -612,9 +643,19 @@ function BoardContent({
     return states;
   }, [lookedUp, targetsByValue]);
 
+  const scheme = useMemo(
+    () => parsePriorityScheme(settings?.priorityJson ?? null),
+    [settings?.priorityJson],
+  );
   const sources: FilterSources = useMemo(
-    () => ({ columns: detail?.columns ?? [], labels, projects, fields }),
-    [detail?.columns, labels, projects, fields],
+    () => ({
+      columns: detail?.columns ?? [],
+      labels,
+      projects,
+      fields,
+      priorities: scheme,
+    }),
+    [detail?.columns, labels, projects, fields, scheme],
   );
   // A label, column, project or field that is gone leaves the filter, so it
   // can't hide every card behind a choice nobody can see or undo. A row left
@@ -853,7 +894,20 @@ function BoardContent({
         .then(() => {
           if (!from || !column || samePlace) return;
           const [, fromColumn, fromIndex] = from.place;
-          pushUndo(before.board.id, movedLabel([from.number], column.name), {
+          const moved = movedLabel([from.number], column.name);
+          // A move into a column past its limit still happens; it says so.
+          const total =
+            columnCards(before, to.columnId).filter(
+              (other) => other.id !== cardId,
+            ).length + 1;
+          const over =
+            fromColumn !== to.columnId &&
+            column.wipLimit != null &&
+            total > column.wipLimit;
+          const label = over
+            ? `${overLimitMessage(total, column.wipLimit!)} · ${moved}`
+            : moved;
+          pushUndo(before.board.id, label, {
             kind: "move",
             cardId,
             columnId: fromColumn,
@@ -891,6 +945,11 @@ function BoardContent({
       .then((board) => loadBoards(board.id))
       .catch(fail("Couldn't create the board"));
   };
+
+  const renameOpenBoard = (board: Board, name: string) =>
+    renameBoard(board.id, name)
+      .then(() => loadBoards(board.id))
+      .catch(fail("Couldn't rename the board"));
 
   const removeBoard = async (board: Board) => {
     const confirmed = await ask(
@@ -1208,6 +1267,7 @@ function BoardContent({
     setBaseline({ spec: next, layout: nextLayout });
     applySpec(next, nextLayout);
   };
+  showViewRef.current = showView;
 
   /**
    * Runs a view write, then reads the board again. A read already in flight
@@ -1673,166 +1733,153 @@ function BoardContent({
   );
 
   return (
-    <div
-      ref={rootRef}
-      tabIndex={-1}
-      className="flex min-h-0 flex-1 flex-col outline-none"
-      onKeyDown={(event) => {
-        // Escape's last layer: the drawer, menus and inline edits take it
-        // first (they mark it handled); what is left clears the selection.
-        if (
-          event.key !== "Escape" ||
-          event.defaultPrevented ||
-          event.nativeEvent.isComposing ||
-          !selection.ids.length ||
-          // A drag in progress is cancelled by its own Escape.
-          dragInProgress()
-        ) {
-          return;
-        }
-        event.preventDefault();
-        setSelection(EMPTY_SELECTION);
-      }}
-      onKeyDownCapture={(event) => {
-        // Cmd+N (Ctrl+N elsewhere) with focus anywhere in the board, the
-        // search box and menu buttons included (capture, so a control that
-        // stops keydown can't swallow it). Shift and Alt variants stay with the app.
-        const mod = IS_MAC ? event.metaKey : event.ctrlKey;
-        if (
-          !mod ||
-          event.shiftKey ||
-          event.altKey ||
-          (IS_MAC && event.ctrlKey) ||
-          event.key.toLowerCase() !== "n" ||
-          event.nativeEvent.isComposing ||
-          !detail ||
-          ticketCardOpen
-        )
-          return;
-        event.preventDefault();
-        setNewCardOpen(true);
-      }}
-    >
-      <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-stroke px-4">
-        {naming === "rename" && openBoard ? (
-          <NameInput
-            initial={openBoard.name}
-            label="Board name"
-            className="w-56"
-            onSubmit={(name) => {
-              setNaming(null);
-              renameBoard(openBoard.id, name)
-                .then(() => loadBoards(openBoard.id))
-                .catch(fail("Couldn't rename the board"));
-            }}
-            onCancel={() => setNaming(null)}
-          />
-        ) : (
-          <div className="w-56 min-w-0">
-            <SearchableSelect
-              label="Board"
-              value={openId ?? ""}
-              options={boards.map((board) => ({
-                value: board.id,
-                label: board.name,
-              }))}
-              onChange={(id) => setOpenId(id)}
-              openSignal={switchSignal}
-              searchPlaceholder="Search boards…"
-              emptyLabel="No matching boards"
-              variant="transparent"
+    <PriorityContext.Provider value={scheme}>
+      <div
+        ref={rootRef}
+        tabIndex={-1}
+        className="flex min-h-0 flex-1 flex-col outline-none"
+        onKeyDown={(event) => {
+          // Escape's last layer: the drawer, menus and inline edits take it
+          // first (they mark it handled); what is left clears the selection.
+          if (
+            event.key !== "Escape" ||
+            event.defaultPrevented ||
+            event.nativeEvent.isComposing ||
+            !selection.ids.length ||
+            // A drag in progress is cancelled by its own Escape.
+            dragInProgress()
+          ) {
+            return;
+          }
+          event.preventDefault();
+          setSelection(EMPTY_SELECTION);
+        }}
+        onKeyDownCapture={(event) => {
+          // Cmd+N (Ctrl+N elsewhere) with focus anywhere in the board, the
+          // search box and menu buttons included (capture, so a control that
+          // stops keydown can't swallow it). Shift and Alt variants stay with the app.
+          const mod = IS_MAC ? event.metaKey : event.ctrlKey;
+          if (
+            !mod ||
+            event.shiftKey ||
+            event.altKey ||
+            (IS_MAC && event.ctrlKey) ||
+            event.key.toLowerCase() !== "n" ||
+            event.nativeEvent.isComposing ||
+            !detail ||
+            ticketCardOpen
+          )
+            return;
+          event.preventDefault();
+          setNewCardOpen(true);
+        }}
+      >
+        <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-stroke px-4">
+          {naming === "rename" && openBoard ? (
+            <NameInput
+              initial={openBoard.name}
+              label="Board name"
+              className="w-56"
+              onSubmit={(name) => {
+                setNaming(null);
+                void renameOpenBoard(openBoard, name);
+              }}
+              onCancel={() => setNaming(null)}
             />
-          </div>
-        )}
-        {openBoard ? (
-          <MenuButton label="Board actions">
-            {(close) => (
-              <>
-                <MenuItem
-                  onSelect={() => {
-                    close();
-                    setNaming("rename");
-                  }}
-                >
-                  Rename board
-                </MenuItem>
-                <MenuItem
-                  danger
-                  onSelect={() => {
-                    close();
-                    void removeBoard(openBoard);
-                  }}
-                >
-                  Delete board
-                </MenuItem>
-              </>
-            )}
-          </MenuButton>
-        ) : null}
-        {detail ? (
-          <>
-            <label className="relative ml-2 flex items-center">
-              <Search
-                className="pointer-events-none absolute left-2 size-3.5 text-content/45"
-                strokeWidth={1.75}
+          ) : (
+            <div className="w-56 min-w-0">
+              <SearchableSelect
+                label="Board"
+                value={openId ?? ""}
+                options={boards.map((board) => ({
+                  value: board.id,
+                  label: board.name,
+                }))}
+                onChange={(id) => setOpenId(id)}
+                openSignal={switchSignal}
+                searchPlaceholder="Search boards…"
+                emptyLabel="No matching boards"
+                variant="transparent"
               />
-              <input
-                aria-label="Search cards"
-                placeholder="Search cards"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape" && query) {
-                    event.preventDefault();
-                    setQuery("");
-                  }
-                }}
-                className="h-7 w-44 rounded-md border border-stroke bg-background-base pl-7 pr-2 text-[12px] text-content outline-none placeholder:text-content/40 focus:border-accent/60"
-              />
-            </label>
-            <BoardFilterMenu
-              rows={rows}
-              count={effectiveRows.length}
-              sources={sources}
-              onChange={setRows}
-            />
-            <BoardSortMenu sort={sort} onChange={setSort} />
-            <MenuButton
-              label="Layout"
-              width={160}
-              className={BUTTON}
-              trigger={`Layout: ${LAYOUTS.find(([kind]) => kind === layoutState.layout)?.[1]}`}
-            >
-              {(close) =>
-                LAYOUTS.map(([kind, name]) => (
+            </div>
+          )}
+          {openBoard ? (
+            <MenuButton label="Board actions">
+              {(close) => (
+                <>
                   <MenuItem
-                    key={kind}
-                    checked={kind === layoutState.layout}
                     onSelect={() => {
                       close();
-                      editLayout(() => ({ layout: kind }));
+                      setNaming("rename");
                     }}
                   >
-                    {name}
+                    Rename board
                   </MenuItem>
-                ))
-              }
+                  <MenuItem
+                    onSelect={() => {
+                      close();
+                      setOpenCard(null);
+                      setArchiveOpen(false);
+                      setSettingsOpen(true);
+                    }}
+                  >
+                    Board settings
+                  </MenuItem>
+                  <MenuItem
+                    danger
+                    onSelect={() => {
+                      close();
+                      void removeBoard(openBoard);
+                    }}
+                  >
+                    Delete board
+                  </MenuItem>
+                </>
+              )}
             </MenuButton>
-            {layoutState.layout === "list" ? (
+          ) : null}
+          {detail ? (
+            <>
+              <label className="relative ml-2 flex items-center">
+                <Search
+                  className="pointer-events-none absolute left-2 size-3.5 text-content/45"
+                  strokeWidth={1.75}
+                />
+                <input
+                  aria-label="Search cards"
+                  placeholder="Search cards"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && query) {
+                      event.preventDefault();
+                      setQuery("");
+                    }
+                  }}
+                  className="h-7 w-44 rounded-md border border-stroke bg-background-base pl-7 pr-2 text-[12px] text-content outline-none placeholder:text-content/40 focus:border-accent/60"
+                />
+              </label>
+              <BoardFilterMenu
+                rows={rows}
+                count={effectiveRows.length}
+                sources={sources}
+                onChange={setRows}
+              />
+              <BoardSortMenu sort={sort} onChange={setSort} />
               <MenuButton
-                label="Group by"
-                width={180}
+                label="Layout"
+                width={160}
                 className={BUTTON}
-                trigger={`Group by ${GROUP_BYS.find(([by]) => by === layoutState.groupBy)?.[1]}`}
+                trigger={`Layout: ${LAYOUTS.find(([kind]) => kind === layoutState.layout)?.[1]}`}
               >
                 {(close) =>
-                  GROUP_BYS.map(([by, name]) => (
+                  LAYOUTS.map(([kind, name]) => (
                     <MenuItem
-                      key={by}
-                      checked={by === layoutState.groupBy}
+                      key={kind}
+                      checked={kind === layoutState.layout}
                       onSelect={() => {
                         close();
-                        editLayout(() => ({ groupBy: by }));
+                        editLayout(() => ({ layout: kind }));
                       }}
                     >
                       {name}
@@ -1840,312 +1887,353 @@ function BoardContent({
                   ))
                 }
               </MenuButton>
-            ) : null}
-            {layoutState.layout === "table" ? (
-              <MenuButton
-                label="Columns"
-                width={200}
-                className={BUTTON}
-                trigger="Columns"
-              >
-                {() => (
-                  <>
-                    <MenuLabel>Show columns</MenuLabel>
-                    {[
-                      ...TABLE_COLUMNS.slice(1).map(([id, name]) => [id, name]),
-                      ...fields.map((field) => [`field:${field.id}`, field.name]),
-                    ].map(([id, name]) => {
-                      const shown = tableColumns(layoutState, fields).some(
-                        (column) => column.id === id,
-                      );
-                      return (
-                        <MenuItem
-                          key={id}
-                          kind="checkbox"
-                          checked={shown}
-                          onSelect={() =>
-                            editLayout((current) => {
-                              const ids = tableColumns(current, fields).map(
-                                (column) => column.id,
-                              );
-                              return {
-                                columns: shown
-                                  ? ids.filter((other) => other !== id)
-                                  : [...ids, id!],
-                              };
-                            })
-                          }
-                        >
-                          {name}
-                        </MenuItem>
-                      );
-                    })}
-                  </>
-                )}
-              </MenuButton>
-            ) : null}
-            {sorted ? (
-              <span data-sorted-by="" className="text-[12px] text-content/55">
-                Sorted by {sortLabel(sort.key)}
-              </span>
-            ) : null}
-          </>
-        ) : null}
-        <div className="flex-1" />
-        {detail ? (
-          <button
-            type="button"
-            className={BUTTON}
-            aria-pressed={archiveOpen}
-            onClick={() => {
-              setOpenCard(null);
-              setArchiveOpen((open) => !open);
-            }}
-          >
-            Archive
-          </button>
-        ) : null}
-        {detail ? (
-          <button
-            type="button"
-            className={BUTTON}
-            onClick={() => setTicketCardOpen(true)}
-          >
-            <Plus className="size-3.5" strokeWidth={1.75} />
-            New card from ticket…
-          </button>
-        ) : null}
-        {naming === "new" ? (
-          <NameInput
-            label="Board name"
-            placeholder="Board name"
-            className="w-48"
-            onSubmit={createNamedBoard}
-            onCancel={() => setNaming(null)}
-          />
-        ) : (
-          <button
-            type="button"
-            className={BUTTON}
-            onClick={() => setNaming("new")}
-          >
-            <Plus className="size-3.5" strokeWidth={1.75} />
-            New board
-          </button>
-        )}
-      </div>
-      {detail ? (
-        <ViewTabs
-          views={orderedViews(views)}
-          activeId={activeView}
-          dirty={dirty}
-          onSelect={(id) =>
-            showView(id ? (views.find((view) => view.id === id) ?? null) : null)
-          }
-          onSaveAs={saveViewAs}
-          onSaveChanges={saveViewChanges}
-          onRevert={revertView}
-          onRename={renameView}
-          onDuplicate={duplicateView}
-          onDelete={removeView}
-        />
-      ) : null}
-      <FilterChips
-        rows={rows}
-        sources={sources}
-        onRemove={(index) =>
-          setRows((list) => list.filter((_, at) => at !== index))
-        }
-        onClear={() => setRows([])}
-      />
-      <div className="flex min-h-0 flex-1">
-        <div
-          className={`relative min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}
-        >
-          {detail && layoutState.layout === "list" ? (
-            <BoardList
-              cards={visibleCards}
-              columns={detail.columns}
-              extras={extras}
-              labels={labels}
-              projects={projects}
-              groupBy={layoutState.groupBy}
-              collapsed={layoutState.collapsed}
-              selected={selectedSet}
-              onToggleGroup={(key) =>
-                editLayout((current) => ({
-                  collapsed: current.collapsed.includes(key)
-                    ? current.collapsed.filter((other) => other !== key)
-                    : [...current.collapsed, key],
-                }))
-              }
-              onRowClick={rowClick}
-            />
-          ) : detail && layoutState.layout === "table" ? (
-            <BoardTable
-              cards={visibleCards}
-              existing={new Set(detail.cards.map((card) => card.id))}
-              columns={tableColumns(layoutState, fields)}
-              boardColumns={detail.columns}
-              extras={extras}
-              index={cardIndex}
-              labels={labels}
-              fields={fields}
-              projects={projects}
-              selected={selectedSet}
-              onRowClick={rowClick}
-              onResize={(id, width) =>
-                editLayout((current) => ({
-                  widths: { ...current.widths, [id]: width },
-                }))
-              }
-              onCommitTitle={(card, title) => {
-                const body =
-                  detailRef.current?.cards.find((other) => other.id === card.id)
-                    ?.body ?? card.body;
-                void updateCard(card.id, title, body).catch(
-                  fail(`Couldn't rename card #${card.number}`),
-                );
-              }}
-              onSetStatus={(card, columnId) =>
-                moveFromDrawer(card, columnId, wholeColumn(columnId).length)
-              }
-              onSetPriority={(card, priority) =>
-                void setCardPriority(card.id, priority).catch(
-                  fail(`Couldn't set the priority of card #${card.number}`),
-                )
-              }
-              onSetDue={(card, dueAt) =>
-                void setCardDue(card.id, dueAt).catch(
-                  fail(`Couldn't set the due date of card #${card.number}`),
-                )
-              }
-              onSetLabels={(card, ids) =>
-                void setCardLabels(card.id, ids).catch(
-                  fail(`Couldn't set the labels of card #${card.number}`),
-                )
-              }
-              onCreateLabel={addLabelTo}
-            />
-          ) : shownDetail ? (
-            <KanbanBoard
-              detail={shownDetail}
-              renderCard={renderCard}
-              renderColumnHeader={renderColumnHeader}
-              renderColumnFooter={renderColumnFooter}
-              onCardMove={onCardMove}
-              onColumnMove={onColumnMove}
-              onCardOpen={(card) => showCard({ id: card.id })}
-              onColumnExpand={(column) => setCollapsed(column, false)}
-              sorted={sorted}
-              selectedIds={selectedSet}
-              trailing={trailing}
-            />
+              {layoutState.layout === "list" ? (
+                <MenuButton
+                  label="Group by"
+                  width={180}
+                  className={BUTTON}
+                  trigger={`Group by ${GROUP_BYS.find(([by]) => by === layoutState.groupBy)?.[1]}`}
+                >
+                  {(close) =>
+                    GROUP_BYS.map(([by, name]) => (
+                      <MenuItem
+                        key={by}
+                        checked={by === layoutState.groupBy}
+                        onSelect={() => {
+                          close();
+                          editLayout(() => ({ groupBy: by }));
+                        }}
+                      >
+                        {name}
+                      </MenuItem>
+                    ))
+                  }
+                </MenuButton>
+              ) : null}
+              {layoutState.layout === "table" ? (
+                <MenuButton
+                  label="Columns"
+                  width={200}
+                  className={BUTTON}
+                  trigger="Columns"
+                >
+                  {() => (
+                    <>
+                      <MenuLabel>Show columns</MenuLabel>
+                      {[
+                        ...TABLE_COLUMNS.slice(1).map(([id, name]) => [id, name]),
+                        ...fields.map((field) => [`field:${field.id}`, field.name]),
+                      ].map(([id, name]) => {
+                        const shown = tableColumns(layoutState, fields).some(
+                          (column) => column.id === id,
+                        );
+                        return (
+                          <MenuItem
+                            key={id}
+                            kind="checkbox"
+                            checked={shown}
+                            onSelect={() =>
+                              editLayout((current) => {
+                                const ids = tableColumns(current, fields).map(
+                                  (column) => column.id,
+                                );
+                                return {
+                                  columns: shown
+                                    ? ids.filter((other) => other !== id)
+                                    : [...ids, id!],
+                                };
+                              })
+                            }
+                          >
+                            {name}
+                          </MenuItem>
+                        );
+                      })}
+                    </>
+                  )}
+                </MenuButton>
+              ) : null}
+              {sorted ? (
+                <span data-sorted-by="" className="text-[12px] text-content/55">
+                  Sorted by {sortLabel(sort.key)}
+                </span>
+              ) : null}
+            </>
           ) : null}
-          {detail && selection.ids.length ? (
-            <SelectionBar
-              count={selection.ids.length}
-              columns={detail.columns}
-              labels={labels}
-              labelCounts={labelCounts}
-              onStatus={(columnId) => {
-                const column = columnsById.get(columnId);
-                if (column) bulkStatus(column);
+          <div className="flex-1" />
+          {detail ? (
+            <button
+              type="button"
+              className={BUTTON}
+              aria-pressed={archiveOpen}
+              onClick={() => {
+                setOpenCard(null);
+                setArchiveOpen((open) => !open);
               }}
-              onPriority={bulkPriority}
-              onLabel={bulkLabel}
-              onArchive={() => bulkRemove(false)}
-              onDelete={() => bulkRemove(true)}
-              onClear={() => setSelection(EMPTY_SELECTION)}
+            >
+              Archive
+            </button>
+          ) : null}
+          {detail ? (
+            <button
+              type="button"
+              className={BUTTON}
+              onClick={() => setTicketCardOpen(true)}
+            >
+              <Plus className="size-3.5" strokeWidth={1.75} />
+              New card from ticket…
+            </button>
+          ) : null}
+          {naming === "new" ? (
+            <NameInput
+              label="Board name"
+              placeholder="Board name"
+              className="w-48"
+              onSubmit={createNamedBoard}
+              onCancel={() => setNaming(null)}
+            />
+          ) : (
+            <button
+              type="button"
+              className={BUTTON}
+              onClick={() => setNaming("new")}
+            >
+              <Plus className="size-3.5" strokeWidth={1.75} />
+              New board
+            </button>
+          )}
+        </div>
+        {detail && !settingsOpen ? (
+          <ViewTabs
+            views={orderedViews(views)}
+            activeId={activeView}
+            dirty={dirty}
+            onSelect={(id) =>
+              showView(id ? (views.find((view) => view.id === id) ?? null) : null)
+            }
+            onSaveAs={saveViewAs}
+            onSaveChanges={saveViewChanges}
+            onRevert={revertView}
+            onRename={renameView}
+            onDuplicate={duplicateView}
+            onDelete={removeView}
+          />
+        ) : null}
+        {settingsOpen ? null : (
+          <FilterChips
+            rows={rows}
+            sources={sources}
+            onRemove={(index) =>
+              setRows((list) => list.filter((_, at) => at !== index))
+            }
+            onClear={() => setRows([])}
+          />
+        )}
+        {settingsOpen && detail ? (
+          <BoardSettings
+            board={detail.board}
+            settings={settings}
+            scheme={scheme}
+            columns={detail.columns}
+            cards={detail.cards}
+            labels={labels}
+            views={views}
+            onClose={() => setSettingsOpen(false)}
+            onRename={(name) => void renameOpenBoard(detail.board, name)}
+            onError={setError}
+            onSettings={setSettings}
+            beforeColumnDelete={() => undo.commitPending()}
+          />
+        ) : null}
+        <div className={`flex min-h-0 flex-1 ${settingsOpen ? "hidden" : ""}`}>
+          <div
+            className={`relative min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}
+          >
+            {detail && layoutState.layout === "list" ? (
+              <BoardList
+                cards={visibleCards}
+                columns={detail.columns}
+                extras={extras}
+                labels={labels}
+                projects={projects}
+                groupBy={layoutState.groupBy}
+                collapsed={layoutState.collapsed}
+                selected={selectedSet}
+                onToggleGroup={(key) =>
+                  editLayout((current) => ({
+                    collapsed: current.collapsed.includes(key)
+                      ? current.collapsed.filter((other) => other !== key)
+                      : [...current.collapsed, key],
+                  }))
+                }
+                onRowClick={rowClick}
+              />
+            ) : detail && layoutState.layout === "table" ? (
+              <BoardTable
+                cards={visibleCards}
+                existing={new Set(detail.cards.map((card) => card.id))}
+                columns={tableColumns(layoutState, fields)}
+                boardColumns={detail.columns}
+                extras={extras}
+                index={cardIndex}
+                labels={labels}
+                fields={fields}
+                projects={projects}
+                selected={selectedSet}
+                onRowClick={rowClick}
+                onResize={(id, width) =>
+                  editLayout((current) => ({
+                    widths: { ...current.widths, [id]: width },
+                  }))
+                }
+                onCommitTitle={(card, title) => {
+                  const body =
+                    detailRef.current?.cards.find((other) => other.id === card.id)
+                      ?.body ?? card.body;
+                  void updateCard(card.id, title, body).catch(
+                    fail(`Couldn't rename card #${card.number}`),
+                  );
+                }}
+                onSetStatus={(card, columnId) =>
+                  moveFromDrawer(card, columnId, wholeColumn(columnId).length)
+                }
+                onSetPriority={(card, priority) =>
+                  void setCardPriority(card.id, priority).catch(
+                    fail(`Couldn't set the priority of card #${card.number}`),
+                  )
+                }
+                onSetDue={(card, dueAt) =>
+                  void setCardDue(card.id, dueAt).catch(
+                    fail(`Couldn't set the due date of card #${card.number}`),
+                  )
+                }
+                onSetLabels={(card, ids) =>
+                  void setCardLabels(card.id, ids).catch(
+                    fail(`Couldn't set the labels of card #${card.number}`),
+                  )
+                }
+                onCreateLabel={addLabelTo}
+              />
+            ) : shownDetail ? (
+              <KanbanBoard
+                detail={shownDetail}
+                renderCard={renderCard}
+                renderColumnHeader={renderColumnHeader}
+                renderColumnFooter={renderColumnFooter}
+                onCardMove={onCardMove}
+                onColumnMove={onColumnMove}
+                onCardOpen={(card) => showCard({ id: card.id })}
+                onColumnExpand={(column) => setCollapsed(column, false)}
+                sorted={sorted}
+                selectedIds={selectedSet}
+                trailing={trailing}
+              />
+            ) : null}
+            {detail && selection.ids.length ? (
+              <SelectionBar
+                count={selection.ids.length}
+                columns={detail.columns}
+                labels={labels}
+                labelCounts={labelCounts}
+                onStatus={(columnId) => {
+                  const column = columnsById.get(columnId);
+                  if (column) bulkStatus(column);
+                }}
+                onPriority={bulkPriority}
+                onLabel={bulkLabel}
+                onArchive={() => bulkRemove(false)}
+                onDelete={() => bulkRemove(true)}
+                onClear={() => setSelection(EMPTY_SELECTION)}
+              />
+            ) : null}
+          </div>
+          {shownCard ? (
+            <CardDetail
+              key={shownCard.id}
+              card={shownCard}
+              columns={(detail?.columns ?? []).map((column) => ({
+                id: column.id,
+                name: column.name,
+                cardCount: (detail?.cards ?? []).filter(
+                  (other) => other.columnId === column.id,
+                ).length,
+              }))}
+              extras={extras[shownCard.id]}
+              labels={labels}
+              projects={projects}
+              link={resolveLink(shownCard, linkStates)}
+              ticket={tickets[shownCard.id] ?? null}
+              linkTargets={linkTargets}
+              boardCards={(detail?.cards ?? []).map((other) => ({
+                id: other.id,
+                number: other.number,
+                title: other.title,
+              }))}
+              fullPage={fullPage}
+              onToggleFullPage={() =>
+                setPageCardId(fullPage ? null : shownCard.id)
+              }
+              focus={openCard?.focus}
+              onClose={() => setOpenCard(null)}
+              onOpenLinkedWork={(target) => {
+                setOpenCard(null);
+                openLinkedWork(target);
+              }}
+              onMove={(columnId, index) =>
+                moveFromDrawer(shownCard, columnId, index)
+              }
+              onDelete={() => removeCard(shownCard)}
+              renderMore={moreItemsFor(shownCard)}
+              onError={setError}
+            />
+          ) : archiveOpen && detail ? (
+            <ArchiveView
+              key={detail.board.id}
+              boardId={detail.board.id}
+              columnNames={
+                new Map(detail.columns.map((column) => [column.id, column.name]))
+              }
+              pendingDelete={null}
+              pendingDeletes={heldIds}
+              onClose={() => setArchiveOpen(false)}
+              onError={setError}
             />
           ) : null}
         </div>
-        {shownCard ? (
-          <CardDetail
-            key={shownCard.id}
-            card={shownCard}
-            columns={(detail?.columns ?? []).map((column) => ({
-              id: column.id,
-              name: column.name,
-              cardCount: (detail?.cards ?? []).filter(
-                (other) => other.columnId === column.id,
-              ).length,
-            }))}
-            extras={extras[shownCard.id]}
-            labels={labels}
-            projects={projects}
-            link={resolveLink(shownCard, linkStates)}
-            ticket={tickets[shownCard.id] ?? null}
-            linkTargets={linkTargets}
-            boardCards={(detail?.cards ?? []).map((other) => ({
-              id: other.id,
-              number: other.number,
-              title: other.title,
-            }))}
-            fullPage={fullPage}
-            onToggleFullPage={() =>
-              setPageCardId(fullPage ? null : shownCard.id)
-            }
-            focus={openCard?.focus}
-            onClose={() => setOpenCard(null)}
-            onOpenLinkedWork={(target) => {
-              setOpenCard(null);
-              openLinkedWork(target);
+        {ticketCardOpen && detail ? (
+          <LinkSessionWorkItemDialog
+            ticketOnly
+            heading="New card from ticket"
+            sessionTitle={detail.board.name}
+            onSave={(item) => {
+              if (!item || item.kind !== "ticket") return;
+              setTicketCardOpen(false);
+              const column = newCardColumn(detail.columns);
+              if (!column) {
+                setError("Couldn't add the card: the board has no columns");
+                return;
+              }
+              createCardFromTicket(column, item.ticket).catch(
+                fail("Couldn't add the card from the ticket"),
+              );
             }}
-            onMove={(columnId, index) =>
-              moveFromDrawer(shownCard, columnId, index)
-            }
-            onDelete={() => removeCard(shownCard)}
-            renderMore={moreItemsFor(shownCard)}
-            onError={setError}
-          />
-        ) : archiveOpen && detail ? (
-          <ArchiveView
-            key={detail.board.id}
-            boardId={detail.board.id}
-            columnNames={
-              new Map(detail.columns.map((column) => [column.id, column.name]))
-            }
-            pendingDelete={null}
-            pendingDeletes={heldIds}
-            onClose={() => setArchiveOpen(false)}
-            onError={setError}
+            onClose={() => setTicketCardOpen(false)}
           />
         ) : null}
+        {newCardOpen && detail ? (
+          <NewCardModal
+            key={detail.board.id}
+            boardId={detail.board.id}
+            columns={detail.columns}
+            labels={labels}
+            projects={projects}
+            onClose={() => setNewCardOpen(false)}
+            onNotice={setError}
+            returnFocusTo={() => rootRef.current}
+          />
+        ) : null}
+        {toast}
       </div>
-      {ticketCardOpen && detail ? (
-        <LinkSessionWorkItemDialog
-          ticketOnly
-          heading="New card from ticket"
-          sessionTitle={detail.board.name}
-          onSave={(item) => {
-            if (!item || item.kind !== "ticket") return;
-            setTicketCardOpen(false);
-            const column = newCardColumn(detail.columns);
-            if (!column) {
-              setError("Couldn't add the card: the board has no columns");
-              return;
-            }
-            createCardFromTicket(column, item.ticket).catch(
-              fail("Couldn't add the card from the ticket"),
-            );
-          }}
-          onClose={() => setTicketCardOpen(false)}
-        />
-      ) : null}
-      {newCardOpen && detail ? (
-        <NewCardModal
-          key={detail.board.id}
-          boardId={detail.board.id}
-          columns={detail.columns}
-          labels={labels}
-          projects={projects}
-          onClose={() => setNewCardOpen(false)}
-          onNotice={setError}
-          returnFocusTo={() => rootRef.current}
-        />
-      ) : null}
-      {toast}
-    </div>
+    </PriorityContext.Provider>
   );
 }

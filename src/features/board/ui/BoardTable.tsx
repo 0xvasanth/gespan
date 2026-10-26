@@ -8,7 +8,6 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
-  PRIORITIES,
   type BoardCard,
   type BoardColumn,
   type BoardField,
@@ -23,6 +22,8 @@ import { MenuButton, MenuItem } from "./boardControls";
 import { LabelPicker, toggled } from "./CardDrawerParts";
 import { PriorityItems } from "./CardPropertyMenus";
 import { dueChip, dueInputValue, parseDueInput } from "./boardFormat";
+import { priorityName } from "../model/boardSettings";
+import { usePriorityScheme } from "./priorityScheme";
 
 /** An inline edit of a text-like cell, held here so scrolling or a refresh never loses it. */
 type Edit = {
@@ -84,6 +85,7 @@ export function BoardTable({
   onSetLabels: (card: BoardCard, labelIds: string[]) => void;
   onCreateLabel: (card: BoardCard, name: string) => void;
 }) {
+  const scheme = usePriorityScheme();
   const win = useWindowedRows({
     count: cards.length,
     rowHeight: ROW_HEIGHT,
@@ -224,7 +226,7 @@ export function BoardTable({
             label={`Priority of #${card.number}`}
             width={160}
             className="rounded px-1 text-left hover:bg-content/10"
-            trigger={PRIORITIES[mine?.priority ?? 0]}
+            trigger={priorityName(scheme, mine?.priority ?? 0)}
           >
             {(close) => (
               <PriorityItems

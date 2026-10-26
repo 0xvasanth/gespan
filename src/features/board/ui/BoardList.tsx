@@ -1,7 +1,6 @@
 import { useMemo, type MouseEvent } from "react";
 import { ChevronDown, ChevronRight } from "../../../shared/ui/icons";
 import {
-  PRIORITIES,
   type BoardCard,
   type BoardColumn,
   type BoardLabel,
@@ -15,6 +14,8 @@ import {
 } from "../model/layout";
 import { useWindowedRows } from "../model/windowing";
 import { dueChip } from "./boardFormat";
+import { priorityName } from "../model/boardSettings";
+import { usePriorityScheme } from "./priorityScheme";
 
 type Row =
   | { kind: "header"; key: string; group: Group; collapsed: boolean }
@@ -50,9 +51,10 @@ export function BoardList({
   /** A click on a card row: the board decides between selecting and opening. */
   onRowClick: (event: MouseEvent<HTMLElement>, card: BoardCard) => void;
 }) {
+  const scheme = usePriorityScheme();
   const rows = useMemo(() => {
     const byId = new Map(cards.map((card) => [card.id, card]));
-    const groups = buildGroups({ by: groupBy, cards, columns, extras, labels, projects });
+    const groups = buildGroups({ by: groupBy, cards, columns, extras, labels, projects, priorities: scheme });
     const out: Row[] = [];
     for (const group of groups) {
       const closed = collapsed.includes(group.key);
@@ -73,7 +75,7 @@ export function BoardList({
       }
     }
     return out;
-  }, [cards, columns, extras, labels, projects, groupBy, collapsed]);
+  }, [cards, columns, extras, labels, projects, groupBy, collapsed, scheme]);
 
   const win = useWindowedRows({ count: rows.length, rowHeight: ROW_HEIGHT });
   const columnName = (id: string) =>
@@ -154,7 +156,7 @@ export function BoardList({
               ) : null}
               {mine?.priority && groupBy !== "priority" ? (
                 <span className="shrink-0 text-[11px] text-content/70">
-                  {PRIORITIES[mine.priority]}
+                  {priorityName(scheme, mine.priority)}
                 </span>
               ) : null}
               {due && groupBy !== "due" ? (

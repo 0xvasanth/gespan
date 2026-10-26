@@ -9,7 +9,6 @@ import {
 import type { TicketRef } from "../../sessions/model/session";
 import { SessionTicketChip } from "../../sessions/ui/SessionTicketChip";
 import {
-  PRIORITIES,
   setCardTicket,
   type BoardCard,
   type BoardLabel,
@@ -28,6 +27,8 @@ import {
   type BoardLinkTarget,
   type ResolvedLink,
 } from "./boardFormat";
+import { priorityName } from "../model/boardSettings";
+import { usePriorityScheme } from "./priorityScheme";
 
 const KIND_ICON: Record<CardLinkKind, typeof MessageSquare> = {
   session: MessageSquare,
@@ -77,8 +78,9 @@ function CardExtrasRow({
   onSetPriority: (priority: number) => void;
   onSetDue: (dueAt: number | null) => void;
 }) {
+  const scheme = usePriorityScheme();
   const due = extras.dueAt === null ? null : dueChip(extras.dueAt);
-  const priority = PRIORITIES[extras.priority] ?? PRIORITIES[0];
+  const priority = priorityName(scheme, extras.priority);
   return (
     <>
       {extras.priority ? (
