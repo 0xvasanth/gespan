@@ -2938,6 +2938,60 @@ mod tests {
             .unwrap();
     }
     #[gpui::test]
+    fn switching_projects_drops_the_previous_projects_selection_and_detail(
+        cx: &mut TestAppContext,
+    ) {
+        let window = fixture(cx);
+        window
+            .update(cx, |fixture, _, cx| {
+                fixture.inbox.update(cx, |inbox, cx| {
+                    let (a, b) = (PathBuf::from("/work/a"), PathBuf::from("/work/b"));
+                    let item = |number, project: &PathBuf| Item {
+                        provider: "github".into(),
+                        kind: "pr".into(),
+                        state: "open".into(),
+                        repo: format!("acme/app-{number}"),
+                        number,
+                        project_path: project.to_string_lossy().into_owned(),
+                        ..Default::default()
+                    };
+                    // Keep the list fetch queued instead of reaching real providers.
+                    inbox.loading = true;
+                    inbox.snapshot.items = vec![item(1, &a), item(2, &b)];
+                    inbox.set_context(vec![a.clone(), b.clone()], a.clone(), cx);
+                    inbox.selected = Some(item(1, &a).key());
+                    inbox.details = Some(Details {
+                        body: "From project A".into(),
+                        ..Default::default()
+                    });
+                    inbox.detail_loading = true;
+                    let request = inbox.detail_generation;
+                    let scope = inbox.fetch_scope();
+
+                    inbox.set_context(vec![a.clone(), b.clone()], b.clone(), cx);
+
+                    assert_eq!(inbox.selected, None);
+                    assert!(inbox.details.is_none() && inbox.thread.is_none());
+                    assert!(inbox.document.is_none() && inbox.comments.is_empty());
+                    assert!(!inbox.detail_loading);
+                    assert_ne!(
+                        inbox.detail_generation, request,
+                        "project A's detail request must be discarded"
+                    );
+                    assert_ne!(inbox.fetch_scope(), scope, "a fetch made for A is stale");
+                    assert_eq!(
+                        inbox
+                            .visible_items(cx)
+                            .iter()
+                            .map(Item::key)
+                            .collect::<Vec<_>>(),
+                        vec![item(2, &b).key()]
+                    );
+                });
+            })
+            .unwrap();
+    }
+    #[gpui::test]
     fn long_discussion_materializes_only_viewport_comments_and_reply_focus_reaches_composer(
         cx: &mut TestAppContext,
     ) {
