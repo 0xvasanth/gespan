@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { HoldState } from "./hold";
 import { HoldCoordinator, type HoldHost } from "./holdCoordinator";
 
-export type HoldActions = Omit<HoldHost, "confirm" | "changed">;
+export type HoldActions = Omit<HoldHost, "changed">;
 
 /**
  * One HoldCoordinator for the app. `actions` may change every render; the
@@ -11,8 +11,6 @@ export type HoldActions = Omit<HoldHost, "confirm" | "changed">;
 export function useHold(actions: HoldActions) {
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
-  const resolver = useRef<((ok: boolean) => void) | null>(null);
-  const [confirming, setConfirming] = useState(false);
   const coordinatorRef = useRef<HoldCoordinator | null>(null);
   const changedRef = useRef<(state: HoldState | null) => void>(() => undefined);
   if (!coordinatorRef.current) {
@@ -21,11 +19,6 @@ export function useHold(actions: HoldActions) {
       holdTurn: (id) => actionsRef.current.holdTurn(id),
       stop: (id) => actionsRef.current.stop?.(id),
       resume: (id, prompt) => actionsRef.current.resume(id, prompt),
-      confirm: () =>
-        new Promise<boolean>((resolve) => {
-          resolver.current = resolve;
-          setConfirming(true);
-        }),
       changed: (state) => changedRef.current(state),
     });
   }
@@ -37,10 +30,5 @@ export function useHold(actions: HoldActions) {
       changedRef.current = () => undefined;
     };
   }, []);
-  const answer = useCallback((ok: boolean) => {
-    setConfirming(false);
-    resolver.current?.(ok);
-    resolver.current = null;
-  }, []);
-  return { hold, phase: hold.phase(), confirming, answer };
+  return { hold, phase: hold.phase() };
 }

@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Loader, Pause, Play } from "../../../shared/ui/icons";
 import { MOD } from "../../../platform/tauri/platform";
 import type { HoldPhase } from "../model/hold";
+import type { HoldPress } from "../model/holdPress";
+import { HoldToConfirm } from "./HoldToConfirm";
 
 export type SettlingSession = { id: string; title: string; tool?: string };
 
@@ -16,30 +18,19 @@ export function HoldControl({
   phase,
   summary,
   settling,
-  onToggle,
+  press,
+  onResume,
   onStopNow,
 }: {
   phase: HoldPhase | null;
   summary: string;
   settling: SettlingSession[];
-  onToggle: () => void;
+  press: HoldPress;
+  onResume: () => void;
   onStopNow: (sessionId: string) => void;
 }) {
   const [details, setDetails] = useState(false);
-  if (phase === null) {
-    return (
-      <button
-        type="button"
-        className={chip}
-        aria-label={`Hold everything (${MOD}⇧H)`}
-        title={`Hold everything (${MOD}⇧H)`}
-        onClick={onToggle}
-      >
-        <Pause className="size-3.5" strokeWidth={1.75} aria-hidden />
-        <span>{summary}</span>
-      </button>
-    );
-  }
+  if (phase === null) return <HoldToConfirm press={press} />;
   if (phase === "holding") {
     return (
       <span className="relative">
@@ -95,7 +86,7 @@ export function HoldControl({
         className={`${chip} text-content/90`}
         aria-label={`Resume everything (${MOD}⇧H)`}
         title={`Resume everything (${MOD}⇧H)`}
-        onClick={onToggle}
+        onClick={onResume}
       >
         <Play className="size-3.5" strokeWidth={1.75} aria-hidden />
         <span>Resume</span>

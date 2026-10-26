@@ -837,7 +837,7 @@ import {
 } from "../features/sessions/data/sessionHistory";
 import { HoldPhaseContext } from "../features/hold/model/holdContext";
 import { useHold } from "../features/hold/model/useHold";
-import { ConfirmHold } from "../features/hold/ui/ConfirmHold";
+import { HoldPress } from "../features/hold/model/holdPress";
 import { HoldControl } from "../features/hold/ui/HoldControl";
 import {
   CONTINUE_PROMPT,
@@ -1224,6 +1224,21 @@ function Workspace({
     },
   });
   const holdRef = useRef(holdApi.hold);
+  // The status-bar button and held ⌘⇧H share one hold-to-confirm press.
+  const [holdPress] = useState(
+    () =>
+      new HoldPress(() => {
+        if (holdRef.current.phase() === null) holdRef.current.toggle();
+      }),
+  );
+  useEffect(() => () => holdPress.dispose(), [holdPress]);
+  // The palette and menus can't be held: they show the button's hint, or
+  // resume once on hold. An echo of a held ⌘⇧H is ignored.
+  const holdFromMenu = useCallback(() => {
+    if (holdPress.keyHeld) return;
+    if (holdRef.current.phase() === null) holdPress.hint();
+    else holdRef.current.toggle();
+  }, [holdPress]);
   const onStopRef = useRef<(id: string) => void>(() => undefined);
   const onSubmitRef = useRef<(...args: Parameters<Submit>) => boolean>(
     () => false,
@@ -13374,13 +13389,29 @@ function Workspace({
         else if (shortcut === "App: Find in Files")
           run("find_in_project", a.onFindInProject);
         else if (shortcut === "App: Hold Everything")
-          run("hold_toggle", () => void holdRef.current.toggle());
+          run("hold_toggle", () =>
+            holdPress.shortcutDown(holdRef.current.phase(), () =>
+              holdRef.current.resume(),
+            ),
+          );
         return;
       }
     };
+    // A held ⌘⇧H ends when H or a modifier goes up, or the window blurs.
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (["Meta", "Control", "Shift", "h", "H"].includes(e.key))
+        holdPress.shortcutUp();
+    };
+    const onBlur = () => holdPress.cancel();
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [run]);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [run, holdPress]);
 
   useEffect(() => {
     const unlisten: Array<Promise<() => void>> = [
@@ -13444,9 +13475,7 @@ function Workspace({
       listen("open_command_palette", () =>
         run("open_command_palette", actions.current.onOpenCommandPalette),
       ),
-      listen("hold_toggle", () =>
-        run("hold_toggle", () => void holdRef.current.toggle()),
-      ),
+      listen("hold_toggle", () => run("hold_toggle", holdFromMenu)),
       listen("reload", () => run("reload", actions.current.onReload)),
       listen("open_search", () => actions.current.onOpenSearch()),
       listen("open_inbox", () => actions.current.onOpenInbox()),
@@ -14454,7 +14483,8 @@ function Workspace({
               const session = sessions.find((s) => s.id === id);
               return { id, title: session?.title || "Session" };
             })}
-            onToggle={() => void holdApi.hold.toggle()}
+            press={holdPress}
+            onResume={() => holdApi.hold.resume()}
             onStopNow={(id) => holdApi.hold.stopNow(id)}
           />
         }
@@ -15072,18 +15102,12 @@ function Workspace({
               }
               onRunAction={(id) => {
                 if (id === "reload") actions.current.onReload();
-                if (id === "hold") void holdRef.current.toggle();
+                if (id === "hold") holdFromMenu();
               }}
               onClose={() => setFilePickerOpen(false)}
             />
           ) : null}
 
-          {holdApi.confirming && (
-            <ConfirmHold
-              running={sessions.filter((s) => s.busy).length}
-              onClose={holdApi.answer}
-            />
-          )}
           {sessionDeleteDialog && (
             <DeleteSessionDialog
               mode={sessionDeleteDialog.mode}

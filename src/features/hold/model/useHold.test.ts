@@ -39,36 +39,13 @@ afterEach(() => {
 });
 
 describe("useHold", () => {
-  it("asks for confirmation, then holds and re-renders with the new phase", async () => {
+  it("re-renders with the new phase when the hold changes", () => {
     root = createRoot(container);
     act(() => root!.render(createElement(Probe, { actions: actions(false) })));
     expect(latest!.phase).toBeNull();
-    let toggled!: Promise<void>;
-    act(() => {
-      toggled = latest!.hold.toggle();
-    });
-    expect(latest!.confirming).toBe(true);
-    await act(async () => {
-      latest!.answer(true);
-      await toggled;
-    });
-    expect(latest!.confirming).toBe(false);
+    act(() => latest!.hold.toggle());
     expect(latest!.phase).toBe("onHold");
-  });
-
-  it("cancelling the confirmation leaves everything running", async () => {
-    root = createRoot(container);
-    const busy = actions(true);
-    act(() => root!.render(createElement(Probe, { actions: busy })));
-    let toggled!: Promise<void>;
-    act(() => {
-      toggled = latest!.hold.toggle();
-    });
-    await act(async () => {
-      latest!.answer(false);
-      await toggled;
-    });
+    act(() => latest!.hold.toggle());
     expect(latest!.phase).toBeNull();
-    expect(busy.holdTurn).not.toHaveBeenCalled();
   });
 });

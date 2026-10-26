@@ -1,5 +1,5 @@
 /**
- * The desktop app's Hold: confirm, stop every session at its safe point, keep
+ * The desktop app's Hold: stop every session at its safe point, keep
  * the hold across restarts, and resume sessions a few at a time. React state
  * stays in App; this class only decides and asks its host to act.
  */
@@ -42,8 +42,6 @@ export type HoldHost = {
    * queue. Returns whether a turn started.
    */
   resume(sessionId: string, prompt: string | null): boolean;
-  /** The "Hold everything?" confirmation. */
-  confirm(): Promise<boolean>;
   /** The hold changed; re-render. */
   changed(state: HoldState | null): void;
 };
@@ -54,7 +52,6 @@ export class HoldCoordinator {
   private interrupted = new Set<string>();
   private queue: ResumeQueue | null = null;
   private reasons = new Map<string, HoldReason>();
-  private prompting = false;
   /** When the last hold began, once it has been resumed. */
   private lastHoldSince: number | undefined;
   /** Settlements of held turns, delivered once the session really stops. */
@@ -83,20 +80,14 @@ export class HoldCoordinator {
     );
   }
 
-  /** ⌘⇧H, the status bar, the palette and the menus all land here. */
-  async toggle(): Promise<void> {
-    if (this.state?.phase === "holding" || this.prompting) return;
-    if (this.state?.phase === "onHold") {
-      this.resume();
-      return;
-    }
-    this.prompting = true;
-    try {
-      if (!(await this.host.confirm())) return;
-    } finally {
-      this.prompting = false;
-    }
-    this.holdAll(Date.now());
+  /**
+   * Holds, or resumes once on hold. Callers confirm a hold first: the
+   * status-bar button and ⌘⇧H are hold-to-confirm.
+   */
+  toggle(): void {
+    if (this.state?.phase === "holding") return;
+    if (this.state?.phase === "onHold") this.resume();
+    else this.holdAll(Date.now());
   }
 
   holdAll(now: number): void {

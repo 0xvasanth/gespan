@@ -103,8 +103,13 @@ impl Shell {
         event: &gpui::ModifiersChangedEvent,
         cx: &mut Context<Self>,
     ) {
+        // macOS sends no key-up for H while ⌘ is down, so a modifier going up
+        // is what usually ends a held ⌘⇧H.
         if self.hold.key_held && !(event.modifiers.secondary() && event.modifiers.shift) {
-            self.cancel_hold_press(cx);
+            self.hold.key_held = false;
+            if self.hold.press.pressing() {
+                self.release_hold_press(cx);
+            }
         }
     }
     /// Enter, Space or VoiceOver on the button: no press to hold, so the
@@ -1094,6 +1099,20 @@ mod tests {
         advance(visual, 3000);
         assert_eq!(phase(visual), None);
         assert_eq!(label(window, visual), crate::hold_confirm::Label::Rest);
+    }
+
+    #[gpui::test]
+    fn a_quick_shortcut_tap_shows_hold_to_confirm(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        shortcut_down(visual);
+        advance(visual, 100);
+        // macOS sends no key-up for H while ⌘ is down: ⌘ going up ends it.
+        visual.simulate_modifiers_change(gpui::Modifiers::none());
+        visual.run_until_parked();
+        assert_eq!(label(window, visual), crate::hold_confirm::Label::Hint);
+        assert_eq!(phase(visual), None);
     }
 
     #[gpui::test]
