@@ -1115,50 +1115,77 @@ mod tests {
         use std::io::{Read, Write};
         use std::net::TcpListener;
 
-        // Serves one 302 pointing back at itself. Because a follower would
-        // call back before the client returned, a connection still waiting
-        // in the backlog afterwards proves the redirect was followed.
-        fn serve_one_redirect() -> (String, std::thread::JoinHandle<(String, bool)>) {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
-            let handle = std::thread::spawn(move || {
-                let (mut first, _) = listener.accept().unwrap();
-                let mut buffer = [0u8; 8192];
-                let read = first.read(&mut buffer).unwrap();
-                let seen = String::from_utf8_lossy(&buffer[..read]).to_string();
-                first
-                    .write_all(
-                        b"HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                    )
-                    .unwrap();
-                drop(first);
-                listener.set_nonblocking(true).unwrap();
-                (seen, listener.accept().is_ok())
-            });
-            (url, handle)
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct Redirector {
+            url: String,
+            done: Arc<AtomicBool>,
+            server: std::thread::JoinHandle<(String, bool)>,
         }
 
-        let (site, server) = serve_one_redirect();
+        impl Redirector {
+            /// Answers the first request with a 302 back at itself, then keeps
+            /// accepting until `finish`, so a follow-up connection made at any
+            /// point before the client returned is recorded.
+            fn start() -> Self {
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+                let done = Arc::new(AtomicBool::new(false));
+                let flag = done.clone();
+                let server = std::thread::spawn(move || {
+                    let (mut first, _) = listener.accept().unwrap();
+                    let mut buffer = [0u8; 8192];
+                    let read = first.read(&mut buffer).unwrap();
+                    let seen = String::from_utf8_lossy(&buffer[..read]).to_string();
+                    first
+                        .write_all(
+                            b"HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        )
+                        .unwrap();
+                    drop(first);
+                    listener.set_nonblocking(true).unwrap();
+                    loop {
+                        let finished = flag.load(Ordering::SeqCst);
+                        if listener.accept().is_ok() {
+                            return (seen, true);
+                        }
+                        if finished {
+                            return (seen, false);
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                });
+                Self { url, done, server }
+            }
+
+            /// Call after the client returned: `(first request, was it followed)`.
+            fn finish(self) -> (String, bool) {
+                self.done.store(true, Ordering::SeqCst);
+                self.server.join().unwrap()
+            }
+        }
+
+        let redirector = Redirector::start();
         let config = JiraConfig {
-            site,
+            site: redirector.url.clone(),
             email: "me@example.com".into(),
             token: "jira-secret".into(),
         };
         let error = jira_get(&config, "/rest/api/3/myself").unwrap_err();
-        let (seen, followed) = server.join().unwrap();
+        let (seen, followed) = redirector.finish();
         assert!(!followed, "Jira redirect was followed");
         assert!(seen.to_ascii_lowercase().contains("authorization: basic"));
         assert!(!error.contains("jira-secret") && !error.contains("elsewhere"));
 
-        let (url, server) = serve_one_redirect();
+        let redirector = Redirector::start();
         let error = crate::provider_boards::linear::graphql_at(
-            &url,
+            &redirector.url,
             "lin_key",
             "query { viewer { id } }",
             json!({}),
         )
         .unwrap_err();
-        let (seen, followed) = server.join().unwrap();
+        let (seen, followed) = redirector.finish();
         assert!(!followed, "Linear redirect was followed");
         assert!(seen.to_ascii_lowercase().contains("authorization: lin_key"));
         assert!(!error.contains("lin_key") && !error.contains("elsewhere"));

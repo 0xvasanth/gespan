@@ -134,16 +134,22 @@ pub fn answer(
 
 const MAX_REMOTE_ERROR: usize = 300;
 
-/// Remote failures can carry a raw response or request dump. Agents get one
-/// short line, and none that mentions a credential header.
+/// Remote failures can carry a raw response or request dump. Agents get the
+/// first non-blank line, cut to `MAX_REMOTE_ERROR` characters. A line that
+/// names a credential header (`authorization`, `x-api-key`, `cookie`) is
+/// replaced by a generic message. This is a header-name denylist on that one
+/// line, not a scrubber for token values.
 fn short_remote_error(message: &str) -> String {
-    let line = message.lines().next().unwrap_or_default().trim();
+    const GENERIC: &str = "The tracker request failed";
+    let Some(line) = message.lines().map(str::trim).find(|line| !line.is_empty()) else {
+        return GENERIC.into();
+    };
     let lower = line.to_ascii_lowercase();
     if ["authorization", "x-api-key", "cookie"]
         .iter()
         .any(|header| lower.contains(header))
     {
-        return "The tracker request failed".into();
+        return GENERIC.into();
     }
     line.chars().take(MAX_REMOTE_ERROR).collect()
 }
@@ -284,6 +290,9 @@ mod tests {
         // Only the first line survives.
         let error = remote("HTTP 500\nauthorization: Bearer abc\nx-api-key: def".into());
         assert_eq!(error, "HTTP 500");
+        // Leading blank lines are skipped; nothing left falls back.
+        assert_eq!(remote("\n  \nHTTP 502\nbody".into()), "HTTP 502");
+        assert_eq!(remote(" \n\n".into()), "The tracker request failed");
         // Length is capped.
         let error = remote("a".repeat(1000));
         assert_eq!(error.chars().count(), 300);
