@@ -447,6 +447,32 @@ fn density_toggle_remeasures_without_overlap(cx: &mut TestAppContext) {
     }
     let comfortable_height = bounds[1].size.height;
     assert!(comfortable_height > compact_height);
+    // Cards below the view were measured compact before the toggle. A wheel
+    // scroll far past them must move by comfortable cards, not by the old
+    // compact heights (which would land many cards too far).
+    let pitch = bounds[1].top() - bounds[0].top();
+    let from = list_top(&f, visual, &column).item_ix;
+    let body = center(visual, "board-column-body-0");
+    visual.simulate_event(ScrollWheelEvent {
+        position: body,
+        delta: ScrollDelta::Pixels(gpui::point(px(0.), px(-3000.))),
+        modifiers: Default::default(),
+        touch_phase: TouchPhase::Moved,
+    });
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let moved = (list_top(&f, visual, &column).item_ix - from) as f32;
+    let expected = 3000. / f32::from(pitch);
+    assert!(
+        (moved - expected).abs() <= 1.5,
+        "a 3000px scroll moved {moved} cards; {expected} comfortable cards fit"
+    );
+    let shown = painted(visual);
+    let mut bounds: Vec<_> = shown.iter().map(|n| card_bounds(visual, *n)).collect();
+    bounds.sort_by(|a, b| a.top().partial_cmp(&b.top()).unwrap());
+    for pair in bounds.windows(2) {
+        assert!(pair[0].bottom() <= pair[1].top());
+    }
     // Back to compact: the cards measured comfortable shrink again.
     patch_display(&f, r#"{"density":"compact"}"#);
     reload_view(&f, visual);
@@ -520,4 +546,158 @@ fn native_open_and_filter_meet_the_budget(cx: &mut TestAppContext) {
         filter <= Duration::from_millis(150),
         "filter took {filter:?}"
     );
+}
+
+fn wheel(visual: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>, dy: f32) {
+    visual.simulate_event(ScrollWheelEvent {
+        position: at,
+        delta: ScrollDelta::Pixels(gpui::point(px(0.), px(dy))),
+        modifiers: Default::default(),
+        touch_phase: TouchPhase::Moved,
+    });
+    visual.run_until_parked();
+}
+
+#[gpui::test]
+fn a_card_dropped_first_in_a_column_viewed_from_the_top_shows_first(cx: &mut TestAppContext) {
+    let f = seeded_board(cx, true);
+    let mover = with_inbox(&f, cx);
+    let column = column_at(&f, cx, 0);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    // Down and back up: the view has scrolled, and is at the start again.
+    let body = center(visual, "board-column-body-0");
+    wheel(visual, body, -2000.);
+    assert!(list_top(&f, visual, &column).item_ix > 0);
+    wheel(visual, body, 4000.);
+    let top = list_top(&f, visual, &column);
+    assert_eq!((top.item_ix, top.offset_in_item), (0, px(0.)));
+    visual.refresh().unwrap();
+    let first = card_bounds(visual, 1);
+    let mover_number = number_of(&f, visual, &mover);
+    let from = card_bounds(visual, mover_number).center();
+    drag(
+        visual,
+        from,
+        gpui::point(first.center().x, first.top() + px(2.)),
+    );
+    assert_eq!(stored_order(&f, &column)[0], mover);
+    visual.refresh().unwrap();
+    let top = list_top(&f, visual, &column);
+    assert_eq!((top.item_ix, top.offset_in_item), (0, px(0.)));
+    // It is painted first, at the top of the column, above card 1.
+    let dropped = card_bounds(visual, mover_number);
+    let view = f
+        .window
+        .read_with(visual, |view, _| {
+            view.column_lists[&column].viewport_bounds()
+        })
+        .unwrap();
+    assert!(dropped.top() >= view.top() && dropped.top() <= view.top() + px(8.));
+    assert!(dropped.bottom() <= card_bounds(visual, 1).top());
+}
+
+#[gpui::test]
+fn the_composer_keeps_every_keystroke_at_the_bottom_of_a_1000_card_column(cx: &mut TestAppContext) {
+    let f = seeded_board(cx, true);
+    let column = column_at(&f, cx, 0);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    scroll_list_to(&f, visual, &column, 1000);
+    click(visual, "board-add-card-0");
+    let titles: Vec<String> = (1..=6).map(|i| format!("Typed card {i}")).collect();
+    for title in &titles {
+        visual.simulate_input(title);
+        f.window
+            .update(visual, |view, window, cx| {
+                let composer = view.composer.as_ref().expect("the composer is open");
+                assert!(composer.focus.is_focused(window), "the field has focus");
+                assert_eq!(
+                    composer.input.read(cx).content,
+                    *title,
+                    "every keystroke landed"
+                );
+            })
+            .unwrap();
+        visual.simulate_keystrokes("enter");
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    }
+    let detail = detail(&f, visual);
+    let order = stored_order(&f, &column);
+    assert_eq!(order.len(), 1006);
+    let last: Vec<String> = order[1000..]
+        .iter()
+        .map(|id| {
+            detail
+                .cards
+                .iter()
+                .find(|card| card.id == *id)
+                .unwrap()
+                .title
+                .clone()
+        })
+        .collect();
+    assert_eq!(last, titles);
+    // The field is still on screen under the cards it added.
+    let view = f
+        .window
+        .read_with(visual, |view, _| {
+            view.column_lists[&column].viewport_bounds()
+        })
+        .unwrap();
+    let newest = detail.cards.iter().find(|c| c.title == titles[5]).unwrap();
+    let card = card_bounds(visual, newest.number);
+    assert!(card.top() >= view.top() && card.bottom() <= view.bottom());
+}
+
+#[gpui::test]
+fn a_card_menu_from_a_scrolled_away_focused_card_anchors_on_screen(cx: &mut TestAppContext) {
+    let f = seeded_board(cx, true);
+    let column = column_at(&f, cx, 0);
+    let ids = list_ids(&f, cx, &column);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &ids[0]);
+    let body = center(visual, "board-column-body-0");
+    wheel(visual, body, -3000.);
+    assert!(list_top(&f, visual, &column).item_ix > 20);
+    assert_eq!(focused_card(&f, visual), Some(ids[0].clone()));
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    f.window
+        .read_with(visual, |view, _| {
+            let menu = view.card_menu.as_ref().expect("the card menu is open");
+            assert_eq!(menu.card_id, ids[0]);
+            let anchor = view.card_anchors[&ids[0]]
+                .get()
+                .expect("the card is painted");
+            assert_ne!(anchor, gpui::Bounds::default());
+            let viewport = view.column_lists[&column].viewport_bounds();
+            assert!(
+                anchor.top() >= viewport.top() && anchor.bottom() <= viewport.bottom(),
+                "{anchor:?} is inside {viewport:?}"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_keyboard_lift_over_a_collapsed_column_keeps_its_scroll(cx: &mut TestAppContext) {
+    let f = seeded_board(cx, false);
+    let (first, second) = (column_at(&f, cx, 0), column_at(&f, cx, 1));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    scroll_list_to(&f, visual, &second, 100);
+    Service::open(&f.db)
+        .unwrap()
+        .set_column_display(&second, None, None, true)
+        .unwrap();
+    reload_view(&f, visual);
+    visual.refresh().unwrap();
+    assert_eq!(list_top(&f, visual, &second).item_ix, 100);
+    let card = list_ids(&f, visual, &first)[0].clone();
+    focus_card(&f, visual, &card);
+    // Lift, pass over the collapsed column and back, and put it down again.
+    visual.simulate_keystrokes("space right left escape");
+    visual.run_until_parked();
+    assert_eq!(list_top(&f, visual, &second).item_ix, 100);
 }

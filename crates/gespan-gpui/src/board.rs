@@ -93,6 +93,9 @@ pub(crate) enum LinkLabel {
 pub(crate) struct Composer {
     pub column_id: String,
     pub input: Entity<Input>,
+    /// The field's focus handle: the column's list keeps the composer row
+    /// mounted while it has focus, however far the cards push it down.
+    pub focus: FocusHandle,
 }
 
 enum Menu {
@@ -281,6 +284,9 @@ pub(crate) struct BoardView {
     item_heights: Rc<RefCell<HashMap<String, Pixels>>>,
     /// The display options the lists were measured with.
     list_display: Option<DisplayOptions>,
+    /// The mean painted card row height seen under each display, the first
+    /// guess for unpainted cards when that display is back.
+    learned_heights: Vec<(DisplayOptions, Pixels)>,
     /// Cards rendered since the start of the last board render.
     #[cfg(test)]
     pub(crate) rendered_cards: std::cell::Cell<usize>,
@@ -461,6 +467,7 @@ impl BoardView {
             card_slots: HashMap::new(),
             item_heights: Rc::default(),
             list_display: None,
+            learned_heights: Vec::new(),
             #[cfg(test)]
             rendered_cards: std::cell::Cell::new(0),
             column_counts: HashMap::new(),
@@ -864,12 +871,22 @@ impl BoardView {
         self.composer_submit = Some(cx.subscribe(&input, |this, _, _: &input::Submitted, cx| {
             this.commit_composer(cx)
         }));
-        window.focus(&input.focus_handle(cx), cx);
-        // The composer is the column's last row: bring it into view.
-        if let Some(count) = self.column_ids.get(&column_id).map(Vec::len) {
+        let focus = input.focus_handle(cx);
+        window.focus(&focus, cx);
+        // The composer is the column's last row: hand the list its focus
+        // handle and bring it into view.
+        if let (Some(count), Some(state)) = (
+            self.column_ids.get(&column_id).map(Vec::len),
+            self.column_lists.get(&column_id),
+        ) {
+            state.splice_focusable(count..count + 1, [Some(focus.clone())]);
             self.reveal_item(&column_id, count);
         }
-        self.composer = Some(Composer { column_id, input });
+        self.composer = Some(Composer {
+            column_id,
+            input,
+            focus,
+        });
         self.menu = None;
         cx.notify();
     }
@@ -1174,6 +1191,9 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The menu anchors to the card: a focused card scrolled out of its
+        // column's window comes back into view first.
+        self.reveal_card(&card_id);
         let Some(detail) = &self.detail else {
             return;
         };
@@ -1515,10 +1535,9 @@ impl gpui::Render for BoardView {
         }
         if self.list_display.as_ref() != Some(&self.display) {
             // A density or card-face change: every card height is stale.
-            if self.list_display.is_some() {
-                for state in self.column_lists.values() {
-                    state.remeasure();
-                }
+            if let Some(old) = self.list_display.clone() {
+                self.learn_item_height(&old);
+                self.remeasure_column_lists();
                 self.item_heights.borrow_mut().clear();
             }
             self.list_display = Some(self.display.clone());

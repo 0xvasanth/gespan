@@ -444,6 +444,10 @@ impl BoardView {
         if self.dragging {
             return;
         }
+        if anchor.is_none() {
+            // The menu anchors to the card face: bring the card into view.
+            self.reveal_card(&card_id);
+        }
         let items = match face {
             Face::Status => self.status_items(&card_id),
             Face::Priority => priority_items(&self.priority),

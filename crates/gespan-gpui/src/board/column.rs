@@ -102,6 +102,10 @@ impl BoardView {
     /// only the changed run of ids is spliced, and the card that was at the
     /// top of the view stays there while it still exists.
     pub(crate) fn sync_column_lists(&mut self) {
+        let display = self.effective_display();
+        if self.list_display.as_ref() == Some(&display) {
+            self.learn_item_height(&display);
+        }
         let mut lists = std::mem::take(&mut self.column_lists);
         let mut old_ids = std::mem::take(&mut self.column_ids);
         let Some(detail) = &self.detail else {
@@ -114,11 +118,16 @@ impl BoardView {
             .enumerate()
             .map(|(index, card)| (card.id.clone(), index))
             .collect();
-        let estimate = card_estimate(&self.effective_display()) + px(ITEM_GAP);
+        let estimate = self.item_estimate(&display);
         let focus = |ids: &[String]| -> Vec<Option<gpui::FocusHandle>> {
             ids.iter()
                 .map(|id| self.card_focus.get(id).cloned())
                 .collect()
+        };
+        let composer_in = |column_id: &str| {
+            self.composer
+                .as_ref()
+                .filter(|composer| composer.column_id == column_id)
         };
         let mut new_lists = HashMap::new();
         let mut new_ids = HashMap::new();
@@ -144,7 +153,14 @@ impl BoardView {
                         // New items start from the estimate, not zero, so the
                         // scroll range and a jump far down stay close.
                         let _ = state.clone().with_uniform_item_height(estimate);
-                        if let Some(item_ix) =
+                        if at_start {
+                            // The splice shifts a view that has ever scrolled;
+                            // put it back at the start.
+                            state.scroll_to(ListOffset {
+                                item_ix: 0,
+                                offset_in_item: px(0.),
+                            });
+                        } else if let Some(item_ix) =
                             top_id.and_then(|id| ids.iter().position(|new| new == id))
                         {
                             state.scroll_to(ListOffset {
@@ -152,13 +168,19 @@ impl BoardView {
                                 offset_in_item: top.offset_in_item,
                             });
                         }
+                        // Typing in the composer adds cards above it: keep
+                        // the field in view.
+                        if composer_in(&column.id).is_some() {
+                            state.scroll_to_reveal_item(ids.len());
+                        }
                     }
                     state
                 }
                 _ => {
                     let state = ListState::new(0, ListAlignment::Top, CARD_LIST_OVERDRAW);
                     // The cards, then the composer row.
-                    state.splice_focusable(0..0, focus(&ids).into_iter().chain([None]));
+                    let composer = composer_in(&column.id).map(|composer| composer.focus.clone());
+                    state.splice_focusable(0..0, focus(&ids).into_iter().chain([composer]));
                     state.with_uniform_item_height(estimate)
                 }
             };
@@ -168,6 +190,69 @@ impl BoardView {
         self.card_slots = slots;
         self.column_lists = new_lists;
         self.column_ids = new_ids;
+    }
+
+    /// A first guess at a card row's height (card and gap) under `display`:
+    /// the mean painted height last seen under it, else the fixed estimate.
+    fn item_estimate(&self, display: &DisplayOptions) -> Pixels {
+        self.learned_heights
+            .iter()
+            .find(|(seen, _)| seen == display)
+            .map_or(card_estimate(display) + px(ITEM_GAP), |(_, height)| *height)
+    }
+
+    /// Remember the mean painted card row height under `display`, which the
+    /// painted heights in `item_heights` were measured with.
+    pub(crate) fn learn_item_height(&mut self, display: &DisplayOptions) {
+        let (sum, count) = self
+            .item_heights
+            .borrow()
+            .iter()
+            .filter(|(key, _)| !key.starts_with("footer:"))
+            .fold((px(0.), 0usize), |(sum, count), (_, height)| {
+                (sum + *height, count + 1)
+            });
+        if count == 0 {
+            return;
+        }
+        let mean = sum / count as f32;
+        match self
+            .learned_heights
+            .iter_mut()
+            .find(|(seen, _)| seen == display)
+        {
+            Some((_, height)) => *height = mean,
+            None => self.learned_heights.push((display.clone(), mean)),
+        }
+    }
+
+    /// After a density or card-face change: drop every cached card height
+    /// (a cached height would keep scrolling and reveals on the old sizes),
+    /// start unpainted cards from the new estimate, and keep the top card.
+    pub(crate) fn remeasure_column_lists(&self) {
+        let estimate = self.item_estimate(&self.display);
+        for (column_id, state) in &self.column_lists {
+            let Some(ids) = self.column_ids.get(column_id) else {
+                continue;
+            };
+            let top = state.logical_scroll_top();
+            let composer = self
+                .composer
+                .as_ref()
+                .filter(|composer| &composer.column_id == column_id)
+                .map(|composer| composer.focus.clone());
+            let handles: Vec<_> = ids
+                .iter()
+                .map(|id| self.card_focus.get(id).cloned())
+                .chain([composer])
+                .collect();
+            state.splice_focusable(0..state.item_count(), handles);
+            let _ = state.clone().with_uniform_item_height(estimate);
+            state.scroll_to(ListOffset {
+                item_ix: top.item_ix,
+                offset_in_item: px(0.),
+            });
+        }
     }
 
     /// Scroll a board column so the card is in view. A card that isn't in a
@@ -203,7 +288,7 @@ impl BoardView {
     /// to the board and scrolls.
     fn column_body_height(&self, column_id: &str) -> Pixels {
         let heights = self.item_heights.borrow();
-        let estimate = card_estimate(&self.display) + px(ITEM_GAP);
+        let estimate = self.item_estimate(&self.display);
         let cards = self.column_ids.get(column_id).map_or(px(0.), |ids| {
             ids.iter().fold(px(0.), |sum, id| {
                 sum + heights.get(id).copied().unwrap_or(estimate)

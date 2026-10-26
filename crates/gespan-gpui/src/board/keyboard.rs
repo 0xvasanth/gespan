@@ -330,7 +330,10 @@ impl BoardView {
         self.drop_target = Some((drag.column_id.clone(), drag.slot));
         // The drop line shows above the card at the slot (or above the
         // composer row past the last card): keep it in view.
-        self.reveal_item(&drag.column_id, drag.slot);
+        // A collapsed column has no window to scroll; its own scroll stays.
+        if !self.is_collapsed(&drag.column_id) {
+            self.reveal_item(&drag.column_id, drag.slot);
+        }
         self.kb_drag = Some(drag);
         cx.notify();
     }
