@@ -1,0 +1,55 @@
+src/features/board/model/windowing.ts
+  s_938a6e0c93b076::t_8f26db1c56b652 1-70
+src/features/board/ui/ArchiveView.tsx
+  s_938a6e0c93b076::t_9779bd4581150a 25,33-34,80-82
+src/features/board/ui/BoardCardItem.tsx
+  s_938a6e0c93b076::t_b0aab592f6f666 1,233-234,260-266,275-279,289-291
+src/features/board/ui/BoardTable.tsx
+  s_938a6e0c93b076::t_300f97e340704f 1-6,8-77,79-363,365-450
+  s_938a6e0c93b076::t_dda5d15adc8b06 7,78,364
+src/features/board/model/windowing.test.ts
+  s_938a6e0c93b076::t_d2b1d23719d85f 1-24
+src/features/board/model/undo.ts
+  s_938a6e0c93b076::t_0ce861e1027a2f 22-23,60-61,86-96,106,129,154,179-184,252-253
+src/features/board/model/selection.ts
+  s_938a6e0c93b076::t_8f26db1c56b652 1-56
+src/features/board/model/undo.test.ts
+  s_938a6e0c93b076::t_c42bd13092255a 6,337-427
+  s_938a6e0c93b076::t_8f9e2861085552 428
+src/features/board/model/selection.test.ts
+  s_938a6e0c93b076::t_d2b1d23719d85f 1-62
+src/features/board/model/layout.test.ts
+  s_938a6e0c93b076::t_d2b1d23719d85f 1-165
+src/features/board/ui/BoardLayouts.test.ts
+  s_938a6e0c93b076::t_d38173ff18c81f 1-201,205-893,895-977
+  s_938a6e0c93b076::t_66081308bf1540 202-204,894
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_71bcc4244a0dc0 169,1535
+  s_938a6e0c93b076::t_0df7bc3c207912 34,51-52,55,66,88-103,109,120-122,126-131,311-314,415-420,530-531
+  s_938a6e0c93b076::t_5c00ddea013311 170,705,1136,1388-1389,1393-1417,1526-1534,1536-1541,1645-1731,1807-1875,1889-1904
+  s_938a6e0c93b076::t_7402bd2b931cf4 680-704,706-751,1067-1135,1419-1427,1457,1953-1954
+  s_938a6e0c93b076::t_f86a17a947a5ae 1137,1905
+src/features/board/model/layout.ts
+  s_938a6e0c93b076::t_01222c49913ff4 1-248
+src/features/board/ui/BoardList.tsx
+  s_938a6e0c93b076::t_9c52eba2b56a21 1-171
+src/features/board/ui/SelectionBar.tsx
+  s_938a6e0c93b076::t_9c52eba2b56a21 1-39,41-122
+  s_938a6e0c93b076::t_d38173ff18c81f 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53eaee84e313ad6a8ebeb17f0421eef2a2bf2226",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
