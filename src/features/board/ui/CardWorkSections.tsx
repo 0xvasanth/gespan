@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { SearchableSelect } from "../../../shared/ui/SearchableSelect";
 import { Plus, X } from "../../../shared/ui/icons";
@@ -44,6 +44,7 @@ import {
   PROPERTY_TRIGGER,
   PropertyRow,
   SMALL_BUTTON,
+  leaveDraftOnEscape,
   useAhead,
   useLive,
 } from "./CardDrawerParts";
@@ -100,6 +101,9 @@ export function StartAndEstimateRows({
   const [text, setText] = useState("");
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set by Escape: the blur that follows puts the saved estimate back
+  // instead of committing what was typed.
+  const cancelled = useRef(false);
   useEffect(() => {
     if (!editing) setText(minutes === null ? "" : formatEstimate(minutes));
   }, [minutes, editing]);
@@ -122,6 +126,10 @@ export function StartAndEstimateRows({
     });
   };
   const commitEstimate = () => {
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
     if (!text.trim()) {
       setEditing(false);
       setError(null);
@@ -182,8 +190,11 @@ export function StartAndEstimateRows({
               event.preventDefault();
               event.currentTarget.blur();
             } else if (event.key === "Escape" && editing) {
-              // Escape puts the saved estimate back instead of closing.
+              // Escape puts the saved estimate back instead of closing; the
+              // blur below must not commit the typed text.
+              event.preventDefault();
               event.stopPropagation();
+              cancelled.current = true;
               setError(null);
               setText(minutes === null ? "" : formatEstimate(minutes));
               setEditing(false);
@@ -475,6 +486,9 @@ function FieldRow({
         }}
         onBlur={commitText}
         onKeyDown={(event) => {
+          // Escape leaves the field for the drawer with the text kept (the
+          // blur commits it); it never closes the drawer over a draft.
+          if (leaveDraftOnEscape(event)) return;
           if (event.key === "Enter" && !event.nativeEvent.isComposing) {
             event.preventDefault();
             event.currentTarget.blur();

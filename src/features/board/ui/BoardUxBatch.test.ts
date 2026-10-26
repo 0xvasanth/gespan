@@ -864,3 +864,143 @@ describe("priority settings (R85)", () => {
     ]);
   });
 });
+
+describe("C6-15 review fixes", () => {
+  const meta = (estimateMinutes: number | null) => ({
+    priority: 0,
+    dueAt: null,
+    startAt: null,
+    estimateMinutes,
+    archivedAt: null,
+    completedAt: null,
+  });
+
+  async function renderWithEstimate() {
+    vi.mocked(invoke).mockImplementation(async (cmd) =>
+      cmd === "board_card_meta" ? meta(90) : [],
+    );
+    const props = await renderDetail();
+    await flush();
+    return props;
+  }
+
+  it("escape_in_the_estimate_puts_the_saved_value_back_without_a_write", async () => {
+    const props = await renderWithEstimate();
+    const estimate = field("Estimate");
+    expect(estimate.value).toBe("1h 30m");
+    act(() => estimate.focus());
+    typeInto(estimate, "2h");
+    press(estimate, "Escape");
+    await flush();
+    expect(commands("board_card_set_estimate")).toEqual([]);
+    expect(field("Estimate").value).toBe("1h 30m");
+    // The estimate took the Escape: the drawer stays.
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
+
+  it("escape_after_a_rejected_estimate_clears_the_help_and_shows_the_saved_value", async () => {
+    await renderWithEstimate();
+    const estimate = field("Estimate");
+    act(() => estimate.focus());
+    typeInto(estimate, "1.m");
+    act(() => estimate.blur());
+    await flush();
+    expect(drawer()!.textContent).toContain(ESTIMATE_HELP);
+    // Back into the field, then Escape.
+    act(() => field("Estimate").focus());
+    press(field("Estimate"), "Escape");
+    await flush();
+    expect(drawer()!.textContent).not.toContain(ESTIMATE_HELP);
+    expect(field("Estimate").value).toBe("1h 30m");
+    expect(commands("board_card_set_estimate")).toEqual([]);
+    // Escape straight from typing a bad value: the same.
+    act(() => field("Estimate").focus());
+    typeInto(field("Estimate"), "1.m");
+    press(field("Estimate"), "Escape");
+    await flush();
+    expect(drawer()!.textContent).not.toContain(ESTIMATE_HELP);
+    expect(field("Estimate").value).toBe("1h 30m");
+    expect(commands("board_card_set_estimate")).toEqual([]);
+  });
+
+  it("escape_in_a_custom_field_input_keeps_the_text_and_the_drawer", async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd === "board_fields") {
+        return (["text", "number", "url"] as const).map((kind, position) => ({
+          id: `f-${kind}`,
+          boardId: "b1",
+          name: `My ${kind}`,
+          kind,
+          optionsJson: null,
+          position,
+        }));
+      }
+      if (cmd === "board_card_meta") return meta(null);
+      if (cmd === "board_field_value_set") return undefined;
+      return [];
+    });
+    const props = await renderDetail();
+    await flush();
+    for (const [kind, typed, stored] of [
+      ["text", "half typed", '"half typed"'],
+      ["number", "42", "42"],
+      ["url", "https://a.dev/x", '"https://a.dev/x"'],
+    ] as const) {
+      const input = field(`My ${kind}`);
+      act(() => input.focus());
+      typeInto(input, typed);
+      press(input, "Escape");
+      await flush();
+      // The text stays and the drawer stays (it has focus now); leaving the
+      // field commits it, as any blur does.
+      expect(props.onClose).not.toHaveBeenCalled();
+      expect(field(`My ${kind}`).value).toBe(typed);
+      expect(document.activeElement).toBe(drawer());
+      expect(commands("board_field_value_set").at(-1)?.[1]).toEqual({
+        cardId: "c3",
+        fieldId: `f-${kind}`,
+        valueJson: stored,
+      });
+    }
+    // The next Escape closes.
+    press(document.activeElement!, "Escape");
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("a_failed_priority_write_resets_only_the_failed_field", async () => {
+    let answer: (saved: boolean) => void = () => undefined;
+    const onPatch = vi.fn(
+      () => new Promise<boolean>((resolve) => (answer = resolve)),
+    );
+    await act(async () =>
+      root.render(
+        createElement(PrioritySection, {
+          scheme: DEFAULT_PRIORITY_SCHEME,
+          stored: false,
+          onPatch,
+          onError: vi.fn(),
+        }),
+      ),
+    );
+    const name = (level: number) =>
+      container.querySelector<HTMLInputElement>(
+        `[data-settings-priority="${level}"] input[aria-label="Priority name"]`,
+      )!;
+    act(() => name(1).focus());
+    typeInto(name(1), "Minor");
+    press(name(1), "Enter");
+    await flush();
+    expect(onPatch).toHaveBeenCalledTimes(1);
+    // While that write is out, the user types in another level.
+    const typing = name(2);
+    act(() => typing.focus());
+    typeInto(typing, "Norm");
+    await act(async () => answer(false));
+    await flush();
+    // Only the failed field goes back to the saved name.
+    expect(name(1).value).toBe("Low");
+    expect(name(2)).toBe(typing);
+    expect(name(2).value).toBe("Norm");
+    expect(document.activeElement).toBe(typing);
+  });
+});
