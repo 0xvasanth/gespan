@@ -12,9 +12,11 @@ import {
 } from "../../model/board";
 import { errorText } from "../boardFormat";
 import { ColumnsSection } from "./ColumnsSection";
+import { AutomationSection } from "./AutomationSection";
 import { DisplaySection } from "./DisplaySection";
 import { FieldsSection } from "./FieldsSection";
 import { GeneralSection } from "./GeneralSection";
+import { TemplatesSection } from "./TemplatesSection";
 import { LabelsSection } from "./LabelsSection";
 import { PrioritySection } from "./PrioritySection";
 
@@ -124,6 +126,8 @@ export function BoardSettings({
         />
         <FieldsSection boardId={board.id} fields={fields} onError={onError} />
         <DisplaySection settings={settings} fields={fields} onPatch={patch} />
+        <AutomationSection settings={settings} columns={columns} onPatch={patch} />
+        <TemplatesSection boardId={board.id} onError={onError} />
       </div>
     </div>
   );

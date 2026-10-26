@@ -19,7 +19,7 @@ import { FileActionError } from "../../files/ui/FileActionError";
 import {
   archiveCard,
   archiveCards,
-  createBoard,
+  createBoardFromTemplate,
   createCard,
   createColumn,
   createLabel,
@@ -148,6 +148,7 @@ import { buildLanes, laneValue } from "../model/swimlanes";
 import { fieldText } from "../model/cardProps";
 import { DisplayEditor } from "./settings/DisplayEditor";
 import { Swimlanes } from "./kanban/Swimlanes";
+import { NewBoardDialog } from "./NewBoardDialog";
 import {
   MenuButton,
   MenuItem,
@@ -320,7 +321,8 @@ function BoardContent({
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<BoardDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [naming, setNaming] = useState<"new" | "rename" | null>(null);
+  const [naming, setNaming] = useState<"rename" | null>(null);
+  const [newBoardOpen, setNewBoardOpen] = useState(false);
   const [addingColumn, setAddingColumn] = useState(false);
   const [tickets, setTickets] = useState<Record<string, TicketRef>>({});
   const [extras, setExtras] = useState<Record<string, CardExtras>>({});
@@ -997,9 +999,9 @@ function BoardContent({
     [fail, refresh],
   );
 
-  const createNamedBoard = (name: string) => {
-    setNaming(null);
-    createBoard(name)
+  const createNamedBoard = (name: string, templateId: string) => {
+    setNewBoardOpen(false);
+    createBoardFromTemplate(name, templateId)
       .then((board) => loadBoards(board.id))
       .catch(fail("Couldn't create the board"));
   };
@@ -1449,6 +1451,8 @@ function BoardContent({
       ticketCardOpen ||
       archiveOpen ||
       naming ||
+      newBoardOpen ||
+      settingsOpen ||
       addingColumn ||
       composerColumn ||
       dragInProgress() ||
@@ -1523,23 +1527,19 @@ function BoardContent({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3">
         <span className="text-[13px] text-content/60">No boards yet</span>
-        {naming === "new" ? (
-          <NameInput
-            label="Board name"
-            placeholder="Board name"
-            className="w-56"
-            onSubmit={createNamedBoard}
-            onCancel={() => setNaming(null)}
+        <button
+          type="button"
+          className={BUTTON}
+          onClick={() => setNewBoardOpen(true)}
+        >
+          Create board
+        </button>
+        {newBoardOpen ? (
+          <NewBoardDialog
+            onCreate={createNamedBoard}
+            onClose={() => setNewBoardOpen(false)}
           />
-        ) : (
-          <button
-            type="button"
-            className={BUTTON}
-            onClick={() => setNaming("new")}
-          >
-            Create board
-          </button>
-        )}
+        ) : null}
         {toast}
       </div>
     );
@@ -1908,6 +1908,8 @@ function BoardContent({
             event.key.toLowerCase() !== "n" ||
             event.nativeEvent.isComposing ||
             !detail ||
+            settingsOpen ||
+            newBoardOpen ||
             ticketCardOpen
           )
             return;
@@ -1961,6 +1963,7 @@ function BoardContent({
                       close();
                       setOpenCard(null);
                       setArchiveOpen(false);
+                      setSelection(EMPTY_SELECTION);
                       setSettingsOpen(true);
                     }}
                   >
@@ -2154,24 +2157,20 @@ function BoardContent({
               New card from ticket…
             </button>
           ) : null}
-          {naming === "new" ? (
-            <NameInput
-              label="Board name"
-              placeholder="Board name"
-              className="w-48"
-              onSubmit={createNamedBoard}
-              onCancel={() => setNaming(null)}
+          <button
+            type="button"
+            className={BUTTON}
+            onClick={() => setNewBoardOpen(true)}
+          >
+            <Plus className="size-3.5" strokeWidth={1.75} />
+            New board
+          </button>
+          {newBoardOpen ? (
+            <NewBoardDialog
+              onCreate={createNamedBoard}
+              onClose={() => setNewBoardOpen(false)}
             />
-          ) : (
-            <button
-              type="button"
-              className={BUTTON}
-              onClick={() => setNaming("new")}
-            >
-              <Plus className="size-3.5" strokeWidth={1.75} />
-              New board
-            </button>
-          )}
+          ) : null}
         </div>
         {detail && !settingsOpen ? (
           <ViewTabs
@@ -2224,7 +2223,10 @@ function BoardContent({
             beforeColumnDelete={() => undo.commitPending()}
           />
         ) : null}
-        <div className={`flex min-h-0 flex-1 ${settingsOpen ? "hidden" : ""}`}>
+        <div
+          className={`flex min-h-0 flex-1 ${settingsOpen ? "hidden" : ""}`}
+          inert={settingsOpen || undefined}
+        >
           <div
             className={`relative min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}
           >

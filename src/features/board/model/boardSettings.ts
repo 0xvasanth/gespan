@@ -1,4 +1,8 @@
-import type { PriorityScheme } from "./board";
+import type {
+  AutoMoveRule,
+  LinkedWorkEvent,
+  PriorityScheme,
+} from "./board";
 
 /** Board icons, as the settings page offers them and the store accepts them. */
 export const BOARD_ICONS = [
@@ -153,4 +157,69 @@ export const COLOR_NAMES: Record<string, string> = {
 
 export function colorName(hex: string): string {
   return COLOR_NAMES[hex] ?? `#${hex}`;
+}
+
+/** The linked-work events an auto-move rule can name, as the store keys them, with their labels. */
+export const AUTO_MOVE_EVENTS: readonly (readonly [LinkedWorkEvent, string])[] = [
+  ["started", "Work starts"],
+  ["needs_input", "Work needs input"],
+  ["completed", "Work completes"],
+  ["failed", "Work fails"],
+  ["pr_opened", "PR opened"],
+  ["pr_merged", "PR merged"],
+];
+
+/** What an event does when no rule names it. "default" is the forward-only rule. */
+export const AUTO_MOVE_DEFAULTS: Readonly<Record<LinkedWorkEvent, AutoMoveRule>> = {
+  started: "default",
+  needs_input: "stay",
+  completed: "default",
+  failed: "stay",
+  pr_opened: "stay",
+  pr_merged: "stay",
+};
+
+const isRule = (value: unknown): value is AutoMoveRule =>
+  value === "default" ||
+  value === "stay" ||
+  (!!value &&
+    typeof value === "object" &&
+    typeof (value as { column?: unknown }).column === "string");
+
+function ruleRecord(json: string | null): Record<string, unknown> {
+  if (!json) return {};
+  try {
+    const raw: unknown = JSON.parse(json);
+    return raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The rule an event runs: the stored one, else its default. Unreadable rules read as the default. */
+export function ruleFor(json: string | null, event: LinkedWorkEvent): AutoMoveRule {
+  const stored = ruleRecord(json)[event];
+  return isRule(stored) ? stored : AUTO_MOVE_DEFAULTS[event];
+}
+
+/**
+ * The rule as a picker shows it: a rule naming a column the board no longer
+ * has acts as "stay", so that is what it reads.
+ */
+export function shownRule(
+  rule: AutoMoveRule,
+  columnIds: ReadonlySet<string>,
+): AutoMoveRule {
+  return typeof rule === "object" && !columnIds.has(rule.column) ? "stay" : rule;
+}
+
+/** `json` with one event's rule set; the other events' rules, and keys this build doesn't know, stay. */
+export function withRule(
+  json: string | null,
+  event: LinkedWorkEvent,
+  rule: AutoMoveRule,
+): string {
+  return JSON.stringify({ ...ruleRecord(json), [event]: rule });
 }
