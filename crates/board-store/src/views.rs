@@ -106,6 +106,32 @@ struct Entry {
     last_run: Option<String>,
 }
 
+/// The newest started/needs_input/completed/failed activity row per card of
+/// a board, in one windowed read over the whole activity log, so any number
+/// of newer comments or moves can't hide it. Rows logged on another board
+/// count too: a card moved here keeps its history.
+const LATEST_RUN_SQL: &str = "SELECT card_id, kind FROM (
+       SELECT card_id, kind, ROW_NUMBER() OVER (
+         PARTITION BY card_id ORDER BY created_at DESC, rowid DESC) AS newest
+       FROM board_activity
+       WHERE card_id IN (SELECT id FROM board_cards WHERE board_id = ?1)
+         AND kind IN ('started', 'needs_input', 'completed', 'failed'))
+     WHERE newest = 1";
+
+/// Card id to the kind of its newest run event (`started`, `needs_input`,
+/// `completed` or `failed`), for every card of the board that has one; the
+/// same rule the `linked: failed` filter uses. Read-only.
+pub fn latest_run_events(
+    conn: &Connection,
+    board_id: &str,
+) -> Result<HashMap<String, String>, String> {
+    let mut events = HashMap::new();
+    pairs(conn, LATEST_RUN_SQL, board_id, |card, kind| {
+        events.insert(card, kind);
+    })?;
+    Ok(events)
+}
+
 fn pairs(
     conn: &Connection,
     sql: &str,
@@ -242,18 +268,9 @@ fn load(conn: &Connection, board_id: &str, with_runs: bool) -> Result<Vec<Entry>
             }
         }
         let mut runs = Vec::new();
-        pairs(
-            conn,
-            "SELECT card_id, kind FROM (
-               SELECT card_id, kind, ROW_NUMBER() OVER (
-                 PARTITION BY card_id ORDER BY created_at DESC, rowid DESC) AS newest
-               FROM board_activity
-               WHERE card_id IN (SELECT id FROM board_cards WHERE board_id = ?1)
-                 AND kind IN ('started', 'needs_input', 'completed', 'failed'))
-             WHERE newest = 1",
-            board_id,
-            |card, kind| runs.push((card, kind)),
-        )?;
+        pairs(conn, LATEST_RUN_SQL, board_id, |card, kind| {
+            runs.push((card, kind))
+        })?;
         for (card, kind) in runs {
             if let Some(index) = entry(&card) {
                 entries[index].last_run = Some(kind);

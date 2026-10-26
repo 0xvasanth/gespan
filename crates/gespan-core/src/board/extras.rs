@@ -561,6 +561,14 @@ impl Service {
         store::blocked_cards(&self.conn, board_id)
     }
 
+    /// Card id to the kind of its newest run event (`started`,
+    /// `needs_input`, `completed` or `failed`), in one read-only windowed
+    /// query, so newer comments or moves never hide a failure.
+    pub fn latest_run_events(&mut self, board_id: &str) -> Result<HashMap<String, String>, String> {
+        validate_id(board_id, "board")?;
+        store::latest_run_events(&self.conn, board_id)
+    }
+
     /// Every link on every card of the board.
     pub fn board_links(&mut self, board_id: &str) -> Result<Vec<CardLink>, String> {
         validate_id(board_id, "board")?;
@@ -641,6 +649,26 @@ mod tests {
         service.activity(board, Some(card), 1).unwrap()[0]
             .detail
             .clone()
+    }
+
+    #[test]
+    fn latest_run_events_go_through_the_service() {
+        let (_dir, mut service, _) = service();
+        let (board, failed) = card(&mut service);
+        let (_, quiet) = card(&mut service);
+        service.card_record(&failed, "failed", None).unwrap();
+        for n in 0..60 {
+            service.add_comment(&failed, &format!("note {n}")).unwrap();
+        }
+        let events = service.latest_run_events(&board).unwrap();
+        assert_eq!(events.get(&failed).map(String::as_str), Some("failed"));
+        assert!(!events.contains_key(&quiet));
+        service.card_record(&failed, "started", None).unwrap();
+        assert_eq!(
+            service.latest_run_events(&board).unwrap()[&failed],
+            "started"
+        );
+        assert!(service.latest_run_events(" ").is_err());
     }
 
     #[test]

@@ -72,8 +72,9 @@ pub use templates::{
     TemplateInfo, BUILT_IN_TEMPLATES,
 };
 pub use views::{
-    card_index, create_view, delete_view, list_views, local_day_chrono, move_view, query_cards,
-    update_view, CardIndexRow, Dir, FilterRow, Op, SortKey, SortSpec, View, ViewSpec,
+    card_index, create_view, delete_view, latest_run_events, list_views, local_day_chrono,
+    move_view, query_cards, update_view, CardIndexRow, Dir, FilterRow, Op, SortKey, SortSpec, View,
+    ViewSpec,
 };
 
 pub fn now_millis() -> i64 {

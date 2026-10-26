@@ -170,8 +170,6 @@ pub(crate) struct BoardView {
     /// view hides, so opening the board looks again.
     status_board: Option<String>,
     status_task: Option<Task<()>>,
-    /// A read connection for the latest run event per card.
-    run_reader: Option<rusqlite::Connection>,
     /// A load asked for a PR and worktree lookup.
     status_due: bool,
     /// How many lookups started, for tests.
@@ -379,7 +377,6 @@ impl BoardView {
             link_source: Arc::new(link_status::GitSource),
             status_board: None,
             status_task: None,
-            run_reader: None,
             status_due: false,
             status_lookups: 0,
             turns_seen: (Vec::new(), BTreeSet::new()),
@@ -663,11 +660,12 @@ impl BoardView {
         let blocked = service.blocked(&board.id)?;
         // Only the "failed" chip state needs this; a read that fails leaves
         // the chips without it rather than failing the whole board.
-        let last_events = self.read_run_events(&board.id).unwrap_or_else(|error| {
-            tracing::warn!(%error, "reading the board's run events failed");
-            self.run_reader = None;
-            HashMap::new()
-        });
+        let last_events = service
+            .latest_run_events(&board.id)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "reading the board's run events failed");
+                HashMap::new()
+            });
         #[cfg(test)]
         if let Some(hook) = self.after_load_reads.as_mut() {
             hook();

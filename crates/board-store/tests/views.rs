@@ -945,3 +945,51 @@ fn card_index_has_start_estimate_fields_in_one_read() {
     }
     assert!(card_index(&conn, "no-board").unwrap().is_empty());
 }
+
+#[test]
+fn latest_run_events_is_the_newest_run_row_per_card_of_the_board() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    ensure_tables(&conn).unwrap();
+    let (board, _, cards) = board_with_cards(&conn, &["buried", "recovered", "waiting", "quiet"]);
+    let (elsewhere, _, others) = board_with_cards(&conn, &["other board", "moved here"]);
+
+    // A failure behind far more newer activity than any activity page holds.
+    record_card(&conn, &cards[0].id, "started", None).unwrap();
+    record_card(&conn, &cards[0].id, "failed", None).unwrap();
+    for n in 0..60 {
+        add_comment(&conn, &cards[0].id, &format!("note {n}"), "user").unwrap();
+    }
+    record_card(&conn, &cards[1].id, "failed", None).unwrap();
+    record_card(&conn, &cards[1].id, "completed", None).unwrap();
+    record_card(&conn, &cards[2].id, "failed", None).unwrap();
+    record_card(&conn, &cards[2].id, "needs_input", None).unwrap();
+    // Another board's card stays out; a card moved here brings its history.
+    record_card(&conn, &others[0].id, "failed", None).unwrap();
+    record_card(&conn, &others[1].id, "failed", None).unwrap();
+    move_card_to_board(&conn, &others[1].id, &board.id).unwrap();
+
+    let expected: std::collections::HashMap<String, String> = [
+        (&cards[0].id, "failed"),
+        (&cards[1].id, "completed"),
+        (&cards[2].id, "needs_input"),
+        (&others[1].id, "failed"),
+    ]
+    .into_iter()
+    .map(|(id, kind)| (id.clone(), kind.to_string()))
+    .collect();
+    assert_eq!(latest_run_events(&conn, &board.id).unwrap(), expected);
+    let left_behind = latest_run_events(&conn, &elsewhere.id).unwrap();
+    assert_eq!(left_behind.len(), 1);
+    assert_eq!(left_behind[&others[0].id], "failed");
+
+    // A read-only connection is enough, and an odd board id is only data.
+    let reader =
+        Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(latest_run_events(&reader, &board.id).unwrap(), expected);
+    assert!(latest_run_events(&reader, "' OR 1=1 --")
+        .unwrap()
+        .is_empty());
+}
