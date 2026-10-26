@@ -3,7 +3,7 @@
 //! by the board's `on_key`) puts it back. Only cards the search and filter show
 //! count; the drop maps the visible slot to the whole column like a mouse drop.
 use super::{BoardView, KeyboardDrag};
-use gpui::{App, Context, KeyDownEvent, Window};
+use gpui::{Context, KeyDownEvent, Window};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Arrow {
@@ -25,7 +25,7 @@ fn arrow(key: &str) -> Option<Arrow> {
 
 impl BoardView {
     /// The ids of the visible cards in a column, top to bottom.
-    fn visible_ids(&self, column_id: &str, _cx: &App) -> Vec<String> {
+    fn visible_ids(&self, column_id: &str) -> Vec<String> {
         let Some(detail) = &self.detail else {
             return Vec::new();
         };
@@ -105,7 +105,7 @@ impl BoardView {
         let Some(column_id) = self.column_of_card(card_id) else {
             return;
         };
-        let here = self.visible_ids(&column_id, cx);
+        let here = self.visible_ids(&column_id);
         let index = here.iter().position(|id| id == card_id).unwrap_or(0);
         let target = match direction {
             Arrow::Up => here.get(index.wrapping_sub(1)).cloned(),
@@ -120,7 +120,7 @@ impl BoardView {
                 };
                 // Columns with nothing visible have nothing to focus: skip them.
                 neighbours.into_iter().find_map(|column| {
-                    let cards = self.visible_ids(column, cx);
+                    let cards = self.visible_ids(column);
                     cards.get(index.min(cards.len().saturating_sub(1))).cloned()
                 })
             }
@@ -135,7 +135,7 @@ impl BoardView {
             return false;
         };
         let slot = self
-            .visible_ids(&column_id, cx)
+            .visible_ids(&column_id)
             .iter()
             .position(|id| id == card_id)
             .unwrap_or(0);
@@ -162,10 +162,10 @@ impl BoardView {
             return;
         };
         let origin = self.column_of_card(&drag.card_id);
-        let old_slot = |this: &Self, column: &str, cx: &App| {
+        let old_slot = |this: &Self, column: &str| {
             (origin.as_deref() == Some(column))
                 .then(|| {
-                    this.visible_ids(column, cx)
+                    this.visible_ids(column)
                         .iter()
                         .position(|id| *id == drag.card_id)
                 })
@@ -184,8 +184,8 @@ impl BoardView {
         };
         match direction {
             Arrow::Up | Arrow::Down => {
-                let len = self.visible_ids(&drag.column_id, cx).len();
-                let old = old_slot(self, &drag.column_id, cx);
+                let len = self.visible_ids(&drag.column_id).len();
+                let old = old_slot(self, &drag.column_id);
                 let down = direction == Arrow::Down;
                 let next = if down {
                     (drag.slot + 1).min(len)
@@ -206,8 +206,8 @@ impl BoardView {
                 };
                 if let Some(next) = next {
                     let column = columns[next].clone();
-                    let len = self.visible_ids(&column, cx).len();
-                    let old = old_slot(self, &column, cx);
+                    let len = self.visible_ids(&column).len();
+                    let old = old_slot(self, &column);
                     drag.slot = settle(drag.slot.min(len), old, false);
                     drag.column_id = column;
                 }
@@ -237,7 +237,7 @@ impl BoardView {
         };
         self.kb_blur = None;
         self.drop_target = None;
-        let slot = self.full_slot(&drag.column_id, drag.slot, cx);
+        let slot = self.full_slot(&drag.column_id, drag.slot);
         let resolved = self.resolve_drop(&drag.card_id, &drag.column_id, slot);
         match resolved {
             Some((column, index)) => {

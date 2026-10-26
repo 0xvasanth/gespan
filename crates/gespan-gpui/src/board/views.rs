@@ -50,6 +50,9 @@ pub(crate) struct Views {
     /// The view whose tab menu is open.
     pub(super) menu: Option<String>,
     anchors: HashMap<String, AnchorSlot>,
+    /// The showing view changed elsewhere while untouched here: the reload
+    /// that read it applies it again.
+    pub(super) reapply: bool,
 }
 
 impl Default for Views {
@@ -63,6 +66,7 @@ impl Default for Views {
             naming: None,
             menu: None,
             anchors: HashMap::new(),
+            reapply: false,
         }
     }
 }
@@ -85,9 +89,15 @@ fn parse_spec(json: &str) -> ViewSpec {
 impl BoardView {
     /// The search text and the filter rows and sort, as one spec.
     pub(crate) fn current_spec(&self, cx: &App) -> ViewSpec {
+        // A row with no values filters nothing, so it isn't part of the spec.
+        let rows = (self.spec.rows.iter())
+            .filter(|row| !row.values.is_empty())
+            .cloned()
+            .collect();
         ViewSpec {
             query: self.search.read(cx).content.trim().to_string(),
-            ..self.spec.clone()
+            rows,
+            sort: self.spec.sort,
         }
     }
 
@@ -108,6 +118,8 @@ impl BoardView {
         let spec = self.current_spec(cx);
         self.last_query = spec.query.clone();
         let Some(board_id) = self.open_board_id.clone() else {
+            self.matched = None;
+            self.rank.clear();
             return Ok(());
         };
         if spec.query.is_empty() && spec.rows.is_empty() && spec.sort.key == SortKey::Manual {
@@ -201,8 +213,24 @@ impl BoardView {
 
     /// Take the saved views a reload read. A showing view deleted elsewhere
     /// leaves the current search, filter and sort in place under "All cards".
-    pub(super) fn sync_views(&mut self, saved: Vec<View>) {
+    pub(super) fn sync_views(&mut self, saved: Vec<View>, cx: &App) {
+        let dirty = self.view_dirty(cx);
         self.set_saved(saved);
+        let stored = self
+            .views
+            .active
+            .as_ref()
+            .and_then(|id| self.views.saved.iter().find(|view| &view.id == id))
+            .map(|view| (parse_spec(&view.spec_json), view.layout_json.clone()));
+        if let Some((spec, layout)) = stored
+            && (spec != self.views.baseline || !same_json(&layout, &self.views.baseline_layout))
+        {
+            // Changed elsewhere. An untouched board shows the new version;
+            // local edits stay, and now differ from what is saved.
+            self.views.baseline = spec;
+            self.views.baseline_layout = layout;
+            self.views.reapply = !dirty;
+        }
         let gone = self
             .views
             .active

@@ -160,6 +160,8 @@ pub(crate) struct BoardView {
     filter_anchor: AnchorSlot,
     pub(crate) extras: HashMap<String, CardExtras>,
     pub(crate) labels: Vec<Label>,
+    /// The board's custom fields, for filter rows.
+    pub(crate) fields: Vec<gespan_core::board::extras::Field>,
     /// Workspace projects as (path, name), for tagging and filtering.
     projects: Vec<(String, String)>,
     search: Entity<Input>,
@@ -297,6 +299,7 @@ impl BoardView {
             filter_anchor: AnchorSlot::default(),
             extras: HashMap::new(),
             labels: Vec::new(),
+            fields: Vec::new(),
             projects: Vec::new(),
             search,
             spec: ViewSpec::default(),
@@ -393,6 +396,10 @@ impl BoardView {
         }
         self.pending_reload = false;
         self.load_error = self.load(cx).err();
+        if self.load_error.is_none() && std::mem::take(&mut self.views.reapply) {
+            let active = self.views.active.clone();
+            self.select_view(active, cx);
+        }
         self.sync_card_detail(cx);
         if self.load_error.is_none() && self.card_detail.is_some() {
             self.refresh_detail_lists();
@@ -473,6 +480,7 @@ impl BoardView {
         let labels = service.labels(&board.id)?;
         let card_tickets = service.board_tickets(&board.id)?;
         let views = service.views(&board.id)?;
+        let fields = service.list_fields(&board.id)?;
         let archived = if archive_open {
             service.archived(&board.id)?
         } else {
@@ -494,7 +502,8 @@ impl BoardView {
         self.archived = archived;
         self.links = self.resolve_links(cx)?;
         self.sync_handles(cx);
-        self.sync_views(views);
+        self.fields = fields;
+        self.sync_views(views, cx);
         // A label or column deleted elsewhere is dropped by the query itself,
         // so a saved filter never hides every card unseen.
         self.refresh_query(cx)
@@ -823,7 +832,7 @@ impl BoardView {
 
     /// A slot among the cards on screen, as a slot in the whole column: before
     /// the visible card it points at, or after the last visible one.
-    fn full_slot(&self, column_id: &str, slot: usize, _cx: &App) -> usize {
+    fn full_slot(&self, column_id: &str, slot: usize) -> usize {
         let Some(detail) = &self.detail else {
             return slot;
         };
@@ -864,7 +873,7 @@ impl BoardView {
 
     fn drop_card(&mut self, card: &DraggedCard, column_id: &str, cx: &mut Context<Self>) {
         let slot = match &self.drop_target {
-            Some((target, slot)) if target == column_id => self.full_slot(column_id, *slot, cx),
+            Some((target, slot)) if target == column_id => self.full_slot(column_id, *slot),
             _ => self.detail.as_ref().map_or(0, |d| {
                 d.cards.iter().filter(|c| c.column_id == column_id).count()
             }),

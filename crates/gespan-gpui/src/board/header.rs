@@ -154,11 +154,11 @@ impl BoardView {
     }
 
     fn narrowing(&self) -> bool {
-        !self.spec.rows.is_empty() || !self.last_query.is_empty()
+        self.active_rows() > 0 || !self.last_query.is_empty()
     }
 
     /// A column's count: `shown/total` while searching or filtering, else the total.
-    pub(crate) fn count_label(&self, column_id: &str, _cx: &App) -> String {
+    pub(crate) fn count_label(&self, column_id: &str) -> String {
         let Some(detail) = &self.detail else {
             return "0".into();
         };
@@ -192,7 +192,7 @@ impl BoardView {
     }
 
     pub(super) fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active = self.spec.rows.len();
+        let active = self.active_rows();
         let search_focus = self.search.focus_handle(cx);
         div()
             .id("board-header")
@@ -412,7 +412,9 @@ impl BoardView {
     }
 
     /// The values a filter row on `field` can pick, as (value, label).
-    pub(crate) fn field_choices(&self, field: &str) -> Vec<(String, String)> {
+    /// `held` is what the row already holds: the only choices a free-form
+    /// custom field (text, number, date) can offer.
+    pub(crate) fn field_choices(&self, field: &str, held: &[String]) -> Vec<(String, String)> {
         let fixed = |table: &[(&str, &str)]| {
             table
                 .iter()
@@ -441,8 +443,65 @@ impl BoardView {
             "due" => fixed(&DUE_CHOICES),
             "created" | "updated" => fixed(&WITHIN_CHOICES),
             "linked" => fixed(&LINKED_CHOICES),
-            _ => Vec::new(),
+            custom => self.custom_choices(custom, held),
         }
+    }
+
+    /// A custom field's choices. Values are JSON-encoded as the engine reads
+    /// them. A deleted field has none.
+    fn custom_choices(&self, field: &str, held: &[String]) -> Vec<(String, String)> {
+        let Some(found) = field
+            .strip_prefix("field:")
+            .and_then(|id| self.fields.iter().find(|f| f.id == id))
+        else {
+            return Vec::new();
+        };
+        match found.kind.as_str() {
+            "select" => super::quick::field_options(found.options_json.as_deref())
+                .into_iter()
+                .map(|option| {
+                    (
+                        serde_json::Value::String(option.clone()).to_string(),
+                        option,
+                    )
+                })
+                .collect(),
+            "checkbox" => vec![
+                ("true".to_string(), "Yes".to_string()),
+                ("false".to_string(), "No".to_string()),
+            ],
+            _ => held
+                .iter()
+                .map(|raw| {
+                    let label = match serde_json::from_str::<serde_json::Value>(raw) {
+                        Ok(serde_json::Value::String(text)) => text,
+                        _ => raw.clone(),
+                    };
+                    (raw.clone(), label)
+                })
+                .collect(),
+        }
+    }
+
+    /// A filter row's field as the user reads it: its name.
+    pub(crate) fn field_title(&self, field: &str) -> String {
+        match field.strip_prefix("field:") {
+            Some(id) => self
+                .fields
+                .iter()
+                .find(|f| f.id == id)
+                .map_or_else(|| "Deleted field".to_string(), |f| f.name.clone()),
+            None => field_label(field),
+        }
+    }
+
+    /// Rows that filter something: those holding at least one value.
+    pub(crate) fn active_rows(&self) -> usize {
+        self.spec
+            .rows
+            .iter()
+            .filter(|row| !row.values.is_empty())
+            .count()
     }
 
     fn spec_changed(&mut self, cx: &mut Context<Self>) {
@@ -515,7 +574,7 @@ impl BoardView {
     /// What a filter row says, for its chip: "Priority is Urgent, High". Values
     /// that no longer exist on the board are left out.
     pub(crate) fn chip_text(&self, row: &FilterRow) -> String {
-        let choices = self.field_choices(&row.field);
+        let choices = self.field_choices(&row.field, &row.values);
         let names: Vec<&str> = row
             .values
             .iter()
@@ -535,7 +594,7 @@ impl BoardView {
         } else {
             names.join(", ")
         };
-        format!("{} {op} {names}", field_label(&row.field))
+        format!("{} {op} {names}", self.field_title(&row.field))
     }
 
     /// One chip per filter row under the tabs, with Clear all.
@@ -656,7 +715,7 @@ impl BoardView {
                     Op::Is => "is",
                     Op::IsNot => "is not",
                 },
-                field_label(&row.field),
+                self.field_title(&row.field),
             );
             rows.push(
                 div()
@@ -747,7 +806,7 @@ impl BoardView {
                 );
                 continue;
             }
-            let choices = self.field_choices(&row.field);
+            let choices = self.field_choices(&row.field, &row.values);
             if choices.is_empty() {
                 rows.push(
                     div()
@@ -786,15 +845,32 @@ impl BoardView {
             "Add filter"
         }));
         let mut fields: Vec<AnyElement> = Vec::new();
-        for (field, label) in FILTER_FIELDS {
+        let mut entries: Vec<(String, String, String)> = FILTER_FIELDS
+            .iter()
+            .map(|(field, label)| {
+                (
+                    format!("board-filter-add-{field}"),
+                    field.to_string(),
+                    label.to_string(),
+                )
+            })
+            .collect();
+        entries.extend(self.fields.iter().enumerate().map(|(index, field)| {
+            (
+                format!("board-filter-add-field-{index}"),
+                format!("field:{}", field.id),
+                field.name.clone(),
+            )
+        }));
+        for (id, field, label) in entries {
             fields.push(
-                menu_row(format!("board-filter-add-{field}").into(), label)
+                menu_row(id.into(), label)
                     .text_size(px(12.))
                     .px(px(8.))
                     .py(px(3.))
                     .border_1()
                     .border_color(content(0.1))
-                    .on_click(cx.listener(move |this, _, _, cx| this.add_filter_row(field, cx)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.add_filter_row(&field, cx)))
                     .into_any_element(),
             );
         }

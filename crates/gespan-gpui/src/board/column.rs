@@ -170,7 +170,7 @@ impl BoardView {
                             .debug_selector(move || format!("board-column-count-{index}"))
                             .text_size(px(12.))
                             .text_color(content(0.4))
-                            .child(self.count_label(&column.id, cx)),
+                            .child(self.count_label(&column.id)),
                     )
                     .child(div().flex_1())
                     .child(
@@ -387,7 +387,7 @@ impl BoardView {
                 div()
                     .text_size(px(12.))
                     .text_color(content(0.4))
-                    .child(self.count_label(&column.id, cx)),
+                    .child(self.count_label(&column.id)),
             )
             .child(
                 div()

@@ -1466,15 +1466,15 @@ fn a_project_filter_shows_tagged_cards_and_clear_restores(cx: &mut TestAppContex
     click(visual, "board-filter-row-0-value-0");
     assert_eq!(shown_cards(visual, &[1, 2, 3]), [1]);
     f.window
-        .read_with(visual, |view, cx| {
-            assert_eq!(view.count_label(&backlog, cx), "1/3")
+        .read_with(visual, |view, _| {
+            assert_eq!(view.count_label(&backlog), "1/3")
         })
         .unwrap();
     click(visual, "board-filter-clear");
     assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
     f.window
-        .read_with(visual, |view, cx| {
-            assert_eq!(view.count_label(&backlog, cx), "3")
+        .read_with(visual, |view, _| {
+            assert_eq!(view.count_label(&backlog), "3")
         })
         .unwrap();
 }
@@ -4818,9 +4818,9 @@ fn search_finds_text_in_the_description(cx: &mut TestAppContext) {
     visual.run_until_parked();
     assert_eq!(shown_cards(visual, &[1, 2]), [1]);
     f.window
-        .read_with(visual, |view, cx| {
+        .read_with(visual, |view, _| {
             assert_eq!(
-                view.count_label(&view.detail.as_ref().unwrap().columns[0].id, cx),
+                view.count_label(&view.detail.as_ref().unwrap().columns[0].id),
                 "1/2"
             )
         })
@@ -5077,16 +5077,25 @@ fn all_cards_tab_cannot_be_deleted(cx: &mut TestAppContext) {
         visual.debug_bounds("board-view-menu-all").is_none(),
         "the built-in tab has no menu"
     );
-    // Even asked to, nothing is deleted and the tab stays first.
-    f.window
-        .update(visual, |view, _, cx| view.delete_view("all", cx))
-        .unwrap();
-    drawer(&f, visual, |view, _| assert_eq!(view.views.active, None));
-    // A saved tab does have Rename, Duplicate and Delete.
+    assert!(
+        visual.debug_bounds("board-view-menu-0").is_none(),
+        "with no saved views there is no menu to open at all"
+    );
     click(visual, "board-view-new");
     visual.simulate_input("Temp");
     visual.simulate_keystrokes("enter");
     visual.run_until_parked();
+    // Even asked to, All cards has nothing to delete, and it stays first.
+    f.window
+        .update(visual, |view, _, cx| view.delete_view("all", cx))
+        .unwrap();
+    assert_eq!(stored_views(&f).len(), 1);
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-view-menu-all").is_none());
+    assert!(
+        visual.debug_bounds("board-view-tab-all").unwrap().left()
+            < visual.debug_bounds("board-view-tab-0").unwrap().left()
+    );
     click(visual, "board-view-menu-0");
     assert!(visual.debug_bounds("board-view-rename").is_some());
     assert!(visual.debug_bounds("board-view-duplicate").is_some());
@@ -5102,7 +5111,9 @@ fn all_cards_tab_cannot_be_deleted(cx: &mut TestAppContext) {
     click(visual, "board-view-delete");
     assert!(stored_views(&f).is_empty());
     drawer(&f, visual, |view, _| assert_eq!(view.views.active, None));
+    visual.refresh().unwrap();
     assert!(visual.debug_bounds("board-view-tab-all").is_some());
+    assert!(visual.debug_bounds("board-view-tab-0").is_none());
 }
 
 #[gpui::test]
@@ -5135,4 +5146,117 @@ fn a_view_with_a_deleted_label_still_loads(cx: &mut TestAppContext) {
         [1, 2],
         "a row whose values are all gone is ignored, not zero results"
     );
+}
+
+#[gpui::test]
+fn a_select_field_row_filters_cards_and_shows_the_field_name(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["One", "Two", "Three"]);
+    add_field(&f, "Stage", "select", Some(r#"["alpha","beta"]"#), 0);
+    let mut service = Service::open(&f.db).unwrap();
+    let (one, two) = (card_id(&f, cx, "One"), card_id(&f, cx, "Two"));
+    service
+        .set_field_value(&one, "f-Stage", Some("\"alpha\""))
+        .unwrap();
+    service
+        .set_field_value(&two, "f-Stage", Some("\"beta\""))
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-add-field-0");
+    // Options in order: alpha, beta.
+    click(visual, "board-filter-row-0-value-1");
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [2]);
+    drawer(&f, visual, |view, _| {
+        assert_eq!(view.spec.rows[0].field, "field:f-Stage");
+        assert_eq!(view.spec.rows[0].values, ["\"beta\""]);
+        assert_eq!(view.chip_text(&view.spec.rows[0]), "Stage is beta");
+    });
+    // A checkbox field offers Yes and No.
+    add_field(&f, "Ready", "checkbox", None, 1);
+    reload(&f, cx);
+    drawer(&f, visual, |view, _| {
+        let choices = view.field_choices("field:f-Ready", &[]);
+        assert_eq!(
+            choices,
+            [("true".into(), "Yes".into()), ("false".into(), "No".into())]
+        );
+    });
+    // The field is deleted elsewhere: the row stays, harmless.
+    rusqlite::Connection::open(&f.db)
+        .unwrap()
+        .execute("DELETE FROM board_fields", [])
+        .unwrap();
+    reload(&f, cx);
+    assert_eq!(shown_cards(visual, &[1, 2, 3]), [1, 2, 3]);
+    drawer(&f, visual, |view, _| {
+        assert_eq!(view.error, None);
+        assert_eq!(view.chip_text(&view.spec.rows[0]), "Deleted field is …");
+    });
+}
+
+#[gpui::test]
+fn a_row_without_values_is_not_a_filter(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["One"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-filter");
+    click(visual, "board-filter-add-priority");
+    drawer(&f, visual, |view, cx| {
+        assert_eq!(view.spec.rows.len(), 1);
+        assert_eq!(view.active_rows(), 0, "the badge does not count it");
+        assert_eq!(
+            view.count_label(&view.detail.as_ref().unwrap().columns[0].id),
+            "1"
+        );
+        assert!(!view.view_dirty(cx), "and it is not an unsaved change");
+    });
+}
+
+fn saved_view(f: &Fixture, name: &str, sort: &str) -> gespan_core::board::extras::View {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    let spec = format!(r#"{{"query":"","rows":[],"sort":{{"key":"{sort}","dir":"asc"}}}}"#);
+    service
+        .view_create(&board.id, name, &spec, views::DEFAULT_LAYOUT)
+        .unwrap()
+}
+
+#[gpui::test]
+fn a_view_changed_elsewhere_reapplies_unless_there_are_local_edits(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Alpha"]);
+    let view = saved_view(&f, "Mine", "manual");
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-view-tab-0");
+    // Untouched here, changed in the other app: the new sort shows.
+    let other = |sort: &str| {
+        let spec = format!(r#"{{"query":"","rows":[],"sort":{{"key":"{sort}","dir":"asc"}}}}"#);
+        Service::open(&f.db)
+            .unwrap()
+            .view_update(&view.id, None, Some(&spec), None)
+            .unwrap();
+    };
+    other("title");
+    reload(&f, cx);
+    drawer(&f, visual, |view, cx| {
+        assert_eq!(
+            view.spec.sort.key,
+            gespan_core::board::extras::SortKey::Title
+        );
+        assert!(!view.view_dirty(cx));
+    });
+    // With local edits the reload leaves them alone, and Save still shows.
+    sort_by(visual, "board-sort-priority");
+    other("due");
+    reload(&f, cx);
+    drawer(&f, visual, |view, cx| {
+        assert_eq!(
+            view.spec.sort.key,
+            gespan_core::board::extras::SortKey::Priority
+        );
+        assert!(view.view_dirty(cx));
+    });
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("board-view-dot-0").is_some());
+    assert!(visual.debug_bounds("board-view-save-changes").is_some());
 }
