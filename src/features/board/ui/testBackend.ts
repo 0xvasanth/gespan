@@ -5,7 +5,7 @@
 import { act } from "react";
 import { vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { SEARCH_DEBOUNCE_MS } from "./BoardView";
+import { SEARCH_DEBOUNCE_MS } from "../model/constants";
 import type {
   BoardCard,
   BoardColumn,

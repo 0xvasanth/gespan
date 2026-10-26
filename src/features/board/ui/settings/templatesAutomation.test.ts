@@ -306,6 +306,7 @@ beforeEach(() => {
     board_column_move: () => undefined,
     board_column_delete: () => undefined,
     board_column_set_display: () => undefined,
+    board_column_update_display: () => undefined,
     board_column_card_count: () => ({ live: 0, archived: 0 }),
     board_cards_move: () => undefined,
     board_card_move: () => undefined,

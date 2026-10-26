@@ -538,7 +538,10 @@ const field = (label: string) =>
 async function openMenu(label: string) {
   await act(async () =>
     drawer()
-      .querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
+      .querySelector<HTMLButtonElement>(
+        // A property trigger names its value too: "Priority: High".
+        `button[aria-label="${label}"], button[aria-label^="${label}: "]`,
+      )!
       .click(),
   );
 }

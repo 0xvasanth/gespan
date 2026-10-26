@@ -72,6 +72,16 @@ export function DueItems({
   );
 }
 
+/**
+ * A date the user has finished typing: a real day with a four-digit year.
+ * WebKit's date input reports each typed year digit as a whole date (`0002`,
+ * `0020`, `0202`, then `2026`), so a year below 1000 is still being typed.
+ */
+function completeDate(value: string): number | null {
+  const at = parseDueInput(value);
+  return at !== null && new Date(at).getFullYear() >= 1000 ? at : null;
+}
+
 /** A date field for a start, due or field date: a half-typed date waits, an emptied one clears. */
 export function DueDateInput({
   dueAt,
@@ -93,9 +103,15 @@ export function DueDateInput({
       value={value}
       onChange={(event) => {
         setValue(event.target.value);
-        const next = parseDueInput(event.target.value);
+        const next = completeDate(event.target.value);
         if (next !== null) onChoose(next);
         else if (event.target.value === "") onChoose(null);
+      }}
+      onBlur={() => {
+        // A date left half typed is dropped: the saved one shows again.
+        if (value !== "" && completeDate(value) === null) {
+          setValue(dueInputValue(dueAt));
+        }
       }}
       className={
         className ??

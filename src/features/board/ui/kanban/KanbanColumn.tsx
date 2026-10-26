@@ -52,7 +52,13 @@ export function KanbanColumn({
   pinned = NO_IDS,
   onCardArrow,
   registerScroller,
+  total,
 }: {
+  /**
+   * Every card in the column, whatever a search or filter hides; set only
+   * while one is active.
+   */
+  total?: number;
   column: BoardColumn;
   cards: BoardCard[];
   isDropTarget: boolean;
@@ -118,13 +124,19 @@ export function KanbanColumn({
   );
 
   if (column.collapsed) {
+    const shown = cards.length;
+    const narrowed = total !== undefined;
+    const all = total ?? shown;
+    const label = narrowed
+      ? `${column.name}, ${shown} of ${all} ${all === 1 ? "card" : "cards"}`
+      : `${column.name}, ${shown} ${shown === 1 ? "card" : "cards"}`;
     // A 36px strip. Its body stays the droppable, so a card dropped on it
     // (mouse or keyboard) lands at the end; the cards themselves aren't
     // mounted, so none of them can be the drop's target.
     return (
       <section
         ref={setNodeRef}
-        aria-label={column.name}
+        aria-label={label}
         data-kanban-column={column.id}
         data-column-collapsed=""
         data-over={isDropTarget ? "" : undefined}
@@ -151,7 +163,7 @@ export function KanbanColumn({
               data-column-count=""
               className="text-[12px] tabular-nums text-content/45"
             >
-              {cards.length}
+              {narrowed ? `${shown}/${all}` : shown}
             </span>
             <span
               data-column-name=""

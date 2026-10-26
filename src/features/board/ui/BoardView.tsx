@@ -61,7 +61,7 @@ import {
   setCardPriority,
   setCardsLabel,
   setCardsPriority,
-  setColumnDisplay,
+  updateColumnDisplay,
   subscribeBoard,
   updateCard,
   updateColumn,
@@ -184,7 +184,8 @@ import {
 } from "./boardFormat";
 import { CardComposer } from "./CardComposer";
 import { loadBoardCardOpen } from "../../settings/model/settings";
-import { CardDetail } from "./CardDetail";
+import { CardDetail, type CardDrawerHandle } from "./CardDetail";
+import { SEARCH_DEBOUNCE_MS } from "../model/constants";
 import { NewCardModal } from "./NewCardModal";
 import { CardMoreItems, type MoreActions } from "./CardMoreMenu";
 import { KanbanBoard } from "./kanban/KanbanBoard";
@@ -234,8 +235,6 @@ function placesIn(
   return out;
 }
 
-/** Search waits this long after the last keystroke before it queries. */
-export const SEARCH_DEBOUNCE_MS = 150;
 
 const dragInProgress = () => !!document.querySelector("[data-dragging]");
 
@@ -455,10 +454,43 @@ function BoardContent({
     () => new Map(),
   );
   const rootRef = useRef<HTMLDivElement>(null);
+  /** The open drawer's handle: Escape from the board, draft flushes. */
+  const drawerHandle = useRef<CardDrawerHandle | null>(null);
+  /** The card whose drawer shows, as of the last render. */
+  const shownCardRef = useRef<BoardCard | null>(null);
+  /** The board whose last load failed (cleared when one succeeds). */
+  const [loadFailed, setLoadFailed] = useState<string | null>(null);
+  /** The card to give focus back to once its drawer has closed. */
+  const returnFocus = useRef<string | null>(null);
   const showCard = (next: { id: string; focus?: "title" | "link" }) => {
     setOpenCard(next);
     setPageCardId(loadBoardCardOpen() === "page" ? next.id : null);
   };
+  /**
+   * Closes the drawer (and its full page). Focus that was in the drawer, or
+   * nowhere, goes back to the card; focus elsewhere on the board stays put.
+   */
+  const closeDrawer = () => {
+    const id = openCard?.id ?? null;
+    const active = document.activeElement;
+    const focusWasInDrawer =
+      !active ||
+      active === document.body ||
+      active === rootRef.current ||
+      !!active.closest("[data-card-drawer]");
+    setOpenCard(null);
+    setPageCardId(null);
+    if (id && focusWasInDrawer) {
+      returnFocus.current = id;
+      // Pinned as the focused card, so it is mounted to take focus.
+      setFocusedId(id);
+    }
+  };
+
+  // The full page belongs to an open card: closing it any way ends it.
+  useEffect(() => {
+    if (!openCard) setPageCardId(null);
+  }, [openCard]);
 
   const detailRef = useRef(detail);
   const openIdRef = useRef(openId);
@@ -632,6 +664,7 @@ function BoardContent({
         ]);
       if (ticket !== request.current || openIdRef.current !== id) return;
       setDetail(next);
+      setLoadFailed(null);
       if (linked) setTickets(linked);
       if (cardExtras) setExtras(cardExtras);
       if (boardLabels) setLabels(boardLabels);
@@ -670,6 +703,7 @@ function BoardContent({
         setOpenId(pickBoard(list, null));
         return;
       }
+      setLoadFailed(id);
       fail("Couldn't load the board")(cause);
     }
   }, [fail, syncViews]);
@@ -1142,12 +1176,15 @@ function BoardContent({
       .then((rows) => {
         if (!stale) setCardIndex(new Map(rows.map((row) => [row.cardId, row])));
       })
-      // The columns that need it stay empty; the rest of the table shows.
-      .catch(() => undefined);
+      // The columns that need it stay empty; the rest of the table shows,
+      // and the error says why.
+      .catch((cause) => {
+        if (!stale) fail("Couldn't load the card fields")(cause);
+      });
     return () => {
       stale = true;
     };
-  }, [needsIndex, openId, detail]);
+  }, [needsIndex, openId, detail, fail]);
 
   /** ⌘/Ctrl-click toggles a card, Shift-click selects a range; true when it was one. */
   const selectClick = (
@@ -1437,13 +1474,10 @@ function BoardContent({
     };
   };
 
+  // A patch: collapsing never resets a colour or WIP limit the other app
+  // set since this board last loaded.
   const setCollapsed = (column: BoardColumn, collapsed: boolean) =>
-    void setColumnDisplay(
-      column.id,
-      column.color,
-      column.wipLimit,
-      collapsed,
-    ).catch(
+    void updateColumnDisplay(column.id, { collapsed }).catch(
       fail(
         collapsed
           ? "Couldn't collapse the column"
@@ -1774,15 +1808,35 @@ function BoardContent({
   const handledCommand = useRef<number | null>(null);
   useEffect(() => {
     if (!command || handledCommand.current === command.nonce) return;
-    if (boards && boards.length && command.id === "new-card" && !detail) return;
     if (!boards) return;
+    // A board that failed to load drops a "new card" command rather than
+    // keeping it to fire whenever the board loads later.
+    const boardFailed = !!openId && loadFailed === openId;
+    if (boards.length && command.id === "new-card" && !detail && !boardFailed) {
+      return;
+    }
     handledCommand.current = command.nonce;
-    if (boards.length) {
+    if (boards.length && !(command.id === "new-card" && !detail)) {
       if (command.id === "new-card") setNewCardOpen(true);
       else setSwitchSignal((n) => n + 1);
     }
     onCommandHandled?.(command.nonce);
-  }, [command, boards, detail, onCommandHandled]);
+  }, [command, boards, detail, openId, loadFailed, onCommandHandled]);
+
+  // Focus goes back to the card whose drawer just closed, scrolled into
+  // view (it is pinned as the focused card, so it is mounted).
+  useLayoutEffect(() => {
+    const id = returnFocus.current;
+    if (!id || openCard) return;
+    returnFocus.current = null;
+    const value = id.replace(/["\\]/g, "\\$&");
+    const element = rootRef.current?.querySelector<HTMLElement>(
+      `[data-kanban-card="${value}"], [data-card-id="${value}"], [data-table-row="${value}"]`,
+    );
+    if (!element) return;
+    element.scrollIntoView?.({ block: "nearest" });
+    element.focus({ preventScroll: true });
+  });
 
   if (!boards) return toast;
 
@@ -1817,6 +1871,7 @@ function BoardContent({
     : undefined;
 
   const fullPage = !!shownCard && pageCardId === shownCard.id;
+  shownCardRef.current = shownCard ?? null;
 
   const labelsOf = (cardId: string) => {
     const ids = extras[cardId]?.labels;
@@ -1828,9 +1883,16 @@ function BoardContent({
     (card: BoardCard) =>
     (
       close: () => void,
-      flush?: () => Promise<void>,
+      drawerFlush?: () => Promise<void>,
       dropDrafts?: () => void,
     ) => {
+      // From the card face (a right-click, say) while this card's drawer is
+      // open, its typed drafts are saved first all the same.
+      const flush =
+        drawerFlush ??
+        (openCard?.id === card.id
+          ? () => drawerHandle.current?.flushDrafts() ?? Promise.resolve()
+          : undefined);
       const mine = extras[card.id];
       const columnsOf = (detail?.columns ?? []).map((column) => ({
         id: column.id,
@@ -1911,6 +1973,10 @@ function BoardContent({
   const linkChipsOf = (card: BoardCard): LinkChipView[] =>
     (linksByCard.get(card.id) ?? []).flatMap((link): LinkChipView[] => {
       if (link.role === "primary") return [];
+      // An extra link that is also the primary shows once, as the primary.
+      if (link.kind === card.linkKind && link.reference === card.linkId) {
+        return [];
+      }
       if (link.kind === "pr" || link.kind === "worktree") {
         const found = linkExtra[extraKey(link)];
         const base = {
@@ -2216,6 +2282,24 @@ function BoardContent({
           .then(() => deleteColumn(column.id))
           .catch(fail("Couldn't delete the column"))
       }
+      moveTargets={(detail?.columns ?? []).filter(
+        (other) => other.id !== column.id,
+      )}
+      onMoveAndDelete={(targetId) => {
+        // Every live card goes, in order, to the end of the target column;
+        // a delete held in this column is carried out first.
+        const moving = wholeColumn(column.id).map((card) => card.id);
+        const end = wholeColumn(targetId).length;
+        void undo
+          .commitPending()
+          .then(() =>
+            moving.length
+              ? moveCards(moving, targetId, end, "user")
+              : undefined,
+          )
+          .then(() => deleteColumn(column.id))
+          .catch(fail("Couldn't delete the column"));
+      }}
       onCollapse={() => setCollapsed(column, true)}
       onSort={(key) => sortColumn(column, key)}
       onMarkAllDone={
@@ -2279,18 +2363,25 @@ function BoardContent({
         tabIndex={-1}
         className="flex min-h-0 flex-1 flex-col outline-none"
         onKeyDown={(event) => {
-          // Escape's last layer: the drawer, menus and inline edits take it
-          // first (they mark it handled); what is left clears the selection.
+          // Escape's last layers: menus, inline edits and the drawer's own
+          // fields take it first (they mark it handled). What is left closes
+          // an open drawer, wherever focus is on the board, then clears the
+          // selection.
           if (
             event.key !== "Escape" ||
             event.defaultPrevented ||
             event.nativeEvent.isComposing ||
-            !selection.ids.length ||
             // A drag in progress is cancelled by its own Escape.
             dragInProgress()
           ) {
             return;
           }
+          if (drawerHandle.current && shownCardRef.current) {
+            event.preventDefault();
+            drawerHandle.current.escape();
+            return;
+          }
+          if (!selection.ids.length) return;
           event.preventDefault();
           setSelection(EMPTY_SELECTION);
         }}
@@ -2741,6 +2832,7 @@ function BoardContent({
                 density={display.density}
                 focusedCardId={focusedId}
                 openCardId={shownCard?.id ?? null}
+                columnTotals={narrowing ? columnCounts : undefined}
               />
             ) : null}
             {detail && selection.ids.length ? (
@@ -2788,7 +2880,16 @@ function BoardContent({
                 setPageCardId(fullPage ? null : shownCard.id)
               }
               focus={openCard?.focus}
-              onClose={() => setOpenCard(null)}
+              onClose={closeDrawer}
+              handle={drawerHandle}
+              isGone={() =>
+                !detailRef.current?.cards.some(
+                  (other) => other.id === shownCard.id,
+                )
+              }
+              resolveLinkTarget={(kind, id) =>
+                linkStates.get(linkValue(kind, id))
+              }
               onOpenLinkedWork={(target) => {
                 setOpenCard(null);
                 openLinkedWork(target);

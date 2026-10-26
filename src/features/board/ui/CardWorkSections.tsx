@@ -122,33 +122,35 @@ export function StartAndEstimateRows({
     });
   };
   const commitEstimate = () => {
-    setEditing(false);
     if (!text.trim()) {
+      setEditing(false);
       setError(null);
       if (minutes !== null) writeEstimate(null);
       return;
     }
     const parsed = parseEstimate(text);
     if (!parsed.ok) {
+      // Still editing: the typed text stays to be corrected, not replaced
+      // by the saved estimate.
       setError(parsed.error);
       return;
     }
+    setEditing(false);
     setError(null);
     setText(formatEstimate(parsed.minutes));
     if (parsed.minutes !== minutes) writeEstimate(parsed.minutes);
   };
 
+  const startText =
+    (startAt === null ? null : fieldText("date", String(startAt))) ?? "None";
+
   return (
     <>
       <PropertyRow name="start" label="Start">
         <MenuButton
-          label="Start"
+          label={`Start: ${startText}`}
           className={PROPERTY_TRIGGER}
-          trigger={
-            <span className="truncate">
-              {startAt === null ? "None" : fieldText("date", String(startAt))}
-            </span>
-          }
+          trigger={<span className="truncate">{startText}</span>}
         >
           {(closeMenu) => (
             <DueItems
@@ -557,7 +559,7 @@ function FieldRow({
     editor = (
       <>
         <MenuButton
-          label={field.name}
+          label={`${field.name}: ${shown ?? "None"}`}
           className={PROPERTY_TRIGGER}
           trigger={<span className="truncate">{shown ?? "None"}</span>}
         >
@@ -587,11 +589,21 @@ type AddingLink = "session" | "pilot" | "pr" | "worktree";
 export function LinksSection({
   card,
   linkTargets,
+  resolveLinkTarget,
   onOpenLinkedWork,
   onError,
 }: {
   card: BoardCard;
   linkTargets: readonly BoardLinkTarget[];
+  /**
+   * The board's lookup of work `linkTargets` doesn't hold (sessions of
+   * projects not loaded this run, say): the target, null when it is gone,
+   * undefined while unknown.
+   */
+  resolveLinkTarget?: (
+    kind: "session" | "pilot",
+    id: string,
+  ) => BoardLinkTarget | null | undefined;
   onOpenLinkedWork: (target: BoardLinkTarget) => void;
   onError: (message: string) => void;
 }) {
@@ -606,11 +618,19 @@ export function LinksSection({
   const [adding, setAdding] = useState<AddingLink | null>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const shown = visibleLinks(links ?? []);
-  const targetOf = (link: CardLinkRow) =>
-    linkTargets.find(
+  const shown = visibleLinks(links ?? [], {
+    kind: card.linkKind,
+    id: card.linkId,
+  });
+  /** The link's work: a target, null when it is gone, undefined while unknown. */
+  const targetOf = (link: CardLinkRow): BoardLinkTarget | null | undefined => {
+    const held = linkTargets.find(
       (target) => target.kind === link.kind && target.id === link.reference,
     );
+    if (held) return held;
+    if (link.kind !== "session" && link.kind !== "pilot") return undefined;
+    return resolveLinkTarget?.(link.kind, link.reference);
+  };
 
   const add = (kind: AddingLink, reference: string) => {
     addCardLink(card.id, kind, reference).then(
@@ -666,6 +686,7 @@ export function LinksSection({
   const label = (link: CardLinkRow) => {
     const target = targetOf(link);
     if (target) return target.label;
+    if (target === null) return "No longer exists";
     if (link.kind === "session" || link.kind === "pilot") {
       return `${kindLabel(link.kind)} ${link.reference.slice(0, 8)}`;
     }

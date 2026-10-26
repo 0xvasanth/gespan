@@ -37,7 +37,13 @@ export function BoardColumnHeader({
   onMarkAllDone,
   onArchiveCompleted,
   heldCards = 0,
+  moveTargets = [],
+  onMoveAndDelete,
 }: {
+  /** The board's other columns, which a Delete can move this one's cards to. */
+  moveTargets?: readonly { id: string; name: string }[];
+  /** Moves the column's cards to the end of `targetId`, then deletes it. */
+  onMoveAndDelete?: (targetId: string) => void;
   column: BoardColumn;
   /** Every card in the column, whatever a search or filter hides. */
   count: number;
@@ -200,9 +206,14 @@ export function BoardColumnHeader({
               <DeleteColumnItem
                 columnId={column.id}
                 held={heldCards}
+                moveTargets={onMoveAndDelete ? moveTargets : []}
                 onSelect={() => {
                   close();
                   onDelete();
+                }}
+                onMoveAndDelete={(targetId) => {
+                  close();
+                  onMoveAndDelete?.(targetId);
                 }}
               />
             </>
@@ -215,39 +226,84 @@ export function BoardColumnHeader({
 
 /**
  * "Delete column", allowed only when the column holds no cards, live or
- * archived. Mounted when the menu opens, so the count is read then.
+ * archived. A column holding only live cards offers "Move cards to…" each
+ * other column instead, as the settings page does. Mounted when the menu
+ * opens, so the counts are read then.
  */
 function DeleteColumnItem({
   columnId,
   held,
+  moveTargets,
   onSelect,
+  onMoveAndDelete,
 }: {
   columnId: string;
   held: number;
+  moveTargets: readonly { id: string; name: string }[];
   onSelect: () => void;
+  onMoveAndDelete: (targetId: string) => void;
 }) {
-  const [total, setTotal] = useState<number | "failed" | null>(null);
+  const [counts, setCounts] = useState<
+    { live: number; archived: number } | "failed" | null
+  >(null);
   useEffect(() => {
     let live = true;
     columnCardCount(columnId)
       .then(
         (count) =>
-          live && setTotal(Math.max(0, count.live + count.archived - held)),
+          live &&
+          setCounts({
+            live: count.live,
+            // Held deletes go before the column does, so they don't block it.
+            archived: Math.max(0, count.archived - held),
+          }),
       )
-      .catch(() => live && setTotal("failed"));
+      .catch(() => live && setCounts("failed"));
     return () => {
       live = false;
     };
   }, [columnId, held]);
+  const total =
+    counts === null || counts === "failed"
+      ? counts
+      : counts.live + counts.archived;
   const reason =
     total === "failed"
       ? "Couldn't check the column's cards"
       : typeof total === "number" && total > 0
         ? `Move or delete its ${total} ${total === 1 ? "card" : "cards"} first`
         : undefined;
+  const canMove =
+    typeof counts === "object" &&
+    counts !== null &&
+    counts.live > 0 &&
+    counts.archived === 0 &&
+    moveTargets.length > 0;
   return (
-    <MenuItem danger disabled={total !== 0} title={reason} onSelect={onSelect}>
-      Delete column
-    </MenuItem>
+    <>
+      <MenuItem
+        danger
+        disabled={total !== 0}
+        title={reason}
+        onSelect={onSelect}
+      >
+        Delete column
+      </MenuItem>
+      {canMove ? (
+        <>
+          <MenuLabel>Move cards to…</MenuLabel>
+          {moveTargets.map((target) => (
+            <MenuItem
+              key={target.id}
+              danger
+              title={`Move the cards to ${target.name}, then delete the column`}
+              onSelect={() => onMoveAndDelete(target.id)}
+            >
+              {target.name}
+            </MenuItem>
+          ))}
+        </>
+      ) : null}
+    </>
   );
 }

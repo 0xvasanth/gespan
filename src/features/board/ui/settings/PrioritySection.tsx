@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BoardSettings, PriorityScheme } from "../../model/board";
 import {
   DEFAULT_PRIORITY_SCHEME,
@@ -35,6 +35,9 @@ export function PrioritySection({
   storedScheme.current = scheme;
   const pending = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
+  // Bumped when a write fails: the name fields start again from the saved
+  // scheme instead of keeping text that was never stored.
+  const [resets, setResets] = useState(0);
   useEffect(() => {
     // The board's read wins once nothing is in flight.
     if (pending.current === 0) latest.current = scheme;
@@ -46,7 +49,10 @@ export function PrioritySection({
       .then((saved) => {
         pending.current -= 1;
         // A save that failed leaves what is stored; edits stop building on it.
-        if (!saved && pending.current === 0) latest.current = storedScheme.current;
+        if (!saved && pending.current === 0) {
+          latest.current = storedScheme.current;
+          setResets((n) => n + 1);
+        }
       });
   };
   const save = (next: PriorityScheme) => {
@@ -66,6 +72,7 @@ export function PrioritySection({
             className="flex items-center gap-3"
           >
             <CommitInput
+              key={resets}
               label="Priority name"
               value={scheme.names[level]}
               className="w-44"

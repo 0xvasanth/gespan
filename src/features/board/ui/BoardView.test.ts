@@ -1484,7 +1484,7 @@ describe("BoardView card face, search and filters", () => {
       el.textContent?.trim(),
     );
 
-  it("collapses a column with its current colour and WIP limit", async () => {
+  it("collapses a column with a patch that leaves its colour and WIP limit alone", async () => {
     five();
     const base = (handlers.board_get as () => BoardDetail)();
     handlers.board_get = () => ({
@@ -1493,15 +1493,16 @@ describe("BoardView card face, search and filters", () => {
         c.id === "backlog" ? { ...c, color: "a371f7", wipLimit: 5 } : c,
       ),
     });
-    handlers.board_column_set_display = () => undefined;
+    handlers.board_column_update_display = () => undefined;
     await renderBoard();
     await runColumnAction("backlog", "Collapse column");
-    expect(commands("board_column_set_display")).toEqual([
+    expect(commands("board_column_update_display")).toEqual([
       [
-        "board_column_set_display",
-        { columnId: "backlog", color: "a371f7", wipLimit: 5, collapsed: true },
+        "board_column_update_display",
+        { columnId: "backlog", patch: { collapsed: true } },
       ],
     ]);
+    expect(commands("board_column_set_display")).toEqual([]);
   });
 
   it("shows a collapsed column as a strip and expands it on click", async () => {
@@ -1515,7 +1516,7 @@ describe("BoardView card face, search and filters", () => {
           : c,
       ),
     });
-    handlers.board_column_set_display = () => undefined;
+    handlers.board_column_update_display = () => undefined;
     await renderBoard();
     expect(columnEl("backlog").hasAttribute("data-column-collapsed")).toBe(
       true,
@@ -1525,11 +1526,9 @@ describe("BoardView card face, search and filters", () => {
       columnEl("backlog").querySelector<HTMLButtonElement>("button")!.click(),
     );
     await flush();
-    expect(commands("board_column_set_display")[0][1]).toEqual({
+    expect(commands("board_column_update_display")[0][1]).toEqual({
       columnId: "backlog",
-      color: "a371f7",
-      wipLimit: 5,
-      collapsed: false,
+      patch: { collapsed: false },
     });
   });
 
@@ -2572,7 +2571,7 @@ describe("BoardView undo toasts, held deletes and the Archive view", () => {
 
   it("the error toast still shows beside the undo toast", async () => {
     backend();
-    handlers.board_column_set_display = () => {
+    handlers.board_column_update_display = () => {
       throw "database is locked";
     };
     await renderBoard();

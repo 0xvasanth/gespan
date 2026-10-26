@@ -89,6 +89,11 @@ export type KanbanBoardProps = {
   focusedCardId?: string | null;
   /** The card whose drawer is open, kept mounted when scrolled away. */
   openCardId?: string | null;
+  /**
+   * Every card in each column, whatever a search or filter hides; set only
+   * while one is active, so a collapsed strip can read "3 of 12 cards".
+   */
+  columnTotals?: ReadonlyMap<string, number>;
 };
 
 // Cards collide with cards and column bodies; columns only with columns.
@@ -190,6 +195,7 @@ export function KanbanBoard({
   density = "comfortable",
   focusedCardId = null,
   openCardId = null,
+  columnTotals,
 }: KanbanBoardProps) {
   const reducedMotion = useReducedMotion();
   const [session, setSession] = useState(() => createSession(detail));
@@ -560,6 +566,7 @@ export function KanbanBoard({
               onExpand={onColumnExpand}
               density={density}
               pinned={pinned}
+              total={columnTotals?.get(column.id)}
             />
           ))}
         </SortableContext>

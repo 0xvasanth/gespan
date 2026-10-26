@@ -6,7 +6,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { IS_MAC } from "../../../platform/tauri/platform";
 import type { CardLinkRow, ViewSpec } from "../model/board";
 import { CARD_ESTIMATE, CARD_GAP } from "../model/windowing";
-import { BoardView, SEARCH_DEBOUNCE_MS } from "./BoardView";
+import { SEARCH_DEBOUNCE_MS } from "../model/constants";
+import { BoardView } from "./BoardView";
 import type { BoardLinkTarget } from "./boardFormat";
 import {
   createTestBackend,

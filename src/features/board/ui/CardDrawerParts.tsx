@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import { Check, Plus, Trash2, X } from "../../../shared/ui/icons";
@@ -105,6 +106,21 @@ export function useLive<T>(
     };
   }, [boardId, reload]);
   return [value, reload] as const;
+}
+
+/**
+ * Escape in a draft field (a comment or a new subtask) leaves the field for
+ * the drawer and keeps the typed text; the next Escape closes the drawer.
+ * True when it took the key.
+ */
+export function leaveDraftOnEscape(event: KeyboardEvent<HTMLElement>): boolean {
+  if (event.key !== "Escape" || event.nativeEvent.isComposing) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  const drawer = event.currentTarget.closest<HTMLElement>("[data-card-drawer]");
+  if (drawer) drawer.focus({ preventScroll: true });
+  else event.currentTarget.blur();
+  return true;
 }
 
 export function toggled<T>(list: readonly T[], item: T): T[] {
@@ -329,6 +345,7 @@ export function Subtasks({
         value={title}
         onChange={(event) => setTitle(event.target.value)}
         onKeyDown={(event) => {
+          if (leaveDraftOnEscape(event)) return;
           if (event.key === "Enter" && !event.nativeEvent.isComposing) {
             event.preventDefault();
             add();
@@ -409,6 +426,7 @@ export function Comments({
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
+            if (leaveDraftOnEscape(event)) return;
             if (
               event.key === "Enter" &&
               (event.metaKey || event.ctrlKey) &&

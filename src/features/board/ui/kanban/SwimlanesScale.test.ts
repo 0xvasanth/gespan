@@ -79,7 +79,7 @@ beforeEach(() => {
   backend = createTestBackend(events.listeners);
   // Lanes by priority: Urgent, High, Medium, Low, None.
   backend.handlers.board_settings = () => SETTINGS;
-  backend.handlers.board_column_set_display = () => undefined;
+  backend.handlers.board_column_update_display = () => undefined;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -456,8 +456,8 @@ describe("windowed swimlanes", () => {
 
     // The strip's button expands the column.
     await click(head.querySelector('button[aria-label="Expand In Progress"]')!);
-    expect(commands("board_column_set_display").map(([, args]) => args)).toMatchObject([
-      { columnId: "progress", collapsed: false },
+    expect(commands("board_column_update_display").map(([, args]) => args)).toEqual([
+      { columnId: "progress", patch: { collapsed: false } },
     ]);
   });
 
