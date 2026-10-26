@@ -871,8 +871,15 @@ impl super::Conversation {
         )
         // Escape cancels dictation before the field or a menu sees
         // it, and still works while the composer is disabled. The
-        // shell binds it to DismissMenu; unbound, it is a key.
+        // shell binds it to DismissMenu, an open menu to its Cancel; unbound,
+        // it is a key.
         .capture_action(cx.listener(|this, _: &crate::shell::DismissMenu, _, cx| {
+            if this.dictation.read(cx).cancellable() {
+                this.dictation.update(cx, |d, cx| d.cancel(cx));
+                cx.stop_propagation();
+            }
+        }))
+        .capture_action(cx.listener(|this, _: &crate::popover::Cancel, _, cx| {
             if this.dictation.read(cx).cancellable() {
                 this.dictation.update(cx, |d, cx| d.cancel(cx));
                 cx.stop_propagation();

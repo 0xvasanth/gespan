@@ -4,6 +4,8 @@ pub(crate) mod avatar;
 pub(crate) mod cards;
 mod changes;
 mod color_picker;
+#[cfg(test)]
+mod dictation_tests;
 mod files;
 mod filters;
 mod floating;

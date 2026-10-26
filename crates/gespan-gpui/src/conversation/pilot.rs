@@ -536,7 +536,9 @@ impl Conversation {
                 .child(self.transcript.clone())
                 .into_any_element()
         };
-        self.attachment_drop_target("pilot-chat", cx)
+        self.dictation_context(cx);
+        let root = self.attachment_drop_target("pilot-chat", cx);
+        self.dictation_keys(root, cx)
             .capture_action(cx.listener(|this, _: &input::Paste, _, cx| {
                 if this.paste_attachments(cx) {
                     cx.stop_propagation();
@@ -834,6 +836,7 @@ impl Conversation {
             .child(self.composer_anchor.probe())
             .children(runner)
             .children(self.attachment_chips(cx))
+            .children(dictation::bar(&self.dictation, &self.input, cx))
             .child(
                 // Even padding centres send beside one line, and keeps it at
                 // the bottom as the text grows.
@@ -1103,6 +1106,7 @@ impl Conversation {
                         cx.notify();
                     })),
             )
+            .child(dictation::mic_button(&self.dictation, &self.input, cx))
             .when(self.pilot_ui.emoji, |d| {
                 d.child(
                     div().flex().gap_1().children(
