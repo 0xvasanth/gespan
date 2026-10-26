@@ -8,10 +8,10 @@ use std::collections::{HashMap, HashSet};
 
 pub use gespan_board_store::{
     auto_move_rules, display_options, priority_scheme, AutoMoveRules, BoardSettings, CardExtras,
-    CardFace, CardIndexRow, CardLink, CardMeta, CardTool, Comment, Density, Dir, DisplayOptions,
-    Field, FieldValue, FilterRow, Label, Op, PriorityScheme, Relation, RuleTarget, SettingsPatch,
-    SortKey, SortSpec, Subtask, TemplateInfo, View, ViewSpec, BOARD_ICONS, BUILT_IN_TEMPLATES,
-    FIELD_KINDS, PRIORITIES,
+    CardFace, CardIndexRow, CardLink, CardMeta, CardTool, ColumnDisplayPatch, Comment, Density,
+    Dir, DisplayOptions, Field, FieldValue, FilterRow, Label, Op, PriorityScheme, Relation,
+    RuleTarget, SettingsPatch, SortKey, SortSpec, Subtask, TemplateInfo, View, ViewSpec,
+    BOARD_ICONS, BUILT_IN_TEMPLATES, FIELD_KINDS, PRIORITIES,
 };
 use std::collections::BTreeMap;
 
@@ -140,6 +140,18 @@ impl Service {
     ) -> Result<(), String> {
         validate_id(column_id, "column")?;
         store::set_column_display(&self.conn, column_id, color, wip_limit, collapsed).map(drop)
+    }
+
+    /// Changes only the display fields `patch` names, so collapsing a column
+    /// here never resets a colour or WIP limit the other app just set.
+    /// Returns the column after the change.
+    pub fn update_column_display(
+        &mut self,
+        column_id: &str,
+        patch: &ColumnDisplayPatch,
+    ) -> Result<store::Column, String> {
+        validate_id(column_id, "column")?;
+        store::update_column_display(&self.conn, column_id, patch)
     }
 
     /// `(live, archived)` card counts of a column.
@@ -639,6 +651,7 @@ impl Service {
 
 #[cfg(test)]
 mod tests {
+    use super::ColumnDisplayPatch;
     use crate::board::Service;
 
     fn service() -> (tempfile::TempDir, Service, std::path::PathBuf) {
@@ -819,6 +832,72 @@ mod tests {
         assert!(service.archive("bad id!").is_err());
         assert!(service.archive_many(&["bad id!".to_string()]).is_err());
         assert!(service.restore(&ids[2], "bad id!", 0).is_err());
+    }
+
+    #[test]
+    fn column_display_patch_goes_through_the_service() {
+        let (_dir, mut service, _) = service();
+        let board = service.default_board().unwrap();
+        let column = service.get(&board.id).unwrap().columns[1].id.clone();
+        service
+            .set_column_display(&column, Some("ff0000"), Some(3), false)
+            .unwrap();
+
+        let collapsed = service
+            .update_column_display(
+                &column,
+                &ColumnDisplayPatch {
+                    collapsed: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                collapsed.color.as_deref(),
+                collapsed.wip_limit,
+                collapsed.collapsed
+            ),
+            (Some("ff0000"), Some(3), true)
+        );
+        let cleared = service
+            .update_column_display(
+                &column,
+                &ColumnDisplayPatch {
+                    wip_limit: Some(None),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                cleared.color.as_deref(),
+                cleared.wip_limit,
+                cleared.collapsed
+            ),
+            (Some("ff0000"), None, true)
+        );
+        let col = &service.get(&board.id).unwrap().columns[1];
+        assert_eq!((col.wip_limit, col.collapsed), (None, true));
+
+        assert_eq!(
+            service
+                .update_column_display("bad id!", &ColumnDisplayPatch::default())
+                .unwrap_err(),
+            "Invalid column id"
+        );
+        assert_eq!(
+            service
+                .update_column_display(
+                    &column,
+                    &ColumnDisplayPatch {
+                        wip_limit: Some(Some(0)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err(),
+            "A WIP limit must be at least 1"
+        );
     }
 
     #[test]

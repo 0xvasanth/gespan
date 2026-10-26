@@ -999,3 +999,176 @@ fn unreadable_stored_options_refuse_a_value_write() {
     set_field_value(&conn, &cards[0].id, &size.id, None).unwrap();
     assert_eq!(value_of(&conn, &cards[0], &size), None);
 }
+
+// ── Column display patch (C6-2) ─────────────────────────────────────────────
+
+fn display(column: &Column) -> (Option<String>, Option<i64>, bool) {
+    (column.color.clone(), column.wip_limit, column.collapsed)
+}
+
+fn stored_display(conn: &Connection, column_id: &str) -> (Option<String>, Option<i64>, bool) {
+    conn.query_row(
+        "SELECT color, wip_limit, collapsed FROM board_columns WHERE id = ?1",
+        [column_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)? != 0)),
+    )
+    .unwrap()
+}
+
+#[test]
+fn column_patch_changes_only_named_fields() {
+    let conn = fresh();
+    let board = create_board(&conn, "Work").unwrap();
+    let column = get_board(&conn, &board.id).unwrap().columns[1].id.clone();
+    set_column_display(&conn, &column, Some("e5534b"), Some(3), false).unwrap();
+
+    // Only `collapsed`: colour and limit stay.
+    let patch = ColumnDisplayPatch {
+        collapsed: Some(true),
+        ..Default::default()
+    };
+    let after = update_column_display(&conn, &column, &patch).unwrap();
+    assert_eq!(display(&after), (Some("e5534b".into()), Some(3), true));
+    assert_eq!(stored_display(&conn, &column), display(&after));
+    assert_eq!(after.id, column);
+    assert_eq!(after.board_id, board.id);
+
+    // Only the limit, to a new value: colour and collapsed stay.
+    let patch = ColumnDisplayPatch {
+        wip_limit: Some(Some(7)),
+        ..Default::default()
+    };
+    let after = update_column_display(&conn, &column, &patch).unwrap();
+    assert_eq!(display(&after), (Some("e5534b".into()), Some(7), true));
+
+    // `Some(None)` clears just that field.
+    let patch = ColumnDisplayPatch {
+        color: Some(None),
+        ..Default::default()
+    };
+    let after = update_column_display(&conn, &column, &patch).unwrap();
+    assert_eq!(display(&after), (None, Some(7), true));
+    let patch = ColumnDisplayPatch {
+        wip_limit: Some(None),
+        ..Default::default()
+    };
+    let after = update_column_display(&conn, &column, &patch).unwrap();
+    assert_eq!(display(&after), (None, None, true));
+
+    // All three at once, and an empty patch writes nothing.
+    let patch = ColumnDisplayPatch {
+        color: Some(Some("00AA11".into())),
+        wip_limit: Some(Some(1)),
+        collapsed: Some(false),
+    };
+    let after = update_column_display(&conn, &column, &patch).unwrap();
+    assert_eq!(display(&after), (Some("00AA11".into()), Some(1), false));
+    let same = update_column_display(&conn, &column, &ColumnDisplayPatch::default()).unwrap();
+    assert_eq!(display(&same), display(&after));
+
+    // Other columns are untouched.
+    let first = get_board(&conn, &board.id).unwrap().columns[0].clone();
+    assert_eq!(display(&first), (None, None, false));
+}
+
+#[test]
+fn collapsing_keeps_a_wip_limit_set_by_the_other_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sessions.db");
+    let native = Connection::open(&path).unwrap();
+    native.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    ensure_tables(&native).unwrap();
+    let tauri = Connection::open(&path).unwrap();
+    tauri.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+
+    let board = create_board(&native, "Work").unwrap();
+    let column = get_board(&native, &board.id).unwrap().columns[1].id.clone();
+    set_column_display(&native, &column, Some("e5534b"), None, false).unwrap();
+
+    // The Tauri app reads the board (no limit yet) and keeps that view.
+    let stale = get_board(&tauri, &board.id).unwrap().columns[1].clone();
+    assert_eq!(stale.wip_limit, None);
+
+    // The native app sets a limit of 4.
+    let set = update_column_display(
+        &native,
+        &column,
+        &ColumnDisplayPatch {
+            wip_limit: Some(Some(4)),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(set.wip_limit, Some(4));
+
+    // The Tauri app collapses the column from its stale view. The patch names
+    // only `collapsed`, so the limit the native app set stays 4.
+    let collapsed = update_column_display(
+        &tauri,
+        &stale.id,
+        &ColumnDisplayPatch {
+            collapsed: Some(!stale.collapsed),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(display(&collapsed), (Some("e5534b".into()), Some(4), true));
+    assert_eq!(
+        stored_display(&native, &column),
+        (Some("e5534b".into()), Some(4), true)
+    );
+}
+
+#[test]
+fn column_patch_validates_like_set_column_display() {
+    let conn = fresh();
+    let board = create_board(&conn, "Work").unwrap();
+    let column = get_board(&conn, &board.id).unwrap().columns[0].id.clone();
+    set_column_display(&conn, &column, Some("abcdef"), Some(2), true).unwrap();
+    let before = stored_display(&conn, &column);
+
+    for bad in ["red", "abcde", "abcdefa", "gggggg", "#abcde", ""] {
+        let patch = ColumnDisplayPatch {
+            color: Some(Some(bad.into())),
+            collapsed: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            update_column_display(&conn, &column, &patch).unwrap_err(),
+            set_column_display(&conn, &column, Some(bad), None, false).unwrap_err(),
+            "colour {bad:?}"
+        );
+        assert_eq!(
+            update_column_display(&conn, &column, &patch).unwrap_err(),
+            "Colour must be six hex digits"
+        );
+    }
+    for bad in [0, -1, i64::MIN] {
+        let patch = ColumnDisplayPatch {
+            wip_limit: Some(Some(bad)),
+            collapsed: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            update_column_display(&conn, &column, &patch).unwrap_err(),
+            "A WIP limit must be at least 1",
+            "limit {bad}"
+        );
+    }
+    // A refused patch writes nothing, not even its valid fields.
+    assert_eq!(stored_display(&conn, &column), before);
+
+    // A missing column is refused, and nothing is created.
+    let missing = ColumnDisplayPatch {
+        collapsed: Some(true),
+        ..Default::default()
+    };
+    assert!(update_column_display(&conn, "no-such-column", &missing).is_err());
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT COUNT(*) FROM board_columns WHERE id = 'no-such-column'"
+        ),
+        0
+    );
+}

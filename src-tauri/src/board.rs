@@ -15,9 +15,9 @@ use gespan_board_store::{
     move_card_to_board, move_cards, move_column, move_subtask, record_card, remove_link,
     remove_relation, rename_board, restore_card, set_card_labels, set_column_display, set_due,
     set_estimate, set_field_value, set_priority, set_projects, set_start, toggle_subtask,
-    unarchive_card, update_card, update_column, validate_id, Activity, Board, BoardDetail, Card,
-    CardExtras, CardIndexRow, CardLink, CardMeta, Column, Comment, Field, FieldValue, Label,
-    Relation, Subtask, View, ViewSpec,
+    unarchive_card, update_card, update_column, update_column_display, validate_id, Activity,
+    Board, BoardDetail, Card, CardExtras, CardIndexRow, CardLink, CardMeta, Column,
+    ColumnDisplayPatch, Comment, Field, FieldValue, Label, Relation, Subtask, View, ViewSpec,
 };
 use gespan_board_store::{answer_card, CardTool};
 use gespan_board_store::{
@@ -484,6 +484,33 @@ pub fn board_column_set_display(
     drop(conn);
     notify(&app, &board_id);
     Ok(())
+}
+
+fn column_update_display_inner(
+    conn: &rusqlite::Connection,
+    column_id: &str,
+    patch: &ColumnDisplayPatch,
+) -> Result<Column, String> {
+    validate_id(column_id, "column")?;
+    update_column_display(conn, column_id, patch)
+}
+
+/// Changes only the display fields the patch names (absent keeps, `null`
+/// clears), so collapsing a column here never resets a colour or WIP limit
+/// the native app just set. Returns the column after the change.
+#[tauri::command(async)]
+pub fn board_column_update_display(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    column_id: String,
+    patch: ColumnDisplayPatch,
+) -> Result<Column, String> {
+    validate_id(&column_id, "column")?;
+    let conn = store.lock_conn()?;
+    let column = column_update_display_inner(&conn, &column_id, &patch)?;
+    drop(conn);
+    notify(&app, &column.board_id);
+    Ok(column)
 }
 
 #[tauri::command(async)]
@@ -2364,6 +2391,117 @@ mod tests {
             .all(|r| r.priority == 4 && r.labels == [label.id.clone()]));
         let row = serde_json::to_value(&index[0]).unwrap();
         assert!(row.get("cardId").is_some() && row.get("dueAt").is_some());
+    }
+
+    fn column_patch(json: serde_json::Value) -> Result<ColumnDisplayPatch, String> {
+        serde_json::from_value(json).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn column_display_patch_round_trips_camel_case_with_null_clearing_and_absent_keeping() {
+        let conn = setup();
+        let (_, columns) = board_with_columns(&conn);
+        let id = &columns[1].id;
+        let set = column_update_display_inner(
+            &conn,
+            id,
+            &column_patch(serde_json::json!({
+                "color": "e5534b",
+                "wipLimit": 4,
+                "collapsed": false,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            (set.color.as_deref(), set.wip_limit, set.collapsed),
+            (Some("e5534b"), Some(4), false)
+        );
+        // Absent keys keep what the other app set.
+        let collapsed = column_update_display_inner(
+            &conn,
+            id,
+            &column_patch(serde_json::json!({ "collapsed": true })).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                collapsed.color.as_deref(),
+                collapsed.wip_limit,
+                collapsed.collapsed
+            ),
+            (Some("e5534b"), Some(4), true)
+        );
+        // `null` clears colour and limit; `collapsed: null` leaves it alone.
+        let cleared = column_update_display_inner(
+            &conn,
+            id,
+            &column_patch(serde_json::json!({ "wipLimit": null, "collapsed": null })).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                cleared.color.as_deref(),
+                cleared.wip_limit,
+                cleared.collapsed
+            ),
+            (Some("e5534b"), None, true)
+        );
+        let cleared = column_update_display_inner(
+            &conn,
+            id,
+            &column_patch(serde_json::json!({ "color": null })).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                cleared.color.as_deref(),
+                cleared.wip_limit,
+                cleared.collapsed
+            ),
+            (None, None, true)
+        );
+        assert_eq!(
+            column_patch(serde_json::json!({ "color": null })).unwrap(),
+            ColumnDisplayPatch {
+                color: Some(None),
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            column_patch(serde_json::json!({})).unwrap(),
+            ColumnDisplayPatch::default()
+        );
+        // The column reads back in camelCase.
+        let value = serde_json::to_value(&cleared).unwrap();
+        assert!(value.get("wipLimit").is_some() && value.get("boardId").is_some());
+        // Unknown and snake_case keys are refused, as are bad ids and values.
+        assert!(column_patch(serde_json::json!({ "wip_limit": 3 })).is_err());
+        assert!(column_patch(serde_json::json!({ "name": "x" })).is_err());
+        assert!(column_patch(serde_json::json!({ "wipLimit": "3" })).is_err());
+        assert_eq!(
+            column_update_display_inner(&conn, "bad id", &ColumnDisplayPatch::default())
+                .unwrap_err(),
+            "Invalid column id"
+        );
+        assert_eq!(
+            column_update_display_inner(
+                &conn,
+                id,
+                &column_patch(serde_json::json!({ "wipLimit": 0 })).unwrap()
+            )
+            .unwrap_err(),
+            "A WIP limit must be at least 1"
+        );
+        assert_eq!(
+            column_update_display_inner(
+                &conn,
+                id,
+                &column_patch(serde_json::json!({ "color": "red" })).unwrap()
+            )
+            .unwrap_err(),
+            "Colour must be six hex digits"
+        );
     }
 
     fn patch(json: serde_json::Value) -> Result<SettingsPatchArg, String> {

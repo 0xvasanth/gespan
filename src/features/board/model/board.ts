@@ -311,7 +311,10 @@ export function moveCards(
   return invoke("board_cards_move", { cardIds, columnId, index, actor });
 }
 
-/** Overwrites all three; pass the current colour and limit to change only `collapsed`. */
+/**
+ * Overwrites all three, including a colour or limit the native app set a
+ * moment ago. For a change from the UI use `updateColumnDisplay`.
+ */
 export function setColumnDisplay(
   columnId: string,
   color: string | null,
@@ -323,6 +326,30 @@ export function setColumnDisplay(
     color,
     wipLimit,
     collapsed,
+  });
+}
+
+/**
+ * The column display fields to change. A key left out stays as it is; `null`
+ * clears a colour or WIP limit.
+ */
+export type ColumnDisplayPatch = {
+  color?: string | null;
+  wipLimit?: number | null;
+  collapsed?: boolean;
+};
+
+/**
+ * Changes only the display fields `patch` names, so collapsing a column never
+ * resets a colour or WIP limit the native app just set. Returns the column after.
+ */
+export function updateColumnDisplay(
+  columnId: string,
+  patch: ColumnDisplayPatch,
+): Promise<BoardColumn> {
+  return invoke<BoardColumn>("board_column_update_display", {
+    columnId,
+    patch,
   });
 }
 

@@ -68,6 +68,7 @@ import {
   moveCards,
   restoreCard,
   setColumnDisplay,
+  updateColumnDisplay,
   unarchiveCard,
   setCardDue,
   setCardLabels,
@@ -216,6 +217,18 @@ describe("card extras wrappers", () => {
       () => setColumnDisplay("col1", null, 5, true),
       "board_column_set_display",
       { columnId: "col1", color: null, wipLimit: 5, collapsed: true },
+    ],
+    [
+      "updateColumnDisplay collapsing only",
+      () => updateColumnDisplay("col1", { collapsed: true }),
+      "board_column_update_display",
+      { columnId: "col1", patch: { collapsed: true } },
+    ],
+    [
+      "updateColumnDisplay clearing the limit",
+      () => updateColumnDisplay("col1", { wipLimit: null, color: "e5534b" }),
+      "board_column_update_display",
+      { columnId: "col1", patch: { wipLimit: null, color: "e5534b" } },
     ],
     [
       "columnCardCount",

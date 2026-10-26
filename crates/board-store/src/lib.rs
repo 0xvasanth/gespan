@@ -55,7 +55,7 @@ pub use ops::{
     cards_for_link, create_board, create_card, create_column, delete_archived_card, delete_board,
     delete_card, delete_column, get_board, get_card, link_card, list_activity, list_boards,
     move_card, move_cards, move_column, record_card, rename_board, set_column_display, update_card,
-    update_column, LINK_KINDS,
+    update_column, update_column_display, ColumnDisplayPatch, LINK_KINDS,
 };
 pub use relations::{
     add_relation, blocked_cards, card_relations, remove_relation, Relation, RELATION_KINDS,

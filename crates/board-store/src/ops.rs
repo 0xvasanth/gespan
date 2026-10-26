@@ -951,7 +951,8 @@ pub fn move_cards(
 }
 
 /// Sets how a column looks: its colour (six hex digits), WIP limit and
-/// collapsed state. Returns the owning board id.
+/// collapsed state, all three together. Returns the owning board id. Kept
+/// for templates; an edit from the UI uses [`update_column_display`].
 pub fn set_column_display(
     conn: &Connection,
     column_id: &str,
@@ -974,6 +975,76 @@ pub fn set_column_display(
     .map_err(db)?;
     tx.commit().map_err(db)?;
     Ok(column.board_id)
+}
+
+/// The column display fields to change. `None` leaves a field as it is;
+/// for colour and WIP limit `Some(None)` clears it. From the front end it
+/// reads camelCase, where an absent key is `None` and an explicit `null` is
+/// `Some(None)` (a `null` for `collapsed` leaves it alone). Unknown keys are
+/// refused.
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ColumnDisplayPatch {
+    #[serde(default, deserialize_with = "present")]
+    pub color: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub wip_limit: Option<Option<i64>>,
+    #[serde(default)]
+    pub collapsed: Option<bool>,
+}
+
+/// A key that is present, `null` included, is `Some`; `default` makes an
+/// absent key `None`.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    <Option<T> as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+/// Changes only the display fields `patch` names, so collapsing a column in
+/// one app never resets a colour or WIP limit the other app just set. The
+/// checks are those of [`set_column_display`]. Returns the column after.
+pub fn update_column_display(
+    conn: &Connection,
+    column_id: &str,
+    patch: &ColumnDisplayPatch,
+) -> Result<Column, String> {
+    if let Some(Some(color)) = &patch.color {
+        check_color(color)?;
+    }
+    if let Some(Some(limit)) = patch.wip_limit {
+        if limit < 1 {
+            return Err("A WIP limit must be at least 1".into());
+        }
+    }
+    let tx = write_tx(conn)?;
+    get_column(&tx, column_id)?;
+    if let Some(color) = &patch.color {
+        tx.execute(
+            "UPDATE board_columns SET color = ?1 WHERE id = ?2",
+            params![color, column_id],
+        )
+        .map_err(db)?;
+    }
+    if let Some(limit) = patch.wip_limit {
+        tx.execute(
+            "UPDATE board_columns SET wip_limit = ?1 WHERE id = ?2",
+            params![limit, column_id],
+        )
+        .map_err(db)?;
+    }
+    if let Some(collapsed) = patch.collapsed {
+        tx.execute(
+            "UPDATE board_columns SET collapsed = ?1 WHERE id = ?2",
+            params![i64::from(collapsed), column_id],
+        )
+        .map_err(db)?;
+    }
+    let column = get_column(&tx, column_id)?;
+    tx.commit().map_err(db)?;
+    Ok(column)
 }
 
 pub(crate) fn check_color(color: &str) -> Result<(), String> {
