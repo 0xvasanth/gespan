@@ -5,7 +5,7 @@ import {
   HARNESSES,
   type HarnessId,
 } from "../../sessions/model/session";
-import { modelsFor, resolveModel } from "../../sessions/model/models";
+import { defaultSessionChoice, modelsFor, resolveModel } from "../../sessions/model/models";
 import type { RunRequest } from "./boardFormat";
 import { FIELD, SETTINGS_BUTTON } from "./settings/settingsControls";
 
@@ -24,8 +24,10 @@ export function RunWithDialog({
   onRun: (request: RunRequest) => void;
   onClose: () => void;
 }) {
-  const [harness, setHarness] = useState<HarnessId>(HARNESSES[0]);
-  const [model, setModel] = useState(() => resolveModel(HARNESSES[0]).id);
+  // The provider and model the user starts sessions with by default.
+  const [choice] = useState(() => defaultSessionChoice(projects[0]?.path));
+  const [harness, setHarness] = useState<HarnessId>(choice.harness);
+  const [model, setModel] = useState(() => resolveModel(choice.harness, choice.model).id);
   const [cwd, setCwd] = useState(projects[0]?.path ?? "");
   const [worktree, setWorktree] = useState(false);
   const models = modelsFor(harness);

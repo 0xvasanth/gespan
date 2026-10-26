@@ -737,7 +737,7 @@ import {
   type LinkRef,
   type RunRequest,
 } from "../features/board/ui/boardFormat";
-import { prepareRun } from "../features/board/model/runWith";
+import { startRun } from "../features/board/model/runWith";
 import {
   addCardLink,
   getCardTicket,
@@ -14172,6 +14172,11 @@ function Workspace({
     ): Promise<Record<string, LinkExtra>> => {
       const out: Record<string, LinkExtra> = {};
       const local = !remoteProjectFor(projectCwd);
+      // The current branch's PR, asked once however many PR links there are.
+      const branchPr =
+        local && links.some((link) => link.kind === "pr")
+          ? gitPrStatus(projectCwd).catch(() => null)
+          : Promise.resolve(null);
       await Promise.all(
         links.map(async (link) => {
           const key = extraKey(link);
@@ -14202,7 +14207,7 @@ function Workspace({
             return;
           }
           const [status, checks] = await Promise.allSettled([
-            gitPrStatus(projectCwd),
+            branchPr,
             fetchGithubPrChecks(projectCwd, pr.repo, pr.number),
           ]);
           const sameBranchPr =
@@ -14228,22 +14233,25 @@ function Workspace({
   // starts), then sent. Everything else about the card stays in the store.
   const onBoardRunWith = useCallback(
     async (request: RunRequest) => {
-      const { session, prompt } = await prepareRun(request, {
+      await startRun(request, {
         getRunPrompt,
         getCardTicket,
+        // The link goes in first, so a refused link leaves no empty session
+        // behind, and write-back finds the card once the turn runs.
+        link: (cardId, sessionId) => addCardLink(cardId, "session", sessionId),
+        open: (session, prompt) => {
+          const nextSessions = [...sessionsRef.current, session];
+          sessionsRef.current = nextSessions;
+          setSessions(nextSessions);
+          const tab = newTab(session.id);
+          appendTab(tab, request.cwd);
+          setBoardViewOpen(false);
+          setSidebarTab("sessions", session.cwd);
+          setActiveTabId(tab.id);
+          setComposerFocused(false);
+          submitSession(session.id, prompt, [], { refreshTitle: true });
+        },
       });
-      const nextSessions = [...sessionsRef.current, session];
-      sessionsRef.current = nextSessions;
-      setSessions(nextSessions);
-      const tab = newTab(session.id);
-      appendTab(tab, request.cwd);
-      // The link goes in before the turn starts, so write-back finds the card.
-      await addCardLink(request.cardId, "session", session.id);
-      setBoardViewOpen(false);
-      setSidebarTab("sessions", session.cwd);
-      setActiveTabId(tab.id);
-      setComposerFocused(false);
-      submitSession(session.id, prompt, [], { refreshTitle: true });
     },
     [appendTab, submitSession],
   );

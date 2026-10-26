@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TicketRef } from "../../sessions/model/session";
-import { prepareRun } from "./runWith";
+import { prepareRun, startRun } from "./runWith";
 
 const ticket = {
   tracker: "linear",
@@ -78,5 +78,39 @@ describe("prepareRun", () => {
     );
     expect(session.workspaceMode).toBe("worktree");
     expect(session.worktreeBase).toBe("HEAD");
+  });
+});
+
+describe("startRun", () => {
+  const base = { getRunPrompt: async () => "p", getCardTicket: async () => null };
+
+  it("links the card before the session opens", async () => {
+    const order: string[] = [];
+    await startRun(request, {
+      ...base,
+      link: async (cardId, sessionId) => {
+        order.push(`link ${cardId}`);
+        expect(sessionId).toBeTruthy();
+      },
+      open: (session, prompt) => {
+        order.push(`open ${prompt}`);
+        expect(session.harness).toBe("claude");
+      },
+    });
+    expect(order).toEqual(["link c1", "open p"]);
+  });
+
+  it("a refused link opens nothing, so no empty session is left behind", async () => {
+    const open = vi.fn();
+    await expect(
+      startRun(request, {
+        ...base,
+        link: async () => {
+          throw "card is gone";
+        },
+        open,
+      }),
+    ).rejects.toBe("card is gone");
+    expect(open).not.toHaveBeenCalled();
   });
 });

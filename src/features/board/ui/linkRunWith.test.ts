@@ -2,6 +2,7 @@
 import { act, createElement, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveModel, saveLastModelChoice } from "../../sessions/model/models";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import type {
@@ -668,8 +669,40 @@ describe("running set and refresh", () => {
     expect(alertText()).toBe("");
   });
 
+  it("only work linked to this board's cards triggers a re-read when it settles", async () => {
+    linkRows = [link("c1", "pr", "https://github.com/acme/api/pull/42")];
+    detail = {
+      ...detail,
+      cards: [{ ...detail.cards[0], linkKind: "session", linkId: "s1" }, detail.cards[1], detail.cards[2]],
+    };
+    const lookup = vi.fn(async () => ({}));
+    await renderBoard({
+      lookupLinkStatus: lookup,
+      linkTargets: [
+        target("session", "s1", "running"),
+        target("session", "elsewhere", "running"),
+      ],
+    });
+    const reads = () => [lookup.mock.calls.length, commands("board_links").length];
+    const before = reads();
+    // Some other session in the app finishes: this board has no reason to read again.
+    await rerender({
+      linkTargets: [target("session", "s1", "running"), target("session", "elsewhere", "completed")],
+    });
+    expect(reads()).toEqual(before);
+    // A linked one finishing does.
+    await rerender({
+      linkTargets: [target("session", "s1", "completed"), target("session", "elsewhere", "completed")],
+    });
+    expect(reads()).toEqual([before[0] + 1, before[1] + 1]);
+  });
+
   it("link_status_refresh_has_no_interval", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: false });
+    detail = {
+      ...detail,
+      cards: [{ ...detail.cards[0], linkKind: "session", linkId: "s1" }, detail.cards[1], detail.cards[2]],
+    };
     try {
       const url = "https://github.com/acme/api/pull/42";
       linkRows = [link("c1", "pr", url)];
@@ -744,6 +777,41 @@ describe("blocked cards and Run with…", () => {
     vi.mocked(ask).mockResolvedValue(true);
     await click(runWithButton()!);
     expect(dialog()).not.toBeNull();
+  });
+
+  it("asks the store at click time, so a stale map can't let a blocked card run", async () => {
+    vi.mocked(ask).mockResolvedValue(false);
+    await renderBoard({ onRunWith: vi.fn(async () => undefined) });
+    // Nothing blocked when the board loaded; a blocker appeared since.
+    expect(faceOf("c2").querySelector("[data-card-blocked]")).toBeNull();
+    blockedRows = { c2: [1] };
+    await open("c2");
+    await click(runWithButton()!);
+    expect(ask).toHaveBeenCalledWith(
+      "#2 is blocked by #1. Run anyway?",
+      expect.anything(),
+    );
+    expect(dialog()).toBeNull();
+  });
+
+  it("if the store can't say whether the card is blocked, nothing starts", async () => {
+    await renderBoard({ onRunWith: vi.fn(async () => undefined) });
+    await open("c1");
+    handlers.board_blocked = () => {
+      throw "store is locked";
+    };
+    await click(runWithButton()!);
+    expect(ask).not.toHaveBeenCalled();
+    expect(dialog()).toBeNull();
+    expect(alertText()).toContain("store is locked");
+  });
+
+  it("the picker starts on the user's default provider", async () => {
+    saveLastModelChoice("codex", resolveModel("codex").id);
+    await renderBoard({ onRunWith: vi.fn(async () => undefined) });
+    await open("c1");
+    await click(runWithButton()!);
+    expect(byLabel<HTMLSelectElement>(dialog()!, "Provider").value).toBe("codex");
   });
 
   it("run_with_starts_linked_session_with_card_prompt_and_inherits_ticket: the picker hands the app what to start", async () => {

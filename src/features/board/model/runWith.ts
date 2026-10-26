@@ -12,6 +12,22 @@ export type RunIo = {
 };
 
 /**
+ * Prepares the run, links the session to the card, and only then opens it.
+ * A link the store refuses stops here: no session or tab was made.
+ */
+export async function startRun(
+  request: RunRequest,
+  io: RunIo & {
+    link: (cardId: string, sessionId: string) => Promise<void>;
+    open: (session: Session, prompt: string) => void;
+  },
+): Promise<void> {
+  const { session, prompt } = await prepareRun(request, io);
+  await io.link(request.cardId, session.id);
+  io.open(session, prompt);
+}
+
+/**
  * The session "Run with…" starts and the prompt it sends. The prompt is the
  * store's, untouched: it is never assembled or extended here, and no ticket
  * text is added. The card's cached ticket rides on the session, so a

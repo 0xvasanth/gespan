@@ -791,14 +791,32 @@ function BoardContent({
 
   // A linked turn settling (something that ran no longer does) re-reads the
   // board's link status once. Nothing here polls.
+  // Only work linked to this board's cards counts: some other session in the
+  // app settling is no reason to read this board (or call `gh`) again.
+  const boardWork = useMemo(() => {
+    const held = new Set<string>();
+    for (const card of detail?.cards ?? []) {
+      if (card.linkKind && card.linkId) held.add(linkValue(card.linkKind, card.linkId));
+    }
+    for (const link of boardLinks) {
+      if (link.kind === "session" || link.kind === "pilot") {
+        held.add(linkValue(link.kind, link.reference));
+      }
+    }
+    return held;
+  }, [detail, boardLinks]);
+  const boardRunning = useMemo(
+    () => runningNow.filter(([kind, id]) => boardWork.has(linkValue(kind, id))),
+    [runningNow, boardWork],
+  );
   const lastRunning = useRef<[CardLinkKind, string][]>([]);
   useEffect(() => {
-    if (settledSince(lastRunning.current, runningNow)) {
+    if (settledSince(lastRunning.current, boardRunning)) {
       setSettleTick((tick) => tick + 1);
       void refresh();
     }
-    lastRunning.current = runningNow;
-  }, [runningNow, refresh]);
+    lastRunning.current = boardRunning;
+  }, [boardRunning, refresh]);
 
   // PR and worktree status: on open, on a changed set of such links, and on settle.
   const lookupStatusRef = useRef(lookupLinkStatus);
@@ -1857,7 +1875,15 @@ function BoardContent({
 
   /** Asks first when open cards block this one, then lets the user pick what runs. */
   const startRunWith = async (card: BoardCard) => {
-    const blockers = blocked[card.id] ?? [];
+    // Asked again now: the map on screen may be stale or empty. If the store
+    // can't say, the card may be blocked, so nothing starts.
+    let blockers: number[];
+    try {
+      blockers = (await getBlockedCards(card.boardId))[card.id] ?? [];
+    } catch (cause) {
+      fail("Couldn't check whether the card is blocked")(cause);
+      return;
+    }
     if (blockers.length) {
       const confirmed = await ask(
         `#${card.number} is blocked by ${blockers.map((n) => `#${n}`).join(", ")}. Run anyway?`,
