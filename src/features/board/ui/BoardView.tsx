@@ -150,7 +150,7 @@ import {
   serializeDisplay,
   withLayoutDisplay,
 } from "../model/display";
-import { buildLanes, laneValue } from "../model/swimlanes";
+import { buildLanes, laneCells, laneOrder, laneValue } from "../model/swimlanes";
 import { fieldText } from "../model/cardProps";
 import { DisplayEditor } from "./settings/DisplayEditor";
 import { Swimlanes } from "./kanban/Swimlanes";
@@ -1021,11 +1021,30 @@ function BoardContent({
       return out;
     }
     const shown = shownDetail ?? detail;
-    return [...shown.columns]
+    const columns = [...shown.columns]
       .sort((a, b) => a.position - b.position)
-      .filter((column) => !column.collapsed)
-      .flatMap((column) => columnCards(shown, column.id));
-  }, [detail, shownDetail, visibleCards, layoutState, extras, labels, projects]);
+      .filter((column) => !column.collapsed);
+    if (lanesBy) {
+      // Swimlanes read lane by lane, then column by column inside a lane.
+      const byId = new Map(shown.cards.map((card) => [card.id, card]));
+      return laneOrder(
+        lanes,
+        laneCells(lanes, shown.cards),
+        columns.map((column) => column.id),
+      ).flatMap((id) => byId.get(id) ?? []);
+    }
+    return columns.flatMap((column) => columnCards(shown, column.id));
+  }, [
+    detail,
+    shownDetail,
+    visibleCards,
+    layoutState,
+    extras,
+    labels,
+    projects,
+    lanesBy,
+    lanes,
+  ]);
   const displayOrderRef = useRef(displayOrder);
   useLayoutEffect(() => {
     displayOrderRef.current = displayOrder;
@@ -2627,8 +2646,12 @@ function BoardContent({
                 renderColumnHeader={renderColumnHeader}
                 onDrop={onLaneDrop}
                 onCardOpen={(card) => showCard({ id: card.id })}
+                onColumnExpand={(column) => setCollapsed(column, false)}
                 selectedIds={selectedSet}
                 trailing={trailing}
+                density={display.density}
+                focusedCardId={focusedId}
+                openCardId={shownCard?.id ?? null}
               />
             ) : shownDetail ? (
               <KanbanBoard

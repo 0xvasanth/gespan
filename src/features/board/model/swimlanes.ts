@@ -140,3 +140,101 @@ export function laneValue(by: LaneBy, key: string): LaneValue | null {
   }
   return null;
 }
+
+/** A row of the windowed swimlanes: a lane's header, or one band of it. */
+export type LaneRow =
+  | { kind: "header"; lane: string }
+  | { kind: "band"; lane: string; band: number };
+
+/** Cards per cell in one band: band `b` holds cards [4b, 4b + 4) of each cell. */
+export const LANE_BAND = 4;
+
+/** First-guess height of a lane header row (px); measured once mounted. */
+export const LANE_HEADER_ESTIMATE = 36;
+/** First-guess height of an empty band (its cells' drop areas). */
+const EMPTY_BAND_ESTIMATE = 40;
+
+/** First-guess height of a band whose tallest cell holds `cards` cards. */
+export function laneBandEstimate(cards: number, cardEstimate: number): number {
+  // Cards stack with a 6px gap, and a 6px pad closes each band.
+  return cards > 0 ? cards * (cardEstimate + 6) : EMPTY_BAND_ESTIMATE;
+}
+
+/** The key of the cell where lane `lane` meets column `column`. */
+export function laneCellKey(lane: string, column: string): string {
+  return `${lane}\u0000${column}`;
+}
+
+/** Each lane's cards split by column and ordered by position (empty cells left out). */
+export function laneCells(
+  lanes: readonly Lane[],
+  cards: readonly BoardCard[],
+): Map<string, string[]> {
+  const byId = new Map(cards.map((card) => [card.id, card]));
+  const out = new Map<string, BoardCard[]>();
+  for (const lane of lanes) {
+    for (const id of lane.cardIds) {
+      const card = byId.get(id);
+      if (!card) continue;
+      const key = laneCellKey(lane.key, card.columnId);
+      const cell = out.get(key);
+      if (cell) cell.push(card);
+      else out.set(key, [card]);
+    }
+  }
+  return new Map(
+    [...out].map(([key, cell]) => [
+      key,
+      cell.sort((a, b) => a.position - b.position).map((card) => card.id),
+    ]),
+  );
+}
+
+/**
+ * The rows of the lanes: each lane's header, then as many bands as its
+ * longest cell needs (at least one, so an empty lane still takes drops).
+ * `cells` holds the cards each cell shows; a collapsed column shows none.
+ */
+export function laneRows(
+  lanes: readonly Lane[],
+  cells: ReadonlyMap<string, readonly string[]>,
+): LaneRow[] {
+  const longest = new Map<string, number>();
+  for (const [key, ids] of cells) {
+    const lane = key.slice(0, key.indexOf("\u0000"));
+    longest.set(lane, Math.max(longest.get(lane) ?? 0, ids.length));
+  }
+  const rows: LaneRow[] = [];
+  for (const lane of lanes) {
+    rows.push({ kind: "header", lane: lane.key });
+    const bands = Math.max(1, Math.ceil((longest.get(lane.key) ?? 0) / LANE_BAND));
+    for (let band = 0; band < bands; band += 1) {
+      rows.push({ kind: "band", lane: lane.key, band });
+    }
+  }
+  return rows;
+}
+
+/**
+ * The lanes' cards in the order they read on screen: lane by lane, column
+ * by column (`columnIds`, the shown ones in order), then by position. A card
+ * in two lanes counts once, at its first place.
+ */
+export function laneOrder(
+  lanes: readonly Lane[],
+  cells: ReadonlyMap<string, readonly string[]>,
+  columnIds: readonly string[],
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const lane of lanes) {
+    for (const column of columnIds) {
+      for (const id of cells.get(laneCellKey(lane.key, column)) ?? []) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push(id);
+      }
+    }
+  }
+  return out;
+}

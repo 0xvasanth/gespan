@@ -147,21 +147,21 @@ describe("swimlane keyboard", () => {
     key(el, "Space", " ");
     await tick();
     // Lifting announces the pick-up, then at once the cell it is over.
-    expect(liveRegion()).toBe("Card #1, Card 1 is over lane Bug, column Backlog.");
+    expect(liveRegion()).toBe("Card #1, Card 1 is over lane Bug, column Backlog, position 1 of 1.");
 
     key(el, "ArrowRight", "ArrowRight");
     await tick();
-    expect(liveRegion()).toBe("Card #1, Card 1 is over lane Bug, column Review.");
+    expect(liveRegion()).toBe("Card #1, Card 1 is over lane Bug, column Review, position 1 of 1.");
 
     key(el, "ArrowDown", "ArrowDown");
     await tick();
-    expect(liveRegion()).toBe("Card #1, Card 1 is over lane Docs, column Review.");
+    expect(liveRegion()).toBe("Card #1, Card 1 is over lane Docs, column Review, position 1 of 1.");
 
     key(document, "Space", " ");
     await tick();
     expect(props.onDrop).toHaveBeenCalledTimes(1);
     expect(props.onDrop).toHaveBeenCalledWith("c1", "l2", "review");
-    expect(liveRegion()).toBe("Dropped card #1 in lane Docs, column Review.");
+    expect(liveRegion()).toBe("Dropped card #1 in lane Docs, column Review, position 1 of 1.");
     // No internal ids in what is spoken.
     expect(liveRegion()).not.toMatch(/cell:|\|/);
   });
@@ -179,7 +179,7 @@ describe("swimlane keyboard", () => {
     await tick();
     expect(props.onDrop).not.toHaveBeenCalled();
     expect(liveRegion()).toBe(
-      "Moving card #1 was cancelled. It is back in lane Bug, column Backlog.",
+      "Moving card #1 was cancelled. It is back in lane Bug, column Backlog, position 1 of 1.",
     );
   });
 

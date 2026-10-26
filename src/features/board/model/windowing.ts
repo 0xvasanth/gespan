@@ -200,20 +200,26 @@ type Anchor = { id: string; offset: number };
  * Once scrolled, the item at the top of the view is the anchor: when ids or
  * heights change above it (a reload, a card added above, a re-measure), the
  * scroll moves with it so it stays where it was. `pinned` ids are always
- * rendered (focus, a drag, an open drawer).
+ * rendered (focus, a drag, an open drawer). `estimates` gives items their
+ * own first guess (by index) in place of `estimate`; `topOffset` is how far
+ * below the scroller's top the first item starts.
  */
 export function useMeasuredWindow({
   ids,
   estimate,
+  estimates,
   gap,
   overscan,
   pinned,
+  topOffset = 0,
 }: {
   ids: readonly string[];
   estimate: number;
+  estimates?: readonly number[];
   gap: number;
   overscan: number;
   pinned: readonly string[];
+  topOffset?: number;
 }) {
   const element = useRef<HTMLElement | null>(null);
   const measured = useRef(new Map<string, Measured>());
@@ -230,11 +236,12 @@ export function useMeasuredWindow({
   );
   const heights = useMemo(() => {
     void version; // measurements live in a ref; `version` marks a change
-    return ids.map((id) => {
+    return ids.map((id, index) => {
+      const guess = estimates?.[index] ?? estimate;
       const entry = measured.current.get(id);
-      return entry && entry.estimate === estimate ? entry.height : estimate;
+      return entry && entry.estimate === guess ? entry.height : guess;
     });
-  }, [ids, estimate, version]);
+  }, [ids, estimate, estimates, version]);
   const offsets = useMemo(() => itemOffsets(heights, gap), [heights, gap]);
   const pinnedIndexes = useMemo(
     () => pinned.flatMap((id) => indexById.get(id) ?? []),
@@ -242,8 +249,15 @@ export function useMeasuredWindow({
   );
   const slots = useMemo(
     () =>
-      windowSlots(heights, gap, scrollTop, viewport, overscan, pinnedIndexes),
-    [heights, gap, scrollTop, viewport, overscan, pinnedIndexes],
+      windowSlots(
+        heights,
+        gap,
+        scrollTop - topOffset,
+        viewport,
+        overscan,
+        pinnedIndexes,
+      ),
+    [heights, gap, scrollTop, topOffset, viewport, overscan, pinnedIndexes],
   );
 
   const isDragging = useCallback(
@@ -251,8 +265,8 @@ export function useMeasuredWindow({
     [],
   );
 
-  const latest = useRef({ ids, offsets });
-  latest.current = { ids, offsets };
+  const latest = useRef({ ids, offsets, topOffset });
+  latest.current = { ids, offsets, topOffset };
 
   /** The item at `top` and how far into it the view starts. */
   const anchorAt = useCallback(
@@ -273,7 +287,7 @@ export function useMeasuredWindow({
     if (!node) return;
     setViewport(node.clientHeight || FALLBACK_VIEWPORT);
     setScrollTop(node.scrollTop);
-    anchor.current = anchorAt(node.scrollTop);
+    anchor.current = anchorAt(node.scrollTop - latest.current.topOffset);
   }, [anchorAt]);
 
   // The scroller can come and go (a column collapsed, then expanded), so the
@@ -313,13 +327,16 @@ export function useMeasuredWindow({
       const height = node.getBoundingClientRect().height;
       // Zero is "not laid out" (hidden, or no layout engine), not a height.
       if (!(height > 0)) continue;
+      const index = indexById.get(id);
+      const guess =
+        (index === undefined ? undefined : estimates?.[index]) ?? estimate;
       const entry = measured.current.get(id);
       if (
         !entry ||
-        entry.estimate !== estimate ||
+        entry.estimate !== guess ||
         Math.abs(entry.height - height) > 0.5
       ) {
-        measured.current.set(id, { estimate, height });
+        measured.current.set(id, { estimate: guess, height });
         changed = true;
       }
     }
@@ -335,10 +352,10 @@ export function useMeasuredWindow({
     if (index === undefined || isDragging(held.id)) {
       // The top card is gone (or lifted): stay at this offset, under the
       // card now there.
-      anchor.current = anchorAt(node.scrollTop);
+      anchor.current = anchorAt(node.scrollTop - topOffset);
       return;
     }
-    const wanted = offsets[index] + held.offset;
+    const wanted = offsets[index] + held.offset + topOffset;
     if (Math.abs(node.scrollTop - wanted) > 0.5) {
       node.scrollTop = wanted;
       setScrollTop(node.scrollTop);
@@ -369,10 +386,10 @@ export function useMeasuredWindow({
   const scrollToIndex = useCallback(
     (index: number) => {
       const node = element.current;
-      const { offsets: at } = latest.current;
+      const { offsets: at, topOffset: above } = latest.current;
       if (!node || index < 0 || index >= at.length - 1) return;
-      const top = at[index];
-      const bottom = at[index + 1] - gap;
+      const top = at[index] + above;
+      const bottom = at[index + 1] - gap + above;
       const view = node.clientHeight || FALLBACK_VIEWPORT;
       let next = node.scrollTop;
       if (top < next) next = top;

@@ -45,3 +45,45 @@ export function nextCardFocus(
   }
   return null;
 }
+
+/** A card in one lane: a card with several labels sits in several lanes. */
+export type LaneFocus = { lane: string; cardId: string };
+
+const SEP = "\u0000";
+
+/**
+ * The card an arrow key moves focus to in swimlanes, from the card `from`
+ * in its lane. ↑/↓ go to the previous or next card in the cell, crossing
+ * into the nearest lane above or below that has cards in the same column.
+ * ←/→ stay in the lane: the same index in the nearest column with cards,
+ * clamped (the Native C1-5 rule). Collapsed columns are passed empty.
+ */
+export function nextLaneFocus(
+  lanes: readonly {
+    key: string;
+    columns: readonly { id: string; cardIds: readonly string[] }[];
+  }[],
+  from: LaneFocus,
+  key: FocusKey,
+): LaneFocus | null {
+  const lane = lanes.find((l) => l.key === from.lane);
+  if (!lane) return null;
+  if (key === "ArrowLeft" || key === "ArrowRight") {
+    const id = nextCardFocus(lane.columns, from.cardId, key);
+    return id ? { lane: lane.key, cardId: id } : null;
+  }
+  // Each column read top to bottom through every lane.
+  const columns = lane.columns.map((column) => ({
+    id: column.id,
+    cardIds: lanes.flatMap(
+      (l) =>
+        l.columns
+          .find((c) => c.id === column.id)
+          ?.cardIds.map((id) => `${l.key}${SEP}${id}`) ?? [],
+    ),
+  }));
+  const next = nextCardFocus(columns, `${from.lane}${SEP}${from.cardId}`, key);
+  if (!next) return null;
+  const cut = next.indexOf(SEP);
+  return { lane: next.slice(0, cut), cardId: next.slice(cut + 1) };
+}
