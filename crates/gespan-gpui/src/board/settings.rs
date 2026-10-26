@@ -1,13 +1,16 @@
 //! The board settings page: one page over the board with a section list on
-//! the left. General, Columns, Labels and Priority live here; every write goes
+//! the left. General, Columns, Labels, Priority, Fields, Display, Templates
+//! and Automation live here; every write goes
 //! through `Service` (settings writes are patches, so a toggle the other app
 //! just set survives).
+mod automation;
 mod columns;
 mod display;
 mod fields;
 mod general;
 mod labels;
 mod priority;
+mod templates;
 
 use super::{BoardView, style::PALETTE};
 use crate::{
@@ -28,16 +31,20 @@ pub(crate) enum Section {
     Priority,
     Fields,
     Display,
+    Templates,
+    Automation,
 }
 
 impl Section {
-    const ALL: [(Section, &'static str, &'static str); 6] = [
+    const ALL: [(Section, &'static str, &'static str); 8] = [
         (Section::General, "general", "General"),
         (Section::Columns, "columns", "Columns"),
         (Section::Labels, "labels", "Labels"),
         (Section::Priority, "priority", "Priority"),
         (Section::Fields, "fields", "Fields"),
         (Section::Display, "display", "Display"),
+        (Section::Templates, "templates", "Templates"),
+        (Section::Automation, "automation", "Automation"),
     ];
 }
 
@@ -54,6 +61,7 @@ pub(crate) enum Edit {
     FieldName(String),
     FieldOption(String, String),
     FieldOptionNew(String),
+    TemplateName,
 }
 
 struct Editing {
@@ -77,6 +85,9 @@ pub(crate) struct Page {
     deleting_field: Option<String>,
     /// Display options being edited: the open saved view's, not the board's.
     display_view: bool,
+    /// Built-in templates first, then saved ones by name. Template commands
+    /// don't emit, so this is reloaded after a save or a delete.
+    templates: Vec<gespan_core::board::extras::TemplateInfo>,
 }
 
 impl Page {
@@ -91,6 +102,7 @@ impl Page {
             deleting_label: None,
             deleting_field: None,
             display_view: false,
+            templates: Vec::new(),
         }
     }
 
@@ -231,6 +243,9 @@ impl BoardView {
             page.clear_prompts();
             page.error = None;
         }
+        if section == Section::Templates {
+            self.refresh_templates();
+        }
         cx.notify();
     }
 
@@ -340,6 +355,7 @@ impl BoardView {
             Edit::FieldName(id) => self.commit_field_name(&id, &text, cx),
             Edit::FieldOption(id, from) => self.commit_field_option(&id, &from, &text, cx),
             Edit::FieldOptionNew(id) => self.commit_field_option_new(&id, &text, cx),
+            Edit::TemplateName => self.commit_template_name(&text, cx),
         };
         if ok {
             // The field is gone: keys (Escape) go to the board again.
@@ -379,6 +395,8 @@ impl BoardView {
             Section::Priority => self.render_priority(cx),
             Section::Fields => self.render_fields(cx),
             Section::Display => self.render_display(cx),
+            Section::Templates => self.render_templates(cx),
+            Section::Automation => self.render_automation(cx),
         };
         let error = page.error.clone().map(|error| {
             div()

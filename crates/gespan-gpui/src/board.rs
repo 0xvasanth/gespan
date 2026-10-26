@@ -241,6 +241,9 @@ pub(crate) struct BoardView {
     /// The settings page, when open, and the open board's settings.
     settings: Option<settings::Page>,
     pub(crate) board_settings: BoardSettings,
+    /// False until the board's settings were read; the automation switches
+    /// and rules stay disabled meanwhile.
+    pub(crate) settings_loaded: bool,
     pub(crate) priority: PriorityScheme,
     /// The display options in force, refreshed at the start of each render.
     pub(crate) display: DisplayOptions,
@@ -384,6 +387,7 @@ impl BoardView {
             archived: Vec::new(),
             settings: None,
             board_settings: BoardSettings::default(),
+            settings_loaded: false,
             priority: PriorityScheme::default(),
             display: DisplayOptions::default(),
             field_seen: HashMap::new(),
@@ -559,7 +563,11 @@ impl BoardView {
         let card_tickets = service.board_tickets(&board.id)?;
         let views = service.views(&board.id)?;
         let fields = service.list_fields(&board.id)?;
-        let board_settings = service.settings(&board.id)?;
+        // A settings row that can't be read is not fatal to the board, but the
+        // automation section must not write over what it could not see.
+        let settings_read = service.settings(&board.id);
+        let settings_loaded = settings_read.is_ok();
+        let board_settings = settings_read.unwrap_or_default();
         let mut field_seen = HashMap::new();
         for field in fields
             .iter()
@@ -621,6 +629,7 @@ impl BoardView {
                 .filter(|id| self.views.saved.iter().any(|view| &view.id == id));
         }
         self.board_settings = board_settings;
+        self.settings_loaded = settings_loaded;
         // A label or column deleted elsewhere is dropped by the query itself,
         // so a saved filter never hides every card unseen.
         self.refresh_query(cx)

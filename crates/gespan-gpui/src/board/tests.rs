@@ -6461,6 +6461,7 @@ fn settings_page_renames_board_and_sets_icon_and_colour(cx: &mut TestAppContext)
             },
         )
         .unwrap();
+    click(visual, "settings-nav-automation");
     click(visual, "settings-toggle-write-back");
     let settings = settings_of(&f);
     assert!(!settings.write_back);
@@ -7702,4 +7703,305 @@ fn swimlane_keyboard_lift_moves_between_cells_and_drops(cx: &mut TestAppContext)
         view.undo.toast.as_ref().map(|t| t.label.clone())
     });
     assert_eq!(toast.as_deref(), Some("Moved #1 to In Progress, Low"));
+}
+
+// ---- templates and automation settings ----
+
+/// New board through the switcher: pick `template` (None keeps the default),
+/// name it and press Enter.
+fn new_board_from(visual: &mut VisualTestContext, template: Option<&str>, name: &str) {
+    click(visual, "board-switcher");
+    click(visual, "board-new");
+    if let Some(template) = template {
+        click(visual, selector(format!("board-template-{template}")));
+    }
+    visual.simulate_input(name);
+    press_enter(visual);
+}
+
+fn column_names(f: &Fixture, cx: &mut impl gpui::AppContext) -> Vec<(String, Option<String>)> {
+    detail(f, cx)
+        .columns
+        .iter()
+        .map(|c| (c.name.clone(), c.role.clone()))
+        .collect()
+}
+
+#[gpui::test]
+fn new_board_from_agent_pipeline_has_its_columns(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    new_board_from(visual, Some("agent-pipeline"), "Agents");
+    assert_eq!(open_name(&f, visual), "Agents");
+    let names: Vec<String> = column_names(&f, visual).into_iter().map(|c| c.0).collect();
+    assert_eq!(
+        names,
+        ["Queued", "Running", "Needs review", "Merged", "Done"]
+    );
+    let detail = detail(&f, visual);
+    let merged = detail.columns[3].id.clone();
+    let settings = Service::open(&f.db)
+        .unwrap()
+        .settings(&detail.board.id)
+        .unwrap();
+    let rules = gespan_core::board::extras::auto_move_rules(&settings);
+    assert_eq!(
+        rules.pr_merged,
+        gespan_core::board::extras::RuleTarget::Column(merged)
+    );
+}
+
+#[gpui::test]
+fn blank_template_matches_todays_default_columns(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let today = column_names(&f, visual);
+    // The default pick is Blank: Enter alone creates it.
+    new_board_from(visual, None, "Plain");
+    assert_eq!(open_name(&f, visual), "Plain");
+    assert_eq!(column_names(&f, visual), today);
+    // Picking Blank explicitly after another template gives the same.
+    click(visual, "board-switcher");
+    click(visual, "board-new");
+    click(visual, "board-template-bug-triage");
+    click(visual, "board-template-blank");
+    visual.simulate_input("Again");
+    press_enter(visual);
+    assert_eq!(column_names(&f, visual), today);
+}
+
+#[gpui::test]
+fn save_as_template_then_create_copies_labels_fields_views(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let board = open_id(&f, visual);
+    {
+        let mut service = Service::open(&f.db).unwrap();
+        service.create_label(&board, "Urgent", "e5534b").unwrap();
+        service.field_create(&board, "Owner", "text", None).unwrap();
+        service.view_create(&board, "Mine", "{}", "{}").unwrap();
+        let backlog = detail(&f, visual).columns[0].id.clone();
+        service.card_create(&backlog, "Not copied", "").unwrap();
+    }
+    f.window
+        .update(visual, |view, _, cx| view.reload(cx))
+        .unwrap();
+    open_settings(visual, "templates");
+    // Blank name: an inline message, nothing saved.
+    click(visual, "settings-template-save");
+    assert!(shown(visual, "settings-error"));
+    click(visual, "settings-template-name");
+    press_enter(visual);
+    assert!(shown(visual, "settings-error"));
+    assert!(shown(visual, "settings-edit"), "the field stays for a name");
+    // Typing then leaving does not save.
+    visual.simulate_input("Sprint kit");
+    click(visual, "settings-nav-general");
+    assert!(
+        Service::open(&f.db)
+            .unwrap()
+            .templates()
+            .unwrap()
+            .iter()
+            .all(|t| t.built_in),
+        "blur saves nothing"
+    );
+    click(visual, "settings-nav-templates");
+    click(visual, "settings-template-name");
+    visual.simulate_input("Sprint kit");
+    click(visual, "settings-template-save");
+    let saved = Service::open(&f.db).unwrap().templates().unwrap();
+    let kit = saved.iter().find(|t| !t.built_in).expect("saved");
+    assert_eq!(kit.name, "Sprint kit");
+    assert!(!shown(visual, "settings-edit"), "the field is cleared");
+    assert!(shown(visual, "settings-template-delete-4"));
+    // Create from it.
+    new_board_from(visual, Some(&kit.id), "Copy");
+    let copy = open_id(&f, visual);
+    assert_ne!(copy, board);
+    let mut service = Service::open(&f.db).unwrap();
+    let labels = service.labels(&copy).unwrap();
+    assert_eq!(
+        labels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
+        ["Urgent"]
+    );
+    let fields = service.list_fields(&copy).unwrap();
+    assert_eq!(
+        fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+        ["Owner"]
+    );
+    let views = service.views(&copy).unwrap();
+    assert_eq!(
+        views.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(),
+        ["Mine"]
+    );
+    assert!(detail(&f, visual).cards.is_empty(), "no cards are copied");
+}
+
+#[gpui::test]
+fn saved_template_deletes_and_built_ins_have_no_delete(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let board = open_id(&f, visual);
+    Service::open(&f.db)
+        .unwrap()
+        .save_as_template(&board, "Mine")
+        .unwrap();
+    open_settings(visual, "templates");
+    for id in ["blank", "agent-pipeline", "bug-triage", "release-checklist"] {
+        assert!(shown(visual, selector(format!("settings-template-{id}"))));
+    }
+    // Only the saved one has a Delete button, and the built-ins say why.
+    assert!(shown(visual, "settings-template-delete-4"));
+    assert!(!shown(visual, "settings-template-delete-0"));
+    click(visual, "settings-template-delete-4");
+    let left = Service::open(&f.db).unwrap().templates().unwrap();
+    assert_eq!(left.len(), 4);
+    assert!(left.iter().all(|t| t.built_in));
+    assert!(
+        !shown(visual, "settings-template-delete-4"),
+        "the list reloaded"
+    );
+    // The store's refusal for a built-in reads the same.
+    let refused = Service::open(&f.db).unwrap().delete_template("blank");
+    assert_eq!(refused.unwrap_err(), "Built-in templates can't be deleted");
+}
+
+#[gpui::test]
+fn agent_toggles_default_on_for_new_boards(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    new_board_from(visual, Some("bug-triage"), "Bugs");
+    let board = open_id(&f, visual);
+    let settings = Service::open(&f.db).unwrap().settings(&board).unwrap();
+    assert!(settings.run_with && settings.write_back && settings.ticket_status_changes);
+    open_settings(visual, "automation");
+    assert!(!shown(visual, "settings-unreadable"));
+    click(visual, "settings-toggle-ticket-status");
+    let settings = Service::open(&f.db).unwrap().settings(&board).unwrap();
+    assert!(!settings.ticket_status_changes);
+    assert!(
+        settings.run_with && settings.write_back,
+        "a one-field patch"
+    );
+    // Settings that could not be read: no toggle or rule writes anything.
+    f.window
+        .update(visual, |view, _, cx| {
+            view.settings_loaded = false;
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert!(shown(visual, "settings-unreadable"));
+    click(visual, "settings-toggle-run-with");
+    click(visual, "settings-rule-completed-stay");
+    let after = Service::open(&f.db).unwrap().settings(&board).unwrap();
+    assert!(after.run_with);
+    assert_eq!(after.auto_move_json, settings.auto_move_json);
+}
+
+#[gpui::test]
+fn auto_move_rule_picker_saves_and_custom_rule_moves_the_card(cx: &mut TestAppContext) {
+    use gespan_core::board::{
+        auto_move::LinkedWorkEvent,
+        extras::{RuleTarget, SettingsPatch},
+    };
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let board = open_id(&f, visual);
+    let columns = detail(&f, visual).columns;
+    // A key this app doesn't know, and a rule the other app set.
+    Service::open(&f.db)
+        .unwrap()
+        .update_settings(
+            &board,
+            &SettingsPatch {
+                auto_move_json: Some(Some(
+                    r#"{"future_event":"stay","failed":{"column":"x"}}"#.into(),
+                )),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    f.window
+        .update(visual, |view, _, cx| view.reload(cx))
+        .unwrap();
+    open_settings(visual, "automation");
+    // Completed -> Backlog (the first column), in either direction.
+    click(visual, "settings-rule-completed-column-0");
+    let settings = Service::open(&f.db).unwrap().settings(&board).unwrap();
+    let raw: serde_json::Value =
+        serde_json::from_str(settings.auto_move_json.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        raw["completed"],
+        serde_json::json!({"column": columns[0].id})
+    );
+    assert_eq!(raw["future_event"], "stay", "unknown keys are kept");
+    assert_eq!(
+        raw["failed"],
+        serde_json::json!({"column": "x"}),
+        "other rules stay"
+    );
+    click(visual, "settings-rule-started-stay");
+    let settings = Service::open(&f.db).unwrap().settings(&board).unwrap();
+    let rules = gespan_core::board::extras::auto_move_rules(&settings);
+    assert_eq!(rules.started, RuleTarget::Stay);
+    assert_eq!(rules.completed, RuleTarget::Column(columns[0].id.clone()));
+    // The rule moves a card that sits further along.
+    let mut service = Service::open(&f.db).unwrap();
+    let card = service.card_create(&columns[1].id, "Work", "").unwrap();
+    service
+        .card_link(&card.id, Some("session"), Some("sess-1"))
+        .unwrap();
+    service
+        .linked_event("session", "sess-1", LinkedWorkEvent::Completed)
+        .unwrap();
+    assert_eq!(service.card(&card.id).unwrap().column_id, columns[0].id);
+}
+
+#[gpui::test]
+fn rule_picker_shows_stay_for_a_deleted_column(cx: &mut TestAppContext) {
+    use gespan_core::board::extras::{RuleTarget, SettingsPatch};
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let board = open_id(&f, visual);
+    let raw = r#"{"completed":{"column":"deleted-col"}}"#;
+    Service::open(&f.db)
+        .unwrap()
+        .update_settings(
+            &board,
+            &SettingsPatch {
+                auto_move_json: Some(Some(raw.into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    f.window
+        .update(visual, |view, _, cx| view.reload(cx))
+        .unwrap();
+    open_settings(visual, "automation");
+    let shown_rule = f
+        .window
+        .read_with(visual, |view, _| view.displayed_rule("completed"))
+        .unwrap();
+    assert_eq!(shown_rule, RuleTarget::Stay);
+    // Looking at it, and editing another rule, leaves the stored rule alone
+    // until it is picked.
+    assert_eq!(
+        Service::open(&f.db)
+            .unwrap()
+            .settings(&board)
+            .unwrap()
+            .auto_move_json
+            .as_deref(),
+        Some(raw)
+    );
+    click(visual, "settings-rule-pr_merged-stay");
+    let stored = Service::open(&f.db).unwrap().settings(&board).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(stored.auto_move_json.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        json["completed"],
+        serde_json::json!({"column": "deleted-col"})
+    );
 }
