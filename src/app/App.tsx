@@ -745,7 +745,11 @@ import {
   getCardTicket,
   getRunPrompt,
 } from "../features/board/model/board";
-import { createPrEvents } from "../features/board/model/prEvents";
+import {
+  createPrEvents,
+  type PrEvents,
+} from "../features/board/model/prEvents";
+import { writeBackReply } from "../features/board/model/writeBackReply";
 import {
   checksState,
   extraKey,
@@ -1874,7 +1878,9 @@ function Workspace({
     boardWriteBack,
   );
   // PR links report pr_opened / pr_merged when a board status read sees it.
-  const prEvents = useRef(createPrEvents(onLinkedWork)).current;
+  const prEventsRef = useRef<PrEvents | null>(null);
+  prEventsRef.current ??= createPrEvents(onLinkedWork);
+  const prEvents = prEventsRef.current;
   const editedResends = useRef(createEditedResendCoordinator()).current;
   const lastPersisted = useRef(new Map<string, string>());
   const lastBoundProvider = useRef(new Map<string, string>());
@@ -8824,7 +8830,7 @@ function Workspace({
             gen,
             outcome.status,
             outcome.status === "completed"
-              ? lastAssistantTextInTurn(
+              ? writeBackReply(
                   sessionsRef.current.find((s) => s.id === sessionId) ??
                     current,
                 )

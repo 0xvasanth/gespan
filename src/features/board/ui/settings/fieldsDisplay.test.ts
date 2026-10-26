@@ -744,6 +744,45 @@ describe("filter rows on free-form fields", () => {
     ).not.toBeNull();
   });
 
+  it("multi_select_filter_rows_offer_the_field_options", async () => {
+    fieldRows = [field("m1", "Areas", "multi-select", '["API","Web","Docs"]', 0)];
+    await renderBoard();
+    await addRow("Areas");
+    expect(choices()).toEqual(["API", "Web", "Docs"]);
+    // Options come from the field, not from card values, and there is no typed input.
+    expect(commands("board_field_distinct_values")).toEqual([]);
+    expect(document.querySelector('input[aria-label="Add Areas value"]')).toBeNull();
+    act(() =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')]
+        .find((el) => el.textContent?.trim() === "Web")!
+        .click(),
+    );
+    await flush();
+    expect(lastRows()).toEqual([{ field: "field:m1", op: "is", values: ['"Web"'] }]);
+  });
+
+  it("url_filter_rows_offer_distinct_card_values_and_typed_input", async () => {
+    fieldRows = [field("u1", "Spec", "url", null, 0)];
+    distinct = { u1: ['"https://acme.dev/a"', '"https://acme.dev/b"'] };
+    await renderBoard();
+    await addRow("Spec");
+    expect(commands("board_field_distinct_values")).toEqual([
+      ["board_field_distinct_values", { boardId: "b1", fieldId: "u1", limit: 50 }],
+    ]);
+    expect(choices()).toEqual(["https://acme.dev/a", "https://acme.dev/b"]);
+    const input = () =>
+      document.querySelector<HTMLInputElement>('input[aria-label="Add Spec value"]')!;
+    expect(input()).not.toBeNull();
+    await type(input(), "ftp://acme.dev", true);
+    expect(JSON.stringify(commands("board_query"))).not.toContain("ftp://");
+    expect(document.body.textContent).toContain("must start with http:// or https://");
+    await type(input(), "https://acme.dev/c", true);
+    expect(lastRows()).toEqual([
+      { field: "field:u1", op: "is", values: ['"https://acme.dev/c"'] },
+    ]);
+    expect(choices()).toContain("https://acme.dev/c");
+  });
+
   it("free_form_filter_value_matches", async () => {
     await renderBoard();
     await addRow("Notes");
@@ -991,6 +1030,63 @@ describe("swimlanes", () => {
       "board_card_set_priority",
       { cardId: "c2", priority: 3 },
     ]);
+  });
+
+  const undoButton = () =>
+    [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        "[data-board-undo-toast] button",
+      ),
+    ].find((button) => button.textContent === "Undo");
+
+  it("a lane drop that also sets the priority says so with no Undo", async () => {
+    settings = settingsWith({ swimlane: "priority" });
+    cardExtras = { c3: { ...extrasOf(2) } };
+    await renderBoard();
+    act(() => lanes.props!.onDrop("c3", "p4", "review"));
+    await flush();
+    expect(toastText()).toContain("Moved #3 to Review");
+    // Moving back alone would leave the priority at Urgent.
+    expect(undoButton()).toBeUndefined();
+  });
+
+  it("a priority-lane drop that keeps the priority keeps its Undo", async () => {
+    settings = settingsWith({ swimlane: "priority" });
+    cardExtras = { c3: { ...extrasOf(2) } };
+    await renderBoard();
+    // Within the Medium lane, into another column: only the column changes.
+    act(() => lanes.props!.onDrop("c3", "p2", "review"));
+    await flush();
+    expect(dropArgs().priority).toEqual([]);
+    expect(toastText()).toContain("Moved #3 to Review");
+    expect(undoButton()).toBeDefined();
+  });
+
+  it("a select-field lane drop that changes the column and the option has no Undo", async () => {
+    fieldRows = [field("f1", "Severity", "select", '["S1","S2"]')];
+    indexRows = { c1: { f1: '"S1"' } };
+    settings = settingsWith({ swimlane: "field:f1" });
+    await renderBoard();
+    act(() => lanes.props!.onDrop("c2", "opt:S2", "review"));
+    await flush();
+    expect(lastArgs("board_field_value_set")).toEqual({
+      cardId: "c2",
+      fieldId: "f1",
+      valueJson: '"S2"',
+    });
+    expect(toastText()).toContain("Moved #2 to Review");
+    expect(undoButton()).toBeUndefined();
+  });
+
+  it("a label or project lane drop changes the column only, so it keeps its Undo", async () => {
+    labelRows = [label("l1", "Bug", 0), label("l2", "Docs", 1)];
+    cardExtras = { c1: { ...extrasOf(3), labels: ["l1"] } };
+    settings = settingsWith({ swimlane: "label" });
+    await renderBoard();
+    act(() => lanes.props!.onDrop("c1", "l2", "review"));
+    await flush();
+    expect(toastText()).toContain("Moved #1 to Review");
+    expect(undoButton()).toBeDefined();
   });
 
   it("a hidden priority lane shows only while a card holds that level", async () => {

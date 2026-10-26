@@ -208,6 +208,22 @@ describe("refreshTicketSnapshot", () => {
     expect(refreshTicketSnapshot(missing, "s1", moved)).toBe(missing);
   });
 
+  it("matches the key the way the store does: trimmed, ignoring case", () => {
+    const sessions = [linked("s1", { ...ticket, key: " eng-7 " })];
+    const next = refreshTicketSnapshot(sessions, "s1", moved);
+    expect(next).not.toBe(sessions);
+    expect(next[0].linkedWorkItem).toEqual({ kind: "ticket", ticket: moved });
+    const lower = [linked("s1", ticket)];
+    expect(
+      refreshTicketSnapshot(lower, "s1", { ...moved, key: "eng-7\n" }),
+    ).not.toBe(lower);
+    // The tracker still has to match, and a different key never does.
+    const jira = [linked("s1", { ...ticket, tracker: "jira", key: "eng-7" })];
+    expect(refreshTicketSnapshot(jira, "s1", moved)).toBe(jira);
+    const other = [linked("s1", { ...ticket, key: "ENG-70" })];
+    expect(refreshTicketSnapshot(other, "s1", moved)).toBe(other);
+  });
+
   it("works on session summaries too (history rows)", () => {
     const rows = [{ id: "s1", linkedWorkItem: { kind: "ticket" as const, ticket } }];
     expect(refreshTicketSnapshot(rows, "s1", moved)[0].linkedWorkItem).toEqual({

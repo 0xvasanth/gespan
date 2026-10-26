@@ -109,10 +109,20 @@ export function ticketContextFor(
   };
 }
 
+/** The same ticket as the store's `same_ticket` reads it: tracker, then key trimmed and ASCII case-insensitive. */
+function sameTicketKey(
+  a: Pick<TicketRef, "tracker" | "key">,
+  b: Pick<TicketRef, "tracker" | "key">,
+): boolean {
+  const fold = (key: string) =>
+    key.trim().replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  return a.tracker === b.tracker && fold(a.key) === fold(b.key);
+}
+
 /**
  * The sessions (or session summaries) with `ticket`'s moved snapshot on
  * `sessionId`, when that session is still linked to the same ticket (tracker
- * and key); otherwise the same list. Only the snapshot changes: the store
+ * and key, matched as the store does); otherwise the same list. Only the snapshot changes: the store
  * already saved it, so this is for the chip, not another link write.
  */
 export function refreshTicketSnapshot<
@@ -121,8 +131,7 @@ export function refreshTicketSnapshot<
   const index = sessions.findIndex((session) => session.id === sessionId);
   if (index < 0) return sessions;
   const now = sessionTicket(sessions[index].linkedWorkItem);
-  if (!now || now.tracker !== ticket.tracker || now.key !== ticket.key)
-    return sessions;
+  if (!now || !sameTicketKey(now, ticket)) return sessions;
   const next = [...sessions];
   next[index] = { ...sessions[index], linkedWorkItem: { kind: "ticket", ticket } };
   return next;

@@ -501,14 +501,14 @@ function BoardContent({
    * out at once, as a switch does with a held one.
    */
   const pushUndo = useCallback(
-    (boardId: string, label: string, action: UndoAction) => {
+    (boardId: string, label: string, action: UndoAction | null) => {
       if (!mounted.current) return;
       if (openIdRef.current === boardId) undo.push(label, action);
-      else if (action.kind === "delete") {
+      else if (action?.kind === "delete") {
         void deleteArchivedCard(action.cardId).catch(
           fail("Couldn't delete the card"),
         );
-      } else if (action.kind === "deleteMany") {
+      } else if (action?.kind === "deleteMany") {
         for (const [cardId] of action.items) {
           void deleteArchivedCard(cardId).catch(
             fail("Couldn't delete the card"),
@@ -1065,7 +1065,12 @@ function BoardContent({
   };
 
   const onCardMove = useCallback(
-    (cardId: string, shown: DropTarget) => {
+    /**
+     * `undoable: false` shows the move's toast without an Undo: a lane drop
+     * that also set a priority or field value can't be undone by moving the
+     * card back alone.
+     */
+    (cardId: string, shown: DropTarget, undoable = true) => {
       const before = detailRef.current;
       if (!before) return;
       let to = shown;
@@ -1121,12 +1126,13 @@ function BoardContent({
           const label = over
             ? `${overLimitMessage(total, column.wipLimit!)} · ${moved}`
             : moved;
-          pushUndo(before.board.id, label, {
-            kind: "move",
-            cardId,
-            columnId: fromColumn,
-            index: fromIndex,
-          });
+          pushUndo(
+            before.board.id,
+            label,
+            undoable
+              ? { kind: "move", cardId, columnId: fromColumn, index: fromIndex }
+              : null,
+          );
         })
         .catch((cause) => {
           if (detailRef.current?.board.id === before.board.id) {
@@ -1993,30 +1999,43 @@ function BoardContent({
   const onLaneDrop = (cardId: string, laneKey: string, columnId: string) => {
     const card = detailRef.current?.cards.find((other) => other.id === cardId);
     if (!card || !lanesBy) return;
-    if (card.columnId !== columnId) {
-      // The same path as a column drop: optimistic move, undo, WIP warning.
-      onCardMove(card.id, {
-        columnId,
-        index: wholeColumn(columnId).filter(
-          (other) => other.id !== card.id && matches(other),
-        ).length,
-      });
-    }
     const value = laneValue(lanesBy, laneKey);
+    const encoded =
+      value?.kind === "field"
+        ? value.option === null
+          ? null
+          : JSON.stringify(value.option)
+        : null;
+    const setsValue =
+      value?.kind === "priority"
+        ? (extras[card.id]?.priority ?? 0) !== value.priority
+        : value?.kind === "field"
+          ? (cardIndex.get(card.id)?.fields[value.fieldId] ?? null) !== encoded
+          : false;
+    if (card.columnId !== columnId) {
+      // The same path as a column drop: optimistic move, WIP warning, and an
+      // Undo only when the column is all that changes (a column-only Undo
+      // would leave the lane's value changed).
+      onCardMove(
+        card.id,
+        {
+          columnId,
+          index: wholeColumn(columnId).filter(
+            (other) => other.id !== card.id && matches(other),
+          ).length,
+        },
+        !setsValue,
+      );
+    }
+    if (!setsValue) return;
     if (value?.kind === "priority") {
-      if ((extras[card.id]?.priority ?? 0) !== value.priority) {
-        void setCardPriority(card.id, value.priority).catch(
-          fail(`Couldn't set the priority of card #${card.number}`),
-        );
-      }
+      void setCardPriority(card.id, value.priority).catch(
+        fail(`Couldn't set the priority of card #${card.number}`),
+      );
     } else if (value?.kind === "field") {
-      const encoded = value.option === null ? null : JSON.stringify(value.option);
-      const held = cardIndex.get(card.id)?.fields[value.fieldId] ?? null;
-      if (held !== encoded) {
-        void setFieldValue(card.id, value.fieldId, encoded).catch(
-          fail(`Couldn't set the field of card #${card.number}`),
-        );
-      }
+      void setFieldValue(card.id, value.fieldId, encoded).catch(
+        fail(`Couldn't set the field of card #${card.number}`),
+      );
     }
   };
 
