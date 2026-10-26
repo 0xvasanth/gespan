@@ -1,0 +1,20 @@
+README.md
+  s_a6e1019ca7733a::t_b81173c3759e7e 1-34
+  s_a6e1019ca7733a::t_e8db5d185434e0 327-329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e584ac6a5c439f4061c3d2d8055a0da34ffd7437",
+  "prompts": {},
+  "sessions": {
+    "s_a6e1019ca7733a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34acd513-c64b-4e3c-9462-fdbd164df4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
