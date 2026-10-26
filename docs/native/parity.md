@@ -56,7 +56,7 @@ Shared by both apps:
 - Start and due dates with quick picks (Today, Tomorrow, Next week, In 2 weeks, Clear) and a date input.
 - Estimate, entered as `90`, `90m`, `1h`, `1h 30m` or `1.5h` and shown as `1h 30m`.
 - Relations: Blocked by, Blocks and Relates to, with cycles refused.
-- Values for a board's existing custom fields (text, number, date, select, checkbox). Managing the fields themselves is not built yet.
+- Values for a board's custom fields, which are managed in board settings (see below).
 - A links list (session, pilot, PR URL, worktree path).
 - A Markdown toolbar (bold, italic, heading, bulleted and numbered list, link, code); the stored text stays plain Markdown.
 - Subtask reorder and Convert to card; comment authors shown as You or Agent.
@@ -72,6 +72,18 @@ Shared by both apps:
 - Bulk select: ⌘-click (Ctrl-click) toggles a card and Shift-click selects a range in on-screen order. The selection holds only visible cards. A floating bar offers Status…, Priority…, Labels…, Archive, Delete and Clear; a bulk delete is a held delete with Undo. Esc clears the selection last, after the drawer and menus.
 - Shortcuts N (new card), `/` (search), E (open the focused card) and Delete / Backspace (held delete of the focused card or the selection) work only when not typing and not inside the open drawer.
 - Command palette: Create card, Go to board and Switch board….
+- Board settings page: name, icon and colour, and default view. Columns have a colour, a WIP limit shown as `{total}/{limit}` (`{shown}/{total}` while filtered), and the toast "Over the WIP limit ({n}/{limit})" on a drop over it. Delete column offers "Move cards to…", and is refused up front while archived cards remain.
+- Labels: create, rename (unique ignoring case), recolour, reorder, merge (with confirmation) and delete. Priority levels can be renamed and hidden; a card that already has a hidden level still shows it.
+- Custom fields in 7 kinds (text, number, date, select, multi-select, checkbox, url). Renaming an option keeps the values. Deleting a field removes its filter rows and table columns. Filter rows for text, number and date fields offer card values plus free-form; select and multi-select offer the options; url offers values plus free-form.
+- Display options: card-face toggles and density, set as the board default; a saved view can override them. Swimlanes group by priority, label, project or a field. A drop into another lane changes the column, and sets the lane value only for priority and select lanes; those value-setting drops have no Undo. Cards can't be reordered inside a lane cell.
+- Templates: Blank, Agent pipeline, Bug triage and Release checklist, plus "Save as template". Built-ins can't be deleted.
+- Auto-move rules per event (started, needs input, completed, failed, PR opened, PR merged). Each is default, stay or a chosen column.
+- Link status chips on cards (session, Pilot, PR, worktree). They refresh when the board opens and when a linked turn settles, never on a timer.
+- Blocked cards show a lock, and "Run with…" asks first. "Run with…" starts a session with the store-built prompt, links it to the card and inherits the card's ticket.
+- Agent fields (provider, model, cost, run time) on cards and in the table; cost stays empty.
+- Agent write-back posts a comment marked Agent when a linked turn finishes (a plan turn posts its plan), and agent card tools manage subtasks.
+- Automation toggles in settings: "Run with…", write-back, and agent may change ticket status. A session's ticket-status permission is its session override, then the strictest linked board, then on; an unreadable setting shows an error state. The linked ticket is read when each call is answered.
+- If settings can't be read, the board still loads, the sections show "Couldn't load settings" with Retry, and nothing is saved.
 
 Known differences:
 
@@ -83,7 +95,13 @@ Known differences:
 | Collapsed column strip | Stacks the letters one per line (first 18 characters) | Rotates the text (vertical writing mode) |
 | "Pick a date…" on a card face | Opens the drawer's date picker | Shows a date field in the menu |
 | Copy link | Copies `gespan://board/{board}/card/{card}`; the app does not open these links yet | Same; not opened yet |
-| `linked: running` filter | Matches nothing until live running state is wired in (C5) | Derived from link targets |
+| "Running" filter and chip | Counts sessions waiting for input; the chip says waiting | Same |
+| Cost | No data source; stays empty | Same |
+| "Run with…" | Refuses remote projects ("Run with… works with local projects for now") | Local projects only |
+| Agent write-back and turn tracking | Local sessions only; remote turns have no ticket bridge or turn tracking | Local sessions only |
+| PR state | Known only for the current branch's PR, otherwise "unknown"; remote workspaces show "unknown" | Same |
+| Swimlanes | No in-cell reorder; collapsed columns draw as thin strips | No in-cell reorder; collapsed columns draw expanded |
+| Creating a board from a template | In the switcher; no empty-state creation | Also from the empty state |
 
 ## Platform and distribution
 
