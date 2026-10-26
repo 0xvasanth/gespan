@@ -7,9 +7,13 @@ use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 
 pub use gespan_board_store::{
-    CardExtras, CardIndexRow, CardLink, CardMeta, Comment, Dir, Field, FieldValue, FilterRow,
-    Label, Op, Relation, SortKey, SortSpec, Subtask, View, ViewSpec, PRIORITIES,
+    auto_move_rules, display_options, priority_scheme, AutoMoveRules, BoardSettings, CardExtras,
+    CardFace, CardIndexRow, CardLink, CardMeta, CardTool, Comment, Density, Dir, DisplayOptions,
+    Field, FieldValue, FilterRow, Label, Op, PriorityScheme, Relation, RuleTarget, SettingsPatch,
+    SortKey, SortSpec, Subtask, TemplateInfo, View, ViewSpec, BOARD_ICONS, BUILT_IN_TEMPLATES,
+    FIELD_KINDS, PRIORITIES,
 };
+use std::collections::BTreeMap;
 
 /// The pre-v3 native tables. Nothing reads them now that board-store has
 /// copied them into its v3 tables; they are still created, and never dropped,
@@ -405,6 +409,211 @@ impl Service {
         validate_id(card_id, "card")?;
         validate_id(board_id, "board")?;
         store::move_card_to_board(&self.conn, card_id, board_id)
+    }
+}
+
+/// Settings, templates, label and field management, and the agent side of
+/// the board (auto-move events, write-back, blockers, link and run state).
+impl Service {
+    /// The board's settings; a board without a settings row reads as the
+    /// defaults.
+    pub fn settings(&mut self, board_id: &str) -> Result<BoardSettings, String> {
+        validate_id(board_id, "board")?;
+        store::board_settings(&self.conn, board_id)
+    }
+
+    /// Changes only the fields `patch` names, so a toggle the other app set
+    /// a moment ago survives. Returns the settings after the change.
+    pub fn update_settings(
+        &mut self,
+        board_id: &str,
+        patch: &SettingsPatch,
+    ) -> Result<BoardSettings, String> {
+        validate_id(board_id, "board")?;
+        store::update_board_settings(&self.conn, board_id, patch)
+    }
+
+    /// Built-in templates first, then saved ones by name.
+    pub fn templates(&mut self) -> Result<Vec<TemplateInfo>, String> {
+        store::list_templates(&self.conn)
+    }
+
+    pub fn create_from_template(&mut self, name: &str, template_id: &str) -> Result<Board, String> {
+        validate_id(template_id, "template")?;
+        store::create_board_from_template(&self.conn, name, template_id)
+    }
+
+    pub fn save_as_template(&mut self, board_id: &str, name: &str) -> Result<TemplateInfo, String> {
+        validate_id(board_id, "board")?;
+        store::save_board_as_template(&self.conn, board_id, name)
+    }
+
+    pub fn delete_template(&mut self, template_id: &str) -> Result<(), String> {
+        validate_id(template_id, "template")?;
+        store::delete_template(&self.conn, template_id)
+    }
+
+    /// Renames and/or recolours a label; `None` leaves that part alone.
+    pub fn label_update(
+        &mut self,
+        label_id: &str,
+        name: Option<&str>,
+        color: Option<&str>,
+    ) -> Result<(), String> {
+        validate_id(label_id, "label")?;
+        store::update_label(&self.conn, label_id, name, color).map(drop)
+    }
+
+    pub fn label_move(&mut self, label_id: &str, index: usize) -> Result<(), String> {
+        validate_id(label_id, "label")?;
+        store::move_label(&self.conn, label_id, index).map(drop)
+    }
+
+    pub fn label_delete(&mut self, label_id: &str) -> Result<(), String> {
+        validate_id(label_id, "label")?;
+        store::delete_label(&self.conn, label_id).map(drop)
+    }
+
+    /// Moves every card from `from_id` to `into_id`, then deletes `from_id`.
+    pub fn labels_merge(&mut self, from_id: &str, into_id: &str) -> Result<(), String> {
+        validate_id(from_id, "label")?;
+        validate_id(into_id, "label")?;
+        store::merge_labels(&self.conn, from_id, into_id).map(drop)
+    }
+
+    pub fn field_create(
+        &mut self,
+        board_id: &str,
+        name: &str,
+        kind: &str,
+        options_json: Option<&str>,
+    ) -> Result<Field, String> {
+        validate_id(board_id, "board")?;
+        store::create_field(&self.conn, board_id, name, kind, options_json)
+    }
+
+    /// Renames a field and/or replaces its options; `None` leaves that part
+    /// alone. A field's kind never changes.
+    pub fn field_update(
+        &mut self,
+        field_id: &str,
+        name: Option<&str>,
+        options_json: Option<&str>,
+    ) -> Result<(), String> {
+        validate_id(field_id, "field")?;
+        store::update_field(&self.conn, field_id, name, options_json).map(drop)
+    }
+
+    pub fn field_rename_option(
+        &mut self,
+        field_id: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<(), String> {
+        validate_id(field_id, "field")?;
+        store::rename_field_option(&self.conn, field_id, from, to).map(drop)
+    }
+
+    pub fn field_move(&mut self, field_id: &str, index: usize) -> Result<(), String> {
+        validate_id(field_id, "field")?;
+        store::move_field(&self.conn, field_id, index).map(drop)
+    }
+
+    pub fn field_delete(&mut self, field_id: &str) -> Result<(), String> {
+        validate_id(field_id, "field")?;
+        store::delete_field(&self.conn, field_id).map(drop)
+    }
+
+    /// The values a text, number or url field holds on the board, for filter
+    /// pickers.
+    pub fn field_distinct_values(
+        &mut self,
+        board_id: &str,
+        field_id: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, String> {
+        validate_id(board_id, "board")?;
+        validate_id(field_id, "field")?;
+        store::field_distinct_values(&self.conn, board_id, field_id, limit)
+    }
+
+    /// Applies the auto-move rules for `event` to every card linked to
+    /// `kind`/`id`. Returns the ids of the boards written.
+    pub fn linked_event(
+        &mut self,
+        kind: &str,
+        id: &str,
+        event: store::LinkedEvent,
+    ) -> Result<Vec<String>, String> {
+        store::on_linked_work(&self.conn, kind, id, event)
+    }
+
+    /// Comments a finished turn's reply on every card linked to the session,
+    /// on boards with write-back on. Returns the card ids written.
+    pub fn write_back(&mut self, session_key: &str, summary: &str) -> Result<Vec<String>, String> {
+        store::write_back(&self.conn, session_key, summary)
+    }
+
+    /// Blocked cards on the board, by card id, to the numbers of their open
+    /// blockers.
+    pub fn blocked(&mut self, board_id: &str) -> Result<BTreeMap<String, Vec<i64>>, String> {
+        validate_id(board_id, "board")?;
+        store::blocked_cards(&self.conn, board_id)
+    }
+
+    /// Every link on every card of the board.
+    pub fn board_links(&mut self, board_id: &str) -> Result<Vec<CardLink>, String> {
+        validate_id(board_id, "board")?;
+        store::board_links(&self.conn, board_id)
+    }
+
+    /// The board's cards linked to one of `running` (`("session", key)` or
+    /// `("pilot", id)`, see `LinkedTurns::open_links`).
+    pub fn running_cards(
+        &mut self,
+        board_id: &str,
+        running: &[(String, String)],
+    ) -> Result<HashSet<String>, String> {
+        validate_id(board_id, "board")?;
+        store::running_card_ids(&self.conn, board_id, running)
+    }
+
+    /// The prompt "Run with..." starts a session with.
+    pub fn run_prompt(&mut self, card_id: &str) -> Result<String, String> {
+        validate_id(card_id, "card")?;
+        store::run_prompt(&self.conn, card_id)
+    }
+
+    /// The session's own "may change ticket status" override, if set.
+    pub fn session_status_setting(&mut self, session_key: &str) -> Option<bool> {
+        store::session_status_setting(&self.conn, session_key)
+    }
+
+    /// Sets the session's override; `None` follows the boards again.
+    pub fn set_session_status_setting(
+        &mut self,
+        session_key: &str,
+        may_change: Option<bool>,
+    ) -> Result<(), String> {
+        store::set_session_status_setting(&self.conn, session_key, may_change)
+    }
+
+    /// Whether an agent in this session may move its ticket's status: the
+    /// session override, else the strictest board linking the session, else
+    /// yes. An unreadable override fails closed.
+    pub fn may_change_ticket_status(&mut self, session_key: &str) -> bool {
+        store::may_change_ticket_status(&self.conn, session_key)
+    }
+
+    /// Runs a card tool for an agent in `session_key`; the cards it may touch
+    /// are the ones linked to the session now.
+    pub fn answer_card(
+        &mut self,
+        session_key: &str,
+        tool: &CardTool,
+        read_only: bool,
+    ) -> Result<serde_json::Value, String> {
+        store::answer_card(&self.conn, session_key, tool, read_only)
     }
 }
 

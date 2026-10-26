@@ -88,6 +88,18 @@ describe("activityText", () => {
       { kind: "failed", actor: "system" },
       "Linked work failed · System · just now",
     ],
+    [
+      { kind: "needs_input", actor: "system" },
+      "Linked work needs input · System · just now",
+    ],
+    [
+      { kind: "pr_opened", actor: "system" },
+      "Pull request opened · System · just now",
+    ],
+    [
+      { kind: "pr_merged", actor: "system" },
+      "Pull request merged · System · just now",
+    ],
   ] as const)("reads %o", (overrides, text) => {
     expect(activityText(row(overrides), NOW)).toBe(text);
   });

@@ -405,6 +405,19 @@ pub fn pr_status(cwd: &Path) -> Result<Option<Pr>, String> {
     Ok(pr_status_for(&expand_home(cwd)))
 }
 
+/// A GitHub pull request's head commit and checks, as `gh` reports them.
+pub use crate::inbox::github::{GitHubPrCheck as PrCheck, GitHubPrChecks as PrChecks};
+
+/// The checks on GitHub pull request `number` of `repo` (`owner/name`), read
+/// with `gh` (no HTTP client of our own) from `cwd`. Blocking; call it off the
+/// UI thread. A remote workspace has no local `gh` to ask, so it is refused.
+pub fn pr_checks(cwd: &Path, repo: &str, number: i64) -> Result<PrChecks, String> {
+    if remote_workspace::is_remote(cwd) {
+        return Err("Pull request checks aren't available for remote workspaces".into());
+    }
+    crate::inbox::github::git_github_pr_checks_for(&expand_home(cwd), repo, number)
+}
+
 /// Create a GitHub pull request with `gh` and return its URL.
 pub fn pr_create(
     cwd: &Path,

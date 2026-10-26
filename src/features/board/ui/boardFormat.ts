@@ -144,6 +144,12 @@ function activityAction(row: BoardActivity): string {
       return "Linked work completed";
     case "failed":
       return "Linked work failed";
+    case "needs_input":
+      return "Linked work needs input";
+    case "pr_opened":
+      return "Pull request opened";
+    case "pr_merged":
+      return "Pull request merged";
   }
 }
 

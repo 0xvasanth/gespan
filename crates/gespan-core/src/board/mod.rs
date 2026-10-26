@@ -391,6 +391,233 @@ mod tests {
     }
 
     #[test]
+    fn service_update_settings_and_run_prompt() {
+        use crate::board::extras::{CardTool, SettingsPatch};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let mut native = Service::open(&path).unwrap();
+        let mut other = Service::open(&path).unwrap();
+        let board = native.create("Work").unwrap();
+        let defaults = native.settings(&board.id).unwrap();
+        assert!(defaults.run_with && defaults.write_back && defaults.ticket_status_changes);
+
+        // A patch changes only what it names, even across connections.
+        native
+            .update_settings(
+                &board.id,
+                &SettingsPatch {
+                    write_back: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let after = other
+            .update_settings(
+                &board.id,
+                &SettingsPatch {
+                    icon: Some(Some("bug".into())),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(!after.write_back);
+        assert_eq!(after.icon.as_deref(), Some("bug"));
+        assert!(after.run_with);
+        assert_eq!(native.settings(&board.id).unwrap(), after);
+        assert_eq!(native.settings("x'; --").unwrap_err(), "Invalid board id");
+
+        // The prompt: title, description, subtasks, user comments only.
+        let columns = native.get(&board.id).unwrap().columns;
+        let card = native
+            .card_create(&columns[0].id, "Fix login", "It fails on Safari.")
+            .unwrap();
+        native.add_subtask(&card.id, "Reproduce").unwrap();
+        native.add_comment(&card.id, "Check the cookie").unwrap();
+        native.add_agent_comment(&card.id, "Agent noise").unwrap();
+        let number = native.card(&card.id).unwrap().number;
+        assert_eq!(
+            native.run_prompt(&card.id).unwrap(),
+            format!(
+                "Work on board card #{number}: Fix login\n\nIt fails on Safari.\n\n\
+                 Subtasks:\n- [ ] Reproduce\n\nComments:\n- Check the cookie"
+            )
+        );
+
+        // Write-back follows the board switch, remote session keys included.
+        native
+            .add_link(&card.id, "session", "remote:env-1:s-9", None)
+            .unwrap();
+        assert!(native
+            .write_back("remote:env-1:s-9", "Done.")
+            .unwrap()
+            .is_empty());
+        native
+            .update_settings(
+                &board.id,
+                &SettingsPatch {
+                    write_back: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            native.write_back("remote:env-1:s-9", "Done.").unwrap(),
+            vec![card.id.clone()]
+        );
+        let last = native.comments(&card.id).unwrap().pop().unwrap();
+        assert_eq!(
+            (last.author.as_str(), last.body.as_str()),
+            ("agent:remote:env-1:s-9", "Done.")
+        );
+
+        // The card tools see only the session's cards.
+        let listed = native
+            .answer_card("remote:env-1:s-9", &CardTool::Subtasks, false)
+            .unwrap();
+        assert_eq!(listed["cards"][0]["number"], number);
+
+        // Running links map to cards; blockers come back by card id.
+        let running = native
+            .running_cards(
+                &board.id,
+                &[("session".to_string(), "remote:env-1:s-9".to_string())],
+            )
+            .unwrap();
+        assert!(running.contains(&card.id));
+        let blocker = native.card_create(&columns[0].id, "Blocker", "").unwrap();
+        native
+            .add_relation(&blocker.id, &card.id, "blocks")
+            .unwrap();
+        let blocked = native.blocked(&board.id).unwrap();
+        assert_eq!(blocked.get(&card.id), Some(&vec![blocker.number]));
+        assert_eq!(blocked.len(), 1);
+        assert!(native
+            .board_links(&board.id)
+            .unwrap()
+            .iter()
+            .any(|link| link.card_id == card.id && link.kind == "session"));
+
+        // Ticket status permission: board switch, then the session override.
+        assert!(native.may_change_ticket_status("remote:env-1:s-9"));
+        native
+            .update_settings(
+                &board.id,
+                &SettingsPatch {
+                    ticket_status_changes: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(!native.may_change_ticket_status("remote:env-1:s-9"));
+        native
+            .set_session_status_setting("remote:env-1:s-9", Some(true))
+            .unwrap();
+        assert_eq!(
+            native.session_status_setting("remote:env-1:s-9"),
+            Some(true)
+        );
+        assert!(native.may_change_ticket_status("remote:env-1:s-9"));
+        native
+            .set_session_status_setting("remote:env-1:s-9", None)
+            .unwrap();
+        assert_eq!(native.session_status_setting("remote:env-1:s-9"), None);
+        assert!(native.set_session_status_setting(" ", Some(true)).is_err());
+    }
+
+    #[test]
+    fn templates_labels_and_fields_go_through_the_service() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&dir.path().join("gespan.db")).unwrap();
+        let ids: Vec<String> = service
+            .templates()
+            .unwrap()
+            .into_iter()
+            .map(|template| template.id)
+            .collect();
+        assert_eq!(
+            ids,
+            ["blank", "agent-pipeline", "bug-triage", "release-checklist"]
+        );
+        let board = service.create_from_template("Bugs", "bug-triage").unwrap();
+        let labels = service.labels(&board.id).unwrap();
+        assert_eq!(labels.len(), 3);
+        let fields = service.list_fields(&board.id).unwrap();
+        assert_eq!(fields[0].name, "Severity");
+
+        let saved = service.save_as_template(&board.id, "Mine").unwrap();
+        assert!(!saved.built_in);
+        assert_eq!(service.templates().unwrap().last().unwrap().id, saved.id);
+        service.delete_template(&saved.id).unwrap();
+        assert_eq!(service.templates().unwrap().len(), 4);
+        assert_eq!(
+            service.delete_template("blank").unwrap_err(),
+            "Built-in templates can't be deleted"
+        );
+
+        // Labels: rename, reorder, merge, delete.
+        service
+            .label_update(&labels[0].id, Some("Defect"), None)
+            .unwrap();
+        service.label_move(&labels[0].id, 2).unwrap();
+        service.labels_merge(&labels[1].id, &labels[2].id).unwrap();
+        let names: Vec<String> = service
+            .labels(&board.id)
+            .unwrap()
+            .into_iter()
+            .map(|label| label.name)
+            .collect();
+        assert_eq!(names, ["Needs repro", "Defect"]);
+        service.label_delete(&labels[0].id).unwrap();
+        assert_eq!(service.labels(&board.id).unwrap().len(), 1);
+
+        // Fields: create, rename an option (values follow), move, delete.
+        let column = service.get(&board.id).unwrap().columns[0].id.clone();
+        let card = service.card_create(&column, "Crash", "").unwrap();
+        let size = service
+            .field_create(&board.id, "Size", "select", Some(r#"["S","L"]"#))
+            .unwrap();
+        service
+            .set_field_value(&card.id, &size.id, Some(r#""S""#))
+            .unwrap();
+        service.field_rename_option(&size.id, "S", "Small").unwrap();
+        assert_eq!(
+            service.field_values(&card.id).unwrap()[0].value_json,
+            r#""Small""#
+        );
+        service
+            .field_update(&size.id, Some("T-shirt"), None)
+            .unwrap();
+        service.field_move(&size.id, 0).unwrap();
+        assert_eq!(service.list_fields(&board.id).unwrap()[0].name, "T-shirt");
+        let note = service
+            .field_create(&board.id, "Note", "text", None)
+            .unwrap();
+        service
+            .set_field_value(&card.id, &note.id, Some(r#""flaky""#))
+            .unwrap();
+        assert_eq!(
+            service
+                .field_distinct_values(&board.id, &note.id, 10)
+                .unwrap(),
+            [r#""flaky""#]
+        );
+        service.field_delete(&size.id).unwrap();
+        assert!(service
+            .list_fields(&board.id)
+            .unwrap()
+            .iter()
+            .all(|field| field.id != size.id));
+        assert_eq!(
+            service.field_move("bad id", 0).unwrap_err(),
+            "Invalid field id"
+        );
+        assert_eq!(
+            service.label_delete("bad id").unwrap_err(),
+            "Invalid label id"
+        );
+    }
+
+    #[test]
     fn data_version_changes_after_another_connection_writes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gespan.db");

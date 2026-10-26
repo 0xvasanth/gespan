@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+
+const invoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+
+import { onLinkedWork } from "./autoMove";
 import type { CardLinkKind, LinkedWorkEvent } from "./board";
 import {
   createLinkedTurns,
@@ -223,5 +229,34 @@ describe("Pilot-driven turns on the board", () => {
       ["session", "s1", "started"],
       ["session", "s1", "completed"],
     ]);
+  });
+});
+
+describe("linked turns through onLinkedWork", () => {
+  it("sends each turn event to the store engine as board_linked_event", async () => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(undefined);
+    const report = vi.fn();
+    const turns = createLinkedTurns(onLinkedWork, report);
+    turns.started("s1", 1, "p1");
+    turns.settled("s1", 1, "failed");
+    await flush();
+    expect(invoke.mock.calls).toEqual([
+      ["board_linked_event", { kind: "session", id: "s1", event: "started" }],
+      ["board_linked_event", { kind: "pilot", id: "p1", event: "started" }],
+      ["board_linked_event", { kind: "session", id: "s1", event: "failed" }],
+      ["board_linked_event", { kind: "pilot", id: "p1", event: "failed" }],
+    ]);
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it("reports a store failure without throwing into the session", async () => {
+    invoke.mockReset();
+    invoke.mockRejectedValue("database is locked");
+    const report = vi.fn();
+    const turns = createLinkedTurns(onLinkedWork, report);
+    expect(() => turns.started("s1", 1)).not.toThrow();
+    await flush();
+    expect(report).toHaveBeenCalledWith("database is locked");
   });
 });

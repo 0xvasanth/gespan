@@ -6,7 +6,14 @@ export const BOARD_CHANGED = "gespan:board-changed";
 
 export type ColumnRole = "todo" | "doing" | "review" | "done";
 export type CardLinkKind = "session" | "pilot" | "flow-run";
-export type LinkedWorkEvent = "started" | "completed" | "failed";
+/** What a card's linked work reported; the auto-move rule keys (snake_case). */
+export type LinkedWorkEvent =
+  | "started"
+  | "needs_input"
+  | "completed"
+  | "failed"
+  | "pr_opened"
+  | "pr_merged";
 export type BoardActor = "user" | "system";
 
 export type Board = {
@@ -410,7 +417,8 @@ export type CardRelation = {
   kind: RelationKind;
 };
 
-export type BoardFieldKind = "text" | "number" | "date" | "select" | "checkbox";
+export type BoardFieldKind =
+  "text" | "number" | "date" | "select" | "multi-select" | "checkbox" | "url";
 
 export type BoardField = {
   id: string;
@@ -649,4 +657,235 @@ export function setCardsLabel(
   on: boolean,
 ): Promise<void> {
   return invoke("board_cards_set_label", { cardIds, labelId, on });
+}
+
+/** Per-board settings. JSON columns stay raw; null means the default. */
+export type BoardSettings = {
+  runWith: boolean;
+  writeBack: boolean;
+  ticketStatusChanges: boolean;
+  autoMoveJson: string | null;
+  icon: string | null;
+  color: string | null;
+  defaultViewId: string | null;
+  displayJson: string | null;
+  priorityJson: string | null;
+};
+
+/**
+ * The settings to change. A key left out stays as it is; `null` on an
+ * optional setting clears it back to the default.
+ */
+export type SettingsPatch = Partial<BoardSettings>;
+
+export type AgentField = "provider" | "model" | "cost" | "runTime";
+
+/** How a board (or a saved view, under `layout.display`) draws cards. */
+export type DisplayOptions = {
+  face: {
+    labels: boolean;
+    priority: boolean;
+    due: boolean;
+    subtasks: boolean;
+    comments: boolean;
+    linkStatus: boolean;
+    number: boolean;
+    fields: string[];
+    agentFields: AgentField[];
+  };
+  density: "comfortable" | "compact";
+  /** `none`, `priority`, `label`, `project` or `field:<id>`. */
+  swimlane: string;
+};
+
+/** The five priority names and the levels hidden from pickers and filters. */
+export type PriorityScheme = {
+  names: [string, string, string, string, string];
+  hidden: number[];
+};
+
+export type TemplateInfo = { id: string; name: string; builtIn: boolean };
+
+/** One auto-move rule: the forward-only default, stay, or a column. */
+export type AutoMoveRule = "default" | "stay" | { column: string };
+
+/** The rules in `autoMoveJson`, keyed by event. A missing key is its default. */
+export type AutoMoveRules = Partial<Record<LinkedWorkEvent, AutoMoveRule>>;
+
+export function getBoardSettings(boardId: string): Promise<BoardSettings> {
+  return invoke<BoardSettings>("board_settings", { boardId });
+}
+
+/** Changes only the settings `patch` names; returns the settings after. */
+export function updateBoardSettings(
+  boardId: string,
+  patch: SettingsPatch,
+): Promise<BoardSettings> {
+  return invoke<BoardSettings>("board_settings_update", { boardId, patch });
+}
+
+export function listTemplates(): Promise<TemplateInfo[]> {
+  return invoke<TemplateInfo[]>("board_templates");
+}
+
+export function createBoardFromTemplate(
+  name: string,
+  templateId: string,
+): Promise<Board> {
+  return invoke<Board>("board_create_from_template", { name, templateId });
+}
+
+export function saveBoardAsTemplate(
+  boardId: string,
+  name: string,
+): Promise<TemplateInfo> {
+  return invoke<TemplateInfo>("board_save_as_template", { boardId, name });
+}
+
+export function deleteTemplate(templateId: string): Promise<void> {
+  return invoke("board_template_delete", { templateId });
+}
+
+/** Renames and/or recolours a label; a part left out stays as it is. */
+export function updateLabel(
+  labelId: string,
+  changes: { name?: string; color?: string },
+): Promise<void> {
+  return invoke("board_label_update", {
+    labelId,
+    name: changes.name ?? null,
+    color: changes.color ?? null,
+  });
+}
+
+export function moveLabel(labelId: string, index: number): Promise<void> {
+  return invoke("board_label_move", { labelId, index });
+}
+
+export function deleteLabel(labelId: string): Promise<void> {
+  return invoke("board_label_delete", { labelId });
+}
+
+/** Moves every card from `fromId` to `intoId`, then deletes `fromId`. */
+export function mergeLabels(fromId: string, intoId: string): Promise<void> {
+  return invoke("board_labels_merge", { fromId, intoId });
+}
+
+export function createField(
+  boardId: string,
+  name: string,
+  kind: BoardFieldKind,
+  optionsJson: string | null = null,
+): Promise<BoardField> {
+  return invoke<BoardField>("board_field_create", {
+    boardId,
+    name,
+    kind,
+    optionsJson,
+  });
+}
+
+/** Renames a field and/or replaces its options; a part left out stays. */
+export function updateField(
+  fieldId: string,
+  changes: { name?: string; optionsJson?: string },
+): Promise<void> {
+  return invoke("board_field_update", {
+    fieldId,
+    name: changes.name ?? null,
+    optionsJson: changes.optionsJson ?? null,
+  });
+}
+
+export function renameFieldOption(
+  fieldId: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  return invoke("board_field_rename_option", { fieldId, from, to });
+}
+
+export function moveField(fieldId: string, index: number): Promise<void> {
+  return invoke("board_field_move", { fieldId, index });
+}
+
+export function deleteField(fieldId: string): Promise<void> {
+  return invoke("board_field_delete", { fieldId });
+}
+
+/** The values (as JSON) a field holds on the board, most used first. */
+export function fieldDistinctValues(
+  boardId: string,
+  fieldId: string,
+  limit: number,
+): Promise<string[]> {
+  return invoke<string[]>("board_field_distinct_values", {
+    boardId,
+    fieldId,
+    limit,
+  });
+}
+
+/**
+ * Applies the boards' auto-move rules for `event` to every card linked to
+ * `kind`/`id` and records the event on each.
+ */
+export function boardLinkedEvent(
+  kind: CardLinkKind,
+  id: string,
+  event: LinkedWorkEvent,
+): Promise<void> {
+  return invoke("board_linked_event", { kind, id, event });
+}
+
+/**
+ * Comments a finished turn's reply on every card linked to the session, on
+ * boards with write-back on. Resolves to the card ids written.
+ */
+export function boardWriteBack(
+  sessionKey: string,
+  summary: string,
+): Promise<string[]> {
+  return invoke<string[]>("board_write_back", { sessionKey, summary });
+}
+
+/** Blocked cards by card id, to the numbers of their open blockers. */
+export function getBlockedCards(
+  boardId: string,
+): Promise<Record<string, number[]>> {
+  return invoke<Record<string, number[]>>("board_blocked", { boardId });
+}
+
+/** Every link on every card of the board. */
+export function listBoardLinks(boardId: string): Promise<CardLinkRow[]> {
+  return invoke<CardLinkRow[]>("board_links", { boardId });
+}
+
+/** The board's cards linked to a running `[kind, id]` pair, sorted. */
+export function getRunningCards(
+  boardId: string,
+  running: [CardLinkKind, string][],
+): Promise<string[]> {
+  return invoke<string[]>("board_running_cards", { boardId, running });
+}
+
+/** The prompt "Run with…" starts a session with. */
+export function getRunPrompt(cardId: string): Promise<string> {
+  return invoke<string>("board_run_prompt", { cardId });
+}
+
+/** The session's own ticket-status override; null follows its boards. */
+export function getSessionStatusSetting(
+  sessionKey: string,
+): Promise<boolean | null> {
+  return invoke<boolean | null>("board_session_status_setting", {
+    sessionKey,
+  });
+}
+
+export function setSessionStatusSetting(
+  sessionKey: string,
+  mayChange: boolean | null,
+): Promise<void> {
+  return invoke("board_session_status_setting_set", { sessionKey, mayChange });
 }

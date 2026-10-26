@@ -5,7 +5,7 @@ mod media;
 pub use media::png as media_png;
 pub mod azure_devops;
 pub use avatar::png as avatar_png;
-mod github;
+pub(crate) mod github;
 pub mod gitlab;
 pub mod jira;
 pub mod linear;

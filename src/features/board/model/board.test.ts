@@ -6,6 +6,30 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 
 import {
+  boardLinkedEvent,
+  boardWriteBack,
+  createBoardFromTemplate,
+  createField,
+  deleteField,
+  deleteLabel,
+  deleteTemplate,
+  fieldDistinctValues,
+  getBlockedCards,
+  getBoardSettings,
+  getRunningCards,
+  getRunPrompt,
+  getSessionStatusSetting,
+  listBoardLinks,
+  listTemplates,
+  mergeLabels,
+  moveField,
+  moveLabel,
+  renameFieldOption,
+  saveBoardAsTemplate,
+  setSessionStatusSetting,
+  updateBoardSettings,
+  updateField,
+  updateLabel,
   addComment,
   addCardLink,
   addRelation,
@@ -468,5 +492,188 @@ describe("card extras wrappers", () => {
       "High",
       "Urgent",
     ]);
+  });
+});
+
+describe("C5 settings, template, label, field and agent wrappers", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(undefined);
+  });
+
+  it.each([
+    [
+      "getBoardSettings",
+      () => getBoardSettings("b1"),
+      "board_settings",
+      { boardId: "b1" },
+    ],
+    [
+      "updateBoardSettings",
+      () => updateBoardSettings("b1", { writeBack: false, icon: null }),
+      "board_settings_update",
+      { boardId: "b1", patch: { writeBack: false, icon: null } },
+    ],
+    ["listTemplates", () => listTemplates(), "board_templates", undefined],
+    [
+      "createBoardFromTemplate",
+      () => createBoardFromTemplate("Bugs", "bug-triage"),
+      "board_create_from_template",
+      { name: "Bugs", templateId: "bug-triage" },
+    ],
+    [
+      "saveBoardAsTemplate",
+      () => saveBoardAsTemplate("b1", "Mine"),
+      "board_save_as_template",
+      { boardId: "b1", name: "Mine" },
+    ],
+    [
+      "deleteTemplate",
+      () => deleteTemplate("t1"),
+      "board_template_delete",
+      { templateId: "t1" },
+    ],
+    [
+      "updateLabel sends null for parts left out",
+      () => updateLabel("l1", { color: "e5534b" }),
+      "board_label_update",
+      { labelId: "l1", name: null, color: "e5534b" },
+    ],
+    [
+      "moveLabel",
+      () => moveLabel("l1", 2),
+      "board_label_move",
+      { labelId: "l1", index: 2 },
+    ],
+    [
+      "deleteLabel",
+      () => deleteLabel("l1"),
+      "board_label_delete",
+      { labelId: "l1" },
+    ],
+    [
+      "mergeLabels",
+      () => mergeLabels("l1", "l2"),
+      "board_labels_merge",
+      { fromId: "l1", intoId: "l2" },
+    ],
+    [
+      "createField",
+      () => createField("b1", "Size", "multi-select", '["S","L"]'),
+      "board_field_create",
+      {
+        boardId: "b1",
+        name: "Size",
+        kind: "multi-select",
+        optionsJson: '["S","L"]',
+      },
+    ],
+    [
+      "createField without options",
+      () => createField("b1", "Link", "url"),
+      "board_field_create",
+      { boardId: "b1", name: "Link", kind: "url", optionsJson: null },
+    ],
+    [
+      "updateField sends null for parts left out",
+      () => updateField("f1", { name: "T-shirt" }),
+      "board_field_update",
+      { fieldId: "f1", name: "T-shirt", optionsJson: null },
+    ],
+    [
+      "renameFieldOption",
+      () => renameFieldOption("f1", "S", "Small"),
+      "board_field_rename_option",
+      { fieldId: "f1", from: "S", to: "Small" },
+    ],
+    [
+      "moveField",
+      () => moveField("f1", 0),
+      "board_field_move",
+      { fieldId: "f1", index: 0 },
+    ],
+    [
+      "deleteField",
+      () => deleteField("f1"),
+      "board_field_delete",
+      { fieldId: "f1" },
+    ],
+    [
+      "fieldDistinctValues",
+      () => fieldDistinctValues("b1", "f1", 20),
+      "board_field_distinct_values",
+      { boardId: "b1", fieldId: "f1", limit: 20 },
+    ],
+    [
+      "boardLinkedEvent",
+      () => boardLinkedEvent("session", "s1", "pr_merged"),
+      "board_linked_event",
+      { kind: "session", id: "s1", event: "pr_merged" },
+    ],
+    [
+      "boardWriteBack",
+      () => boardWriteBack("remote:env:s1", "Done."),
+      "board_write_back",
+      { sessionKey: "remote:env:s1", summary: "Done." },
+    ],
+    [
+      "getBlockedCards",
+      () => getBlockedCards("b1"),
+      "board_blocked",
+      { boardId: "b1" },
+    ],
+    [
+      "listBoardLinks",
+      () => listBoardLinks("b1"),
+      "board_links",
+      { boardId: "b1" },
+    ],
+    [
+      "getRunningCards",
+      () =>
+        getRunningCards("b1", [
+          ["session", "s1"],
+          ["pilot", "p1"],
+        ]),
+      "board_running_cards",
+      {
+        boardId: "b1",
+        running: [
+          ["session", "s1"],
+          ["pilot", "p1"],
+        ],
+      },
+    ],
+    [
+      "getRunPrompt",
+      () => getRunPrompt("c1"),
+      "board_run_prompt",
+      { cardId: "c1" },
+    ],
+    [
+      "getSessionStatusSetting",
+      () => getSessionStatusSetting("s1"),
+      "board_session_status_setting",
+      { sessionKey: "s1" },
+    ],
+    [
+      "setSessionStatusSetting clears with null",
+      () => setSessionStatusSetting("s1", null),
+      "board_session_status_setting_set",
+      { sessionKey: "s1", mayChange: null },
+    ],
+  ])(
+    "%s invokes the command with camelCase args",
+    async (_n, call, command, args) => {
+      await call();
+      if (args === undefined) expect(invoke).toHaveBeenCalledWith(command);
+      else expect(invoke).toHaveBeenCalledWith(command, args);
+    },
+  );
+
+  it("leaves settings the patch does not name out of the payload", async () => {
+    await updateBoardSettings("b1", { runWith: true });
+    const [, payload] = invoke.mock.calls[0];
+    expect(Object.keys(payload.patch)).toEqual(["runWith"]);
   });
 });

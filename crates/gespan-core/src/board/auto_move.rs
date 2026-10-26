@@ -1,235 +1,35 @@
-//! Where a linked card moves when its work starts, finishes or fails.
-//! Mirrors `src/features/board/model/autoMove.ts`.
-use super::{Column, Service};
-use std::collections::HashMap;
+//! Where a linked card moves when its work starts, finishes or fails. The
+//! rules and the engine live in `gespan-board-store` (`on_linked_work`), so
+//! the native app and the Tauri app move cards the same way; by default a
+//! card only moves forward (started to doing, completed to review or done).
+use super::Service;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LinkedWorkEvent {
-    Started,
-    Completed,
-    Failed,
-}
+/// Something a card's linked work reported (`started`, `needs_input`,
+/// `completed`, `failed`, `pr_opened`, `pr_merged`).
+pub use gespan_board_store::LinkedEvent as LinkedWorkEvent;
 
-impl LinkedWorkEvent {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Started => "started",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-        }
-    }
-}
-
-/// The first column with `role` strictly right of `current`.
-fn forward_column<'a>(columns: &'a [Column], current: &Column, role: &str) -> Option<&'a Column> {
-    columns
-        .iter()
-        .filter(|column| column.role.as_deref() == Some(role) && column.position > current.position)
-        .min_by_key(|column| column.position)
-}
-
-/// Where a card should go when its linked work reports `event`, or `None` to
-/// stay. Cards only move right: started goes to doing, completed to review (or
-/// done when the board has no review column). Failed work never moves a card.
-pub fn auto_move_target<'a>(
-    columns: &'a [Column],
-    current: &Column,
-    event: LinkedWorkEvent,
-) -> Option<&'a Column> {
-    match event {
-        LinkedWorkEvent::Started => forward_column(columns, current, "doing"),
-        LinkedWorkEvent::Completed => {
-            let has_review = columns.iter().any(|c| c.role.as_deref() == Some("review"));
-            forward_column(columns, current, if has_review { "review" } else { "done" })
-        }
-        LinkedWorkEvent::Failed => None,
-    }
-}
-
-/// Applies the rule to every card linked to this work, recording the event on
-/// each (after the move's own "moved" row, or alone when the card stays). One
-/// failing card does not stop the others; the first error is returned.
+/// Applies the boards' auto-move rules to every card linked to this work,
+/// recording the event on each. One failing card does not stop the others;
+/// the first error is returned. Returns the ids of the boards written.
 pub fn on_linked_work(
     service: &mut Service,
     kind: &str,
     id: &str,
     event: LinkedWorkEvent,
-) -> Result<(), String> {
-    let cards = service.cards_for_link(kind, id)?;
-    let mut columns_by_board: HashMap<String, Vec<Column>> = HashMap::new();
-    let mut first_error = None;
-    for card in cards {
-        let result = (|| {
-            if !columns_by_board.contains_key(&card.board_id) {
-                let columns = service.get(&card.board_id)?.columns;
-                columns_by_board.insert(card.board_id.clone(), columns);
-            }
-            let columns = &columns_by_board[&card.board_id];
-            let target = columns
-                .iter()
-                .find(|column| column.id == card.column_id)
-                .and_then(|current| auto_move_target(columns, current, event))
-                .map(|column| column.id.clone());
-            if let Some(target) = target {
-                service.card_move(&card.id, &target, usize::MAX, "system")?;
-            }
-            service.card_record(&card.id, event.as_str(), None)
-        })();
-        if let Err(error) = result {
-            first_error.get_or_insert(error);
-        }
-    }
-    first_error.map_or(Ok(()), Err)
+) -> Result<Vec<String>, String> {
+    service.linked_event(kind, id, event)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::board::{Column, Service};
-
-    fn column(id: &str, position: i64, role: Option<&str>) -> Column {
-        Column {
-            id: id.into(),
-            board_id: "b".into(),
-            name: id.into(),
-            position,
-            role: role.map(Into::into),
-            color: None,
-            wip_limit: None,
-            collapsed: false,
-        }
-    }
-
-    fn roles() -> Vec<Column> {
-        vec![
-            column("todo", 0, Some("todo")),
-            column("doing", 1, Some("doing")),
-            column("review", 2, Some("review")),
-            column("done", 3, Some("done")),
-        ]
-    }
-
-    fn target<'a>(columns: &'a [Column], from: &str, event: LinkedWorkEvent) -> Option<&'a str> {
-        let current = columns.iter().find(|c| c.id == from).unwrap();
-        auto_move_target(columns, current, event).map(|c| c.id.as_str())
-    }
+    use crate::board::Service;
 
     #[test]
     fn event_names_match_the_tauri_record_kinds() {
         assert_eq!(LinkedWorkEvent::Started.as_str(), "started");
         assert_eq!(LinkedWorkEvent::Completed.as_str(), "completed");
         assert_eq!(LinkedWorkEvent::Failed.as_str(), "failed");
-    }
-
-    #[test]
-    fn moves_started_work_from_todo_to_doing() {
-        assert_eq!(
-            target(&roles(), "todo", LinkedWorkEvent::Started),
-            Some("doing")
-        );
-    }
-
-    #[test]
-    fn never_moves_started_work_backward() {
-        assert_eq!(target(&roles(), "review", LinkedWorkEvent::Started), None);
-        assert_eq!(target(&roles(), "done", LinkedWorkEvent::Started), None);
-    }
-
-    #[test]
-    fn stays_put_when_started_work_is_already_in_doing() {
-        assert_eq!(target(&roles(), "doing", LinkedWorkEvent::Started), None);
-    }
-
-    #[test]
-    fn moves_completed_work_to_review_from_doing_or_todo() {
-        assert_eq!(
-            target(&roles(), "doing", LinkedWorkEvent::Completed),
-            Some("review")
-        );
-        assert_eq!(
-            target(&roles(), "todo", LinkedWorkEvent::Completed),
-            Some("review")
-        );
-    }
-
-    #[test]
-    fn falls_back_to_done_when_there_is_no_review_column() {
-        let columns: Vec<Column> = roles().into_iter().filter(|c| c.id != "review").collect();
-        assert_eq!(
-            target(&columns, "doing", LinkedWorkEvent::Completed),
-            Some("done")
-        );
-    }
-
-    #[test]
-    fn does_not_move_completed_work_out_of_done_or_review() {
-        assert_eq!(target(&roles(), "review", LinkedWorkEvent::Completed), None);
-        assert_eq!(target(&roles(), "done", LinkedWorkEvent::Completed), None);
-    }
-
-    #[test]
-    fn never_moves_a_failed_run() {
-        for from in ["todo", "doing", "review", "done"] {
-            assert_eq!(target(&roles(), from, LinkedWorkEvent::Failed), None);
-        }
-    }
-
-    #[test]
-    fn stays_put_on_started_when_the_board_has_no_doing_column() {
-        let columns: Vec<Column> = roles().into_iter().filter(|c| c.id != "doing").collect();
-        assert_eq!(target(&columns, "todo", LinkedWorkEvent::Started), None);
-    }
-
-    #[test]
-    fn stays_put_on_completed_when_the_board_has_neither_review_nor_done() {
-        let columns = vec![
-            column("todo", 0, Some("todo")),
-            column("doing", 1, Some("doing")),
-        ];
-        assert_eq!(target(&columns, "doing", LinkedWorkEvent::Completed), None);
-    }
-
-    #[test]
-    fn handles_columns_passed_out_of_position_order() {
-        let mut columns = roles();
-        columns.reverse();
-        assert_eq!(
-            target(&columns, "todo", LinkedWorkEvent::Started),
-            Some("doing")
-        );
-        assert_eq!(
-            target(&columns, "doing", LinkedWorkEvent::Completed),
-            Some("review")
-        );
-    }
-
-    #[test]
-    fn a_user_column_between_doing_and_review_moves_completed_work_to_review_only() {
-        let columns = vec![
-            column("todo", 0, Some("todo")),
-            column("doing", 1, Some("doing")),
-            column("qa", 2, None),
-            column("review", 3, Some("review")),
-            column("done", 4, Some("done")),
-        ];
-        assert_eq!(
-            target(&columns, "qa", LinkedWorkEvent::Completed),
-            Some("review")
-        );
-        assert_eq!(target(&columns, "qa", LinkedWorkEvent::Started), None);
-    }
-
-    #[test]
-    fn treats_a_role_less_column_left_of_doing_as_before_it() {
-        let columns = vec![
-            column("inbox", 0, None),
-            column("doing", 1, Some("doing")),
-            column("done", 2, Some("done")),
-        ];
-        assert_eq!(
-            target(&columns, "inbox", LinkedWorkEvent::Started),
-            Some("doing")
-        );
     }
 
     fn service() -> (tempfile::TempDir, Service) {
@@ -331,6 +131,41 @@ mod tests {
         let moved = detail.cards.iter().find(|c| c.id == card.id).unwrap();
         assert_eq!(moved.column_id, columns[2].id);
         assert_eq!(moved.position, 1);
+    }
+
+    #[test]
+    fn follows_the_boards_auto_move_rules_set_through_the_service() {
+        use crate::board::extras::SettingsPatch;
+        let (_dir, mut service) = service();
+        let board = service.create("A").unwrap();
+        let columns = service.get(&board.id).unwrap().columns;
+        let card = service.card_create(&columns[2].id, "Work", "").unwrap();
+        service
+            .card_link(&card.id, Some("session"), Some("s-1"))
+            .unwrap();
+        // Failed work goes back to the backlog on this board: a custom target
+        // moves the card in either direction.
+        let rules = format!(r#"{{"failed":{{"column":"{}"}}}}"#, columns[0].id);
+        service
+            .update_settings(
+                &board.id,
+                &SettingsPatch {
+                    auto_move_json: Some(Some(rules)),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let touched =
+            on_linked_work(&mut service, "session", "s-1", LinkedWorkEvent::Failed).unwrap();
+        assert_eq!(touched, vec![board.id.clone()]);
+        let (column, kinds) = where_is(&mut service, &board.id, &card.id);
+        assert_eq!(column, "Backlog");
+        assert_eq!(kinds[..2], ["failed".to_string(), "moved".to_string()]);
+        // PR events fire once per card.
+        on_linked_work(&mut service, "session", "s-1", LinkedWorkEvent::PrOpened).unwrap();
+        on_linked_work(&mut service, "session", "s-1", LinkedWorkEvent::PrOpened).unwrap();
+        let (_, kinds) = where_is(&mut service, &board.id, &card.id);
+        assert_eq!(kinds.iter().filter(|kind| *kind == "pr_opened").count(), 1);
     }
 
     #[test]

@@ -1138,3 +1138,42 @@ fn a_password_with_an_at_sign_is_dropped_whole() {
     );
     assert!(logged.ends_with("on github.com/o/r"), "{logged}");
 }
+
+#[test]
+fn pr_checks_refuses_bad_numbers_repos_and_remote_workspaces_before_running_gh() {
+    let dir = tmp();
+    assert_eq!(
+        pr_checks(dir.path(), "owner/repo", 0).unwrap_err(),
+        "GitHub pull request number must be positive"
+    );
+    assert_eq!(
+        pr_checks(dir.path(), "not a repo", 3).unwrap_err(),
+        "GitHub did not return a repository"
+    );
+    assert_eq!(
+        pr_checks(dir.path(), "owner/repo/extra", 3).unwrap_err(),
+        "GitHub did not return a repository"
+    );
+    assert_eq!(
+        pr_checks(Path::new("remote://env-1/work"), "owner/repo", 3).unwrap_err(),
+        "Pull request checks aren't available for remote workspaces"
+    );
+}
+
+#[test]
+fn pr_checks_serialize_with_camel_case_keys() {
+    let checks = PrChecks {
+        head_oid: "abc".into(),
+        checks: vec![PrCheck {
+            name: "ci".into(),
+            workflow: "build".into(),
+            state: "success".into(),
+            url: None,
+            started_at: Some("t0".into()),
+            completed_at: None,
+        }],
+    };
+    let value = serde_json::to_value(&checks).unwrap();
+    assert_eq!(value["headOid"], "abc");
+    assert_eq!(value["checks"][0]["startedAt"], "t0");
+}

@@ -19,11 +19,19 @@ use gespan_board_store::{
     Column, Comment, Field, FieldValue, Label, Relation, Subtask, View, ViewSpec,
 };
 use gespan_board_store::{
+    blocked_cards, create_board_from_template, delete_field, delete_label, delete_template,
+    field_distinct_values, list_templates, merge_labels, move_field, move_label, on_linked_work,
+    rename_field_option, run_prompt, running_card_ids, save_board_as_template,
+    session_status_setting, set_session_status_setting, update_board_settings, update_field,
+    update_label, write_back, BoardSettings, LinkedEvent, SettingsPatch, TemplateInfo,
+};
+use gespan_board_store::{
     card_index, create_view, delete_view, list_views, local_day_chrono, move_view, now_millis,
     query_cards, set_label_many, set_priority_many, update_view,
 };
 use gespan_tracker_client::tickets::TicketRef;
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use tauri::{AppHandle, Emitter, State};
@@ -1068,6 +1076,453 @@ pub fn board_card_move_to_board(
     Ok(card)
 }
 
+/// A settings patch from the front end, in camelCase. A key that is absent
+/// leaves that setting alone; for the optional settings an explicit `null`
+/// clears it back to the default. Unknown keys are refused.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingsPatchArg {
+    #[serde(default)]
+    run_with: Option<bool>,
+    #[serde(default)]
+    write_back: Option<bool>,
+    #[serde(default)]
+    ticket_status_changes: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    auto_move_json: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    icon: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    color: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    default_view_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    display_json: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    priority_json: Option<Option<String>>,
+}
+
+/// A key that is present, `null` included, is `Some`; `default` makes an
+/// absent key `None`.
+fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
+}
+
+impl From<SettingsPatchArg> for SettingsPatch {
+    fn from(arg: SettingsPatchArg) -> Self {
+        SettingsPatch {
+            run_with: arg.run_with,
+            write_back: arg.write_back,
+            ticket_status_changes: arg.ticket_status_changes,
+            auto_move_json: arg.auto_move_json,
+            icon: arg.icon,
+            color: arg.color,
+            default_view_id: arg.default_view_id,
+            display_json: arg.display_json,
+            priority_json: arg.priority_json,
+        }
+    }
+}
+
+fn settings_update_inner(
+    conn: &rusqlite::Connection,
+    board_id: &str,
+    patch: SettingsPatchArg,
+) -> Result<BoardSettings, String> {
+    validate_id(board_id, "board")?;
+    update_board_settings(conn, board_id, &patch.into())
+}
+
+#[tauri::command(async)]
+pub fn board_settings(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<BoardSettings, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    gespan_board_store::board_settings(&conn, &board_id)
+}
+
+/// Changes only the settings the patch names, so a toggle the native app set
+/// a moment ago survives a rename here.
+#[tauri::command(async)]
+pub fn board_settings_update(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    board_id: String,
+    patch: SettingsPatchArg,
+) -> Result<BoardSettings, String> {
+    let conn = store.lock_conn()?;
+    let settings = settings_update_inner(&conn, &board_id, patch)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(settings)
+}
+
+#[tauri::command(async)]
+pub fn board_templates(store: State<'_, SessionStore>) -> Result<Vec<TemplateInfo>, String> {
+    let conn = store.lock_conn()?;
+    list_templates(&conn)
+}
+
+#[tauri::command(async)]
+pub fn board_create_from_template(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    name: String,
+    template_id: String,
+) -> Result<Board, String> {
+    validate_id(&template_id, "template")?;
+    let conn = store.lock_conn()?;
+    let board = create_board_from_template(&conn, &name, &template_id)?;
+    drop(conn);
+    notify(&app, &board.id);
+    Ok(board)
+}
+
+#[tauri::command(async)]
+pub fn board_save_as_template(
+    store: State<'_, SessionStore>,
+    board_id: String,
+    name: String,
+) -> Result<TemplateInfo, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    save_board_as_template(&conn, &board_id, &name)
+}
+
+#[tauri::command(async)]
+pub fn board_template_delete(
+    store: State<'_, SessionStore>,
+    template_id: String,
+) -> Result<(), String> {
+    validate_id(&template_id, "template")?;
+    let conn = store.lock_conn()?;
+    delete_template(&conn, &template_id)
+}
+
+/// Renames and/or recolours a label; a part left `null` stays as it is.
+#[tauri::command(async)]
+pub fn board_label_update(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    label_id: String,
+    name: Option<String>,
+    color: Option<String>,
+) -> Result<(), String> {
+    validate_id(&label_id, "label")?;
+    let conn = store.lock_conn()?;
+    let board_id = update_label(&conn, &label_id, name.as_deref(), color.as_deref())?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_label_move(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    label_id: String,
+    index: usize,
+) -> Result<(), String> {
+    validate_id(&label_id, "label")?;
+    let conn = store.lock_conn()?;
+    let board_id = move_label(&conn, &label_id, index)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_label_delete(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    label_id: String,
+) -> Result<(), String> {
+    validate_id(&label_id, "label")?;
+    let conn = store.lock_conn()?;
+    let board_id = delete_label(&conn, &label_id)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+/// Moves every card from `fromId` to `intoId`, then deletes `fromId`.
+#[tauri::command(async)]
+pub fn board_labels_merge(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    from_id: String,
+    into_id: String,
+) -> Result<(), String> {
+    validate_id(&from_id, "label")?;
+    validate_id(&into_id, "label")?;
+    let conn = store.lock_conn()?;
+    let board_id = merge_labels(&conn, &from_id, &into_id)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_field_create(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    board_id: String,
+    name: String,
+    kind: String,
+    options_json: Option<String>,
+) -> Result<Field, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    let field =
+        gespan_board_store::create_field(&conn, &board_id, &name, &kind, options_json.as_deref())?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(field)
+}
+
+/// Renames a field and/or replaces its options; a part left `null` stays.
+#[tauri::command(async)]
+pub fn board_field_update(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    field_id: String,
+    name: Option<String>,
+    options_json: Option<String>,
+) -> Result<(), String> {
+    validate_id(&field_id, "field")?;
+    let conn = store.lock_conn()?;
+    let board_id = update_field(&conn, &field_id, name.as_deref(), options_json.as_deref())?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_field_rename_option(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    field_id: String,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    validate_id(&field_id, "field")?;
+    let conn = store.lock_conn()?;
+    let board_id = rename_field_option(&conn, &field_id, &from, &to)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_field_move(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    field_id: String,
+    index: usize,
+) -> Result<(), String> {
+    validate_id(&field_id, "field")?;
+    let conn = store.lock_conn()?;
+    let board_id = move_field(&conn, &field_id, index)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_field_delete(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    field_id: String,
+) -> Result<(), String> {
+    validate_id(&field_id, "field")?;
+    let conn = store.lock_conn()?;
+    let board_id = delete_field(&conn, &field_id)?;
+    drop(conn);
+    notify(&app, &board_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn board_field_distinct_values(
+    store: State<'_, SessionStore>,
+    board_id: String,
+    field_id: String,
+    limit: usize,
+) -> Result<Vec<String>, String> {
+    validate_id(&board_id, "board")?;
+    validate_id(&field_id, "field")?;
+    let conn = store.lock_conn()?;
+    field_distinct_values(&conn, &board_id, &field_id, limit)
+}
+
+/// The boards of every card linked to `kind`/`id`, in first-seen order. A
+/// partly failed batch still wrote some of them, so they are all notified.
+fn linked_boards(conn: &rusqlite::Connection, kind: &str, id: &str) -> Vec<String> {
+    let mut boards: Vec<String> = Vec::new();
+    for card in cards_for_link(conn, kind, id).unwrap_or_default() {
+        if !boards.contains(&card.board_id) {
+            boards.push(card.board_id);
+        }
+    }
+    boards
+}
+
+/// The boards to notify, and the outcome.
+fn linked_event_inner(
+    conn: &rusqlite::Connection,
+    kind: &str,
+    id: &str,
+    event: LinkedEvent,
+) -> (Vec<String>, Result<(), String>) {
+    match on_linked_work(conn, kind, id, event) {
+        Ok(boards) => (boards, Ok(())),
+        Err(error) => (linked_boards(conn, kind, id), Err(error)),
+    }
+}
+
+/// Applies the boards' auto-move rules for `event` to every card linked to
+/// `kind`/`id`, recording the event, and notifies each board written.
+#[tauri::command(async)]
+pub fn board_linked_event(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    kind: String,
+    id: String,
+    event: LinkedEvent,
+) -> Result<(), String> {
+    let conn = store.lock_conn()?;
+    let (boards, result) = linked_event_inner(&conn, &kind, &id, event);
+    drop(conn);
+    for board_id in &boards {
+        notify(&app, board_id);
+    }
+    result
+}
+
+/// The card ids written and the boards to notify, in first-seen order.
+fn write_back_inner(
+    conn: &rusqlite::Connection,
+    session_key: &str,
+    summary: &str,
+) -> (Vec<String>, Vec<String>, Result<(), String>) {
+    let cards = match write_back(conn, session_key, summary) {
+        Ok(cards) => cards,
+        Err(error) => {
+            return (
+                Vec::new(),
+                linked_boards(conn, "session", session_key),
+                Err(error),
+            )
+        }
+    };
+    let mut boards: Vec<String> = Vec::new();
+    for card_id in &cards {
+        if let Ok(card) = get_card(conn, card_id) {
+            if !boards.contains(&card.board_id) {
+                boards.push(card.board_id);
+            }
+        }
+    }
+    (cards, boards, Ok(()))
+}
+
+/// Comments a finished turn's reply on every card linked to the session, on
+/// boards with write-back on. Returns the card ids written.
+#[tauri::command(async)]
+pub fn board_write_back(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    session_key: String,
+    summary: String,
+) -> Result<Vec<String>, String> {
+    let conn = store.lock_conn()?;
+    let (cards, boards, result) = write_back_inner(&conn, &session_key, &summary);
+    drop(conn);
+    for board_id in &boards {
+        notify(&app, board_id);
+    }
+    result.map(|()| cards)
+}
+
+/// Blocked cards by card id, to the numbers of their open blockers.
+#[tauri::command(async)]
+pub fn board_blocked(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<BTreeMap<String, Vec<i64>>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    blocked_cards(&conn, &board_id)
+}
+
+/// Every link on every card of the board, for the link chips.
+#[tauri::command(async)]
+pub fn board_links(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<Vec<CardLink>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    gespan_board_store::board_links(&conn, &board_id)
+}
+
+fn running_cards_inner(
+    conn: &rusqlite::Connection,
+    board_id: &str,
+    running: &[(String, String)],
+) -> Result<Vec<String>, String> {
+    validate_id(board_id, "board")?;
+    let mut cards: Vec<String> = running_card_ids(conn, board_id, running)?
+        .into_iter()
+        .collect();
+    cards.sort();
+    Ok(cards)
+}
+
+/// The board's cards linked to a running `[kind, id]` pair (`session` or
+/// `pilot`), sorted.
+#[tauri::command(async)]
+pub fn board_running_cards(
+    store: State<'_, SessionStore>,
+    board_id: String,
+    running: Vec<(String, String)>,
+) -> Result<Vec<String>, String> {
+    let conn = store.lock_conn()?;
+    running_cards_inner(&conn, &board_id, &running)
+}
+
+/// The prompt "Run with…" starts a session with.
+#[tauri::command(async)]
+pub fn board_run_prompt(store: State<'_, SessionStore>, card_id: String) -> Result<String, String> {
+    validate_id(&card_id, "card")?;
+    let conn = store.lock_conn()?;
+    run_prompt(&conn, &card_id)
+}
+
+/// The session's own "may change ticket status" override, or null when it
+/// follows its boards.
+#[tauri::command(async)]
+pub fn board_session_status_setting(
+    store: State<'_, SessionStore>,
+    session_key: String,
+) -> Result<Option<bool>, String> {
+    let conn = store.lock_conn()?;
+    Ok(session_status_setting(&conn, &session_key))
+}
+
+/// Sets the session's override; null follows its boards again.
+#[tauri::command(async)]
+pub fn board_session_status_setting_set(
+    store: State<'_, SessionStore>,
+    session_key: String,
+    may_change: Option<bool>,
+) -> Result<(), String> {
+    let conn = store.lock_conn()?;
+    set_session_status_setting(&conn, &session_key, may_change)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1819,5 +2274,195 @@ mod tests {
             .all(|r| r.priority == 4 && r.labels == [label.id.clone()]));
         let row = serde_json::to_value(&index[0]).unwrap();
         assert!(row.get("cardId").is_some() && row.get("dueAt").is_some());
+    }
+
+    fn patch(json: serde_json::Value) -> Result<SettingsPatchArg, String> {
+        serde_json::from_value(json).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn settings_patch_round_trips_camel_case_with_null_clearing_and_absent_keeping() {
+        let conn = setup();
+        let (board, _) = board_with_columns(&conn);
+        let set = settings_update_inner(
+            &conn,
+            &board.id,
+            patch(serde_json::json!({
+                "icon": "bug",
+                "color": "e5534b",
+                "writeBack": false,
+                "autoMoveJson": "{\"failed\":\"stay\"}",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(set.icon.as_deref(), Some("bug"));
+        assert!(!set.write_back);
+        // `icon: null` clears the icon; absent keys (color, writeBack, the
+        // rules) keep what the other app set.
+        let after = settings_update_inner(
+            &conn,
+            &board.id,
+            patch(serde_json::json!({ "icon": null, "runWith": false })).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after.icon, None);
+        assert_eq!(after.color.as_deref(), Some("e5534b"));
+        assert!(!after.write_back && !after.run_with && after.ticket_status_changes);
+        assert_eq!(
+            after.auto_move_json.as_deref(),
+            Some("{\"failed\":\"stay\"}")
+        );
+        // A `null` flag leaves it alone rather than failing.
+        let same = settings_update_inner(
+            &conn,
+            &board.id,
+            patch(serde_json::json!({ "writeBack": null })).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(same, after);
+        // An empty patch writes nothing.
+        assert_eq!(
+            settings_update_inner(&conn, &board.id, patch(serde_json::json!({})).unwrap()).unwrap(),
+            after
+        );
+        // Unknown and snake_case keys are refused, as are bad ids and values.
+        assert!(patch(serde_json::json!({ "write_back": true })).is_err());
+        assert!(patch(serde_json::json!({ "boardName": "x" })).is_err());
+        assert_eq!(
+            settings_update_inner(&conn, "bad id", SettingsPatchArg::default()).unwrap_err(),
+            "Invalid board id"
+        );
+        assert!(settings_update_inner(
+            &conn,
+            &board.id,
+            patch(serde_json::json!({ "icon": "skull" })).unwrap()
+        )
+        .is_err());
+        // The returned settings read back in camelCase.
+        let value = serde_json::to_value(&after).unwrap();
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "autoMoveJson",
+                "color",
+                "defaultViewId",
+                "displayJson",
+                "icon",
+                "priorityJson",
+                "runWith",
+                "ticketStatusChanges",
+                "writeBack"
+            ]
+        );
+        let template = &list_templates(&conn).unwrap()[0];
+        assert_eq!(
+            serde_json::to_value(template).unwrap(),
+            serde_json::json!({ "id": "blank", "name": template.name, "builtIn": true })
+        );
+    }
+
+    #[test]
+    fn linked_events_from_the_front_end_are_snake_case_and_run_the_store_rules() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let card = add_cards(&conn, &columns[0].id, &["A"]).remove(0);
+        add_link(&conn, &card.id, "session", "s-1", None).unwrap();
+        let event: LinkedEvent = serde_json::from_value(serde_json::json!("started")).unwrap();
+        let (boards, result) = linked_event_inner(&conn, "session", "s-1", event);
+        result.unwrap();
+        assert_eq!(boards, vec![board.id.clone()]);
+        assert_eq!(get_card(&conn, &card.id).unwrap().column_id, columns[1].id);
+        for word in [
+            "needs_input",
+            "completed",
+            "failed",
+            "pr_opened",
+            "pr_merged",
+        ] {
+            assert!(serde_json::from_value::<LinkedEvent>(serde_json::json!(word)).is_ok());
+        }
+        assert!(serde_json::from_value::<LinkedEvent>(serde_json::json!("prMerged")).is_err());
+        // A card that fails still leaves the board notified, with the error.
+        conn.execute_batch(&format!(
+            "CREATE TEMP TRIGGER refuse BEFORE INSERT ON board_activity \
+             WHEN NEW.card_id = '{}' BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            card.id
+        ))
+        .unwrap();
+        let (boards, result) = linked_event_inner(&conn, "session", "s-1", LinkedEvent::Completed);
+        assert!(result.unwrap_err().contains("refused"));
+        assert_eq!(boards, vec![board.id.clone()]);
+        // Nothing linked: nothing to notify.
+        let (boards, result) = linked_event_inner(&conn, "session", "nobody", LinkedEvent::Started);
+        assert!(result.is_ok() && boards.is_empty());
+    }
+
+    #[test]
+    fn write_back_reports_cards_and_their_boards_once_each() {
+        let conn = setup();
+        let (a, a_columns) = board_with_columns(&conn);
+        let b = create_board(&conn, "Other").unwrap();
+        let b_column = get_board(&conn, &b.id).unwrap().columns[0].id.clone();
+        let one = add_cards(&conn, &a_columns[0].id, &["One", "Two"]);
+        let three = create_card(&conn, &b_column, "Three", "").unwrap();
+        for card in one.iter().chain([&three]) {
+            add_link(&conn, &card.id, "session", "remote:env:s-1", None).unwrap();
+        }
+        let (cards, boards, result) = write_back_inner(&conn, "remote:env:s-1", "All done");
+        result.unwrap();
+        assert_eq!(cards.len(), 3);
+        assert_eq!(boards.len(), 2);
+        assert!(boards.contains(&a.id) && boards.contains(&b.id));
+        assert_eq!(
+            list_comments(&conn, &three.id).unwrap()[0].author,
+            "agent:remote:env:s-1"
+        );
+        // An empty reply writes nothing and notifies nobody.
+        let (cards, boards, result) = write_back_inner(&conn, "remote:env:s-1", "  ");
+        assert!(result.is_ok() && cards.is_empty() && boards.is_empty());
+        let (_, boards, result) = write_back_inner(&conn, "", "x");
+        assert!(result.is_err() && boards.is_empty());
+        // A comment that fails on one board still notifies every linked board,
+        // since the others were written.
+        conn.execute_batch(&format!(
+            "CREATE TEMP TRIGGER refuse BEFORE INSERT ON board_comments \
+             WHEN NEW.card_id = '{}' BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            three.id
+        ))
+        .unwrap();
+        let (_, boards, result) = write_back_inner(&conn, "remote:env:s-1", "Again");
+        assert!(result.unwrap_err().contains("refused"));
+        assert_eq!(boards.len(), 2);
+    }
+
+    #[test]
+    fn running_cards_take_kind_and_id_pairs_and_come_back_sorted() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let cards = add_cards(&conn, &columns[0].id, &["A", "B", "C"]);
+        add_link(&conn, &cards[0].id, "session", "s-1", None).unwrap();
+        add_link(&conn, &cards[1].id, "pilot", "p-1", None).unwrap();
+        add_link(&conn, &cards[2].id, "session", "s-2", None).unwrap();
+        let running: Vec<(String, String)> =
+            serde_json::from_value(serde_json::json!([["session", "s-1"], ["pilot", "p-1"]]))
+                .unwrap();
+        let mut expected = vec![cards[0].id.clone(), cards[1].id.clone()];
+        expected.sort();
+        assert_eq!(
+            running_cards_inner(&conn, &board.id, &running).unwrap(),
+            expected
+        );
+        assert!(running_cards_inner(&conn, &board.id, &[])
+            .unwrap()
+            .is_empty());
+        assert!(running_cards_inner(&conn, "bad id", &running).is_err());
     }
 }
