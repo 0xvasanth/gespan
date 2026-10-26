@@ -1,0 +1,23 @@
+docs/superpowers/plans/2026-10-26-board-174-c5-maps.md
+  s_938a6e0c93b076::t_a71347b0039723 1-136
+docs/superpowers/plans/2026-10-26-board-174-c5.md
+  s_938a6e0c93b076::t_06fe730246a7fa 165
+  s_938a6e0c93b076::t_9368582449efe9 1-164,166-585
+  s_938a6e0c93b076::t_089c983fea2303 586
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "891dcab5688ce23b2b0969b2216c2ed3855d3f73",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
