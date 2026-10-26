@@ -1,0 +1,38 @@
+src/features/board/ui/settings/settingsControls.tsx
+  s_938a6e0c93b076::t_7899ac71355293 1-9,101-116,119,121,124,126-128,130-146,151-152,154,156-159,162-171,177-213
+  s_938a6e0c93b076::t_c13c2f280db5bb 214-216
+src/features/board/ui/settings/boardSettings.test.ts
+  s_938a6e0c93b076::t_f45c8f70b4655f 363,380,527,661-662,666-670,673-674,679-680,830,1024-1125
+  s_938a6e0c93b076::t_c37e9b58940736 413-420
+  s_938a6e0c93b076::t_8732b0ee1a35ff 1126
+src/features/board/ui/settings/BoardSettings.tsx
+  s_938a6e0c93b076::t_ae791aea2d4bc4 58
+src/features/board/ui/settings/GeneralSection.tsx
+  s_938a6e0c93b076::t_ae791aea2d4bc4 6,24,54-55,57-69
+src/features/board/ui/settings/PrioritySection.tsx
+  s_938a6e0c93b076::t_ae791aea2d4bc4 28
+  s_938a6e0c93b076::t_a497884f931c58 75,100-103
+  s_938a6e0c93b076::t_0ee5b6fc9b8eda 1,4,31-51,76,87
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_a497884f931c58 2041-2049
+src/features/board/model/boardSettings.ts
+  s_938a6e0c93b076::t_7899ac71355293 141-156
+src/features/board/ui/settings/ColumnsSection.tsx
+  s_938a6e0c93b076::t_ae791aea2d4bc4 61-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae160b0d4db7e1ae2c77e2b6ca4bab003779a1e8",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
