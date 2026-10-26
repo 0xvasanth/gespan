@@ -332,6 +332,24 @@ pub(crate) struct BoardView {
     filter_free: Entity<Input>,
     /// The swimlane cell (lane key, column id) a drag would drop into.
     pub(crate) lane_drop: Option<(String, String)>,
+    /// Swimlanes as one windowed list of rows (a lane's header, then bands
+    /// of `LANE_BAND` cards per cell); `None` on a board without lanes.
+    pub(crate) lane_list: Option<ListState>,
+    /// The rows, lanes and cells (shown card ids per `(lane, column)`) the
+    /// lane list was last synced with, computed once per render.
+    lane_rows_cache: Vec<swimlanes::LaneRow>,
+    lanes_cache: Vec<swimlanes::Lane>,
+    pub(crate) lane_cell_ids: swimlanes::LaneCells,
+    /// The focus handle each lane row keeps itself mounted by.
+    lane_row_handles: Vec<Option<FocusHandle>>,
+    /// Each lane header's focus, where focus goes when a filter hides every
+    /// card of the focused card's cell.
+    pub(crate) lane_header_focus: HashMap<String, FocusHandle>,
+    /// A lane card a reveal scrolled to, and frames left to check it.
+    lane_settling: Option<(String, u8)>,
+    /// A focused card a reload or filter hid, and the lane whose header
+    /// takes focus instead on the next render.
+    lane_header_refocus: Option<(String, String)>,
     /// The board whose default view was applied; it applies once per board.
     default_view_applied: Option<String>,
     pending_default_view: Option<String>,
@@ -503,6 +521,14 @@ impl BoardView {
             field_seen: HashMap::new(),
             filter_free,
             lane_drop: None,
+            lane_list: None,
+            lane_rows_cache: Vec::new(),
+            lanes_cache: Vec::new(),
+            lane_cell_ids: HashMap::new(),
+            lane_row_handles: Vec::new(),
+            lane_header_focus: HashMap::new(),
+            lane_settling: None,
+            lane_header_refocus: None,
             default_view_applied: None,
             pending_default_view: None,
             #[cfg(test)]
@@ -1549,6 +1575,7 @@ impl gpui::Render for BoardView {
         self.rendered_cards.set(0);
         // Reads the bounds the last frame painted, before they are cleared.
         self.settle_reveal(window, cx);
+        self.settle_lane_reveal(window, cx);
         // Bounds are only good for the frame that painted them: a card
         // scrolled out of a column's window keeps none.
         for anchor in self.card_anchors.values() {
@@ -1559,6 +1586,7 @@ impl gpui::Render for BoardView {
             if let Some(old) = self.list_display.clone() {
                 self.learn_item_height(&old);
                 self.remeasure_column_lists();
+                self.remeasure_lane_list();
                 self.item_heights.borrow_mut().clear();
             }
             self.list_display = Some(self.display.clone());
@@ -1572,7 +1600,10 @@ impl gpui::Render for BoardView {
             self.sync_column_lists();
         }
         self.pin_drawer_card();
+        self.sync_lane_list(cx);
+        self.follow_lane_header_refocus(window, cx);
         self.follow_card_focus(window, cx);
+        self.sync_lane_handles();
         let root =
             div()
                 .id("board-view")

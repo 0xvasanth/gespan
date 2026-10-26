@@ -200,11 +200,12 @@ impl BoardView {
             return;
         };
         if self.lane_mode().is_some() {
-            if let Some(handle) = self
-                .lane_focus_target(card_id, direction)
-                .and_then(|id| self.card_focus.get(&id))
-            {
-                window.focus(handle, cx);
+            // A card outside the lanes' window scrolls into view first.
+            if let Some(target) = self.lane_focus_target(card_id, direction) {
+                self.reveal_card(&target);
+                if let Some(handle) = self.card_focus.get(&target).cloned() {
+                    window.focus(&handle, cx);
+                }
             }
             return;
         }
@@ -256,9 +257,9 @@ impl BoardView {
             })
         });
         let lane = self.lane_mode().and_then(|_| self.first_lane_of(card_id));
-        // Swimlane drags say where they go in the lanes' own status line.
-        if lane.is_none() {
-            self.announce_pick_up(card_id);
+        match &lane {
+            Some(lane) => self.announce_lane_pick_up(card_id, lane, &column_id),
+            None => self.announce_pick_up(card_id),
         }
         self.lane_drop = lane.clone().map(|lane| (lane, column_id.clone()));
         self.drop_target = Some((column_id.clone(), slot));
@@ -399,6 +400,8 @@ impl BoardView {
         };
         if drag.lane.is_none() {
             self.announce_cancel(&drag.card_id);
+        } else {
+            self.announce_lane_cancel(&drag.card_id);
         }
         self.drop_target = None;
         self.lane_drop = None;

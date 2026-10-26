@@ -15,7 +15,7 @@ pub(in crate::board) const COLUMN_WIDTH: f32 = 280.;
 /// The space above each card in a column, and around the composer.
 const ITEM_GAP: f32 = 6.;
 /// How many frames a reveal keeps checking that its item is fully in view.
-const SETTLE_FRAMES: u8 = 6;
+pub(super) const SETTLE_FRAMES: u8 = 6;
 /// The composer's "Add card" row, until it has been measured.
 const FOOTER_ESTIMATE: f32 = 40.;
 
@@ -328,7 +328,7 @@ impl BoardView {
 
     /// A first guess at a card row's height (card and gap) under `display`:
     /// the mean painted height last seen under it, else the fixed estimate.
-    fn item_estimate(&self, display: &DisplayOptions) -> Pixels {
+    pub(super) fn item_estimate(&self, display: &DisplayOptions) -> Pixels {
         self.learned_heights
             .iter()
             .find(|(seen, _)| seen == display)
@@ -392,6 +392,10 @@ impl BoardView {
     /// Scroll a board column so the card is in view. A card that isn't in a
     /// column's visible cards is left alone.
     pub(crate) fn reveal_card(&mut self, card_id: &str) {
+        // Swimlanes have one list of lane rows instead of a list a column.
+        if self.lane_list.is_some() {
+            return self.reveal_lane_card(card_id);
+        }
         let found = self.column_ids.iter().find_map(|(column, ids)| {
             ids.iter()
                 .position(|id| id == card_id)

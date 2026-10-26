@@ -7800,7 +7800,10 @@ fn swimlane_keyboard_lift_moves_between_cells_and_drops(cx: &mut TestAppContext)
     visual.refresh().unwrap();
     assert!(shown(visual, "board-lane-announce"));
     let said = drawer(&f, visual, |view, _| view.lane_announcement());
-    assert_eq!(said.as_deref(), Some("Moving #1 to Backlog, None"));
+    assert_eq!(
+        said.as_deref(),
+        Some("Picked up card #1, Keyed. Lane None, column Backlog, position 1 of 1.")
+    );
     // Right: next column; Up: the lane above (None -> Low).
     visual.simulate_keystrokes("right");
     visual.simulate_keystrokes("up");
@@ -7815,7 +7818,10 @@ fn swimlane_keyboard_lift_moves_between_cells_and_drops(cx: &mut TestAppContext)
     assert!(announced.0);
     assert_eq!(announced.1.as_deref(), Some("p1"));
     let said = drawer(&f, visual, |view, _| view.lane_announcement());
-    assert_eq!(said.as_deref(), Some("Moving #1 to In Progress, Low"));
+    assert_eq!(
+        said.as_deref(),
+        Some("Card #1, Keyed is over lane Low, column In Progress, position 1 of 1.")
+    );
     // Escape puts it back and writes nothing.
     visual.simulate_keystrokes("escape");
     visual.run_until_parked();
@@ -8457,5 +8463,6 @@ fn a_failed_template_list_still_lets_the_switcher_create_a_blank_board(cx: &mut 
 
 mod agent_wiring;
 mod keyboard_scale;
+mod lanes_scale;
 mod link_run;
 mod scale;
