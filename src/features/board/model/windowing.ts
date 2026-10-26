@@ -260,23 +260,33 @@ export function useMeasuredWindow({
     anchor.current = anchorAt(node.scrollTop);
   }, [anchorAt]);
 
+  // The scroller can come and go (a column collapsed, then expanded), so the
+  // observer follows the node the ref is given, never the first one.
+  const observer = useRef<ResizeObserver | null>(null);
   const ref = useCallback(
     (node: HTMLElement | null) => {
+      observer.current?.disconnect();
+      observer.current = null;
       element.current = node;
-      if (node) sync();
+      if (!node) return;
+      sync();
+      if (typeof ResizeObserver === "undefined") return;
+      observer.current = new ResizeObserver(() => {
+        if (element.current === node) {
+          setViewport(node.clientHeight || FALLBACK_VIEWPORT);
+        }
+      });
+      observer.current.observe(node);
     },
     [sync],
   );
-
-  useEffect(() => {
-    const node = element.current;
-    if (!node || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() =>
-      setViewport(node.clientHeight || FALLBACK_VIEWPORT),
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
+  useEffect(
+    () => () => {
+      observer.current?.disconnect();
+      observer.current = null;
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
     // Re-measure what is mounted: a density toggle, new labels or a longer

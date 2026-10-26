@@ -322,6 +322,14 @@ describe("windowed board columns", () => {
     expect(cardEl("k500")!.getAttribute("aria-description")).toBe(
       "501 of 1000 in Backlog",
     );
+    // One more step down: the spacers resize in place, not remount.
+    const tail = bodyOf("backlog").lastElementChild as HTMLElement;
+    expect(tail.hasAttribute("data-window-gap")).toBe(true);
+    scrollColumn("backlog", 501 * STEP);
+    expect(rendered("backlog")[0]).toBe("k497");
+    expect(bodyOf("backlog").firstElementChild).toBe(first);
+    expect(bodyOf("backlog").lastElementChild).toBe(tail);
+    expect(parseFloat(first.style.height)).toBe(497 * STEP - CARD_GAP);
   });
 
   it("a_reload_with_unchanged_ids_keeps_the_scroll_position", async () => {
@@ -551,6 +559,73 @@ describe("windowed board columns", () => {
     await flush();
     expect(cardEl("k3")!.hasAttribute("data-dragging")).toBe(false);
     expect(commands("board_card_move")).toHaveLength(0);
+  });
+
+  it("the_viewport_follows_a_column_expanded_after_mount_and_re_expanded", async () => {
+    // A ResizeObserver stand-in: `resize(node)` fires the live observers of it.
+    const observers: {
+      callback: ResizeObserverCallback;
+      nodes: Set<Element>;
+    }[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        entry: (typeof observers)[number];
+        constructor(callback: ResizeObserverCallback) {
+          this.entry = { callback, nodes: new Set() };
+          observers.push(this.entry);
+        }
+        observe(node: Element) {
+          this.entry.nodes.add(node);
+        }
+        unobserve(node: Element) {
+          this.entry.nodes.delete(node);
+        }
+        disconnect() {
+          this.entry.nodes.clear();
+        }
+      },
+    );
+    const resize = (node: HTMLElement, height: number) => {
+      Object.defineProperty(node, "clientHeight", {
+        configurable: true,
+        value: height,
+      });
+      act(() => {
+        for (const o of observers) {
+          if (o.nodes.has(node)) o.callback([], {} as ResizeObserver);
+        }
+      });
+    };
+    // Cards in view at `height` (from the top), plus four of overscan.
+    const inView = (height: number) => Math.ceil(height / STEP) + 4;
+    const collapsed = (yes: boolean) =>
+      COLUMNS.map((c) => (c.id === "backlog" ? { ...c, collapsed: yes } : c));
+
+    backend.seedThousand(1);
+    backend.columns = collapsed(true);
+    await renderBoard();
+    expect(rendered("backlog")).toEqual([]);
+
+    // Expanded after mount: the body is new, and its height is followed.
+    backend.columns = collapsed(false);
+    await reload();
+    expect(rendered("backlog")).toHaveLength(inView(640)); // before layout
+    resize(bodyOf("backlog"), 2000);
+    expect(rendered("backlog")).toHaveLength(inView(2000));
+
+    // Collapsed and expanded again: the new body is observed, the old one not.
+    const old = bodyOf("backlog");
+    backend.columns = collapsed(true);
+    await reload();
+    expect(rendered("backlog")).toEqual([]);
+    expect(observers.some((o) => o.nodes.has(old))).toBe(false);
+    backend.columns = collapsed(false);
+    await reload();
+    resize(bodyOf("backlog"), 1200);
+    expect(rendered("backlog")).toHaveLength(inView(1200));
+    resize(bodyOf("backlog"), 400);
+    expect(rendered("backlog")).toHaveLength(inView(400));
   });
 
   it("the focused and open cards stay mounted while scrolled away", async () => {

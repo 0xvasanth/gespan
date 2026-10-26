@@ -182,11 +182,17 @@ export function KanbanColumn({
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
           {windowed.slots.map((slot, i, slots) => {
             if (slot.kind === "gap") {
-              const next = slots[i + 1];
+              const prev = slots[i - 1];
+              // Keyed by place, so scrolling resizes a spacer, never remounts it.
+              const key =
+                i === 0
+                  ? "gap:lead"
+                  : i === slots.length - 1
+                    ? "gap:tail"
+                    : `gap:after:${prev?.kind === "item" ? cards[prev.index].id : i}`;
               return (
                 <div
-                  // One spacer per run of unmounted cards, named by what follows it.
-                  key={`gap:${next?.kind === "item" ? cards[next.index].id : "end"}`}
+                  key={key}
                   aria-hidden="true"
                   data-window-gap=""
                   className="shrink-0"

@@ -33,6 +33,7 @@ vi.mock("../../../app/shell/WindowControls", () => ({
 const OPEN_BUDGET_MS = 2_000;
 const FILTER_BUDGET_MS = 750;
 const RUNS = 3;
+const MAX_PER_COLUMN = 60;
 
 let backend: TestBackend;
 
@@ -98,6 +99,15 @@ async function measure(): Promise<{ open: number; filter: number }> {
     await act(async () => root.render(createElement(BoardView, props())));
     await until(() => painted().includes("k0"));
     const open = performance.now() - openStart;
+    // The scale test guards windowing too: 250 cards per column, at most 60
+    // of them mounted in each expanded column.
+    const columns = [...container.querySelectorAll("[data-kanban-column]")];
+    expect(columns).toHaveLength(4);
+    for (const column of columns) {
+      const mounted = column.querySelectorAll("[data-kanban-card]").length;
+      expect(mounted).toBeGreaterThan(0);
+      expect(mounted).toBeLessThanOrEqual(MAX_PER_COLUMN);
+    }
 
     // "card 99" matches #99 and #990…#999 (k98, k989…k998).
     const expected = ["k98", ...Array.from({ length: 10 }, (_, i) => `k${989 + i}`)];
