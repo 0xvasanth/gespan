@@ -1032,7 +1032,7 @@ impl Shell {
                             div()
                                 .min_w_0()
                                 .truncate()
-                                .font_family(crate::markdown::MONO)
+                                .font_family(crate::fonts::mono())
                                 .text_size(px(10.))
                                 .child(label),
                         )

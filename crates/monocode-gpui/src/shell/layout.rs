@@ -365,9 +365,10 @@ impl Shell {
         let tab_bar = if spans_window || (original && self.app_search.is_some()) {
             None
         } else if original && self.app_view_open() {
-            Some(self.classic_app_surface_header(cx))
+            Some(self.titlebar_controls_space(self.classic_app_surface_header(cx), window))
         } else if original && self.mono_active(cx) {
-            Some(self.classic_mono_header(cx))
+            let bar = self.classic_mono_header(cx);
+            Some(self.titlebar_controls_space(bar, window))
         } else {
             Some(self.titlebar(window, cx))
         };
@@ -476,7 +477,7 @@ impl Shell {
                     div()
                         .absolute()
                         .top_0()
-                        .right_0()
+                        .right(px(super::client_controls_width(window)))
                         .h(px(TITLE_BAR_HEIGHT))
                         .children(corner),
                 )
@@ -747,7 +748,9 @@ impl Shell {
                                 div()
                                     .relative()
                                     .size_full()
+                                    .child(self.mono_bounds.layout_probe())
                                     .child(monos)
+                                    .children(self.drop_hint(super::mono_panes::MONO_VIEW))
                                     .children(linked.map(|notice| {
                                         div()
                                             .absolute()

@@ -65,7 +65,7 @@ fn icon_action_ink(
 fn action_icon(name: &'static str, ink: Hsla) -> gpui::Svg {
     icon(name, 14.).text_color(ink)
 }
-fn relative_time(iso: &str) -> String {
+pub(crate) fn relative_time(iso: &str) -> String {
     if model::timestamp_ms(iso) == 0 {
         return String::new();
     }

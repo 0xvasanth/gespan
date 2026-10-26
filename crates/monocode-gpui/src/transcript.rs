@@ -18,6 +18,7 @@ mod remote_plans;
 pub(crate) mod selection;
 pub(crate) mod tasks;
 mod tools;
+mod user_links;
 mod visuals;
 
 use crate::markdown_model::MarkdownParser;
@@ -36,6 +37,7 @@ use gpui::{
 };
 use monocode_core::tool::{ToolCall, ToolState, tasks::Panel};
 use monocode_core::transcript::Row;
+use monocode_core::user_links::{UserMessageLink, parse_user_message_link};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
@@ -114,6 +116,9 @@ struct Message {
     /// A user message's displayed chunks and attachments, which its cached
     /// bubble width depends on.
     prompt_fingerprint: u64,
+    /// parseUserMessageLink: the prompt's first web link, with the index of
+    /// the text chunk that holds it.
+    user_link: Option<(usize, Arc<UserMessageLink>)>,
 }
 struct RenderedBlock {
     source: Arc<crate::markdown_model::TopBlock>,
@@ -191,6 +196,7 @@ const TOP_INSET: f32 = 20.;
 // Saved drafts are presentation rows, outside the provider transcript.
 const SAVED_DRAFT_START: usize = usize::MAX - 1;
 const BOTTOM_INSET: f32 = 40.;
+#[cfg(target_os = "macos")]
 const TOP_FADE: f32 = 24.;
 /// AgentTranscript.tsx's user bubble: `text-sm`, `max-w-[36rem]` and `px-3`.
 /// Measurement, line counting and render share these.
@@ -462,6 +468,7 @@ pub(crate) struct TranscriptView {
     selection: selection::Selection,
     selection_focus: Option<gpui::FocusHandle>,
     links: links::State,
+    work_item_cards: user_links::Cards,
     source: Vec<Row>,
     source_bytes: usize,
     attachment_images: HashMap<String, gpui::Entity<attachments::Photo>>,
@@ -2292,6 +2299,7 @@ impl TranscriptView {
             selection: Default::default(),
             selection_focus: None,
             links: Default::default(),
+            work_item_cards: Default::default(),
             source: Vec::new(),
             source_bytes: 0,
             attachment_images: HashMap::new(),
@@ -3046,6 +3054,7 @@ impl TranscriptView {
                 (None, Arc::default())
             };
             let old = previous.remove(&at).filter(|p| p.role == role);
+            let mut user_link = None;
             let (mut parser, mut markdown_blocks) = old
                 .map(|p| (p.parser, p.markdown_blocks))
                 .unwrap_or_else(|| {
@@ -3416,9 +3425,17 @@ impl TranscriptView {
                         .map(|row| row.text.clone())
                         .collect()
                 };
+                if role == "user" {
+                    user_link = text_rows.iter().enumerate().find_map(|(chunk, text)| {
+                        parse_user_message_link(text).map(|link| (chunk, Arc::new(link)))
+                    });
+                }
                 // `line-clamp-4`: a collapsed message shows its first lines only.
-                let clamped =
-                    role == "user" && !self.expanded_prompts.contains(&at) && text_rows.len() > 1;
+                // A message with a link preview is never clamped, as in React.
+                let clamped = role == "user"
+                    && user_link.is_none()
+                    && !self.expanded_prompts.contains(&at)
+                    && text_rows.len() > 1;
                 if clamped {
                     self.clamped_prompts.insert(at);
                 } else {
@@ -3481,6 +3498,7 @@ impl TranscriptView {
                 role,
                 parser,
                 markdown_blocks,
+                user_link,
                 under_line: has_work && final_answer == Some(at),
                 turn: if self.mono {
                     self.mono_group_start(turn)
@@ -4892,10 +4910,18 @@ impl TranscriptView {
                     .into_any_element()
             }
             Body::Plain(text) => {
+                // UserLinkPreview: the prompt's first link, drawn in its chunk.
+                let message_link = self.messages[row.message].user_link.clone();
+                let link = message_link
+                    .as_ref()
+                    .filter(|(chunk, _)| user && *chunk + 16 == row.key.1)
+                    .map(|(_, link)| link.clone());
                 let collapsed = !self.expanded_prompts.contains(&message_start);
-                let clamp = user && first && collapsed;
+                let clamp = user && first && collapsed && message_link.is_none();
                 // `overflows`: hidden chunks, or more than four wrapped lines.
+                // React never clamps a message that shows a link preview.
                 let overflows = user
+                    && message_link.is_none()
                     && last
                     && (!first
                         || self.clamped_prompts.contains(&message_start)
@@ -4970,32 +4996,37 @@ impl TranscriptView {
                                 .gap(px(6.))
                                 .child(icon(path, 14.).flex_shrink_0().text_color(content(0.6)))
                         })
-                        .child(
-                            div()
-                                .when(clamp, |d| d.line_clamp(4).text_ellipsis())
-                                .child({
-                                    let styled = gpui::StyledText::new(text.clone())
-                                        .with_highlights(markdown::mark_styles(
-                                            &text,
-                                            vec![],
-                                            self.search_match
-                                                .as_ref()
-                                                .map_or("", |(_, q)| q.as_str()),
-                                            self.search_match
-                                                .as_ref()
-                                                .is_some_and(|(start, _)| *start == message_start),
-                                        ));
-                                    let layout = styled.layout().clone();
-                                    let child = styled.into_any_element();
-                                    if let Some(selection) =
-                                        self.text_selection(row.key, message_start, false, cx)
-                                    {
-                                        selection.wrap(text.clone(), layout, child)
-                                    } else {
-                                        child
-                                    }
-                                }),
-                        )
+                        .when_some(link.clone(), |d, link| {
+                            d.child(self.user_link_text(&text, &link, row.key, message_start, cx))
+                        })
+                        .when(link.is_none(), |d| {
+                            d.child(
+                                div()
+                                    .when(clamp, |d| d.line_clamp(4).text_ellipsis())
+                                    .child({
+                                        let styled = gpui::StyledText::new(text.clone())
+                                            .with_highlights(markdown::mark_styles(
+                                                &text,
+                                                vec![],
+                                                self.search_match
+                                                    .as_ref()
+                                                    .map_or("", |(_, q)| q.as_str()),
+                                                self.search_match.as_ref().is_some_and(
+                                                    |(start, _)| *start == message_start,
+                                                ),
+                                            ));
+                                        let layout = styled.layout().clone();
+                                        let child = styled.into_any_element();
+                                        if let Some(selection) =
+                                            self.text_selection(row.key, message_start, false, cx)
+                                        {
+                                            selection.wrap(text.clone(), layout, child)
+                                        } else {
+                                            child
+                                        }
+                                    }),
+                            )
+                        })
                     })
                     .children(
                         self.burst
@@ -5537,6 +5568,7 @@ impl Render for TranscriptView {
             .children(self.outline(window, cx))
             .children(self.selection_menu(cx))
             .child(self.link_overlays(cx))
+            .children(self.work_item_card(window, cx))
             .when(self.show_jump, |d| {
                 // Centered, or the column's right end when the commit pill
                 // takes the left.
@@ -5626,28 +5658,10 @@ fn paint_edge_fade(bounds: Bounds<Pixels>, begin: bool, window: &mut Window) {
             BOTTOM_INSET * window.scale_factor(),
         ),
     ));
+    // A color overlay cannot mask text without tinting the pane and creating
+    // a seam above the composer. Only the Metal backend supports a real mask.
     #[cfg(not(target_os = "macos"))]
-    if !begin {
-        // Other native backends use an opaque chat pane.
-        for (top, height) in [(true, TOP_FADE as usize), (false, BOTTOM_INSET as usize)] {
-            for y in 0..height {
-                let mut color: gpui::Hsla = rgb(CHAT).into();
-                color.a = 1. - (y as f32 + 0.5) / height as f32;
-                let origin = gpui::point(
-                    bounds.left(),
-                    if top {
-                        bounds.top() + px(y as f32)
-                    } else {
-                        bounds.bottom() - px(y as f32 + 1.)
-                    },
-                );
-                window.paint_quad(gpui::fill(
-                    Bounds::new(origin, size(bounds.size.width, px(1.))),
-                    color,
-                ));
-            }
-        }
-    }
+    let _ = (bounds, begin, window);
 }
 
 #[cfg(test)]

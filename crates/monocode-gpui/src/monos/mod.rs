@@ -548,6 +548,14 @@ impl Monos {
         id: &str,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Conversation>> {
+        self.pane_chat(id, cx)
+    }
+    /// A Mono's chat for a split pane, loading it when it is not open yet.
+    pub(crate) fn pane_chat(
+        &mut self,
+        id: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Conversation>> {
         self.ensure_chat(id, cx);
         self.chats.get(id).cloned()
     }

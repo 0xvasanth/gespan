@@ -413,6 +413,7 @@ fn main() {
             explorer::bind(cx);
             history::bind(cx);
             diff_view::bind(cx);
+            fonts::init(cx);
             terminal::bind(cx);
             let modifier = if cfg!(target_os = "macos") {
                 "cmd"
@@ -434,6 +435,12 @@ fn main() {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(820.), px(520.))),
+                    window_decorations: workspace
+                        .preferences
+                        .wayland_decorations(cx.compositor_name()),
+                    // Linux desktops match this to the .desktop file's
+                    // StartupWMClass to show the app icon.
+                    app_id: Some("dev.usemono.gpui".into()),
                     window_background: if cfg!(target_os = "macos") {
                         WindowBackgroundAppearance::Blurred
                     } else {

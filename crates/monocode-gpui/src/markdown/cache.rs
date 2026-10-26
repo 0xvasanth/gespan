@@ -50,7 +50,7 @@ impl PreparedInline {
                 }
             }
             if style.code || style.math {
-                fonts.push((range.clone(), MONO.into()));
+                fonts.push((range.clone(), crate::fonts::mono().into()));
             }
             if let Some(url) = &style.link {
                 links.push(range.clone());

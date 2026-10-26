@@ -139,6 +139,23 @@ impl SettingsView {
                 |this, v, cx| this.update(cx, |p| p.apply_workspace_theme(v)),
             )],
         ));
+        #[cfg(target_os = "linux")]
+        if cx.compositor_name() == "Wayland" {
+            theme.push(self.row(
+                Some("wayland-window-decorations"),
+                false,
+                "Wayland window decorations",
+                Some("Show compositor decorations. Monocode's title bar stays visible.".into()),
+                vec![self.toggle(
+                    "wayland-window-decorations",
+                    "Wayland window decorations",
+                    p.wayland_window_decorations,
+                    false,
+                    cx,
+                    |this, on, cx| this.update(cx, |p| p.wayland_window_decorations = on),
+                )],
+            ));
+        }
         let accent_picker = self.accent_picker(cx);
         theme.push(self.row(
             Some("accent-color"),

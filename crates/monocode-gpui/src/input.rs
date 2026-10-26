@@ -1180,7 +1180,7 @@ impl EntityInputHandler for Input {
             && self.code.is_none()
             && cx
                 .try_global::<crate::settings::Preferences>()
-                .is_none_or(|p| p.autocorrect);
+                .is_some_and(|p| p.autocorrect);
         gpui::TextInputConfiguration {
             autocorrect: enabled,
             suggestions: enabled,
@@ -1245,7 +1245,7 @@ impl EntityInputHandler for Input {
             && text.chars().all(char::is_whitespace)
             && cx
                 .try_global::<crate::settings::Preferences>()
-                .is_none_or(|p| p.autocorrect)
+                .is_some_and(|p| p.autocorrect)
         {
             let start = self.content[..r.start]
                 .rfind(|c: char| !c.is_alphabetic())
@@ -1765,7 +1765,7 @@ impl Render for Input {
                 "Composer"
             })
             .when(self.code.is_some(), |d| {
-                d.h_full().font_family(crate::markdown::MONO)
+                d.h_full().font_family(crate::fonts::mono())
             })
             .track_focus(&self.focus)
             .cursor(if self.code_rail_hovered() {

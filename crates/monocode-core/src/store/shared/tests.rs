@@ -36,6 +36,22 @@ fn desktop_operator_access_restores_only_from_submitted_user_messages() {
 }
 
 #[test]
+fn saved_turn_metrics_reload_with_the_same_revision() {
+    // Without exact float parsing these reload one ULP away, and the next
+    // save reports the conversation as changed in another window.
+    let store = Store::open_monocode(Path::new(":memory:")).unwrap();
+    let id = store.create("codex", "/project").unwrap().id;
+    let blocks = [95.12525746447635, 99.55200675204587, 98.15813953488373]
+        .map(|percent| {
+            json!({"id":percent.to_string(),"role":"assistant","text":"Done",
+            "turnMetrics":{"cacheHitPercent":percent}})
+        })
+        .to_vec();
+    store.shared_store_blocks(id, &blocks).unwrap();
+    assert!(HistoryRevision::of(&blocks).matches(&store.shared_blocks(id).unwrap()));
+}
+
+#[test]
 fn streamed_indexed_mono_load_preserves_projection_and_revision_guards() {
     let mut store = Store::open_monocode(Path::new(":memory:")).unwrap();
     let legacy = include_str!("../../../../../src-tauri/src/mono_transcript.rs");

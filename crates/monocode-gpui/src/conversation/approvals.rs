@@ -102,7 +102,7 @@ impl Conversation {
                         .py_1()
                         .max_h(px(180.))
                         .overflow_y_scroll()
-                        .font_family(crate::markdown::MONO)
+                        .font_family(crate::fonts::mono())
                         .text_size(px(12.))
                         .line_height(px(18.))
                         .text_color(content(0.75))
