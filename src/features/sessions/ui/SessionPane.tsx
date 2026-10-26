@@ -660,6 +660,14 @@ const LocalSessionPane = memo(function LocalSessionPane({
     (!draftBlock && (!isEmpty || inSplit || !!session.inboxAsk || !!agent));
   const composerDockMotion = useComposerDockMotion(dockComposer);
   const draftRef = useRef<string | undefined>(getComposerDraft(session.id));
+  // A seed replaced while the draft still holds the old one (a ticket's
+  // title arriving after its key) replaces the draft. Edited text stays.
+  const seedRef = useRef(session.composerSeed);
+  if (seedRef.current !== session.composerSeed) {
+    if (draftRef.current === undefined || draftRef.current === seedRef.current)
+      draftRef.current = session.composerSeed;
+    seedRef.current = session.composerSeed;
+  }
   const composer = (
     <Composer
       key={session.id}
