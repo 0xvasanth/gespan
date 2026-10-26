@@ -541,6 +541,13 @@ describe("new board dialog", () => {
     );
     expect(dialog()).not.toBeNull();
     expect(radios()).toHaveLength(2);
+    await type(byLabel<HTMLInputElement>(dialog()!, "Board name"), "First", false);
+    await click(buttonNamed(dialog()!, "Create board"));
+    expect(lastArgs("board_create_from_template")).toEqual({
+      name: "First",
+      templateId: "blank",
+    });
+    expect(container.querySelector("[data-kanban-board]")).not.toBeNull();
   });
 });
 
@@ -551,7 +558,17 @@ describe("templates section", () => {
   it("save_as_template_then_create_copies_labels_fields_views", async () => {
     await renderBoard();
     await openSettings();
-    await type(byLabel<HTMLInputElement>(section("Templates"), "Template name"), "My setup");
+    const nameField = () =>
+      byLabel<HTMLInputElement>(section("Templates"), "Template name");
+    // Leaving the field with a name typed saves nothing.
+    act(() => nameField().focus());
+    await type(nameField(), "My setup", false);
+    act(() => nameField().blur());
+    await flush();
+    expect(commands("board_save_as_template")).toEqual([]);
+    // Enter saves, and the field is cleared.
+    await type(nameField(), "My setup", true);
+    expect(nameField().value).toBe("");
     expect(commands("board_save_as_template")).toEqual([
       ["board_save_as_template", { boardId: "b1", name: "My setup" }],
     ]);
@@ -611,13 +628,27 @@ describe("templates section", () => {
     expect(row("t9")).not.toBeNull();
   });
 
+  it("a blank template name shows a message and saves nothing", async () => {
+    await renderBoard();
+    await openSettings();
+    const nameField = byLabel<HTMLInputElement>(section("Templates"), "Template name");
+    await type(nameField, "   ", false);
+    await click(buttonNamed(section("Templates"), "Save as template"));
+    expect(commands("board_save_as_template")).toEqual([]);
+    expect(section("Templates").textContent).toContain("Name the template first");
+    // Typing clears the message.
+    await type(nameField, "a", false);
+    expect(section("Templates").textContent).not.toContain("Name the template first");
+  });
+
   it("says when a save is refused and keeps the list", async () => {
     handlers.board_save_as_template = () => {
       throw "A template named “X” already exists";
     };
     await renderBoard();
     await openSettings();
-    await type(byLabel<HTMLInputElement>(section("Templates"), "Template name"), "X");
+    await type(byLabel<HTMLInputElement>(section("Templates"), "Template name"), "X", false);
+    await click(buttonNamed(section("Templates"), "Save as template"));
     expect(alertText()).toContain("already exists");
     expect(section("Templates").querySelectorAll("[data-template]")).toHaveLength(2);
   });
@@ -637,14 +668,90 @@ describe("automation section", () => {
     }
   });
 
-  it("reads the toggles as on before settings have loaded", async () => {
+  it("without readable settings the section says so, is disabled and writes nothing", async () => {
+    let readable = false;
     handlers.board_settings = () => {
-      throw "store is locked";
+      if (!readable) throw "store is locked";
+      return settings;
     };
     await renderBoard();
     await openSettings();
+    const auto = section("Automation");
+    expect(auto.textContent).toContain("Couldn't load settings");
+    for (const label of ["Run with…", "Agent write-back", "Agent may change ticket status"]) {
+      expect(box(label).disabled, label).toBe(true);
+      expect(box(label).checked, label).toBe(false);
+    }
+    expect(picker("PR merged").disabled).toBe(true);
+    // A disabled control can't be used, so a rule edit can't replace the stored map.
+    await choose(picker("PR merged"), "column:review");
+    await click(box("Run with…"));
+    expect(commands("board_settings_update")).toEqual([]);
+
+    readable = true;
+    await click(buttonNamed(auto, "Retry"));
+    expect(section("Automation").textContent).not.toContain("Couldn't load settings");
+    expect(box("Run with…").disabled).toBe(false);
     expect(box("Run with…").checked).toBe(true);
+    expect(picker("PR merged").disabled).toBe(false);
+  });
+
+  it("quick off then on writes false then true", async () => {
+    const replies: (() => void)[] = [];
+    handlers.board_settings_update = (args) =>
+      new Promise((resolve) => {
+        replies.push(() => {
+          settings = { ...settings, ...(args.patch as Partial<BoardSettings>) };
+          resolve(settings);
+        });
+      });
+    await renderBoard();
+    await openSettings();
+    await click(box("Agent write-back"));
+    expect(box("Agent write-back").checked).toBe(false);
+    await click(box("Agent write-back"));
     expect(box("Agent write-back").checked).toBe(true);
+    replies.shift()!();
+    await flush();
+    replies.shift()!();
+    await flush();
+    expect(
+      commands("board_settings_update").map(([, a]) => (a as { patch: unknown }).patch),
+    ).toEqual([{ writeBack: false }, { writeBack: true }]);
+    expect(settings.writeBack).toBe(true);
+  });
+
+  it("a failed rule save isn't carried into the edit queued behind it", async () => {
+    const calls: { fail: () => void; ok: () => void }[] = [];
+    handlers.board_settings_update = (args) =>
+      new Promise((resolve, reject) => {
+        calls.push({
+          fail: () => reject("store is locked"),
+          ok: () => {
+            settings = { ...settings, ...(args.patch as Partial<BoardSettings>) };
+            resolve(settings);
+          },
+        });
+      });
+    await renderBoard();
+    await openSettings();
+    await choose(picker("PR merged"), "column:review");
+    await choose(picker("PR opened"), "column:progress");
+    // Both show at once, optimistically.
+    expect(picker("PR merged").value).toBe("column:review");
+    expect(picker("PR opened").value).toBe("column:progress");
+    calls.shift()!.fail();
+    await flush();
+    calls.shift()!.ok();
+    await flush();
+    const writes = commands("board_settings_update").map(
+      ([, a]) => JSON.parse((a as { patch: { autoMoveJson: string } }).patch.autoMoveJson),
+    );
+    expect(writes[1]).toEqual({ pr_opened: { column: "progress" } });
+    expect(alertText()).toContain("store is locked");
+    // The failed edit is gone from the picker; the saved one stays.
+    expect(picker("PR merged").value).toBe("stay");
+    expect(picker("PR opened").value).toBe("column:progress");
   });
 
   it("each toggle writes only its own setting", async () => {
@@ -766,7 +873,7 @@ describe("the hidden board while settings is open", () => {
     await renderBoard();
     const face = (id: string) =>
       container.querySelector<HTMLElement>(`[data-board-card='${id}']`)!;
-    // Select a card, and open another one's drawer.
+    // Select a card.
     act(() =>
       face("c1").dispatchEvent(
         new MouseEvent("click", { bubbles: true, metaKey: true, ctrlKey: true }),
@@ -786,11 +893,19 @@ describe("the hidden board while settings is open", () => {
     press(kanbanCard, "Backspace");
     press(document.body, "n");
     press(kanbanCard, "n");
+    press(kanbanCard, "e");
+    press(document.body, "/");
+    press(kanbanCard, "/");
     press(document.body, "n", { metaKey: true, ctrlKey: true });
     await flush();
     expect(commands("board_card_archive")).toEqual([]);
     expect(commands("board_cards_archive")).toEqual([]);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+    // "/" didn't move focus to the search box, "E" didn't open the card.
+    expect(document.activeElement).not.toBe(
+      container.querySelector('input[aria-label="Search cards"]'),
+    );
+    expect(document.querySelector("[data-card-drawer]")).toBeNull();
   });
 
   it("opening settings closes an open card drawer", async () => {

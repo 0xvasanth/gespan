@@ -38,6 +38,7 @@ export function BoardSettings({
   onRename,
   onError,
   onSettings,
+  onReloadSettings,
   beforeColumnDelete,
 }: {
   board: Board;
@@ -53,6 +54,8 @@ export function BoardSettings({
   onError: (message: string) => void;
   /** The settings a write left, so the page doesn't wait for the board to read again. */
   onSettings: (settings: Settings) => void;
+  /** Reads the board's settings again (after they couldn't be read). */
+  onReloadSettings: () => void;
   beforeColumnDelete?: () => Promise<void>;
 }) {
   const root = useRef<HTMLDivElement>(null);
@@ -126,7 +129,12 @@ export function BoardSettings({
         />
         <FieldsSection boardId={board.id} fields={fields} onError={onError} />
         <DisplaySection settings={settings} fields={fields} onPatch={patch} />
-        <AutomationSection settings={settings} columns={columns} onPatch={patch} />
+        <AutomationSection
+          settings={settings}
+          columns={columns}
+          onPatch={patch}
+          onRetry={onReloadSettings}
+        />
         <TemplatesSection boardId={board.id} onError={onError} />
       </div>
     </div>

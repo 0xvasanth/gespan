@@ -7,7 +7,7 @@ import {
   type TemplateInfo,
 } from "../../model/board";
 import { errorText } from "../boardFormat";
-import { CommitInput, SETTINGS_BUTTON, SettingsSection } from "./settingsControls";
+import { FIELD, SETTINGS_BUTTON, SettingsSection } from "./settingsControls";
 
 export const BUILT_IN_DELETE = "Built-in templates can't be deleted";
 
@@ -29,6 +29,8 @@ export function TemplatesSection({
   onError: (message: string) => void;
 }) {
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
+  const [name, setName] = useState("");
+  const [missing, setMissing] = useState(false);
   // Template commands don't announce changes: the list is read again after each.
   const reload = useCallback(
     () =>
@@ -41,6 +43,22 @@ export function TemplatesSection({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const save = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setMissing(true);
+      return;
+    }
+    try {
+      await saveBoardAsTemplate(boardId, trimmed);
+    } catch (cause) {
+      onError(`Couldn't save the template: ${errorText(cause)}`);
+      return;
+    }
+    setName("");
+    await reload();
+  };
 
   return (
     <SettingsSection
@@ -91,26 +109,40 @@ export function TemplatesSection({
           </li>
         ))}
       </ul>
-      <div className="flex items-center gap-2">
-        <CommitInput
-          label="Template name"
-          value=""
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
+        <input
+          aria-label="Template name"
+          aria-invalid={missing || undefined}
           placeholder="Save this board as a template"
-          className="w-64"
-          onCommit={async (text) => {
-            const name = text.trim();
-            if (!name) return false;
-            try {
-              await saveBoardAsTemplate(boardId, name);
-            } catch (cause) {
-              onError(`Couldn't save the template: ${errorText(cause)}`);
-              return false;
-            }
-            await reload();
+          value={name}
+          onChange={(event) => {
+            setName(event.target.value);
+            setMissing(false);
           }}
+          onKeyDown={(event) => {
+            // Enter saves; leaving the field does not.
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              void save();
+            }
+          }}
+          className={`${FIELD} w-64`}
         />
-        <span className="text-[12px] text-content/45">Press Enter to save</span>
-      </div>
+        <button type="submit" className={SETTINGS_BUTTON}>
+          Save as template
+        </button>
+        {missing ? (
+          <span role="note" className="text-[12px] text-red-300/90">
+            Name the template first
+          </span>
+        ) : null}
+      </form>
     </SettingsSection>
   );
 }

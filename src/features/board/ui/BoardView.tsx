@@ -2220,6 +2220,7 @@ function BoardContent({
             onRename={(name) => void renameOpenBoard(detail.board, name)}
             onError={setError}
             onSettings={setSettings}
+            onReloadSettings={() => void refresh()}
             beforeColumnDelete={() => undo.commitPending()}
           />
         ) : null}
