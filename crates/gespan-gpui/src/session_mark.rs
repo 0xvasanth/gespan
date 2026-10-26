@@ -46,13 +46,25 @@ pub(crate) fn spinner_at(fraction: f32) -> gpui::Div {
             }))
         }))
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum State {
     Idle,
     Working,
     Done,
     /// Waiting on an approval or a question.
     Attention,
+    /// Stopped by Hold; it continues on Resume.
+    Held,
+}
+
+/// Stopped by Hold. Also drawn for held sessions that aren't loaded yet.
+pub(crate) fn held(id: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .role(Role::Image)
+        .aria_label("Held")
+        .child(icon("queue-pause", 14.).text_color(content(0.55)))
 }
 
 /// A small cached view so animation leaves the conversation untouched.
@@ -116,6 +128,7 @@ impl Render for SessionMark {
                 .aria_label("Done")
                 .child(icon("check-circle-2", 14.).text_color(rgb(0x2dd4bf)))
                 .into_any_element(),
+            State::Held => held("session-held").into_any_element(),
             State::Attention => div()
                 .id("session-attention")
                 .role(Role::Image)

@@ -22,6 +22,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  Pause,
   CircleDashed,
   CircleDot,
   Clock,
@@ -305,6 +306,8 @@ type Props = {
   sessions: SessionSummary[];
   busySessionIds: Set<string>;
   approvalSessionIds: Set<string>;
+  /** Stopped by Hold with something to continue on Resume. */
+  heldSessionIds?: ReadonlySet<string>;
   activeSessionId?: string;
   /** Open tabs, including blank ones not yet in history. */
   openSessions?: readonly SessionSummary[];
@@ -433,6 +436,7 @@ function SidebarComponent({
   sessions,
   busySessionIds,
   approvalSessionIds,
+  heldSessionIds,
   activeSessionId,
   openSessions = [],
   status,
@@ -1976,6 +1980,7 @@ function SidebarComponent({
         isActive={session.id === highlightedSessionId}
         isSelected={selectedSessionIds.has(session.id)}
         busy={listedBusySessionIds.has(session.id)}
+        held={heldSessionIds?.has(session.id)}
         done={unseenFinishedIds.has(session.id)}
         linkedUpdate={linkedSessionUpdateIds.has(session.id)}
         needsApproval={listedApprovalSessionIds.has(session.id)}
@@ -4847,6 +4852,7 @@ export const SessionCard = memo(function SessionCard({
   isActive,
   isSelected,
   busy,
+  held = false,
   done,
   linkedUpdate,
   needsApproval,
@@ -4876,6 +4882,8 @@ export const SessionCard = memo(function SessionCard({
   isActive: boolean;
   isSelected: boolean;
   busy: boolean;
+  /** Stopped by Hold: shown ahead of every other state. */
+  held?: boolean;
   done: boolean;
   linkedUpdate: boolean;
   needsApproval: boolean;
@@ -5004,7 +5012,9 @@ export const SessionCard = memo(function SessionCard({
     compact && !orchestrationExpanded
       ? null
       : resolveModel(session.harness, session.model).name;
-  const statusClass = needsApproval
+  const statusClass = held
+    ? "text-content/55"
+    : needsApproval
     ? "text-amber-400"
     : busy
       ? "text-accent"
@@ -5017,7 +5027,12 @@ export const SessionCard = memo(function SessionCard({
     <span
       className={`flex shrink-0 items-center gap-1 text-[11px] tabular-nums ${statusClass}`}
     >
-      {needsApproval ? (
+      {held ? (
+        <>
+          <Pause className="size-3" strokeWidth={1.75} aria-label="Held" />
+          <span>Held</span>
+        </>
+      ) : needsApproval ? (
         <>
           <CircleAlert className="size-3" strokeWidth={1.75} />
           <span>{orchestration ? "Needs input" : "Need approval"}</span>

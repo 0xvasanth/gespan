@@ -45,6 +45,17 @@ pub fn configure_idle_agents(limit: usize) {
 pub fn keep_idle_agents(ids: Vec<i64>) {
     parked::keep(ids);
 }
+/// Hold keeps these sessions' agents and their background work alive.
+pub fn pin_idle_agents(ids: impl IntoIterator<Item = i64>) {
+    parked::pin_idle_agents(ids);
+}
+pub fn idle_agent_pinned(id: i64) -> bool {
+    parked::idle_agent_pinned(id)
+}
+/// Resume gives held agents the usual idle period from now.
+pub fn unpin_idle_agents() {
+    parked::unpin_idle_agents();
+}
 pub fn discard_worktree(path: &Path) {
     parked::discard_worktree(path);
     opencode::discard_worktree(path);
@@ -2027,7 +2038,11 @@ fn launch(
         && ((result.is_ok() && !cancel.load(Ordering::Relaxed))
             || (stop_confirmed && protocol.request.kind != Kind::Antigravity))
     {
-        parked::put(wire, protocol);
+        if held {
+            parked::put_held(wire, protocol);
+        } else {
+            parked::put(wire, protocol);
+        }
     }
     result
 }

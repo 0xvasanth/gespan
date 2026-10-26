@@ -34,6 +34,7 @@ mod git_picker;
 mod git_status;
 mod history;
 mod hold;
+mod hold_confirm;
 mod image_lightbox;
 mod image_memory;
 mod inbox;

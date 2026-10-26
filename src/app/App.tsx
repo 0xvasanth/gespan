@@ -333,6 +333,7 @@ import {
   transferHarnessSessionAccount,
   cancelHarnessTurn,
   holdHarnessTurn,
+  holdIdlePark,
   canCompactHarnessContext,
   canRewindHarnessLastTurn,
   canSteerHarness,
@@ -837,7 +838,7 @@ import {
 } from "../features/sessions/data/sessionHistory";
 import { HoldPhaseContext } from "../features/hold/model/holdContext";
 import { useHold } from "../features/hold/model/useHold";
-import { ConfirmHold } from "../features/hold/ui/ConfirmHold";
+import { HoldPress } from "../features/hold/model/holdPress";
 import { HoldControl } from "../features/hold/ui/HoldControl";
 import {
   CONTINUE_PROMPT,
@@ -1199,6 +1200,8 @@ function Workspace({
         })),
     holdTurn: (id) => {
       const session = sessionsRef.current.find((s) => s.id === id);
+      // Before the interrupt settles: its child must not be idle-parked.
+      holdIdlePark(keepHeldIdle);
       if (session) void holdHarnessTurn(session.harness, id);
     },
     stop: (id) => onStopRef.current(id),
@@ -1224,6 +1227,28 @@ function Workspace({
     },
   });
   const holdRef = useRef(holdApi.hold);
+  // Held sessions' children, and their background work, stay warm until
+  // Resume; then they get the usual idle period.
+  const keepHeldIdle = (id: string) => holdRef.current.isSessionHeld(id);
+  const holding = holdApi.phase !== null;
+  useEffect(() => {
+    holdIdlePark(holding ? keepHeldIdle : null);
+  }, [holding]);
+  // The status-bar button and held ⌘⇧H share one hold-to-confirm press.
+  const [holdPress] = useState(
+    () =>
+      new HoldPress(() => {
+        if (holdRef.current.phase() === null) holdRef.current.toggle();
+      }),
+  );
+  useEffect(() => () => holdPress.dispose(), [holdPress]);
+  // The palette and menus can't be held: they show the button's hint, or
+  // resume once on hold. An echo of a held ⌘⇧H is ignored.
+  const holdFromMenu = useCallback(() => {
+    if (holdPress.keyHeld) return;
+    if (holdRef.current.phase() === null) holdPress.hint();
+    else holdRef.current.toggle();
+  }, [holdPress]);
   const onStopRef = useRef<(id: string) => void>(() => undefined);
   const onSubmitRef = useRef<(...args: Parameters<Submit>) => boolean>(
     () => false,
@@ -1231,6 +1256,18 @@ function Workspace({
   useEffect(() => {
     holdRef.current.sync();
   }, [sessions]);
+  // Sessions held with something to continue, for the sidebar and panes.
+  const heldSessionIds = useMemo(
+    () =>
+      new Set(
+        sessions
+          .filter((s) => holdRef.current.isSessionMarked(s.id))
+          .map((s) => s.id),
+      ),
+    // The coordinator lives in a ref; its version changes with the hold.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessions, holdApi.version],
+  );
   useEffect(() => {
     // Resume lifts the hold: queued orchestration work may start again.
     if (holdApi.phase === null) orchestrator.wake();
@@ -13374,13 +13411,29 @@ function Workspace({
         else if (shortcut === "App: Find in Files")
           run("find_in_project", a.onFindInProject);
         else if (shortcut === "App: Hold Everything")
-          run("hold_toggle", () => void holdRef.current.toggle());
+          run("hold_toggle", () =>
+            holdPress.shortcutDown(holdRef.current.phase(), () =>
+              holdRef.current.resume(),
+            ),
+          );
         return;
       }
     };
+    // A held ⌘⇧H ends when H or a modifier goes up, or the window blurs.
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (["Meta", "Control", "Shift", "h", "H"].includes(e.key))
+        holdPress.shortcutUp();
+    };
+    const onBlur = () => holdPress.cancel();
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [run]);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [run, holdPress]);
 
   useEffect(() => {
     const unlisten: Array<Promise<() => void>> = [
@@ -13444,9 +13497,7 @@ function Workspace({
       listen("open_command_palette", () =>
         run("open_command_palette", actions.current.onOpenCommandPalette),
       ),
-      listen("hold_toggle", () =>
-        run("hold_toggle", () => void holdRef.current.toggle()),
-      ),
+      listen("hold_toggle", () => run("hold_toggle", holdFromMenu)),
       listen("reload", () => run("reload", actions.current.onReload)),
       listen("open_search", () => actions.current.onOpenSearch()),
       listen("open_inbox", () => actions.current.onOpenInbox()),
@@ -13892,6 +13943,7 @@ function Workspace({
           <SessionPane
             {...sessionPaneProps}
             session={pilotShownSessionPane}
+            held={heldSessionIds.has(pilotShownSessionPane.id)}
             // The Pilot view covers the workspace, so a review opens
             // beside the chat rather than in a hidden tab.
             onOpenDiff={onOpenPilotDiff}
@@ -14348,6 +14400,7 @@ function Workspace({
       sessions={sidebarHistory}
       busySessionIds={busySessionIds}
       approvalSessionIds={approvalSessionIds}
+      heldSessionIds={heldSessionIds}
       activeSessionId={activeSessionId}
       status={historyFailed ? "error" : "idle"}
       pending={historyPending}
@@ -14454,7 +14507,8 @@ function Workspace({
               const session = sessions.find((s) => s.id === id);
               return { id, title: session?.title || "Session" };
             })}
-            onToggle={() => void holdApi.hold.toggle()}
+            press={holdPress}
+            onResume={() => holdApi.hold.resume()}
             onStopNow={(id) => holdApi.hold.stopNow(id)}
           />
         }
@@ -14767,6 +14821,7 @@ function Workspace({
                                         <SessionPane
                                           {...sessionPaneProps}
                                           session={session}
+                                          held={heldSessionIds.has(session.id)}
                                           visible={visible}
                                           focused={
                                             visible &&
@@ -14886,6 +14941,7 @@ function Workspace({
                             <SessionPane
                               {...sessionPaneProps}
                               session={session}
+                              held={heldSessionIds.has(session.id)}
                               visible={visible}
                               focused={visible}
                               inSplit={false}
@@ -15072,18 +15128,12 @@ function Workspace({
               }
               onRunAction={(id) => {
                 if (id === "reload") actions.current.onReload();
-                if (id === "hold") void holdRef.current.toggle();
+                if (id === "hold") holdFromMenu();
               }}
               onClose={() => setFilePickerOpen(false)}
             />
           ) : null}
 
-          {holdApi.confirming && (
-            <ConfirmHold
-              running={sessions.filter((s) => s.busy).length}
-              onClose={holdApi.answer}
-            />
-          )}
           {sessionDeleteDialog && (
             <DeleteSessionDialog
               mode={sessionDeleteDialog.mode}

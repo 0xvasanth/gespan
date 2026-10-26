@@ -1,5 +1,5 @@
 /**
- * The desktop app's Hold: confirm, stop every session at its safe point, keep
+ * The desktop app's Hold: stop every session at its safe point, keep
  * the hold across restarts, and resume sessions a few at a time. React state
  * stays in App; this class only decides and asks its host to act.
  */
@@ -42,8 +42,6 @@ export type HoldHost = {
    * queue. Returns whether a turn started.
    */
   resume(sessionId: string, prompt: string | null): boolean;
-  /** The "Hold everything?" confirmation. */
-  confirm(): Promise<boolean>;
   /** The hold changed; re-render. */
   changed(state: HoldState | null): void;
 };
@@ -54,7 +52,8 @@ export class HoldCoordinator {
   private interrupted = new Set<string>();
   private queue: ResumeQueue | null = null;
   private reasons = new Map<string, HoldReason>();
-  private prompting = false;
+  /** Resumed with a continuation whose turn hasn't been seen running yet. */
+  private resuming = new Set<string>();
   /** When the last hold began, once it has been resumed. */
   private lastHoldSince: number | undefined;
   /** Settlements of held turns, delivered once the session really stops. */
@@ -83,20 +82,27 @@ export class HoldCoordinator {
     );
   }
 
-  /** ⌘⇧H, the status bar, the palette and the menus all land here. */
-  async toggle(): Promise<void> {
-    if (this.state?.phase === "holding" || this.prompting) return;
-    if (this.state?.phase === "onHold") {
-      this.resume();
-      return;
-    }
-    this.prompting = true;
-    try {
-      if (!(await this.host.confirm())) return;
-    } finally {
-      this.prompting = false;
-    }
-    this.holdAll(Date.now());
+  /**
+   * The session's held mark: stopped with something to continue on Resume,
+   * until its resumed turn begins. A session that was simply idle isn't
+   * marked, and one still finishing its step is working, not held.
+   */
+  isSessionMarked(sessionId: string): boolean {
+    if (this.resuming.has(sessionId)) return true;
+    const reason =
+      this.state?.sessions.find((s) => s.sessionId === sessionId)?.reason ??
+      this.reasons.get(sessionId);
+    return !!reason && reason !== "idle";
+  }
+
+  /**
+   * Holds, or resumes once on hold. Callers confirm a hold first: the
+   * status-bar button and ⌘⇧H are hold-to-confirm.
+   */
+  toggle(): void {
+    if (this.state?.phase === "holding") return;
+    if (this.state?.phase === "onHold") this.resume();
+    else this.holdAll(Date.now());
   }
 
   holdAll(now: number): void {
@@ -160,6 +166,12 @@ export class HoldCoordinator {
     for (const id of this.queue?.runningIds() ?? []) {
       if (!present.has(id)) this.finishResumed(id);
     }
+    let unmarked = false;
+    for (const id of this.resuming) {
+      const session = sessions.find((s) => s.id === id);
+      if (!session || session.busy) unmarked = this.resuming.delete(id);
+    }
+    if (unmarked) this.host.changed(this.state);
     for (const s of sessions) {
       if (s.busy) {
         if (this.unsettled(s.id)) this.evaluate(s);
@@ -272,7 +284,10 @@ export class HoldCoordinator {
         const reason = this.reasons.get(id) ?? "idle";
         this.reasons.delete(id);
         this.interrupted.delete(id);
-        if (!this.host.resume(id, continuation(reason))) {
+        const prompt = continuation(reason);
+        const sent = this.host.resume(id, prompt);
+        if (sent && prompt) this.resuming.add(id);
+        if (!sent) {
           queue.finished(id);
           // Nothing more runs there: the held turn's own outcome stands.
           const deliver = this.deferred.get(id);

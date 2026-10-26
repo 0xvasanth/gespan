@@ -124,7 +124,8 @@ actions!(
         OpenSettings,
         GoToFile,
         OpenCommandPalette,
-        ToggleHold
+        ToggleHold,
+        HoldFromMenu
     ]
 );
 
@@ -1312,6 +1313,10 @@ impl Shell {
         if !self.order.contains(&id) {
             self.order.push(id);
         }
+        // Restored after a restart, a held session has no view state of its own.
+        if crate::hold::active(cx) {
+            self.refresh_session_mark(id, cx);
+        }
     }
     /// SessionPane's reviewUndoLocked: another running session shares the checkout.
     fn sync_review_locks(&mut self, cx: &mut Context<Self>) {
@@ -1352,7 +1357,10 @@ impl Shell {
         if focused || session.summary.archived {
             self.unseen_finished.remove(&id);
         }
-        let state = if busy {
+        // Held outranks the rest: a session left waiting is still busy.
+        let state = if self.held_mark(id, Some(session), cx) {
+            MarkState::Held
+        } else if busy {
             MarkState::Working
         } else if self.unseen_finished.contains(&id) {
             MarkState::Done
@@ -5661,6 +5669,10 @@ impl Shell {
                     .clone()
                     .cached(StyleRefinement::default().size(px(side)).flex_shrink_0())
                     .into_any_element(),
+                // Not loaded yet, as after a restart: the saved hold still marks it.
+                None if self.held_mark(id, None, cx) => {
+                    crate::session_mark::held("session-held-unloaded").into_any_element()
+                }
                 None => provider_icon(&session.summary.provider, side).into_any_element(),
             };
             div()
@@ -7835,6 +7847,7 @@ impl Render for Shell {
                 .push(cx.observe_window_activation(window, |this, window, cx| {
                     if !window.is_window_active() {
                         this.close_preview(cx);
+                        this.cancel_hold_press(cx);
                     } else {
                         this.resume_git(cx);
                     }
@@ -7974,6 +7987,11 @@ impl Render for Shell {
             )
             .on_action(cx.listener(report::report_issue))
             .on_action(cx.listener(|this, _: &ToggleHold, window, cx| this.toggle_hold(window, cx)))
+            .on_action(cx.listener(|this, _: &HoldFromMenu, _, cx| this.hold_from_menu(cx)))
+            .on_key_up(cx.listener(|this, event, _, cx| this.hold_key_up(event, cx)))
+            .on_modifiers_changed(
+                cx.listener(|this, event, _, cx| this.hold_modifiers_changed(event, cx)),
+            )
             .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| {
                 this.open_quick_open(true, window, cx)
             }))

@@ -8,7 +8,6 @@ type Fake = HoldHost & {
   list: HoldSession[];
   held: string[];
   resumed: [string, string | null][];
-  answer: boolean;
 };
 
 function host(list: HoldSession[]): Fake {
@@ -16,7 +15,6 @@ function host(list: HoldSession[]): Fake {
     list,
     held: [],
     resumed: [],
-    answer: true,
     sessions: () => fake.list,
     holdTurn: (id) => fake.held.push(id),
     resume: (id, prompt) => {
@@ -25,7 +23,6 @@ function host(list: HoldSession[]): Fake {
       if (session && prompt) session.busy = true;
       return !!prompt;
     },
-    confirm: async () => fake.answer,
     changed: () => undefined,
   };
   return fake;
@@ -46,21 +43,11 @@ const tool = (callId: string, status = "in_progress"): HarnessEvent =>
 describe("HoldCoordinator", () => {
   afterEach(() => localStorage.clear());
 
-  it("asks first, and a cancelled confirmation changes nothing", async () => {
-    const fake = host([session("a", true)]);
-    fake.answer = false;
-    const hold = new HoldCoordinator(fake);
-    await hold.toggle();
-    expect(hold.phase()).toBeNull();
-    expect(fake.held).toEqual([]);
-    expect(loadHold()).toBeNull();
-  });
-
   it("waits for a running command, interrupts after it, and reaches onHold", async () => {
     const fake = host([session("a", true), session("b")]);
     const hold = new HoldCoordinator(fake);
     hold.observe("a", tool("c1"));
-    await hold.toggle();
+    hold.toggle();
     expect(hold.phase()).toBe("holding");
     expect(fake.held).toEqual([]);
     hold.observe("a", tool("c1", "completed"));
@@ -75,17 +62,16 @@ describe("HoldCoordinator", () => {
     const fake = host([session("a", true)]);
     const hold = new HoldCoordinator(fake);
     hold.observe("a", delta);
-    await hold.toggle();
+    hold.toggle();
     expect(fake.held).toEqual(["a"]);
-    fake.answer = false;
-    await hold.toggle();
+    hold.toggle();
     expect(hold.phase()).toBe("holding");
   });
 
   it("leaves a pending approval pending", async () => {
     const fake = host([{ ...session("a", true), awaitingInput: true }]);
     const hold = new HoldCoordinator(fake);
-    await hold.toggle();
+    hold.toggle();
     expect(fake.held).toEqual([]);
     expect(hold.phase()).toBe("onHold");
   });
@@ -98,11 +84,11 @@ describe("HoldCoordinator", () => {
     fake.sessions = () => all.filter((s) => s.busy || hold.isSessionHeld(s.id));
     const hold = new HoldCoordinator(fake);
     for (const s of all) hold.observe(s.id, delta);
-    await hold.toggle();
+    hold.toggle();
     for (const s of fake.list) s.busy = false;
     hold.sync();
     expect(hold.phase()).toBe("onHold");
-    await hold.toggle();
+    hold.toggle();
     expect(hold.phase()).toBeNull();
     expect(fake.resumed.map(([id]) => id)).toEqual(["1", "2", "3"]);
     expect(fake.resumed[0][1]).toBe("Continue from where you left off.");
@@ -117,14 +103,14 @@ describe("HoldCoordinator", () => {
 
   it("is on hold at once when nothing is running", async () => {
     const hold = new HoldCoordinator(host([]));
-    await hold.toggle();
+    hold.toggle();
     expect(hold.phase()).toBe("onHold");
   });
 
   it("does not interrupt a turn that has shown nothing yet", async () => {
     const fake = host([session("a", true)]);
     const hold = new HoldCoordinator(fake);
-    await hold.toggle();
+    hold.toggle();
     expect(fake.held).toEqual([]);
     hold.observe("a", delta);
     expect(fake.held).toEqual(["a"]);
@@ -133,11 +119,11 @@ describe("HoldCoordinator", () => {
   it("tracks a session that queues a message while held and releases it on Resume", async () => {
     const fake = host([]);
     const hold = new HoldCoordinator(fake);
-    await hold.toggle();
+    hold.toggle();
     fake.list.push({ ...session("late"), queued: 1 });
     hold.noteQueued("late", false);
     expect(hold.summary()).toBe("On hold · 1 session · 1 queued");
-    await hold.toggle();
+    hold.toggle();
     expect(fake.resumed).toEqual([["late", null]]);
   });
 
@@ -145,13 +131,13 @@ describe("HoldCoordinator", () => {
     const fake = host([session("idle"), session("worker", true)]);
     const hold = new HoldCoordinator(fake);
     hold.observe("worker", delta);
-    await hold.toggle();
+    hold.toggle();
     fake.list[1].busy = false;
     hold.sync();
     const delivered: [string, string][] = [];
     hold.deferSettlement("idle", (o) => delivered.push(["idle", o ?? "original"]));
     hold.deferSettlement("worker", (o) => delivered.push(["worker", o ?? "original"]));
-    await hold.toggle();
+    hold.toggle();
     // Nothing more runs in the idle session: its own outcome stands.
     expect(delivered).toEqual([["idle", "original"]]);
     // The worker continues; its real outcome is the continuation's.
@@ -162,8 +148,8 @@ describe("HoldCoordinator", () => {
   it("idle sessions resume by releasing their queue only", async () => {
     const fake = host([session("a")]);
     const hold = new HoldCoordinator(fake);
-    await hold.toggle();
-    await hold.toggle();
+    hold.toggle();
+    hold.toggle();
     expect(fake.resumed).toEqual([["a", null]]);
   });
 
@@ -182,7 +168,7 @@ describe("HoldCoordinator", () => {
     const hold = new HoldCoordinator(fake);
     expect(hold.summary()).toBe("Hold all");
     hold.observe("a", tool("c1"));
-    await hold.toggle();
+    hold.toggle();
     expect(hold.summary()).toBe("Holding 1/2…");
     expect(hold.settling()).toEqual(["a"]);
     hold.stopNow("a");
@@ -193,8 +179,43 @@ describe("HoldCoordinator", () => {
     const fake = host([session("a", true)]);
     const hold = new HoldCoordinator(fake);
     hold.observe("a", delta);
-    await hold.toggle();
+    hold.toggle();
     expect(hold.isSessionHeld("a")).toBe(true);
     expect(hold.isSessionHeld("other")).toBe(false);
+  });
+
+  it("marks sessions with something to continue, until their resumed turn begins", () => {
+    const fake = host([session("a", true), session("b")]);
+    const hold = new HoldCoordinator(fake);
+    hold.observe("a", tool("c1"));
+    hold.toggle();
+    expect(hold.isSessionMarked("a")).toBe(false);
+    expect(hold.isSessionMarked("b")).toBe(false);
+    hold.observe("a", tool("c1", "completed"));
+    fake.list[0].busy = false;
+    hold.sync();
+    expect(hold.phase()).toBe("onHold");
+    expect(hold.isSessionMarked("a")).toBe(true);
+    expect(hold.isSessionMarked("b")).toBe(false);
+    // Resume: the continuation is sent, but the turn hasn't begun yet.
+    fake.resume = (id, prompt) => {
+      fake.resumed.push([id, prompt]);
+      return true;
+    };
+    hold.toggle();
+    expect(hold.isSessionMarked("a")).toBe(true);
+    fake.list[0].busy = true;
+    hold.sync();
+    expect(hold.isSessionMarked("a")).toBe(false);
+  });
+
+  it("marks a session restored after a restart", () => {
+    let state = track(newHold(1), "a", false);
+    state = track(state, "b", false);
+    state = settle(state, "b", "idle", 2);
+    saveHold(state);
+    const hold = new HoldCoordinator(host([session("a"), session("b")]));
+    expect(hold.isSessionMarked("a")).toBe(true);
+    expect(hold.isSessionMarked("b")).toBe(false);
   });
 });
