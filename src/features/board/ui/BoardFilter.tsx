@@ -1,6 +1,8 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ListFilter, X } from "../../../shared/ui/icons";
 import type { FilterRow, SortSpec } from "../model/board";
+import { encodeField } from "../model/cardProps";
+import { dueInputValue, parseDueInput } from "./boardFormat";
 import {
   FILTER_FIELDS,
   SORT_KEYS,
@@ -8,6 +10,7 @@ import {
   customFieldKey,
   fieldChoices,
   fieldTitle,
+  isFreeFormField,
   sortLabel,
   type FilterSources,
 } from "../model/views";
@@ -49,20 +52,113 @@ function Option({
   );
 }
 
+/** A typed value for a text, number, date or URL row, added as another match. */
+function FreeFormValue({
+  title,
+  kind,
+  onAdd,
+}: {
+  title: string;
+  kind: "text" | "number" | "date" | "url" | string;
+  onAdd: (raw: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  if (kind === "date") {
+    return (
+      <div className="px-2 py-1">
+        <input
+          type="date"
+          aria-label={`Add ${title} value`}
+          value={dueInputValue(null)}
+          onChange={(event) => {
+            const ms = parseDueInput(event.target.value);
+            if (ms !== null) onAdd(String(ms));
+          }}
+          className="h-6 w-full rounded border border-stroke bg-background-base px-1.5 text-[12px] text-content outline-none focus:border-accent/60"
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="px-2 py-1">
+      <input
+        aria-label={`Add ${title} value`}
+        placeholder="Type a value, then Enter"
+        value={text}
+        inputMode={kind === "number" ? "decimal" : undefined}
+        onChange={(event) => {
+          setText(event.target.value);
+          setError(null);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const encoded = encodeField(
+            kind === "number" || kind === "url" ? kind : "text",
+            text,
+          );
+          if (!encoded.ok) {
+            setError(encoded.error);
+            return;
+          }
+          if (encoded.value !== null) onAdd(encoded.value);
+          setText("");
+        }}
+        className="h-6 w-full rounded border border-stroke bg-background-base px-1.5 text-[12px] text-content outline-none placeholder:text-content/40 focus:border-accent/60"
+      />
+      {error ? (
+        <div role="note" className="pt-1 text-[11px] text-red-400">
+          {error}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** "Where" on the first row, "and" on the rest. */
 export const leadLabel = (row: number) => (row === 0 ? "Where" : "and");
+
+/** A free-form field's values a card holds, loaded when its row opens. */
+export type DistinctValues = (fieldKey: string) => Promise<string[]>;
+
+const freeFormKind = (field: string, sources: FilterSources) =>
+  field.startsWith("field:")
+    ? sources.fields.find((found) => `field:${found.id}` === field)?.kind
+    : undefined;
 
 function FilterBuilder({
   rows,
   sources,
   onChange,
+  distinctValues,
 }: {
   rows: readonly FilterRow[];
   sources: FilterSources;
   onChange: (rows: FilterRow[]) => void;
+  distinctValues?: DistinctValues;
 }) {
+  // Values cards hold, by field key; read once per field while the menu is open.
+  const [distinct, setDistinct] = useState<Record<string, string[]>>({});
+  const asked = useRef(new Set<string>());
   // The rows whose values are listed: one just added, or picked.
   const [open, setOpen] = useState<ReadonlySet<number>>(new Set());
+  useEffect(() => {
+    if (!distinctValues) return;
+    for (const index of open) {
+      const field = rows[index]?.field;
+      const kind = field && freeFormKind(field, sources);
+      if (!field || !kind || !isFreeFormField(kind)) continue;
+      if (asked.current.has(field)) continue;
+      asked.current.add(field);
+      distinctValues(field).then(
+        (values) => setDistinct((held) => ({ ...held, [field]: values })),
+        // The row still offers what it holds, and typed input.
+        () => asked.current.delete(field),
+      );
+    }
+  }, [open, rows, sources, distinctValues]);
   const edit = (index: number, patch: Partial<FilterRow>) =>
     onChange(
       rows.map((row, at) => (at === index ? { ...row, ...patch } : row)),
@@ -74,7 +170,14 @@ function FilterBuilder({
   return (
     <div className="max-h-[60vh] overflow-y-auto">
       {rows.map((row, index) => {
-        const choices = fieldChoices(row.field, sources, row.values);
+        const kind = freeFormKind(row.field, sources);
+        const free = !!kind && isFreeFormField(kind);
+        const offered = free
+          ? [
+              ...new Set([...row.values, ...(distinct[row.field] ?? [])]),
+            ]
+          : row.values;
+        const choices = fieldChoices(row.field, sources, offered);
         const expanded = open.has(index);
         return (
           <div key={index} data-filter-row={index}>
@@ -141,6 +244,19 @@ function FilterBuilder({
                 </div>
               )
             ) : null}
+            {expanded && free && kind ? (
+              <FreeFormValue
+                title={fieldTitle(row.field, sources)}
+                kind={kind}
+                onAdd={(value) =>
+                  edit(index, {
+                    values: row.values.includes(value)
+                      ? row.values
+                      : [...row.values, value],
+                  })
+                }
+              />
+            ) : null}
           </div>
         );
       })}
@@ -176,12 +292,14 @@ export function BoardFilterMenu({
   count,
   sources,
   onChange,
+  distinctValues,
 }: {
   rows: readonly FilterRow[];
   /** Rows that filter something. */
   count: number;
   sources: FilterSources;
   onChange: (rows: FilterRow[]) => void;
+  distinctValues?: DistinctValues;
 }) {
   return (
     <MenuButton
@@ -204,7 +322,12 @@ export function BoardFilterMenu({
       }
     >
       {() => (
-        <FilterBuilder rows={rows} sources={sources} onChange={onChange} />
+        <FilterBuilder
+          rows={rows}
+          sources={sources}
+          onChange={onChange}
+          distinctValues={distinctValues}
+        />
       )}
     </MenuButton>
   );

@@ -983,10 +983,11 @@ describe("BoardView linked work", () => {
     await flush();
     const dialog = document.querySelector("[data-card-drawer]")!;
     expect(dialog.textContent).toContain("Card #3");
-    expect(commands("board_activity")[0][1]).toMatchObject({
-      boardId: "b1",
-      cardId: "c3",
-    });
+    // The board reads its recent activity as a whole (for link status); the
+    // drawer asks for this card's own.
+    expect(
+      commands("board_activity").map(([, args]) => args),
+    ).toContainEqual(expect.objectContaining({ boardId: "b1", cardId: "c3" }));
     await act(async () =>
       [...dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
         .find((tab) => tab.textContent === "Activity")!

@@ -225,6 +225,9 @@ import {
 } from "../features/sessions/model/attachments";
 import {
   basename,
+  gitBranches,
+  gitDiffStats,
+  gitPrStatus,
   homeDir,
   notifyGitChanged,
   pickFolders,
@@ -540,8 +543,9 @@ import {
 import {
   runCardTool,
   runTicketTool,
+  needsTicketContext,
+  refreshTicketSnapshot,
   ticketContextFor,
-  ticketContextReceipt,
   ticketMayChangeStatus,
   withTicketContextReceipt,
 } from "../features/sessions/model/ticketContext";
@@ -732,7 +736,28 @@ import {
   sessionLinkTarget,
   type BoardLinkTarget,
   type LinkRef,
+  type RunRequest,
 } from "../features/board/ui/boardFormat";
+import { startRun } from "../features/board/model/runWith";
+import {
+  addCardLink,
+  boardWriteBack,
+  getCardTicket,
+  getRunPrompt,
+} from "../features/board/model/board";
+import {
+  createPrEvents,
+  type PrEvents,
+} from "../features/board/model/prEvents";
+import { writeBackReply } from "../features/board/model/writeBackReply";
+import {
+  checksState,
+  extraKey,
+  parsePrUrl,
+  prState,
+  type LinkExtra,
+} from "../features/board/model/linkStatus";
+import { fetchGithubPrChecks } from "../features/inbox/model/githubPrChecks";
 import { onLinkedWork } from "../features/board/model/autoMove";
 import {
   createLinkedTurns,
@@ -1843,10 +1868,19 @@ function Workspace({
     canForward: false,
   });
   const turnGen = useRef(new Map<string, number>());
-  // Moves board cards linked to a session (or its Pilot) as its turns run.
-  // Runs whether or not the Board is shown; failures only reach the console.
+  // Moves board cards linked to a session (or its Pilot) as its turns run,
+  // and comments a completed turn's reply on write-back boards. Runs whether
+  // or not the Board is shown; failures only reach the console.
   const linkedTurns = useRef<LinkedTurns | null>(null);
-  linkedTurns.current ??= createLinkedTurns(onLinkedWork);
+  linkedTurns.current ??= createLinkedTurns(
+    onLinkedWork,
+    undefined,
+    boardWriteBack,
+  );
+  // PR links report pr_opened / pr_merged when a board status read sees it.
+  const prEventsRef = useRef<PrEvents | null>(null);
+  prEventsRef.current ??= createPrEvents(onLinkedWork);
+  const prEvents = prEventsRef.current;
   const editedResends = useRef(createEditedResendCoordinator()).current;
   const lastPersisted = useRef(new Map<string, string>());
   const lastBoundProvider = useRef(new Map<string, string>());
@@ -2407,6 +2441,20 @@ function Workspace({
     approvalSessionIdsRef.current = nextApprovalSessionIds;
   }
   const approvalSessionIds = approvalSessionIdsRef.current;
+  // A running session that starts waiting on the user reports needs_input.
+  const needsInputKey = useMemo(
+    () =>
+      sessions
+        .filter((session) => sessionNeedsInput(session))
+        .map((session) => session.id)
+        .join("\n"),
+    [sessions],
+  );
+  useEffect(() => {
+    linkedTurns.current!.needsInput(
+      needsInputKey ? needsInputKey.split("\n") : [],
+    );
+  }, [needsInputKey]);
 
   const activeSessionId = inboxViewOpen
     ? inboxAskPortal?.sessionId
@@ -8540,8 +8588,7 @@ function Workspace({
             !rawCommand &&
             intent !== "orchestrate" &&
             !current.inboxAsk &&
-            ticketSession.ticketContextReceipt !==
-              ticketContextReceipt(sessionId, introTicket.key)
+            needsTicketContext(ticketSession, intent === "plan")
           ) {
             ticketContext = ticketContextFor(ticketSession, {
               mayChangeStatus: await ticketMayChangeStatus(sessionId).catch(
@@ -8778,7 +8825,17 @@ function Workspace({
             turnGen.current.get(sessionId) !== gen
               ? { status: "cancelled", text: controlText }
               : controlOutcome;
-          linkedTurns.current!.settled(sessionId, gen, outcome.status);
+          linkedTurns.current!.settled(
+            sessionId,
+            gen,
+            outcome.status,
+            outcome.status === "completed"
+              ? writeBackReply(
+                  sessionsRef.current.find((s) => s.id === sessionId) ??
+                    current,
+                )
+              : undefined,
+          );
           options?.onSettled?.(outcome);
         });
       return true;
@@ -11367,8 +11424,6 @@ function Workspace({
   stopSessionRef.current = onStop;
   const removeSessionRef = useRef(onRemoveHistorySession);
   removeSessionRef.current = onRemoveHistorySession;
-  const setLinkedWorkItemRef = useRef(onSetHistorySessionLinkedWorkItem);
-  setLinkedWorkItemRef.current = onSetHistorySessionLinkedWorkItem;
 
   useEffect(() => {
     const listening = listen<{
@@ -11379,13 +11434,20 @@ function Workspace({
       action: string;
       input: Record<string, unknown>;
     }>("gespan-control-request", ({ payload }) => {
+      // The store already saved the moved snapshot on the link: only the
+      // chip's copy changes (no second link write, open panels stay open).
       const refreshTicketChip = (sessionId: string, ticket: TicketRef) => {
-        const now = sessionTicket(
-          sessionsRef.current.find((session) => session.id === sessionId)
-            ?.linkedWorkItem,
+        const next = refreshTicketSnapshot(
+          sessionsRef.current,
+          sessionId,
+          ticket,
         );
-        if (now?.tracker === ticket.tracker && now.key === ticket.key)
-          setLinkedWorkItemRef.current(sessionId, { kind: "ticket", ticket });
+        if (next === sessionsRef.current) return;
+        setSessions(next);
+        setHistory((rows) => refreshTicketSnapshot(rows, sessionId, ticket));
+        setStoredLinkedSessions((rows) =>
+          refreshTicketSnapshot(rows, sessionId, ticket),
+        );
       };
       const handle = async () => {
         if (payload.namespace === "control") {
@@ -14056,9 +14118,17 @@ function Workspace({
         .map((session) => session.id)
         .join("\n")
     : "";
+  // Sessions waiting on an approval or a question, for the cards' "waiting" chips.
+  const waitingSessionKey = boardShown
+    ? sessions
+        .filter((session) => sessionNeedsInput(session))
+        .map((session) => session.id)
+        .join("\n")
+    : "";
   const boardLinkTargets = useMemo((): BoardLinkTarget[] => {
     if (!boardShown) return [];
     const busy = new Set(busySessionKey.split("\n"));
+    const waiting = new Set(waitingSessionKey.split("\n"));
     // Archived and draft sessions stay targets (a card linked to one still
     // finds it) but are unlisted, so the picker leaves them out.
     const targets: BoardLinkTarget[] = history
@@ -14066,7 +14136,12 @@ function Workspace({
       .map((session) =>
         sessionLinkTarget(
           session,
-          busy.has(session.id) ? "running" : "completed",
+          // A turn waiting on the user is still open: it reads "waiting".
+          waiting.has(session.id)
+            ? "waiting"
+            : busy.has(session.id)
+              ? "running"
+              : "completed",
         ),
       );
     if (pilotsEnabled) {
@@ -14083,7 +14158,15 @@ function Workspace({
     return targets;
     // The Pilot roster is read through its snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boardShown, busySessionKey, history, pilotsEnabled, pilotRail, pilotsSnap]);
+  }, [
+    boardShown,
+    busySessionKey,
+    waitingSessionKey,
+    history,
+    pilotsEnabled,
+    pilotRail,
+    pilotsSnap,
+  ]);
   const boardProjects = useMemo(
     () =>
       boardShown
@@ -14123,6 +14206,105 @@ function Workspace({
       return targets;
     },
     [],
+  );
+  // PR checks and diff stats for the board's PR and worktree links. Read when
+  // the board opens and when a linked turn settles; never on a timer. Remote
+  // workspaces refuse `gh` checks, so those read as unknown, not as an error.
+  const lookupBoardLinkStatus = useCallback(
+    async (
+      links: { kind: "pr" | "worktree"; reference: string }[],
+    ): Promise<Record<string, LinkExtra>> => {
+      const out: Record<string, LinkExtra> = {};
+      const local = !remoteProjectFor(projectCwd);
+      // The current branch's PR, asked once however many PR links there are.
+      const branchPr =
+        local && links.some((link) => link.kind === "pr")
+          ? gitPrStatus(projectCwd).catch(() => null)
+          : Promise.resolve(null);
+      await Promise.all(
+        links.map(async (link) => {
+          const key = extraKey(link);
+          if (link.kind === "worktree") {
+            const [branches, stats] = await Promise.allSettled([
+              gitBranches(link.reference),
+              gitDiffStats(link.reference),
+            ]);
+            out[key] = {
+              state: "idle",
+              ...(branches.status === "fulfilled" && branches.value.current
+                ? { branch: branches.value.current }
+                : {}),
+              ...(stats.status === "fulfilled"
+                ? {
+                    diff: {
+                      additions: stats.value.additions,
+                      deletions: stats.value.deletions,
+                    },
+                  }
+                : {}),
+            };
+            return;
+          }
+          const pr = parsePrUrl(link.reference);
+          if (!pr || !local) {
+            out[key] = { state: "unknown" };
+            return;
+          }
+          const [status, checks] = await Promise.allSettled([
+            branchPr,
+            fetchGithubPrChecks(projectCwd, pr.repo, pr.number),
+          ]);
+          const sameBranchPr =
+            status.status === "fulfilled" &&
+            status.value?.url === link.reference
+              ? status.value
+              : null;
+          out[key] = {
+            state: prState(sameBranchPr?.state),
+            ...(checks.status === "fulfilled" &&
+            checksState(checks.value.checks)
+              ? { checks: checksState(checks.value.checks) }
+              : {}),
+          };
+        }),
+      );
+      prEvents.observe(
+        links.flatMap((link) =>
+          link.kind === "pr"
+            ? [{ reference: link.reference, state: out[extraKey(link)]?.state }]
+            : [],
+        ),
+      );
+      return out;
+    },
+    [prEvents, projectCwd],
+  );
+  // "Run with…": a session with the store's prompt for the card, linked to
+  // it, carrying the card's cached ticket (so a disconnected tracker still
+  // starts), then sent. Everything else about the card stays in the store.
+  const onBoardRunWith = useCallback(
+    async (request: RunRequest) => {
+      await startRun(request, {
+        getRunPrompt,
+        getCardTicket,
+        // The link goes in first, so a refused link leaves no empty session
+        // behind, and write-back finds the card once the turn runs.
+        link: (cardId, sessionId) => addCardLink(cardId, "session", sessionId),
+        open: (session, prompt) => {
+          const nextSessions = [...sessionsRef.current, session];
+          sessionsRef.current = nextSessions;
+          setSessions(nextSessions);
+          const tab = newTab(session.id);
+          appendTab(tab, request.cwd);
+          setBoardViewOpen(false);
+          setSidebarTab("sessions", session.cwd);
+          setActiveTabId(tab.id);
+          setComposerFocused(false);
+          submitSession(session.id, prompt, [], { refreshTitle: true });
+        },
+      });
+    },
+    [appendTab, submitSession],
   );
   // Rejections reach the board's error toast.
   const onOpenBoardLinkedWork = useCallback(
@@ -14982,6 +15164,8 @@ function Workspace({
                         linkTargets={boardLinkTargets}
                         onOpenLinkedWork={onOpenBoardLinkedWork}
                         lookupLinkTargets={lookupBoardLinkTargets}
+                        lookupLinkStatus={lookupBoardLinkStatus}
+                        onRunWith={onBoardRunWith}
                         projects={boardProjects}
                         command={boardCommand}
                         onCommandHandled={onBoardCommandHandled}

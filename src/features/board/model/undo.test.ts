@@ -85,6 +85,20 @@ describe("createUndo", () => {
     expect(onCommitDelete).not.toHaveBeenCalled();
   });
 
+  it("a push with no action shows the label with no Undo, replacing the toast", () => {
+    const onCommitDelete = vi.fn();
+    const undo = createUndo({ onCommitDelete });
+    undo.push("Deleted #9", del);
+    undo.push("Moved #1 to Done", null);
+    // It replaces (unlike notify), so the held delete is carried out now.
+    expect(onCommitDelete).toHaveBeenCalledExactlyOnceWith("c9");
+    expect(undo.current()).toMatchObject({ label: "Moved #1 to Done", action: null });
+    expect(undo.undo()).toBeNull();
+    expect(undo.current()?.label).toBe("Moved #1 to Done");
+    vi.advanceTimersByTime(UNDO_WINDOW_MS);
+    expect(undo.current()).toBeNull();
+  });
+
   it("holds a delete until the toast expires", () => {
     const onCommitDelete = vi.fn();
     const undo = createUndo({ onCommitDelete });

@@ -83,6 +83,7 @@ export function KanbanColumn({
         }}
         className={COLLAPSED_CLASS}
       >
+        <ColumnStripe color={column.color} />
         <div
           ref={body.setNodeRef}
           data-column-drop=""
@@ -126,13 +127,14 @@ export function KanbanColumn({
       }}
       className={COLUMN_CLASS}
     >
+      <ColumnStripe color={column.color} />
       <div
         ref={setActivatorNodeRef}
         {...attributes}
         {...listeners}
         aria-roledescription="column"
         aria-label={`Column ${column.name}`}
-        className="group/column-header flex h-9 shrink-0 cursor-grab items-center gap-2 rounded-t-lg px-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 data-[dragging]:cursor-grabbing"
+        className="group/column-header flex h-9 shrink-0 cursor-grab items-center gap-2 rounded-t-lg px-2.5 outline-none has-[[data-wip-over]]:bg-red-500/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 data-[dragging]:cursor-grabbing"
         data-dragging={isDragging ? "" : undefined}
       >
         {renderColumnHeader(column, cards.length)}
@@ -159,5 +161,18 @@ export function KanbanColumn({
       </div>
       {renderColumnFooter(column)}
     </section>
+  );
+}
+
+/** A 2px bar in the column's palette colour, across its top. */
+function ColumnStripe({ color }: { color: string | null }) {
+  if (!color) return null;
+  return (
+    <div
+      data-column-color={color}
+      aria-hidden="true"
+      className="mx-px h-0.5 shrink-0 rounded-t-lg"
+      style={{ backgroundColor: `#${color}` }}
+    />
   );
 }

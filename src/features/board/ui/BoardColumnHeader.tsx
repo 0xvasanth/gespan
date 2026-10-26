@@ -5,6 +5,7 @@ import {
   type BoardColumn,
   type ColumnRole,
 } from "../model/board";
+import { wipCount } from "../model/boardSettings";
 import type { SortKey } from "../model/columnActions";
 import {
   ICON_BUTTON,
@@ -38,7 +39,7 @@ export function BoardColumnHeader({
   heldCards = 0,
 }: {
   column: BoardColumn;
-  /** Every card in the column. */
+  /** Every card in the column, whatever a search or filter hides. */
   count: number;
   /** Cards a search or filter leaves showing; set only while one is active. */
   shown?: number;
@@ -61,6 +62,7 @@ export function BoardColumnHeader({
   heldCards?: number;
 }) {
   const [renaming, setRenaming] = useState(false);
+  const wip = wipCount({ total: count, shown, limit: column.wipLimit ?? null });
   return (
     <>
       <ColumnRoleIcon role={column.role} className="shrink-0" />
@@ -85,9 +87,19 @@ export function BoardColumnHeader({
       )}
       <span
         data-column-count=""
-        className="shrink-0 text-[12px] tabular-nums text-content/45"
+        data-wip-over={wip.over ? "" : undefined}
+        title={
+          column.wipLimit == null
+            ? undefined
+            : wip.over
+              ? `Over the WIP limit of ${column.wipLimit}`
+              : `WIP limit ${column.wipLimit}`
+        }
+        className={`shrink-0 text-[12px] tabular-nums ${
+          wip.over ? "font-medium text-red-400" : "text-content/45"
+        }`}
       >
-        {shown === undefined ? count : `${shown}/${count}`}
+        {wip.text}
       </span>
       <div className="ml-auto flex items-center opacity-0 group-hover/column-header:opacity-100 focus-within:opacity-100 has-[[data-menu-open]]:opacity-100">
         <button

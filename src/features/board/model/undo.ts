@@ -34,9 +34,10 @@ export type UndoToast = {
 export type Undo = {
   /**
    * Shows the toast for an action that just ran; a held delete is committed
-   * first. Ignored while disposed.
+   * first. A null action shows the label with no Undo (an action that can't
+   * be undone), still replacing the toast. Ignored while disposed.
    */
-  push: (label: string, action: UndoAction) => void;
+  push: (label: string, action: UndoAction | null) => void;
   /**
    * Shows a message with no Undo, for 8 seconds, but only when no toast is
    * showing: it never replaces one, so it never cuts short a held delete.

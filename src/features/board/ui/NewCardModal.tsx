@@ -3,7 +3,6 @@ import { Modal } from "../../../shared/ui/Modal";
 import {
   createCard,
   createLabel,
-  PRIORITIES,
   setCardDue,
   setCardLabels,
   setCardPriority,
@@ -21,6 +20,8 @@ import {
   PropertyRow,
   toggled,
 } from "./CardDrawerParts";
+import { priorityName } from "../model/boardSettings";
+import { usePriorityScheme } from "./priorityScheme";
 
 /** The column a new card starts in: the first `todo` column, else the first. */
 export function defaultColumnId(
@@ -100,6 +101,7 @@ export function NewCardModal({
   /** Where focus goes on close when what had it before is gone. */
   returnFocusTo?: () => HTMLElement | null;
 }) {
+  const scheme = usePriorityScheme();
   // Whatever had focus when the modal opened gets it back on close, so the
   // board keeps its keys (Cmd+N again) instead of focus falling to the page.
   const opener = useRef<Element | null>(document.activeElement);
@@ -284,7 +286,7 @@ export function NewCardModal({
               label="Priority"
               className={PROPERTY_TRIGGER}
               openOnArrowDown
-              trigger={<span className="truncate">{PRIORITIES[priority]}</span>}
+              trigger={<span className="truncate">{priorityName(scheme, priority)}</span>}
             >
               {(close) => (
                 <PriorityItems

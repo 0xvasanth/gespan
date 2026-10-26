@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { PRIORITIES } from "../model/board";
+import { offeredPriorities, priorityName } from "../model/boardSettings";
 import { DATE_PICKS, datePickValue } from "../model/cardProps";
 import { dueInputValue, parseDueInput } from "./boardFormat";
 import { MenuItem, MenuSeparator } from "./boardControls";
+import { usePriorityScheme } from "./priorityScheme";
 
 /** The priority choices of a Priority menu, current one checked. */
 export function PriorityItems({
@@ -14,18 +15,20 @@ export function PriorityItems({
   onChoose: (priority: number) => void;
   close: () => void;
 }) {
+  const scheme = usePriorityScheme();
+  // Hidden levels aren't offered, though a card that holds one still shows it.
   return (
     <>
-      {PRIORITIES.map((name, index) => (
+      {offeredPriorities(scheme).map((level) => (
         <MenuItem
-          key={name}
-          checked={index === priority}
+          key={level}
+          checked={level === priority}
           onSelect={() => {
             close();
-            onChoose(index);
+            onChoose(level);
           }}
         >
-          {name}
+          {priorityName(scheme, level)}
         </MenuItem>
       ))}
     </>

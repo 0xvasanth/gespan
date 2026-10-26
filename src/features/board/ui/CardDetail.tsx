@@ -3,13 +3,12 @@ import {
   SearchableSelect,
   type SearchableSelectOption,
 } from "../../../shared/ui/SearchableSelect";
-import { ExternalLink, Maximize2, Trash2 } from "../../../shared/ui/icons";
+import { ExternalLink, Maximize2, Play, Trash2 } from "../../../shared/ui/icons";
 import { applyFetchedTicket } from "../model/ticketCards";
 import { LinkSessionWorkItemDialog } from "../../sessions/ui/LinkSessionWorkItemDialog";
 import { SessionTicketChip } from "../../sessions/ui/SessionTicketChip";
 import type { LinkedWorkItem, TicketRef } from "../../sessions/model/session";
 import {
-  PRIORITIES,
   createLabel,
   linkCard,
   listActivity,
@@ -60,6 +59,8 @@ import {
   type BoardLinkTarget,
   type ResolvedLink,
 } from "./boardFormat";
+import { priorityName } from "../model/boardSettings";
+import { usePriorityScheme } from "./priorityScheme";
 
 const ACTIVITY_LIMIT = 50;
 const NO_LINK = "";
@@ -91,7 +92,13 @@ export function CardDetail({
   onDelete,
   renderMore,
   onError,
+  onRunWith,
+  blockedBy = [],
 }: {
+  /** Absent when the board turns "Run with…" off. */
+  onRunWith?: () => void;
+  /** Numbers of the open cards blocking this one. */
+  blockedBy?: readonly number[];
   card: BoardCard;
   /** The board's columns in order, with how many cards each holds. */
   columns: readonly { id: string; name: string; cardCount: number }[];
@@ -128,6 +135,7 @@ export function CardDetail({
   ) => ReactNode;
   onError: (message: string) => void;
 }) {
+  const scheme = usePriorityScheme();
   const [title, setTitle] = useState(card.title);
   const [body, setBody] = useState(card.body);
   const [tab, setTab] = useState<Tab>("comments");
@@ -465,7 +473,7 @@ export function CardDetail({
               className={PROPERTY_TRIGGER}
               trigger={
                 <span className="truncate">
-                  {PRIORITIES[priority] ?? PRIORITIES[0]}
+                  {priorityName(scheme, priority)}
                 </span>
               }
             >
@@ -593,6 +601,24 @@ export function CardDetail({
                   </button>
                 ) : null}
               </div>
+              {onRunWith ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    data-run-with=""
+                    onClick={onRunWith}
+                    className={`${SMALL_BUTTON} gap-1.5`}
+                  >
+                    <Play className="size-3.5" strokeWidth={1.75} />
+                    Run with…
+                  </button>
+                  {blockedBy.length ? (
+                    <span data-card-blocked="" className="text-[11px] text-amber-400">
+                      Blocked by {blockedBy.map((n) => `#${n}`).join(", ")}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
               {link ? (
                 <div className="text-[11px]">
                   <LinkChip link={link} full />

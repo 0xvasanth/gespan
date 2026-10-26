@@ -113,6 +113,20 @@ describe("buildGroups", () => {
     });
   });
 
+  it("names the priority groups from the board's scheme", () => {
+    const groups = buildGroups({
+      ...base,
+      by: "priority",
+      extras: { a: extras({ priority: 4 }) },
+      priorities: {
+        names: ["None", "Minor", "Normal", "Major", "Blocker"],
+        hidden: [4],
+      },
+    });
+    // A hidden level keeps its group while a card holds it.
+    expect(groups[0]).toMatchObject({ label: "Blocker", cardIds: ["a"] });
+  });
+
   it("groups by priority, urgent first, none last", () => {
     const groups = buildGroups({
       ...base,

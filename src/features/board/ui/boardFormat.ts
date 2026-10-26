@@ -1,4 +1,7 @@
+import { resolveModel } from "../../sessions/model/models";
+import { HARNESS_LABEL, type HarnessId } from "../../sessions/model/session";
 import { projectName } from "../../../shared/lib/paths";
+import type { AgentFacts } from "../model/agentFields";
 import type {
   BoardActivity,
   BoardCard,
@@ -22,7 +25,9 @@ export type BoardLinkTarget = {
   label: string;
   /** Shown after the label in the picker, e.g. the project. */
   detail?: string;
-  status?: "running" | "completed" | "failed";
+  status?: "running" | "waiting" | "completed" | "failed";
+  /** What the app knows of the session, for the card's agent fields. Never stored. */
+  agent?: AgentFacts;
   /**
    * Still the card's linked work, but not offered in the link picker
    * (an archived or draft session).
@@ -30,8 +35,35 @@ export type BoardLinkTarget = {
   unlisted?: boolean;
 };
 
+/** What "Run with…" asks the app to start. */
+export type RunRequest = {
+  cardId: string;
+  harness: HarnessId;
+  model: string;
+  /** The project folder to work in. */
+  cwd: string;
+  /** Work in a new worktree of that project. */
+  worktree: boolean;
+};
+
 /** A card's link as a lookup asks for it. */
 export type LinkRef = { kind: CardLinkKind; id: string };
+
+/** What a saved session tells the card's agent fields. Cost isn't recorded per session, so it stays unknown. */
+export function sessionAgentFacts(session: {
+  harness: HarnessId;
+  model: string;
+  createdAt?: number;
+  updatedAt?: number;
+}): AgentFacts {
+  return {
+    provider: HARNESS_LABEL[session.harness],
+    model: resolveModel(session.harness, session.model).name,
+    ...(session.createdAt !== undefined && session.updatedAt !== undefined
+      ? { runTimeMs: Math.max(0, session.updatedAt - session.createdAt) }
+      : {}),
+  };
+}
 
 /** A saved session as a link target; archived and draft ones are unlisted. */
 export function sessionLinkTarget(
@@ -41,6 +73,10 @@ export function sessionLinkTarget(
     cwd?: string;
     archived?: boolean;
     draft?: boolean;
+    harness?: HarnessId;
+    model?: string;
+    createdAt?: number;
+    updatedAt?: number;
   },
   status?: BoardLinkTarget["status"],
 ): BoardLinkTarget {
@@ -51,6 +87,14 @@ export function sessionLinkTarget(
     detail: session.cwd ? projectName(session.cwd) : undefined,
     status,
   };
+  if (session.harness && session.model) {
+    target.agent = sessionAgentFacts({
+      harness: session.harness,
+      model: session.model,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    });
+  }
   if (session.archived || session.draft) target.unlisted = true;
   return target;
 }

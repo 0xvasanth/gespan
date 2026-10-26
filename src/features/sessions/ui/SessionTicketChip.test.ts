@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { SessionTicketChip } from "./SessionTicketChip";
@@ -34,12 +34,19 @@ let container: HTMLDivElement;
 let root: Root;
 let connected: string[];
 let fetchTicket: (ticket: TicketRef) => Promise<TicketRef>;
+let statusSetting: () => Promise<boolean | null>;
+let saveStatusSetting: (value: boolean | null) => Promise<void>;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   resetTicketLinkCaches();
   connected = ["jira", "linear"];
   fetchTicket = async () => FILLED;
+  let stored: boolean | null = null;
+  statusSetting = async () => stored;
+  saveStatusSetting = async (value) => {
+    stored = value;
+  };
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -49,6 +56,11 @@ beforeEach(() => {
     if (command === "ticket_connected") return connected;
     if (command === "ticket_fetch")
       return fetchTicket((args as { ticket: TicketRef }).ticket);
+    if (command === "board_session_status_setting") return statusSetting();
+    if (command === "board_session_status_setting_set")
+      return saveStatusSetting(
+        (args as { mayChange: boolean | null }).mayChange,
+      );
     throw new Error(`Unexpected command: ${command}`);
   });
 });
@@ -63,6 +75,7 @@ type Props = {
   visible?: boolean;
   onChange?: (item: LinkedWorkItem | undefined) => void;
   current?: () => LinkedWorkItem | undefined;
+  sessionKey?: string;
 };
 
 async function render(props: Props = {}) {
@@ -74,6 +87,7 @@ async function render(props: Props = {}) {
         visible: props.visible ?? true,
         onChange: props.onChange ?? (() => undefined),
         current: props.current ?? (() => ({ kind: "ticket" as const, ticket })),
+        sessionKey: props.sessionKey,
       }),
     ),
   );
@@ -227,4 +241,120 @@ it("unlinks from the menu", async () => {
   await openMenu();
   await pick("Unlink");
   expect(onChange).toHaveBeenCalledWith(undefined);
+});
+
+describe("Agent may change ticket status", () => {
+  const options = () =>
+    [
+      ...container.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
+    ].map((el) => [el.textContent, el.getAttribute("aria-checked")]);
+  const statusCalls = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([c]) => c.startsWith("board_session_status_setting"));
+
+  async function pickOption(label: string) {
+    const item = [
+      ...container.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
+    ].find((el) => el.textContent === label);
+    expect(item, label).toBeTruthy();
+    await act(async () => item!.click());
+  }
+
+  it("is offered on a session's chip, not on a card's", async () => {
+    await render({ visible: false });
+    await openMenu();
+    expect(container.textContent).not.toContain("Agent may change ticket status");
+    expect(options()).toEqual([]);
+    expect(statusCalls()).toEqual([]);
+  });
+
+  it.each([
+    [null, "Board default"],
+    [true, "On"],
+    [false, "Off"],
+  ] as const)("reads %j as %s", async (value, label) => {
+    statusSetting = async () => value;
+    await render({ visible: false, sessionKey: "s1" });
+    await openMenu();
+    expect(container.textContent).toContain("Agent may change ticket status");
+    expect(options()).toEqual(
+      ["Board default", "On", "Off"].map((text) => [
+        text,
+        String(text === label),
+      ]),
+    );
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      "board_session_status_setting",
+      { sessionKey: "s1" },
+    );
+  });
+
+  it.each([
+    ["On", true],
+    ["Off", false],
+    ["Board default", null],
+  ] as const)("saves %s for this session", async (label, value) => {
+    statusSetting = async () => (value === null ? true : null);
+    await render({ visible: false, sessionKey: "remote:env-1:abc" });
+    await openMenu();
+    await pickOption(label);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      "board_session_status_setting_set",
+      { sessionKey: "remote:env-1:abc", mayChange: value },
+    );
+    statusSetting = async () => value;
+    await openMenu();
+    expect(
+      options().find(([, checked]) => checked === "true")?.[0],
+    ).toBe(label);
+  });
+
+  it("shows an error, not Board default, when the setting can't be read", async () => {
+    statusSetting = async () => {
+      throw "database is locked";
+    };
+    await render({ visible: false, sessionKey: "s1" });
+    await openMenu();
+    expect(options().every(([, checked]) => checked === "false")).toBe(true);
+    const error = container.querySelector('[data-status-setting-error="true"]');
+    expect(error?.textContent).toContain("Couldn't read this setting");
+    // An explicit choice still saves.
+    await pickOption("Off");
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      "board_session_status_setting_set",
+      { sessionKey: "s1", mayChange: false },
+    );
+  });
+
+  it("explains a failed save and keeps the saved value", async () => {
+    statusSetting = async () => true;
+    saveStatusSetting = async () => {
+      throw "database is locked";
+    };
+    await render({ visible: false, sessionKey: "s1" });
+    await openMenu();
+    await pickOption("Off");
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      "database is locked",
+    );
+    await openMenu();
+    expect(
+      options().find(([, checked]) => checked === "true")?.[0],
+    ).toBe("On");
+  });
+
+  it("re-reads the setting each time the menu opens", async () => {
+    let value: boolean | null = null;
+    statusSetting = async () => value;
+    await render({ visible: false, sessionKey: "s1" });
+    await openMenu();
+    await openMenu(); // close
+    // Changed elsewhere (the Native app, or the board).
+    value = false;
+    await openMenu();
+    expect(
+      options().find(([, checked]) => checked === "true")?.[0],
+    ).toBe("Off");
+  });
 });

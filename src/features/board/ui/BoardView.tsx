@@ -19,7 +19,7 @@ import { FileActionError } from "../../files/ui/FileActionError";
 import {
   archiveCard,
   archiveCards,
-  createBoard,
+  createBoardFromTemplate,
   createCard,
   createColumn,
   createLabel,
@@ -37,6 +37,16 @@ import {
   listFields,
   listLabels,
   listBoards,
+  fieldDistinctValues,
+  getBlockedCards,
+  getRunningCards,
+  listActivity,
+  listBoardLinks,
+  type CardLinkRow,
+  type CardLinkKind,
+  getBoardSettings,
+  setFieldValue,
+  updateBoardSettings,
   listViews,
   moveCard,
   moveColumn,
@@ -61,9 +71,11 @@ import {
   type BoardDetail,
   type BoardField,
   type BoardLabel,
+  type BoardSettings as StoredSettings,
   type BoardView as SavedView,
   type CardExtras,
   type CardIndexRow,
+  type DisplayOptions,
   type ColumnRole,
   type FilterRow,
   type SortSpec,
@@ -129,6 +141,32 @@ import { SelectionBar } from "./SelectionBar";
 import { BoardColumnHeader } from "./BoardColumnHeader";
 import { BoardFilterMenu, BoardSortMenu, FilterChips } from "./BoardFilter";
 import { ViewTabs } from "./ViewTabs";
+import { BoardSettings } from "./settings/BoardSettings";
+import { PriorityContext } from "./priorityScheme";
+import { overLimitMessage, parsePriorityScheme } from "../model/boardSettings";
+import {
+  laneBy,
+  resolveDisplay,
+  serializeDisplay,
+  withLayoutDisplay,
+} from "../model/display";
+import { buildLanes, laneValue } from "../model/swimlanes";
+import { fieldText } from "../model/cardProps";
+import { DisplayEditor } from "./settings/DisplayEditor";
+import { Swimlanes } from "./kanban/Swimlanes";
+import { NewBoardDialog } from "./NewBoardDialog";
+import { RunWithDialog } from "./RunWithDialog";
+import { agentValues, AGENT_FIELD_LABEL } from "../model/agentFields";
+import {
+  extraKey,
+  latestEventByCard,
+  pilotState,
+  runningPairs,
+  sessionState,
+  settledSince,
+  type LinkChipView,
+  type LinkExtra,
+} from "../model/linkStatus";
 import {
   MenuButton,
   MenuItem,
@@ -142,6 +180,7 @@ import {
   resolveLink,
   type BoardLinkTarget,
   type LinkRef,
+  type RunRequest,
 } from "./boardFormat";
 import { CardComposer } from "./CardComposer";
 import { loadBoardCardOpen } from "../../settings/model/settings";
@@ -220,6 +259,16 @@ type Props = {
   lookupLinkTargets: (links: LinkRef[]) => Promise<BoardLinkTarget[]>;
   /** The workspace's projects, for the filter. */
   projects: readonly { path: string; name: string }[];
+  /**
+   * Reads the state of PR and worktree links (state, checks, branch, diff
+   * stats), keyed by `extraKey`. Called when the board opens and when a
+   * linked turn settles, never on a timer.
+   */
+  lookupLinkStatus?: (
+    links: { kind: "pr" | "worktree"; reference: string }[],
+  ) => Promise<Record<string, LinkExtra>>;
+  /** Starts a session for a card (the app builds it from the store's prompt). */
+  onRunWith?: (request: RunRequest) => Promise<void>;
   /** A palette command for the board; `nonce` tells repeats apart. */
   command?: BoardCommand | null;
   /** Called once the board has acted on (or dropped) `command`. */
@@ -238,6 +287,8 @@ export function BoardView({
   onOpenLinkedWork,
   lookupLinkTargets,
   projects,
+  lookupLinkStatus,
+  onRunWith,
   command,
   onCommandHandled,
 }: Props) {
@@ -274,6 +325,8 @@ export function BoardView({
         onOpenLinkedWork={onOpenLinkedWork}
         lookupLinkTargets={lookupLinkTargets}
         projects={projects}
+        lookupLinkStatus={lookupLinkStatus}
+        onRunWith={onRunWith}
         command={command}
         onCommandHandled={onCommandHandled}
       />
@@ -286,6 +339,8 @@ function BoardContent({
   onOpenLinkedWork,
   lookupLinkTargets,
   projects,
+  lookupLinkStatus,
+  onRunWith,
   command,
   onCommandHandled,
 }: Pick<
@@ -294,6 +349,8 @@ function BoardContent({
   | "onOpenLinkedWork"
   | "lookupLinkTargets"
   | "projects"
+  | "lookupLinkStatus"
+  | "onRunWith"
   | "command"
   | "onCommandHandled"
 >) {
@@ -301,7 +358,8 @@ function BoardContent({
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<BoardDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [naming, setNaming] = useState<"new" | "rename" | null>(null);
+  const [naming, setNaming] = useState<"rename" | null>(null);
+  const [newBoardOpen, setNewBoardOpen] = useState(false);
   const [addingColumn, setAddingColumn] = useState(false);
   const [tickets, setTickets] = useState<Record<string, TicketRef>>({});
   const [extras, setExtras] = useState<Record<string, CardExtras>>({});
@@ -330,6 +388,20 @@ function BoardContent({
   // The card shown as a full page, if any; opening one follows the setting.
   const [pageCardId, setPageCardId] = useState<string | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Link status: every link on the board, what blocks which card, each
+  // card's latest linked-work event, and what PR and worktree links report.
+  const [boardLinks, setBoardLinks] = useState<CardLinkRow[]>([]);
+  const [blocked, setBlocked] = useState<Record<string, number[]>>({});
+  const [latestEvent, setLatestEvent] = useState<Record<string, string>>({});
+  const [linkExtra, setLinkExtra] = useState<Record<string, LinkExtra>>({});
+  const [realRunning, setRealRunning] = useState<string[] | null>(null);
+  const [settleTick, setSettleTick] = useState(0);
+  const [runFor, setRunFor] = useState<BoardCard | null>(null);
+  const [settings, setSettings] = useState<StoredSettings | null>(null);
+  // The board whose default view has been looked at: it applies once per open.
+  const defaultViewSeen = useRef<string | null>(null);
+  const showViewRef = useRef<(view: SavedView | null) => void>(() => {});
   const [newCardOpen, setNewCardOpen] = useState(false);
   const [switchSignal, setSwitchSignal] = useState(0);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
@@ -429,14 +501,14 @@ function BoardContent({
    * out at once, as a switch does with a held one.
    */
   const pushUndo = useCallback(
-    (boardId: string, label: string, action: UndoAction) => {
+    (boardId: string, label: string, action: UndoAction | null) => {
       if (!mounted.current) return;
       if (openIdRef.current === boardId) undo.push(label, action);
-      else if (action.kind === "delete") {
+      else if (action?.kind === "delete") {
         void deleteArchivedCard(action.cardId).catch(
           fail("Couldn't delete the card"),
         );
-      } else if (action.kind === "deleteMany") {
+      } else if (action?.kind === "deleteMany") {
         for (const [cardId] of action.items) {
           void deleteArchivedCard(cardId).catch(
             fail("Couldn't delete the card"),
@@ -483,8 +555,18 @@ function BoardContent({
     if (!id) return;
     const ticket = ++request.current;
     try {
-      const [next, linked, cardExtras, boardLabels, boardFields, boardViews] =
-        await Promise.all([
+      const [
+        next,
+        linked,
+        cardExtras,
+        boardLabels,
+        boardFields,
+        boardViews,
+        boardSettings,
+        links,
+        blockers,
+        activity,
+      ] = await Promise.all([
           getBoard(id),
           // A failed ticket read leaves the cards without chips, not the board unloaded.
           getCardTickets(id).catch(() => null),
@@ -493,6 +575,12 @@ function BoardContent({
           listLabels(id).catch(() => null),
           listFields(id).catch(() => null),
           listViews(id).catch(() => null),
+          // Without them the board shows with its defaults.
+          getBoardSettings(id).catch(() => null),
+          // Chips, locks and failed marks are left as they were if these fail.
+          listBoardLinks(id).catch(() => null),
+          getBlockedCards(id).catch(() => null),
+          listActivity(id, null, 200).catch(() => null),
         ]);
       if (ticket !== request.current || openIdRef.current !== id) return;
       setDetail(next);
@@ -501,6 +589,18 @@ function BoardContent({
       if (boardLabels) setLabels(boardLabels);
       if (boardFields) setFields(boardFields);
       if (boardViews) syncViews(boardViews);
+      if (boardSettings) setSettings(boardSettings);
+      if (links) setBoardLinks(links);
+      if (blockers) setBlocked(blockers);
+      if (activity) setLatestEvent(latestEventByCard(activity));
+      if (defaultViewSeen.current !== id) {
+        defaultViewSeen.current = id;
+        const wanted = boardViews?.find(
+          (view) => view.id === boardSettings?.defaultViewId,
+        );
+        // A default that is gone, or one the user already moved off, is skipped.
+        if (wanted && !live.current.activeView) showViewRef.current(wanted);
+      }
       setBoards(
         (list) =>
           list &&
@@ -547,6 +647,15 @@ function BoardContent({
     setFields([]);
     // So are its views, search, filter and sort.
     setViews([]);
+    setSettings(null);
+    setBoardLinks([]);
+    setBlocked({});
+    setLatestEvent({});
+    setLinkExtra({});
+    setRealRunning(null);
+    setRunFor(null);
+    setSettingsOpen(false);
+    defaultViewSeen.current = null;
     setActiveView(null);
     setBaseline({ spec: EMPTY_SPEC, layout: DEFAULT_LAYOUT });
     applySpec(EMPTY_SPEC, DEFAULT_LAYOUT);
@@ -586,6 +695,14 @@ function BoardContent({
       if (targetsByValue.has(value) || asked.current.has(value)) continue;
       wanted.set(value, { kind: card.linkKind, id: card.linkId });
     }
+    // The cards' other session and Pilot links need their targets too.
+    for (const link of boardLinks) {
+      if (link.kind !== "session" && link.kind !== "pilot") continue;
+      const value = linkValue(link.kind, link.reference);
+      if (targetsByValue.has(value)) asked.current.delete(value);
+      if (targetsByValue.has(value) || asked.current.has(value)) continue;
+      wanted.set(value, { kind: link.kind, id: link.reference });
+    }
     if (!wanted.size) return;
     for (const value of wanted.keys()) asked.current.add(value);
     lookupLinkTargets([...wanted.values()])
@@ -603,7 +720,7 @@ function BoardContent({
       })
       // Left unconfirmed: a failed lookup says nothing about the work.
       .catch(fail("Couldn't check linked work"));
-  }, [detail, targetsByValue, lookupLinkTargets, fail]);
+  }, [detail, boardLinks, targetsByValue, lookupLinkTargets, fail]);
 
   // What the app has loaded wins over a lookup: it carries live status.
   const linkStates = useMemo(() => {
@@ -612,9 +729,19 @@ function BoardContent({
     return states;
   }, [lookedUp, targetsByValue]);
 
+  const scheme = useMemo(
+    () => parsePriorityScheme(settings?.priorityJson ?? null),
+    [settings?.priorityJson],
+  );
   const sources: FilterSources = useMemo(
-    () => ({ columns: detail?.columns ?? [], labels, projects, fields }),
-    [detail?.columns, labels, projects, fields],
+    () => ({
+      columns: detail?.columns ?? [],
+      labels,
+      projects,
+      fields,
+      priorities: scheme,
+    }),
+    [detail?.columns, labels, projects, fields, scheme],
   );
   // A label, column, project or field that is gone leaves the filter, so it
   // can't hide every card behind a choice nobody can see or undo. A row left
@@ -626,16 +753,100 @@ function BoardContent({
   const sorted = sort.key !== "manual";
   const narrowing = query.trim() !== "" || effectiveRows.length > 0;
 
-  const runningIds = useMemo(
+  // The cards whose linked work is running now. The store answers it for
+  // every link on every card; the primary links alone stand in until it has.
+  const runningNow = useMemo(
+    () => runningPairs([...linkStates.values()].flatMap((t) => (t ? [t] : []))),
+    [linkStates],
+  );
+  const runningKey = JSON.stringify(runningNow);
+  const fallbackRunning = useMemo(
     () =>
       runningCardIds(
         detail?.cards ?? [],
         (kind, id) =>
           kind !== "flow-run" &&
-          linkStates.get(linkValue(kind, id))?.status === "running",
+          ["running", "waiting"].includes(
+            linkStates.get(linkValue(kind, id))?.status ?? "",
+          ),
       ),
     [detail, linkStates],
   );
+  const runningIds = realRunning ?? fallbackRunning;
+  useEffect(() => {
+    if (!openId || detail?.board.id !== openId) return;
+    let stale = false;
+    getRunningCards(openId, JSON.parse(runningKey))
+      .then((ids) => {
+        if (!stale) setRealRunning(ids);
+      })
+      // The primary links stand in.
+      .catch(() => {
+        if (!stale) setRealRunning(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [openId, detail, runningKey]);
+
+  // A linked turn settling (something that ran no longer does) re-reads the
+  // board's link status once. Nothing here polls.
+  // Only work linked to this board's cards counts: some other session in the
+  // app settling is no reason to read this board (or call `gh`) again.
+  const boardWork = useMemo(() => {
+    const held = new Set<string>();
+    for (const card of detail?.cards ?? []) {
+      if (card.linkKind && card.linkId) held.add(linkValue(card.linkKind, card.linkId));
+    }
+    for (const link of boardLinks) {
+      if (link.kind === "session" || link.kind === "pilot") {
+        held.add(linkValue(link.kind, link.reference));
+      }
+    }
+    return held;
+  }, [detail, boardLinks]);
+  const boardRunning = useMemo(
+    () => runningNow.filter(([kind, id]) => boardWork.has(linkValue(kind, id))),
+    [runningNow, boardWork],
+  );
+  const lastRunning = useRef<[CardLinkKind, string][]>([]);
+  useEffect(() => {
+    if (settledSince(lastRunning.current, boardRunning)) {
+      setSettleTick((tick) => tick + 1);
+      void refresh();
+    }
+    lastRunning.current = boardRunning;
+  }, [boardRunning, refresh]);
+
+  // PR and worktree status: on open, on a changed set of such links, and on settle.
+  const lookupStatusRef = useRef(lookupLinkStatus);
+  lookupStatusRef.current = lookupLinkStatus;
+  const statusLinks = useMemo(
+    () =>
+      boardLinks.flatMap((link) =>
+        link.kind === "pr" || link.kind === "worktree"
+          ? [{ kind: link.kind as "pr" | "worktree", reference: link.reference }]
+          : [],
+      ),
+    [boardLinks],
+  );
+  const statusKey = JSON.stringify(statusLinks);
+  useEffect(() => {
+    const lookup = lookupStatusRef.current;
+    const links = JSON.parse(statusKey) as typeof statusLinks;
+    if (!lookup || !openId || !links.length) return;
+    let stale = false;
+    lookup(links).then(
+      (found) => {
+        if (!stale) setLinkExtra(found);
+      },
+      // The chips keep what they had (unknown at first).
+      () => undefined,
+    );
+    return () => {
+      stale = true;
+    };
+  }, [openId, statusKey, settleTick]);
 
   // Matching, filtering and ordering all come from the board query. A newer
   // request, a board switch or a new board read wins over a late answer.
@@ -702,6 +913,44 @@ function BoardContent({
   });
 
   const layoutState = useMemo(() => parseLayout(layout), [layout]);
+  // The board's display, with the showing view's override over it. "All
+  // cards" has no override, so it draws with the board default.
+  const display = useMemo(
+    () =>
+      resolveDisplay(settings?.displayJson ?? null, activeView ? layout : null),
+    [settings?.displayJson, activeView, layout],
+  );
+  // Quick Display edits build on the latest display, saved or not, and write
+  // in order, so two toggles in a row can't undo each other.
+  const displayBase = useRef(display);
+  const displayPending = useRef(0);
+  const displayQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  useEffect(() => {
+    if (displayPending.current === 0) displayBase.current = display;
+  }, [display]);
+  const lanesBy = useMemo(() => laneBy(display, fields), [display, fields]);
+  const cardFieldValues = useMemo(() => {
+    const out: Record<string, Record<string, string>> = {};
+    for (const [id, row] of cardIndex) out[id] = row.fields;
+    return out;
+  }, [cardIndex]);
+  const lanes = useMemo(
+    () =>
+      lanesBy && shownDetail
+        ? buildLanes({
+            by: lanesBy,
+            cards: shownDetail.cards,
+            extras,
+            labels,
+            projects,
+            fieldValues: cardFieldValues,
+            priorities: scheme,
+          })
+        : [],
+    [lanesBy, shownDetail, extras, labels, projects, cardFieldValues, scheme],
+  );
   const editLayout = useCallback(
     (patch: (current: LayoutState) => Partial<LayoutState>) =>
       setLayout((json) => patchLayout(json, patch(parseLayout(json)))),
@@ -778,8 +1027,14 @@ function BoardContent({
   }, [detail, displayOrder]);
 
   const isTable = layoutState.layout === "table";
+  // Field values come from the card index: the table, the field chips on
+  // faces and a field-lane board all need it.
+  const needsIndex =
+    isTable ||
+    display.face.fields.length > 0 ||
+    lanesBy?.kind === "field";
   useEffect(() => {
-    if (!isTable || !openId || detail?.board.id !== openId) return;
+    if (!needsIndex || !openId || detail?.board.id !== openId) return;
     let stale = false;
     getCardIndex(openId)
       .then((rows) => {
@@ -790,7 +1045,7 @@ function BoardContent({
     return () => {
       stale = true;
     };
-  }, [isTable, openId, detail]);
+  }, [needsIndex, openId, detail]);
 
   /** ⌘/Ctrl-click toggles a card, Shift-click selects a range; true when it was one. */
   const selectClick = (
@@ -810,7 +1065,12 @@ function BoardContent({
   };
 
   const onCardMove = useCallback(
-    (cardId: string, shown: DropTarget) => {
+    /**
+     * `undoable: false` shows the move's toast without an Undo: a lane drop
+     * that also set a priority or field value can't be undone by moving the
+     * card back alone.
+     */
+    (cardId: string, shown: DropTarget, undoable = true) => {
       const before = detailRef.current;
       if (!before) return;
       let to = shown;
@@ -853,12 +1113,26 @@ function BoardContent({
         .then(() => {
           if (!from || !column || samePlace) return;
           const [, fromColumn, fromIndex] = from.place;
-          pushUndo(before.board.id, movedLabel([from.number], column.name), {
-            kind: "move",
-            cardId,
-            columnId: fromColumn,
-            index: fromIndex,
-          });
+          const moved = movedLabel([from.number], column.name);
+          // A move into a column past its limit still happens; it says so.
+          const total =
+            columnCards(before, to.columnId).filter(
+              (other) => other.id !== cardId,
+            ).length + 1;
+          const over =
+            fromColumn !== to.columnId &&
+            column.wipLimit != null &&
+            total > column.wipLimit;
+          const label = over
+            ? `${overLimitMessage(total, column.wipLimit!)} · ${moved}`
+            : moved;
+          pushUndo(
+            before.board.id,
+            label,
+            undoable
+              ? { kind: "move", cardId, columnId: fromColumn, index: fromIndex }
+              : null,
+          );
         })
         .catch((cause) => {
           if (detailRef.current?.board.id === before.board.id) {
@@ -885,12 +1159,17 @@ function BoardContent({
     [fail, refresh],
   );
 
-  const createNamedBoard = (name: string) => {
-    setNaming(null);
-    createBoard(name)
+  const createNamedBoard = (name: string, templateId: string) => {
+    setNewBoardOpen(false);
+    createBoardFromTemplate(name, templateId)
       .then((board) => loadBoards(board.id))
       .catch(fail("Couldn't create the board"));
   };
+
+  const renameOpenBoard = (board: Board, name: string) =>
+    renameBoard(board.id, name)
+      .then(() => loadBoards(board.id))
+      .catch(fail("Couldn't rename the board"));
 
   const removeBoard = async (board: Board) => {
     const confirmed = await ask(
@@ -1208,6 +1487,7 @@ function BoardContent({
     setBaseline({ spec: next, layout: nextLayout });
     applySpec(next, nextLayout);
   };
+  showViewRef.current = showView;
 
   /**
    * Runs a view write, then reads the board again. A read already in flight
@@ -1331,6 +1611,8 @@ function BoardContent({
       ticketCardOpen ||
       archiveOpen ||
       naming ||
+      newBoardOpen ||
+      settingsOpen ||
       addingColumn ||
       composerColumn ||
       dragInProgress() ||
@@ -1405,23 +1687,19 @@ function BoardContent({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3">
         <span className="text-[13px] text-content/60">No boards yet</span>
-        {naming === "new" ? (
-          <NameInput
-            label="Board name"
-            placeholder="Board name"
-            className="w-56"
-            onSubmit={createNamedBoard}
-            onCancel={() => setNaming(null)}
+        <button
+          type="button"
+          className={BUTTON}
+          onClick={() => setNewBoardOpen(true)}
+        >
+          Create board
+        </button>
+        {newBoardOpen ? (
+          <NewBoardDialog
+            onCreate={createNamedBoard}
+            onClose={() => setNewBoardOpen(false)}
           />
-        ) : (
-          <button
-            type="button"
-            className={BUTTON}
-            onClick={() => setNaming("new")}
-          >
-            Create board
-          </button>
-        )}
+        ) : null}
         {toast}
       </div>
     );
@@ -1499,11 +1777,140 @@ function BoardContent({
       );
     };
 
+  /** The custom fields the display lists that this card holds a value for. */
+  const fieldChipsOf = (cardId: string) =>
+    display.face.fields.flatMap((id) => {
+      const field = fields.find((found) => found.id === id);
+      const raw = cardIndex.get(cardId)?.fields[id];
+      const text = field && raw !== undefined ? fieldText(field.kind, raw) : null;
+      return field && text ? [{ id, name: field.name, text }] : [];
+    });
+
+  const basenameOf = (path: string) => {
+    const parts = path.split("/").filter(Boolean);
+    return parts[parts.length - 1] ?? path;
+  };
+
+  /** The link of a card as its chip shows it: a failed latest event marks finished work. */
+  const linkOf = (card: BoardCard) => {
+    const link = resolveLink(card, linkStates);
+    const target = link?.target;
+    return link &&
+      target &&
+      target.kind === "session" &&
+      target.status === "completed" &&
+      latestEvent[card.id] === "failed"
+      ? { ...link, target: { ...target, status: "failed" as const } }
+      : link;
+  };
+
+  /** One chip for each link besides the primary one. */
+  const linkChipsOf = (card: BoardCard): LinkChipView[] =>
+    boardLinks.flatMap((link): LinkChipView[] => {
+      if (link.cardId !== card.id || link.role === "primary") return [];
+      if (link.kind === "pr" || link.kind === "worktree") {
+        const found = linkExtra[extraKey(link)];
+        const base = {
+          kind: link.kind,
+          reference: link.reference,
+          state: found?.state ?? "unknown",
+          checks: found?.checks,
+          diff: found?.diff,
+        } as const;
+        return [
+          {
+            ...base,
+            label:
+              link.kind === "worktree"
+                ? (found?.branch ?? basenameOf(link.reference))
+                : (link.reference.match(/\/pull\/(\d+)/)?.[1]
+                    ? `PR #${link.reference.match(/\/pull\/(\d+)/)![1]}`
+                    : "PR"),
+          },
+        ];
+      }
+      if (link.kind !== "session" && link.kind !== "pilot") return [];
+      const target = linkStates.get(linkValue(link.kind, link.reference));
+      const state =
+        target === null
+          ? "missing"
+          : link.kind === "pilot"
+            ? pilotState(target?.status === "running")
+            : sessionState({
+                running: target?.status === "running",
+                waiting: target?.status === "waiting",
+                failed: latestEvent[card.id] === "failed",
+              });
+      return [
+        {
+          kind: link.kind,
+          reference: link.reference,
+          label: target?.label ?? (link.kind === "pilot" ? "Pilot" : "Session"),
+          state,
+        },
+      ];
+    });
+
+  /** The sessions linked to a card (primary and extra), as the app knows them. */
+  const agentFactsOf = (card: BoardCard) => {
+    const ids = new Set<string>();
+    if (card.linkKind === "session" && card.linkId) ids.add(card.linkId);
+    for (const link of boardLinks) {
+      if (link.cardId === card.id && link.kind === "session") ids.add(link.reference);
+    }
+    return [...ids].flatMap((id) => {
+      const facts = linkStates.get(linkValue("session", id))?.agent;
+      return facts ? [facts] : [];
+    });
+  };
+  const agentOf = (cardId: string) => {
+    const card = detail?.cards.find((other) => other.id === cardId);
+    return agentValues(card ? agentFactsOf(card) : []);
+  };
+  const faceChipsOf = (card: BoardCard) => {
+    const values = agentOf(card.id);
+    return [
+      ...fieldChipsOf(card.id),
+      ...display.face.agentFields.flatMap((field) =>
+        values[field]
+          ? [{ id: `agent:${field}`, name: AGENT_FIELD_LABEL[field], text: values[field]! }]
+          : [],
+      ),
+    ];
+  };
+
+  /** Asks first when open cards block this one, then lets the user pick what runs. */
+  const startRunWith = async (card: BoardCard) => {
+    // Asked again now: the map on screen may be stale or empty. If the store
+    // can't say, the card may be blocked, so nothing starts.
+    let blockers: number[];
+    try {
+      blockers = (await getBlockedCards(card.boardId))[card.id] ?? [];
+    } catch (cause) {
+      fail("Couldn't check whether the card is blocked")(cause);
+      return;
+    }
+    if (blockers.length) {
+      const confirmed = await ask(
+        `#${card.number} is blocked by ${blockers.map((n) => `#${n}`).join(", ")}. Run anyway?`,
+        {
+          title: "Blocked card",
+          kind: "warning",
+          okLabel: "Run anyway",
+          cancelLabel: "Cancel",
+        },
+      ).catch(() => false);
+      if (!confirmed) return;
+    }
+    setRunFor(card);
+  };
+  const runWithOn = !!onRunWith && settings?.runWith === true;
+
   const renderCard = (card: BoardCard) => (
     <BoardCardItem
       card={card}
       done={columnsById.get(card.columnId)?.role === "done"}
-      link={resolveLink(card, linkStates)}
+      link={linkOf(card)}
       ticket={tickets[card.id] ?? null}
       extras={extras[card.id]}
       labels={labelsOf(card.id)}
@@ -1541,6 +1948,10 @@ function BoardContent({
       moreItems={moreItemsFor(card)}
       selected={selectedSet.has(card.id)}
       onSelectClick={(event) => selectClick(event, card)}
+      display={display}
+      fieldChips={faceChipsOf(card)}
+      linkChips={linkChipsOf(card)}
+      blockedBy={blocked[card.id] ?? []}
     />
   );
 
@@ -1579,6 +1990,91 @@ function BoardContent({
         ? heldAction.items
         : [];
   const heldIds = heldPlaces.map(([cardId]) => cardId);
+
+  /**
+   * A drop into a lane changes the column, and sets the lane's value only for
+   * a priority or select-field lane; label and project lanes change the
+   * column alone.
+   */
+  const onLaneDrop = (cardId: string, laneKey: string, columnId: string) => {
+    const card = detailRef.current?.cards.find((other) => other.id === cardId);
+    if (!card || !lanesBy) return;
+    const value = laneValue(lanesBy, laneKey);
+    const encoded =
+      value?.kind === "field"
+        ? value.option === null
+          ? null
+          : JSON.stringify(value.option)
+        : null;
+    const setsValue =
+      value?.kind === "priority"
+        ? (extras[card.id]?.priority ?? 0) !== value.priority
+        : value?.kind === "field"
+          ? (cardIndex.get(card.id)?.fields[value.fieldId] ?? null) !== encoded
+          : false;
+    if (card.columnId !== columnId) {
+      // The same path as a column drop: optimistic move, WIP warning, and an
+      // Undo only when the column is all that changes (a column-only Undo
+      // would leave the lane's value changed).
+      onCardMove(
+        card.id,
+        {
+          columnId,
+          index: wholeColumn(columnId).filter(
+            (other) => other.id !== card.id && matches(other),
+          ).length,
+        },
+        !setsValue,
+      );
+    }
+    if (!setsValue) return;
+    if (value?.kind === "priority") {
+      void setCardPriority(card.id, value.priority).catch(
+        fail(`Couldn't set the priority of card #${card.number}`),
+      );
+    } else if (value?.kind === "field") {
+      void setFieldValue(card.id, value.fieldId, encoded).catch(
+        fail(`Couldn't set the field of card #${card.number}`),
+      );
+    }
+  };
+
+  /**
+   * The toolbar's Display edits: on a saved view they are its override (kept
+   * with Save changes); on "All cards" they change the board default.
+   */
+  const changeDisplay = (next: DisplayOptions) => {
+    displayBase.current = next;
+    if (activeView) {
+      setLayout((json) => withLayoutDisplay(json, next));
+    } else if (openId) {
+      displayPending.current += 1;
+      displayQueue.current = displayQueue.current
+        .then(() =>
+          updateBoardSettings(openId, { displayJson: serializeDisplay(next) }),
+        )
+        .then(
+          (saved) => {
+            setSettings(saved);
+            return true;
+          },
+          (cause) => {
+            fail("Couldn't save the display")(cause);
+            return false;
+          },
+        )
+        .then((saved) => {
+          displayPending.current -= 1;
+          // A failed save leaves what is stored; edits stop building on it.
+          if (!saved && displayPending.current === 0) {
+            displayBase.current = resolveDisplay(
+              settingsRef.current?.displayJson ?? null,
+              null,
+            );
+          }
+        });
+    }
+  };
 
   const renderColumnHeader = (column: BoardColumn, shown: number) => (
     <BoardColumnHeader
@@ -1673,166 +2169,163 @@ function BoardContent({
   );
 
   return (
-    <div
-      ref={rootRef}
-      tabIndex={-1}
-      className="flex min-h-0 flex-1 flex-col outline-none"
-      onKeyDown={(event) => {
-        // Escape's last layer: the drawer, menus and inline edits take it
-        // first (they mark it handled); what is left clears the selection.
-        if (
-          event.key !== "Escape" ||
-          event.defaultPrevented ||
-          event.nativeEvent.isComposing ||
-          !selection.ids.length ||
-          // A drag in progress is cancelled by its own Escape.
-          dragInProgress()
-        ) {
-          return;
-        }
-        event.preventDefault();
-        setSelection(EMPTY_SELECTION);
-      }}
-      onKeyDownCapture={(event) => {
-        // Cmd+N (Ctrl+N elsewhere) with focus anywhere in the board, the
-        // search box and menu buttons included (capture, so a control that
-        // stops keydown can't swallow it). Shift and Alt variants stay with the app.
-        const mod = IS_MAC ? event.metaKey : event.ctrlKey;
-        if (
-          !mod ||
-          event.shiftKey ||
-          event.altKey ||
-          (IS_MAC && event.ctrlKey) ||
-          event.key.toLowerCase() !== "n" ||
-          event.nativeEvent.isComposing ||
-          !detail ||
-          ticketCardOpen
-        )
-          return;
-        event.preventDefault();
-        setNewCardOpen(true);
-      }}
-    >
-      <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-stroke px-4">
-        {naming === "rename" && openBoard ? (
-          <NameInput
-            initial={openBoard.name}
-            label="Board name"
-            className="w-56"
-            onSubmit={(name) => {
-              setNaming(null);
-              renameBoard(openBoard.id, name)
-                .then(() => loadBoards(openBoard.id))
-                .catch(fail("Couldn't rename the board"));
-            }}
-            onCancel={() => setNaming(null)}
-          />
-        ) : (
-          <div className="w-56 min-w-0">
-            <SearchableSelect
-              label="Board"
-              value={openId ?? ""}
-              options={boards.map((board) => ({
-                value: board.id,
-                label: board.name,
-              }))}
-              onChange={(id) => setOpenId(id)}
-              openSignal={switchSignal}
-              searchPlaceholder="Search boards…"
-              emptyLabel="No matching boards"
-              variant="transparent"
+    <PriorityContext.Provider value={scheme}>
+      <div
+        ref={rootRef}
+        tabIndex={-1}
+        className="flex min-h-0 flex-1 flex-col outline-none"
+        onKeyDown={(event) => {
+          // Escape's last layer: the drawer, menus and inline edits take it
+          // first (they mark it handled); what is left clears the selection.
+          if (
+            event.key !== "Escape" ||
+            event.defaultPrevented ||
+            event.nativeEvent.isComposing ||
+            !selection.ids.length ||
+            // A drag in progress is cancelled by its own Escape.
+            dragInProgress()
+          ) {
+            return;
+          }
+          event.preventDefault();
+          setSelection(EMPTY_SELECTION);
+        }}
+        onKeyDownCapture={(event) => {
+          // Cmd+N (Ctrl+N elsewhere) with focus anywhere in the board, the
+          // search box and menu buttons included (capture, so a control that
+          // stops keydown can't swallow it). Shift and Alt variants stay with the app.
+          const mod = IS_MAC ? event.metaKey : event.ctrlKey;
+          if (
+            !mod ||
+            event.shiftKey ||
+            event.altKey ||
+            (IS_MAC && event.ctrlKey) ||
+            event.key.toLowerCase() !== "n" ||
+            event.nativeEvent.isComposing ||
+            !detail ||
+            settingsOpen ||
+            newBoardOpen ||
+            ticketCardOpen
+          )
+            return;
+          event.preventDefault();
+          setNewCardOpen(true);
+        }}
+      >
+        <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-stroke px-4">
+          {naming === "rename" && openBoard ? (
+            <NameInput
+              initial={openBoard.name}
+              label="Board name"
+              className="w-56"
+              onSubmit={(name) => {
+                setNaming(null);
+                void renameOpenBoard(openBoard, name);
+              }}
+              onCancel={() => setNaming(null)}
             />
-          </div>
-        )}
-        {openBoard ? (
-          <MenuButton label="Board actions">
-            {(close) => (
-              <>
-                <MenuItem
-                  onSelect={() => {
-                    close();
-                    setNaming("rename");
-                  }}
-                >
-                  Rename board
-                </MenuItem>
-                <MenuItem
-                  danger
-                  onSelect={() => {
-                    close();
-                    void removeBoard(openBoard);
-                  }}
-                >
-                  Delete board
-                </MenuItem>
-              </>
-            )}
-          </MenuButton>
-        ) : null}
-        {detail ? (
-          <>
-            <label className="relative ml-2 flex items-center">
-              <Search
-                className="pointer-events-none absolute left-2 size-3.5 text-content/45"
-                strokeWidth={1.75}
+          ) : (
+            <div className="w-56 min-w-0">
+              <SearchableSelect
+                label="Board"
+                value={openId ?? ""}
+                options={boards.map((board) => ({
+                  value: board.id,
+                  label: board.name,
+                }))}
+                onChange={(id) => setOpenId(id)}
+                openSignal={switchSignal}
+                searchPlaceholder="Search boards…"
+                emptyLabel="No matching boards"
+                variant="transparent"
               />
-              <input
-                aria-label="Search cards"
-                placeholder="Search cards"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape" && query) {
-                    event.preventDefault();
-                    setQuery("");
-                  }
-                }}
-                className="h-7 w-44 rounded-md border border-stroke bg-background-base pl-7 pr-2 text-[12px] text-content outline-none placeholder:text-content/40 focus:border-accent/60"
-              />
-            </label>
-            <BoardFilterMenu
-              rows={rows}
-              count={effectiveRows.length}
-              sources={sources}
-              onChange={setRows}
-            />
-            <BoardSortMenu sort={sort} onChange={setSort} />
-            <MenuButton
-              label="Layout"
-              width={160}
-              className={BUTTON}
-              trigger={`Layout: ${LAYOUTS.find(([kind]) => kind === layoutState.layout)?.[1]}`}
-            >
-              {(close) =>
-                LAYOUTS.map(([kind, name]) => (
+            </div>
+          )}
+          {openBoard ? (
+            <MenuButton label="Board actions">
+              {(close) => (
+                <>
                   <MenuItem
-                    key={kind}
-                    checked={kind === layoutState.layout}
                     onSelect={() => {
                       close();
-                      editLayout(() => ({ layout: kind }));
+                      setNaming("rename");
                     }}
                   >
-                    {name}
+                    Rename board
                   </MenuItem>
-                ))
-              }
+                  <MenuItem
+                    onSelect={() => {
+                      close();
+                      setOpenCard(null);
+                      setArchiveOpen(false);
+                      setSelection(EMPTY_SELECTION);
+                      setSettingsOpen(true);
+                    }}
+                  >
+                    Board settings
+                  </MenuItem>
+                  <MenuItem
+                    danger
+                    onSelect={() => {
+                      close();
+                      void removeBoard(openBoard);
+                    }}
+                  >
+                    Delete board
+                  </MenuItem>
+                </>
+              )}
             </MenuButton>
-            {layoutState.layout === "list" ? (
+          ) : null}
+          {detail ? (
+            <>
+              <label className="relative ml-2 flex items-center">
+                <Search
+                  className="pointer-events-none absolute left-2 size-3.5 text-content/45"
+                  strokeWidth={1.75}
+                />
+                <input
+                  aria-label="Search cards"
+                  placeholder="Search cards"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && query) {
+                      event.preventDefault();
+                      setQuery("");
+                    }
+                  }}
+                  className="h-7 w-44 rounded-md border border-stroke bg-background-base pl-7 pr-2 text-[12px] text-content outline-none placeholder:text-content/40 focus:border-accent/60"
+                />
+              </label>
+              <BoardFilterMenu
+                rows={rows}
+                count={effectiveRows.length}
+                sources={sources}
+                onChange={setRows}
+                distinctValues={(fieldKey) =>
+                  fieldDistinctValues(
+                    openId!,
+                    fieldKey.slice("field:".length),
+                    50,
+                  )
+                }
+              />
+              <BoardSortMenu sort={sort} onChange={setSort} />
               <MenuButton
-                label="Group by"
-                width={180}
+                label="Layout"
+                width={160}
                 className={BUTTON}
-                trigger={`Group by ${GROUP_BYS.find(([by]) => by === layoutState.groupBy)?.[1]}`}
+                trigger={`Layout: ${LAYOUTS.find(([kind]) => kind === layoutState.layout)?.[1]}`}
               >
                 {(close) =>
-                  GROUP_BYS.map(([by, name]) => (
+                  LAYOUTS.map(([kind, name]) => (
                     <MenuItem
-                      key={by}
-                      checked={by === layoutState.groupBy}
+                      key={kind}
+                      checked={kind === layoutState.layout}
                       onSelect={() => {
                         close();
-                        editLayout(() => ({ groupBy: by }));
+                        editLayout(() => ({ layout: kind }));
                       }}
                     >
                       {name}
@@ -1840,312 +2333,410 @@ function BoardContent({
                   ))
                 }
               </MenuButton>
-            ) : null}
-            {layoutState.layout === "table" ? (
               <MenuButton
-                label="Columns"
-                width={200}
+                label="Display"
+                width={340}
                 className={BUTTON}
-                trigger="Columns"
+                trigger="Display"
               >
                 {() => (
-                  <>
-                    <MenuLabel>Show columns</MenuLabel>
-                    {[
-                      ...TABLE_COLUMNS.slice(1).map(([id, name]) => [id, name]),
-                      ...fields.map((field) => [`field:${field.id}`, field.name]),
-                    ].map(([id, name]) => {
-                      const shown = tableColumns(layoutState, fields).some(
-                        (column) => column.id === id,
-                      );
-                      return (
-                        <MenuItem
-                          key={id}
-                          kind="checkbox"
-                          checked={shown}
-                          onSelect={() =>
-                            editLayout((current) => {
-                              const ids = tableColumns(current, fields).map(
-                                (column) => column.id,
-                              );
-                              return {
-                                columns: shown
-                                  ? ids.filter((other) => other !== id)
-                                  : [...ids, id!],
-                              };
-                            })
-                          }
-                        >
-                          {name}
-                        </MenuItem>
-                      );
-                    })}
-                  </>
+                  <div className="p-2">
+                    <DisplayEditor
+                      display={display}
+                      fields={fields}
+                      onChange={changeDisplay}
+                      base={() => displayBase.current}
+                    />
+                    <div className="pt-2 text-[11px] text-content/45">
+                      {activeView
+                        ? "Saved with this view."
+                        : "Changes the board default."}
+                    </div>
+                  </div>
                 )}
               </MenuButton>
-            ) : null}
-            {sorted ? (
-              <span data-sorted-by="" className="text-[12px] text-content/55">
-                Sorted by {sortLabel(sort.key)}
-              </span>
-            ) : null}
-          </>
-        ) : null}
-        <div className="flex-1" />
-        {detail ? (
+              {layoutState.layout === "list" ? (
+                <MenuButton
+                  label="Group by"
+                  width={180}
+                  className={BUTTON}
+                  trigger={`Group by ${GROUP_BYS.find(([by]) => by === layoutState.groupBy)?.[1]}`}
+                >
+                  {(close) =>
+                    GROUP_BYS.map(([by, name]) => (
+                      <MenuItem
+                        key={by}
+                        checked={by === layoutState.groupBy}
+                        onSelect={() => {
+                          close();
+                          editLayout(() => ({ groupBy: by }));
+                        }}
+                      >
+                        {name}
+                      </MenuItem>
+                    ))
+                  }
+                </MenuButton>
+              ) : null}
+              {layoutState.layout === "table" ? (
+                <MenuButton
+                  label="Columns"
+                  width={200}
+                  className={BUTTON}
+                  trigger="Columns"
+                >
+                  {() => (
+                    <>
+                      <MenuLabel>Show columns</MenuLabel>
+                      {[
+                        ...TABLE_COLUMNS.slice(1).map(([id, name]) => [id, name]),
+                        ...fields.map((field) => [`field:${field.id}`, field.name]),
+                      ].map(([id, name]) => {
+                        const shown = tableColumns(layoutState, fields).some(
+                          (column) => column.id === id,
+                        );
+                        return (
+                          <MenuItem
+                            key={id}
+                            kind="checkbox"
+                            checked={shown}
+                            onSelect={() =>
+                              editLayout((current) => {
+                                const ids = tableColumns(current, fields).map(
+                                  (column) => column.id,
+                                );
+                                return {
+                                  columns: shown
+                                    ? ids.filter((other) => other !== id)
+                                    : [...ids, id!],
+                                };
+                              })
+                            }
+                          >
+                            {name}
+                          </MenuItem>
+                        );
+                      })}
+                    </>
+                  )}
+                </MenuButton>
+              ) : null}
+              {sorted ? (
+                <span data-sorted-by="" className="text-[12px] text-content/55">
+                  Sorted by {sortLabel(sort.key)}
+                </span>
+              ) : null}
+            </>
+          ) : null}
+          <div className="flex-1" />
+          {detail ? (
+            <button
+              type="button"
+              className={BUTTON}
+              aria-pressed={archiveOpen}
+              onClick={() => {
+                setOpenCard(null);
+                setArchiveOpen((open) => !open);
+              }}
+            >
+              Archive
+            </button>
+          ) : null}
+          {detail ? (
+            <button
+              type="button"
+              className={BUTTON}
+              onClick={() => setTicketCardOpen(true)}
+            >
+              <Plus className="size-3.5" strokeWidth={1.75} />
+              New card from ticket…
+            </button>
+          ) : null}
           <button
             type="button"
             className={BUTTON}
-            aria-pressed={archiveOpen}
-            onClick={() => {
-              setOpenCard(null);
-              setArchiveOpen((open) => !open);
-            }}
-          >
-            Archive
-          </button>
-        ) : null}
-        {detail ? (
-          <button
-            type="button"
-            className={BUTTON}
-            onClick={() => setTicketCardOpen(true)}
-          >
-            <Plus className="size-3.5" strokeWidth={1.75} />
-            New card from ticket…
-          </button>
-        ) : null}
-        {naming === "new" ? (
-          <NameInput
-            label="Board name"
-            placeholder="Board name"
-            className="w-48"
-            onSubmit={createNamedBoard}
-            onCancel={() => setNaming(null)}
-          />
-        ) : (
-          <button
-            type="button"
-            className={BUTTON}
-            onClick={() => setNaming("new")}
+            onClick={() => setNewBoardOpen(true)}
           >
             <Plus className="size-3.5" strokeWidth={1.75} />
             New board
           </button>
-        )}
-      </div>
-      {detail ? (
-        <ViewTabs
-          views={orderedViews(views)}
-          activeId={activeView}
-          dirty={dirty}
-          onSelect={(id) =>
-            showView(id ? (views.find((view) => view.id === id) ?? null) : null)
-          }
-          onSaveAs={saveViewAs}
-          onSaveChanges={saveViewChanges}
-          onRevert={revertView}
-          onRename={renameView}
-          onDuplicate={duplicateView}
-          onDelete={removeView}
-        />
-      ) : null}
-      <FilterChips
-        rows={rows}
-        sources={sources}
-        onRemove={(index) =>
-          setRows((list) => list.filter((_, at) => at !== index))
-        }
-        onClear={() => setRows([])}
-      />
-      <div className="flex min-h-0 flex-1">
-        <div
-          className={`relative min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}
-        >
-          {detail && layoutState.layout === "list" ? (
-            <BoardList
-              cards={visibleCards}
-              columns={detail.columns}
-              extras={extras}
-              labels={labels}
-              projects={projects}
-              groupBy={layoutState.groupBy}
-              collapsed={layoutState.collapsed}
-              selected={selectedSet}
-              onToggleGroup={(key) =>
-                editLayout((current) => ({
-                  collapsed: current.collapsed.includes(key)
-                    ? current.collapsed.filter((other) => other !== key)
-                    : [...current.collapsed, key],
-                }))
-              }
-              onRowClick={rowClick}
-            />
-          ) : detail && layoutState.layout === "table" ? (
-            <BoardTable
-              cards={visibleCards}
-              existing={new Set(detail.cards.map((card) => card.id))}
-              columns={tableColumns(layoutState, fields)}
-              boardColumns={detail.columns}
-              extras={extras}
-              index={cardIndex}
-              labels={labels}
-              fields={fields}
-              projects={projects}
-              selected={selectedSet}
-              onRowClick={rowClick}
-              onResize={(id, width) =>
-                editLayout((current) => ({
-                  widths: { ...current.widths, [id]: width },
-                }))
-              }
-              onCommitTitle={(card, title) => {
-                const body =
-                  detailRef.current?.cards.find((other) => other.id === card.id)
-                    ?.body ?? card.body;
-                void updateCard(card.id, title, body).catch(
-                  fail(`Couldn't rename card #${card.number}`),
-                );
-              }}
-              onSetStatus={(card, columnId) =>
-                moveFromDrawer(card, columnId, wholeColumn(columnId).length)
-              }
-              onSetPriority={(card, priority) =>
-                void setCardPriority(card.id, priority).catch(
-                  fail(`Couldn't set the priority of card #${card.number}`),
-                )
-              }
-              onSetDue={(card, dueAt) =>
-                void setCardDue(card.id, dueAt).catch(
-                  fail(`Couldn't set the due date of card #${card.number}`),
-                )
-              }
-              onSetLabels={(card, ids) =>
-                void setCardLabels(card.id, ids).catch(
-                  fail(`Couldn't set the labels of card #${card.number}`),
-                )
-              }
-              onCreateLabel={addLabelTo}
-            />
-          ) : shownDetail ? (
-            <KanbanBoard
-              detail={shownDetail}
-              renderCard={renderCard}
-              renderColumnHeader={renderColumnHeader}
-              renderColumnFooter={renderColumnFooter}
-              onCardMove={onCardMove}
-              onColumnMove={onColumnMove}
-              onCardOpen={(card) => showCard({ id: card.id })}
-              onColumnExpand={(column) => setCollapsed(column, false)}
-              sorted={sorted}
-              selectedIds={selectedSet}
-              trailing={trailing}
-            />
-          ) : null}
-          {detail && selection.ids.length ? (
-            <SelectionBar
-              count={selection.ids.length}
-              columns={detail.columns}
-              labels={labels}
-              labelCounts={labelCounts}
-              onStatus={(columnId) => {
-                const column = columnsById.get(columnId);
-                if (column) bulkStatus(column);
-              }}
-              onPriority={bulkPriority}
-              onLabel={bulkLabel}
-              onArchive={() => bulkRemove(false)}
-              onDelete={() => bulkRemove(true)}
-              onClear={() => setSelection(EMPTY_SELECTION)}
+          {newBoardOpen ? (
+            <NewBoardDialog
+              onCreate={createNamedBoard}
+              onClose={() => setNewBoardOpen(false)}
             />
           ) : null}
         </div>
-        {shownCard ? (
-          <CardDetail
-            key={shownCard.id}
-            card={shownCard}
-            columns={(detail?.columns ?? []).map((column) => ({
-              id: column.id,
-              name: column.name,
-              cardCount: (detail?.cards ?? []).filter(
-                (other) => other.columnId === column.id,
-              ).length,
-            }))}
-            extras={extras[shownCard.id]}
-            labels={labels}
-            projects={projects}
-            link={resolveLink(shownCard, linkStates)}
-            ticket={tickets[shownCard.id] ?? null}
-            linkTargets={linkTargets}
-            boardCards={(detail?.cards ?? []).map((other) => ({
-              id: other.id,
-              number: other.number,
-              title: other.title,
-            }))}
-            fullPage={fullPage}
-            onToggleFullPage={() =>
-              setPageCardId(fullPage ? null : shownCard.id)
+        {detail && !settingsOpen ? (
+          <ViewTabs
+            views={orderedViews(views)}
+            activeId={activeView}
+            dirty={dirty}
+            onSelect={(id) =>
+              showView(id ? (views.find((view) => view.id === id) ?? null) : null)
             }
-            focus={openCard?.focus}
-            onClose={() => setOpenCard(null)}
-            onOpenLinkedWork={(target) => {
-              setOpenCard(null);
-              openLinkedWork(target);
-            }}
-            onMove={(columnId, index) =>
-              moveFromDrawer(shownCard, columnId, index)
-            }
-            onDelete={() => removeCard(shownCard)}
-            renderMore={moreItemsFor(shownCard)}
-            onError={setError}
-          />
-        ) : archiveOpen && detail ? (
-          <ArchiveView
-            key={detail.board.id}
-            boardId={detail.board.id}
-            columnNames={
-              new Map(detail.columns.map((column) => [column.id, column.name]))
-            }
-            pendingDelete={null}
-            pendingDeletes={heldIds}
-            onClose={() => setArchiveOpen(false)}
-            onError={setError}
+            onSaveAs={saveViewAs}
+            onSaveChanges={saveViewChanges}
+            onRevert={revertView}
+            onRename={renameView}
+            onDuplicate={duplicateView}
+            onDelete={removeView}
           />
         ) : null}
-      </div>
-      {ticketCardOpen && detail ? (
-        <LinkSessionWorkItemDialog
-          ticketOnly
-          heading="New card from ticket"
-          sessionTitle={detail.board.name}
-          onSave={(item) => {
-            if (!item || item.kind !== "ticket") return;
-            setTicketCardOpen(false);
-            const column = newCardColumn(detail.columns);
-            if (!column) {
-              setError("Couldn't add the card: the board has no columns");
-              return;
+        {settingsOpen ? null : (
+          <FilterChips
+            rows={rows}
+            sources={sources}
+            onRemove={(index) =>
+              setRows((list) => list.filter((_, at) => at !== index))
             }
-            createCardFromTicket(column, item.ticket).catch(
-              fail("Couldn't add the card from the ticket"),
-            );
-          }}
-          onClose={() => setTicketCardOpen(false)}
-        />
-      ) : null}
-      {newCardOpen && detail ? (
-        <NewCardModal
-          key={detail.board.id}
-          boardId={detail.board.id}
-          columns={detail.columns}
-          labels={labels}
-          projects={projects}
-          onClose={() => setNewCardOpen(false)}
-          onNotice={setError}
-          returnFocusTo={() => rootRef.current}
-        />
-      ) : null}
-      {toast}
-    </div>
+            onClear={() => setRows([])}
+          />
+        )}
+        {settingsOpen && detail ? (
+          <BoardSettings
+            board={detail.board}
+            settings={settings}
+            scheme={scheme}
+            columns={detail.columns}
+            cards={detail.cards}
+            labels={labels}
+            fields={fields}
+            views={views}
+            onClose={() => {
+              setSettingsOpen(false);
+              // Back where the page was opened from.
+              rootRef.current
+                ?.querySelector<HTMLElement>(
+                  'button[aria-label="Board actions"]',
+                )
+                ?.focus();
+            }}
+            onRename={(name) => void renameOpenBoard(detail.board, name)}
+            onError={setError}
+            onSettings={setSettings}
+            onReloadSettings={() => void refresh()}
+            beforeColumnDelete={() => undo.commitPending()}
+          />
+        ) : null}
+        <div
+          className={`flex min-h-0 flex-1 ${settingsOpen ? "hidden" : ""}`}
+          inert={settingsOpen || undefined}
+        >
+          <div
+            className={`relative min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}
+          >
+            {detail && layoutState.layout === "list" ? (
+              <BoardList
+                cards={visibleCards}
+                columns={detail.columns}
+                extras={extras}
+                labels={labels}
+                projects={projects}
+                groupBy={layoutState.groupBy}
+                collapsed={layoutState.collapsed}
+                selected={selectedSet}
+                onToggleGroup={(key) =>
+                  editLayout((current) => ({
+                    collapsed: current.collapsed.includes(key)
+                      ? current.collapsed.filter((other) => other !== key)
+                      : [...current.collapsed, key],
+                  }))
+                }
+                onRowClick={rowClick}
+              />
+            ) : detail && layoutState.layout === "table" ? (
+              <BoardTable
+                agent={agentOf}
+                cards={visibleCards}
+                existing={new Set(detail.cards.map((card) => card.id))}
+                columns={tableColumns(layoutState, fields)}
+                boardColumns={detail.columns}
+                extras={extras}
+                index={cardIndex}
+                labels={labels}
+                fields={fields}
+                projects={projects}
+                selected={selectedSet}
+                onRowClick={rowClick}
+                onResize={(id, width) =>
+                  editLayout((current) => ({
+                    widths: { ...current.widths, [id]: width },
+                  }))
+                }
+                onCommitTitle={(card, title) => {
+                  const body =
+                    detailRef.current?.cards.find((other) => other.id === card.id)
+                      ?.body ?? card.body;
+                  void updateCard(card.id, title, body).catch(
+                    fail(`Couldn't rename card #${card.number}`),
+                  );
+                }}
+                onSetStatus={(card, columnId) =>
+                  moveFromDrawer(card, columnId, wholeColumn(columnId).length)
+                }
+                onSetPriority={(card, priority) =>
+                  void setCardPriority(card.id, priority).catch(
+                    fail(`Couldn't set the priority of card #${card.number}`),
+                  )
+                }
+                onSetDue={(card, dueAt) =>
+                  void setCardDue(card.id, dueAt).catch(
+                    fail(`Couldn't set the due date of card #${card.number}`),
+                  )
+                }
+                onSetLabels={(card, ids) =>
+                  void setCardLabels(card.id, ids).catch(
+                    fail(`Couldn't set the labels of card #${card.number}`),
+                  )
+                }
+                onCreateLabel={addLabelTo}
+              />
+            ) : shownDetail && lanesBy ? (
+              <Swimlanes
+                columns={shownDetail.columns}
+                cards={shownDetail.cards}
+                lanes={lanes}
+                renderCard={renderCard}
+                renderColumnHeader={renderColumnHeader}
+                onDrop={onLaneDrop}
+                onCardOpen={(card) => showCard({ id: card.id })}
+                selectedIds={selectedSet}
+                trailing={trailing}
+              />
+            ) : shownDetail ? (
+              <KanbanBoard
+                detail={shownDetail}
+                renderCard={renderCard}
+                renderColumnHeader={renderColumnHeader}
+                renderColumnFooter={renderColumnFooter}
+                onCardMove={onCardMove}
+                onColumnMove={onColumnMove}
+                onCardOpen={(card) => showCard({ id: card.id })}
+                onColumnExpand={(column) => setCollapsed(column, false)}
+                sorted={sorted}
+                selectedIds={selectedSet}
+                trailing={trailing}
+              />
+            ) : null}
+            {detail && selection.ids.length ? (
+              <SelectionBar
+                count={selection.ids.length}
+                columns={detail.columns}
+                labels={labels}
+                labelCounts={labelCounts}
+                onStatus={(columnId) => {
+                  const column = columnsById.get(columnId);
+                  if (column) bulkStatus(column);
+                }}
+                onPriority={bulkPriority}
+                onLabel={bulkLabel}
+                onArchive={() => bulkRemove(false)}
+                onDelete={() => bulkRemove(true)}
+                onClear={() => setSelection(EMPTY_SELECTION)}
+              />
+            ) : null}
+          </div>
+          {shownCard ? (
+            <CardDetail
+              key={shownCard.id}
+              card={shownCard}
+              columns={(detail?.columns ?? []).map((column) => ({
+                id: column.id,
+                name: column.name,
+                cardCount: (detail?.cards ?? []).filter(
+                  (other) => other.columnId === column.id,
+                ).length,
+              }))}
+              extras={extras[shownCard.id]}
+              labels={labels}
+              projects={projects}
+              link={linkOf(shownCard)}
+              onRunWith={runWithOn ? () => void startRunWith(shownCard) : undefined}
+              blockedBy={blocked[shownCard.id] ?? []}
+              ticket={tickets[shownCard.id] ?? null}
+              linkTargets={linkTargets}
+              boardCards={(detail?.cards ?? []).map((other) => ({
+                id: other.id,
+                number: other.number,
+                title: other.title,
+              }))}
+              fullPage={fullPage}
+              onToggleFullPage={() =>
+                setPageCardId(fullPage ? null : shownCard.id)
+              }
+              focus={openCard?.focus}
+              onClose={() => setOpenCard(null)}
+              onOpenLinkedWork={(target) => {
+                setOpenCard(null);
+                openLinkedWork(target);
+              }}
+              onMove={(columnId, index) =>
+                moveFromDrawer(shownCard, columnId, index)
+              }
+              onDelete={() => removeCard(shownCard)}
+              renderMore={moreItemsFor(shownCard)}
+              onError={setError}
+            />
+          ) : archiveOpen && detail ? (
+            <ArchiveView
+              key={detail.board.id}
+              boardId={detail.board.id}
+              columnNames={
+                new Map(detail.columns.map((column) => [column.id, column.name]))
+              }
+              pendingDelete={null}
+              pendingDeletes={heldIds}
+              onClose={() => setArchiveOpen(false)}
+              onError={setError}
+            />
+          ) : null}
+        </div>
+        {ticketCardOpen && detail ? (
+          <LinkSessionWorkItemDialog
+            ticketOnly
+            heading="New card from ticket"
+            sessionTitle={detail.board.name}
+            onSave={(item) => {
+              if (!item || item.kind !== "ticket") return;
+              setTicketCardOpen(false);
+              const column = newCardColumn(detail.columns);
+              if (!column) {
+                setError("Couldn't add the card: the board has no columns");
+                return;
+              }
+              createCardFromTicket(column, item.ticket).catch(
+                fail("Couldn't add the card from the ticket"),
+              );
+            }}
+            onClose={() => setTicketCardOpen(false)}
+          />
+        ) : null}
+        {runFor && onRunWith ? (
+          <RunWithDialog
+            cardId={runFor.id}
+            projects={projects}
+            onClose={() => setRunFor(null)}
+            onRun={(request) => {
+              setRunFor(null);
+              onRunWith(request).catch(fail("Couldn't start the session"));
+            }}
+          />
+        ) : null}
+        {newCardOpen && detail ? (
+          <NewCardModal
+            key={detail.board.id}
+            boardId={detail.board.id}
+            columns={detail.columns}
+            labels={labels}
+            projects={projects}
+            onClose={() => setNewCardOpen(false)}
+            onNotice={setError}
+            returnFocusTo={() => rootRef.current}
+          />
+        ) : null}
+        {toast}
+      </div>
+    </PriorityContext.Provider>
   );
 }

@@ -203,3 +203,35 @@ describe("links", () => {
     ]);
   });
 });
+
+describe("url and multi-select field values", () => {
+  it("encodes a URL only when it is http(s) with a host, no spaces, within 2,000 characters", async () => {
+    const { encodeField, validFieldUrl } = await import("./cardProps");
+    expect(encodeField("url", " https://a.dev/x ")).toEqual({ ok: true, value: '"https://a.dev/x"' });
+    expect(encodeField("url", "")).toEqual({ ok: true, value: null });
+    for (const bad of ["ftp://a.dev", "a.dev", "https://", "https://a b", "javascript:alert(1)"]) {
+      expect(encodeField("url", bad).ok, bad).toBe(false);
+    }
+    expect(validFieldUrl(`https://a.dev/${"x".repeat(1985)}`)).toBe(true);
+    expect(validFieldUrl(`https://a.dev/${"x".repeat(1990)}`)).toBe(false);
+  });
+
+  it("limits text to 2,000 characters", async () => {
+    const { encodeField } = await import("./cardProps");
+    expect(encodeField("text", "x".repeat(2000)).ok).toBe(true);
+    expect(encodeField("text", "x".repeat(2001)).ok).toBe(false);
+  });
+
+  it("stores picks in option order and clears an empty pick", async () => {
+    const { encodePicks, fieldPicks, fieldText } = await import("./cardProps");
+    expect(encodePicks(["A", "B", "C"], ["C", "A"])).toBe('["A","C"]');
+    expect(encodePicks(["A", "B"], [])).toBeNull();
+    expect(encodePicks(["A"], ["Z"])).toBeNull();
+    expect(fieldPicks('["A","B"]')).toEqual(["A", "B"]);
+    expect(fieldPicks("nope")).toEqual([]);
+    expect(fieldPicks(undefined)).toEqual([]);
+    expect(fieldText("multi-select", '["A","B"]')).toBe("A, B");
+    expect(fieldText("multi-select", "[]")).toBeNull();
+    expect(fieldText("url", '"https://a.dev"')).toBe("https://a.dev");
+  });
+});

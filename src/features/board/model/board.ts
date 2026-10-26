@@ -6,6 +6,8 @@ export const BOARD_CHANGED = "gespan:board-changed";
 
 export type ColumnRole = "todo" | "doing" | "review" | "done";
 export type CardLinkKind = "session" | "pilot" | "flow-run";
+/** Linked work that reports events: a card link kind, or a PR link (by URL). */
+export type LinkedWorkKind = CardLinkKind | "pr";
 /** What a card's linked work reported; the auto-move rule keys (snake_case). */
 export type LinkedWorkEvent =
   | "started"
@@ -831,7 +833,7 @@ export function fieldDistinctValues(
  * `kind`/`id` and records the event on each.
  */
 export function boardLinkedEvent(
-  kind: CardLinkKind,
+  kind: LinkedWorkKind,
   id: string,
   event: LinkedWorkEvent,
 ): Promise<void> {

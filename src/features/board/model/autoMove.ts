@@ -1,7 +1,7 @@
 import {
   boardLinkedEvent,
-  type CardLinkKind,
   type LinkedWorkEvent,
+  type LinkedWorkKind,
 } from "./board";
 
 /**
@@ -12,7 +12,7 @@ import {
  * does not stop the others; the first error rejects.
  */
 export function onLinkedWork(
-  kind: CardLinkKind,
+  kind: LinkedWorkKind,
   id: string,
   event: LinkedWorkEvent,
 ): Promise<void> {
