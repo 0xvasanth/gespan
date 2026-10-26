@@ -1,0 +1,21 @@
+docs/superpowers/plans/2026-10-27-pilot-dictation.md
+  s_95473500c30519::t_e81399a05b85c9 114
+  s_95473500c30519::t_63d40f21f7b3d8 14-15,39,118,160,193
+  s_95473500c30519::t_f3ab5971175158 1-13,16-38,40-113,115-117,119-159,161-192,194-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d8e0b6958a2ffeeeff8a42457d2cbb597b048b20",
+  "prompts": {},
+  "sessions": {
+    "s_95473500c30519": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07533a55-4129-4b86-932a-a5b04d2ec453",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
