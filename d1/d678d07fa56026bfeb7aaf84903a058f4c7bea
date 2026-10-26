@@ -1,0 +1,25 @@
+crates/board-store/src/fields.rs
+  s_938a6e0c93b076::t_d2f6d143b02dfb 355-358
+  s_938a6e0c93b076::t_ba8c83537a7a25 283,333-354,359-366,494-517,705-706
+crates/board-store/tests/manage.rs
+  s_938a6e0c93b076::t_d2f6d143b02dfb 602,632-636,816-1001
+crates/board-store/src/card_ops.rs
+  s_938a6e0c93b076::t_ba8c83537a7a25 317-319,321,330,366-370,374
+  s_938a6e0c93b076::t_d2f6d143b02dfb 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1d678d07fa56026bfeb7aaf84903a058f4c7bea",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
