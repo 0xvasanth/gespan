@@ -60,7 +60,7 @@ pub use relations::{
 };
 pub use schema::{ensure_tables, VERSION as SCHEMA_VERSION};
 pub use settings::{
-    board_settings, display_options, may_change_ticket_status, priority_scheme,
+    board_settings, check_session_key, display_options, may_change_ticket_status, priority_scheme,
     session_status_setting, set_board_settings, set_session_status_setting, update_board_settings,
     BoardSettings, CardFace, Density, DisplayOptions, PriorityScheme, SettingsPatch, BOARD_ICONS,
 };

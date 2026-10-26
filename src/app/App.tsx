@@ -531,9 +531,20 @@ import {
   type PilotSpawnedSession,
   isGithubWorkItem,
   type Session,
+  type TicketRef,
+  type TurnIntent,
   type UsageLimit,
   type WorkspaceMode,
+  sessionTicket,
 } from "../features/sessions/model/session";
+import {
+  runCardTool,
+  runTicketTool,
+  ticketContextFor,
+  ticketContextReceipt,
+  ticketMayChangeStatus,
+  withTicketContextReceipt,
+} from "../features/sessions/model/ticketContext";
 
 import {
   canDispatchQueuedHead,
@@ -8517,12 +8528,46 @@ function Workspace({
               `<gespan_app>\n${handAgent ? "App access is always enabled in this thread." : "The user's Operator command enables app access in this thread, including later turns without the command."} You can start sessions, list and create project worktrees, choose a new session's checkout, read, continue, stop, archive or delete other project sessions, save unsent drafts, organize session folders, and read or write saved notes through its local CLI. Run \`${cli} --help\` when you need the exact commands and JSON fields. When reading another session, start with its latest two or three user/assistant exchanges. Request older exchanges with nextBefore or a larger excerpt only if needed. The CLI uses a session credential already in your environment; never print it. New sessions inherit this session's permission mode unless runtimeMode is set explicitly. For a new session with a draft, call sessions.start with its prompt and draft:true; do not submit a seed prompt. Sessions you start appear in the user's sidebar under this session without opening; the user opens them when they want. Only set placement right or down, or reveal:true, when the user asks to see a session open or side by side. The returned ID can be used as besideSessionId to split its pane again or moved into a folder immediately. A normal sessions.start submits its prompt but returns after acceptance, so do not wait for that agent to finish before organizing it.\n</gespan_app>`,
             );
           }
+          // The linked ticket is introduced once per session and key, by
+          // tracker and key only; the agent reads the rest with ticket.get.
+          const ticketSession =
+            sessionsRef.current.find((session) => session.id === sessionId) ??
+            current;
+          const introTicket = sessionTicket(ticketSession.linkedWorkItem);
+          let ticketContext: { text: string; receipt: string } | undefined;
+          if (
+            introTicket &&
+            !rawCommand &&
+            intent !== "orchestrate" &&
+            !current.inboxAsk &&
+            ticketSession.ticketContextReceipt !==
+              ticketContextReceipt(sessionId, introTicket.key)
+          ) {
+            ticketContext = ticketContextFor(ticketSession, {
+              mayChangeStatus: await ticketMayChangeStatus(sessionId).catch(
+                () => false,
+              ),
+              readOnly: intent === "plan",
+              cli: `${shellPath(await invoke<string>("app_cli_path"))} app`,
+            });
+            if (ticketContext) appContext.push(ticketContext.text);
+          }
+          turnIntents.current.set(sessionId, intent);
           // A Pilot reads who it is ahead of the message, so it never takes it
           // for something the user pasted. A command must stay first.
           if (pilot && !rawCommand) sendText = pilotTurn(sendText, appContext);
           else if (appContext.length)
             sendText += `\n\n${appContext.join("\n\n")}`;
           await sendTurn(sendText);
+          if (ticketContext) {
+            const { receipt } = ticketContext;
+            sessionsRef.current = sessionsRef.current.map((session) =>
+              session.id === sessionId
+                ? withTicketContextReceipt(session, receipt)
+                : session,
+            );
+            setSessions(sessionsRef.current);
+          }
           if (agentFiles) {
             recordAgentContext(
               sessionId,
@@ -9289,6 +9334,8 @@ function Workspace({
   const appReceipts = useRef(
     new Map<string, { signature: string; promise: Promise<unknown> }>(),
   );
+  /** The intent each session's current turn started with, for ticket.*. */
+  const turnIntents = useRef(new Map<string, TurnIntent>());
 
   const ensureAutomationRecovery = useCallback(() => {
     if (!automationRecoveryRef.current) {
@@ -11320,6 +11367,8 @@ function Workspace({
   stopSessionRef.current = onStop;
   const removeSessionRef = useRef(onRemoveHistorySession);
   removeSessionRef.current = onRemoveHistorySession;
+  const setLinkedWorkItemRef = useRef(onSetHistorySessionLinkedWorkItem);
+  setLinkedWorkItemRef.current = onSetHistorySessionLinkedWorkItem;
 
   useEffect(() => {
     const listening = listen<{
@@ -11330,6 +11379,14 @@ function Workspace({
       action: string;
       input: Record<string, unknown>;
     }>("gespan-control-request", ({ payload }) => {
+      const refreshTicketChip = (sessionId: string, ticket: TicketRef) => {
+        const now = sessionTicket(
+          sessionsRef.current.find((session) => session.id === sessionId)
+            ?.linkedWorkItem,
+        );
+        if (now?.tracker === ticket.tracker && now.key === ticket.key)
+          setLinkedWorkItemRef.current(sessionId, { kind: "ticket", ticket });
+      };
       const handle = async () => {
         if (payload.namespace === "control") {
           return orchestrator.handle(
@@ -11777,6 +11834,21 @@ function Workspace({
             readAgentFile: (pilotId, path) => readAgentFile(pilotId, path),
             writeAgentFile: (pilotId, path, text, hash) =>
               writeAgentFile(pilotId, path, text, hash),
+            ticketTool: async (sessionId, readOnly, tool, ticketKey) => {
+              const { result, ticket } = await runTicketTool(
+                sessionId,
+                readOnly,
+                tool,
+                ticketKey,
+              );
+              // A move was stored on the session; refresh its chip unless
+              // the user relinked meanwhile.
+              if (ticket) refreshTicketChip(sessionId, ticket);
+              return result;
+            },
+            cardTool: (sessionId, readOnly, tool) =>
+              runCardTool(sessionId, readOnly, tool),
+            turnIntent: (sessionId) => turnIntents.current.get(sessionId),
           },
         );
         appReceipts.current.set(key, { signature, promise });

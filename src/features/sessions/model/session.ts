@@ -577,6 +577,11 @@ export type Session = {
   inboxCard?: InboxComposerCard;
   /** GitHub issue or pull request shown on the persisted session card. */
   linkedWorkItem?: LinkedWorkItem;
+  /**
+   * `ticket-context:{session}:{key}` once the agent was introduced to its
+   * linked ticket, so the introduction goes out once per session and key.
+   */
+  ticketContextReceipt?: string;
   /** Automation that created or last launched this session. */
   automationId?: string;
   /** New linked-item activity shown above the composer. In-memory, one-shot. */

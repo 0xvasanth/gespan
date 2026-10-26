@@ -18,6 +18,7 @@ use gespan_board_store::{
     validate_id, Activity, Board, BoardDetail, Card, CardExtras, CardIndexRow, CardLink, CardMeta,
     Column, Comment, Field, FieldValue, Label, Relation, Subtask, View, ViewSpec,
 };
+use gespan_board_store::{answer_card, CardTool};
 use gespan_board_store::{
     blocked_cards, create_board_from_template, delete_field, delete_label, delete_template,
     field_distinct_values, list_templates, merge_labels, move_field, move_label, on_linked_work,
@@ -1523,6 +1524,36 @@ pub fn board_session_status_setting_set(
     set_session_status_setting(&conn, &session_key, may_change)
 }
 
+/// A card tool an agent called through the app CLI (`card.*`), scoped to the
+/// live cards linked to the session right now. `read_only` is set by the
+/// app for a plan turn. Answers the board-store result; a tick notifies its
+/// board.
+fn agent_card_tool_inner(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    read_only: bool,
+    tool: &CardTool,
+) -> Result<serde_json::Value, String> {
+    answer_card(conn, session_id, tool, read_only)
+}
+
+#[tauri::command(async)]
+pub fn board_agent_card_tool(
+    app: AppHandle,
+    store: State<'_, SessionStore>,
+    session_id: String,
+    read_only: bool,
+    tool: CardTool,
+) -> Result<serde_json::Value, String> {
+    let conn = store.lock_conn()?;
+    let result = agent_card_tool_inner(&conn, &session_id, read_only, &tool)?;
+    drop(conn);
+    if let Some(board_id) = result.get("boardId").and_then(serde_json::Value::as_str) {
+        notify(&app, board_id);
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2464,5 +2495,65 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(running_cards_inner(&conn, "bad id", &running).is_err());
+    }
+
+    #[test]
+    fn card_tool_refuses_unlinked_subtask() {
+        let conn = setup();
+        let (board, columns) = board_with_columns(&conn);
+        let cards = add_cards(&conn, &columns[0].id, &["Mine", "Theirs", "Old"]);
+        add_link(&conn, &cards[0].id, "session", "s-1", None).unwrap();
+        add_link(&conn, &cards[1].id, "session", "s-2", None).unwrap();
+        let mine = add_subtask(&conn, &cards[0].id, "Write tests").unwrap();
+        let theirs = add_subtask(&conn, &cards[1].id, "Their work").unwrap();
+        let tick = |id: &str, read_only: bool| {
+            agent_card_tool_inner(
+                &conn,
+                "s-1",
+                read_only,
+                &CardTool::SubtaskDone {
+                    subtask_id: id.into(),
+                    done: true,
+                },
+            )
+        };
+        // Another session's card, and a subtask id that doesn't exist, are
+        // both out of reach, and nothing changes.
+        assert_eq!(
+            tick(&theirs.id, false).unwrap_err(),
+            gespan_board_store::NOT_LINKED
+        );
+        assert_eq!(
+            tick("no-such-subtask", false).unwrap_err(),
+            gespan_board_store::NOT_LINKED
+        );
+        assert!(!list_subtasks(&conn, &cards[1].id).unwrap()[0].done);
+        // A plan turn may list but not tick.
+        assert_eq!(
+            tick(&mine.id, true).unwrap_err(),
+            "This session is read-only"
+        );
+        assert!(!list_subtasks(&conn, &cards[0].id).unwrap()[0].done);
+        // Its own card's subtask ticks, and the answer names the board to refresh.
+        let ticked = tick(&mine.id, false).unwrap();
+        assert_eq!(ticked["boardId"], board.id.as_str());
+        assert!(list_subtasks(&conn, &cards[0].id).unwrap()[0].done);
+        // Listing shows only the session's own cards.
+        let listed = agent_card_tool_inner(&conn, "s-1", true, &CardTool::Subtasks).unwrap();
+        let listed = listed["cards"].as_array().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["number"], cards[0].number);
+        // Unlinked mid-turn: the card leaves reach at once.
+        remove_link(&conn, &cards[0].id, "session", "s-1").unwrap();
+        assert_eq!(
+            tick(&mine.id, false).unwrap_err(),
+            gespan_board_store::NOT_LINKED
+        );
+        assert!(
+            agent_card_tool_inner(&conn, "s-1", false, &CardTool::Subtasks).unwrap()["cards"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 }

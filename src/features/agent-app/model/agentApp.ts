@@ -14,7 +14,13 @@ import {
   RUNTIME_MODES,
   type HarnessId,
   type Session,
+  type TurnIntent,
 } from "../../sessions/model/session";
+import {
+  isReadOnlyTurn,
+  type CardToolCall,
+  type TicketToolCall,
+} from "../../sessions/model/ticketContext";
 import {
   addSessionToFolder,
   createFolderWithSessions,
@@ -164,6 +170,24 @@ export type AgentAppHost = {
     text: string,
     hash: string,
   ): Promise<string>;
+  /**
+   * The session's own ticket tools, on the ticket linked to it when the call
+   * runs (the app reads the link; `key` only guards against a stale one).
+   */
+  ticketTool?(
+    sessionId: string,
+    readOnly: boolean,
+    tool: TicketToolCall,
+    key: string | undefined,
+  ): Promise<unknown>;
+  /** The session's own card tools, on the cards linked to it right now. */
+  cardTool?(
+    sessionId: string,
+    readOnly: boolean,
+    tool: CardToolCall,
+  ): Promise<unknown>;
+  /** The intent the session's current turn started with. */
+  turnIntent?(sessionId: string): TurnIntent | undefined;
   /** The clock entries are dated by; tests pin it. */
   now?(): Date;
 };
@@ -220,6 +244,11 @@ const FIELDS = new Map<string, readonly string[]>([
   ["habits.run", ["id"]],
   ["habits.remove", ["id"]],
   ["chat.card", [...CARD_FIELDS]],
+  ["ticket.get", ["key"]],
+  ["ticket.comment", ["body", "key"]],
+  ["ticket.status", ["target", "fields", "key"]],
+  ["card.subtasks", []],
+  ["card.subtask_done", ["subtaskId", "done"]],
 ]);
 
 function fields(action: string, input: Record<string, unknown>) {
@@ -940,6 +969,65 @@ async function handleArtifacts(
   return { ...card, saved: true, attached: true };
 }
 
+/**
+ * `ticket.*` and `card.*`: the calling session's own ticket and board cards.
+ * Nothing in the input names a session, ticket or card scope; the app reads
+ * them for `source` at call time. A plan turn is read-only.
+ */
+function handleSessionTools(
+  source: Session,
+  action: string,
+  input: Record<string, unknown>,
+  host: AgentAppHost,
+): Promise<unknown> {
+  const readOnly = isReadOnlyTurn(source, host.turnIntent?.(source.id));
+  if (action.startsWith("card.")) {
+    if (!host.cardTool)
+      throw new Error("Card tools aren't available in this session");
+    if (action === "card.subtasks")
+      return host.cardTool(source.id, readOnly, { tool: "card_subtasks" });
+    const subtaskId = requiredString(input.subtaskId, "subtaskId", 256);
+    if (typeof input.done !== "boolean")
+      throw new Error("done must be a boolean");
+    return host.cardTool(source.id, readOnly, {
+      tool: "card_subtask_done",
+      subtaskId,
+      done: input.done,
+    });
+  }
+  if (!host.ticketTool)
+    throw new Error("Ticket tools aren't available in this session");
+  const key = optionalString(input.key, "key", 256);
+  let tool: TicketToolCall;
+  if (action === "ticket.get") {
+    tool = { tool: "get" };
+  } else if (action === "ticket.comment") {
+    if (typeof input.body !== "string" || !input.body.trim() || input.body.length > 60_000)
+      throw new Error("body must be non-empty Markdown under 60000 characters");
+    tool = { tool: "comment", markdown: input.body.replace(/\r\n?/g, "\n") };
+  } else {
+    const target = optionalString(input.target, "target", 256);
+    const fields = input.fields;
+    if (
+      fields !== undefined &&
+      (fields === null || typeof fields !== "object" || Array.isArray(fields))
+    )
+      throw new Error("fields must be an object of values by field key");
+    if (!target) {
+      if (fields !== undefined)
+        throw new Error("fields need a target status to move to");
+      tool = { tool: "statuses" };
+    } else {
+      tool = {
+        tool: "set_status",
+        target,
+        fields: (fields as Record<string, unknown> | undefined) ?? {},
+      };
+    }
+  }
+  return host.ticketTool(source.id, readOnly, tool, key);
+}
+
 export async function handleAgentApp(
   source: Session,
   requestId: string,
@@ -948,6 +1036,8 @@ export async function handleAgentApp(
   host: AgentAppHost,
 ): Promise<unknown> {
   fields(action, input);
+  if (action.startsWith("ticket.") || action.startsWith("card."))
+    return handleSessionTools(source, action, input, host);
   if (action.startsWith("artifacts."))
     return handleArtifacts(source, requestId, action, input, host);
   if (action.startsWith("soul."))

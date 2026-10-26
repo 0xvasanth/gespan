@@ -4,10 +4,16 @@
 //! keychain, and fetches go over the network).
 use std::path::PathBuf;
 
+use gespan_board_store::{check_session_key, may_change_ticket_status};
 use gespan_tracker_client::credentials::plane::{self, PlaneStatus};
 use gespan_tracker_client::tickets::{parse_ticket, Resolved, TicketRef, Tickets, Tracker};
+use gespan_tracker_client::tools::{answer, refusal, Effect, TicketTool, NO_TICKET};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
+
+use crate::session_store::SessionStore;
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -98,6 +104,152 @@ pub async fn plane_set_config(
 ) -> Result<PlaneStatus, String> {
     let dir = data_dir(&app)?;
     blocking(move || plane::plane_set_config(dir, base_url, workspace, api_key)).await
+}
+
+/// The ticket the session is linked to right now, read from the session
+/// store. Agents never name the ticket a tool acts on; this read does.
+fn linked_ticket(conn: &Connection, session_id: &str) -> Result<Option<TicketRef>, String> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT linked_work_item_json FROM sessions WHERE id = ?1",
+            [session_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .flatten();
+    let Some(item) = raw.and_then(|raw| serde_json::from_str::<Value>(&raw).ok()) else {
+        return Ok(None);
+    };
+    if item.get("kind").and_then(Value::as_str) != Some("ticket") {
+        return Ok(None);
+    }
+    Ok(item
+        .get("ticket")
+        .cloned()
+        .and_then(|ticket| serde_json::from_value(ticket).ok()))
+}
+
+fn same_ticket(a: &TicketRef, b: &TicketRef) -> bool {
+    a.tracker == b.tracker && a.key.trim().eq_ignore_ascii_case(b.key.trim())
+}
+
+/// The session's current ticket for this call, or why the call is refused:
+/// no ticket, a key naming another ticket, a read-only turn, or status
+/// changes turned off for the session.
+fn ticket_for_call(
+    conn: &Connection,
+    session_id: &str,
+    read_only: bool,
+    tool: &TicketTool,
+    key: Option<&str>,
+) -> Result<TicketRef, String> {
+    check_session_key(session_id)?;
+    let linked = linked_ticket(conn, session_id)?;
+    if let Some(key) = key {
+        match &linked {
+            Some(ticket) if ticket.key.trim().eq_ignore_ascii_case(key.trim()) => {}
+            Some(ticket) => return Err(format!("This session is linked to {}", ticket.key)),
+            None => return Err(NO_TICKET.into()),
+        }
+    }
+    let ticket = linked.ok_or(NO_TICKET)?;
+    if let Some(refused) = refusal(tool, may_change_ticket_status(conn, session_id), read_only) {
+        return Err(refused.into());
+    }
+    Ok(ticket)
+}
+
+/// Stores a moved ticket's snapshot on the session, unless the session was
+/// unlinked or linked to another ticket while the move was out. Other fields
+/// of the stored link are kept.
+fn store_moved(conn: &Connection, session_id: &str, moved: &TicketRef) -> Result<bool, String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    if !linked_ticket(&tx, session_id)?.is_some_and(|ticket| same_ticket(&ticket, moved)) {
+        return Ok(false);
+    }
+    let raw: String = tx
+        .query_row(
+            "SELECT linked_work_item_json FROM sessions WHERE id = ?1",
+            [session_id],
+            |r| r.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut item: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    item["ticket"] = serde_json::to_value(moved).map_err(|error| error.to_string())?;
+    tx.execute(
+        "UPDATE sessions SET linked_work_item_json = ?1 WHERE id = ?2",
+        params![item.to_string(), session_id],
+    )
+    .map_err(|error| error.to_string())?;
+    tx.commit().map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+/// One agent ticket call. The store lock is held only to read the scope and
+/// to store a move, never across the tracker request. Answers
+/// `{result, ticket}`: `result` goes to the agent; `ticket` is the moved
+/// snapshot the app stored, for the ticket chip.
+fn ticket_tool_with(
+    store: &SessionStore,
+    tickets: &Tickets,
+    session_id: &str,
+    read_only: bool,
+    tool: &TicketTool,
+    key: Option<&str>,
+) -> Result<Value, String> {
+    let ticket = {
+        let conn = store.lock_conn()?;
+        ticket_for_call(&conn, session_id, read_only, tool, key)?
+    };
+    let answered = answer(tickets, &ticket, tool)?;
+    let stored = match answered.effect {
+        Effect::Moved(moved) => {
+            let conn = store.lock_conn()?;
+            store_moved(&conn, session_id, &moved)?.then_some(moved)
+        }
+        Effect::None | Effect::Commented => None,
+    };
+    Ok(json!({ "result": answered.value, "ticket": stored }))
+}
+
+/// A ticket tool an agent called through the app CLI (`ticket.*`), for the
+/// session the control host granted. `read_only` is set by the app for a
+/// plan turn. The ticket is the session's link at call time.
+#[tauri::command]
+pub async fn ticket_tool(
+    app: AppHandle,
+    session_id: String,
+    read_only: bool,
+    tool: TicketTool,
+    key: Option<String>,
+) -> Result<Value, String> {
+    let dir = data_dir(&app)?;
+    blocking(move || {
+        let store = app.state::<SessionStore>();
+        ticket_tool_with(
+            &store,
+            &Tickets::new(dir),
+            &session_id,
+            read_only,
+            &tool,
+            key.as_deref(),
+        )
+    })
+    .await
+}
+
+/// Whether the agent in this session may change its ticket's status now, for
+/// the introduction the app gives it. The tools check again on every call.
+#[tauri::command(async)]
+pub fn ticket_may_change_status(
+    store: tauri::State<'_, SessionStore>,
+    session_id: String,
+) -> Result<bool, String> {
+    check_session_key(&session_id)?;
+    Ok(may_change_ticket_status(&*store.lock_conn()?, &session_id))
 }
 
 #[cfg(test)]
@@ -232,6 +384,300 @@ mod tests {
         assert_eq!(
             fetch_with(&t, &jira).unwrap_err(),
             "Connect Jira in Settings"
+        );
+    }
+
+    // Agent ticket calls (`ticket.*` app actions).
+
+    struct Shared(Arc<FakeProvider>);
+
+    impl Connection for Shared {
+        fn board(&self) -> &dyn BoardProvider {
+            &*self.0
+        }
+    }
+
+    fn shared_tickets(fake: Arc<FakeProvider>) -> Tickets {
+        gespan_tracker_secrets::testing::use_memory_keychain();
+        Tickets::with_providers(
+            PathBuf::from("/unused"),
+            vec![(
+                Tracker::Linear,
+                Arc::new(Shared(fake)) as Arc<dyn Connection>,
+            )],
+        )
+    }
+
+    fn linear(key: &str) -> TicketRef {
+        TicketRef {
+            tracker: Tracker::Linear,
+            key: key.into(),
+            url: None,
+            title: None,
+            status: None,
+            status_group: None,
+            fetched_at: None,
+        }
+    }
+
+    fn session_store(id: &str, ticket: Option<&str>) -> SessionStore {
+        let store = SessionStore::open_in_memory().unwrap();
+        crate::session_store::upsert_session(
+            &store.lock_conn().unwrap(),
+            &crate::session_store::SessionUpsert {
+                sidebar_hidden: false,
+                id: id.into(),
+                cwd: "/repo".into(),
+                harness: "codex".into(),
+                model: "gpt-5".into(),
+                model_settings: json!({}),
+                runtime_mode: "supervised".into(),
+                title: "Session".into(),
+                provider_session_id: None,
+                provider_account_id: None,
+                blocks: json!([]),
+                queued_messages: vec![],
+                queue_status: None,
+                context_used: None,
+                context_window: None,
+                branch: None,
+                worktree_cwd: None,
+                worktree_removed: false,
+                linked_work_item: None,
+                automation_id: None,
+            },
+        )
+        .unwrap();
+        link(&store, id, ticket);
+        store
+    }
+
+    /// Relinks (or unlinks) the session the way the app's ticket chip does.
+    fn link(store: &SessionStore, id: &str, ticket: Option<&str>) {
+        let item = ticket.map(|key| json!({"kind":"ticket","ticket":linear(key)}).to_string());
+        store
+            .lock_conn()
+            .unwrap()
+            .execute(
+                "UPDATE sessions SET linked_work_item_json = ?1 WHERE id = ?2",
+                rusqlite::params![item, id],
+            )
+            .unwrap();
+    }
+
+    fn fake_with(keys: &[&str]) -> Arc<FakeProvider> {
+        Arc::new(
+            keys.iter()
+                .fold(FakeProvider::new(), |fake, key| fake.with_issue(issue(key))),
+        )
+    }
+
+    fn comment(text: &str) -> TicketTool {
+        TicketTool::Comment {
+            markdown: text.into(),
+        }
+    }
+
+    fn set_status(target: &str) -> TicketTool {
+        TicketTool::SetStatus {
+            target: target.into(),
+            fields: Default::default(),
+        }
+    }
+
+    fn call(
+        store: &SessionStore,
+        tickets: &Tickets,
+        read_only: bool,
+        tool: TicketTool,
+        key: Option<&str>,
+    ) -> Result<Value, String> {
+        ticket_tool_with(store, tickets, "s1", read_only, &tool, key)
+    }
+
+    #[test]
+    fn ticket_tool_refuses_another_key() {
+        let fake = fake_with(&["ENG-1", "ENG-2"]);
+        let tickets = shared_tickets(fake.clone());
+        let store = session_store("s1", Some("ENG-1"));
+        for tool in [
+            TicketTool::Get,
+            comment("Hi"),
+            TicketTool::Statuses,
+            set_status("Doing"),
+        ] {
+            assert_eq!(
+                call(&store, &tickets, false, tool, Some("ENG-2")).unwrap_err(),
+                "This session is linked to ENG-1"
+            );
+        }
+        assert!(fake.comments("ENG-2").is_empty());
+        assert_eq!(fake.get_issue("ENG-2").unwrap().state.name, "Todo");
+        // Its own key, in any case, is fine; so is no key.
+        let read = call(&store, &tickets, false, TicketTool::Get, Some(" eng-1 ")).unwrap();
+        assert_eq!(read["result"]["key"], "ENG-1");
+        assert_eq!(read["ticket"], Value::Null);
+        assert_eq!(
+            call(&store, &tickets, false, TicketTool::Get, None).unwrap()["result"]["key"],
+            "ENG-1"
+        );
+        // Unlinked sessions are refused whatever key is named.
+        let unlinked = session_store("s1", None);
+        for key in [None, Some("ENG-1")] {
+            assert_eq!(
+                call(&unlinked, &tickets, false, TicketTool::Get, key).unwrap_err(),
+                NO_TICKET
+            );
+        }
+        // A session id that isn't a valid key never reaches the store.
+        assert_eq!(
+            ticket_tool_with(&store, &tickets, " ", false, &TicketTool::Get, None).unwrap_err(),
+            "Invalid session key"
+        );
+    }
+
+    #[test]
+    fn ticket_tool_uses_the_link_at_call_time() {
+        let fake = fake_with(&["ENG-1", "ENG-2"]);
+        let tickets = shared_tickets(fake.clone());
+        let store = session_store("s1", Some("ENG-1"));
+        call(&store, &tickets, false, comment("First"), None).unwrap();
+        assert_eq!(fake.comments("ENG-1").len(), 1);
+
+        // Relinked mid-turn: the next call acts on the new ticket, and the
+        // old key the agent still remembers is refused.
+        link(&store, "s1", Some("ENG-2"));
+        assert_eq!(
+            call(&store, &tickets, false, comment("Old"), Some("ENG-1")).unwrap_err(),
+            "This session is linked to ENG-2"
+        );
+        call(&store, &tickets, false, comment("Second"), None).unwrap();
+        assert_eq!(fake.comments("ENG-1").len(), 1);
+        assert_eq!(fake.comments("ENG-2")[0].1, "Second");
+
+        // Unlinked mid-turn: every ticket call is refused.
+        link(&store, "s1", None);
+        for tool in [
+            TicketTool::Get,
+            comment("Late"),
+            TicketTool::Statuses,
+            set_status("Done"),
+        ] {
+            assert_eq!(
+                call(&store, &tickets, false, tool, None).unwrap_err(),
+                NO_TICKET
+            );
+        }
+        assert_eq!(fake.comments("ENG-2").len(), 1);
+        assert_eq!(fake.get_issue("ENG-2").unwrap().state.name, "Todo");
+    }
+
+    #[test]
+    fn ticket_tool_read_only_refuses_comment_and_move() {
+        let fake = fake_with(&["ENG-1"]);
+        let tickets = shared_tickets(fake.clone());
+        let store = session_store("s1", Some("ENG-1"));
+        for tool in [comment("Plan says hi"), set_status("Done")] {
+            assert_eq!(
+                call(&store, &tickets, true, tool, None).unwrap_err(),
+                "This session is read-only"
+            );
+        }
+        assert!(fake.comments("ENG-1").is_empty());
+        assert_eq!(fake.get_issue("ENG-1").unwrap().state.name, "Todo");
+        // Reading and listing still work in a plan turn.
+        assert_eq!(
+            call(&store, &tickets, true, TicketTool::Get, None).unwrap()["result"]["title"],
+            "Fix login"
+        );
+        assert!(
+            call(&store, &tickets, true, TicketTool::Statuses, None).unwrap()["result"]["statuses"]
+                .as_array()
+                .is_some_and(|statuses| !statuses.is_empty())
+        );
+    }
+
+    #[test]
+    fn ticket_tool_status_off_lists_but_never_moves() {
+        let fake = fake_with(&["ENG-1"]);
+        let tickets = shared_tickets(fake.clone());
+        let store = session_store("s1", Some("ENG-1"));
+        gespan_board_store::set_session_status_setting(
+            &store.lock_conn().unwrap(),
+            "s1",
+            Some(false),
+        )
+        .unwrap();
+        assert_eq!(
+            call(&store, &tickets, false, set_status("Done"), None).unwrap_err(),
+            "Changing ticket status is turned off for this session"
+        );
+        assert_eq!(fake.get_issue("ENG-1").unwrap().state.name, "Todo");
+        let listing = call(&store, &tickets, false, TicketTool::Statuses, None).unwrap();
+        assert_eq!(listing["result"]["key"], "ENG-1");
+        assert!(listing["result"]["statuses"]
+            .as_array()
+            .is_some_and(|statuses| !statuses.is_empty()));
+        // Comments are not status changes.
+        call(&store, &tickets, false, comment("Still here"), None).unwrap();
+        assert_eq!(fake.comments("ENG-1").len(), 1);
+        // Turned back on, the same move goes through.
+        gespan_board_store::set_session_status_setting(
+            &store.lock_conn().unwrap(),
+            "s1",
+            Some(true),
+        )
+        .unwrap();
+        call(&store, &tickets, false, set_status("Done"), None).unwrap();
+        assert_eq!(fake.get_issue("ENG-1").unwrap().state.name, "Done");
+    }
+
+    #[test]
+    fn moved_ticket_is_stored_on_the_session() {
+        let fake = fake_with(&["ENG-1"]);
+        let tickets = shared_tickets(fake.clone());
+        let store = session_store("s1", Some("ENG-1"));
+        let moved = call(&store, &tickets, false, set_status("Doing"), None).unwrap();
+        assert_eq!(moved["result"]["status"], "Doing");
+        assert_eq!(moved["ticket"]["key"], "ENG-1");
+        assert_eq!(moved["ticket"]["statusGroup"], "started");
+        let stored = linked_ticket(&store.lock_conn().unwrap(), "s1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.status.as_deref(), Some("Doing"));
+        assert_eq!(stored.status_group, Some(StateGroup::Started));
+        assert!(stored.fetched_at.is_some());
+        // Only the snapshot changes: the link's other fields stay.
+        let raw: String = store
+            .lock_conn()
+            .unwrap()
+            .query_row(
+                "SELECT linked_work_item_json FROM sessions WHERE id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&raw).unwrap()["kind"],
+            "ticket"
+        );
+
+        // A move that lands after the user relinked never restores the old
+        // ticket over the new link.
+        link(&store, "s1", Some("ENG-2"));
+        assert!(!store_moved(&store.lock_conn().unwrap(), "s1", &stored).unwrap());
+        assert_eq!(
+            linked_ticket(&store.lock_conn().unwrap(), "s1")
+                .unwrap()
+                .unwrap()
+                .key,
+            "ENG-2"
+        );
+        link(&store, "s1", None);
+        assert!(!store_moved(&store.lock_conn().unwrap(), "s1", &stored).unwrap());
+        assert_eq!(
+            linked_ticket(&store.lock_conn().unwrap(), "s1").unwrap(),
+            None
         );
     }
 }

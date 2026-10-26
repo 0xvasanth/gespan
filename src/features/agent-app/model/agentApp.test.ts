@@ -1515,3 +1515,120 @@ describe("agent app commands", () => {
     ).rejects.toThrow("body is required");
   });
 });
+
+describe("ticket and card actions", () => {
+  function withTools() {
+    const { source, host } = fixture();
+    host.ticketTool = vi.fn(async () => ({ key: "ENG-1" }));
+    host.cardTool = vi.fn(async () => ({ cards: [] }));
+    return { source, host };
+  }
+
+  it("ticket_actions_reject_unknown_fields", async () => {
+    const { source, host } = withTools();
+    for (const [action, input] of [
+      ["ticket.get", { key: "ENG-1", session: "other" }],
+      ["ticket.comment", { body: "Hi", ticket: "ENG-2" }],
+      ["ticket.status", { target: "Done", sessionId: "other" }],
+      ["card.subtasks", { cardId: "c1" }],
+      ["card.subtask_done", { subtaskId: "t1", done: true, sessionKey: "other" }],
+    ] as const) {
+      await expect(
+        handleAgentApp(source, "r1", action, { ...input }, host),
+      ).rejects.toThrow(`Unknown ${action} fields`);
+    }
+    // Malformed values never reach the app either.
+    for (const [action, input, message] of [
+      ["ticket.comment", {}, "body"],
+      ["ticket.comment", { body: "  " }, "body"],
+      ["ticket.get", { key: 7 }, "key"],
+      ["ticket.status", { fields: { resolution: "Fixed" } }, "target"],
+      ["ticket.status", { target: "Done", fields: [] }, "fields"],
+      ["card.subtask_done", { subtaskId: "t1" }, "done"],
+      ["card.subtask_done", { done: true }, "subtaskId"],
+    ] as const) {
+      await expect(
+        handleAgentApp(source, "r1", action, { ...input }, host),
+      ).rejects.toThrow(message);
+    }
+    expect(host.ticketTool).not.toHaveBeenCalled();
+    expect(host.cardTool).not.toHaveBeenCalled();
+
+    // The session is always the caller's own: no input field can name another.
+    await handleAgentApp(source, "r2", "ticket.status", {}, host);
+    expect(host.ticketTool).toHaveBeenLastCalledWith(
+      "lead",
+      false,
+      { tool: "statuses" },
+      undefined,
+    );
+    await handleAgentApp(
+      source,
+      "r3",
+      "ticket.status",
+      { target: "Done", fields: { resolution: "Fixed" }, key: "ENG-1" },
+      host,
+    );
+    expect(host.ticketTool).toHaveBeenLastCalledWith(
+      "lead",
+      false,
+      { tool: "set_status", target: "Done", fields: { resolution: "Fixed" } },
+      "ENG-1",
+    );
+    await handleAgentApp(source, "r4", "card.subtask_done", { subtaskId: "t1", done: false }, host);
+    expect(host.cardTool).toHaveBeenLastCalledWith("lead", false, {
+      tool: "card_subtask_done",
+      subtaskId: "t1",
+      done: false,
+    });
+    await handleAgentApp(source, "r5", "card.subtasks", {}, host);
+    expect(host.cardTool).toHaveBeenLastCalledWith("lead", false, {
+      tool: "card_subtasks",
+    });
+  });
+
+  it("plan_turn_ticket_comment_is_read_only", async () => {
+    const { source, host } = withTools();
+    source.blocks = [
+      { id: "u1", role: "user", text: "Plan the fix", intent: "plan" },
+    ];
+    await handleAgentApp(source, "r1", "ticket.comment", { body: "Draft" }, host);
+    expect(host.ticketTool).toHaveBeenLastCalledWith(
+      "lead",
+      true,
+      { tool: "comment", markdown: "Draft" },
+      undefined,
+    );
+    await handleAgentApp(source, "r2", "card.subtask_done", { subtaskId: "t1", done: true }, host);
+    expect(host.cardTool).toHaveBeenLastCalledWith("lead", true, {
+      tool: "card_subtask_done",
+      subtaskId: "t1",
+      done: true,
+    });
+
+    // The turn's own intent wins over an ordinary message steered into it.
+    source.blocks = [
+      ...source.blocks,
+      { id: "u2", role: "user", text: "Also check the tests" },
+    ];
+    host.turnIntent = () => "plan";
+    await handleAgentApp(source, "r3", "ticket.comment", { body: "Draft" }, host);
+    expect(vi.mocked(host.ticketTool!).mock.calls.at(-1)![1]).toBe(true);
+
+    // A later ordinary turn may write again.
+    host.turnIntent = () => "default";
+    await handleAgentApp(source, "r4", "ticket.comment", { body: "Done" }, host);
+    expect(vi.mocked(host.ticketTool!).mock.calls.at(-1)![1]).toBe(false);
+  });
+
+  it("refuses ticket and card actions where the app has no tools", async () => {
+    const { source, host } = fixture();
+    await expect(
+      handleAgentApp(source, "r1", "ticket.get", {}, host),
+    ).rejects.toThrow("Ticket tools aren't available in this session");
+    await expect(
+      handleAgentApp(source, "r1", "card.subtasks", {}, host),
+    ).rejects.toThrow("Card tools aren't available in this session");
+  });
+});
+
