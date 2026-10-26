@@ -1,0 +1,23 @@
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_0c1fc43bdd2240 2545-2551
+src/features/board/ui/kanban/KanbanBoard.tsx
+  s_938a6e0c93b076::t_915598af9b988a 12,116-134,316-320,323,336-337,340,343,346-398,439-440,456
+src/features/board/ui/kanban/KanbanKeyboardScale.test.ts
+  s_938a6e0c93b076::t_39ef10bab35bfb 190-202,411-414,538-633
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8b8e2f6b5b4db2f53cb9ce72db33c67d1ec506e",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
