@@ -234,7 +234,7 @@ impl BoardView {
         };
         let extras = |at: usize| self.extras.get(&detail.cards[at].id);
         // Every group there could be, in display order, with the keys each
-        // card belongs to; "none" groups close the label and project lists.
+        // card belongs to; "none" groups close every list but priority.
         let mut heads: Vec<(String, String)> = match by {
             "priority" => (0..PRIORITIES.len())
                 .rev()
@@ -265,6 +265,7 @@ impl BoardView {
                 .columns
                 .iter()
                 .map(|column| (column.id.clone(), column.name.clone()))
+                .chain([("none".into(), "No status".into())])
                 .collect(),
         };
         let keys = |at: usize| -> Vec<String> {
@@ -290,16 +291,28 @@ impl BoardView {
         let mut groups: Vec<Group> = heads
             .drain(..)
             .map(|(key, label)| Group {
-                key,
+                // Keys carry the mode (what the Tauri app stores too), so a
+                // collapsed "No label" never matches "No project".
+                key: format!("{by}:{key}"),
                 label,
                 cards: Vec::new(),
             })
             .collect();
+        let none = format!("{by}:none");
         for at in order {
-            for key in keys(at) {
+            let raw = keys(at);
+            let mut found = false;
+            for key in &raw {
+                let key = format!("{by}:{key}");
                 if let Some(group) = groups.iter_mut().find(|group| group.key == key) {
                     group.cards.push(at);
+                    found = true;
                 }
+            }
+            // Nothing the board still lists (a deleted label, an unknown
+            // column): the card goes in the catch-all group, never lost.
+            if !found && let Some(group) = groups.iter_mut().find(|group| group.key == none) {
+                group.cards.push(at);
             }
         }
         groups.retain(|group| !group.cards.is_empty());
@@ -620,7 +633,7 @@ mod tests {
 
     #[test]
     fn layout_state_round_trips_and_keeps_keys_it_does_not_know() {
-        let stored = r#"{"layout":"table","columns":["title","due"],"widths":{"title":220},"collapsed":["a"],"future":{"x":1}}"#;
+        let stored = r#"{"layout":"table","columns":["title","due"],"widths":{"title":220},"collapsed":["label:a"],"future":{"x":1}}"#;
         let spec: LayoutSpec = serde_json::from_str(stored).unwrap();
         assert_eq!(spec.widths["title"], 220);
         let again: serde_json::Value =

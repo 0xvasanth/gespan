@@ -5341,7 +5341,7 @@ fn list_groups_by_status_and_priority_and_collapses_groups(cx: &mut TestAppConte
     let backlog = column_id(&f, visual, "Backlog");
     assert_eq!(
         layout_of(&f, visual)["collapsed"],
-        serde_json::json!([backlog])
+        serde_json::json!([format!("status:{backlog}")])
     );
     drawer(&f, visual, |view, cx| assert!(view.view_dirty(cx)));
     click(visual, "board-list-group-0");
@@ -5963,6 +5963,94 @@ fn list_groups_by_label_due_bucket_and_project(cx: &mut TestAppContext) {
     cmd_click(visual, 1);
     shift_click(visual, 3);
     assert_eq!(selected_numbers(&f, visual), [1, 2, 3]);
+}
+
+/// The collapsed keys of the open list layout.
+fn collapsed_keys(f: &Fixture, cx: &mut impl gpui::AppContext) -> Vec<String> {
+    drawer(f, cx, |view, _| view.layout_spec().collapsed)
+}
+
+/// The headings of the list's groups that are collapsed.
+fn collapsed_headings(f: &Fixture, cx: &mut impl gpui::AppContext) -> Vec<String> {
+    drawer(f, cx, |view, _| {
+        let spec = view.layout_spec();
+        view.groups(&spec)
+            .into_iter()
+            .filter(|group| spec.collapsed.contains(&group.key))
+            .map(|group| group.label)
+            .collect()
+    })
+}
+
+#[gpui::test]
+fn a_collapsed_no_label_group_does_not_collapse_no_project(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-list");
+    group_by(visual, "menu-action-group-label");
+    assert_eq!(group_summary(&f, visual).len(), 1);
+    click(visual, "board-list-group-0");
+    assert_eq!(collapsed_keys(&f, visual), ["label:none"]);
+    assert_eq!(collapsed_headings(&f, visual), ["No label"]);
+    assert_eq!(shown_cards(visual, &[1, 2]), Vec::<i64>::new());
+    group_by(visual, "menu-action-group-project");
+    assert_eq!(
+        group_summary(&f, visual),
+        [("No project".to_string(), titles(&["A", "B"]))]
+    );
+    assert!(collapsed_headings(&f, visual).is_empty());
+    assert_eq!(shown_cards(visual, &[1, 2]), [1, 2]);
+    // Back under labels, "No label" is still collapsed.
+    group_by(visual, "menu-action-group-label");
+    assert_eq!(collapsed_headings(&f, visual), ["No label"]);
+}
+
+#[gpui::test]
+fn a_collapsed_key_stored_by_the_other_app_collapses_that_group(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let layout = r#"{"layout":"list","groupBy":"label","collapsed":["label:none"]}"#;
+    f.window
+        .update(cx, |view, _, cx| {
+            view.views.layout = layout.to_string();
+            cx.notify();
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    assert_eq!(collapsed_headings(&f, visual), ["No label"]);
+    assert_eq!(shown_cards(visual, &[1, 2]), Vec::<i64>::new());
+    // A bare key from before the change names nothing.
+    let bare = r#"{"layout":"list","groupBy":"label","collapsed":["none"]}"#;
+    f.window
+        .update(visual, |view, _, cx| {
+            view.views.layout = bare.to_string();
+            cx.notify();
+        })
+        .unwrap();
+    visual.refresh().unwrap();
+    assert!(collapsed_headings(&f, visual).is_empty());
+}
+
+#[gpui::test]
+fn a_card_in_an_unlisted_column_shows_under_no_status(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    f.window
+        .update(cx, |view, _, _| {
+            let detail = view.detail.as_mut().unwrap();
+            detail.cards[1].column_id = "deleted-column".into();
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-list");
+    let summary = group_summary(&f, visual);
+    assert_eq!(summary.len(), 2);
+    assert_eq!(summary[0].1, titles(&["A"]));
+    assert_eq!(summary[1], ("No status".to_string(), titles(&["B"])));
+    drawer(&f, visual, |view, _| {
+        let groups = view.groups(&view.layout_spec());
+        assert_eq!(groups[1].key, "status:none");
+        assert!(groups[0].key.starts_with("status:"));
+    });
 }
 
 #[gpui::test]
