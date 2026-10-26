@@ -1,0 +1,38 @@
+src-tauri/src/board.rs
+  s_938a6e0c93b076::t_08ace942640744 36,1668-1671,1673,1676-1679,1681,1684-1685,1687-1688,1690-1697,1699-1700,1705,1708,1710-1720,1723-1724,1726-1727,1729,1733-1734,1736-1737,1739,1743,1746,1748-1761,1764-1765,1768-1769,1771-1779,1783,1788-1791,1793,1795-1809
+  s_938a6e0c93b076::t_57239007cfb83f 1730
+crates/board-store/tests/views.rs
+  s_938a6e0c93b076::t_d5805333fd3d56 335-336,354-357,361
+  s_938a6e0c93b076::t_ca11e1ca100e51 334,337-349,352,363-367,375-382,384-444
+  s_938a6e0c93b076::t_eb89dd4316ea33 383
+crates/board-store/src/subtasks.rs
+  s_938a6e0c93b076::t_b0b15dc4cdbc3a 145,157-168
+  s_938a6e0c93b076::t_613bea0eccaa4d 169-170
+crates/board-store/tests/v3.rs
+  s_938a6e0c93b076::t_33900c0def56af 1246-1247
+  s_938a6e0c93b076::t_958fd2722e9a2c 1243-1245,1248-1475,1485-1544,1548-1549,1556-1557,1562-1624
+  s_938a6e0c93b076::t_adc6a779788ad6 706,737
+  s_938a6e0c93b076::t_b0b15dc4cdbc3a 1476-1484,1545-1547,1550-1555,1558-1561
+crates/board-store/src/links.rs
+  s_938a6e0c93b076::t_b0b15dc4cdbc3a 10-11,45-47,67-69,82,122-124
+crates/board-store/src/migrate.rs
+  s_938a6e0c93b076::t_b0b15dc4cdbc3a 94-96,134,142
+crates/board-store/src/ops.rs
+  s_938a6e0c93b076::t_b0b15dc4cdbc3a 700-701,706
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0776396a0c89dabf0d22c757398544647e34d54b",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
