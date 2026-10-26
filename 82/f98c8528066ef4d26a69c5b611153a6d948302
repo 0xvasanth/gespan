@@ -1,0 +1,65 @@
+src/features/board/model/runWith.test.ts
+  s_938a6e0c93b076::t_0a744e039474bf 1-82
+src/features/board/model/runWith.ts
+  s_938a6e0c93b076::t_eeda515e3ff2a6 1-37
+src/features/board/model/linkStatus.test.ts
+  s_938a6e0c93b076::t_102e68f75d617c 57-63
+  s_938a6e0c93b076::t_79bb94de199f20 1-56,64-84
+src/features/board/ui/BoardView.test.ts
+  s_938a6e0c93b076::t_fdfa19d34f999d 986-990
+src/features/board/ui/boardFormat.ts
+  s_938a6e0c93b076::t_a5a2cdf289f377 4,28-30,38-46
+  s_938a6e0c93b076::t_8992c38c689ad1 1-2,52-67,76-79,90-97
+  s_938a6e0c93b076::t_aa5dba3663eab8 47-48
+src/features/board/ui/CardDetail.tsx
+  s_938a6e0c93b076::t_923ef419f7311e 95-96,98-101,604-621
+  s_938a6e0c93b076::t_5536c4cbea857a 6
+src/features/board/model/layout.ts
+  s_938a6e0c93b076::t_a5a2cdf289f377 37-41
+src/features/board/model/linkStatus.ts
+  s_938a6e0c93b076::t_102e68f75d617c 106-115
+  s_938a6e0c93b076::t_3bcfcb20c8d67a 1-105,116-154
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_a468df7082a791 1770-1800,1802-1876,1881,1920-1922,2505,2609-2611
+  s_938a6e0c93b076::t_f31bbf4e31bec8 810,1765-1769,1801
+  s_938a6e0c93b076::t_3d6fb51cc70dc8 41-46,158-169,262-271,290-291,328-329,342-343,352-353
+  s_938a6e0c93b076::t_5f4f35fbb58280 2670-2680
+  s_938a6e0c93b076::t_fd318c76472083 183,392-400,566-568,580-583,593-595,651-656,756-763,775-809,811-831
+  s_938a6e0c93b076::t_f1dbf9f44247d3 698-705,723
+  s_938a6e0c93b076::t_286ab4c7739df7 769-771
+src/features/board/ui/RunWithDialog.tsx
+  s_938a6e0c93b076::t_923ef419f7311e 1-117
+src/app/App.tsx
+  s_938a6e0c93b076::t_286ab4c7739df7 228-230,738,741-753,14166-14230,14235-14249,15108-15109
+  s_938a6e0c93b076::t_eeda515e3ff2a6 740,14231-14234
+  s_938a6e0c93b076::t_102e68f75d617c 14095-14099
+  s_938a6e0c93b076::t_2864f1632e3703 14077-14083,14087,14100,14117-14125
+src/features/board/ui/BoardCardItem.tsx
+  s_938a6e0c93b076::t_bf671f49c50684 6,21,45,186-229,290-291,293-296,466-476,485-489
+src/features/board/ui/BoardTable.tsx
+  s_938a6e0c93b076::t_5b94381a97f132 18-19,68,70-71,310-320
+src/features/board/ui/linkRunWith.test.ts
+  s_938a6e0c93b076::t_1101fccce43700 12,143-144,199-200,294-308,365-367,372-373,376,379,381-387,473-476,479-801,803-849,851-863,865-896
+  s_938a6e0c93b076::t_f1dbf9f44247d3 477-478
+  s_938a6e0c93b076::t_cefc2205c93652 1-11,13-142,145-198,201-293,309-364,368-371,374-375,377-378,380,388-472,802,850,864
+src/features/board/model/agentFields.test.ts
+  s_938a6e0c93b076::t_e1fe90e2ee1f96 1-33
+src/features/board/model/agentFields.ts
+  s_938a6e0c93b076::t_ee0e00caac6b61 1-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82f98c8528066ef4d26a69c5b611153a6d948302",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
