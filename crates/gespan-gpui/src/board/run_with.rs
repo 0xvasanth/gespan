@@ -20,6 +20,14 @@ use gpui::{
 };
 use std::{collections::HashMap, path::Path};
 
+/// Remote session keys change once the session exists on its host, so a
+/// card link written at start would go stale (ruling C5-r).
+pub(crate) const REMOTE_REFUSED: &str = "Run with… works with local projects for now";
+
+fn is_remote(path: &str) -> bool {
+    gespan_core::files::remote::is_remote(Path::new(path))
+}
+
 /// What the picker asks the shell to start.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RunRequest {
@@ -40,6 +48,8 @@ pub(crate) struct RunOptions {
     pub default_provider: Option<String>,
     /// Provider id → the user's default model for it.
     pub default_models: HashMap<String, String>,
+    /// Provider id → the models the app knows for it, as (id, name).
+    pub models: HashMap<String, Vec<(String, String)>>,
 }
 
 impl RunOptions {
@@ -123,8 +133,10 @@ pub(crate) fn prepare_run_with(
     let mut service = Service::open(db_path)?;
     let prompt = service.run_prompt(&request.card_id)?;
     let ticket = service.card_ticket(&request.card_id)?;
-    let remote = gespan_core::files::remote::is_remote(Path::new(&request.project));
-    if !remote && !Path::new(&request.project).is_dir() {
+    if is_remote(&request.project) {
+        return Err(REMOTE_REFUSED.into());
+    }
+    if !Path::new(&request.project).is_dir() {
         return Err("Choose a project folder before running this card".into());
     }
     let mut store = locked(store)?;
@@ -224,13 +236,15 @@ impl BoardView {
             let default = default.clone();
             model.update(cx, |input, cx| input.set_text(default, cx));
         }
-        let card_projects = self.card_projects(&card_id);
-        let project = card_projects
+        // The default is always one of the options shown: the card's first
+        // local workspace project, else the first local project.
+        let options = self.run_projects();
+        let project = self
+            .card_projects(&card_id)
             .iter()
-            .find(|path| self.projects.iter().any(|(known, _)| known == *path))
+            .find(|path| options.iter().any(|(known, _)| known == *path))
             .cloned()
-            .or_else(|| self.projects.first().map(|(path, _)| path.clone()))
-            .or_else(|| card_projects.first().cloned());
+            .or_else(|| options.first().map(|(path, _)| path.clone()));
         let start_focus = cx.focus_handle();
         window.focus(&start_focus, cx);
         self.run_picker = Some(RunPicker {
@@ -258,6 +272,24 @@ impl BoardView {
         }
         cx.notify();
         true
+    }
+
+    /// The projects the picker offers: the workspace's local ones.
+    pub(crate) fn run_projects(&self) -> Vec<(String, String)> {
+        self.projects
+            .iter()
+            .filter(|(path, _)| !is_remote(path))
+            .cloned()
+            .collect()
+    }
+
+    fn pick_model(&mut self, model: String, cx: &mut Context<Self>) {
+        if let Some(picker) = &self.run_picker {
+            picker
+                .model
+                .update(cx, |input, cx| input.set_text(model, cx));
+        }
+        cx.notify();
     }
 
     fn pick_provider(&mut self, provider: String, cx: &mut Context<Self>) {
@@ -297,6 +329,11 @@ impl BoardView {
             cx.notify();
             return;
         };
+        if is_remote(&project) {
+            picker.error = Some(REMOTE_REFUSED.into());
+            cx.notify();
+            return;
+        }
         let model = picker.model.read(cx).content.trim().to_string();
         let request = RunRequest {
             card_id: picker.card_id.clone(),
@@ -416,8 +453,8 @@ impl BoardView {
                 }))
             })
             .collect::<Vec<_>>();
-        let projects = self
-            .projects
+        let run_projects = self.run_projects();
+        let projects = run_projects
             .iter()
             .enumerate()
             .map(|(index, (path, name))| {
@@ -437,6 +474,30 @@ impl BoardView {
                         }
                     }
                 }))
+            })
+            .collect::<Vec<_>>();
+        let typed = picker.model.read(cx).content.trim().to_string();
+        let models = self
+            .run_options
+            .models
+            .get(&picker.provider)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+            .map(|(index, (id, name))| {
+                let pick = id.clone();
+                option(format!("board-run-model-{index}"), name, typed == id)
+                    .on_click(cx.listener(move |this, _, _, cx| this.pick_model(pick.clone(), cx)))
+                    .on_key_down(cx.listener({
+                        let pick = id.clone();
+                        move |this, event: &gpui::KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                cx.stop_propagation();
+                                this.pick_model(pick.clone(), cx)
+                            }
+                        }
+                    }))
             })
             .collect::<Vec<_>>();
         let worktree = picker.new_worktree;
@@ -496,23 +557,36 @@ impl BoardView {
                 ),
             )
             .child(
-                group("Model").child(
-                    div()
-                        .id("board-run-model")
-                        .debug_selector(|| "board-run-model".into())
-                        .h(px(30.))
-                        .px(px(10.))
-                        .rounded(px(8.))
-                        .border_1()
-                        .border_color(content(0.12))
-                        .flex()
-                        .items_center()
-                        .on_click({
-                            let focus = picker.model.focus_handle(cx);
-                            move |_, window, cx| window.focus(&focus, cx)
-                        })
-                        .child(picker.model.clone()),
-                ),
+                group("Model")
+                    .when(!models.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .id("board-run-models")
+                                .role(Role::RadioGroup)
+                                .aria_label("Model")
+                                .flex()
+                                .flex_wrap()
+                                .gap(px(6.))
+                                .children(models),
+                        )
+                    })
+                    .child(
+                        div()
+                            .id("board-run-model")
+                            .debug_selector(|| "board-run-model".into())
+                            .h(px(30.))
+                            .px(px(10.))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(content(0.12))
+                            .flex()
+                            .items_center()
+                            .on_click({
+                                let focus = picker.model.focus_handle(cx);
+                                move |_, window, cx| window.focus(&focus, cx)
+                            })
+                            .child(picker.model.clone()),
+                    ),
             )
             .child(
                 group("Project").child(
@@ -524,12 +598,18 @@ impl BoardView {
                         .flex_wrap()
                         .gap(px(6.))
                         .children(projects)
-                        .when(self.projects.is_empty(), |d| {
+                        .when(run_projects.is_empty(), |d| {
                             d.child(
                                 div()
+                                    .id("board-run-no-project")
+                                    .debug_selector(|| "board-run-no-project".into())
                                     .text_size(px(12.))
                                     .text_color(content(0.45))
-                                    .child("Add a project to the workspace first"),
+                                    .child(if self.projects.is_empty() {
+                                        "Add a project to the workspace first"
+                                    } else {
+                                        REMOTE_REFUSED
+                                    }),
                             )
                         }),
                 ),

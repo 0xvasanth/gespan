@@ -167,18 +167,32 @@ pub(crate) fn parse_pr_url(url: &str) -> Option<(String, i64)> {
     Some((format!("{owner}/{repo}"), number))
 }
 
-/// The newest linked-work event per card, from newest-first activity rows.
-pub(crate) fn latest_event_by_card<'a>(
-    rows: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> HashMap<String, String> {
-    const EVENTS: [&str; 4] = ["started", "needs_input", "completed", "failed"];
-    let mut out = HashMap::new();
-    for (card_id, kind) in rows {
-        if EVENTS.contains(&kind) && !out.contains_key(card_id) {
-            out.insert(card_id.to_string(), kind.to_string());
-        }
-    }
-    out
+/// The newest started/needs_input/completed/failed activity kind for each
+/// card on the board (from any board, as a moved card keeps its history),
+/// read directly so any number of newer comments or moves can't hide it.
+/// The same rule the store's `linked: failed` filter uses.
+pub(crate) fn latest_run_events(
+    conn: &rusqlite::Connection,
+    board_id: &str,
+) -> Result<HashMap<String, String>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT card_id, kind FROM (
+               SELECT card_id, kind, ROW_NUMBER() OVER (
+                 PARTITION BY card_id ORDER BY created_at DESC, rowid DESC) AS newest
+               FROM board_activity
+               WHERE card_id IN (SELECT id FROM board_cards WHERE board_id = ?1)
+                 AND kind IN ('started', 'needs_input', 'completed', 'failed'))
+             WHERE newest = 1",
+        )
+        .map_err(|e| e.to_string())?;
+    statement
+        .query_map([board_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<HashMap<_, _>>>()
+        .map_err(|e| e.to_string())
 }
 
 /// What the chips are built from, all read before building.
@@ -523,6 +537,25 @@ impl super::BoardView {
         Ok(())
     }
 
+    /// The newest run event per card of the board, in one query.
+    pub(super) fn read_run_events(
+        &mut self,
+        board_id: &str,
+    ) -> Result<HashMap<String, String>, String> {
+        if self.run_reader.is_none() {
+            let conn = rusqlite::Connection::open_with_flags(
+                &self.db_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(|e| e.to_string())?;
+            conn.busy_timeout(std::time::Duration::from_secs(5))
+                .map_err(|e| e.to_string())?;
+            self.run_reader = Some(conn);
+        }
+        latest_run_events(self.run_reader.as_ref().expect("opened above"), board_id)
+    }
+
     /// Build the chips from the last reads and the app's live turns.
     pub(super) fn rebuild_chips(&mut self, cx: &gpui::App) {
         let running = super::turns::running_links(cx);
@@ -573,6 +606,9 @@ impl super::BoardView {
 
     /// Look the board's PR and worktree links up on the background executor.
     pub(super) fn refresh_link_status(&mut self, cx: &mut gpui::Context<Self>) {
+        if !self.visible {
+            return;
+        }
         self.status_board = self.open_board_id.clone();
         self.status_lookups += 1;
         let card_projects: HashMap<String, Vec<String>> = self

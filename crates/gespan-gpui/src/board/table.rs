@@ -27,7 +27,8 @@ pub(crate) const MIN_COLUMN: i64 = 60;
 
 /// The built-in columns as (id, label, default width). The agent fields
 /// (provider, model, run time) are computed from the card's linked sessions;
-/// cost has no source yet, so it isn't offered.
+/// their ids are the Tauri app's (ruling C5-q). `agent:cost` has no source
+/// yet, so it isn't offered or drawn, but a layout naming it keeps it.
 const COLUMNS: [(&str, &str, i64); 13] = [
     ("title", "Title", 320),
     ("status", "Status", 130),
@@ -39,9 +40,9 @@ const COLUMNS: [(&str, &str, i64); 13] = [
     ("estimate", "Estimate", 90),
     ("created", "Created", 100),
     ("updated", "Updated", 100),
-    ("provider", "Provider", 130),
-    ("model", "Model", 150),
-    ("runTime", "Run time", 90),
+    ("agent:provider", "Provider", 110),
+    ("agent:model", "Model", 130),
+    ("agent:runTime", "Run time", 90),
 ];
 const DEFAULT_COLUMNS: [&str; 5] = ["title", "status", "priority", "due", "labels"];
 const FIELD_WIDTH: i64 = 140;
@@ -97,17 +98,18 @@ impl BoardView {
             .collect()
     }
 
-    /// Show or hide a column. Title can't be hidden.
+    /// Show or hide a column. Title can't be hidden. The change is made to
+    /// the stored list, so ids this build doesn't know or draw (`agent:cost`,
+    /// a newer app's columns) stay where they are.
     pub(super) fn toggle_table_column(&mut self, column: &str, cx: &mut Context<Self>) {
         if column == "title" {
             return;
         }
         let spec = self.layout_spec();
-        let mut ids: Vec<String> = self
-            .table_columns(&spec)
-            .into_iter()
-            .map(|column| column.id)
-            .collect();
+        let mut ids: Vec<String> = spec
+            .columns
+            .clone()
+            .unwrap_or_else(|| DEFAULT_COLUMNS.iter().map(|id| id.to_string()).collect());
         match ids.iter().position(|id| id == column) {
             Some(at) => {
                 ids.remove(at);
@@ -132,7 +134,7 @@ impl BoardView {
         }
     }
 
-    fn column_menu_items(&self, spec: &LayoutSpec) -> Vec<crate::popover::MenuItem> {
+    pub(super) fn column_menu_items(&self, spec: &LayoutSpec) -> Vec<crate::popover::MenuItem> {
         let shown: Vec<String> = self
             .table_columns(spec)
             .into_iter()
@@ -381,11 +383,11 @@ impl BoardView {
                     now,
                 )))
                 .into_any_element(),
-            agent @ ("provider" | "model" | "runTime") => cell
+            agent @ ("agent:provider" | "agent:model" | "agent:runTime") => cell
                 .child(text(
                     self.agent
                         .get(&card.id)
-                        .and_then(|values| values.get(agent))
+                        .and_then(|values| values.get(&agent["agent:".len()..]))
                         .unwrap_or_default()
                         .to_string(),
                 ))

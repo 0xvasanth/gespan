@@ -170,6 +170,8 @@ pub(crate) struct BoardView {
     /// view hides, so opening the board looks again.
     status_board: Option<String>,
     status_task: Option<Task<()>>,
+    /// A read connection for the latest run event per card.
+    run_reader: Option<rusqlite::Connection>,
     /// A load asked for a PR and worktree lookup.
     status_due: bool,
     /// How many lookups started, for tests.
@@ -377,6 +379,7 @@ impl BoardView {
             link_source: Arc::new(link_status::GitSource),
             status_board: None,
             status_task: None,
+            run_reader: None,
             status_due: false,
             status_lookups: 0,
             turns_seen: (Vec::new(), BTreeSet::new()),
@@ -473,6 +476,9 @@ impl BoardView {
     /// The view came on screen: start polling and show the latest data.
     pub(crate) fn shown(&mut self, cx: &mut Context<Self>) {
         self.visible = true;
+        // Coming on screen is opening the board: PRs and worktrees are looked
+        // up again, even after a reload that ran while it was hidden.
+        self.status_board = None;
         self.reload(cx);
     }
 
@@ -655,18 +661,13 @@ impl BoardView {
         };
         let link_rows = service.board_links(&board.id)?;
         let blocked = service.blocked(&board.id)?;
-        let mut last_events = HashMap::new();
-        for card_id in link_rows
-            .iter()
-            .filter(|link| link.kind == "session")
-            .map(|link| link.card_id.clone())
-            .collect::<BTreeSet<_>>()
-        {
-            let rows = service.activity(&board.id, Some(&card_id), 50)?;
-            last_events.extend(link_status::latest_event_by_card(
-                rows.iter().map(|row| (card_id.as_str(), row.kind.as_str())),
-            ));
-        }
+        // Only the "failed" chip state needs this; a read that fails leaves
+        // the chips without it rather than failing the whole board.
+        let last_events = self.read_run_events(&board.id).unwrap_or_else(|error| {
+            tracing::warn!(%error, "reading the board's run events failed");
+            self.run_reader = None;
+            HashMap::new()
+        });
         #[cfg(test)]
         if let Some(hook) = self.after_load_reads.as_mut() {
             hook();
@@ -713,7 +714,7 @@ impl BoardView {
         }
         self.board_settings = board_settings;
         self.settings_loaded = settings_loaded;
-        if self.status_board != self.open_board_id {
+        if self.visible && self.status_board != self.open_board_id {
             // The board opened (or another was picked): look PRs and
             // worktrees up once the load is done.
             self.status_due = true;

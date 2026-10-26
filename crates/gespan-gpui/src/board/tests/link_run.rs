@@ -276,9 +276,26 @@ fn link_status_looks_up_on_open_and_linked_settle_only_never_on_a_timer(cx: &mut
     assert_eq!(lookups(&f, cx), opened, "a start alone looks nothing up");
     settled(&f, cx, linked, true);
     assert_eq!(lookups(&f, cx), opened + 1);
-    // An hour passes (and the data poll runs): no lookup.
-    cx.executor().advance_clock(Duration::from_secs(3600));
-    cx.run_until_parked();
+    // An hour passes while other writes move the data version, so the poll
+    // reloads the board: still no lookup.
+    for minute in 0..60 {
+        Service::open(&f.db)
+            .unwrap()
+            .card_update(&card, &format!("Linked {minute}"), "")
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_secs(60));
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        detail(&f, cx)
+            .cards
+            .iter()
+            .find(|c| c.id == card)
+            .unwrap()
+            .title,
+        "Linked 59",
+        "the poll did reload"
+    );
     assert_eq!(lookups(&f, cx), opened + 1);
     // Opening the board again looks again.
     f.window
@@ -389,6 +406,14 @@ fn run_options(f: &Fixture, cx: &mut TestAppContext, project: &str) {
                 ],
                 default_provider: Some("claude".into()),
                 default_models: [("claude".to_string(), "opus".to_string())].into(),
+                models: [(
+                    "claude".to_string(),
+                    vec![
+                        ("opus".to_string(), "Opus".to_string()),
+                        ("sonnet".to_string(), "Sonnet".to_string()),
+                    ],
+                )]
+                .into(),
             });
             view.set_projects(vec![(project, "App".into())], cx);
         })
@@ -717,13 +742,214 @@ fn agent_fields_show_provider_model_cost_and_run_time(cx: &mut TestAppContext) {
     click(visual, "board-layout-table");
     f.window
         .update(visual, |view, _, cx| {
-            view.toggle_table_column("provider", cx);
-            view.toggle_table_column("model", cx);
-            view.toggle_table_column("runTime", cx);
+            view.toggle_table_column("agent:provider", cx);
+            view.toggle_table_column("agent:model", cx);
+            view.toggle_table_column("agent:runTime", cx);
         })
         .unwrap();
-    assert!(shown(visual, "board-table-cell-provider-1"));
-    assert!(shown(visual, "board-table-cell-model-1"));
-    assert!(shown(visual, "board-table-cell-runTime-1"));
-    assert!(!shown(visual, "board-table-cell-cost-1"));
+    assert!(shown(visual, "board-table-cell-agent:provider-1"));
+    assert!(shown(visual, "board-table-cell-agent:model-1"));
+    assert!(shown(visual, "board-table-cell-agent:runTime-1"));
+    assert!(!shown(visual, "board-table-cell-agent:cost-1"));
+}
+
+#[gpui::test]
+fn agent_columns_use_tauri_ids_and_toggling_keeps_ids_native_does_not_draw(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded(cx, &["Agent card"]);
+    let board = open_id(&f, cx);
+    let card = card_id(&f, cx, "Agent card");
+    let (_, key) = new_session(&f);
+    add_link(&f, &card, "session", &key);
+    // A layout the Tauri app saved, with a column from a newer build.
+    let spec = serde_json::to_string(&ViewSpec::default()).unwrap();
+    let saved = Service::open(&f.db)
+        .unwrap()
+        .view_create(
+            &board,
+            "Agents",
+            &spec,
+            r#"{"layout":"table","columns":["title","agent:provider","agent:cost","x:future","agent:runTime"]}"#,
+        )
+        .unwrap();
+    reload(&f, cx);
+    f.window
+        .update(cx, |view, _, cx| {
+            view.select_view(Some(saved.id.clone()), cx)
+        })
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    assert!(shown(visual, "board-table-cell-agent:provider-1"));
+    assert!(shown(visual, "board-table-cell-agent:runTime-1"));
+    assert!(
+        !shown(visual, "board-table-cell-agent:cost-1"),
+        "no cost source"
+    );
+    assert!(!shown(visual, "board-table-cell-x:future-1"));
+    f.window
+        .update(visual, |view, _, cx| {
+            view.toggle_table_column("priority", cx)
+        })
+        .unwrap();
+    assert_eq!(
+        layout_of(&f, visual)["columns"],
+        serde_json::json!([
+            "title",
+            "agent:provider",
+            "agent:cost",
+            "x:future",
+            "agent:runTime",
+            "priority"
+        ]),
+        "ids Native doesn't draw stay in place"
+    );
+    f.window
+        .update(visual, |view, _, cx| {
+            view.toggle_table_column("agent:provider", cx)
+        })
+        .unwrap();
+    assert_eq!(
+        layout_of(&f, visual)["columns"],
+        serde_json::json!([
+            "title",
+            "agent:cost",
+            "x:future",
+            "agent:runTime",
+            "priority"
+        ])
+    );
+    // The column menu offers the agent columns under the Tauri ids, not cost.
+    let offered: Vec<String> = drawer(&f, visual, |view, _| {
+        view.column_menu_items(&view.layout_spec())
+            .into_iter()
+            .filter_map(|item| match item {
+                crate::popover::MenuItem::Action(action) => Some(action.id.to_string()),
+                _ => None,
+            })
+            .collect()
+    });
+    assert!(
+        offered.contains(&"column-agent:provider".to_string()),
+        "{offered:?}"
+    );
+    assert!(offered.contains(&"column-agent:model".to_string()));
+    assert!(offered.contains(&"column-agent:runTime".to_string()));
+    assert!(!offered.iter().any(|id| id.contains("cost")));
+}
+
+#[gpui::test]
+fn run_with_refuses_remote_projects(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    let card = card_id(&f, cx, "Card");
+    run_options(&f, cx, "remote://env-1/app");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let (seen, _subscription) = events(&f, visual);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-run-with");
+    // The remote project isn't offered, and nothing defaults to it.
+    assert!(!shown(visual, "board-run-project-0"));
+    assert!(shown(visual, "board-run-no-project"));
+    drawer(&f, visual, |view, _| {
+        assert_eq!(view.run_picker.as_ref().unwrap().project, None)
+    });
+    click(visual, "board-run-start");
+    assert!(seen.borrow().is_empty(), "nothing starts");
+    // The shell refuses one too, before any session exists.
+    let before = f.store.lock().unwrap().sessions().unwrap().len();
+    let result = prepare_run(
+        &f.store,
+        &f.db,
+        &request(&card, Path::new("remote://env-1/app")),
+        run_settings(),
+    );
+    assert_eq!(
+        result.err().as_deref(),
+        Some("Run with… works with local projects for now")
+    );
+    assert_eq!(f.store.lock().unwrap().sessions().unwrap().len(), before);
+}
+
+#[gpui::test]
+fn run_with_picker_defaults_to_a_shown_project_and_offers_known_models(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    let card = card_id(&f, cx, "Card");
+    // The card is tagged with a project the workspace no longer has.
+    Service::open(&f.db)
+        .unwrap()
+        .set_projects(&card, &["/gone/project".into()])
+        .unwrap();
+    run_options(&f, cx, "/work/app");
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let (seen, _subscription) = events(&f, visual);
+    click(visual, "board-card-1");
+    click(visual, "board-drawer-run-with");
+    drawer(&f, visual, |view, _| {
+        assert_eq!(
+            view.run_picker.as_ref().unwrap().project.as_deref(),
+            Some("/work/app"),
+            "a project the picker shows"
+        )
+    });
+    assert!(shown(visual, "board-run-project-0"));
+    assert!(!shown(visual, "board-run-project-1"));
+    // The provider's known models are choices; picking one sets the model.
+    assert!(shown(visual, "board-run-model-0"));
+    assert!(shown(visual, "board-run-model-1"));
+    click(visual, "board-run-model-1");
+    click(visual, "board-run-start");
+    assert_eq!(
+        *seen.borrow(),
+        [format!("run:{card}:claude:sonnet:/work/app:false")]
+    );
+    // A provider with no known models offers only the typed field.
+    click(visual, "board-drawer-run-with");
+    click(visual, "board-run-provider-0");
+    assert!(!shown(visual, "board-run-model-0"));
+    assert!(shown(visual, "board-run-model"));
+}
+
+#[gpui::test]
+fn returning_to_the_board_after_run_with_looks_link_status_up(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Card"]);
+    let card = card_id(&f, cx, "Card");
+    add_link(&f, &card, "worktree", "/work/wt");
+    look_up_with(&f, cx, FakeSource::default());
+    let opened = lookups(&f, cx);
+    // "Run with…" switches to the new session: the board hides, and the
+    // shell reloads it once the card is linked.
+    f.window
+        .update(cx, |view, _, cx| {
+            view.hidden(cx);
+            view.reload(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(lookups(&f, cx), opened, "nothing looked up while hidden");
+    f.window.update(cx, |view, _, cx| view.shown(cx)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(lookups(&f, cx), opened + 1, "coming back looks again");
+}
+
+#[gpui::test]
+fn a_failure_behind_many_newer_activity_rows_still_shows_failed(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Busy card"]);
+    install_turns(&f, cx);
+    let card = card_id(&f, cx, "Busy card");
+    let (session, key) = new_session(&f);
+    add_link(&f, &card, "session", &key);
+    started(&f, cx, session, None);
+    settled(&f, cx, session, false);
+    let mut service = Service::open(&f.db).unwrap();
+    for n in 0..60 {
+        service.add_comment(&card, &format!("note {n}")).unwrap();
+    }
+    let rows = service.activity(&open_id(&f, cx), Some(&card), 50).unwrap();
+    assert!(
+        rows.iter().all(|row| row.kind != "failed"),
+        "the failure is older than the newest 50 rows"
+    );
+    reload(&f, cx);
+    assert_eq!(states(&f, cx, &card), [LinkState::Failed]);
 }

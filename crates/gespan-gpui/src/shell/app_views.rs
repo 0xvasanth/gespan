@@ -324,7 +324,7 @@ impl Shell {
                 (path.clone(), name)
             })
             .collect();
-        let options = self.board_run_options();
+        let options = self.board_run_options(cx);
         board.update(cx, |board, cx| {
             board.set_projects(projects, cx);
             board.set_run_options(options);
@@ -333,8 +333,9 @@ impl Shell {
 
     /// What the Board's "Run with…" picker offers: every provider, starting
     /// on the user's usual provider and its model for the current project.
-    fn board_run_options(&self) -> board::run_with::RunOptions {
+    fn board_run_options(&self, cx: &App) -> board::run_with::RunOptions {
         let preferences = &self.workspace.preferences;
+        let accounts = crate::accounts::get(cx);
         let project = preferences.project_providers.get(&self.workspace.project);
         board::run_with::RunOptions {
             providers: Kind::ALL
@@ -349,6 +350,24 @@ impl Shell {
                         .and_then(|project| project.models.get(kind.id()))
                         .or(preferences.default_models.get(kind.id()))?;
                     Some((kind.id().to_string(), model.clone()))
+                })
+                .collect(),
+            // The catalogs already read; nothing is fetched for the picker.
+            models: Kind::ALL
+                .iter()
+                .filter_map(|kind| {
+                    let account = accounts
+                        .as_ref()
+                        .map(|accounts| accounts.read(cx).selected(*kind, &self.workspace.project))
+                        .unwrap_or_default();
+                    let models = gespan_core::catalog::cached_models_for(*kind, &account)?;
+                    Some((
+                        kind.id().to_string(),
+                        models
+                            .into_iter()
+                            .map(|model| (model.id, model.name))
+                            .collect(),
+                    ))
                 })
                 .collect(),
         }
@@ -378,8 +397,7 @@ impl Shell {
         if request.new_worktree {
             super::automation_runs::WorktreeChoice::New.apply(&mut settings);
         }
-        let store = self.store.clone();
-        let db_path = match locked(&store) {
+        let db_path = match locked(&self.store) {
             Ok(store) => store.database_path().to_path_buf(),
             Err(error) => {
                 self.error = Some(error);
@@ -387,6 +405,18 @@ impl Shell {
                 return;
             }
         };
+        self.start_card_run_at(request, settings, db_path, cx);
+    }
+
+    /// `start_card_run` against the board tables at `db_path`.
+    pub(super) fn start_card_run_at(
+        &mut self,
+        request: board::run_with::RunRequest,
+        settings: gespan_core::agent::Settings,
+        db_path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let store = self.store.clone();
         self.navigation_revision += 1;
         let revision = self.navigation_revision;
         let work = cx.background_executor().spawn(async move {
@@ -404,8 +434,12 @@ impl Shell {
                             .update(cx, |view, _| view.summary.work_item = Some(linked));
                     }
                     let (prompt, settings) = (run.prompt, run.settings);
-                    this.sessions[&id]
-                        .update(cx, |view, cx| view.quick_submit(prompt, settings, cx));
+                    #[cfg(test)]
+                    card_run_submits::record(id, &prompt);
+                    if !card_run_submits::captured() {
+                        this.sessions[&id]
+                            .update(cx, |view, cx| view.quick_submit(prompt, settings, cx));
+                    }
                     if this.navigation_revision == revision {
                         this.activate_session(id, window, cx);
                     }
@@ -738,5 +772,171 @@ impl Shell {
             });
         })
         .detach();
+    }
+}
+
+/// Tests read what a card run would hand `quick_submit` instead of launching a
+/// provider. Outside tests nothing is captured.
+mod card_run_submits {
+    #[cfg(test)]
+    thread_local! {
+        pub(super) static SUBMITS: std::cell::RefCell<Option<Vec<(i64, String)>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    #[cfg(test)]
+    pub(super) fn record(id: i64, prompt: &str) {
+        SUBMITS.with(|submits| {
+            if let Some(submits) = submits.borrow_mut().as_mut() {
+                submits.push((id, prompt.to_string()));
+            }
+        });
+    }
+
+    #[cfg(test)]
+    pub(super) fn captured() -> bool {
+        SUBMITS.with(|submits| submits.borrow().is_some())
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn captured() -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod card_run_tests {
+    use super::*;
+    use gespan_core::board::Service;
+    use gpui::TestAppContext;
+
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A board database with one card, in a folder that is also the project.
+    fn board(name: &str) -> (Scratch, std::path::PathBuf, String) {
+        let dir =
+            std::env::temp_dir().join(format!("gespan-card-run-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("gespan.db");
+        let mut service = Service::open(&db).unwrap();
+        let board = service.create("Work").unwrap();
+        let column = service.get(&board.id).unwrap().columns[0].id.clone();
+        let card = service
+            .card_create(&column, "Ship login", "Make the form work.")
+            .unwrap();
+        (Scratch(dir), db, card.id)
+    }
+
+    fn request(card: &str, project: &std::path::Path) -> board::run_with::RunRequest {
+        board::run_with::RunRequest {
+            card_id: card.into(),
+            provider: "claude".into(),
+            model: Some("opus".into()),
+            project: project.to_string_lossy().into_owned(),
+            new_worktree: false,
+        }
+    }
+
+    fn capture() {
+        card_run_submits::SUBMITS.with(|submits| *submits.borrow_mut() = Some(Vec::new()));
+    }
+
+    fn submits() -> Vec<(i64, String)> {
+        card_run_submits::SUBMITS.with(|submits| submits.borrow().clone().unwrap_or_default())
+    }
+
+    #[gpui::test]
+    fn start_card_run_opens_and_starts_the_session_with_exactly_the_run_prompt(
+        cx: &mut TestAppContext,
+    ) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let (dir, db, card) = board("ok");
+        capture();
+        let before = window
+            .update(cx, |shell, _, cx| {
+                let before = shell.session_summaries.keys().copied().collect::<Vec<_>>();
+                shell.start_card_run_at(
+                    request(&card, &dir.0),
+                    gespan_core::agent::Settings::default(),
+                    db.clone(),
+                    cx,
+                );
+                before
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let (id, key) = window
+            .update(cx, |shell, _, _| {
+                let added: Vec<i64> = shell
+                    .session_summaries
+                    .keys()
+                    .copied()
+                    .filter(|id| !before.contains(id))
+                    .collect();
+                assert_eq!(added.len(), 1, "one session added");
+                let id = added[0];
+                assert!(shell.sessions.contains_key(&id));
+                assert_eq!(shell.workspace.active, Some(id), "and activated");
+                assert_eq!(shell.session_summaries[&id].provider, "claude");
+                assert!(shell.error.is_none());
+                let key = locked(&shell.store)
+                    .unwrap()
+                    .persisted_session_id(id)
+                    .unwrap();
+                (id, key)
+            })
+            .unwrap();
+        let mut service = Service::open(&db).unwrap();
+        let prompt = service.run_prompt(&card).unwrap();
+        assert_eq!(
+            submits(),
+            [(id, prompt)],
+            "quick_submit gets the run prompt"
+        );
+        assert!(
+            service
+                .card_links(&card)
+                .unwrap()
+                .iter()
+                .any(|link| link.kind == "session" && link.reference == key)
+        );
+    }
+
+    #[gpui::test]
+    fn start_card_run_failure_shows_an_error_and_leaves_no_session(cx: &mut TestAppContext) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let (dir, db, _) = board("fail");
+        capture();
+        let (before, stored) = window
+            .update(cx, |shell, _, cx| {
+                let before = shell.session_summaries.len();
+                let stored = locked(&shell.store).unwrap().sessions().unwrap().len();
+                // A card that doesn't exist: no prompt, so nothing starts.
+                shell.start_card_run_at(
+                    request("00000000-0000-0000-0000-000000000000", &dir.0),
+                    gespan_core::agent::Settings::default(),
+                    db.clone(),
+                    cx,
+                );
+                (before, stored)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                assert!(shell.error.is_some(), "the failure shows");
+                assert_eq!(shell.session_summaries.len(), before);
+                assert_eq!(
+                    locked(&shell.store).unwrap().sessions().unwrap().len(),
+                    stored
+                );
+            })
+            .unwrap();
+        assert!(submits().is_empty());
     }
 }
