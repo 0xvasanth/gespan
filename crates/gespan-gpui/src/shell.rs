@@ -1311,6 +1311,10 @@ impl Shell {
         if !self.order.contains(&id) {
             self.order.push(id);
         }
+        // Restored after a restart, a held session has no view state of its own.
+        if crate::hold::active(cx) {
+            self.refresh_session_mark(id, cx);
+        }
     }
     /// SessionPane's reviewUndoLocked: another running session shares the checkout.
     fn sync_review_locks(&mut self, cx: &mut Context<Self>) {
@@ -1351,7 +1355,10 @@ impl Shell {
         if focused || session.summary.archived {
             self.unseen_finished.remove(&id);
         }
-        let state = if busy {
+        // Held outranks the rest: a session left waiting is still busy.
+        let state = if self.held_mark(id, Some(session), cx) {
+            MarkState::Held
+        } else if busy {
             MarkState::Working
         } else if self.unseen_finished.contains(&id) {
             MarkState::Done

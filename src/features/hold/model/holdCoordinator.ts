@@ -52,6 +52,8 @@ export class HoldCoordinator {
   private interrupted = new Set<string>();
   private queue: ResumeQueue | null = null;
   private reasons = new Map<string, HoldReason>();
+  /** Resumed with a continuation whose turn hasn't been seen running yet. */
+  private resuming = new Set<string>();
   /** When the last hold began, once it has been resumed. */
   private lastHoldSince: number | undefined;
   /** Settlements of held turns, delivered once the session really stops. */
@@ -78,6 +80,19 @@ export class HoldCoordinator {
       this.reasons.has(sessionId) ||
       !!this.state?.sessions.some((s) => s.sessionId === sessionId)
     );
+  }
+
+  /**
+   * The session's held mark: stopped with something to continue on Resume,
+   * until its resumed turn begins. A session that was simply idle isn't
+   * marked, and one still finishing its step is working, not held.
+   */
+  isSessionMarked(sessionId: string): boolean {
+    if (this.resuming.has(sessionId)) return true;
+    const reason =
+      this.state?.sessions.find((s) => s.sessionId === sessionId)?.reason ??
+      this.reasons.get(sessionId);
+    return !!reason && reason !== "idle";
   }
 
   /**
@@ -151,6 +166,12 @@ export class HoldCoordinator {
     for (const id of this.queue?.runningIds() ?? []) {
       if (!present.has(id)) this.finishResumed(id);
     }
+    let unmarked = false;
+    for (const id of this.resuming) {
+      const session = sessions.find((s) => s.id === id);
+      if (!session || session.busy) unmarked = this.resuming.delete(id);
+    }
+    if (unmarked) this.host.changed(this.state);
     for (const s of sessions) {
       if (s.busy) {
         if (this.unsettled(s.id)) this.evaluate(s);
@@ -263,7 +284,10 @@ export class HoldCoordinator {
         const reason = this.reasons.get(id) ?? "idle";
         this.reasons.delete(id);
         this.interrupted.delete(id);
-        if (!this.host.resume(id, continuation(reason))) {
+        const prompt = continuation(reason);
+        const sent = this.host.resume(id, prompt);
+        if (sent && prompt) this.resuming.add(id);
+        if (!sent) {
           queue.finished(id);
           // Nothing more runs there: the held turn's own outcome stands.
           const deliver = this.deferred.get(id);

@@ -226,7 +226,9 @@ impl Shell {
             move |this, view, _: &SessionChanged, cx| {
                 if view.read(cx).busy {
                     // Its resumed turn began: from here it reports as usual.
-                    this.hold.reasons.remove(&id);
+                    if this.hold.reasons.remove(&id).is_some() {
+                        this.refresh_session_mark(id, cx);
+                    }
                 } else {
                     this.resumed_session_settled(id, cx);
                 }
@@ -269,8 +271,17 @@ impl Shell {
         if let Some(pilots) = self.pilots.clone() {
             pilots.update(cx, |pilots, cx| pilots.hold_changed(cx));
         }
+        self.refresh_hold_marks(cx);
         self.invalidate_chrome(cx);
         cx.notify();
+    }
+    /// Marks and composer notices follow the hold, which no view observes.
+    fn refresh_hold_marks(&mut self, cx: &mut Context<Self>) {
+        let ids: Vec<i64> = self.sessions.keys().copied().collect();
+        for id in ids {
+            self.refresh_session_mark(id, cx);
+            self.sessions[&id].update(cx, |_, cx| cx.notify());
+        }
     }
     /// After a restart the hold continues; nothing that was running survived.
     pub(super) fn restore_hold(&mut self, cx: &mut Context<Self>) {
@@ -394,6 +405,7 @@ impl Shell {
             self.hold.resume = None;
             self.hold.subscriptions.clear();
         }
+        self.refresh_hold_marks(cx);
     }
     fn resumed_session_settled(&mut self, id: i64, cx: &mut Context<Self>) {
         if self.hold.reasons.contains_key(&id) {
@@ -438,6 +450,19 @@ impl Shell {
                 .try_global::<Hold>()
                 .and_then(|hold| hold.0.as_ref())
                 .is_some_and(|state| state.sessions.iter().any(|s| s.session == id))
+    }
+    /// The sidebar and tab mark: stopped with something to continue on
+    /// Resume. A session that was simply idle isn't marked, and one still
+    /// finishing its step shows as working.
+    pub(super) fn held_mark(&self, id: i64, live: Option<&Conversation>, cx: &App) -> bool {
+        let reason = cx
+            .try_global::<Hold>()
+            .and_then(|hold| hold.0.as_ref())
+            .and_then(|state| state.sessions.iter().find(|s| s.session == id))
+            .and_then(|held| held.reason)
+            .or_else(|| self.hold.reasons.get(&id).copied())
+            .or_else(|| live.and_then(|view| view.held));
+        reason.is_some_and(|reason| reason != Reason::Idle)
     }
     fn queued_messages(&self, state: &HoldState, cx: &App) -> usize {
         let pilot_views = self
@@ -908,6 +933,132 @@ mod tests {
                 assert!(!shell.session_held(ids[0], Some(view.read(cx)), cx));
             })
             .unwrap();
+    }
+
+    fn mark(window: WindowHandle<Shell>, id: i64, cx: &mut TestAppContext) -> MarkState {
+        window
+            .update(cx, |shell, _, cx| shell.session_marks[&id].read(cx).state())
+            .unwrap()
+    }
+    fn notice(window: WindowHandle<Shell>, id: i64, cx: &mut TestAppContext) -> bool {
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&id].read(cx).hold_notice_shown(cx)
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn restored_sessions_are_marked_held_until_their_resumed_turn_begins(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let ids = sessions(&store, 2);
+        // Quit while on hold: one was interrupted, one was idle.
+        let mut state = HoldState::new(1);
+        state.track(ids[0], false);
+        state.track(ids[1], false);
+        state.settle(ids[1], Reason::Idle, 2, None, vec![]);
+        store.save_hold(&state).unwrap();
+        let window = shell(store, cx);
+        window
+            .update(cx, |shell, _, cx| {
+                for &id in &ids {
+                    load(shell, id, cx);
+                }
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            mark(window, ids[0], cx),
+            MarkState::Held,
+            "no view state, still held"
+        );
+        assert_eq!(
+            mark(window, ids[1], cx),
+            MarkState::Idle,
+            "nothing to continue"
+        );
+        assert!(notice(window, ids[0], cx));
+        assert!(!notice(window, ids[1], cx));
+
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&ids[0]].update(cx, |view, _| {
+                    view.summary.provider = "fixture".into();
+                    view.hold_history_for_test();
+                });
+                shell.resume_all(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            mark(window, ids[0], cx),
+            MarkState::Held,
+            "its continuation hasn't started"
+        );
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&ids[0]].update(cx, |view, cx| {
+                    view.busy = true;
+                    cx.emit(SessionChanged);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(mark(window, ids[0], cx), MarkState::Working);
+        assert!(!notice(window, ids[0], cx));
+    }
+
+    #[gpui::test]
+    fn a_settling_session_works_until_it_reaches_its_safe_point(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let ids = sessions(&store, 2);
+        let window = shell(store, cx);
+        busy_and_idle(window, &ids, cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&ids[0]].update(cx, |_, cx| cx.emit(SessionChanged));
+                shell.hold_all(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            mark(window, ids[0], cx),
+            MarkState::Working,
+            "a command is running"
+        );
+        assert!(!notice(window, ids[0], cx));
+        assert_eq!(mark(window, ids[1], cx), MarkState::Idle);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&ids[0]]
+                    .update(cx, |view, cx| view.hold_point(HoldPoint::AwaitingInput, cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(mark(window, ids[0], cx), MarkState::Held);
+        assert!(notice(window, ids[0], cx));
+    }
+
+    #[gpui::test]
+    fn the_held_notice_shows_above_the_composer(cx: &mut TestAppContext) {
+        let (window, a, b) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                cx.set_global(Hold(Some({
+                    let mut state = HoldState::new(1);
+                    state.track(a, false);
+                    state.track(b, false);
+                    state.settle(a, Reason::Interrupted, 2, None, vec![]);
+                    state.settle(b, Reason::Interrupted, 2, None, vec![]);
+                    state.refresh_phase();
+                    state
+                })));
+                shell.hold_state_changed(cx);
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("hold-notice").is_some());
     }
 
     #[gpui::test]

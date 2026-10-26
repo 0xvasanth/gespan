@@ -365,3 +365,10 @@ it("keeps rapid sends out of the queue and steer interface", () => {
   ).toBeNull();
   expect(container.textContent).not.toContain("Steer");
 });
+
+it("shows the held notice above the composer only while held", () => {
+  render({ ...props(), held: true });
+  expect(container.textContent).toContain("Held · continues on Resume");
+  render(props());
+  expect(container.textContent).not.toContain("Held · continues on Resume");
+});

@@ -1,4 +1,4 @@
-import { GripVertical, X } from "../../../shared/ui/icons";
+import { GripVertical, Pause, X } from "../../../shared/ui/icons";
 import { useSessionSnapshot } from "../model/sessionStateStore";
 import {
   memo,
@@ -130,6 +130,8 @@ export type SessionPaneProps = {
   session: Session;
   workspaceSwitchingSessionId?: string;
   reviewUndoLocked?: boolean;
+  /** Stopped by Hold with something to continue on Resume. */
+  held?: boolean;
   visible: boolean;
   focused: boolean;
   addToChatTarget?: boolean;
@@ -310,6 +312,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
   session,
   workspaceSwitchingSessionId,
   reviewUndoLocked = false,
+  held = false,
   visible,
   focused,
   addToChatTarget = focused,
@@ -650,6 +653,12 @@ const LocalSessionPane = memo(function LocalSessionPane({
     (!draftBlock && (!isEmpty || inSplit || !!session.inboxAsk || !!agent));
   const composerDockMotion = useComposerDockMotion(dockComposer);
   const draftRef = useRef<string | undefined>(getComposerDraft(session.id));
+  const holdNotice = held ? (
+    <div className="mb-1.5 flex items-center gap-2 rounded-[10px] bg-content/5 px-3 py-1.5 text-[12px] text-content/60">
+      <Pause className="size-3.5" strokeWidth={1.75} aria-hidden />
+      <span>Held · continues on Resume</span>
+    </div>
+  ) : null;
   const composer = (
     <Composer
       key={session.id}
@@ -932,6 +941,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                         ref={composerDockMotion.centeredRef}
                         data-session-composer
                       >
+                        {holdNotice}
                         {composer}
                       </div>
                     )
@@ -1148,6 +1158,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
               inert={btw.open}
               className="mx-auto w-full max-w-4xl shrink-0"
             >
+              {holdNotice}
               {agent ? (
                 <>
                   <MessageQueue

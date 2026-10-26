@@ -1246,6 +1246,18 @@ function Workspace({
   useEffect(() => {
     holdRef.current.sync();
   }, [sessions]);
+  // Sessions held with something to continue, for the sidebar and panes.
+  const heldSessionIds = useMemo(
+    () =>
+      new Set(
+        sessions
+          .filter((s) => holdRef.current.isSessionMarked(s.id))
+          .map((s) => s.id),
+      ),
+    // The coordinator lives in a ref; its version changes with the hold.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessions, holdApi.version],
+  );
   useEffect(() => {
     // Resume lifts the hold: queued orchestration work may start again.
     if (holdApi.phase === null) orchestrator.wake();
@@ -13921,6 +13933,7 @@ function Workspace({
           <SessionPane
             {...sessionPaneProps}
             session={pilotShownSessionPane}
+            held={heldSessionIds.has(pilotShownSessionPane.id)}
             // The Pilot view covers the workspace, so a review opens
             // beside the chat rather than in a hidden tab.
             onOpenDiff={onOpenPilotDiff}
@@ -14377,6 +14390,7 @@ function Workspace({
       sessions={sidebarHistory}
       busySessionIds={busySessionIds}
       approvalSessionIds={approvalSessionIds}
+      heldSessionIds={heldSessionIds}
       activeSessionId={activeSessionId}
       status={historyFailed ? "error" : "idle"}
       pending={historyPending}
@@ -14797,6 +14811,7 @@ function Workspace({
                                         <SessionPane
                                           {...sessionPaneProps}
                                           session={session}
+                                          held={heldSessionIds.has(session.id)}
                                           visible={visible}
                                           focused={
                                             visible &&
@@ -14916,6 +14931,7 @@ function Workspace({
                             <SessionPane
                               {...sessionPaneProps}
                               session={session}
+                              held={heldSessionIds.has(session.id)}
                               visible={visible}
                               focused={visible}
                               inSplit={false}

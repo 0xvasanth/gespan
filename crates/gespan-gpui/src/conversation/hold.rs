@@ -36,6 +36,42 @@ impl Conversation {
         }
         self.settle_hold(Reason::Idle, cx);
     }
+    /// Held with something to continue: interrupted, waiting or restarted.
+    pub(crate) fn hold_notice_shown(&self, cx: &gpui::App) -> bool {
+        let Some(state) = cx
+            .try_global::<crate::hold::Hold>()
+            .and_then(|h| h.0.as_ref())
+        else {
+            return false;
+        };
+        let reason = state
+            .sessions
+            .iter()
+            .find(|s| s.session == self.summary.id)
+            .and_then(|held| held.reason)
+            .or(self.held);
+        reason.is_some_and(|reason| reason != Reason::Idle)
+    }
+    /// A thin line above the composer while this session is held.
+    pub(super) fn hold_notice(&self, cx: &gpui::App) -> Option<AnyElement> {
+        self.hold_notice_shown(cx).then(|| {
+            div()
+                .debug_selector(|| "hold-notice".into())
+                .mb(px(6.))
+                .px(px(12.))
+                .py(px(6.))
+                .rounded(px(10.))
+                .bg(content(0.05))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .text_size(px(12.))
+                .text_color(content(0.6))
+                .child(icon("queue-pause", 13.))
+                .child("Held · continues on Resume")
+                .into_any_element()
+        })
+    }
     /// The provider loop reported where the held turn came to rest.
     pub(crate) fn hold_point(&mut self, point: HoldPoint, cx: &mut Context<Self>) {
         // After Resume the turn was released; a late report means nothing.

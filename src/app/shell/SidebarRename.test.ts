@@ -2331,3 +2331,23 @@ it("labels preserved sessions as having no branch selected", () => {
   expect(card().textContent).not.toContain("No branch selected");
   expect(card().textContent).toContain("project/main");
 });
+
+describe("held sessions", () => {
+  it("marks a held session Held, ahead of Working", () => {
+    props = { ...props, heldSessionIds: new Set(["session-1"]) };
+    act(render);
+    const held = card().querySelector('[aria-label="Held"]');
+    expect(held).not.toBeNull();
+    expect(card().textContent).toContain("Held");
+    expect(card().textContent).not.toContain("Working...");
+  });
+
+  it("shows Working again once the session is no longer held", () => {
+    props = { ...props, heldSessionIds: new Set(["session-1"]) };
+    act(render);
+    props = { ...props, heldSessionIds: new Set() };
+    act(render);
+    expect(card().querySelector('[aria-label="Held"]')).toBeNull();
+    expect(card().textContent).toContain("Working...");
+  });
+});

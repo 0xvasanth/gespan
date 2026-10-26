@@ -183,4 +183,39 @@ describe("HoldCoordinator", () => {
     expect(hold.isSessionHeld("a")).toBe(true);
     expect(hold.isSessionHeld("other")).toBe(false);
   });
+
+  it("marks sessions with something to continue, until their resumed turn begins", () => {
+    const fake = host([session("a", true), session("b")]);
+    const hold = new HoldCoordinator(fake);
+    hold.observe("a", tool("c1"));
+    hold.toggle();
+    expect(hold.isSessionMarked("a")).toBe(false);
+    expect(hold.isSessionMarked("b")).toBe(false);
+    hold.observe("a", tool("c1", "completed"));
+    fake.list[0].busy = false;
+    hold.sync();
+    expect(hold.phase()).toBe("onHold");
+    expect(hold.isSessionMarked("a")).toBe(true);
+    expect(hold.isSessionMarked("b")).toBe(false);
+    // Resume: the continuation is sent, but the turn hasn't begun yet.
+    fake.resume = (id, prompt) => {
+      fake.resumed.push([id, prompt]);
+      return true;
+    };
+    hold.toggle();
+    expect(hold.isSessionMarked("a")).toBe(true);
+    fake.list[0].busy = true;
+    hold.sync();
+    expect(hold.isSessionMarked("a")).toBe(false);
+  });
+
+  it("marks a session restored after a restart", () => {
+    let state = track(newHold(1), "a", false);
+    state = track(state, "b", false);
+    state = settle(state, "b", "idle", 2);
+    saveHold(state);
+    const hold = new HoldCoordinator(host([session("a"), session("b")]));
+    expect(hold.isSessionMarked("a")).toBe(true);
+    expect(hold.isSessionMarked("b")).toBe(false);
+  });
 });

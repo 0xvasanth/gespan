@@ -23,12 +23,13 @@ export function useHold(actions: HoldActions) {
     });
   }
   const hold = coordinatorRef.current;
-  const [, setVersion] = useState(0);
+  const [version, setVersion] = useState(0);
   useEffect(() => {
     changedRef.current = () => setVersion((v) => v + 1);
     return () => {
       changedRef.current = () => undefined;
     };
   }, []);
-  return { hold, phase: hold.phase() };
+  // Changes whenever the hold does, for memoised views of it.
+  return { hold, phase: hold.phase(), version };
 }
