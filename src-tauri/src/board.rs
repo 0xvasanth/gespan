@@ -1503,14 +1503,22 @@ pub fn board_run_prompt(store: State<'_, SessionStore>, card_id: String) -> Resu
 }
 
 /// The session's own "may change ticket status" override, or null when it
-/// follows its boards.
+/// follows its boards. A failed read is an error, so the chip can say so
+/// instead of showing "Board default".
 #[tauri::command(async)]
 pub fn board_session_status_setting(
     store: State<'_, SessionStore>,
     session_key: String,
 ) -> Result<Option<bool>, String> {
+    read_session_status_setting(&store, &session_key)
+}
+
+fn read_session_status_setting(
+    store: &SessionStore,
+    session_key: &str,
+) -> Result<Option<bool>, String> {
     let conn = store.lock_conn()?;
-    Ok(session_status_setting(&conn, &session_key))
+    session_status_setting(&conn, session_key)
 }
 
 /// Sets the session's override; null follows its boards again.
@@ -2066,6 +2074,31 @@ mod tests {
         move_card(&conn, &card.id, &detail.columns[1].id, 0, "user").unwrap();
         delete_card(&conn, &card.id).unwrap();
         assert!(store::list_comments(&conn, &card.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_status_setting_command_reports_a_failed_read_instead_of_board_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_store = SessionStore::open(dir.path().join("gespan.db")).unwrap();
+        {
+            let conn = session_store.lock_conn().unwrap();
+            ensure_tables(&conn).unwrap();
+            set_session_status_setting(&conn, "s1", Some(false)).unwrap();
+        }
+        assert_eq!(
+            read_session_status_setting(&session_store, "s1"),
+            Ok(Some(false))
+        );
+        assert_eq!(read_session_status_setting(&session_store, "s2"), Ok(None));
+
+        session_store
+            .lock_conn()
+            .unwrap()
+            .execute_batch("ALTER TABLE board_session_settings RENAME TO moved")
+            .unwrap();
+        // Both a saved override and a session with none fail, never null.
+        assert!(read_session_status_setting(&session_store, "s1").is_err());
+        assert!(read_session_status_setting(&session_store, "s2").is_err());
     }
 
     #[test]

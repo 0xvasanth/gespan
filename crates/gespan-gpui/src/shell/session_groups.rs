@@ -3793,13 +3793,61 @@ mod tests {
                 })
                 .unwrap();
             cx.run_until_parked();
-            assert_eq!(read(), saved, "{action}");
+            assert_eq!(read(), Ok(saved), "{action}");
             window
                 .update(cx, |shell, _, cx| {
                     assert_eq!(status_choices(shell, a, cx), choices(checked), "{action}")
                 })
                 .unwrap();
         }
+    }
+
+    #[gpui::test]
+    fn a_failed_status_setting_read_shows_the_error_not_board_default(cx: &mut TestAppContext) {
+        let (window, a, _) = setup(cx);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let store = {
+            let store = gespan_core::store::Store::open(&path).unwrap();
+            while store.create("codex", "/work/gespan").unwrap().id < a {}
+            Arc::new(Mutex::new(store))
+        };
+        window
+            .update(cx, |shell, _, _| shell.store = store.clone())
+            .unwrap();
+        fake_tickets(window, cx, &[Tracker::Linear]);
+        submit_link(window, cx, a, "ENG-7");
+        window
+            .update(cx, |shell, w, cx| {
+                shell.run_menu(MenuTarget::Session(a), "ticket-status:off", None, w, cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // The board store opens, but the setting's table can't be read.
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE board_session_settings RENAME TO moved")
+            .unwrap();
+        let read_error = vec![("Couldn't read this setting".to_string(), false, true)];
+        window
+            .update(cx, |shell, _, cx| {
+                assert_eq!(status_choices(shell, a, cx), read_error)
+            })
+            .unwrap();
+
+        // Readable again: the saved "Off" is back.
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE moved RENAME TO board_session_settings")
+            .unwrap();
+        window
+            .update(cx, |shell, _, cx| {
+                let choices = status_choices(shell, a, cx);
+                assert_eq!(choices.len(), 3);
+                assert!(choices[2].0 == "Off" && choices[2].1);
+            })
+            .unwrap();
     }
 
     #[test]

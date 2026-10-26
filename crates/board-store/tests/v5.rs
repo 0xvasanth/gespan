@@ -145,7 +145,7 @@ fn v5_migration_is_idempotent_and_keeps_v4_views() {
         board_settings(&conn, &board.id).unwrap().icon.as_deref(),
         Some("bug")
     );
-    assert_eq!(session_status_setting(&conn, "s1"), Some(false));
+    assert_eq!(session_status_setting(&conn, "s1"), Ok(Some(false)));
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_templates"), 1);
 
     // A second connection opening the same file finds the work done.
@@ -616,15 +616,15 @@ fn session_override_wins_else_strictest_linked_board_else_on() {
     assert!(!may_change_ticket_status(&conn, "s1"));
 
     // The session override wins in both directions.
-    assert_eq!(session_status_setting(&conn, "s1"), None);
+    assert_eq!(session_status_setting(&conn, "s1"), Ok(None));
     set_session_status_setting(&conn, "s1", Some(true)).unwrap();
-    assert_eq!(session_status_setting(&conn, "s1"), Some(true));
+    assert_eq!(session_status_setting(&conn, "s1"), Ok(Some(true)));
     assert!(may_change_ticket_status(&conn, "s1"));
     set_session_status_setting(&conn, "s2", Some(false)).unwrap();
     assert!(!may_change_ticket_status(&conn, "s2"));
     // Back to following the boards.
     set_session_status_setting(&conn, "s1", None).unwrap();
-    assert_eq!(session_status_setting(&conn, "s1"), None);
+    assert_eq!(session_status_setting(&conn, "s1"), Ok(None));
     assert!(!may_change_ticket_status(&conn, "s1"));
     // Unlinking the strict card leaves only the open board.
     remove_link(&conn, &on_strict.id, "session", "s1").unwrap();
@@ -716,7 +716,9 @@ fn an_unreadable_session_override_refuses() {
     // When the override can't be read, the answer is no, never the boards'.
     conn.execute_batch("ALTER TABLE board_session_settings RENAME TO moved")
         .unwrap();
-    assert_eq!(session_status_setting(&conn, "s1"), None);
+    // The read itself reports the failure instead of "follows the boards".
+    assert!(session_status_setting(&conn, "s1").is_err());
+    assert!(session_status_setting(&conn, "s2").is_err());
     assert!(!may_change_ticket_status(&conn, "s1"));
     // That includes a session with no override that would otherwise be on.
     assert!(!may_change_ticket_status(&conn, "s2"));
@@ -725,6 +727,30 @@ fn an_unreadable_session_override_refuses() {
         .unwrap();
     assert!(!may_change_ticket_status(&conn, "s1"));
     assert!(may_change_ticket_status(&conn, "s2"));
+}
+
+#[test]
+fn a_failed_status_setting_read_is_an_error_not_follow_the_boards() {
+    let conn = fresh();
+    set_session_status_setting(&conn, "on", Some(true)).unwrap();
+    // No row at all is a real "follow the boards".
+    assert_eq!(session_status_setting(&conn, "none"), Ok(None));
+    assert_eq!(session_status_setting(&conn, "on"), Ok(Some(true)));
+
+    // A broken table: every session's read is an error, whatever it held.
+    conn.execute_batch("ALTER TABLE board_session_settings RENAME TO moved")
+        .unwrap();
+    for key in ["none", "on"] {
+        let error = session_status_setting(&conn, key).expect_err(key);
+        assert!(!error.is_empty(), "{key}");
+        assert!(!may_change_ticket_status(&conn, key), "{key}");
+    }
+
+    // Once readable again, the saved value comes back unchanged.
+    conn.execute_batch("ALTER TABLE moved RENAME TO board_session_settings")
+        .unwrap();
+    assert_eq!(session_status_setting(&conn, "on"), Ok(Some(true)));
+    assert_eq!(session_status_setting(&conn, "none"), Ok(None));
 }
 
 #[test]

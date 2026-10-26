@@ -406,11 +406,15 @@ fn override_of(conn: &Connection, session_key: &str) -> rusqlite::Result<Option<
         .map(|value| value != 0))
 }
 
-/// The session's own "may change ticket status" override; `None` when it
-/// follows its boards (or cannot be read: [`may_change_ticket_status`]
+/// The session's own "may change ticket status" override; `Ok(None)` when it
+/// follows its boards. A read that fails is an error, never `Ok(None)`, so a
+/// caller can't mistake it for "follow the boards" ([`may_change_ticket_status`]
 /// refuses in that case rather than falling back to the boards).
-pub fn session_status_setting(conn: &Connection, session_key: &str) -> Option<bool> {
-    override_of(conn, session_key).ok().flatten()
+pub fn session_status_setting(
+    conn: &Connection,
+    session_key: &str,
+) -> Result<Option<bool>, String> {
+    override_of(conn, session_key).map_err(db)
 }
 
 /// Sets the session's override, or with `None` makes it follow its boards.

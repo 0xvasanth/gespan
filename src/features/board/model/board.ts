@@ -876,7 +876,10 @@ export function getRunPrompt(cardId: string): Promise<string> {
   return invoke<string>("board_run_prompt", { cardId });
 }
 
-/** The session's own ticket-status override; null follows its boards. */
+/**
+ * The session's own ticket-status override; null follows its boards. Rejects
+ * when the setting can't be read, so a failed read never looks like null.
+ */
 export function getSessionStatusSetting(
   sessionKey: string,
 ): Promise<boolean | null> {

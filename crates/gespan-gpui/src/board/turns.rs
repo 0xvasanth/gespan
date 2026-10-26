@@ -257,12 +257,12 @@ pub(crate) fn turn_began(store: Database, session: i64, turn: u64, cx: &mut App)
 
 /// The session's own "Agent may change ticket status" choice: `Some(on)`,
 /// or `None` to follow its boards. An error when the board store can't be
-/// opened. (The store reads an unreadable override as `None`, so a failed
-/// read past opening still shows as following the boards.)
+/// opened or the setting can't be read, so the menu never shows a failed
+/// read as following the boards.
 pub(crate) fn status_setting(store: &Database, session: i64) -> Result<Option<bool>, String> {
     let key = session_key(store, session).ok_or("Session no longer exists")?;
     let path = locked(store)?.database_path().to_path_buf();
-    Ok(Service::open(&path)?.session_status_setting(&key))
+    Service::open(&path)?.session_status_setting(&key)
 }
 
 /// Saves the session's choice (`None`: follow the boards) and tells its

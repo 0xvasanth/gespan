@@ -514,14 +514,37 @@ mod tests {
             .unwrap();
         assert_eq!(
             native.session_status_setting("remote:env-1:s-9"),
-            Some(true)
+            Ok(Some(true))
         );
         assert!(native.may_change_ticket_status("remote:env-1:s-9"));
         native
             .set_session_status_setting("remote:env-1:s-9", None)
             .unwrap();
-        assert_eq!(native.session_status_setting("remote:env-1:s-9"), None);
+        assert_eq!(native.session_status_setting("remote:env-1:s-9"), Ok(None));
         assert!(native.set_session_status_setting(" ", Some(true)).is_err());
+    }
+
+    #[test]
+    fn an_unreadable_session_status_setting_is_an_error_through_the_service() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let mut service = Service::open(&path).unwrap();
+        service
+            .set_session_status_setting("s1", Some(true))
+            .unwrap();
+        assert_eq!(service.session_status_setting("s1"), Ok(Some(true)));
+        assert_eq!(service.session_status_setting("s2"), Ok(None));
+
+        // Another connection breaks the table under the open service.
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE board_session_settings RENAME TO moved")
+            .unwrap();
+        assert!(service.session_status_setting("s1").is_err());
+        assert!(service.session_status_setting("s2").is_err());
+        // The permission check still fails closed.
+        assert!(!service.may_change_ticket_status("s1"));
+        assert!(!service.may_change_ticket_status("s2"));
     }
 
     #[test]

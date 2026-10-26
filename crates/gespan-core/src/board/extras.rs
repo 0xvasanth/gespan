@@ -584,8 +584,10 @@ impl Service {
         store::run_prompt(&self.conn, card_id)
     }
 
-    /// The session's own "may change ticket status" override, if set.
-    pub fn session_status_setting(&mut self, session_key: &str) -> Option<bool> {
+    /// The session's own "may change ticket status" override, if set
+    /// (`Ok(None)`: it follows its boards). A failed read is an error, so it
+    /// never shows as following the boards.
+    pub fn session_status_setting(&mut self, session_key: &str) -> Result<Option<bool>, String> {
         store::session_status_setting(&self.conn, session_key)
     }
 

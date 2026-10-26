@@ -671,6 +671,17 @@ describe("C5 settings, template, label, field and agent wrappers", () => {
     },
   );
 
+  it("getSessionStatusSetting passes a failed read on, never as null", async () => {
+    invoke.mockRejectedValueOnce("no such table: board_session_settings");
+    await expect(getSessionStatusSetting("s1")).rejects.toBe(
+      "no such table: board_session_settings",
+    );
+    invoke.mockResolvedValueOnce(null);
+    await expect(getSessionStatusSetting("s1")).resolves.toBeNull();
+    invoke.mockResolvedValueOnce(false);
+    await expect(getSessionStatusSetting("s1")).resolves.toBe(false);
+  });
+
   it("leaves settings the patch does not name out of the payload", async () => {
     await updateBoardSettings("b1", { runWith: true });
     const [, payload] = invoke.mock.calls[0];
