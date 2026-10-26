@@ -1,9 +1,9 @@
 //! Finding and organising cards: the one query engine both apps call, the
 //! board-wide card index it reads, and saved views (`board_views`).
 //!
-//! The engine never reads the clock. Callers pass `now_ms` and their UTC
-//! offset, so date filters are the same in both apps and testable across
-//! midnight and DST changes.
+//! The engine never reads the clock or the time zone. Callers pass `now_ms`
+//! and a local-day function (normally [`local_day_chrono`]), so date filters
+//! are the same in both apps and testable across midnight and DST changes.
 use crate::meta::priority_of;
 use crate::now_millis;
 use crate::ops::{clean_text, db, new_id, write_tx};
@@ -50,6 +50,8 @@ pub struct SortSpec {
     pub dir: Dir,
 }
 
+/// `Manual` is column order, then position; it has no direction, so
+/// `manual` + `desc` gives the same order as `manual` + `asc`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SortKey {
@@ -99,7 +101,8 @@ struct Entry {
     body: String,
     role: Option<String>,
     has_links: bool,
-    /// Kind of the newest started/completed/failed activity row.
+    /// Kind of the newest started/completed/failed activity row for the
+    /// card, on any board (a card moved here keeps its history).
     last_run: Option<String>,
 }
 
@@ -245,7 +248,7 @@ fn load(conn: &Connection, board_id: &str, with_runs: bool) -> Result<Vec<Entry>
                SELECT card_id, kind, ROW_NUMBER() OVER (
                  PARTITION BY card_id ORDER BY created_at DESC, rowid DESC) AS newest
                FROM board_activity
-               WHERE board_id = ?1 AND card_id IS NOT NULL
+               WHERE card_id IN (SELECT id FROM board_cards WHERE board_id = ?1)
                  AND kind IN ('started', 'completed', 'failed'))
              WHERE newest = 1",
             board_id,
@@ -290,6 +293,8 @@ enum DueBucket {
     None,
 }
 
+/// `linked` values. `Failed` reads only the activity log: the newest run row
+/// is `failed`, whether or not the card still has links.
 #[derive(Clone, Copy)]
 enum Linked {
     Running,
@@ -424,15 +429,25 @@ fn compile(row: &FilterRow, facts: &BoardFacts) -> Option<Test> {
     (!empty).then_some(test)
 }
 
-/// The local day a moment falls on, for a fixed UTC offset.
-fn local_day(ms: i64, tz_offset_minutes: i32) -> i64 {
-    (ms + i64::from(tz_offset_minutes) * 60_000).div_euclid(DAY_MS)
+/// The local calendar day (days since 1970-01-01) a moment falls on in the
+/// machine's time zone, using the offset in force at that moment. A due date
+/// stored at local midnight under summer time stays on its own day when read
+/// in winter, which a single "today's offset" would get wrong.
+pub fn local_day_chrono(ms: i64) -> i64 {
+    use chrono::{Datelike, Local, TimeZone};
+    match Local.timestamp_millis_opt(ms).earliest() {
+        Some(at) => i64::from(at.date_naive().num_days_from_ce()) - DAYS_CE_TO_EPOCH,
+        None => ms.div_euclid(DAY_MS),
+    }
 }
+
+/// `num_days_from_ce` of 1970-01-01.
+const DAYS_CE_TO_EPOCH: i64 = 719_163;
 
 struct Now<'a> {
     ms: i64,
     today: i64,
-    tz_offset_minutes: i32,
+    local_day: &'a dyn Fn(i64) -> i64,
     running: &'a HashSet<String>,
 }
 
@@ -440,7 +455,7 @@ fn in_bucket(entry: &Entry, bucket: DueBucket, now: &Now<'_>) -> bool {
     let Some(due) = entry.row.due_at else {
         return matches!(bucket, DueBucket::None);
     };
-    let day = local_day(due, now.tz_offset_minutes) - now.today;
+    let day = (now.local_day)(due) - now.today;
     match bucket {
         DueBucket::Overdue => day < 0 && entry.role.as_deref() != Some("done"),
         DueBucket::Today => day == 0,
@@ -515,15 +530,22 @@ enum SortValue {
 }
 
 /// The ids of the board's live cards that match `spec`, in its order.
-/// `running` holds the cards whose linked session or Pilot runs now, which
-/// only the app knows. Filter values that no longer exist on the board are
-/// dropped, and a row left with none is ignored.
+///
+/// - `local_day` maps a moment (ms) to its local day number, DST-aware; due
+///   buckets compare `local_day(due)` with `local_day(now_ms)`. Apps pass
+///   [`local_day_chrono`]. The created/updated windows are plain durations
+///   back from `now_ms`.
+/// - `running` holds the cards whose linked session or Pilot runs now, which
+///   only the app knows.
+///
+/// Filter values that no longer exist on the board are dropped, and a row
+/// left with none is ignored.
 pub fn query_cards(
     conn: &Connection,
     board_id: &str,
     spec: &ViewSpec,
     now_ms: i64,
-    tz_offset_minutes: i32,
+    local_day: &dyn Fn(i64) -> i64,
     running: &HashSet<String>,
 ) -> Result<Vec<String>, String> {
     let needs_runs = spec.rows.iter().any(|row| row.field == "linked");
@@ -536,8 +558,8 @@ pub fn query_cards(
         .collect();
     let now = Now {
         ms: now_ms,
-        today: local_day(now_ms, tz_offset_minutes),
-        tz_offset_minutes,
+        today: local_day(now_ms),
+        local_day,
         running,
     };
     let query = spec.query.trim();

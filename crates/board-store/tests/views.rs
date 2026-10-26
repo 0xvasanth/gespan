@@ -47,7 +47,7 @@ fn row(field: &str, op: Op, values: &[&str]) -> FilterRow {
 }
 
 fn run(conn: &Connection, board: &Board, spec: &ViewSpec) -> Vec<String> {
-    run_at(conn, board, spec, MIDNIGHT_UTC, 0, &HashSet::new())
+    run_at(conn, board, spec, MIDNIGHT_UTC, &fixed(0), &HashSet::new())
 }
 
 fn run_at(
@@ -55,10 +55,24 @@ fn run_at(
     board: &Board,
     spec: &ViewSpec,
     now_ms: i64,
-    tz_offset_minutes: i32,
+    local_day: &dyn Fn(i64) -> i64,
     running: &HashSet<String>,
 ) -> Vec<String> {
-    query_cards(conn, &board.id, spec, now_ms, tz_offset_minutes, running).unwrap()
+    query_cards(conn, &board.id, spec, now_ms, local_day, running).unwrap()
+}
+
+/// A local-day function for a zone that never changes its UTC offset.
+fn fixed(offset_minutes: i64) -> impl Fn(i64) -> i64 {
+    move |ms| (ms + offset_minutes * 60_000).div_euclid(DAY)
+}
+
+fn utc(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> i64 {
+    chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .unwrap()
+        .and_hms_opt(hour, minute, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp_millis()
 }
 
 fn ids(cards: &[&Card]) -> Vec<String> {
@@ -204,13 +218,13 @@ fn due_buckets_use_local_days_across_midnight() {
     set_due(&conn, &cards[6].id, Some(local_midnight - 3 * DAY)).unwrap();
     move_card(&conn, &cards[6].id, &columns[3].id, 0, "user").unwrap(); // Done
     let running = HashSet::new();
-    let bucket = |value: &str, now: i64, offset: i32| {
+    let bucket = |value: &str, now: i64, offset: i64| {
         run_at(
             &conn,
             &board,
             &spec("", vec![row("due", Op::Is, &[value])]),
             now,
-            offset,
+            &fixed(offset),
             &running,
         )
     };
@@ -240,6 +254,131 @@ fn due_buckets_use_local_days_across_midnight() {
     assert_eq!(bucket("later", pacific, -420), ids(&[&cards[3], &cards[4]]));
 }
 
+/// US/Pacific in 2026: PST (UTC-8) until 10:00 UTC on Mar 8, PDT (UTC-7) after.
+fn pacific_2026(ms: i64) -> i64 {
+    let offset = if ms >= utc(2026, 3, 8, 10, 0) {
+        -420
+    } else {
+        -480
+    };
+    (ms + offset * 60_000).div_euclid(DAY)
+}
+
+#[test]
+fn due_buckets_use_each_dates_own_offset_across_dst() {
+    let conn = fresh();
+    let (board, _, cards) = board_with_cards(&conn, &["mar 9", "mar 8", "mar 2"]);
+    // Due dates are stored at local midnight under their own offset.
+    set_due(&conn, &cards[0].id, Some(utc(2026, 3, 9, 7, 0))).unwrap(); // Mar 9 00:00 PDT
+    set_due(&conn, &cards[1].id, Some(utc(2026, 3, 8, 8, 0))).unwrap(); // Mar 8 00:00 PST
+    set_due(&conn, &cards[2].id, Some(utc(2026, 3, 2, 8, 0))).unwrap(); // Mar 2 00:00 PST
+    let running = HashSet::new();
+    let bucket = |value: &str, now: i64, local_day: &dyn Fn(i64) -> i64| {
+        run_at(
+            &conn,
+            &board,
+            &spec("", vec![row("due", Op::Is, &[value])]),
+            now,
+            local_day,
+            &running,
+        )
+    };
+
+    // Viewing on Mar 1 (PST): Mar 9 is eight days out, so later. Reading it
+    // with Mar 1's offset would call it Mar 8 and put it in next7.
+    let mar_1_noon = utc(2026, 3, 1, 20, 0);
+    assert_eq!(
+        bucket("later", mar_1_noon, &pacific_2026),
+        ids(&[&cards[0]])
+    );
+    assert_eq!(
+        bucket("next7", mar_1_noon, &pacific_2026),
+        ids(&[&cards[1], &cards[2]])
+    );
+    assert_eq!(
+        bucket("next7", mar_1_noon, &fixed(-480)),
+        ids(&cards.iter().collect::<Vec<_>>())
+    );
+
+    // 01:00 PST on Mar 8, the day of the change: the card due Mar 9 is
+    // tomorrow (next7), not today, and the Mar 8 card is today.
+    let mar_8_early = utc(2026, 3, 8, 9, 0);
+    assert_eq!(
+        bucket("today", mar_8_early, &pacific_2026),
+        ids(&[&cards[1]])
+    );
+    assert_eq!(
+        bucket("next7", mar_8_early, &pacific_2026),
+        ids(&[&cards[0]])
+    );
+    assert_eq!(
+        bucket("overdue", mar_8_early, &pacific_2026),
+        ids(&[&cards[2]])
+    );
+    assert_eq!(
+        bucket("today", mar_8_early, &fixed(-480)),
+        ids(&[&cards[0], &cards[1]])
+    );
+    // Later the same day, after the change, nothing moves.
+    let mar_8_late = utc(2026, 3, 9, 6, 30); // 23:30 PDT
+    assert_eq!(
+        bucket("today", mar_8_late, &pacific_2026),
+        ids(&[&cards[1]])
+    );
+    assert_eq!(
+        bucket("next7", mar_8_late, &pacific_2026),
+        ids(&[&cards[0]])
+    );
+}
+
+#[test]
+fn local_day_chrono_counts_local_calendar_days() {
+    use chrono::{Local, NaiveDate, TimeZone};
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+    // Noon and the first minute of each day around both 2026 US changes fall
+    // on that local date, whatever zone the machine is in.
+    for (month, day) in [(3, 7), (3, 8), (3, 9), (10, 31), (11, 1), (11, 2)] {
+        let date = NaiveDate::from_ymd_opt(2026, month, day).unwrap();
+        let expected = (date - epoch).num_days();
+        for (hour, minute) in [(0, 0), (12, 0), (23, 59)] {
+            let local = date.and_hms_opt(hour, minute, 0).unwrap();
+            let ms = Local
+                .from_local_datetime(&local)
+                .earliest()
+                .unwrap()
+                .timestamp_millis();
+            assert_eq!(local_day_chrono(ms), expected, "{local}");
+        }
+    }
+    // Before the epoch too.
+    let old = NaiveDate::from_ymd_opt(1969, 12, 31)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let ms = Local
+        .from_local_datetime(&old)
+        .earliest()
+        .unwrap()
+        .timestamp_millis();
+    assert_eq!(local_day_chrono(ms), -1);
+}
+
+#[test]
+fn failed_state_follows_a_card_moved_from_another_board() {
+    let conn = fresh();
+    let (first, _, cards) = board_with_cards(&conn, &["fails"]);
+    add_link(&conn, &cards[0].id, "session", "s-1", None).unwrap();
+    record_card(&conn, &cards[0].id, "failed", None).unwrap();
+    let second = create_board(&conn, "Second").unwrap();
+    let moved = move_card_to_board(&conn, &cards[0].id, &second.id).unwrap();
+    let failed = spec("", vec![row("linked", Op::Is, &["failed"])]);
+    assert_eq!(run(&conn, &second, &failed), [moved.id.as_str()]);
+    assert!(run(&conn, &first, &failed).is_empty());
+    // A run on the new board settles it there.
+    record_card(&conn, &moved.id, "completed", None).unwrap();
+    assert!(run(&conn, &second, &failed).is_empty());
+}
+
 #[test]
 fn created_within_24h_and_7d() {
     let conn = fresh();
@@ -256,7 +395,7 @@ fn created_within_24h_and_7d() {
             &board,
             &spec("", vec![row(field, Op::Is, &[value])]),
             now,
-            330,
+            &fixed(330),
             &running,
         )
     };
@@ -277,7 +416,7 @@ fn created_within_24h_and_7d() {
             &board,
             &spec("", vec![row("created", Op::IsNot, &["7d"])]),
             now,
-            0,
+            &fixed(0),
             &running
         ),
         ids(&[&cards[3]])
@@ -313,7 +452,7 @@ fn linked_running_comes_from_the_caller_and_failed_from_activity() {
             &board,
             &spec("", vec![row("linked", Op::Is, &[value])]),
             MIDNIGHT_UTC,
-            0,
+            &fixed(0),
             &running,
         )
     };

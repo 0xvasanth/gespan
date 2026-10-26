@@ -43,8 +43,8 @@ pub use subtasks::{
     add_subtask, delete_subtask, list_subtasks, move_subtask, toggle_subtask, Subtask,
 };
 pub use views::{
-    card_index, create_view, delete_view, list_views, move_view, query_cards, update_view,
-    CardIndexRow, Dir, FilterRow, Op, SortKey, SortSpec, View, ViewSpec,
+    card_index, create_view, delete_view, list_views, local_day_chrono, move_view, query_cards,
+    update_view, CardIndexRow, Dir, FilterRow, Op, SortKey, SortSpec, View, ViewSpec,
 };
 
 pub fn now_millis() -> i64 {
