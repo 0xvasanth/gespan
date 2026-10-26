@@ -23,6 +23,7 @@ import type { KanbanBoardProps } from "./kanban/KanbanBoard";
 import type { ComponentProps as Props } from "react";
 import type { Swimlanes } from "./kanban/Swimlanes";
 import { BoardView } from "./BoardView";
+import { waitForSearch } from "./testBackend";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const events = vi.hoisted(() => ({
@@ -521,9 +522,7 @@ describe("link chips", () => {
 
   it("card_shows_one_chip_per_link_running_waiting_failed_completed", async () => {
     linkRows = [link("c1", "session", "s1", "primary"), link("c1", "session", "s2")];
-    handlers.board_activity = () => [
-      { id: "a1", boardId: "b1", cardId: "c2", kind: "failed", actor: "system", fromColumn: null, toColumn: null, detail: null, createdAt: 2 },
-    ];
+    handlers.board_latest_run_events = () => ({ c2: "failed" });
     await renderBoard({
       linkTargets: [
         target("session", "s1", "running"),
@@ -541,9 +540,7 @@ describe("link chips", () => {
 
   it("running beats waiting beats failed for a session link", async () => {
     linkRows = [link("c1", "session", "s5"), link("c1", "session", "s6")];
-    handlers.board_activity = () => [
-      { id: "a1", boardId: "b1", cardId: "c1", kind: "failed", actor: "system", fromColumn: null, toColumn: null, detail: null, createdAt: 2 },
-    ];
+    handlers.board_latest_run_events = () => ({ c1: "failed" });
     await renderBoard({
       linkTargets: [target("session", "s5", "running"), target("session", "s6", "completed")],
     });
@@ -651,6 +648,7 @@ describe("running set and refresh", () => {
     });
     const search = container.querySelector<HTMLInputElement>('input[aria-label="Search cards"]')!;
     await type(search, "o", false);
+    await waitForSearch();
     expect((lastArgs("board_query") as { running: string[] }).running).toEqual(["c1", "c2"]);
   });
 
@@ -665,6 +663,7 @@ describe("running set and refresh", () => {
     await renderBoard({ linkTargets: [target("session", "s1", "running")] });
     const search = container.querySelector<HTMLInputElement>('input[aria-label="Search cards"]')!;
     await type(search, "o", false);
+    await waitForSearch();
     expect((lastArgs("board_query") as { running: string[] }).running).toEqual(["c1"]);
     expect(alertText()).toBe("");
   });

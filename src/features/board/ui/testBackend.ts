@@ -5,6 +5,7 @@
 import { act } from "react";
 import { vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { SEARCH_DEBOUNCE_MS } from "./BoardView";
 import type {
   BoardCard,
   BoardColumn,
@@ -203,6 +204,9 @@ export function createTestBackend(
           }
         : { board: BOARD, columns: backend.columns, cards: backend.live() },
     board_activity: () => [],
+    board_links: () => [],
+    board_blocked: () => ({}),
+    board_latest_run_events: () => ({}),
     board_card_extras: () => backend.extras,
     board_labels: () => LABELS,
     board_subtasks: () => [],
@@ -280,6 +284,17 @@ export function createTestBackend(
     return handler((args ?? {}) as Record<string, unknown>);
   });
   return backend;
+}
+
+/**
+ * Waits out the search box's debounce, so the typed search has been asked
+ * for: by the clock, or by advancing fake timers when a test uses them.
+ */
+export async function waitForSearch() {
+  await act(async () => {
+    if (vi.isFakeTimers()) vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    else await new Promise((resolve) => setTimeout(resolve, SEARCH_DEBOUNCE_MS));
+  });
 }
 
 /** Lets pending promises (invoke answers, effects) settle inside `act`. */

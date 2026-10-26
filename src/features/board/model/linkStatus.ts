@@ -131,24 +131,3 @@ export function settledSince(
 export function extraKey(link: Pick<CardLinkRow, "kind" | "reference">): string {
   return `${link.kind}\n${link.reference}`;
 }
-
-/** The latest linked-work event per card, from newest-first activity rows. */
-export function latestEventByCard(
-  rows: readonly { cardId: string | null; kind: string }[],
-): Record<string, string> {
-  const events = new Set([
-    "started",
-    "needs_input",
-    "completed",
-    "failed",
-    "pr_opened",
-    "pr_merged",
-  ]);
-  const out: Record<string, string> = {};
-  for (const row of rows) {
-    if (row.cardId && events.has(row.kind) && !(row.cardId in out)) {
-      out[row.cardId] = row.kind;
-    }
-  }
-  return out;
-}

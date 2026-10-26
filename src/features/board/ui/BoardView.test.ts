@@ -24,6 +24,7 @@ import type { KanbanBoardProps } from "./kanban/KanbanBoard";
 import { LAYER } from "../../../shared/lib/layers";
 import { IS_MAC } from "../../../platform/tauri/platform";
 import { BoardView } from "./BoardView";
+import { waitForSearch } from "./testBackend";
 import { Sidebar } from "../../../app/shell/Sidebar";
 import {
   saveBoardCardOpen,
@@ -369,6 +370,7 @@ async function search(value: string) {
     setter.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
+  await waitForSearch();
   await flush();
 }
 
@@ -983,8 +985,7 @@ describe("BoardView linked work", () => {
     await flush();
     const dialog = document.querySelector("[data-card-drawer]")!;
     expect(dialog.textContent).toContain("Card #3");
-    // The board reads its recent activity as a whole (for link status); the
-    // drawer asks for this card's own.
+    // The drawer asks for this card's own activity.
     expect(
       commands("board_activity").map(([, args]) => args),
     ).toContainEqual(expect.objectContaining({ boardId: "b1", cardId: "c3" }));

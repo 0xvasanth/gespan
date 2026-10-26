@@ -12,6 +12,7 @@ import {
   createTestBackend,
   flush,
   type TestBackend,
+  waitForSearch,
 } from "../testBackend";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -139,6 +140,7 @@ async function search(value: string) {
     )!.set!.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
+  await waitForSearch();
   await flush();
   await flush();
 }

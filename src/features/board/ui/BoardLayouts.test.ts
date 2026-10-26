@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { IS_MAC } from "../../../platform/tauri/platform";
 import { BoardView } from "./BoardView";
+import { waitForSearch } from "./testBackend";
 import {
   BOARD,
   COLUMNS,
@@ -127,6 +128,7 @@ async function search(value: string) {
     container.querySelector<HTMLInputElement>('input[aria-label="Search cards"]')!,
     value,
   );
+  await waitForSearch();
   await flush();
 }
 

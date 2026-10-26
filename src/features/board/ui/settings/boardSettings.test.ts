@@ -16,6 +16,7 @@ import type {
 } from "../../model/board";
 import type { KanbanBoardProps } from "../kanban/KanbanBoard";
 import { BoardView } from "../BoardView";
+import { waitForSearch } from "../testBackend";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const events = vi.hoisted(() => ({
@@ -731,10 +732,12 @@ describe("board columns", () => {
       'input[aria-label="Search cards"]',
     )!;
     await type(search, "card 1", false);
+    await waitForSearch();
     // One of three shown; the limit (2) still compares against the total (3).
     expect(countOf("backlog")).toBe("1/3");
     expect(columnEl("backlog").querySelector("[data-wip-over]")).not.toBeNull();
     await type(search, "", false);
+    await waitForSearch();
     expect(countOf("backlog")).toBe("3/2");
   });
 

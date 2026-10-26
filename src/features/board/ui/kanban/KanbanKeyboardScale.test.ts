@@ -8,7 +8,12 @@ import type { BoardCard } from "../../model/board";
 import { ROW_HEIGHT } from "../../model/layout";
 import { CARD_ESTIMATE, CARD_GAP } from "../../model/windowing";
 import { BoardView } from "../BoardView";
-import { createTestBackend, flush, type TestBackend } from "../testBackend";
+import {
+  createTestBackend,
+  flush,
+  type TestBackend,
+  waitForSearch,
+} from "../testBackend";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const events = vi.hoisted(() => ({
@@ -196,6 +201,7 @@ async function search(value: string) {
     )!.set!.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
+  await waitForSearch();
   await flush();
   await flush();
 }
