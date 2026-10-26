@@ -227,6 +227,22 @@ function applyWritesInStore() {
   };
 }
 
+async function search(value: string) {
+  const input = container.querySelector<HTMLInputElement>(
+    'input[aria-label="Search cards"]',
+  )!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(() => new Promise((resolve) => setTimeout(resolve, 200)));
+  await flush();
+  await flush();
+}
+
 describe("windowed swimlanes", () => {
   it("lane_order_matches_the_native_rows_for_the_same_board", () => {
     // The fixed board both apps test (Native: board/tests/lanes_scale.rs):
@@ -512,6 +528,94 @@ describe("windowed swimlanes", () => {
   });
 });
 
+describe("swimlane focus across reloads and filters", () => {
+  it("a_reload_that_moves_the_focused_card_across_a_band_edge_keeps_focus_on_it", async () => {
+    seedLanes();
+    await renderBoard();
+    // Urgent/Backlog: k0, k2, k4, k6 in band 0; k8 opens band 1.
+    act(() => cardEl("k8")!.focus());
+    expect(focusedCard()).toBe("Lane Urgent/k8");
+    // The other app moves k0 to Review: k8 is now index 3, in band 0.
+    backend.cards = backend.cards.map((c) =>
+      c.id === "k0" ? { ...c, columnId: "review", position: 0 } : c,
+    );
+    await reload();
+    expect(cardEl("k8")!.getAttribute("aria-description")).toBe(
+      "4 of 199 in Urgent, Backlog",
+    );
+    expect(focusedCard()).toBe("Lane Urgent/k8");
+    key(cardEl("k8")!, "ArrowDown");
+    expect(focusedCard()).toBe("Lane Urgent/k10");
+  });
+
+  it("a_focused_lane_card_hidden_by_a_filter_moves_focus_to_the_nearest_card_in_its_cell", async () => {
+    // Medium/Backlog holds m0, m1, m2; High/Backlog holds h0 alone.
+    const add = (id: string, position: number, priority: number) => {
+      backend.cards.push(card(id, "backlog", position, backend.cards.length + 1, `Card ${id}`));
+      backend.extras[id] = extra({ priority });
+    };
+    backend.cards = [];
+    backend.extras = {};
+    add("m0", 0, 2);
+    add("m1", 1, 2);
+    add("m2", 2, 2);
+    add("h0", 3, 3);
+    await renderBoard();
+    await search("card");
+    const hide = async (id: string) => {
+      backend.cards = backend.cards.map((c) =>
+        c.id === id ? { ...c, title: "Hidden by the search" } : c,
+      );
+      await reload();
+    };
+    act(() => cardEl("m1")!.focus());
+    await hide("m1");
+    expect(cardEl("m1")).toBeNull();
+    // The card that took its place.
+    expect(focusedCard()).toBe("Lane Medium/m2");
+    await hide("m2");
+    // The last card of the cell: the one before it.
+    expect(focusedCard()).toBe("Lane Medium/m0");
+    // The only card of its cell: the lane's header.
+    act(() => cardEl("h0")!.focus());
+    await hide("h0");
+    expect(document.activeElement?.getAttribute("data-lane-label")).toBe("p3");
+    // Focus somewhere else is left alone.
+    act(() => cardEl("m0")!.focus());
+    const box = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search cards"]',
+    )!;
+    act(() => box.focus());
+    await hide("m0");
+    expect(document.activeElement).toBe(box);
+  });
+
+  it("lane_rows_start_where_the_measured_column_header_ends", async () => {
+    seedLanes();
+    await renderBoard();
+    // Lay the scroller out: 640px tall, with the first lane 80px below its
+    // top (not the default 52), as a taller column header would put it.
+    Object.defineProperty(scroller(), "clientHeight", { value: 640, configurable: true });
+    const rect = (top: number) =>
+      ({ x: 0, y: top, left: 0, top, width: 0, height: 0, right: 0, bottom: top, toJSON() {} }) as DOMRect;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element) {
+        if (this.matches("section[data-lane]") && this === scroller().querySelector("section[data-lane]")) {
+          return rect(80 - scroller().scrollTop);
+        }
+        return rect(0);
+      },
+    );
+    act(() => cardEl("k4")!.focus());
+    scrollTo(30 * FULL_BAND);
+    // k6 is band 0 (row 1, 36px down): revealing it scrolls to its top,
+    // counted from where the rows really start.
+    key(cardEl("k4")!, "ArrowDown");
+    expect(focusedCard()).toBe("Lane Urgent/k6");
+    expect(scroller().scrollTop).toBe(80 + LANE_HEADER_ESTIMATE);
+  });
+});
+
 // A drop with the pointer, on the component alone. happy-dom has no layout:
 // this stacks rows 400px apart (by their row index) and columns 300px apart.
 describe("pointer drops in lane bands", () => {
@@ -552,7 +656,7 @@ describe("pointer drops in lane bands", () => {
       toJSON() {},
     }) as DOMRect;
 
-  function stubGrid() {
+  function stubGrid(cols: readonly BoardColumn[] = columns) {
     const overlay = { rect: rect(0, 0, 0, 0) };
     const layout = function (this: Element): DOMRect {
       const row = this.closest("[data-lane-row]");
@@ -562,7 +666,7 @@ describe("pointer drops in lane bands", () => {
       // A row itself measures small, so the window keeps every row mounted.
       if (!segment) return rect(0, y, 1000, 60);
       const x =
-        columns.findIndex((c) => c.id === segment.getAttribute("data-lane-column")) *
+        cols.findIndex((c) => c.id === segment.getAttribute("data-lane-column")) *
         300;
       const slot = this.closest("[data-kanban-card]");
       if (!slot) return rect(x, y, 280, 400);
@@ -652,5 +756,35 @@ describe("pointer drops in lane bands", () => {
     await dragOnto(layout, "a8", "A|done|1");
     expect(onDrop).toHaveBeenLastCalledWith("a8", "A", "done");
     expect(onDrop).toHaveBeenCalledTimes(3);
+  });
+
+  it("pointer_drop_on_a_collapsed_column_strip_reports_that_column", async () => {
+    const withStrip = [...columns, { ...column("later", "Later", 2), collapsed: true }];
+    const onDrop = vi.fn();
+    const layout = stubGrid(withStrip);
+    act(() =>
+      root.render(
+        createElement(Swimlanes, {
+          columns: withStrip,
+          cards: [...cards, card("l0", "later", 0, 40, "L 0")],
+          lanes: [lanes[0], { ...lanes[1], cardIds: ["b0", "l0"] }],
+          renderCard: (c: BoardCard) => createElement("span", null, c.title),
+          renderColumnHeader: (c: BoardColumn) => createElement("span", null, c.name),
+          onDrop,
+          density: "compact",
+        }),
+      ),
+    );
+    // The strip mounts none of its cards, in any band.
+    expect(cardEl("l0")).toBeNull();
+    const strip = container.querySelector('[data-lane-band="A|later|1"]')!;
+    expect(strip.hasAttribute("data-column-collapsed")).toBe(true);
+    expect(strip.className).toContain("w-9");
+    await dragOnto(layout, "b0", "A|later|1");
+    expect(onDrop).toHaveBeenLastCalledWith("b0", "A", "later");
+    // From a lane card onto its own lane's strip.
+    await dragOnto(layout, "a3", "A|later|0");
+    expect(onDrop).toHaveBeenLastCalledWith("a3", "A", "later");
+    expect(onDrop).toHaveBeenCalledTimes(2);
   });
 });

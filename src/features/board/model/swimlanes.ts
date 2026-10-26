@@ -238,3 +238,44 @@ export function laneOrder(
   }
   return out;
 }
+
+/** Where focus goes in the lanes: a card in a lane, or the lane's header. */
+export type LaneRefocus = { lane: string; cardId: string | null };
+
+/**
+ * Where focus goes when the focused card `from` lost its element across a
+ * change of the lanes' cells (`before` → `after`): the same card if its lane
+ * still shows it (a reload that moved it to another band or column), else
+ * the nearest card that took its place in its old cell (next, then
+ * previous, widening), else that cell's first card, else the lane's header.
+ * Null when the lane itself is gone.
+ */
+export function laneRefocus(
+  from: { lane: string; cardId: string },
+  before: ReadonlyMap<string, readonly string[]>,
+  after: ReadonlyMap<string, readonly string[]>,
+  laneKeys: readonly string[],
+  columnIds: readonly string[],
+): LaneRefocus | null {
+  if (!laneKeys.includes(from.lane)) return null;
+  for (const column of columnIds) {
+    if (after.get(laneCellKey(from.lane, column))?.includes(from.cardId)) {
+      return { lane: from.lane, cardId: from.cardId };
+    }
+  }
+  for (const column of columnIds) {
+    const ids = before.get(laneCellKey(from.lane, column)) ?? [];
+    const at = ids.indexOf(from.cardId);
+    if (at < 0) continue;
+    const now = after.get(laneCellKey(from.lane, column)) ?? [];
+    const shown = new Set(now);
+    for (let d = 1; d < ids.length; d += 1) {
+      for (const id of [ids[at + d], ids[at - d]]) {
+        if (id !== undefined && shown.has(id)) return { lane: from.lane, cardId: id };
+      }
+    }
+    if (now.length) return { lane: from.lane, cardId: now[0] };
+    break;
+  }
+  return { lane: from.lane, cardId: null };
+}

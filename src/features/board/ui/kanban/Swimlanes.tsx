@@ -41,6 +41,8 @@ import {
   laneBandEstimate,
   laneCellKey,
   laneCells,
+  laneRefocus,
+  type LaneRefocus,
   type LaneRow,
   laneRows,
 } from "../../model/swimlanes";
@@ -62,8 +64,8 @@ const rowKey = (row: LaneRow) =>
     : `b\u0000${row.lane}\u0000${row.band}`;
 
 /**
- * How far below the scroller's top the first lane row starts: its 12px top
- * pad, then the 36px column header row and its 4px gap.
+ * How far below the scroller's top the first lane row starts until it is
+ * measured: its 12px top pad, then the 36px column header row and its 4px gap.
  */
 export const LANE_TOP_OFFSET = 52;
 /** Rows rendered beyond each edge of the view: a band is up to 4 cards a column. */
@@ -209,14 +211,23 @@ export function Swimlanes({
     [lanes, ordered, cellCards],
   );
   const draggedId = active?.card.id ?? null;
+  // Where focus goes when the focused card lost its element (a reload moved
+  // it to another band, or a filter hid it): kept mounted until focused.
+  const [refocus, setRefocus] = useState<LaneRefocus | null>(null);
   const pinned = useMemo(() => {
     const out = new Set(rowIds.filter((id) => id.startsWith("h\u0000")));
     for (const id of [draggedId, focusedCardId, openCardId]) {
       if (id) for (const row of rowsOfCard(id)) out.add(row);
     }
+    if (refocus?.cardId) {
+      for (const row of rowsOfCard(refocus.cardId, refocus.lane)) out.add(row);
+    }
     return [...out];
-  }, [rowIds, rowsOfCard, draggedId, focusedCardId, openCardId]);
+  }, [rowIds, rowsOfCard, draggedId, focusedCardId, openCardId, refocus]);
 
+  // Where the first lane starts below the scroller's top, measured once the
+  // scroller is laid out (a column header that wraps makes it taller).
+  const [topOffset, setTopOffset] = useState(LANE_TOP_OFFSET);
   const windowed = useMeasuredWindow({
     ids: rowIds,
     estimate: LANE_HEADER_ESTIMATE,
@@ -224,7 +235,7 @@ export function Swimlanes({
     gap: 0,
     overscan: ROW_OVERSCAN,
     pinned,
-    topOffset: LANE_TOP_OFFSET,
+    topOffset,
   });
   const { scrollToIndex, ref: windowRef } = windowed;
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -235,6 +246,68 @@ export function Swimlanes({
     },
     [windowRef],
   );
+
+  useLayoutEffect(() => {
+    const node = scrollerRef.current;
+    // No height is no layout (hidden, or no layout engine): keep the guess.
+    if (!node || !(node.clientHeight > 0)) return;
+    const first = node.querySelector("section[data-lane]");
+    if (!first) return;
+    const measured =
+      first.getBoundingClientRect().top -
+      node.getBoundingClientRect().top +
+      node.scrollTop;
+    if (measured >= 0 && Math.abs(measured - topOffset) > 0.5) {
+      setTopOffset(measured);
+    }
+  });
+
+  // The lane card that has focus, by lane (a card can sit in two lanes).
+  // Kept when its element goes away under it, so focus can come back.
+  const lastFocus = useRef<LaneFocus | null>(null);
+  const lastShown = useRef(shownCells);
+  useLayoutEffect(() => {
+    const before = lastShown.current;
+    lastShown.current = shownCells;
+    const held = lastFocus.current;
+    if (!held || before === shownCells) return;
+    // Only when focus really went with the card (to the page), never away
+    // from wherever the user has put it since.
+    const now = document.activeElement;
+    if (now && now !== document.body && now.isConnected) return;
+    setRefocus(
+      laneRefocus(
+        held,
+        before,
+        shownCells,
+        lanes.map((lane) => lane.key),
+        ordered.map((column) => column.id),
+      ),
+    );
+  }, [shownCells, lanes, ordered]);
+  useLayoutEffect(() => {
+    if (!refocus) return;
+    const { lane, cardId } = refocus;
+    if (cardId) {
+      const row = rowsOfCard(cardId, lane)[0];
+      const index = row === undefined ? undefined : rowIndex.get(row);
+      if (index !== undefined) scrollToIndex(index);
+      find(
+        scrollerRef.current,
+        "[data-kanban-card]",
+        (el) =>
+          el.getAttribute("data-kanban-card") === cardId &&
+          el.getAttribute("data-lane-key") === lane,
+      )?.focus();
+    } else {
+      find(
+        scrollerRef.current,
+        "[data-lane-label]",
+        (el) => el.getAttribute("data-lane-label") === lane,
+      )?.focus();
+    }
+    setRefocus(null);
+  }, [refocus, rowsOfCard, rowIndex, scrollToIndex]);
 
   // What the keyboard handlers read, as of the last render.
   const nav = useRef({ lanes, ordered, rowIndex, scrollToIndex });
@@ -455,7 +528,12 @@ export function Swimlanes({
             data-lane-header={lane.key}
             className="flex h-9 shrink-0 flex-col justify-end"
           >
-            <h3 className="sticky left-0 flex h-[22px] w-max items-center gap-1 text-[12px] font-medium text-content/70">
+            <h3
+              // Focus lands here when the last card of a focused cell goes.
+              tabIndex={-1}
+              data-lane-label={lane.key}
+              className="sticky left-0 flex h-[22px] w-max items-center gap-1 rounded text-[12px] font-medium text-content/70 outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            >
               {lane.label}{" "}
               <span data-lane-count="" className="tabular-nums text-content/40">
                 {lane.cardIds.length}
@@ -536,6 +614,37 @@ export function Swimlanes({
       <div
         ref={setScroller}
         onScroll={windowed.onScroll}
+        onFocus={(event) => {
+          const el =
+            event.target instanceof Element
+              ? event.target.closest<HTMLElement>("[data-lane-key]")
+              : null;
+          const lane = el?.getAttribute("data-lane-key");
+          const cardId = el?.getAttribute("data-kanban-card");
+          lastFocus.current =
+            lane != null && cardId != null ? { lane, cardId } : null;
+        }}
+        onBlur={(event) => {
+          const left = event.target;
+          if (event.relatedTarget) {
+            // A lane card taking focus sets it again in onFocus.
+            lastFocus.current = null;
+            return;
+          }
+          // Nowhere to go: a click on nothing clears it, but a card removed
+          // under focus (a reload, a filter) or the window losing focus
+          // keeps it.
+          queueMicrotask(() => {
+            const now = document.activeElement;
+            if (
+              left.isConnected &&
+              (!now || now === document.body) &&
+              document.hasFocus()
+            ) {
+              lastFocus.current = null;
+            }
+          });
+        }}
         data-swimlanes=""
         className="flex h-full min-h-0 flex-col overflow-auto px-4 py-3 [overflow-anchor:none]"
       >

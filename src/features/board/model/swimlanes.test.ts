@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BoardCard, BoardField, CardExtras } from "./board";
-import { buildLanes, laneValue } from "./swimlanes";
+import { buildLanes, laneCellKey, laneRefocus, laneValue } from "./swimlanes";
 
 const card = (id: string): BoardCard => ({
   id,
@@ -117,5 +117,66 @@ describe("laneValue", () => {
   it("sets nothing for label and project lanes", () => {
     expect(laneValue({ kind: "label" }, "l1")).toBeNull();
     expect(laneValue({ kind: "project" }, "/p")).toBeNull();
+  });
+});
+
+describe("laneRefocus", () => {
+  const cells = (entries: [string, string, string[]][]) =>
+    new Map(entries.map(([lane, column, ids]) => [laneCellKey(lane, column), ids]));
+  const before = cells([
+    ["bug", "todo", ["a", "b", "c", "d", "e"]],
+    ["bug", "done", ["z"]],
+    ["ui", "todo", ["u"]],
+  ]);
+  const lanes = ["bug", "ui"];
+  const columns = ["todo", "done"];
+
+  it("keeps the card when its lane still shows it, in another band or column", () => {
+    const moved = cells([["bug", "todo", ["b", "c", "d", "e"]], ["bug", "done", ["z"]]]);
+    expect(laneRefocus({ lane: "bug", cardId: "e" }, before, moved, lanes, columns)).toEqual({
+      lane: "bug",
+      cardId: "e",
+    });
+    const across = cells([["bug", "done", ["z", "c"]]]);
+    expect(laneRefocus({ lane: "bug", cardId: "c" }, before, across, lanes, columns)).toEqual({
+      lane: "bug",
+      cardId: "c",
+    });
+  });
+
+  it("goes to the next card still shown in its cell, then the previous", () => {
+    const noC = cells([["bug", "todo", ["a", "b", "d", "e"]]]);
+    expect(laneRefocus({ lane: "bug", cardId: "c" }, before, noC, lanes, columns)).toEqual({
+      lane: "bug",
+      cardId: "d",
+    });
+    const noE = cells([["bug", "todo", ["a", "b", "c", "d"]]]);
+    expect(laneRefocus({ lane: "bug", cardId: "e" }, before, noE, lanes, columns)).toEqual({
+      lane: "bug",
+      cardId: "d",
+    });
+    // Neighbours further out when the nearest ones went too.
+    const far = cells([["bug", "todo", ["a"]]]);
+    expect(laneRefocus({ lane: "bug", cardId: "c" }, before, far, lanes, columns)).toEqual({
+      lane: "bug",
+      cardId: "a",
+    });
+  });
+
+  it("falls back to the cell's first card, then to the lane header", () => {
+    const fresh = cells([["bug", "todo", ["new"]]]);
+    expect(laneRefocus({ lane: "bug", cardId: "c" }, before, fresh, lanes, columns)).toEqual({
+      lane: "bug",
+      cardId: "new",
+    });
+    const empty = cells([["bug", "done", ["z"]]]);
+    expect(laneRefocus({ lane: "bug", cardId: "c" }, before, empty, lanes, columns)).toEqual({
+      lane: "bug",
+      cardId: null,
+    });
+  });
+
+  it("returns null when the lane is gone", () => {
+    expect(laneRefocus({ lane: "bug", cardId: "c" }, before, new Map(), ["ui"], columns)).toBeNull();
   });
 });
