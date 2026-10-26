@@ -2,8 +2,8 @@
 //! columns (C6-6): focus and lifts that move onto cards outside a column's
 //! window land on the right card, and every count comes from the data.
 use super::scale::{
-    card_bounds, column_at, list_ids, list_top, number_of, reload_view, scroll_list_to,
-    seeded_board, stored_order, wheel,
+    card_bounds, column_at, list_ids, list_top, number_of, scroll_list_to, seeded_board,
+    stored_order, wheel,
 };
 use super::*;
 
@@ -25,6 +25,25 @@ fn announcement(f: &Fixture, visual: &mut VisualTestContext) -> Option<String> {
     f.window
         .read_with(visual, |view, _| view.board_announcement())
         .unwrap()
+}
+
+/// The other app wrote: the board's two-second poll sees the new data
+/// version and reloads, as it does in the app.
+fn poll_tick(visual: &mut VisualTestContext) {
+    visual.executor().advance_clock(Duration::from_secs(2));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+}
+
+/// The frames the app draws after a far reveal, which keeps checking for a
+/// few frames until the card is fully in view (the test window only draws
+/// when asked).
+fn frames(f: &Fixture, visual: &mut VisualTestContext) {
+    for _ in 0..6 {
+        f.window.update(visual, |_, _, _| {}).unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    }
 }
 
 fn activate(visual: &mut VisualTestContext) {
@@ -149,7 +168,7 @@ fn focus_survives_a_board_changed_reload_while_scrolled_away(cx: &mut TestAppCon
     focus_card(&f, visual, &ids[5]);
     scroll_list_to(&f, visual, &column, 500);
     rename(&f, &ids[500], "Renamed in the other app");
-    reload_view(&f, visual);
+    poll_tick(visual);
     visual.run_until_parked();
     visual.refresh().unwrap();
     assert_eq!(list_top(&f, visual, &column).item_ix, 500);
@@ -173,7 +192,7 @@ fn a_focused_card_hidden_by_a_filter_moves_focus_to_the_nearest_visible_card(
     visual.refresh().unwrap();
     // The other app renames it out of the results: the next card takes focus.
     rename(&f, &ids[499], "Gone");
-    reload_view(&f, visual);
+    poll_tick(visual);
     visual.run_until_parked();
     visual.refresh().unwrap();
     assert_eq!(list_ids(&f, visual, &column).len(), 999);
@@ -183,7 +202,7 @@ fn a_focused_card_hidden_by_a_filter_moves_focus_to_the_nearest_visible_card(
     focus_card(&f, visual, &ids[999]);
     visual.refresh().unwrap();
     rename(&f, &ids[999], "Gone too");
-    reload_view(&f, visual);
+    poll_tick(visual);
     visual.run_until_parked();
     visual.refresh().unwrap();
     assert_eq!(focused_card(&f, visual), Some(ids[998].clone()));
@@ -195,7 +214,7 @@ fn a_focused_card_hidden_by_a_filter_moves_focus_to_the_nearest_visible_card(
         .unwrap();
     visual.refresh().unwrap();
     rename(&f, &ids[998], "Gone as well");
-    reload_view(&f, visual);
+    poll_tick(visual);
     visual.run_until_parked();
     visual.refresh().unwrap();
     assert_eq!(focused_card(&f, visual), None);
@@ -233,7 +252,7 @@ fn a_focused_card_hidden_with_no_neighbour_left_moves_focus_to_the_columns_first
         service.card_update(&drop, "Gone", "").unwrap();
         fresh.id
     };
-    reload_view(&f, visual);
+    poll_tick(visual);
     visual.run_until_parked();
     visual.refresh().unwrap();
     assert_eq!(list_ids(&f, visual, &backlog), std::slice::from_ref(&fresh));
@@ -288,6 +307,8 @@ fn keyboard_drag_announces_position_of_the_full_count(cx: &mut TestAppContext) {
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     visual.refresh().unwrap();
     assert_eq!(announcement(&f, visual), None);
+    // The live region is there, empty, before anything is said.
+    assert!(visual.debug_bounds("board-drag-announce").is_some());
     focus_card(&f, visual, &ids[0]);
     press(visual, "space");
     assert_eq!(
@@ -637,4 +658,192 @@ fn the_card_whose_drawer_is_open_stays_mounted(cx: &mut TestAppContext) {
     visual.refresh().unwrap();
     visual.refresh().unwrap();
     assert!(visual.debug_bounds("board-card-1").is_none());
+}
+
+/// Opens the drawer on `card` without moving focus into it.
+fn open_drawer(f: &Fixture, visual: &mut VisualTestContext, card: &str) {
+    f.window
+        .update(visual, |view, window, cx| {
+            view.open_card_detail(card.to_string(), window, cx)
+        })
+        .unwrap();
+    visual.refresh().unwrap();
+}
+
+#[gpui::test]
+fn a_focused_card_scrolled_away_stays_mounted_while_a_drawer_is_open_above_it(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded_board(cx, true);
+    let column = column_at(&f, cx, 0);
+    let ids = list_ids(&f, cx, &column);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    activate(visual);
+    open_drawer(&f, visual, &ids[0]);
+    focus_card(&f, visual, &ids[3]);
+    visual.refresh().unwrap();
+    assert_eq!(focused_card(&f, visual), Some(ids[3].clone()));
+    let body = center(visual, "board-column-body-0");
+    wheel(visual, body, -6000.);
+    assert!(list_top(&f, visual, &column).item_ix > 40);
+    assert!(
+        visual.debug_bounds("board-card-4").is_some(),
+        "the focused card wins over the drawer's card"
+    );
+    assert_eq!(focused_card(&f, visual), Some(ids[3].clone()));
+    press(visual, "down");
+    assert_eq!(focused_card(&f, visual), Some(ids[4].clone()));
+}
+
+#[gpui::test]
+fn a_focused_card_off_screen_stays_mounted_while_the_drawers_card_is_in_view(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded_board(cx, true);
+    let column = column_at(&f, cx, 0);
+    let ids = list_ids(&f, cx, &column);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    activate(visual);
+    open_drawer(&f, visual, &ids[600]);
+    focus_card(&f, visual, &ids[5]);
+    visual.refresh().unwrap();
+    scroll_list_to(&f, visual, &column, 600);
+    visual.refresh().unwrap();
+    assert!(
+        visual.debug_bounds("board-card-6").is_some(),
+        "the focused card is mounted"
+    );
+    assert_eq!(focused_card(&f, visual), Some(ids[5].clone()));
+    press(visual, "down");
+    assert_eq!(focused_card(&f, visual), Some(ids[6].clone()));
+}
+
+#[gpui::test]
+fn a_lift_survives_moving_50_down_while_a_drawer_is_open_on_an_earlier_card(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded_board(cx, true);
+    let column = column_at(&f, cx, 0);
+    let ids = list_ids(&f, cx, &column);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    activate(visual);
+    open_drawer(&f, visual, &ids[0]);
+    focus_card(&f, visual, &ids[3]);
+    press(visual, "space");
+    press_n(visual, "down", 50);
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(
+                view.kb_drag.as_ref().map(|drag| drag.card_id.clone()),
+                Some(ids[3].clone()),
+                "still lifted"
+            );
+        })
+        .unwrap();
+    press(visual, "space");
+    // Card 4 (index 3) moved 50 places down.
+    assert_eq!(stored_order(&f, &column)[53], ids[3]);
+    assert_eq!(
+        announcement(&f, visual).as_deref(),
+        Some("Dropped card #4 in Backlog, position 54 of 1000.")
+    );
+}
+
+#[gpui::test]
+fn a_click_inside_an_open_popover_during_a_lift_cancels_it_and_leaves_the_popover_open(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded_board(cx, true);
+    let column = column_at(&f, cx, 0);
+    let ids = list_ids(&f, cx, &column);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    activate(visual);
+    click(visual, "board-sort");
+    assert!(
+        f.window
+            .read_with(visual, |view, _| view.sort_open)
+            .unwrap()
+    );
+    focus_card(&f, visual, &ids[2]);
+    press(visual, "space down");
+    assert!(
+        f.window
+            .read_with(visual, |view, _| view.kb_drag.is_some())
+            .unwrap()
+    );
+    // A press in the menu's padding, above its first row: inside the
+    // popover, on nothing that acts.
+    let row = visual
+        .debug_bounds("board-sort-manual")
+        .expect("the sort menu is open");
+    let inside = gpui::point(row.left() + px(2.), row.top() - px(2.));
+    visual.simulate_click(inside, Default::default());
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    f.window
+        .read_with(visual, |view, _| {
+            assert!(view.kb_drag.is_none() && view.drop_target.is_none());
+            assert!(view.sort_open, "the menu stays open");
+            assert!(!view.sorted(), "the press picked no sort");
+        })
+        .unwrap();
+    assert_eq!(
+        announcement(&f, visual).as_deref(),
+        Some("Moving card #3 was cancelled. It is back in Backlog, position 3 of 1000.")
+    );
+    // A later Space moves nothing.
+    focus_card(&f, visual, &ids[2]);
+    press(visual, "space space");
+    assert_eq!(stored_order(&f, &column)[2], ids[2]);
+    assert_eq!(moved_rows(&f, visual), 0);
+}
+
+#[gpui::test]
+fn left_and_right_at_scale_reach_an_unmounted_card_past_a_collapsed_column(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded_board(cx, false);
+    let (first, second, third) = (
+        column_at(&f, cx, 0),
+        column_at(&f, cx, 1),
+        column_at(&f, cx, 2),
+    );
+    Service::open(&f.db)
+        .unwrap()
+        .set_column_display(&second, None, None, true)
+        .unwrap();
+    poll_tick_cx(cx);
+    let (left_ids, right_ids) = (list_ids(&f, cx, &first), list_ids(&f, cx, &third));
+    assert_eq!((left_ids.len(), right_ids.len()), (250, 250));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    scroll_list_to(&f, visual, &first, 200);
+    focus_card(&f, visual, &left_ids[200]);
+    visual.refresh().unwrap();
+    let target = number_of(&f, visual, &right_ids[200]);
+    assert!(
+        visual
+            .debug_bounds(selector(format!("board-card-{target}")))
+            .is_none()
+    );
+    press(visual, "right");
+    assert_eq!(
+        focused_card(&f, visual),
+        Some(right_ids[200].clone()),
+        "the collapsed column is skipped, the index kept"
+    );
+    frames(&f, visual);
+    assert!(in_view(&f, visual, &third, target));
+    // Back left: the first column's card at the same index.
+    scroll_list_to(&f, visual, &first, 0);
+    let back = number_of(&f, visual, &left_ids[200]);
+    press(visual, "left");
+    frames(&f, visual);
+    assert_eq!(focused_card(&f, visual), Some(left_ids[200].clone()));
+    assert!(in_view(&f, visual, &first, back));
+}
+
+fn poll_tick_cx(cx: &mut TestAppContext) {
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
 }

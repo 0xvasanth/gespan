@@ -3,7 +3,7 @@
 //! by the board's `on_key`) puts it back. Only cards the search and filter show
 //! count; the drop maps the visible slot to the whole column like a mouse drop.
 use super::{BoardView, KeyboardDrag};
-use gpui::{App, Context, KeyBinding, KeyDownEvent, Window, actions};
+use gpui::{App, Context, IntoElement, KeyBinding, KeyDownEvent, Styled, Window, actions};
 
 actions!(
     board,
@@ -341,6 +341,53 @@ impl BoardView {
         self.announce_over(&drag);
         self.kb_drag = Some(drag);
         cx.notify();
+    }
+
+    /// Watches every mouse press in the window while a card is lifted, in
+    /// the capture phase, so a press on a popover or the drawer (which take
+    /// the press themselves) still ends the lift.
+    pub(super) fn lift_press_watch(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let lifted = self.kb_drag.is_some();
+        let weak = cx.weak_entity();
+        gpui::canvas(
+            |_, _, _| {},
+            move |_, _, window, _| {
+                if !lifted {
+                    return;
+                }
+                let weak = weak.clone();
+                window.on_mouse_event(move |event: &gpui::MouseDownEvent, phase, _, cx| {
+                    if phase == gpui::DispatchPhase::Capture {
+                        let _ =
+                            weak.update(cx, |this, cx| this.press_during_lift(event.position, cx));
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_0()
+        .into_any_element()
+    }
+
+    /// A mouse press while a card is lifted: one outside the lifted card
+    /// cancels the lift, and leaves menus, the drawer and the selection be.
+    pub(super) fn press_during_lift(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(drag) = &self.kb_drag else {
+            return;
+        };
+        let on_card = self
+            .card_anchors
+            .get(&drag.card_id)
+            .and_then(|anchor| anchor.get())
+            .is_some_and(|bounds| bounds.contains(&position));
+        if !on_card {
+            self.cancel_keyboard_drag(cx);
+            cx.notify();
+        }
     }
 
     /// Escape, or the view leaving the screen: put the card back, write

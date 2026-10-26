@@ -275,6 +275,9 @@ pub(crate) struct BoardView {
     refocus: Option<(String, String)>,
     /// The card whose drawer the column lists keep mounted.
     drawer_pinned: Option<String>,
+    /// A column item a reveal scrolled to on estimated heights: (column,
+    /// item, frames left to check it is fully in view).
+    settling: Option<(String, usize, u8)>,
     /// What the last board-layout keyboard drag step said, for the status
     /// element screen readers read.
     drag_announcement: Option<String>,
@@ -474,6 +477,7 @@ impl BoardView {
             refocus: None,
             drawer_pinned: None,
             drag_announcement: None,
+            settling: None,
             card_menu: None,
             collapsed_focus: HashMap::new(),
             column_lists: HashMap::new(),
@@ -1543,6 +1547,8 @@ impl gpui::Render for BoardView {
         self.display = self.effective_display();
         #[cfg(test)]
         self.rendered_cards.set(0);
+        // Reads the bounds the last frame painted, before they are cleared.
+        self.settle_reveal(window, cx);
         // Bounds are only good for the frame that painted them: a card
         // scrolled out of a column's window keeps none.
         for anchor in self.card_anchors.values() {
@@ -1739,7 +1745,7 @@ impl gpui::Render for BoardView {
                             .flex()
                             .items_start()
                             .gap_2()
-                            .children(self.render_drag_announce())
+                            .child(self.render_drag_announce())
                             .children(columns)
                             .child(
                                 icon_button("board-add-column", "Add column", "plus")
@@ -1753,6 +1759,7 @@ impl gpui::Render for BoardView {
                 },
             );
         root.child(board)
+            .child(self.lift_press_watch(cx))
             .children(archive)
             .children(card_detail)
             .children(filter)

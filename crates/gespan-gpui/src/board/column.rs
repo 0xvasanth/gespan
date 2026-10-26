@@ -14,6 +14,8 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 pub(in crate::board) const COLUMN_WIDTH: f32 = 280.;
 /// The space above each card in a column, and around the composer.
 const ITEM_GAP: f32 = 6.;
+/// How many frames a reveal keeps checking that its item is fully in view.
+const SETTLE_FRAMES: u8 = 6;
 /// The composer's "Add card" row, until it has been measured.
 const FOOTER_ESTIMATE: f32 = 40.;
 
@@ -227,11 +229,13 @@ impl BoardView {
     }
 
     /// The focus handle a column list keeps a card's row mounted by: the
-    /// card's own, or, for the card whose drawer is open, the board's, which
-    /// holds focus wherever it is on the board (drawer, card or field).
+    /// card's own, or, for the card whose drawer is open, the drawer's, so it
+    /// stays mounted while focus is inside the drawer. GPUI's list keeps only
+    /// one focused row mounted off screen, so a card that really has focus
+    /// always wins over the drawer's card.
     fn item_focus(&self, card_id: &str) -> Option<gpui::FocusHandle> {
         if self.drawer_pinned.as_deref() == Some(card_id) {
-            return Some(self.focus.clone());
+            return Some(self.drawer_focus.clone());
         }
         self.card_focus.get(card_id).cloned()
     }
@@ -303,24 +307,23 @@ impl BoardView {
     }
 
     /// The status element that reads board-layout keyboard drags aloud. It
-    /// takes no room on screen.
-    pub(super) fn render_drag_announce(&self) -> Option<AnyElement> {
-        let text = self.board_announcement()?;
-        Some(
-            div()
-                .id("board-drag-announce")
-                .debug_selector(|| "board-drag-announce".into())
-                .role(Role::Status)
-                .aria_label(gpui::SharedString::from(text.clone()))
-                .absolute()
-                .top_0()
-                .left_0()
-                .size(px(1.))
-                .overflow_hidden()
-                .opacity(0.)
-                .child(text)
-                .into_any_element(),
-        )
+    /// takes no room on screen, and is there (empty) before the first drag so
+    /// screen readers have registered the live region by then.
+    pub(super) fn render_drag_announce(&self) -> AnyElement {
+        let text = self.board_announcement().unwrap_or_default();
+        div()
+            .id("board-drag-announce")
+            .debug_selector(|| "board-drag-announce".into())
+            .role(Role::Status)
+            .aria_label(gpui::SharedString::from(text.clone()))
+            .absolute()
+            .top_0()
+            .left_0()
+            .size(px(1.))
+            .overflow_hidden()
+            .opacity(0.)
+            .child(text)
+            .into_any_element()
     }
 
     /// A first guess at a card row's height (card and gap) under `display`:
@@ -400,10 +403,20 @@ impl BoardView {
     }
 
     /// Scroll a column so its item `ix` (a card, or the composer row past the
-    /// last card) is fully in view.
-    pub(crate) fn reveal_item(&self, column_id: &str, ix: usize) {
+    /// last card) is fully in view. A jump far past the painted cards scrolls
+    /// on estimated heights, so the next few frames check again once the
+    /// cards around it have been measured (`settle_reveal`).
+    pub(crate) fn reveal_item(&mut self, column_id: &str, ix: usize) {
+        if !self.scroll_into_view(column_id, ix) {
+            self.settling = Some((column_id.to_string(), ix, SETTLE_FRAMES));
+        }
+    }
+
+    /// Scroll item `ix` into view unless it is already fully shown. True
+    /// when it was shown.
+    fn scroll_into_view(&self, column_id: &str, ix: usize) -> bool {
         let Some(state) = self.column_lists.get(column_id) else {
-            return;
+            return true;
         };
         let viewport = state.viewport_bounds();
         let shown = state
@@ -411,6 +424,63 @@ impl BoardView {
             .is_some_and(|item| item.top() >= viewport.top() && item.bottom() <= viewport.bottom());
         if !shown {
             state.scroll_to_reveal_item(ix.min(state.item_count().saturating_sub(1)));
+        }
+        shown
+    }
+
+    /// Before each frame: finish a reveal whose first scroll used estimated
+    /// heights, from where the last frame painted the card. GPUI's list
+    /// paints a focused card it has not reached yet just below the visible
+    /// ones, and its own idea of an item's place can be stale, so a card
+    /// painted wholly outside the view is scrolled to again; one the list
+    /// already believes is in view is brought to the top of the view.
+    pub(crate) fn settle_reveal(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        let Some((column_id, ix, left)) = self.settling.take() else {
+            return;
+        };
+        let painted = self
+            .column_ids
+            .get(&column_id)
+            .and_then(|ids| ids.get(ix))
+            .and_then(|id| self.card_anchors.get(id))
+            .and_then(|anchor| anchor.get());
+        let shown = match (painted, self.column_lists.get(&column_id)) {
+            (Some(card), Some(state)) => {
+                let view = state.viewport_bounds();
+                let gap = px(ITEM_GAP);
+                if card.top() >= view.top() && card.bottom() <= view.bottom() {
+                    true
+                } else if card.bottom() > view.top() && card.top() < view.bottom() {
+                    // Partly in view, painted in place: scroll the rest in.
+                    let by = if card.top() < view.top() {
+                        card.top() - view.top() - gap
+                    } else {
+                        card.bottom() - view.bottom() + gap
+                    };
+                    state.scroll_by(by);
+                    false
+                } else if self.scroll_into_view(&column_id, ix) {
+                    state.scroll_to(ListOffset {
+                        item_ix: ix,
+                        offset_in_item: px(0.),
+                    });
+                    false
+                } else {
+                    false
+                }
+            }
+            // Not painted yet: the list's own idea of its place is all there
+            // is, so scroll by it and look again once the card is painted.
+            (None, Some(_)) if ix < self.column_ids.get(&column_id).map_or(0, Vec::len) => {
+                self.scroll_into_view(&column_id, ix);
+                false
+            }
+            _ => self.scroll_into_view(&column_id, ix),
+        };
+        if !shown && left > 1 {
+            self.settling = Some((column_id, ix, left - 1));
+            // Look again on the next frame (a notify during render is lost).
+            cx.on_next_frame(window, |_, _, cx| cx.notify());
         }
     }
 
