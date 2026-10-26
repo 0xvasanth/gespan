@@ -1,0 +1,39 @@
+src/features/board/ui/kanban/KanbanWindow.test.ts
+  s_938a6e0c93b076::t_86524bcf97bc28 1-584
+  s_938a6e0c93b076::t_a47ac875558da2 585-587
+src/features/board/ui/BoardScale.test.ts
+  s_938a6e0c93b076::t_6045a2da43e399 1-125
+  s_938a6e0c93b076::t_2dc334bb939344 126-145
+src/features/board/ui/testBackend.ts
+  s_938a6e0c93b076::t_1cdac3b8725c70 1-290
+src/features/board/model/windowing.test.ts
+  s_938a6e0c93b076::t_1b3b345d5d2128 2,25-111
+src/features/board/model/windowing.ts
+  s_938a6e0c93b076::t_141b363e38e4f8 1-8,81-362
+src/features/board/ui/BoardLayouts.test.ts
+  s_938a6e0c93b076::t_ccba118506733f 8-15,34,48,79,244,288,431-432,449,461,568,573,608,628,712,820-822,826-827,1192
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_29e325501c8155 2620-2621
+src/features/board/ui/kanban/KanbanBoard.tsx
+  s_938a6e0c93b076::t_466945608699da 79-84,110-118,140-142,208-218,288-289,309-310
+src/features/board/ui/kanban/KanbanCard.tsx
+  s_938a6e0c93b076::t_b79414fc7caf3c 3,19-20,28-31,46-52,55,74
+src/features/board/ui/kanban/KanbanColumn.tsx
+  s_938a6e0c93b076::t_f203fdeeb4a8a6 8,10-15,30-31,34-37,50-51,64-67,85-102,178-180,182-210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b919e25388e90fb960003408c53c9c14e0f09d41",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
