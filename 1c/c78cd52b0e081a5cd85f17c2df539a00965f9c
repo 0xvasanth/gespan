@@ -1,0 +1,38 @@
+src/features/board/model/writeBackReply.test.ts
+  s_938a6e0c93b076::t_5a2850249e6452 1-101
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_df0cb5e7c247ef 504,507,511,1068-1073,1129-1135,2002-2014,2016-2028,2030,2032-2034,2036-2038
+src/features/board/ui/settings/fieldsDisplay.test.ts
+  s_938a6e0c93b076::t_3813beef199784 747-776,778-785
+  s_938a6e0c93b076::t_c4527d3a9288eb 777
+  s_938a6e0c93b076::t_6ce41790869798 1035-1091
+src/app/App.tsx
+  s_938a6e0c93b076::t_f756e7a9c73adc 749-752,1881-1883,8833
+  s_938a6e0c93b076::t_310286ff54e563 748
+src/features/board/model/writeBackReply.ts
+  s_938a6e0c93b076::t_f756e7a9c73adc 1-27
+src/features/sessions/model/ticketContext.ts
+  s_938a6e0c93b076::t_f756e7a9c73adc 112-121,125,134
+src/features/board/model/undo.test.ts
+  s_938a6e0c93b076::t_6ce41790869798 88-101
+src/features/board/model/undo.ts
+  s_938a6e0c93b076::t_df0cb5e7c247ef 37-38,40
+src/features/sessions/model/ticketContext.test.ts
+  s_938a6e0c93b076::t_5a2850249e6452 211-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1cc78cd52b0e081a5cd85f17c2df539a00965f9c",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
