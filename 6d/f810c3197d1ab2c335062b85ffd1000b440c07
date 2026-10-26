@@ -1,0 +1,37 @@
+src/features/board/ui/ArchiveView.tsx
+  s_938a6e0c93b076::t_49817e69bd0c10 80,82
+src/features/board/ui/BoardLayouts.test.ts
+  s_938a6e0c93b076::t_c6cc4f48487e20 8,131
+src/features/board/ui/BoardScale.test.ts
+  s_938a6e0c93b076::t_6c27c9ab60c3d4 5-10,42,131-134,166-484
+src/features/board/ui/BoardView.test.ts
+  s_938a6e0c93b076::t_2027c2403abdad 27,373,988
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_c8d8e2f7a38e95 43,46,214-239,405-407,409,438-440,479,615,630-631,643,802-808,816,862-884,910,930-937,1432-1433,1517,1520,1557,1559,1562,1912-1913,1961-1962,1970,2096-2099,2190,2211,2400,2771
+src/features/board/ui/kanban/KanbanKeyboardScale.test.ts
+  s_938a6e0c93b076::t_637610c2ab6fa3 11-16,204
+src/features/board/ui/kanban/KanbanWindow.test.ts
+  s_938a6e0c93b076::t_a316327e114379 15,143
+src/features/board/ui/linkRunWith.test.ts
+  s_938a6e0c93b076::t_cf77436d308a6b 26,525,543,651,666
+src/features/board/ui/settings/boardSettings.test.ts
+  s_938a6e0c93b076::t_3ba2886121873a 19,735,740
+src/features/board/ui/testBackend.ts
+  s_938a6e0c93b076::t_19ed1e109947b0 8,207-209,289-299
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6df810c3197d1ab2c335062b85ffd1000b440c07",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
