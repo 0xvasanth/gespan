@@ -213,6 +213,18 @@ function placeOf(
 
 const dragInProgress = () => !!document.querySelector("[data-dragging]");
 
+/** The card a focus event's target is, or sits in, in any layout. */
+function focusedRowOf(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  const row = target.closest("[data-kanban-card], [data-card-id], [data-table-row]");
+  return (
+    row?.getAttribute("data-kanban-card") ??
+    row?.getAttribute("data-card-id") ??
+    row?.getAttribute("data-table-row") ??
+    null
+  );
+}
+
 const OPEN_BOARD_KEY = "gespan:open-board";
 
 function loadOpenBoardId(): string | null {
@@ -405,6 +417,8 @@ function BoardContent({
   const [newCardOpen, setNewCardOpen] = useState(false);
   const [switchSignal, setSwitchSignal] = useState(0);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
+  /** The card (board card, list or table row) holding keyboard focus. */
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const [cardIndex, setCardIndex] = useState<ReadonlyMap<string, CardIndexRow>>(
     () => new Map(),
   );
@@ -2525,6 +2539,10 @@ function BoardContent({
         >
           <div
             className={`relative min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}
+            // The card or row holding keyboard focus, in any layout: each
+            // keeps it mounted when it is scrolled out of its window (R81).
+            onFocus={(event) => setFocusedId(focusedRowOf(event.target))}
+            onBlur={(event) => setFocusedId(focusedRowOf(event.relatedTarget))}
           >
             {detail && layoutState.layout === "list" ? (
               <BoardList
@@ -2536,6 +2554,7 @@ function BoardContent({
                 groupBy={layoutState.groupBy}
                 collapsed={layoutState.collapsed}
                 selected={selectedSet}
+                focusedCardId={focusedId}
                 onToggleGroup={(key) =>
                   editLayout((current) => ({
                     collapsed: current.collapsed.includes(key)
@@ -2558,6 +2577,7 @@ function BoardContent({
                 fields={fields}
                 projects={projects}
                 selected={selectedSet}
+                focusedCardId={focusedId}
                 onRowClick={rowClick}
                 onResize={(id, width) =>
                   editLayout((current) => ({
@@ -2618,6 +2638,7 @@ function BoardContent({
                 selectedIds={selectedSet}
                 trailing={trailing}
                 density={display.density}
+                focusedCardId={focusedId}
                 openCardId={shownCard?.id ?? null}
               />
             ) : null}

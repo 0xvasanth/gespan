@@ -19,7 +19,7 @@ import type { AgentValues } from "../model/agentFields";
 import type { AgentField } from "../model/board";
 import { fieldText, formatEstimate } from "../model/cardProps";
 import { MIN_COLUMN, ROW_HEIGHT, type TableColumn } from "../model/layout";
-import { useWindowedRows } from "../model/windowing";
+import { rowsWithPinned, useWindowedRows } from "../model/windowing";
 import { MenuButton, MenuItem } from "./boardControls";
 import { LabelPicker, toggled } from "./CardDrawerParts";
 import { PriorityItems } from "./CardPropertyMenus";
@@ -57,6 +57,7 @@ export function BoardTable({
   fields,
   projects,
   selected,
+  focusedCardId = null,
   onRowClick,
   onResize,
   onCommitTitle,
@@ -81,6 +82,8 @@ export function BoardTable({
   fields: readonly BoardField[];
   projects: readonly { path: string; name: string }[];
   selected: ReadonlySet<string>;
+  /** The card whose row holds focus: kept mounted when scrolled away (R81). */
+  focusedCardId?: string | null;
   onRowClick: (event: ReactMouseEvent<HTMLElement>, card: BoardCard) => void;
   onResize: (columnId: string, width: number) => void;
   onCommitTitle: (card: BoardCard, title: string) => void;
@@ -109,6 +112,12 @@ export function BoardTable({
   useEffect(() => {
     if (edit && !existing.has(edit.cardId)) setEdit(null);
   }, [edit, existing]);
+
+  const pinned = useMemo(() => {
+    if (!focusedCardId) return [];
+    const at = cards.findIndex((card) => card.id === focusedCardId);
+    return at >= 0 ? [at] : [];
+  }, [cards, focusedCardId]);
 
   const cardsById = useMemo(
     () => new Map(cards.map((card) => [card.id, card])),
@@ -367,7 +376,8 @@ export function BoardTable({
           ))}
         </div>
         <div style={{ height: win.totalHeight, position: "relative" }}>
-          {cards.slice(win.start, win.end).map((card, offset) => {
+          {rowsWithPinned(win.start, win.end, pinned).map((at) => {
+            const card = cards[at];
             const isSelected = selected.has(card.id);
             return (
               <div
@@ -376,7 +386,7 @@ export function BoardTable({
                 data-table-row={card.id}
                 data-selected={isSelected ? "" : undefined}
                 aria-selected={isSelected}
-                aria-rowindex={win.start + offset + 2}
+                aria-rowindex={at + 2}
                 aria-label={`Card #${card.number}, ${card.title}`}
                 tabIndex={0}
                 onClick={(event) => onRowClick(event, card)}
@@ -391,7 +401,7 @@ export function BoardTable({
                 }}
                 style={{
                   position: "absolute",
-                  top: (win.start + offset) * ROW_HEIGHT,
+                  top: at * ROW_HEIGHT,
                   height: ROW_HEIGHT,
                   width: "100%",
                 }}

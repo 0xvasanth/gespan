@@ -5,8 +5,9 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { type ReactNode, useCallback, useMemo } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo } from "react";
 import type { BoardCard, BoardColumn } from "../../model/board";
+import type { FocusKey } from "../../model/cardFocus";
 import {
   CARD_ESTIMATE,
   CARD_GAP,
@@ -49,6 +50,8 @@ export function KanbanColumn({
   onExpand,
   density = "comfortable",
   pinned = NO_IDS,
+  onCardArrow,
+  registerScroller,
 }: {
   column: BoardColumn;
   cards: BoardCard[];
@@ -65,6 +68,13 @@ export function KanbanColumn({
   density?: keyof typeof CARD_ESTIMATE;
   /** Card ids kept mounted wherever they are (focus, a drag, an open drawer). */
   pinned?: readonly string[];
+  /** An arrow key on a card (left out while a card is lifted). */
+  onCardArrow?: (cardId: string, key: FocusKey) => void;
+  /** Hands the board this column's "scroll card `index` into view". */
+  registerScroller?: (
+    columnId: string,
+    scrollToIndex: ((index: number) => void) | null,
+  ) => void;
 }) {
   const data: KanbanDragData = { kind: "column", columnId: column.id };
   const {
@@ -91,6 +101,12 @@ export function KanbanColumn({
     overscan: CARD_OVERSCAN,
     pinned,
   });
+  const { scrollToIndex } = windowed;
+  useEffect(() => {
+    if (!registerScroller) return;
+    registerScroller(column.id, scrollToIndex);
+    return () => registerScroller(column.id, null);
+  }, [registerScroller, column.id, scrollToIndex]);
   const { setNodeRef: setBodyNodeRef } = body;
   const { ref: windowRef } = windowed;
   const bodyRef = useCallback(
@@ -206,8 +222,10 @@ export function KanbanColumn({
                 key={card.id}
                 card={card}
                 renderCard={renderCard}
-                selected={selectedIds?.has(card.id)}
+                // Pressed only while a selection exists (R82).
+                selected={selectedIds?.size ? selectedIds.has(card.id) : undefined}
                 onOpen={onCardOpen}
+                onArrow={onCardArrow}
                 reducedMotion={reducedMotion}
                 description={`${slot.index + 1} of ${cards.length} in ${column.name}`}
                 measureRef={windowed.measureRef(card.id)}

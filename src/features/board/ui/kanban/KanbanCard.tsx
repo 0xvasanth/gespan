@@ -2,19 +2,23 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { type ReactNode, useCallback } from "react";
 import type { BoardCard } from "../../model/board";
+import { type FocusKey, isFocusKey } from "../../model/cardFocus";
 import type { KanbanDragData } from "./kanbanMove";
 
 /**
  * Sortable wrapper for one card; the whole card is the drag handle. While it
  * is the active item its slot collapses to a 2px accent line, so the line
  * marks where the card will land as neighbours slide apart. Enter on the
- * focused card opens it; Space picks it up.
+ * focused card opens it; Space picks it up; the arrow keys move focus to a
+ * neighbouring card (`onArrow`, left out while a card is lifted, when the
+ * arrows belong to the drag).
  */
 export function KanbanCard({
   card,
   renderCard,
   selected,
   onOpen,
+  onArrow,
   reducedMotion,
   description,
   measureRef,
@@ -24,6 +28,8 @@ export function KanbanCard({
   /** Set while a selection exists: whether this card is in it. */
   selected?: boolean;
   onOpen?: (card: BoardCard) => void;
+  /** An unmodified arrow key on the card itself: move focus that way. */
+  onArrow?: (cardId: string, key: FocusKey) => void;
   reducedMotion: boolean;
   /** "{i} of {total} in {column}", counted over the column's visible cards. */
   description?: string;
@@ -66,6 +72,21 @@ export function KanbanCard({
         ) {
           event.preventDefault();
           onOpen(card);
+          return;
+        }
+        if (
+          onArrow &&
+          isFocusKey(event.key) &&
+          event.target === event.currentTarget &&
+          !event.defaultPrevented &&
+          !event.nativeEvent.isComposing &&
+          !event.altKey &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.shiftKey
+        ) {
+          event.preventDefault();
+          onArrow(card.id, event.key);
         }
       }}
       aria-roledescription="card"

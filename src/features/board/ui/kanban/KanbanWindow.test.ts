@@ -254,6 +254,9 @@ async function dragOnto(
   pointer("pointerup", document, b.x, b.y);
   await flush();
   await flush();
+  // dnd-kit swallows document clicks for 50 ms after a pointer drag; wait
+  // that out so a menu click right after (in the next test, too) lands.
+  await act(() => new Promise((resolve) => setTimeout(resolve, 60)));
 }
 
 const lastMove = () =>

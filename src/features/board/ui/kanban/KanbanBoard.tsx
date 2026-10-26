@@ -7,6 +7,7 @@ import {
   type DragOverEvent,
   DragOverlay,
   type DragStartEvent,
+  type KeyboardCoordinateGetter,
   KeyboardSensor,
   MeasuringStrategy,
   type Modifier,
@@ -25,11 +26,13 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import type { BoardCard, BoardColumn, BoardDetail } from "../../model/board";
+import { type FocusKey, nextCardFocus } from "../../model/cardFocus";
 import {
   kanbanAnnouncements,
   kanbanScreenReaderInstructions,
@@ -78,7 +81,10 @@ export type KanbanBoardProps = {
   selectedIds?: ReadonlySet<string>;
   /** Card density: the first-guess height of a card before it is measured. */
   density?: "comfortable" | "compact";
-  /** The card with keyboard focus, kept mounted when scrolled away. */
+  /**
+   * The card with keyboard focus (tracked by the board view), kept mounted
+   * when scrolled away so focus never drops to the page.
+   */
   focusedCardId?: string | null;
   /** The card whose drawer is open, kept mounted when scrolled away. */
   openCardId?: string | null;
@@ -106,14 +112,38 @@ const lockColumnsToRow: Modifier = ({ active, transform }) =>
 
 const MEASURING = { droppable: { strategy: MeasuringStrategy.Always } };
 
+/** The mounted card element for `id` inside `root`, if any. */
+function cardElement(root: HTMLElement | null, id: string): HTMLElement | null {
+  if (!root) return null;
+  for (const el of root.querySelectorAll<HTMLElement>("[data-kanban-card]")) {
+    if (el.getAttribute("data-kanban-card") === id) return el;
+  }
+  return null;
+}
 
-/** The card a focus event's target sits in, if any. */
-function cardIdOf(target: EventTarget | null): string | null {
-  if (!(target instanceof Element)) return null;
-  return (
-    target.closest("[data-kanban-card]")?.getAttribute("data-kanban-card") ??
-    null
-  );
+/**
+ * Where ↑/↓ moves a lifted card, counted from the data: the card the drop
+ * goes next to, its column and its index there. `overId` is what the card is
+ * over now; a card shown next to it by a cross-column preview (`previewOver`)
+ * means "where the preview put it", so the move counts from the card itself.
+ */
+export function keyboardDropTarget(
+  shown: BoardDetail,
+  cardId: string,
+  overId: string | null,
+  previewOver: string | null,
+  step: 1 | -1,
+): { id: string; columnId: string; index: number } | null {
+  const card = shown.cards.find((c) => c.id === cardId);
+  if (!card) return null;
+  const list = columnCards(shown, card.columnId);
+  const overAt =
+    overId && overId !== previewOver
+      ? list.findIndex((c) => c.id === overId)
+      : -1;
+  const base = overAt >= 0 ? overAt : list.findIndex((c) => c.id === cardId);
+  const next = list[base + step];
+  return next ? { id: next.id, columnId: card.columnId, index: base + step } : null;
 }
 
 const OVERLAY_CLASS =
@@ -157,6 +187,11 @@ export function KanbanBoard({
     shownRef.current = shown;
   });
 
+  const sessionRef = useRef(session);
+  useLayoutEffect(() => {
+    sessionRef.current = session;
+  });
+
   const sortedRef = useRef(sorted);
   useLayoutEffect(() => {
     sortedRef.current = sorted;
@@ -176,11 +211,19 @@ export function KanbanBoard({
   // is still the closest and would read as a sort past it. Until the next
   // frame the card is over itself, which keeps the previewed place.
   const movedToNewColumn = useRef(false);
+  // A keyboard drag moves up and down by the data, not by measured rects:
+  // the card it goes next to may not be mounted yet (the column is
+  // windowed), so it is scrolled into view and named here as the target.
+  // Null while ←/→ (or a pointer) leave the target to the rects.
+  const keyboardOver = useRef<string | null>(null);
+  const keyboardDrag = useRef(false);
   const collisionDetection = useCallback<CollisionDetection>(
     (args) =>
       movedToNewColumn.current
         ? [{ id: args.active.id }]
-        : boardCollisions(args),
+        : keyboardOver.current
+          ? [{ id: keyboardOver.current }]
+          : boardCollisions(args),
     [],
   );
   useEffect(() => {
@@ -191,10 +234,69 @@ export function KanbanBoard({
     return () => cancelAnimationFrame(frame);
   }, [session.local]);
 
+  // Each column's "scroll card `index` into view", for focus and drags.
+  const scrollers = useRef(new Map<string, (index: number) => void>());
+  const registerScroller = useCallback(
+    (columnId: string, scroll: ((index: number) => void) | null) => {
+      if (scroll) scrollers.current.set(columnId, scroll);
+      else scrollers.current.delete(columnId);
+    },
+    [],
+  );
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  // Re-renders the board so a new keyboard target is picked up even when
+  // the overlay's coordinates didn't change.
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+
+  const coordinateGetter = useCallback<KeyboardCoordinateGetter>(
+    (event, args) => {
+      const { active, over, collisionRect } = args.context;
+      const data = active ? dragDataOf(active) : null;
+      const vertical = event.code === "ArrowUp" || event.code === "ArrowDown";
+      if (data?.kind === "card" && vertical) {
+        const board = shownRef.current;
+        const column = board.columns.find(
+          (c) =>
+            c.id === board.cards.find((card) => card.id === data.cardId)?.columnId,
+        );
+        // A collapsed column mounts no cards: leave it to the rects.
+        if (column && !column.collapsed) {
+          event.preventDefault();
+          const target = keyboardDropTarget(
+            board,
+            data.cardId,
+            over ? String(over.id) : keyboardOver.current,
+            sessionRef.current.drag?.previewOver ?? null,
+            event.code === "ArrowDown" ? 1 : -1,
+          );
+          if (!target) return undefined;
+          // Mount the target (and let it register as a droppable) before
+          // the collision names it: dnd-kit resolves `over` once per id.
+          flushSync(() => {
+            scrollers.current.get(target.columnId)?.(target.index);
+          });
+          keyboardOver.current = target.id;
+          rerender();
+          const rect = cardElement(boardRef.current, target.id)?.getBoundingClientRect();
+          if (!rect || !collisionRect) return args.currentCoordinates;
+          const below = event.code === "ArrowDown";
+          return {
+            x: args.currentCoordinates.x,
+            y: below ? rect.bottom - collisionRect.height : rect.top,
+          };
+        }
+      }
+      const next = sortableKeyboardCoordinates(event, args);
+      if (next) keyboardOver.current = null;
+      return next;
+    },
+    [],
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
+      coordinateGetter,
       keyboardCodes: KEYBOARD_CODES,
     }),
   );
@@ -205,17 +307,68 @@ export function KanbanBoard({
     [columns, shown],
   );
   const drag = session.drag;
-  // The card focus is on, as the board sees it: kept mounted while it holds
-  // focus, so scrolling its column never drops focus to the page.
-  const [focusedHere, setFocusedHere] = useState<string | null>(null);
   const draggedId = drag?.kind === "card" ? drag.id : null;
   const pinned = useMemo(
     () =>
-      [...new Set([draggedId, focusedHere, focusedCardId, openCardId])].filter(
+      [...new Set([draggedId, focusedCardId, openCardId])].filter(
         (id): id is string => !!id,
       ),
-    [draggedId, focusedHere, focusedCardId, openCardId],
+    [draggedId, focusedCardId, openCardId],
   );
+
+  /** ↑/↓/←/→ on a card: scroll the next card into view, then focus it. */
+  const focusFrom = useCallback(
+    (from: string, key: FocusKey) => {
+      const target = nextCardFocus(
+        columns.map((column) => ({
+          id: column.id,
+          // A collapsed strip shows no cards, so it has none to focus.
+          cardIds: column.collapsed
+            ? []
+            : (cardsByColumn.get(column.id) ?? []).map((card) => card.id),
+        })),
+        from,
+        key,
+      );
+      if (!target) return;
+      const columnId = shown.cards.find((card) => card.id === target)?.columnId;
+      const index = (columnId ? cardsByColumn.get(columnId) : undefined)?.findIndex(
+        (card) => card.id === target,
+      );
+      if (columnId && index !== undefined && index >= 0) {
+        flushSync(() => scrollers.current.get(columnId)?.(index));
+      }
+      cardElement(boardRef.current, target)?.focus();
+    },
+    [columns, cardsByColumn, shown],
+  );
+
+  // A click anywhere but the lifted card abandons a keyboard drag, as
+  // Escape would (the Native rule: focus moving off the card cancels it).
+  const keyboardLift = drag && keyboardDrag.current ? drag.id : null;
+  useEffect(() => {
+    if (!keyboardLift) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("[data-kanban-card]")?.getAttribute("data-kanban-card") ===
+          keyboardLift
+      )
+        return;
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          code: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () =>
+      document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [keyboardLift]);
   const activeCard =
     drag?.kind === "card"
       ? (shown.cards.find((c) => c.id === drag.id) ?? null)
@@ -223,12 +376,20 @@ export function KanbanBoard({
 
   function update(next: DragSession) {
     movedToNewColumn.current = false;
+    if (!next.drag) {
+      keyboardOver.current = null;
+      keyboardDrag.current = false;
+    }
     snapshotRef.current = next.lastSnapshot;
     setSession(next);
   }
 
-  function handleDragStart({ active: dragged }: DragStartEvent) {
+  function handleDragStart({ active: dragged, activatorEvent }: DragStartEvent) {
     const data = dragDataOf(dragged);
+    keyboardDrag.current = activatorEvent instanceof KeyboardEvent;
+    // A lifted card starts over its own place.
+    keyboardOver.current =
+      keyboardDrag.current && data?.kind === "card" ? data.cardId : null;
     if (data?.kind === "card") {
       update(sessionStart(session, { kind: "card", id: data.cardId }));
     } else if (data?.kind === "column") {
@@ -240,7 +401,22 @@ export function KanbanBoard({
     const ref = toDropRef(over);
     setSession((s) => {
       const next = sessionOver(s, ref);
-      if (next.local !== s.local) movedToNewColumn.current = true;
+      if (next.local !== s.local) {
+        movedToNewColumn.current = true;
+        // A keyboard card shown in another column goes on from its new
+        // place there, unless that column is a strip with no cards mounted.
+        const dragged = next.drag?.kind === "card" ? next.drag.id : null;
+        const into = dragged
+          ? shownBoard(next).cards.find((c) => c.id === dragged)?.columnId
+          : undefined;
+        if (
+          keyboardDrag.current &&
+          dragged &&
+          !shownBoard(next).columns.find((c) => c.id === into)?.collapsed
+        ) {
+          keyboardOver.current = dragged;
+        }
+      }
       return next;
     });
   }
@@ -283,10 +459,9 @@ export function KanbanBoard({
       onDragCancel={handleDragCancel}
     >
       <div
+        ref={boardRef}
         data-kanban-board=""
         data-dragging={drag ? drag.kind : undefined}
-        onFocus={(event) => setFocusedHere(cardIdOf(event.target))}
-        onBlur={(event) => setFocusedHere(cardIdOf(event.relatedTarget))}
         className="flex h-full min-h-0 items-start gap-2 overflow-x-auto px-4 py-3"
       >
         <SortableContext
@@ -303,6 +478,8 @@ export function KanbanBoard({
               renderCard={renderCard}
               selectedIds={selectedIds}
               onCardOpen={drag ? undefined : onCardOpen}
+              onCardArrow={drag ? undefined : focusFrom}
+              registerScroller={registerScroller}
               renderColumnHeader={renderColumnHeader}
               renderColumnFooter={renderColumnFooter}
               onExpand={onColumnExpand}

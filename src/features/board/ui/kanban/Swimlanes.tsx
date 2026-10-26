@@ -283,7 +283,7 @@ function LaneCell({
           key={card.id}
           card={card}
           laneKey={lane.key}
-          selected={selectedIds?.has(card.id)}
+          selected={selectedIds?.size ? selectedIds.has(card.id) : undefined}
           onOpen={onCardOpen}
         >
           {renderCard(card)}

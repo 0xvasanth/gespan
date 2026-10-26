@@ -24,6 +24,22 @@ export function visibleRange(
   };
 }
 
+/**
+ * The row indexes to render: `start..end`, plus each `pinned` index outside
+ * it (a focused row scrolled away), in order.
+ */
+export function rowsWithPinned(
+  start: number,
+  end: number,
+  pinned: readonly number[],
+): number[] {
+  const out: number[] = [];
+  for (let i = start; i < end; i++) out.push(i);
+  const extra = pinned.filter((i) => i >= 0 && (i < start || i >= end));
+  if (!extra.length) return out;
+  return [...new Set([...out, ...extra])].sort((a, b) => a - b);
+}
+
 /** Used until the scroller reports a height (it has none before layout). */
 const FALLBACK_VIEWPORT = 640;
 
