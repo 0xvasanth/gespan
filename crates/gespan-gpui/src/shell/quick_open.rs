@@ -53,7 +53,7 @@ impl Shell {
                     Command::Panel => window.dispatch_action(Box::new(ToggleRightPanel), cx),
                     Command::Terminal => window.dispatch_action(Box::new(ToggleTerminal), cx),
                     Command::Layout => window.dispatch_action(Box::new(ToggleLayout), cx),
-                    Command::Hold => window.dispatch_action(Box::new(ToggleHold), cx),
+                    Command::Hold => window.dispatch_action(Box::new(HoldFromMenu), cx),
                     Command::OpenLogs => {
                         let open = cx
                             .background_executor()

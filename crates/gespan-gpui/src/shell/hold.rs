@@ -59,6 +59,18 @@ impl Shell {
             }
         }
     }
+    /// The palette and the tray can't be held, and the modifiers the window
+    /// remembers may be stale: they show the hint, or resume once on hold.
+    pub(super) fn hold_from_menu(&mut self, cx: &mut Context<Self>) {
+        if self.hold.key_held {
+            return;
+        }
+        match crate::hold::phase(cx) {
+            None => self.arm_hold_hint(cx),
+            Some(Phase::Holding) => {}
+            Some(Phase::OnHold) => self.resume_all(cx),
+        }
+    }
     /// Shows "Hold to confirm" on the status-bar button.
     pub(super) fn arm_hold_hint(&mut self, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
@@ -651,6 +663,14 @@ impl Shell {
                     this.hold_button_keyboard_press(cx);
                 }
             }))
+            // VoiceOver's press can't be held: without this, gpui turns it
+            // into an instant mouse click, which only ever shows the hint.
+            .on_a11y_action(gpui::AccessibleAction::Click, {
+                let shell = cx.entity().downgrade();
+                move |_, _, cx| {
+                    let _ = shell.update(cx, |this, cx| this.hold_button_keyboard_press(cx));
+                }
+            })
             .into_any_element()
     }
     /// What Hold is still waiting for, each with Stop now, above the status bar.
@@ -1013,6 +1033,36 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_held_session_not_yet_loaded_is_marked_in_the_sidebar(cx: &mut TestAppContext) {
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                // Listed but metadata only, as a background session after a restart.
+                let mut summary = locked(&shell.store)
+                    .unwrap()
+                    .create("codex", "/work/gespan")
+                    .unwrap();
+                summary.has_messages = true;
+                let id = summary.id;
+                shell.order.insert(0, id);
+                shell.session_summaries.insert(id, summary);
+                assert!(!shell.sessions.contains_key(&id));
+                cx.set_global(Hold(Some({
+                    let mut state = HoldState::new(1);
+                    state.track(id, false);
+                    state.settle(id, Reason::Restarted, 2, None, vec![]);
+                    state.refresh_phase();
+                    state
+                })));
+                shell.hold_state_changed(cx);
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("session-held-unloaded").is_some());
+    }
+
+    #[gpui::test]
     fn a_settling_session_works_until_it_reaches_its_safe_point(cx: &mut TestAppContext) {
         let store = Store::open(Path::new(":memory:")).unwrap();
         let ids = sessions(&store, 2);
@@ -1305,7 +1355,7 @@ mod tests {
         let store = Store::open(Path::new(":memory:")).unwrap();
         let window = shell(store, cx);
         window
-            .update(cx, |_, w, cx| w.dispatch_action(Box::new(ToggleHold), cx))
+            .update(cx, |_, w, cx| w.dispatch_action(Box::new(HoldFromMenu), cx))
             .unwrap();
         cx.run_until_parked();
         assert!(!cx.has_pending_prompt());
@@ -1313,6 +1363,31 @@ mod tests {
         assert_eq!(label(window, cx), crate::hold_confirm::Label::Hint);
         advance(cx, 5000);
         assert_eq!(phase(cx), None);
+    }
+
+    #[gpui::test]
+    fn the_tray_and_palette_never_start_a_press_even_with_stale_modifiers(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let window = shell(store, cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        // Left with ⌘⇧Tab: the window still remembers ⌘⇧ as down.
+        visual.simulate_modifiers_change(shortcut_modifiers());
+        window
+            .update(visual, |shell, w, cx| shell.pilot_toggle_hold(w, cx))
+            .unwrap();
+        window
+            .update(visual, |_, w, cx| {
+                w.dispatch_action(Box::new(HoldFromMenu), cx)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert_eq!(label(window, visual), crate::hold_confirm::Label::Hint);
+        advance(visual, 3000);
+        assert_eq!(
+            phase(visual),
+            None,
+            "only the held shortcut or button holds"
+        );
     }
 
     #[gpui::test]

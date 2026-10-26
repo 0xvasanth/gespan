@@ -124,7 +124,8 @@ actions!(
         OpenSettings,
         GoToFile,
         OpenCommandPalette,
-        ToggleHold
+        ToggleHold,
+        HoldFromMenu
     ]
 );
 
@@ -5667,6 +5668,10 @@ impl Shell {
                     .clone()
                     .cached(StyleRefinement::default().size(px(side)).flex_shrink_0())
                     .into_any_element(),
+                // Not loaded yet, as after a restart: the saved hold still marks it.
+                None if self.held_mark(id, None, cx) => {
+                    crate::session_mark::held("session-held-unloaded").into_any_element()
+                }
                 None => provider_icon(&session.summary.provider, side).into_any_element(),
             };
             div()
@@ -7979,6 +7984,7 @@ impl Render for Shell {
             )
             .on_action(cx.listener(report::report_issue))
             .on_action(cx.listener(|this, _: &ToggleHold, window, cx| this.toggle_hold(window, cx)))
+            .on_action(cx.listener(|this, _: &HoldFromMenu, _, cx| this.hold_from_menu(cx)))
             .on_key_up(cx.listener(|this, event, _, cx| this.hold_key_up(event, cx)))
             .on_modifiers_changed(
                 cx.listener(|this, event, _, cx| this.hold_modifiers_changed(event, cx)),

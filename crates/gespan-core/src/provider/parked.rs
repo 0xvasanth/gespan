@@ -309,12 +309,13 @@ pub fn configure(limit: usize) {
 pub(super) fn enforce_idle_limit() {
     static EVICT: OnceLock<Mutex<()>> = OnceLock::new();
     let _evict = EVICT.get_or_init(Default::default).lock().unwrap();
-    // Held agents expire on their own clock and don't take warm-pool slots.
+    // Held and pinned agents expire on their own clock and don't take
+    // warm-pool slots, so no other agent can evict them.
     let mut entries: Vec<_> = idle_pool()
         .lock()
         .unwrap()
         .iter()
-        .filter(|entry| !entry.held)
+        .filter(|entry| !entry.held && !pinned(entry.owner))
         .map(|entry| (entry.wire.child.id(), entry.at, entry.owner))
         .collect();
     entries.extend(opencode::idle_entries());
@@ -871,6 +872,20 @@ for line in sys.stdin:
         backdate(held, IDLE);
         sweep();
         assert!(!parked(held), "then it expires like any idle agent");
+
+        // With the warm pool on, an agent already idle when Hold pinned it
+        // is not evicted to make room for others.
+        configure(1);
+        let (wire, protocol, idle) = spawn("idle-before-hold");
+        process::owned_by(44, || put(wire, protocol));
+        pin_idle_agents([44]);
+        let (wire, protocol, later) = spawn("finished-during-hold");
+        process::owned_by(45, || put(wire, protocol));
+        assert!(parked(idle) && alive(idle), "the pinned agent stays");
+        assert!(parked(later), "the newer one is kept within the limit");
+        unpin_idle_agents();
+        configure(0);
+        idle_pool().lock().unwrap().clear();
 
         // Deleting a held session still ends its agent.
         pin_idle_agents([43]);

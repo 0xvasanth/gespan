@@ -57,6 +57,16 @@ pub(crate) enum State {
     Held,
 }
 
+/// Stopped by Hold. Also drawn for held sessions that aren't loaded yet.
+pub(crate) fn held(id: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .role(Role::Image)
+        .aria_label("Held")
+        .child(icon("queue-pause", 14.).text_color(content(0.55)))
+}
+
 /// A small cached view so animation leaves the conversation untouched.
 pub(crate) struct SessionMark {
     side: f32,
@@ -118,12 +128,7 @@ impl Render for SessionMark {
                 .aria_label("Done")
                 .child(icon("check-circle-2", 14.).text_color(rgb(0x2dd4bf)))
                 .into_any_element(),
-            State::Held => div()
-                .id("session-held")
-                .role(Role::Image)
-                .aria_label("Held")
-                .child(icon("queue-pause", 14.).text_color(content(0.55)))
-                .into_any_element(),
+            State::Held => held("session-held").into_any_element(),
             State::Attention => div()
                 .id("session-attention")
                 .role(Role::Image)
