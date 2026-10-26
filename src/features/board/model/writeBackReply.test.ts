@@ -45,12 +45,33 @@ describe("writeBackReply", () => {
         {
           id: "a1",
           role: "assistant",
-          text: "Here is the revision.\n<proposed_plan>\n1. Ship it\n2. Watch it\n</proposed_plan>\nTell me if this works.",
+          text: "Here is the revision.\n<proposed_plan>\n1. Ship it\n2. Watch it\n</proposed_plan>",
         },
       ]),
     );
     expect(promoted.blocks.some((block) => block.role === "plan")).toBe(true);
     expect(writeBackReply(promoted)).toBe("1. Ship it\n2. Watch it");
+  });
+
+  it("an assistant block after the plan is the last reply, so it is the one written", () => {
+    const session = withBlocks([
+      { id: "u1", role: "user", text: "Plan it", intent: "plan" },
+      { id: "p1", role: "plan", text: "1. Do it", plan: { status: "ready" } },
+      { id: "a1", role: "assistant", text: "Tell me if this works" },
+    ]);
+    expect(writeBackReply(session)).toBe("Tell me if this works");
+    // The same through a promoted Codex reply with text after the plan.
+    const promoted = promoteProposedPlan(
+      withBlocks([
+        { id: "u1", role: "user", text: "Revise the plan" },
+        {
+          id: "a1",
+          role: "assistant",
+          text: "<proposed_plan>\n1. Ship it\n</proposed_plan>\nTell me if this works.",
+        },
+      ]),
+    );
+    expect(writeBackReply(promoted)).toBe("Tell me if this works.");
   });
 
   it("never uses reasoning, tool, approval or system text", () => {
