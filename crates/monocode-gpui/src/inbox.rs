@@ -111,6 +111,15 @@ pub(crate) struct Inbox {
     _subscriptions: Vec<Subscription>,
 }
 
+/// The inbox opens scoped to the project it was opened from.
+fn other_projects(projects: &[PathBuf], cwd: &PathBuf) -> Vec<String> {
+    projects
+        .iter()
+        .filter(|project| *project != cwd)
+        .map(|project| project.to_string_lossy().into_owned())
+        .collect()
+}
+
 impl EventEmitter<Event> for Inbox {}
 impl Focusable for Inbox {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -138,7 +147,7 @@ impl Inbox {
         if !projects.contains(&cwd) {
             projects.push(cwd.clone());
         }
-        let (state, data_dir) = locked(&store)
+        let (mut state, data_dir) = locked(&store)
             .map(|db| {
                 (
                     ViewState::load(&db),
@@ -148,6 +157,7 @@ impl Inbox {
                 )
             })
             .unwrap_or_else(|_| (ViewState::default(), cwd.clone()));
+        state.filters.hidden_projects = other_projects(&projects, &cwd);
         let search = cx.new(|cx| Input::field("Filter inbox", "Filter inbox", content(0.4), cx));
         let comment = cx.new(Input::inbox_comment);
         let connect_url = cx.new(|cx| Input::field("Instance URL", "https://", content(0.4), cx));
@@ -296,6 +306,10 @@ impl Inbox {
             projects.push(cwd.clone());
         }
         if self.projects != projects || self.service.cwd != cwd {
+            if self.service.cwd != cwd {
+                self.state.filters.hidden_projects = other_projects(&projects, &cwd);
+                self.save();
+            }
             self.projects = projects;
             self.service.cwd = cwd.clone();
             self.start_project = cwd;
