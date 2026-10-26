@@ -1,0 +1,33 @@
+src/features/board/ui/NewBoardDialog.tsx
+  s_938a6e0c93b076::t_e76e0b91a856d4 1-122
+src/features/board/ui/settings/BoardSettings.tsx
+  s_938a6e0c93b076::t_bee4827391c4e0 15,19,129-130
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_a3bac5292a51d9 22,1530-1540,1542,1911-1912,1966,2160-2171,2173,2226-2229
+  s_938a6e0c93b076::t_bee4827391c4e0 151,324-325,1002-1004,1454-1455
+src/features/board/ui/settings/AutomationSection.tsx
+  s_938a6e0c93b076::t_bee4827391c4e0 61,63-65
+  s_938a6e0c93b076::t_e76e0b91a856d4 1-60,62,66-142
+src/features/board/ui/settings/templatesAutomation.test.ts
+  s_938a6e0c93b076::t_0a23c00efad5cd 1-817
+src/features/board/model/boardSettings.ts
+  s_938a6e0c93b076::t_e76e0b91a856d4 1-5,161-225
+src/features/board/ui/settings/TemplatesSection.tsx
+  s_938a6e0c93b076::t_e76e0b91a856d4 1-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ec0bea7dbcecb31819c9e76d41411e1bbd39956",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
