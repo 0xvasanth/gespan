@@ -141,11 +141,16 @@ export function KanbanBoard({
     shownRef.current = shown;
   });
 
+  const sortedRef = useRef(sorted);
+  useLayoutEffect(() => {
+    sortedRef.current = sorted;
+  });
   const announcements = useMemo(
     () =>
       kanbanAnnouncements({
         current: () => shownRef.current,
         snapshot: () => snapshotRef.current,
+        sorted: () => sortedRef.current,
       }),
     [],
   );

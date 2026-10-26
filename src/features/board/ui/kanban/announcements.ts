@@ -76,6 +76,11 @@ export type KanbanAnnouncementSource = {
   current: () => BoardDetail;
   /** The board when the drag started; null before the first drag. */
   snapshot: () => BoardDetail | null;
+  /**
+   * The cards follow a sort: a drop inside the column the card came from is
+   * cancelled, and a drop into another column goes to the end of it.
+   */
+  sorted?: () => boolean;
 };
 
 /**
@@ -144,6 +149,16 @@ export function kanbanAnnouncements(
     },
     onDragEnd({ active, over }) {
       const landed = cardLanding(active, over);
+      if (landed && source.sorted?.()) {
+        const start = cardAt(startBoard(), active);
+        if (start && start.card.columnId === landed.card.columnId) {
+          return cardCancelled(start.card, start.place);
+        }
+        return cardDropped(landed.card, {
+          ...landed.place,
+          index: landed.place.total - 1,
+        });
+      }
       if (landed) return cardDropped(landed.card, landed.place);
       const column =
         columnLanding(active, over) ?? columnAt(startBoard(), active);

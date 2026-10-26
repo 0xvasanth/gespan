@@ -155,6 +155,9 @@ type BoardViewRow = {
  * Stands in for the Rust `board_query`: it matches the title and description
  * (or `#N`), the rows the tests use, and the sort, over what the fake board
  * serves. Only the shape matters here; the real rules are tested in Rust.
+ * Differences from Rust: `start` is always missing (so it keeps manual
+ * order), and `linked: none` means "not running" rather than "no links".
+ * Priority 0 sorts as missing (last), as in Rust.
  */
 function fakeEngine(args: Record<string, unknown>): string[] {
   const spec = args.spec as ViewSpec;
@@ -203,7 +206,7 @@ function fakeEngine(args: Record<string, unknown>): string[] {
   const value = (c: BoardCard): number | string | null => {
     const e = extras[c.id];
     return key === "priority"
-      ? (e?.priority ?? 0)
+      ? e?.priority || null
       : key === "due"
         ? (e?.dueAt ?? null)
         : key === "title"
@@ -3104,7 +3107,7 @@ describe("BoardView filter builder, sort and saved views", () => {
     expect(cardIdsIn("backlog")).toEqual(["c2", "c4"]);
     expect(cardIdsIn("progress")).toEqual(["c3"]);
     await click(
-      container.querySelector('[data-filter-chip="0"] button[aria-label="Remove filter"]')!,
+      container.querySelector('[data-filter-chip="0"] button[aria-label="Remove Priority filter"]')!,
     );
     expect(chips()).toEqual([]);
     expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
@@ -3204,6 +3207,36 @@ describe("BoardView filter builder, sort and saved views", () => {
     );
     await flush();
     expect(commands("board_card_move")).toHaveLength(1);
+  });
+
+  it("names_each_remove_button_after_its_row", async () => {
+    await renderBoard();
+    await filterBy("Priority", "High");
+    await filterBy("Labels", "Bug");
+    for (const name of ["Priority", "Labels"]) {
+      // One in the builder, one on the chip.
+      expect(
+        document.querySelectorAll(`button[aria-label="Remove ${name} filter"]`),
+      ).toHaveLength(2);
+    }
+    await click(
+      container.querySelector(
+        '[data-filter-chip="1"] button[aria-label="Remove Labels filter"]',
+      )!,
+    );
+    expect(chips()).toEqual(["Priority is High"]);
+  });
+
+  it("sorts_priority_none_last_and_orders_the_rest", async () => {
+    handlers.board_card_extras = () => ({
+      c1: extras({ priority: 3 }),
+      c2: extras({ priority: 1 }),
+    });
+    await renderBoard();
+    await pick("Sort", "Priority");
+    expect(cardIdsIn("backlog")).toEqual(["c2", "c1", "c4"]);
+    await pick("Sort", "Descending");
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
   });
 
   it("keyboard_drop_inside_a_sorted_column_moves_nothing", async () => {

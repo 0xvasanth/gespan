@@ -112,7 +112,7 @@ function FilterBuilder({
               </button>
               <button
                 type="button"
-                aria-label="Remove filter"
+                aria-label={`Remove ${fieldTitle(row.field, sources)} filter`}
                 className={SMALL}
                 onClick={() => {
                   onChange(rows.filter((_, at) => at !== index));
@@ -280,7 +280,7 @@ export function FilterChips({
           {chipText(row, sources)}
           <button
             type="button"
-            aria-label="Remove filter"
+            aria-label={`Remove ${fieldTitle(row.field, sources)} filter`}
             className="grid size-3.5 place-items-center rounded-full hover:bg-content/12"
             onClick={() => onRemove(index)}
           >

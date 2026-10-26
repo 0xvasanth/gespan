@@ -97,7 +97,11 @@ export function ViewTabs({
               >
                 {view.name}
                 {selected && dirty ? (
-                  <span aria-label="Unsaved changes" data-view-dot="">
+                  <span
+                    role="img"
+                    aria-label="Unsaved changes"
+                    data-view-dot=""
+                  >
                     •
                   </span>
                 ) : null}
