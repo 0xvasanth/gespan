@@ -1374,7 +1374,7 @@ impl BoardView {
 
     /// A held delete: the card is archived and the drawer closes at once; the
     /// undo toast deletes it for good when it goes, or Undo puts it back.
-    fn delete_card(&mut self, card_id: &str, cx: &mut Context<Self>) {
+    pub(super) fn delete_card(&mut self, card_id: &str, cx: &mut Context<Self>) {
         let Some(card) = self.card(card_id).cloned() else {
             return;
         };

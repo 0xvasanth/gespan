@@ -129,7 +129,7 @@ fn date_error(text: &str) -> String {
 
 impl BoardView {
     /// Open the modal on the open board, or put the cursor back in its title.
-    pub(super) fn open_new_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_new_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(form) = &self.new_card {
             window.focus(&form.title.focus_handle(cx), cx);
             return;

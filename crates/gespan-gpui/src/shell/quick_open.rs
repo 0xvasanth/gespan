@@ -5,7 +5,36 @@ pub(super) struct Open {
     restore: Option<FocusHandle>,
     _events: Subscription,
 }
+#[derive(Clone, Copy)]
+enum BoardCommand {
+    Show,
+    CreateCard,
+    SwitchBoard,
+}
 impl Shell {
+    /// A palette command that works on the Board: open it, then act.
+    fn board_command(
+        &mut self,
+        command: BoardCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_board(window, cx);
+        let Some(board) = self.board.clone() else {
+            self.error = Some("Turn on the Board in Settings to use it".into());
+            cx.notify();
+            return;
+        };
+        match command {
+            BoardCommand::Show => {}
+            BoardCommand::CreateCard => {
+                board.update(cx, |board, cx| board.open_new_card(window, cx))
+            }
+            BoardCommand::SwitchBoard => {
+                board.update(cx, |board, cx| board.open_switcher(window, cx))
+            }
+        }
+    }
     pub(super) fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(open) = self.quick_open.take() {
             if let Some(restore) = open.restore {
@@ -56,6 +85,11 @@ impl Shell {
                     Command::LinkTicket => this.link_ticket_to_active_session(window, cx),
                     Command::NewSessionFromTicket => this.open_new_ticket_dialog(window, cx),
                     Command::NewCardFromTicket => this.open_new_card_ticket_dialog(window, cx),
+                    Command::CreateCard => this.board_command(BoardCommand::CreateCard, window, cx),
+                    Command::GoToBoard => this.board_command(BoardCommand::Show, window, cx),
+                    Command::SwitchBoard => {
+                        this.board_command(BoardCommand::SwitchBoard, window, cx)
+                    }
                     Command::OpenLogs => {
                         let open = cx
                             .background_executor()
@@ -729,6 +763,94 @@ mod tests {
             .update(cx, |shell, _, _| {
                 assert!(shell.link_dialog.as_ref().unwrap().error.is_some());
                 assert_eq!(shell.session_summaries.len(), before);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn palette_create_card_opens_board_and_modal(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::shell::bind_keys(cx);
+            crate::input::bind(cx);
+            crate::popover::bind(cx);
+        });
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, _| {
+                shell.workspace.preferences.board = true;
+                assert!(shell.board.is_none());
+            })
+            .unwrap();
+        palette_pick(cx, window, ">create card", &[]);
+        window
+            .update(cx, |shell, _, cx| {
+                assert_eq!(
+                    shell.active_app_view,
+                    Some(crate::workspace::AppView::Board)
+                );
+                let board = shell.board.as_ref().expect("the board opened");
+                assert!(board.read(cx).new_card_open(), "the New card modal opens");
+                assert!(shell.quick_open.is_none());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn palette_create_card_with_the_board_off_opens_nothing(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::shell::bind_keys(cx);
+            crate::input::bind(cx);
+            crate::popover::bind(cx);
+        });
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, _| shell.workspace.preferences.board = false)
+            .unwrap();
+        palette_pick(cx, window, ">create card", &[]);
+        window
+            .update(cx, |shell, _, _| {
+                assert!(shell.board.is_none());
+                assert_ne!(
+                    shell.active_app_view,
+                    Some(crate::workspace::AppView::Board)
+                );
+                assert!(shell.error.is_some());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn palette_go_to_board_and_switch_board(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::shell::bind_keys(cx);
+            crate::input::bind(cx);
+            crate::popover::bind(cx);
+        });
+        let (window, _, _) = crate::shell::tests::window(cx);
+        window
+            .update(cx, |shell, _, _| shell.workspace.preferences.board = true)
+            .unwrap();
+        palette_pick(cx, window, ">go to board", &[]);
+        window
+            .update(cx, |shell, _, cx| {
+                assert_eq!(
+                    shell.active_app_view,
+                    Some(crate::workspace::AppView::Board)
+                );
+                let board = shell.board.as_ref().unwrap().read(cx);
+                assert!(!board.switcher_open(), "go to board only shows it");
+                assert!(!board.new_card_open());
+            })
+            .unwrap();
+        palette_pick(cx, window, ">switch board", &[]);
+        window
+            .update(cx, |shell, _, cx| {
+                assert_eq!(
+                    shell.active_app_view,
+                    Some(crate::workspace::AppView::Board)
+                );
+                let board = shell.board.as_ref().unwrap().read(cx);
+                assert!(board.switcher_open(), "the board list is open");
             })
             .unwrap();
     }

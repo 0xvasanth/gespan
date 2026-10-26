@@ -45,7 +45,7 @@ struct Fixture {
 fn open(cx: &mut TestAppContext) -> Fixture {
     cx.update(crate::input::bind);
     cx.update(crate::popover::bind);
-    cx.update(new_card::bind);
+    cx.update(bind);
     cx.update(|cx| cx.set_reduce_motion(true));
     let dir = Scratch::new();
     let db = dir.0.join("gespan.db");
@@ -6070,4 +6070,176 @@ fn a_second_bulk_delete_commits_the_first_and_a_board_switch_commits_the_second(
     visual.run_until_parked();
     assert!(!card_exists(&f, &ids[2]) && !card_exists(&f, &ids[3]));
     assert_eq!(toast(&f, visual), None);
+}
+
+// ---- Plain-key shortcuts (N, /, E, Delete) ----
+
+fn search_text(f: &Fixture, cx: &mut VisualTestContext) -> String {
+    f.window
+        .read_with(cx, |view, cx| view.search.read(cx).content.to_string())
+        .unwrap()
+}
+
+fn focus_search(f: &Fixture, visual: &mut VisualTestContext) {
+    f.window
+        .update(visual, |view, window, cx| {
+            let focus = view.search.focus_handle(cx);
+            window.focus(&focus, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+}
+
+#[gpui::test]
+fn n_opens_the_new_card_modal_when_no_field_has_focus(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    focus_board(&f, visual);
+    visual.simulate_keystrokes("n");
+    visual.run_until_parked();
+    assert!(modal_open(&f, visual));
+    // The key itself is not typed into the modal's title.
+    assert_eq!(new_card_text(&f, visual), (String::new(), String::new()));
+    // On a focused card it opens the modal too.
+    f.window
+        .update(visual, |view, _, cx| {
+            view.close_new_card(None, cx);
+        })
+        .unwrap();
+    let a = card_id(&f, visual, "A");
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("n");
+    visual.run_until_parked();
+    assert!(modal_open(&f, visual));
+}
+
+#[gpui::test]
+fn n_types_in_the_search_box(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    focus_search(&f, visual);
+    visual.simulate_keystrokes("n e / backspace n");
+    visual.run_until_parked();
+    assert!(!modal_open(&f, visual));
+    // `/` typed, then Backspace edited the text instead of deleting a card.
+    assert_eq!(search_text(&f, visual), "nen");
+    assert_eq!(card_count(&f), 1);
+    assert_eq!(toast(&f, visual), None);
+    drawer(&f, visual, |view, _| assert!(view.card_detail.is_none()));
+}
+
+#[gpui::test]
+fn slash_focuses_search(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    focus_board(&f, visual);
+    visual.simulate_keystrokes("/");
+    visual.run_until_parked();
+    // The slash is not typed; the next keys are.
+    assert_eq!(search_text(&f, visual), "");
+    visual.simulate_keystrokes("a b");
+    assert_eq!(search_text(&f, visual), "ab");
+    // Inside the search box a slash is just text.
+    visual.simulate_keystrokes("/");
+    assert_eq!(search_text(&f, visual), "ab/");
+}
+
+#[gpui::test]
+fn e_opens_the_focused_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let b = card_id(&f, visual, "B");
+    // No card focused: nothing opens.
+    focus_board(&f, visual);
+    visual.simulate_keystrokes("e");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, _| assert!(view.card_detail.is_none()));
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &b);
+    visual.simulate_keystrokes("e");
+    visual.run_until_parked();
+    drawer(&f, visual, |view, _| {
+        assert_eq!(
+            view.card_detail.as_ref().map(|d| d.card_id.as_str()),
+            Some(b.as_str())
+        );
+    });
+}
+
+#[gpui::test]
+fn delete_holds_a_delete_of_the_focused_card_with_undo(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let (a, b) = (card_id(&f, visual, "A"), card_id(&f, visual, "B"));
+    // Nothing focused: Delete does nothing.
+    focus_board(&f, visual);
+    visual.simulate_keystrokes("delete");
+    visual.run_until_parked();
+    assert_eq!(toast(&f, visual), None);
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &a);
+    visual.simulate_keystrokes("delete");
+    visual.run_until_parked();
+    assert_eq!(toast(&f, visual).as_deref(), Some("Deleted #1"));
+    assert_eq!(archived_ids(&f, visual), std::slice::from_ref(&a));
+    assert!(card_exists(&f, &a), "held, not gone yet");
+    click(visual, "board-undo");
+    assert!(archived_ids(&f, visual).is_empty());
+    assert_eq!(titles_in(&f, visual, "Backlog"), ["A", "B"]);
+    // Backspace does the same, and the other card is untouched.
+    visual.refresh().unwrap();
+    focus_card(&f, visual, &b);
+    visual.simulate_keystrokes("backspace");
+    visual.run_until_parked();
+    assert_eq!(toast(&f, visual).as_deref(), Some("Deleted #2"));
+    assert_eq!(archived_ids(&f, visual), std::slice::from_ref(&b));
+}
+
+#[gpui::test]
+fn delete_with_a_selection_deletes_all_selected(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let (a, b, c) = (
+        card_id(&f, visual, "A"),
+        card_id(&f, visual, "B"),
+        card_id(&f, visual, "C"),
+    );
+    cmd_click(visual, 1);
+    cmd_click(visual, 3);
+    // Focus is on a card that is not selected: the selection still wins.
+    focus_card(&f, visual, &b);
+    visual.simulate_keystrokes("delete");
+    visual.run_until_parked();
+    assert_eq!(toast(&f, visual).as_deref(), Some("Deleted 2 cards"));
+    let mut held = archived_ids(&f, visual);
+    held.sort();
+    let mut expected = vec![a.clone(), c.clone()];
+    expected.sort();
+    assert_eq!(held, expected);
+    assert!(!held.contains(&b));
+    drawer(&f, visual, |view, _| assert_eq!(view.selected_count(), 0));
+    click(visual, "board-undo");
+    assert!(archived_ids(&f, visual).is_empty());
+}
+
+#[gpui::test]
+fn keys_type_normally_in_an_inline_table_edit(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let a = card_id(&f, cx, "A");
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-layout-table");
+    click(visual, "board-table-edit-1");
+    visual.simulate_keystrokes("n e / x backspace delete");
+    visual.run_until_parked();
+    assert!(!modal_open(&f, visual));
+    drawer(&f, visual, |view, _| {
+        assert!(view.card_detail.is_none());
+        assert!(view.table_edit.is_some(), "the edit is still open");
+    });
+    assert_eq!(toast(&f, visual), None);
+    assert_eq!(card_count(&f), 2);
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    // "A" + "ne/x", Backspace took the x; the forward Delete had nothing to remove.
+    assert_eq!(card_of(&f, &a).title, "Ane/");
 }

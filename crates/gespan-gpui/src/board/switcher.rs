@@ -63,6 +63,15 @@ impl BoardView {
         cx.notify();
     }
 
+    /// Show the board list, opening it when it is closed.
+    pub(crate) fn open_switcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.switcher.is_none() {
+            self.toggle_switcher(window, cx);
+        } else {
+            window.focus(&self.focus, cx);
+        }
+    }
+
     /// Open a board and remember it. The search and filter go (labels belong
     /// to a board), as do the drawer and any open menu. False when the drawer
     /// could not save its edits, in which case nothing changes.

@@ -3,7 +3,26 @@
 //! by the board's `on_key`) puts it back. Only cards the search and filter show
 //! count; the drop maps the visible slot to the whole column like a mouse drop.
 use super::{BoardView, KeyboardDrag};
-use gpui::{Context, KeyDownEvent, Window};
+use gpui::{App, Context, KeyBinding, KeyDownEvent, Window, actions};
+
+actions!(
+    board,
+    [NewCardKey, FocusSearch, OpenFocusedCard, DeleteSelected]
+);
+
+/// Plain-key shortcuts. `Composer` is the key context of every text field
+/// (search, composer, inline edits, drawer fields), so with one focused these
+/// keys are not bound at all and type normally.
+pub(crate) fn bind(cx: &mut App) {
+    let context = Some("Board && !Composer");
+    cx.bind_keys([
+        KeyBinding::new("n", NewCardKey, context),
+        KeyBinding::new("/", FocusSearch, context),
+        KeyBinding::new("e", OpenFocusedCard, context),
+        KeyBinding::new("delete", DeleteSelected, context),
+        KeyBinding::new("backspace", DeleteSelected, context),
+    ]);
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Arrow {
@@ -48,6 +67,71 @@ impl BoardView {
         let detail = self.detail.as_ref()?;
         let card = detail.cards.iter().find(|card| card.id == card_id)?;
         Some(card.column_id.clone())
+    }
+
+    /// True while something sits in front of the board's cards: the shortcut
+    /// keys leave it alone.
+    pub(super) fn shortcuts_blocked(&self) -> bool {
+        self.kb_drag.is_some()
+            || self.new_card.is_some()
+            || self.composer.is_some()
+            || self.filter_open
+            || self.sort_open
+            || self.open_in_open
+            || self.switcher.is_some()
+            || self.renaming.is_some()
+            || self.pop.is_some()
+            || self.table_edit.is_some()
+            || self.menu.is_some()
+            || self.card_menu.is_some()
+            || self.views.menu.is_some()
+            || self.views.naming.is_some()
+    }
+
+    /// The card that has keyboard focus, if any.
+    fn focused_card(&self, window: &Window, cx: &App) -> Option<String> {
+        self.card_focus
+            .iter()
+            .find(|(_, handle)| handle.contains_focused(window, cx))
+            .map(|(id, _)| id.clone())
+    }
+
+    /// `E`: open the focused card's detail. False when no card has focus.
+    pub(super) fn open_focused_card(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.shortcuts_blocked() {
+            return false;
+        }
+        let Some(id) = self.focused_card(window, cx) else {
+            return false;
+        };
+        self.open_card_detail(id, window, cx);
+        true
+    }
+
+    /// `Delete`: a held delete of the selection, else of the focused card.
+    /// False when there is neither.
+    pub(super) fn delete_focused_or_selected(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.shortcuts_blocked() {
+            return false;
+        }
+        if self.selected_count() > 0 {
+            self.bulk_delete(cx);
+        } else if let Some(id) = self.focused_card(window, cx) {
+            self.delete_card(&id, cx);
+        } else {
+            return false;
+        }
+        // The card that had focus is gone: keep the board's keys alive.
+        window.focus(&self.focus, cx);
+        true
     }
 
     /// Handles a key on a card. True when the key was used.

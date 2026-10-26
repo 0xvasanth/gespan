@@ -59,6 +59,7 @@ pub(crate) const ROLES: [(&str, &str); 4] = [
 /// The board's own keys (⌘N for a new card).
 pub(crate) fn bind(cx: &mut App) {
     new_card::bind(cx);
+    keyboard::bind(cx);
 }
 
 pub(crate) enum Event {
@@ -361,6 +362,16 @@ impl BoardView {
     }
 
     /// The view came on screen: start polling and show the latest data.
+    #[cfg(test)]
+    pub(crate) fn new_card_open(&self) -> bool {
+        self.new_card.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn switcher_open(&self) -> bool {
+        self.switcher.is_some()
+    }
+
     pub(crate) fn shown(&mut self, cx: &mut Context<Self>) {
         self.visible = true;
         self.reload(cx);
@@ -1317,6 +1328,34 @@ impl gpui::Render for BoardView {
                 .on_action(cx.listener(|this, _: &new_card::OpenNewCard, window, cx| {
                     this.open_new_card(window, cx)
                 }))
+                .on_action(cx.listener(|this, _: &keyboard::NewCardKey, window, cx| {
+                    if this.shortcuts_blocked() {
+                        cx.propagate();
+                    } else {
+                        this.open_new_card(window, cx);
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &keyboard::FocusSearch, window, cx| {
+                    if this.shortcuts_blocked() {
+                        cx.propagate();
+                    } else {
+                        window.focus(&this.search.focus_handle(cx), cx);
+                    }
+                }))
+                .on_action(
+                    cx.listener(|this, _: &keyboard::OpenFocusedCard, window, cx| {
+                        if !this.open_focused_card(window, cx) {
+                            cx.propagate();
+                        }
+                    }),
+                )
+                .on_action(
+                    cx.listener(|this, _: &keyboard::DeleteSelected, window, cx| {
+                        if !this.delete_focused_or_selected(window, cx) {
+                            cx.propagate();
+                        }
+                    }),
+                )
                 .on_action(
                     cx.listener(|this, _: &new_card::SubmitNewCard, window, cx| {
                         if this.new_card.is_some() {
