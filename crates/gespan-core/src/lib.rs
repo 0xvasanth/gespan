@@ -16,6 +16,7 @@ pub mod flow;
 pub mod follow_up;
 pub mod git;
 pub mod harness_updates;
+pub mod hold;
 pub mod inbox;
 pub mod mobile;
 pub mod notes;

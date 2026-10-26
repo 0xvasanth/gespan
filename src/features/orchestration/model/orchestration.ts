@@ -47,6 +47,8 @@ export type WorkerPreparation = {
   workspace: OrchestrationWorkspace;
 };
 export type OrchestrationHost = {
+  /** Gespan is on hold: dispatch nothing until Resume calls wake(). */
+  held?(): boolean;
   session(id: string): Session | undefined;
   sessions(): Session[];
   choices(): { harness: HarnessId; models: { id: string; name: string }[] }[];
@@ -294,6 +296,10 @@ export class Orchestrator {
   constructor(private readonly store: Storage = storage) {}
   bind(host: OrchestrationHost) {
     this.host = host;
+  }
+  /** Resume dispatching after a hold. */
+  wake() {
+    void this.pump();
   }
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -1456,7 +1462,7 @@ export class Orchestrator {
       this.pumpAgain = true;
       return;
     }
-    if (!this.host) return;
+    if (!this.host || this.host.held?.()) return;
     this.pumping = true;
     try {
       for (const initial of this.runs) {

@@ -422,6 +422,25 @@ export async function cancelClaudeTurn(sessionId: string): Promise<void> {
   ]);
 }
 
+/**
+ * Hold ends the turn at a safe point but leaves what Claude started in the
+ * background running. Nothing is pending then, so nothing is denied.
+ */
+export async function holdClaudeTurn(sessionId: string): Promise<void> {
+  const live = liveByThread.get(sessionId);
+  if (!live) return;
+  live.cancelled = true;
+  live.muteUpdates = true;
+  await writeJson(
+    sessionId,
+    buildControlRequest(nextControlId(live), { subtype: "interrupt" }),
+  ).catch(() => undefined);
+  finishActiveTurn(live, [
+    { type: "message.completed" },
+    { type: "reasoning.completed" },
+  ]);
+}
+
 export async function stopClaudeSession(sessionId: string): Promise<void> {
   cancelledThreads.delete(sessionId);
   const live = liveByThread.get(sessionId);

@@ -11,6 +11,7 @@ mod file_panes;
 mod flow_runs;
 #[cfg(test)]
 mod flow_view_tests;
+mod hold;
 mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
@@ -122,7 +123,8 @@ actions!(
         ToggleLayout,
         OpenSettings,
         GoToFile,
-        OpenCommandPalette
+        OpenCommandPalette,
+        ToggleHold
     ]
 );
 
@@ -186,6 +188,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
     let context = Some("Workspace");
     cx.bind_keys([
         KeyBinding::new(&format!("{modifier}-n"), NewCodex, context),
+        KeyBinding::new(&format!("{modifier}-shift-h"), ToggleHold, context),
         KeyBinding::new(&format!("{modifier}-t"), NewCodex, context),
         KeyBinding::new(&format!("{modifier}-shift-n"), NewClaude, context),
         KeyBinding::new(&format!("{modifier}-o"), OpenProject, context),
@@ -573,6 +576,7 @@ pub(crate) struct Shell {
     /// Repaints the live agents card's elapsed times once a second.
     live_tick: Option<gpui::Task<()>>,
     busy_sessions: HashSet<i64>,
+    hold: hold::HoldCoordinator,
     /// Held per Settings → Keep screen awake; released on drop at quit.
     keep_awake: gespan_keep_awake::KeepAwake,
     notification_state: notifications::State,
@@ -926,6 +930,7 @@ impl Shell {
             live_agents_expanded: false,
             live_tick: None,
             busy_sessions: HashSet::new(),
+            hold: Default::default(),
             keep_awake: gespan_keep_awake::KeepAwake::new(),
             notification_state,
             quick: Default::default(),
@@ -1153,6 +1158,7 @@ impl Shell {
             this.session_summaries.insert(summary.id, summary);
         }
         this.init_mobile_host(cx);
+        this.restore_hold(cx);
         if let Some(id) = this.workspace.active {
             this.ensure_session(this.workspace.session_for_pane(id), cx);
             this.record_worktree_session(id, cx);
@@ -1767,6 +1773,31 @@ impl Shell {
             .any(|pane| pane.read(cx).unsaved_files(cx))
     }
     fn request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.quit_prompted && !self.settling_sessions(cx).is_empty() {
+            self.quit_prompted = true;
+            let answer = window.prompt(
+                gpui::PromptLevel::Warning,
+                "Some sessions are still finishing a command",
+                Some("Quit anyway and stop them? Gespan stays on hold and continues them when you resume."),
+                &["Quit Anyway", "Cancel"],
+                cx,
+            );
+            cx.spawn_in(window, async move |this, cx| {
+                let answer = answer.await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.quit_prompted = false;
+                    if matches!(answer, Ok(0)) {
+                        // Unsaved edits are still asked about.
+                        this.quit_unless_unsaved(window, cx);
+                    }
+                });
+            })
+            .detach();
+            return;
+        }
+        self.quit_unless_unsaved(window, cx);
+    }
+    fn quit_unless_unsaved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.unsaved_files(cx) {
             crate::quit(cx);
             return;
@@ -7956,6 +7987,7 @@ impl Render for Shell {
                 }),
             )
             .on_action(cx.listener(report::report_issue))
+            .on_action(cx.listener(|this, _: &ToggleHold, window, cx| this.toggle_hold(window, cx)))
             .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| {
                 this.open_quick_open(true, window, cx)
             }))
@@ -8293,6 +8325,7 @@ impl Render for Shell {
             .children(self.link_modal(window, cx))
             .children(self.action_modal(window, cx))
             .children(self.resource_modal(window, cx))
+            .children(self.hold_details(window, cx))
             .children(self.quick_open_modal(window, cx))
             .children(self.report_modal(window, cx))
             .children(self.remote_project_modal(window, cx))

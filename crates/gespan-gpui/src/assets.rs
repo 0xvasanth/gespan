@@ -169,6 +169,7 @@ impl AssetSource for Assets {
    "fx.svg"=>include_bytes!("../assets/fx.svg"),
    "hermes.svg"=>include_bytes!("../assets/hermes.svg"),
    "devin.svg"=>include_bytes!("../assets/devin.svg"),
+   "kiro.svg"=>include_bytes!("../assets/kiro.svg"),
    _ if path.starts_with("mi/")=>return Ok(crate::file_icons::svg(path).map(Cow::Borrowed)),
    _=>return Ok(icon_body(path).map(|body|Cow::Owned(format!("<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'>{body}</svg>").into_bytes())))
   };

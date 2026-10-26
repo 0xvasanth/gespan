@@ -108,7 +108,9 @@ impl Conversation {
             .is_none_or(|prefs| prefs.follow_up == "steer")
             || !self.background.tasks.is_empty())
             && Kind::from_id(&self.summary.provider).can_steer()
-            && message.can_steer();
+            && message.can_steer()
+            // Held messages wait for Resume instead of joining a settling turn.
+            && !crate::hold::active(cx);
         self.follow_ups.motion.insert(
             &message.id,
             self.follow_ups.state.messages.is_empty(),
@@ -268,7 +270,7 @@ impl Conversation {
         }
     }
     pub(super) fn pump_follow_ups(&mut self, cx: &mut Context<Self>) {
-        if self.editing_last_turn.pending() || self.stopping {
+        if self.editing_last_turn.pending() || self.stopping || crate::hold::active(cx) {
             return;
         }
         if !self.history_ready() {
@@ -386,7 +388,7 @@ impl Conversation {
         }
         cx.notify();
     }
-    fn resume_queue(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn resume_queue(&mut self, cx: &mut Context<Self>) {
         if self.stopping {
             self.defer_history_action(|this, cx| this.resume_queue(cx), cx);
             return;
@@ -493,7 +495,7 @@ impl Conversation {
             .when(self.follow_ups.state.paused && !self.follow_ups.resuming, |d| d.child(
                 div().h(px(28.)).flex().items_center().gap_2().border_b_1().border_color(content(0.1))
                     .child(icon("queue-pause", 14.))
-                    .child(div().flex_1().min_w_0().truncate().child(if failed { "A message couldn't be sent" } else { "Queue paused because you interrupted" }))
+                    .child(div().flex_1().min_w_0().truncate().child(if failed { "A message couldn't be sent" } else if self.held.is_some() || crate::hold::active(cx) { "Held: sends on Resume" } else { "Queue paused because you interrupted" }))
                     .child(queue_button("queue-resume", if failed { "Retry queue" } else { "Resume queue" }, "queue-play").w_auto().px(px(6.)).gap(px(6.)).child(if failed { "Retry" } else { "Resume" }).on_click(cx.listener(|this, _, _, cx| this.resume_queue(cx))))
             ))
             .children(self.follow_ups.state.messages.iter().enumerate().map(|(index, message)| {

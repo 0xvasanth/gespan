@@ -54,3 +54,21 @@ it("labels a combined report without exposing the app prompt", () => {
   expect(markup).toContain("3 sessions finished");
   expect(markup).not.toContain("Gespan completion notification");
 });
+
+it("says held messages wait for Resume and offers no per-session Resume while held", async () => {
+  const { HoldPhaseContext } = await import("../../hold/model/holdContext");
+  const markup = renderToStaticMarkup(
+    createElement(
+      HoldPhaseContext.Provider,
+      { value: "onHold" },
+      createElement(MessageQueue, {
+        messages: [{ id: "m", text: "after lunch", attachments: [] }],
+        status: "paused",
+        onResume: vi.fn(),
+      }),
+    ),
+  );
+  expect(markup).toContain("Held: sends on Resume");
+  expect(markup).not.toContain("because you interrupted");
+  expect(markup).not.toContain(">Resume<");
+});

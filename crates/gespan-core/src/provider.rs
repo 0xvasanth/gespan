@@ -27,6 +27,11 @@ mod compaction;
 pub(crate) mod devin;
 mod discovery;
 mod follow_up;
+mod hold;
+pub use hold::HoldPoint;
+use lifecycle::Interrupt;
+#[cfg(all(test, unix))]
+mod hold_tests;
 mod kind;
 mod lifecycle;
 mod limits;
@@ -113,6 +118,8 @@ pub enum Event {
         model: Option<String>,
         model_settings: HashMap<String, String>,
     },
+    /// A held turn reached its safe point.
+    HoldSettled(HoldPoint),
     Done,
 }
 
@@ -265,6 +272,8 @@ struct Protocol {
     previous_turn: Option<String>,
     interrupt_id: Option<String>,
     claude_prompt_sent: bool,
+    /// Hold was requested: pending questions wait instead of auto-resolving.
+    holding: bool,
     claude_result_seen: bool,
     claude_usage_limit: Option<crate::usage::Limit>,
     claude_resume_at: Option<Instant>,
@@ -307,6 +316,7 @@ impl Protocol {
             interrupt_id: None,
             claude_prompt_sent: false,
             claude_result_seen: false,
+            holding: false,
             claude_usage_limit: None,
             claude_resume_at: None,
             follow_up_ready: false,
@@ -1398,6 +1408,40 @@ pub(crate) fn catalog_for(kind: Kind, account: crate::accounts::Profile) -> Resu
     .ok_or_else(|| format!("{} returned no model catalog", kind.label()))
 }
 
+fn kiro_auth_error(detail: &str) -> String {
+    format!("{}: {detail} {}", Kind::Kiro.label(), acp::KIRO_AUTH_HELP)
+}
+
+/// Kiro's sign-in failure from stderr. An exited process gets a moment for
+/// its last stderr lines to be read.
+fn kiro_stderr_failure(wire: &mut parked::Wire) -> Option<String> {
+    let deadline = Instant::now() + Duration::from_millis(300);
+    loop {
+        if let Some(detail) = wire.auth.lock().unwrap().as_deref() {
+            return Some(kiro_auth_error(detail));
+        }
+        if wire.stderr_closed()
+            || Instant::now() >= deadline
+            || !matches!(wire.child.try_wait(), Ok(Some(_)))
+        {
+            return None;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Whether the child exits soon after its output ended.
+fn exited(child: &mut std::process::Child) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            _ => return false,
+        }
+    }
+}
+
 fn run_process(
     request: Request,
     cancel: Arc<AtomicBool>,
@@ -1423,6 +1467,41 @@ fn run_operation(
     if request.kind == Kind::OpenCode {
         return opencode::run(request, cancel, controls, probe, compact, emit);
     }
+    let controls = controls.as_ref();
+    let mut fallback = false;
+    loop {
+        let mut relaunch = false;
+        let result = launch(
+            request.clone(),
+            &cancel,
+            controls,
+            (probe, compact, command_probe),
+            fallback,
+            &mut relaunch,
+            &mut emit,
+        );
+        if !relaunch {
+            return result;
+        }
+        // Stop can arrive while waiting for the first attempt to exit.
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Stopped".into());
+        }
+        fallback = true;
+    }
+}
+
+/// One provider process. `relaunch` is set, instead of reporting a failure,
+/// when Kiro exits before answering `initialize` and `fallback` was not tried.
+fn launch(
+    request: Request,
+    cancel: &Arc<AtomicBool>,
+    controls: Option<&mpsc::Receiver<Control>>,
+    (probe, compact, command_probe): (bool, bool, bool),
+    fallback: bool,
+    relaunch: &mut bool,
+    emit: &mut impl FnMut(Vec<Event>) -> Result<(), String>,
+) -> Result<Option<Value>, String> {
     let claude_new_session = (request.kind == Kind::Claude
         && request.provider_id.is_none()
         && !request.settings.text_only)
@@ -1562,7 +1641,7 @@ fn run_operation(
             }
         }
         kind if kind.is_pi() => pi::configure(&mut command, &request, probe || command_probe),
-        _ => acp::configure(&mut command, &request)?,
+        _ => acp::configure(&mut command, &request, fallback)?,
     }
     command
         .current_dir(if request.kind == Kind::Antigravity {
@@ -1595,7 +1674,8 @@ fn run_operation(
             parked::discard_session(&request);
         }
         (
-            parked::Wire::spawn(&mut command, &request, eligible)?,
+            // The fallback relaunch is part of the start already counted.
+            parked::Wire::spawn(&mut command, &request, eligible && !fallback)?,
             Protocol::new(request),
             false,
         )
@@ -1604,6 +1684,7 @@ fn run_operation(
     protocol.seed_agent_runs();
     let rx = &wire.rx;
     let tail = &wire.tail;
+    let auth = &wire.auth;
     let mut stdin = &mut wire.stdin;
     let mut pending = Vec::new();
     if let Some(id) = claude_new_session {
@@ -1611,6 +1692,7 @@ fn run_operation(
         pending.push(Event::SessionId(id));
     }
     let mut stop_confirmed = false;
+    let mut held = false;
     let result = (|| {
         protocol.probe = probe;
         protocol.compact = compact;
@@ -1650,10 +1732,11 @@ fn run_operation(
         let started = Instant::now();
         let mut ready_emitted = false;
         let mut interrupted = false;
+        let mut gate = hold::Gate::default();
         loop {
             if cancel.load(Ordering::Relaxed) && !interrupted {
                 interrupted = true;
-                if !protocol.interrupt(&mut stdin)? {
+                if !protocol.interrupt(&mut stdin, Interrupt::Stop)? {
                     return Err("Stopped".into());
                 }
                 if protocol.request.kind == Kind::Claude {
@@ -1663,22 +1746,59 @@ fn run_operation(
             if !interrupted {
                 if let Some(controls) = &controls {
                     while let Ok(control) = controls.try_recv() {
-                        if let Decision::Steer(message) = control.decision {
-                            let id = message.id.clone();
-                            match protocol.steer(message, &mut stdin) {
-                                Ok(events) => pending.extend(events),
-                                Err(error) => pending.push(Event::FollowUpFailed { id, error }),
+                        match control.decision {
+                            Decision::Steer(message) => {
+                                let id = message.id.clone();
+                                match protocol.steer(message, &mut stdin) {
+                                    Ok(events) => pending.extend(events),
+                                    Err(error) => pending.push(Event::FollowUpFailed { id, error }),
+                                }
                             }
-                        } else {
-                            protocol.respond(control, &mut stdin)?;
+                            Decision::Hold => {
+                                gate.request();
+                                protocol.holding = true;
+                            }
+                            Decision::Release => {
+                                gate.release();
+                                protocol.holding = false;
+                            }
+                            _ => protocol.respond(control, &mut stdin)?,
                         }
                     }
                 }
                 pending.extend(protocol.expire_steering());
-                pending.extend(protocol.lifecycle_tick(started, &mut stdin)?);
+                let tick = protocol.lifecycle_tick(started, &mut stdin)?;
+                for event in &tick {
+                    gate.observe(event);
+                }
+                pending.extend(tick);
                 if protocol.ready() && !ready_emitted {
                     ready_emitted = true;
                     pending.push(Event::Ready);
+                }
+                let awaiting = !protocol.approvals.is_empty() || !protocol.questions.is_empty();
+                let decision = (awaiting || protocol.prompt_delivered())
+                    .then(|| gate.decide(awaiting))
+                    .flatten();
+                match decision {
+                    Some(hold::Action::Interrupt) => {
+                        interrupted = true;
+                        held = true;
+                        pending.push(Event::HoldSettled(HoldPoint::Interrupted));
+                        if !protocol.interrupt(&mut stdin, Interrupt::Hold)? {
+                            return Err("Stopped".into());
+                        }
+                    }
+                    Some(hold::Action::Settle(point)) => pending.push(Event::HoldSettled(point)),
+                    None => {}
+                }
+            }
+            // Kiro can wait forever at startup once signed out; its stderr
+            // says why. During a prompt, tool and MCP stderr can look the
+            // same, so the line only explains a failure that happens anyway.
+            if !interrupted && protocol.acp_starting() {
+                if let Some(detail) = auth.lock().unwrap().as_deref() {
+                    return Err(kiro_auth_error(detail));
                 }
             }
             if interrupted && protocol.request.kind.is_pi() {
@@ -1759,6 +1879,7 @@ fn run_operation(
                         Err(error) => return Err(error),
                     };
                     for event in events {
+                        gate.observe(&event);
                         if controls.is_none() || interrupted {
                             if let Event::Approval(approval) = &event {
                                 protocol.respond(
@@ -1835,7 +1956,7 @@ fn run_operation(
             }
             let discovery_timeout = match protocol.request.kind {
                 Kind::Cursor | Kind::Grok => Some(15),
-                Kind::Hermes => Some(30),
+                Kind::Hermes | Kind::Kiro => Some(30),
                 Kind::Pi | Kind::Omp => Some(45),
                 Kind::Antigravity => None,
                 _ => Some(60),
@@ -1848,15 +1969,39 @@ fn run_operation(
             }
         }
     })();
+    // A Hold interrupt ends the turn like Stop, but the session is held, not stopped.
+    let result = match result {
+        Err(error) if held && error == "Stopped" => Err("Held".to_owned()),
+        result => result,
+    };
+    let stopped = held || cancel.load(Ordering::Relaxed);
+    if protocol.request.kind == Kind::Kiro && result.is_err() && !stopped {
+        // A CLI without the V3 engine rejects the flag and exits; a live
+        // process that timed out or answered with an error is not retried.
+        if !fallback && !warm && protocol.acp_initializing() && exited(&mut wire.child) {
+            // A signed-out CLI exits too; the plain launch would only repeat
+            // it, so the turn fails below with the login help instead.
+            if kiro_stderr_failure(&mut wire).is_none() {
+                *relaunch = true;
+                return result;
+            }
+        }
+    }
+    let result = match result {
+        Err(error) if protocol.request.kind == Kind::Kiro && !stopped => {
+            Err(kiro_stderr_failure(&mut wire).unwrap_or(error))
+        }
+        result => result,
+    };
     // Cancellation can arrive while publishing an event batch. Its callback
     // then returns Stopped before the next receive-loop iteration can interrupt.
     if cancel.load(Ordering::Relaxed) && protocol.interrupt_id.is_none() {
-        let _ = protocol.interrupt(&mut wire.stdin);
+        let _ = protocol.interrupt(&mut wire.stdin, Interrupt::Stop);
     }
     if cancel.load(Ordering::Relaxed) && protocol.done {
         stop_confirmed = true;
     }
-    if let (Err(error), false) = (&result, cancel.load(Ordering::Relaxed)) {
+    if let (Err(error), false) = (&result, cancel.load(Ordering::Relaxed) || held) {
         // Conversation turns only: not probes or background text work.
         if eligible {
             crate::diagnostics::metrics::failure(
@@ -2413,6 +2558,201 @@ for line in sys.stdin:
         assert!(done);
     }
 
+    /// A fake `kiro-cli` in Python. `launch` runs first with `args`, the
+    /// arguments it was started with; `turn` answers each ACP request `m`.
+    fn kiro(launch: &str, turn: &str) -> (tempfile::TempDir, Request) {
+        let indent = |code: &str| {
+            code.lines()
+                .map(|line| format!("        {line}\n"))
+                .collect::<String>()
+        };
+        let (tmp, mut request) = fixture(&format!(
+            r#"#!/usr/bin/env python3
+import json, os, sys, time
+args = sys.argv[1:]
+with open(os.path.join(os.path.dirname(sys.argv[0]), 'launches'), 'a') as f:
+    f.write(' '.join(args) + '\n')
+def send(value):
+    print(json.dumps(value), flush=True)
+def reply(m, result):
+    send({{'jsonrpc': '2.0', 'id': m['id'], 'result': result}})
+def say(text):
+    send({{'jsonrpc': '2.0', 'method': 'session/update', 'params': {{'sessionId': 'k1', 'update': {{'sessionUpdate': 'agent_message_chunk', 'content': {{'type': 'text', 'text': text}}}}}}}})
+def log(line):
+    sys.stderr.write(line + '\n')
+    sys.stderr.flush()
+{launch}
+for line in sys.stdin:
+    m = json.loads(line)
+    method = m.get('method')
+    if True:
+{turn}"#,
+            turn = indent(turn)
+        ));
+        request.kind = Kind::Kiro;
+        (tmp, request)
+    }
+    const KIRO_TURN: &str = "if method == 'initialize':
+    reply(m, {})
+elif method == 'session/new':
+    reply(m, {'sessionId': 'k1'})
+elif method == 'session/prompt':
+    say('Hi')
+    reply(m, {'stopReason': 'end_turn'})";
+    fn launches(request: &Request) -> Vec<String> {
+        std::fs::read_to_string(request.cwd.join("launches"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+    fn kiro_run(request: Request) -> (Result<(), String>, String) {
+        let mut text = String::new();
+        let result = run(request, Arc::new(AtomicBool::new(false)), |events| {
+            for event in events {
+                if let Event::Text(t) = event {
+                    text.push_str(&t);
+                }
+            }
+            Ok(())
+        });
+        (result, text)
+    }
+    #[test]
+    fn kiro_launches_v3_and_falls_back_to_plain_acp_when_v3_exits() {
+        // A CLI without the V3 engine rejects the flag and exits.
+        let (_tmp, request) = kiro(
+            "if '--agent-engine=v3' in args:\n    log('error: unexpected argument --agent-engine')\n    sys.exit(2)",
+            KIRO_TURN,
+        );
+        let (result, text) = kiro_run(request.clone());
+        assert_eq!(result, Ok(()));
+        assert_eq!(text, "Hi");
+        assert_eq!(launches(&request), ["acp --agent-engine=v3", "acp"]);
+
+        // A V3 CLI is launched once.
+        let (_tmp, request) = kiro("", KIRO_TURN);
+        let (result, text) = kiro_run(request.clone());
+        assert_eq!(result, Ok(()));
+        assert_eq!(text, "Hi");
+        assert_eq!(launches(&request), ["acp --agent-engine=v3"]);
+
+        // The fallback is tried once, even when it exits as well.
+        let (_tmp, request) = kiro("sys.exit(2)", KIRO_TURN);
+        let (result, _) = kiro_run(request.clone());
+        assert!(result.unwrap_err().contains("exited"));
+        assert_eq!(launches(&request), ["acp --agent-engine=v3", "acp"]);
+
+        // Exiting after `initialize` succeeded is a failed turn, not a fallback.
+        let (_tmp, request) = kiro(
+            "",
+            "if method == 'initialize':\n    reply(m, {})\nelse:\n    sys.exit(1)",
+        );
+        let (result, _) = kiro_run(request.clone());
+        assert!(result.unwrap_err().contains("exited"));
+        assert_eq!(launches(&request), ["acp --agent-engine=v3"]);
+    }
+    #[test]
+    fn kiro_does_not_retry_a_live_process_that_times_out() {
+        let help = "Run `kiro-cli login` (check with `kiro-cli whoami`).";
+        acp::DEADLINE_OVERRIDE.with(|d| d.set(Some(Duration::from_secs(2))));
+        let (_tmp, request) = kiro("", "pass");
+        let (result, _) = kiro_run(request.clone());
+        acp::DEADLINE_OVERRIDE.with(|d| d.set(None));
+        assert_eq!(result, Err(format!("Kiro CLI did not start. {help}")));
+        assert_eq!(launches(&request), ["acp --agent-engine=v3"]);
+
+        // An error reply to `initialize` is an answer, not an exit.
+        let (_tmp, request) = kiro(
+            "",
+            "send({'jsonrpc': '2.0', 'id': m['id'], 'error': {'code': -32600, 'message': 'Unsupported protocol version'}})",
+        );
+        let (result, _) = kiro_run(request.clone());
+        assert_eq!(result, Err("Kiro CLI: Unsupported protocol version".into()));
+        assert_eq!(launches(&request), ["acp --agent-engine=v3"]);
+    }
+    #[test]
+    fn kiro_signed_out_errors_end_with_the_login_help() {
+        let help = "Run `kiro-cli login` (check with `kiro-cli whoami`).";
+        // Kiro logs progress, debug lines included, on stderr: a turn succeeds.
+        let (_tmp, request) = kiro(
+            "log('[DEBUG] token expired, refreshing')\nlog('INFO auth failed for cached profile; retrying')\nlog('Starting login service')",
+            KIRO_TURN,
+        );
+        let (result, text) = kiro_run(request);
+        assert_eq!(result, Ok(()));
+        assert_eq!(text, "Hi");
+
+        // An explicit sign-in failure ends a turn that would otherwise hang.
+        let (_tmp, request) = kiro(
+            "",
+            "if method == 'initialize':\n    reply(m, {})\nelif method == 'session/new':\n    log('Error: not logged in')",
+        );
+        let started = Instant::now();
+        let (result, _) = kiro_run(request);
+        assert_eq!(
+            result,
+            Err(format!("Kiro CLI: Error: not logged in {help}"))
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+
+        // The sign-in failure wins over the generic reply that follows it.
+        let (_tmp, request) = kiro(
+            "",
+            "if method == 'initialize':\n    reply(m, {})\nelif method == 'session/new':\n    log('authentication required')\n    time.sleep(0.3)\n    send({'jsonrpc': '2.0', 'id': m['id'], 'error': {'code': -32603, 'message': 'Internal error'}})",
+        );
+        let (result, _) = kiro_run(request);
+        assert_eq!(
+            result,
+            Err(format!("Kiro CLI: authentication required {help}"))
+        );
+    }
+    #[test]
+    fn kiro_signed_out_v3_exit_does_not_fall_back() {
+        let help = "Run `kiro-cli login` (check with `kiro-cli whoami`).";
+        let (_tmp, request) = kiro("log('Error: not logged in')\nsys.exit(1)", KIRO_TURN);
+        let (result, _) = kiro_run(request.clone());
+        assert_eq!(
+            result,
+            Err(format!("Kiro CLI: Error: not logged in {help}"))
+        );
+        assert_eq!(launches(&request), ["acp --agent-engine=v3"]);
+    }
+    #[test]
+    fn kiro_stderr_auth_noise_mid_prompt_does_not_end_the_turn() {
+        // An MCP server or tool logs an auth-like line while the prompt runs.
+        let (_tmp, request) = kiro(
+            "",
+            "if method == 'initialize':\n    reply(m, {})\nelif method == 'session/new':\n    reply(m, {'sessionId': 'k1'})\nelif method == 'session/prompt':\n    log('mcp github: 401 Unauthorized')\n    log('2026-10-25T10:00:00Z  WARN token expired, refreshing')\n    time.sleep(0.3)\n    say('Hi')\n    reply(m, {'stopReason': 'end_turn'})",
+        );
+        let (result, text) = kiro_run(request);
+        assert_eq!(result, Ok(()));
+        assert_eq!(text, "Hi");
+    }
+    #[test]
+    fn kiro_stop_while_v3_exits_does_not_launch_the_fallback() {
+        // The v3 attempt closes stdout, then takes a while to exit; Stop
+        // arrives while the launcher waits to see it exit.
+        let (_tmp, request) = kiro(
+            "if '--agent-engine=v3' in args:\n    os.close(1)\n    open(os.path.join(os.path.dirname(sys.argv[0]), 'closed'), 'w').close()\n    time.sleep(1)\n    sys.exit(2)",
+            KIRO_TURN,
+        );
+        let closed = request.cwd.join("closed");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop = cancel.clone();
+        let stopper = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !closed.exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            thread::sleep(Duration::from_millis(200));
+            stop.store(true, Ordering::Relaxed);
+        });
+        let result = run(request.clone(), cancel, |_| Ok(()));
+        stopper.join().unwrap();
+        assert_eq!(result, Err("Stopped".into()));
+        assert_eq!(launches(&request), ["acp --agent-engine=v3"]);
+    }
     #[test]
     fn malformed_provider_json_fails() {
         // Exercise JSON parsing after startup, rather than a broken initialization pipe.

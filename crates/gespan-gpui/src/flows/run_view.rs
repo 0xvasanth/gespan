@@ -63,7 +63,7 @@ pub(super) fn default_resume_state(run: &FlowRun, visits: &[FlowVisit]) -> Optio
         .filter(|id| run.flow.states.iter().any(|s| s.id() == id))
 }
 
-pub(super) fn duration(visit: &FlowVisit, now: i64) -> String {
+pub(crate) fn duration(visit: &FlowVisit, now: i64) -> String {
     let end = visit.finished_at.unwrap_or(now);
     let seconds = (end - visit.started_at).max(0) / 1000;
     if seconds < 60 {
@@ -83,7 +83,7 @@ pub(super) fn running_hint(flow: &str, title: &str, waiting_in: Option<&str>) ->
     }
 }
 
-fn visit_status_label(status: VisitStatus) -> &'static str {
+pub(crate) fn visit_status_label(status: VisitStatus) -> &'static str {
     match status {
         VisitStatus::Running => "Running",
         VisitStatus::WaitingApproval => "Needs approval",

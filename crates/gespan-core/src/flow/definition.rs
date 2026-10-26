@@ -981,7 +981,7 @@ mod tests {
     #[test]
     fn harness_must_be_a_native_kind() {
         let f = one(AgentState {
-            harness: "kiro".into(),
+            harness: "nonexistent".into(),
             ..agent("a")
         });
         assert!(errors_of(&f).contains("unknown harness"));

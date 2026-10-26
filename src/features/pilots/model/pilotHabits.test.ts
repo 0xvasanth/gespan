@@ -80,6 +80,15 @@ it("runs a recent missed habit once and skips stale ones", () => {
   expect(skipped.map((h) => h.id)).toEqual(["h2"]);
 });
 
+it("runs a habit that came due during a hold once, even past the grace", () => {
+  const heldSince = at(5, 9) - 3 * MISSED_RUN_GRACE_MS;
+  const missedWhileHeld = habit({ nextRunAt: heldSince + 1 });
+  const before = habit({ id: "h2", nextRunAt: heldSince - 1 });
+  const { run, skipped } = dueHabits([missedWhileHeld, before], at(5, 9), heldSince);
+  expect(run.map((h) => h.id)).toEqual(["h1"]);
+  expect(skipped.map((h) => h.id)).toEqual(["h2"]);
+});
+
 it("moves to the next run and records how it went", () => {
   // Monday Oct 5 09:00 → next weekday is Tuesday Oct 6 09:00.
   const claimed = afterRun(habit(), at(5, 9));

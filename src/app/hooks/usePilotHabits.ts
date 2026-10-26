@@ -73,6 +73,10 @@ export type PilotHabitHost = {
   ): void;
   /** Withdraws the run's unanswered approvals from the chat once it ends. */
   endApprovals(runId: string): void;
+  /** Gespan is on hold: start nothing, and don't count time against runs. */
+  held?(): boolean;
+  /** Start of the last hold, so habits missed during it run once. */
+  heldSince?(): number | undefined;
 };
 
 const POLL_MS = 2_000;
@@ -125,6 +129,8 @@ async function watchRun(
     for (const block of pending)
       if (!isRelayed(runId, block.approval!.requestId))
         host.askApproval(pilotId, habit, runId, block);
+    // Held time is not the run's time.
+    if (host.held?.()) continue;
     if (pending.length) waiting += POLL_MS;
     else working += POLL_MS;
     if (working >= HABIT_RUN_TIMEOUT_MS || waiting >= HABIT_APPROVAL_WAIT_MS)
@@ -258,7 +264,7 @@ export function usePilotHabits(host: PilotHabitHost, enabled = true) {
 
     const tick = async () => {
       if ((window as OwnedWindow)[OWNER] !== owner) stopped = true;
-      if (stopped) return;
+      if (stopped || hostRef.current.held?.()) return;
       if (running) {
         checkAgain = true;
         return;
@@ -271,12 +277,15 @@ export function usePilotHabits(host: PilotHabitHost, enabled = true) {
           // Habits are set up in its chat, so one never opened has none.
           if (!sessionId) continue;
           const now = Date.now();
-          const { run, skipped } = dueHabits(await loadHabits(id), now);
+          const heldSince = hostRef.current.heldSince?.();
+          const { run, skipped } = dueHabits(await loadHabits(id), now, heldSince);
           if (!run.length && !skipped.length) continue;
           if (skipped.length) {
             await updateHabits(id, (habits) => {
               const stale = new Set(
-                dueHabits(habits, Date.now()).skipped.map((habit) => habit.id),
+                dueHabits(habits, Date.now(), heldSince).skipped.map(
+                  (habit) => habit.id,
+                ),
               );
               return {
                 habits: habits.map((habit) =>

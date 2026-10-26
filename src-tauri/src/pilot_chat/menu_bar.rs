@@ -39,11 +39,17 @@ pub(super) struct Action {
 
 /// The actions below the Pilots, each in its own group. Each gets a circle
 /// like a portrait's so every title in the menu shares one column.
-pub(super) const ACTIONS: [Action; 2] = [
+pub(super) const ACTIONS: [Action; 3] = [
     Action {
         id: "pilot-chat-composer",
         title: "Quick Composer",
         symbol: "square.and.pencil",
+        destructive: false,
+    },
+    Action {
+        id: "pilot-chat-hold",
+        title: "Hold or Resume Everything",
+        symbol: "pause.circle",
         destructive: false,
     },
     Action {

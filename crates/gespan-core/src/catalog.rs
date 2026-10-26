@@ -346,6 +346,7 @@ pub fn models_for(kind: Kind, account: &crate::accounts::Profile) -> Result<Vec<
             }
         }
     }
+    with_configured_model(kind, &mut models);
     if models.is_empty() {
         return Err(format!("{} returned an empty model catalog", kind.label()));
     }
@@ -365,6 +366,14 @@ pub fn models_for(kind: Kind, account: &crate::accounts::Profile) -> Result<Vec<
             .push((kind, account.clone(), models.clone(), Instant::now()));
     }
     Ok(models)
+}
+
+/// Kiro runs the model its own settings choose; `default` skips model selection.
+fn with_configured_model(kind: Kind, models: &mut Vec<Model>) {
+    if kind == Kind::Kiro {
+        models.retain(|m| m.id != "default");
+        models.insert(0, model("default", "Configured model"));
+    }
 }
 
 fn model(id: &str, name: &str) -> Model {
@@ -877,6 +886,26 @@ mod tests {
         assert!(cached_models_for(Kind::Codex, &account).is_none());
         invalidate(Kind::Claude, &account);
         assert!(cached_models_for(Kind::Claude, &account).is_none());
+    }
+
+    #[test]
+    fn kiro_model_picker_offers_the_configured_model() {
+        let mut models = vec![
+            model("claude-sonnet-4.5", "Sonnet 4.5"),
+            model("default", "Auto"),
+        ];
+        with_configured_model(Kind::Kiro, &mut models);
+        let ids: Vec<_> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["default", "claude-sonnet-4.5"]);
+        assert_eq!(models[0].name, "Configured model");
+        // An empty live catalog still leaves the one usable entry.
+        let mut empty = Vec::new();
+        with_configured_model(Kind::Kiro, &mut empty);
+        assert_eq!(empty.len(), 1);
+        // Other providers are untouched.
+        let mut hermes = vec![model("a", "A")];
+        with_configured_model(Kind::Hermes, &mut hermes);
+        assert_eq!(hermes.len(), 1);
     }
 
     #[test]

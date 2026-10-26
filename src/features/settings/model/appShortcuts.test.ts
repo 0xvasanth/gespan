@@ -52,6 +52,13 @@ describe("resolveAppShortcut", () => {
     ).toBe("App: Toggle Session Sidebar");
   });
 
+  it("holds everything with Mod+Shift+H", () => {
+    expect(
+      resolveAppShortcut(key({ key: "H", metaKey: true, shiftKey: true })),
+    ).toBe("App: Hold Everything");
+    expect(resolveAppShortcut(key({ key: "h", metaKey: true }))).toBeNull();
+  });
+
   it("ignores a chord while an IME is composing", () => {
     // The maintainer's blocker: these used to fire mid-composition.
     for (const chord of [

@@ -16,6 +16,8 @@ enum Effect {
     None,
     Start(Session, Box<Settings>, String, bool, bool),
     Groups(String, Groups),
+    /// A `flows.*` call stored a change to the calling Pilot's Flows.
+    FlowsChanged,
 }
 /// The sidebar folder holding a Pilot's sessions; the id survives renames.
 pub(super) fn pilot_folder_id(pilot_id: &str) -> String {
@@ -209,6 +211,7 @@ impl Pilots {
                 let result = result.map(|(value, effect)| {
                     match effect {
                         Effect::None => (),
+                        Effect::FlowsChanged => this.flows_changed(&pilot_id, cx),
                         Effect::Card(value) => {
                             this.hold_card(call.session, &pilot_id, value);
                             this.save(cx);
@@ -486,29 +489,38 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                     _ => None,
                 };
                 let target = owner.clone();
+                // Only a stored save changes anything; an error has no effect.
+                let effect = match action.as_str() {
+                    "flows.save" => Effect::FlowsChanged,
+                    _ => Effect::None,
+                };
                 self.call_work(
                     call,
                     target,
                     move |_| {
                         let store = flows_lock(&store)?;
-                        Ok((
-                            read_flows(&store, &owner, &action, &input, flow)?,
-                            Effect::None,
-                        ))
+                        Ok((read_flows(&store, &owner, &action, &input, flow)?, effect))
                     },
                     cx,
                 );
                 return;
             }
-            "flows.start" => self.start_flow_run(&input, pilot, &store, cx),
+            "flows.start" => {
+                let started = self.start_flow_run(&input, pilot, &store, cx);
+                if started.is_ok() {
+                    self.flows_changed(&owner, cx);
+                }
+                started
+            }
             "flows.editRun" | "flows.cancel" | "flows.resume" | "flows.delete" => {
                 let changed = resume_in_scope(&action, &input, pilot, &store)
                     .and_then(|()| self.change_flows(&action, &input, &owner, cx));
-                if changed.is_ok()
-                    && let Some(run_id) = input.get("runId").and_then(Value::as_str)
-                {
-                    self.flow_changed(&owner, &action, run_id);
-                    self.save(cx);
+                if changed.is_ok() {
+                    if let Some(run_id) = input.get("runId").and_then(Value::as_str) {
+                        self.flow_changed(&owner, &action, run_id);
+                        self.save(cx);
+                    }
+                    self.flows_changed(&owner, cx);
                 }
                 changed
             }
@@ -731,7 +743,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                 views
                     .iter()
                     .find(|v| v.id == session)
-                    .is_none_or(|v| !v.busy && v.has_messages)
+                    .is_none_or(|v| !v.busy && v.has_messages && !v.held)
             };
             let in_flight = |session: i64| {
                 self.completion_work.iter().any(|((p, _), work)| {

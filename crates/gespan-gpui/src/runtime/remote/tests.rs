@@ -76,12 +76,9 @@ impl Host {
                 reader.read_exact(&mut bytes).unwrap();
                 let payload: Value = serde_json::from_slice(&bytes).unwrap();
                 let result = if payload["method"] == "environment.describe" {
-                    assert!(
-                        payload["params"]["supportedProviders"]
-                            .as_array()
-                            .unwrap()
-                            .contains(&json!("devin"))
-                    );
+                    let supported = payload["params"]["supportedProviders"].as_array().unwrap();
+                    assert!(supported.contains(&json!("devin")));
+                    assert!(supported.contains(&json!("kiro")));
                     Some(
                         json!({"protocolVersion":1,"environmentId":"env","name":"Fixture","providers":["codex"]}),
                     )

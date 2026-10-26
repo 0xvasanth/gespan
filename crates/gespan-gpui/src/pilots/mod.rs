@@ -15,6 +15,7 @@ mod notifications;
 mod overview;
 mod panel_stack;
 mod panels;
+mod roadmap;
 mod scheduler;
 mod search;
 #[cfg(all(target_os = "macos", not(test)))]
@@ -98,6 +99,10 @@ pub(crate) struct Pilots {
     overview_tab: OverviewTab,
     overview_previous: OverviewTab,
     overview_reveal: Option<crate::project_tabs::TabReveal<OverviewTab>>,
+    /// Each Pilot's SOP Roadmap tab, made when first shown.
+    roadmaps: HashMap<String, (Entity<roadmap::Roadmap>, [Subscription; 2])>,
+    /// Roadmaps to reload when next drawn.
+    stale_roadmaps: HashSet<String>,
     route: Option<Route>,
     settings: Option<SettingsSection>,
     settings_focus: gpui::FocusHandle,
@@ -164,6 +169,9 @@ pub(crate) struct Pilots {
     /// Every Flow event handed to a Pilot, in order.
     #[cfg(test)]
     pub(crate) flow_events: Vec<(String, crate::shell::pilot_flows::PilotFlowEvent)>,
+    /// Every Pilot a successful mutating `flows.*` call changed, in order.
+    #[cfg(test)]
+    pub(crate) flows_changes: Vec<String>,
 }
 impl EventEmitter<Changed> for Pilots {}
 impl EventEmitter<TabOpened> for Pilots {}
@@ -204,6 +212,10 @@ impl Pilots {
         self.parent_window = Some(window.window_handle());
         self.sync_status(cx);
     }
+    /// The menu-bar item's Hold or Resume label follows the hold.
+    pub(crate) fn hold_changed(&mut self, cx: &mut Context<Self>) {
+        self.sync_status(cx);
+    }
     fn sync_status(&mut self, _cx: &mut Context<Self>) {
         #[cfg(all(target_os = "macos", not(test)))]
         {
@@ -218,8 +230,28 @@ impl Pilots {
             let app = std::cell::RefCell::new(_cx.to_async());
             let run = std::rc::Rc::new(move |id: &str| {
                 let _ = entity.update(&mut *app.borrow_mut(), |this, cx| {
-                    if id == "quit" {
-                        cx.quit();
+                    if id == "quit" || id == "hold" {
+                        // Both go through the window, so Hold asks first and
+                        // Quit waits for anything still finishing.
+                        if let Some(handle) = this.parent_window {
+                            let owner = this.owner.clone();
+                            let hold = id == "hold";
+                            let app: &mut App = cx;
+                            app.defer(move |cx| {
+                                let _ = handle.update(cx, |_, window, cx| {
+                                    window.activate_window();
+                                    let _ = owner.update(cx, |o, cx| {
+                                        if hold {
+                                            o.pilot_toggle_hold(window, cx)
+                                        } else {
+                                            o.pilot_request_quit(window, cx)
+                                        }
+                                    });
+                                });
+                            });
+                        } else if id == "quit" {
+                            cx.quit();
+                        }
                     } else if id == "composer" {
                         if let Some(handle) = this.parent_window {
                             let owner = this.owner.clone();
@@ -233,6 +265,7 @@ impl Pilots {
                         }
                     } else if this.roster.get(id).is_some() {
                         this.active = Some(id.into());
+                        this.reload_roadmap(cx);
                         this.ensure_chat(id, cx);
                         this.open_floating(cx);
                         this.changed(cx);
@@ -245,8 +278,9 @@ impl Pilots {
                 .iter()
                 .map(|m| (m.id.clone(), m.label()))
                 .collect::<Vec<_>>();
+            let hold = crate::quick_open::hold_label(_cx);
             if let Some(status) = &mut self.status {
-                status.update(&pilots, run);
+                status.update(&pilots, hold, run);
             }
         }
     }
@@ -319,6 +353,8 @@ impl Pilots {
             overview_tab: OverviewTab::Sessions,
             overview_previous: OverviewTab::Sessions,
             overview_reveal: None,
+            roadmaps: HashMap::new(),
+            stale_roadmaps: HashSet::new(),
             route: None,
             settings: None,
             settings_focus: cx.focus_handle(),
@@ -374,6 +410,8 @@ impl Pilots {
             hidden_dispatch_fails: false,
             #[cfg(test)]
             flow_events: Vec::new(),
+            #[cfg(test)]
+            flows_changes: Vec::new(),
         };
         if let Some(rx) = rx {
             this._bridge_task = Some(cx.spawn(async move |this, cx| {
@@ -409,6 +447,17 @@ impl Pilots {
         }
         this.file_loose_launches(cx);
         this
+    }
+    /// Every Pilot-owned conversation Hold must stop: chats (resumed last),
+    /// running habits and Flow reviews.
+    pub(crate) fn hold_views(&self) -> Vec<(Entity<Conversation>, bool)> {
+        let chats = self.chats.values().map(|view| (view.clone(), true));
+        let habits = self.running.values().map(|run| (run.view.clone(), true));
+        let reviews = self
+            .reviews
+            .values()
+            .map(|review| (review.view.clone(), false));
+        chats.chain(habits).chain(reviews).collect()
     }
     pub(crate) fn is_pilot_session(&self, id: i64) -> bool {
         self.roster.hidden_sessions.contains(&id)
@@ -608,6 +657,8 @@ impl Pilots {
                 )
             })
             .collect::<Vec<_>>();
+        // Every outbox change saves: a message the roadmap sent may be gone.
+        self.sync_roadmap_queues(cx);
         let previous = self.writes.take();
         self.writes = Some(cx.spawn(async move |this, cx| {
             if let Some(previous) = previous {
@@ -1046,6 +1097,7 @@ impl Pilots {
             self.settings = None;
         }
         self.active = Some(id.into());
+        self.reload_roadmap(cx);
         self.ensure_chat(id, cx);
         self.reload_files(id, cx);
         cx.emit(TabOpened(id.into()));

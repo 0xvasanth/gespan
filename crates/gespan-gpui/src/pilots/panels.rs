@@ -12,6 +12,7 @@ pub(super) enum OverviewTab {
     Habits,
     Documents,
     Changes,
+    Roadmap,
     Activity,
 }
 #[derive(Clone, Copy, PartialEq)]
@@ -139,7 +140,7 @@ fn card() -> Div {
         .flex_col()
 }
 /// pilotPanelParts' EmptyState: an icon over a short, centred note.
-fn empty_state(glyph: &'static str, message: &str) -> AnyElement {
+pub(super) fn empty_state(glyph: &'static str, message: &str) -> AnyElement {
     div()
         .size_full()
         .flex()
@@ -743,6 +744,9 @@ impl Pilots {
             self.overview_tab = tab;
             cx.notify();
         }
+        if tab == OverviewTab::Roadmap {
+            self.reload_roadmap(cx);
+        }
     }
     /// PilotSidebarHeader lives in the base page, so routed pages replace its
     /// tabs and close control together with the overview body.
@@ -829,6 +833,7 @@ impl Pilots {
                 "file-diff",
                 self.project_changes.count(&pilot.id),
             ),
+            (OverviewTab::Roadmap, "SOP Roadmap", "git-merge", 0),
         ];
         div()
             .id("pilot-overview-tabs")
@@ -855,6 +860,7 @@ impl Pilots {
                     OverviewTab::Documents => "pilot-overview-Documents",
                     OverviewTab::Habits => "pilot-overview-Habits",
                     OverviewTab::Changes => "pilot-overview-Changes",
+                    OverviewTab::Roadmap => "pilot-overview-roadmap",
                     OverviewTab::Activity => unreachable!(),
                 };
                 crate::project_tabs::tab_button(
@@ -914,6 +920,7 @@ impl Pilots {
             OverviewTab::Habits => self.habits_list(pilot, cx),
             OverviewTab::Documents => self.document_list(pilot, cx),
             OverviewTab::Changes => self.changes_list(pilot, cx),
+            OverviewTab::Roadmap => self.shown_roadmap(&pilot.id, cx).into_any_element(),
             OverviewTab::Activity => self.activity_view(pilot, cx),
         };
         div()

@@ -16,6 +16,7 @@ pub fn supported_providers() -> &'static [&'static str] {
         "omp",
         "fx",
         "hermes",
+        "kiro",
         "antigravity",
         "devin",
     ]

@@ -91,7 +91,11 @@ impl Protocol {
 
     /// A user Stop uses the provider's cancellation API before transport teardown.
     /// Returns whether there is an active request whose acknowledgement can settle.
-    pub(super) fn interrupt(&mut self, stdin: &mut impl Write) -> Result<bool, String> {
+    pub(super) fn interrupt(
+        &mut self,
+        stdin: &mut impl Write,
+        kind: Interrupt,
+    ) -> Result<bool, String> {
         let interrupt_id = format!(
             "native-interrupt-{}",
             CONTROL_SEQUENCE.fetch_add(1, Ordering::Relaxed)
@@ -109,6 +113,15 @@ impl Protocol {
                     return Ok(true);
                 }
                 Ok(false)
+            }
+            Kind::Claude if kind == Interrupt::Hold => {
+                // Hold only interrupts between steps, so nothing is pending, and it
+                // leaves background tasks running.
+                write_json(
+                    stdin,
+                    json!({"type":"control_request","request_id":interrupt_id,"request":{"subtype":"interrupt"}}),
+                )?;
+                Ok(self.claude_prompt_sent)
             }
             Kind::Claude => {
                 // Deny outstanding permissions and skip questions before interrupt,
@@ -155,7 +168,18 @@ impl Protocol {
             }
         }
     }
+}
 
+/// Stop ends the turn and everything it started; Hold only ends the turn.
+/// Checked against Claude Code 2.1.310: a `run_in_background` Bash command kept
+/// running after an `interrupt` sent without `stop_task`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Interrupt {
+    Stop,
+    Hold,
+}
+
+impl Protocol {
     pub(super) fn codex_access(&self) -> (Value, &'static str, Value, &'static str) {
         let (policy, sandbox, mut sandbox_policy, reviewer) = self.request.settings.access.codex();
         if (self.request.settings.operator || self.request.settings.orchestrator)

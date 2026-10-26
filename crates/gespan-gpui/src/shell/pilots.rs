@@ -9,6 +9,8 @@ pub(crate) struct PilotSession {
     pub archived: bool,
     pub updated_at: u64,
     pub needs_input: bool,
+    /// Held, or waiting for its turn to resume: it has not finished.
+    pub held: bool,
     pub branch: Option<String>,
     pub model: SharedString,
 }
@@ -29,6 +31,15 @@ impl Shell {
             .as_ref()
             .is_some_and(|m| m.read(cx).active.is_some())
     }
+    // Called from the macOS menu-bar item, which tests don't build.
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn pilot_toggle_hold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_hold(window, cx);
+    }
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn pilot_request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_quit(window, cx);
+    }
     pub(crate) fn pilot_session_views(&self, cx: &App) -> Vec<PilotSession> {
         self.order
             .iter()
@@ -44,6 +55,7 @@ impl Shell {
                     archived: metadata.summary.archived,
                     updated_at: metadata.summary.updated_at,
                     needs_input: metadata.needs_approval(),
+                    held: self.session_held(id, live, cx),
                     branch: live.and_then(|v| v.branch_name()).map(str::to_owned),
                     model: live.map(|v| v.pilot_model_label()).unwrap_or_default(),
                 }

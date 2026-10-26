@@ -242,6 +242,8 @@ export function addHabit(pilotId: string, draft: HabitDraft): Promise<Habit> {
 export function dueHabits(
   habits: Habit[],
   now: number,
+  /** Start of the last hold: what came due during it runs once on Resume. */
+  heldSince?: number,
 ): { run: Habit[]; skipped: Habit[] } {
   const run: Habit[] = [];
   const skipped: Habit[] = [];
@@ -253,7 +255,11 @@ export function dueHabits(
       continue;
     }
     if (!habit.enabled || habit.nextRunAt > now) continue;
-    (now - habit.nextRunAt <= MISSED_RUN_GRACE_MS ? run : skipped).push(habit);
+    const missedWhileHeld = heldSince !== undefined && habit.nextRunAt >= heldSince;
+    (missedWhileHeld || now - habit.nextRunAt <= MISSED_RUN_GRACE_MS
+      ? run
+      : skipped
+    ).push(habit);
   }
   return { run, skipped };
 }

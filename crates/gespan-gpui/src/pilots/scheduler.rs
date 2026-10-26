@@ -1184,12 +1184,42 @@ impl Pilots {
         })
         .detach();
     }
+    /// After a hold: running habits don't count the held time against their
+    /// timeouts, and habits that came due while held run once now.
+    pub(crate) fn resumed(&mut self, held_ms: u64, since: u64, cx: &mut Context<Self>) {
+        for run in self.running.values_mut() {
+            run.started += held_ms;
+            if let Some(waiting) = run.waiting_since.as_mut() {
+                *waiting += held_ms;
+            }
+        }
+        let now = now_ms();
+        for id in self
+            .roster
+            .pilots
+            .iter()
+            .map(|m| m.id.clone())
+            .collect::<Vec<_>>()
+        {
+            if let Err(error) = habits::update(&self.root, &id, |all| {
+                habits::catch_up(all, since, now);
+                Ok(())
+            }) {
+                self.error = Some(error);
+            }
+        }
+        cx.notify();
+    }
     pub(super) fn tick(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.check_habits(cx);
         self.tick_flows(cx);
         cx.notify();
     }
-    fn check_habits(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn check_habits(&mut self, cx: &mut Context<Self>) {
+        // While held no habit starts, times out or reports; Resume moves the clocks on.
+        if crate::hold::active(cx) {
+            return;
+        }
         let now = now_ms();
         if let Some(id) = self.active.clone() {
             self.refresh_work(&id, cx);

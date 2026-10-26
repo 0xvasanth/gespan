@@ -846,6 +846,11 @@ mod tests {
     }
 
     #[test]
+    fn remote_supported_providers_include_kiro() {
+        assert!(crate::remote::protocol::supported_providers().contains(&"kiro"));
+    }
+
+    #[test]
     fn incompatible_pairing_does_not_create_a_machine() {
         let (url, _, server) = host_fixture(vec![
             json!({ "result": { "protocolVersion": 2, "environmentId": "env" } }),

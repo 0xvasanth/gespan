@@ -74,6 +74,12 @@ impl Conversation {
     pub(crate) fn hold_history_for_test(&mut self) {
         self.loading = true;
     }
+    /// Tests: the chat took Pilot message `id`, as when its turn starts.
+    #[cfg(test)]
+    pub(crate) fn deliver_for_test(&mut self, id: String, cx: &mut Context<Self>) {
+        self.pilot_message_delivered(id, cx);
+        cx.notify();
+    }
     pub(super) fn pilot_flush_external(&mut self, cx: &mut Context<Self>) {
         if !self.history_ready() || self.stopping {
             return;
@@ -139,6 +145,10 @@ impl Conversation {
             .update(cx, |t, cx| t.set_pending(pending, cx));
     }
     pub(crate) fn pilot_dispatch(&mut self, message: &Message, cx: &mut Context<Self>) -> bool {
+        // On hold the message stays in the Pilot's mailbox until Resume.
+        if crate::hold::active(cx) {
+            return false;
+        }
         if self.pilot_ui.delivered.contains(&message.id) || (self.busy && message.internal) {
             return false;
         }
