@@ -13,7 +13,7 @@ const SEEDED: i64 = 1000;
 
 /// A board with the 1,000-card seed. With `one_column`, every column but the
 /// first is deleted first, so the first column holds all 1,000 cards.
-fn seeded_board(cx: &mut TestAppContext, one_column: bool) -> Fixture {
+pub(super) fn seeded_board(cx: &mut TestAppContext, one_column: bool) -> Fixture {
     let f = with_board(cx);
     let board = open_id(&f, cx);
     let mut service = Service::open(&f.db).unwrap();
@@ -27,7 +27,7 @@ fn seeded_board(cx: &mut TestAppContext, one_column: bool) -> Fixture {
     f
 }
 
-fn reload_view(f: &Fixture, cx: &mut impl gpui::AppContext) {
+pub(super) fn reload_view(f: &Fixture, cx: &mut impl gpui::AppContext) {
     f.window.update(cx, |view, _, cx| view.reload(cx)).unwrap();
 }
 
@@ -43,7 +43,7 @@ fn with_inbox(f: &Fixture, cx: &mut TestAppContext) -> String {
     mover.id
 }
 
-fn column_at(f: &Fixture, cx: &mut impl gpui::AppContext, index: usize) -> String {
+pub(super) fn column_at(f: &Fixture, cx: &mut impl gpui::AppContext, index: usize) -> String {
     detail(f, cx).columns[index].id.clone()
 }
 
@@ -67,19 +67,28 @@ fn rendered_cards(f: &Fixture, visual: &mut VisualTestContext) -> usize {
 }
 
 /// A column's visible card ids, as its list holds them.
-fn list_ids(f: &Fixture, cx: &mut impl gpui::AppContext, column: &str) -> Vec<String> {
+pub(super) fn list_ids(f: &Fixture, cx: &mut impl gpui::AppContext, column: &str) -> Vec<String> {
     f.window
         .read_with(cx, |view, _| view.column_ids[column].clone())
         .unwrap()
 }
 
-fn list_top(f: &Fixture, cx: &mut impl gpui::AppContext, column: &str) -> gpui::ListOffset {
+pub(super) fn list_top(
+    f: &Fixture,
+    cx: &mut impl gpui::AppContext,
+    column: &str,
+) -> gpui::ListOffset {
     f.window
         .read_with(cx, |view, _| view.column_lists[column].logical_scroll_top())
         .unwrap()
 }
 
-fn scroll_list_to(f: &Fixture, visual: &mut VisualTestContext, column: &str, item_ix: usize) {
+pub(super) fn scroll_list_to(
+    f: &Fixture,
+    visual: &mut VisualTestContext,
+    column: &str,
+    item_ix: usize,
+) {
     f.window
         .update(visual, |view, _, cx| {
             view.column_lists[column].scroll_to(gpui::ListOffset {
@@ -92,7 +101,7 @@ fn scroll_list_to(f: &Fixture, visual: &mut VisualTestContext, column: &str, ite
     visual.refresh().unwrap();
 }
 
-fn number_of(f: &Fixture, cx: &mut impl gpui::AppContext, card: &str) -> i64 {
+pub(super) fn number_of(f: &Fixture, cx: &mut impl gpui::AppContext, card: &str) -> i64 {
     detail(f, cx)
         .cards
         .iter()
@@ -101,14 +110,17 @@ fn number_of(f: &Fixture, cx: &mut impl gpui::AppContext, card: &str) -> i64 {
         .number
 }
 
-fn card_bounds(visual: &mut VisualTestContext, number: i64) -> gpui::Bounds<gpui::Pixels> {
+pub(super) fn card_bounds(
+    visual: &mut VisualTestContext,
+    number: i64,
+) -> gpui::Bounds<gpui::Pixels> {
     visual
         .debug_bounds(selector(format!("board-card-{number}")))
         .unwrap_or_else(|| panic!("card {number} is not painted"))
 }
 
 /// A column's card ids in stored order (every card, hidden or not).
-fn stored_order(f: &Fixture, column: &str) -> Vec<String> {
+pub(super) fn stored_order(f: &Fixture, column: &str) -> Vec<String> {
     let board = Service::open(&f.db).unwrap().default_board().unwrap();
     let mut cards: Vec<_> = Service::open(&f.db)
         .unwrap()
@@ -548,7 +560,7 @@ fn native_open_and_filter_meet_the_budget(cx: &mut TestAppContext) {
     );
 }
 
-fn wheel(visual: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>, dy: f32) {
+pub(super) fn wheel(visual: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>, dy: f32) {
     visual.simulate_event(ScrollWheelEvent {
         position: at,
         delta: ScrollDelta::Pixels(gpui::point(px(0.), px(dy))),

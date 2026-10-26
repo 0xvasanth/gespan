@@ -268,6 +268,16 @@ pub(crate) struct BoardView {
     pub(crate) drop_target: Option<(String, usize)>,
     /// One focus handle per card, so cards are tab stops.
     pub(crate) card_focus: HashMap<String, FocusHandle>,
+    /// The card that had keyboard focus at the last render.
+    focused_card_id: Option<String>,
+    /// A focused card a reload or filter hid, and the card in its column that
+    /// takes focus instead on the next render.
+    refocus: Option<(String, String)>,
+    /// The card whose drawer the column lists keep mounted.
+    drawer_pinned: Option<String>,
+    /// What the last board-layout keyboard drag step said, for the status
+    /// element screen readers read.
+    drag_announcement: Option<String>,
     card_menu: Option<CardMenu>,
     /// One tab stop per collapsed column's strip.
     pub(crate) collapsed_focus: HashMap<String, FocusHandle>,
@@ -389,7 +399,7 @@ impl BoardView {
             boards: Vec::new(),
             switcher: None,
             switcher_anchor: AnchorSlot::default(),
-            switcher_focus: cx.focus_handle(),
+            switcher_focus: cx.focus_handle().tab_stop(true),
             detail: None,
             dragging: false,
             pending_reload: false,
@@ -446,12 +456,12 @@ impl BoardView {
             filter_row: None,
             sort_open: false,
             sort_anchor: AnchorSlot::default(),
-            sort_focus: cx.focus_handle(),
+            sort_focus: cx.focus_handle().tab_stop(true),
             open_in_page,
             open_in_open: false,
             open_in_anchor: AnchorSlot::default(),
-            filter_focus: cx.focus_handle(),
-            new_task_focus: cx.focus_handle(),
+            filter_focus: cx.focus_handle().tab_stop(true),
+            new_task_focus: cx.focus_handle().tab_stop(true),
             drawer_focus: cx.focus_handle(),
             column_anchors: HashMap::new(),
             card_anchors: HashMap::new(),
@@ -460,6 +470,10 @@ impl BoardView {
             kb_blur: None,
             drop_target: None,
             card_focus: HashMap::new(),
+            focused_card_id: None,
+            refocus: None,
+            drawer_pinned: None,
+            drag_announcement: None,
             card_menu: None,
             collapsed_focus: HashMap::new(),
             column_lists: HashMap::new(),
@@ -533,6 +547,7 @@ impl BoardView {
         self.forget_finished_drag(cx);
         self.visible = false;
         self.cancel_keyboard_drag(cx);
+        self.drag_announcement = None;
         self.composer = None;
         self.new_card = None;
         self.menu = None;
@@ -774,13 +789,13 @@ impl BoardView {
             self.column_anchors.entry(column.id.clone()).or_default();
             self.collapsed_focus
                 .entry(column.id.clone())
-                .or_insert_with(|| cx.focus_handle());
+                .or_insert_with(|| cx.focus_handle().tab_stop(true));
         }
         for card in &detail.cards {
             self.card_anchors.entry(card.id.clone()).or_default();
             self.card_focus
                 .entry(card.id.clone())
-                .or_insert_with(|| cx.focus_handle());
+                .or_insert_with(|| cx.focus_handle().tab_stop(true));
         }
     }
 
@@ -1523,7 +1538,7 @@ impl gpui::Render for BoardTooltip {
 use gpui::AnyElement;
 
 impl gpui::Render for BoardView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.forget_finished_drag(cx);
         self.display = self.effective_display();
         #[cfg(test)]
@@ -1550,6 +1565,8 @@ impl gpui::Render for BoardView {
         }) {
             self.sync_column_lists();
         }
+        self.pin_drawer_card();
+        self.follow_card_focus(window, cx);
         let root =
             div()
                 .id("board-view")
@@ -1722,6 +1739,7 @@ impl gpui::Render for BoardView {
                             .flex()
                             .items_start()
                             .gap_2()
+                            .children(self.render_drag_announce())
                             .children(columns)
                             .child(
                                 icon_button("board-add-column", "Add column", "plus")

@@ -60,6 +60,24 @@ fn common_ends(old: &[String], new: &[String]) -> (usize, usize) {
     (prefix, suffix)
 }
 
+/// The card that takes focus when `focused` leaves a column's shown cards:
+/// the next card after it in the old order that is still shown, else the
+/// previous one, else the column's first card. `None` when the old ids did
+/// not hold it, or nothing is shown.
+fn nearest_shown(old: &[String], new: &[String], focused: &str) -> Option<String> {
+    let at = old.iter().position(|id| id == focused)?;
+    if new.iter().any(|id| id == focused) {
+        return None;
+    }
+    let shown: std::collections::HashSet<&String> = new.iter().collect();
+    old[at + 1..]
+        .iter()
+        .find(|id| shown.contains(id))
+        .or_else(|| old[..at].iter().rev().find(|id| shown.contains(id)))
+        .or_else(|| new.first())
+        .cloned()
+}
+
 /// The 14px ring that says what a column is for.
 pub(super) fn role_icon(role: Option<&str>) -> AnyElement {
     let (color, fill): (Hsla, f32) = match role {
@@ -120,10 +138,15 @@ impl BoardView {
             .collect();
         let estimate = self.item_estimate(&display);
         let focus = |ids: &[String]| -> Vec<Option<gpui::FocusHandle>> {
-            ids.iter()
-                .map(|id| self.card_focus.get(id).cloned())
-                .collect()
+            ids.iter().map(|id| self.item_focus(id)).collect()
         };
+        // The focused card, while it is still on the board: if the new ids
+        // leave it out, the nearest card still shown in its column takes over.
+        let focused = self
+            .focused_card_id
+            .clone()
+            .filter(|id| self.card_focus.contains_key(id));
+        let mut heir: Option<(String, String)> = None;
         let composer_in = |column_id: &str| {
             self.composer
                 .as_ref()
@@ -140,6 +163,11 @@ impl BoardView {
             let state = match (lists.remove(&column.id), old_ids.remove(&column.id)) {
                 (Some(state), Some(old)) => {
                     if old != ids {
+                        if let Some(focused) = &focused
+                            && let Some(next) = nearest_shown(&old, &ids, focused)
+                        {
+                            heir = Some((focused.clone(), next));
+                        }
                         let top = state.logical_scroll_top();
                         // At the very start nothing is above the view to keep
                         // in place: whatever lands first shows.
@@ -187,9 +215,112 @@ impl BoardView {
             new_lists.insert(column.id.clone(), state);
             new_ids.insert(column.id.clone(), ids);
         }
+        // A card that only moved to another column keeps its focus.
+        if let Some((hidden, next)) = heir
+            && !new_ids.values().any(|ids| ids.contains(&hidden))
+        {
+            self.refocus = Some((hidden, next));
+        }
         self.card_slots = slots;
         self.column_lists = new_lists;
         self.column_ids = new_ids;
+    }
+
+    /// The focus handle a column list keeps a card's row mounted by: the
+    /// card's own, or, for the card whose drawer is open, the board's, which
+    /// holds focus wherever it is on the board (drawer, card or field).
+    fn item_focus(&self, card_id: &str) -> Option<gpui::FocusHandle> {
+        if self.drawer_pinned.as_deref() == Some(card_id) {
+            return Some(self.focus.clone());
+        }
+        self.card_focus.get(card_id).cloned()
+    }
+
+    /// Keep the card whose drawer is open mounted, and let a card whose
+    /// drawer closed go like any other.
+    pub(crate) fn pin_drawer_card(&mut self) {
+        let open = self
+            .card_detail
+            .as_ref()
+            .map(|detail| detail.card_id.clone());
+        if open == self.drawer_pinned {
+            return;
+        }
+        let old = std::mem::replace(&mut self.drawer_pinned, open.clone());
+        for card_id in old.into_iter().chain(open) {
+            let found = self.column_ids.iter().find_map(|(column, ids)| {
+                ids.iter()
+                    .position(|id| *id == card_id)
+                    .map(|ix| (column.clone(), ix))
+            });
+            if let Some((column, ix)) = found
+                && let Some(state) = self.column_lists.get(&column)
+            {
+                state.splice_focusable(ix..ix + 1, [self.item_focus(&card_id)]);
+            }
+        }
+    }
+
+    /// Before each frame: hand focus on from a focused card a reload or
+    /// filter hid (unless the user has put focus somewhere else meanwhile),
+    /// then note which card has focus now.
+    pub(crate) fn follow_card_focus(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        if let Some((hidden, next)) = self.refocus.take() {
+            let still_there = self
+                .card_focus
+                .get(&hidden)
+                .is_some_and(|handle| handle.is_focused(window));
+            if (still_there || window.focused(cx).is_none())
+                && let Some(handle) = self.card_focus.get(&next).cloned()
+            {
+                self.reveal_card(&next);
+                window.focus(&handle, cx);
+            }
+        }
+        let known = self
+            .focused_card_id
+            .as_ref()
+            .and_then(|id| self.card_focus.get(id))
+            .is_some_and(|handle| handle.is_focused(window));
+        if !known {
+            self.focused_card_id = self
+                .card_focus
+                .iter()
+                .find(|(_, handle)| handle.is_focused(window))
+                .map(|(id, _)| id.clone());
+        }
+    }
+
+    /// The column's accessible name: its name and how many cards it shows,
+    /// counted from the data, not from the cards its window mounted.
+    pub(crate) fn column_label(&self, column_id: &str) -> String {
+        let name = self
+            .column(column_id)
+            .map_or("", |column| column.name.as_str());
+        let total = self.column_ids.get(column_id).map_or(0, Vec::len);
+        let noun = if total == 1 { "card" } else { "cards" };
+        format!("{name}, {total} {noun}")
+    }
+
+    /// The status element that reads board-layout keyboard drags aloud. It
+    /// takes no room on screen.
+    pub(super) fn render_drag_announce(&self) -> Option<AnyElement> {
+        let text = self.board_announcement()?;
+        Some(
+            div()
+                .id("board-drag-announce")
+                .debug_selector(|| "board-drag-announce".into())
+                .role(Role::Status)
+                .aria_label(gpui::SharedString::from(text.clone()))
+                .absolute()
+                .top_0()
+                .left_0()
+                .size(px(1.))
+                .overflow_hidden()
+                .opacity(0.)
+                .child(text)
+                .into_any_element(),
+        )
     }
 
     /// A first guess at a card row's height (card and gap) under `display`:
@@ -243,7 +374,7 @@ impl BoardView {
                 .map(|composer| composer.focus.clone());
             let handles: Vec<_> = ids
                 .iter()
-                .map(|id| self.card_focus.get(id).cloned())
+                .map(|id| self.item_focus(id))
                 .chain([composer])
                 .collect();
             state.splice_focusable(0..state.item_count(), handles);
@@ -472,7 +603,7 @@ impl BoardView {
             .debug_selector(move || format!("board-column-{index}"))
             .group(group.clone())
             .role(Role::Group)
-            .aria_label(column.name.clone())
+            .aria_label(self.column_label(&column.id))
             .w(px(COLUMN_WIDTH))
             .flex_shrink_0()
             .max_h_full()

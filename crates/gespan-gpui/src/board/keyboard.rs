@@ -256,6 +256,10 @@ impl BoardView {
             })
         });
         let lane = self.lane_mode().and_then(|_| self.first_lane_of(card_id));
+        // Swimlane drags say where they go in the lanes' own status line.
+        if lane.is_none() {
+            self.announce_pick_up(card_id);
+        }
         self.lane_drop = lane.clone().map(|lane| (lane, column_id.clone()));
         self.drop_target = Some((column_id.clone(), slot));
         self.kb_drag = Some(KeyboardDrag {
@@ -334,6 +338,7 @@ impl BoardView {
         if !self.is_collapsed(&drag.column_id) {
             self.reveal_item(&drag.column_id, drag.slot);
         }
+        self.announce_over(&drag);
         self.kb_drag = Some(drag);
         cx.notify();
     }
@@ -342,8 +347,11 @@ impl BoardView {
     /// nothing, and catch up on a reload that waited.
     pub(super) fn cancel_keyboard_drag(&mut self, cx: &mut Context<Self>) {
         self.kb_blur = None;
-        if self.kb_drag.take().is_none() {
+        let Some(drag) = self.kb_drag.take() else {
             return;
+        };
+        if drag.lane.is_none() {
+            self.announce_cancel(&drag.card_id);
         }
         self.drop_target = None;
         self.lane_drop = None;
@@ -365,6 +373,7 @@ impl BoardView {
         };
         self.kb_blur = None;
         self.drop_target = None;
+        self.announce_drop(&drag);
         let slot = self.full_slot(&drag.column_id, drag.slot);
         let resolved = self.resolve_drop(&drag.card_id, &drag.column_id, slot);
         match resolved {
@@ -374,5 +383,141 @@ impl BoardView {
             None if self.pending_reload => self.reload(cx),
             None => cx.notify(),
         }
+    }
+}
+
+/// Where a card is or would land, as Tauri's announcements word it.
+struct Place {
+    column: String,
+    index: usize,
+    total: usize,
+}
+
+impl Place {
+    fn words(&self) -> String {
+        format!(
+            "{}, position {} of {}",
+            self.column,
+            self.index + 1,
+            self.total
+        )
+    }
+}
+
+impl BoardView {
+    /// What the last board-layout keyboard drag step said: picked up, over,
+    /// dropped or cancelled, in Tauri's words. Positions count every card the
+    /// column shows, not the cards its window has mounted.
+    pub(crate) fn board_announcement(&self) -> Option<String> {
+        self.drag_announcement.clone()
+    }
+
+    /// The ids of the cards a column shows (search and filter applied),
+    /// collapsed or not.
+    fn shown_ids(&self, column_id: &str) -> Vec<String> {
+        let Some(detail) = &self.detail else {
+            return Vec::new();
+        };
+        self.column_cards(detail, column_id)
+            .into_iter()
+            .map(|card| card.id.clone())
+            .collect()
+    }
+
+    /// Where the card is now.
+    fn place_now(&self, card_id: &str) -> Option<Place> {
+        let column_id = self.column_of_card(card_id)?;
+        let ids = self.shown_ids(&column_id);
+        let index = ids.iter().position(|id| id == card_id)?;
+        Some(Place {
+            column: self.column(&column_id)?.name.clone(),
+            index,
+            total: ids.len(),
+        })
+    }
+
+    /// Where the lifted card would land at the drag's slot: the slot counts
+    /// the column's shown cards, the lifted one included, and a collapsed
+    /// column takes it at its end.
+    fn place_at(&self, drag: &KeyboardDrag) -> Option<Place> {
+        let ids = self.shown_ids(&drag.column_id);
+        let column = self.column(&drag.column_id)?.name.clone();
+        let (index, total) = match ids.iter().position(|id| *id == drag.card_id) {
+            Some(old) => {
+                let index = if self.is_collapsed(&drag.column_id) {
+                    ids.len() - 1
+                } else if drag.slot > old {
+                    drag.slot - 1
+                } else {
+                    drag.slot
+                };
+                (index.min(ids.len() - 1), ids.len())
+            }
+            None => {
+                let index = if self.is_collapsed(&drag.column_id) {
+                    ids.len()
+                } else {
+                    drag.slot.min(ids.len())
+                };
+                (index, ids.len() + 1)
+            }
+        };
+        Some(Place {
+            column,
+            index,
+            total,
+        })
+    }
+
+    fn card_label(&self, card_id: &str) -> Option<(i64, String)> {
+        let card = self.card(card_id)?;
+        Some((card.number, card.title.clone()))
+    }
+
+    fn announce_pick_up(&mut self, card_id: &str) {
+        self.drag_announcement = self.card_label(card_id).zip(self.place_now(card_id)).map(
+            |((number, title), place)| {
+                format!("Picked up card #{number}, {title}. {}.", place.words())
+            },
+        );
+    }
+
+    fn announce_over(&mut self, drag: &KeyboardDrag) {
+        self.drag_announcement = self
+            .card_label(&drag.card_id)
+            .zip(self.place_at(drag))
+            .map(|((number, _), place)| format!("Card #{number} is over {}.", place.words()));
+    }
+
+    fn announce_cancel(&mut self, card_id: &str) {
+        self.drag_announcement =
+            self.card_label(card_id)
+                .zip(self.place_now(card_id))
+                .map(|((number, _), place)| {
+                    format!(
+                        "Moving card #{number} was cancelled. It is back in {}.",
+                        place.words()
+                    )
+                });
+    }
+
+    /// Said before the drop is written, from where the card lands. A sorted
+    /// board keeps a card's place inside its own column (the drop is
+    /// cancelled) and appends it to another.
+    fn announce_drop(&mut self, drag: &KeyboardDrag) {
+        let inside = self.column_of_card(&drag.card_id).as_deref() == Some(drag.column_id.as_str());
+        if self.sorted() && inside {
+            return self.announce_cancel(&drag.card_id);
+        }
+        let place = self.place_at(drag).map(|mut place| {
+            if self.sorted() {
+                place.index = place.total - 1;
+            }
+            place
+        });
+        self.drag_announcement = self
+            .card_label(&drag.card_id)
+            .zip(place)
+            .map(|((number, _), place)| format!("Dropped card #{number} in {}.", place.words()));
     }
 }
