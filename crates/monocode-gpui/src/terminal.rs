@@ -360,6 +360,19 @@ impl Terminal {
         self.foreground = label;
         cx.emit(TerminalEvent::Changed);
     }
+    /// Hangs up the job holding the terminal, leaving the shell at its prompt.
+    pub(crate) fn stop_foreground(&mut self, cx: &mut Context<Self>) {
+        #[cfg(unix)]
+        if self.master_fd >= 0 && !self.exited {
+            let pgrp = unsafe { libc::tcgetpgrp(self.master_fd) };
+            if pgrp > 1 && pgrp != self.shell_pid as i32 {
+                unsafe {
+                    libc::kill(-pgrp, libc::SIGHUP);
+                }
+            }
+        }
+        self.set_foreground(None, cx);
+    }
     fn write(&self, bytes: impl Into<Cow<'static, [u8]>>) {
         if let Some(sender) = &self.sender {
             let _ = sender.send(Msg::Input(bytes.into()));

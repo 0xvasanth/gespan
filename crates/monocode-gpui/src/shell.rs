@@ -3000,6 +3000,32 @@ impl Shell {
             let t = terminal.read(cx);
             (t.foreground.clone(), project_name(&t.cwd))
         };
+        // The panel's last terminal stays: closing it hides the panel, and
+        // stops whatever it was running.
+        if self.terminal_in_panel(cx) && self.terminals.get(&project).is_some_and(|t| t.len() == 1)
+        {
+            let Some(process) = process else {
+                self.set_right_panel_open(false, window, cx);
+                return;
+            };
+            let answer = window.prompt(
+                gpui::PromptLevel::Warning,
+                &format!("\"{process}\" is still running in {label}. Stop it and close the panel?"),
+                None,
+                &["Stop", "Cancel"],
+                cx,
+            );
+            cx.spawn_in(window, async move |this, cx| {
+                if matches!(answer.await, Ok(0)) {
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        terminal.update(cx, |t, cx| t.stop_foreground(cx));
+                        this.set_right_panel_open(false, window, cx);
+                    });
+                }
+            })
+            .detach();
+            return;
+        }
         let Some(process) = process else {
             self.remove_terminal(&project, ix, window, cx);
             return;
