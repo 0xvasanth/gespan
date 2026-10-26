@@ -1,0 +1,45 @@
+crates/board-store/src/lib.rs
+  s_938a6e0c93b076::t_7530acd5aca183 7-8,24-30,32-34,44-46,58-60
+crates/board-store/src/relations.rs
+  s_938a6e0c93b076::t_7530acd5aca183 180-182
+  s_938a6e0c93b076::t_a448b0f5abf205 4,153-179,183-190
+  s_938a6e0c93b076::t_556202352056b6 191
+crates/board-store/src/subtasks.rs
+  s_938a6e0c93b076::t_f55e5513b1538e 1-4,29,95-109,115,118,120-130
+crates/board-store/tests/agent.rs
+  s_938a6e0c93b076::t_bbde6ac7fca6c0 471
+  s_938a6e0c93b076::t_a1081b35c5a4b9 1-121,126-146,151-195,204-239,244-470,472-526,531-554,558,567,575-631,636-637,643-654,657-742,750-752,758-770,778-855,860-861,866
+  s_938a6e0c93b076::t_7530acd5aca183 122-125,147-150,196-203,240-243,527-530,632-635,638-642,655-656,743-749,753-757,771-777,856-859,862-865
+  s_938a6e0c93b076::t_62075e2f0cdaef 555-557,559-566,568-574
+crates/board-store/src/ops.rs
+  s_938a6e0c93b076::t_eaaaebee16b094 28-34,590-605,608,613,622,629,631,633,640
+  s_938a6e0c93b076::t_f2ca79d230d0bd 27
+crates/board-store/src/comments.rs
+  s_938a6e0c93b076::t_7530acd5aca183 21-23
+  s_938a6e0c93b076::t_f2ca79d230d0bd 7-9,11-20,24,77
+crates/board-store/src/auto_move.rs
+  s_938a6e0c93b076::t_7530acd5aca183 10
+  s_938a6e0c93b076::t_89785c43f00c6a 1-9,11-268
+crates/board-store/src/agent.rs
+  s_938a6e0c93b076::t_14a6a50e70fe3c 156-157,164-173,176-177,181-182,184
+  s_938a6e0c93b076::t_437238e23c0c58 1-155,158,160-163,174-175,185-269
+  s_938a6e0c93b076::t_6c32429faa15e0 159,178-180,183
+crates/board-store/src/links.rs
+  s_938a6e0c93b076::t_a448b0f5abf205 149-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4cfc72412d3c078f7e7cee6e95cad5814ee14223",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
