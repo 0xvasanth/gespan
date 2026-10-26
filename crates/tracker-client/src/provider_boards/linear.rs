@@ -312,6 +312,15 @@ fn graphql_with_authorization(
     query: &str,
     variables: Value,
 ) -> Result<Value, String> {
+    graphql_at(LINEAR_API, authorization, query, variables)
+}
+
+pub(super) fn graphql_at(
+    url: &str,
+    authorization: &str,
+    query: &str,
+    variables: Value,
+) -> Result<Value, String> {
     let agent = ureq::AgentBuilder::new()
         .timeout(HTTP_TIMEOUT)
         .redirects(0)
@@ -319,7 +328,7 @@ fn graphql_with_authorization(
     let payload = serde_json::to_string(&json!({ "query": query, "variables": variables }))
         .map_err(|error| error.to_string())?;
     let result = agent
-        .post(LINEAR_API)
+        .post(url)
         .set("Authorization", authorization)
         .set("Content-Type", "application/json")
         .send_string(&payload);

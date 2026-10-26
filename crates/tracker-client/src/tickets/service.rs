@@ -358,9 +358,19 @@ fn plain_host(origin: &str) -> String {
 
 /// Plane Cloud's web host and API host are the same site.
 fn same_host(a: &str, b: &str) -> bool {
-    let canonical = |origin: &str| match plain_host(origin).as_str() {
-        "api.plane.so" => "app.plane.so".to_string(),
-        host => host.to_string(),
+    let canonical = |origin: &str| {
+        let scheme = origin
+            .split_once("://")
+            .map_or("https", |(scheme, _)| scheme)
+            .to_ascii_lowercase();
+        let host = plain_host(origin);
+        let default_port = if scheme == "http" { ":80" } else { ":443" };
+        let host = host.strip_suffix(default_port).unwrap_or(&host);
+        let host = match host {
+            "api.plane.so" => "app.plane.so",
+            host => host,
+        };
+        (scheme, host.to_string())
     };
     canonical(a) == canonical(b)
 }
@@ -626,6 +636,25 @@ mod tests {
         )]);
         assert!(matches!(
             t.resolve("https://app.plane.so/acme/browse/WEB-3"),
+            Resolved::One(_)
+        ));
+    }
+
+    #[test]
+    fn plane_base_url_with_default_port_is_the_same_site() {
+        assert!(same_host("https://x:443", "https://x"));
+        assert!(same_host("https://x", "https://x:443"));
+        assert!(same_host("http://x:80", "http://x"));
+        // Scheme and non-default ports still tell sites apart.
+        assert!(!same_host("https://x", "http://x"));
+        assert!(!same_host("https://x:8443", "https://x"));
+        assert!(!same_host("http://x:443", "http://x"));
+        let t = tickets(vec![(
+            Tracker::Plane,
+            at("https://plane.example.com:443", Some("acme")),
+        )]);
+        assert!(matches!(
+            t.resolve("https://plane.example.com/acme/browse/WEB-3"),
             Resolved::One(_)
         ));
     }

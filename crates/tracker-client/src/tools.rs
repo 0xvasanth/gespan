@@ -127,8 +127,25 @@ pub fn answer(
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        TicketError::Remote(message) => short_remote_error(message),
         _ => error.to_string(),
     })
+}
+
+const MAX_REMOTE_ERROR: usize = 300;
+
+/// Remote failures can carry a raw response or request dump. Agents get one
+/// short line, and none that mentions a credential header.
+fn short_remote_error(message: &str) -> String {
+    let line = message.lines().next().unwrap_or_default().trim();
+    let lower = line.to_ascii_lowercase();
+    if ["authorization", "x-api-key", "cookie"]
+        .iter()
+        .any(|header| lower.contains(header))
+    {
+        return "The tracker request failed".into();
+    }
+    line.chars().take(MAX_REMOTE_ERROR).collect()
 }
 
 fn describe_field(field: &RequiredField) -> String {
@@ -253,6 +270,31 @@ mod tests {
         );
         assert_eq!(READ_ONLY, "This session is read-only");
         assert_eq!(NO_TICKET, "This session isn't linked to a ticket");
+    }
+
+    #[test]
+    fn remote_errors_reach_agents_as_one_short_line() {
+        use crate::provider_boards::ProviderError;
+        let remote = |message: String| {
+            let fake = Arc::new(FakeProvider::new().with_issue(issue("ENG-1")));
+            fake.fail_next("get_issue", ProviderError::Remote(message));
+            let t = tickets(fake, None);
+            answer(&t, &linked("ENG-1"), &TicketTool::Get).unwrap_err()
+        };
+        // Only the first line survives.
+        let error = remote("HTTP 500\nauthorization: Bearer abc\nx-api-key: def".into());
+        assert_eq!(error, "HTTP 500");
+        // Length is capped.
+        let error = remote("a".repeat(1000));
+        assert_eq!(error.chars().count(), 300);
+        // A first line naming a credential header is not passed on.
+        for line in ["Authorization: Bearer abc", "sent X-Api-Key: def"] {
+            let error = remote(format!("{line}\nmore"));
+            let lower = error.to_ascii_lowercase();
+            assert!(!lower.contains("authorization") && !lower.contains("x-api-key"));
+            assert!(!error.contains("abc") && !error.contains("def"));
+            assert!(!error.is_empty());
+        }
     }
 
     #[test]

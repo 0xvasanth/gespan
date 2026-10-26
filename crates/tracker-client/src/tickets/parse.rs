@@ -71,13 +71,17 @@ fn parse_url(url: &Url) -> Option<ParsedTicket> {
             return jira(key);
         }
         let at = segments.iter().position(|s| *s == "browse")?;
+        // The key must be the last segment: `/browse/ABC-1/extra` is not a ticket.
+        if segments.len() != at + 2 {
+            return None;
+        }
         return jira(normalize_key(segments.get(at + 1)?)?);
     }
 
     // A browse path on any other host is told apart by depth: Jira Data Center
     // serves `/browse/KEY`, Plane nests it under a workspace slug.
     match segments.as_slice() {
-        ["browse", key, ..] => jira(normalize_key(key)?),
+        ["browse", key] => jira(normalize_key(key)?),
         [workspace, "browse", key, ..] => Some(ParsedTicket {
             tracker: Some(Tracker::Plane),
             key: normalize_key(key)?,
@@ -160,6 +164,23 @@ mod tests {
         let p = parse_ticket("https://jira.example.com/secure/RapidBoard.jspa?selectedIssue=abc-4")
             .unwrap();
         assert_eq!((p.tracker, p.key.as_str()), (Some(Tracker::Jira), "ABC-4"));
+    }
+
+    #[test]
+    fn jira_browse_path_must_be_exactly_browse_key() {
+        assert!(parse_ticket("https://jira.example.com/browse/ABC-1/extra").is_none());
+        assert!(parse_ticket("https://acme.atlassian.net/browse/ABC-1/extra").is_none());
+        assert!(parse_ticket("https://jira.example.com/browse/ABC-1/").is_some());
+        assert!(parse_ticket("https://acme.atlassian.net/browse/ABC-1").is_some());
+    }
+
+    #[test]
+    fn selected_issue_query_wins_over_browse_path() {
+        let p =
+            parse_ticket("https://acme.atlassian.net/browse/ABC-1?selectedIssue=ABC-2").unwrap();
+        assert_eq!(p.key, "ABC-2");
+        let p = parse_ticket("https://jira.example.com/jira/x?selectedIssue=ABC-3").unwrap();
+        assert_eq!(p.key, "ABC-3");
     }
 
     #[test]

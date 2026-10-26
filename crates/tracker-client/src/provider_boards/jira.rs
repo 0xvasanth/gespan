@@ -1110,6 +1110,60 @@ impl BoardProvider for JiraProvider {
 mod tests {
     use super::*;
 
+    #[test]
+    fn jira_and_linear_refuse_a_3xx_without_following_it() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        // Serves one 302 pointing back at itself. Because a follower would
+        // call back before the client returned, a connection still waiting
+        // in the backlog afterwards proves the redirect was followed.
+        fn serve_one_redirect() -> (String, std::thread::JoinHandle<(String, bool)>) {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+            let handle = std::thread::spawn(move || {
+                let (mut first, _) = listener.accept().unwrap();
+                let mut buffer = [0u8; 8192];
+                let read = first.read(&mut buffer).unwrap();
+                let seen = String::from_utf8_lossy(&buffer[..read]).to_string();
+                first
+                    .write_all(
+                        b"HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .unwrap();
+                drop(first);
+                listener.set_nonblocking(true).unwrap();
+                (seen, listener.accept().is_ok())
+            });
+            (url, handle)
+        }
+
+        let (site, server) = serve_one_redirect();
+        let config = JiraConfig {
+            site,
+            email: "me@example.com".into(),
+            token: "jira-secret".into(),
+        };
+        let error = jira_get(&config, "/rest/api/3/myself").unwrap_err();
+        let (seen, followed) = server.join().unwrap();
+        assert!(!followed, "Jira redirect was followed");
+        assert!(seen.to_ascii_lowercase().contains("authorization: basic"));
+        assert!(!error.contains("jira-secret") && !error.contains("elsewhere"));
+
+        let (url, server) = serve_one_redirect();
+        let error = crate::provider_boards::linear::graphql_at(
+            &url,
+            "lin_key",
+            "query { viewer { id } }",
+            json!({}),
+        )
+        .unwrap_err();
+        let (seen, followed) = server.join().unwrap();
+        assert!(!followed, "Linear redirect was followed");
+        assert!(seen.to_ascii_lowercase().contains("authorization: lin_key"));
+        assert!(!error.contains("lin_key") && !error.contains("elsewhere"));
+    }
+
     const SITE: &str = "https://acme.atlassian.net";
 
     fn issue_node() -> Value {
