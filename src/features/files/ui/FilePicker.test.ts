@@ -229,3 +229,51 @@ describe("file picker on a remote project", () => {
     expect(document.body.textContent).toContain("Machine is not connected");
   });
 });
+
+describe("file picker extra commands", () => {
+  const extraActions = [
+    { id: "board-create-card", label: "Create card" },
+    { id: "board-go-to", label: "Go to board" },
+    { id: "board-switch", label: "Switch board…" },
+  ];
+  const render = (query: string) => {
+    const onRunAction = vi.fn();
+    const onClose = vi.fn();
+    act(() =>
+      root.render(
+        createElement(FilePicker, {
+          open: true,
+          cwd: "/repo",
+          initialQuery: query,
+          onOpenFile: vi.fn(),
+          onRunAction,
+          extraActions,
+          onClose,
+        }),
+      ),
+    );
+    return { onRunAction, onClose };
+  };
+
+  it("lists them after Reload and keeps Reload", () => {
+    render(">");
+    const text = document.querySelector("[data-file-picker]")!.textContent!;
+    for (const label of ["Reload Gespan", "Create card", "Go to board", "Switch board…"]) {
+      expect(text).toContain(label);
+    }
+  });
+
+  it("filters them and runs one by id with Enter", () => {
+    const { onRunAction, onClose } = render(">switch");
+    const input = document.querySelector<HTMLInputElement>("[data-file-picker] input")!;
+    expect(document.querySelector("[data-file-picker]")!.textContent).not.toContain("Go to board");
+    press(input, "Enter");
+    expect(onRunAction).toHaveBeenCalledWith("board-switch");
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("shows no board command without the prop", () => {
+    renderPicker(">");
+    expect(document.querySelector("[data-file-picker]")!.textContent).not.toContain("Create card");
+  });
+});

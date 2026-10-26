@@ -147,6 +147,7 @@ import {
   type PilotActivitySelection,
 } from "../features/pilots/model/pilotActivity";
 import { MenuBar } from "./shell/MenuBar";
+import type { BoardCommand } from "../features/board/ui/BoardView";
 import { FilePicker } from "../features/files/ui/FilePicker";
 import {
   DeleteSessionDialog,
@@ -911,6 +912,12 @@ const AutomationsView = lazySurface(
   },
   { suspense: false },
 );
+const BOARD_PALETTE_ACTIONS = [
+  { id: "board-create-card", label: "Create card" },
+  { id: "board-go-to", label: "Go to board" },
+  { id: "board-switch", label: "Switch board…" },
+] as const;
+let boardCommandNonce = 0;
 const BoardView = lazySurface(
   async () => {
     const module = await import("../features/board/ui/BoardView");
@@ -1344,6 +1351,7 @@ function Workspace({
   const [notesViewOpen, setNotesViewOpen] = useState(false);
   const [automationsViewOpen, setAutomationsViewOpen] = useState(false);
   const [boardViewOpen, setBoardViewOpen] = useState(false);
+  const [boardCommand, setBoardCommand] = useState<BoardCommand | null>(null);
   const [openAppViews, setOpenAppViews] = useState<AppView[]>([]);
   // Pilots open as title tabs in the inset layout, by Pilot id.
   const [openPilotTabs, setOpenPilotTabs] = useState<string[]>([]);
@@ -12473,6 +12481,17 @@ function Workspace({
     });
   }, []);
 
+  const onBoardCommand = useCallback(
+    (id: BoardCommand["id"]) => {
+      onOpenBoard();
+      setBoardCommand({ id, nonce: ++boardCommandNonce });
+    },
+    [onOpenBoard],
+  );
+  const onBoardCommandHandled = useCallback((nonce: number) => {
+    setBoardCommand((current) => (current?.nonce === nonce ? null : current));
+  }, []);
+
   const onLeaveBoard = useCallback(() => {
     setBoardViewOpen(false);
   }, []);
@@ -14892,6 +14911,8 @@ function Workspace({
                         onOpenLinkedWork={onOpenBoardLinkedWork}
                         lookupLinkTargets={lookupBoardLinkTargets}
                         projects={boardProjects}
+                        command={boardCommand}
+                        onCommandHandled={onBoardCommandHandled}
                       />
                     </AppViewSurface>
                   ) : null}
@@ -14982,8 +15003,12 @@ function Workspace({
               openPaths={openFilePaths}
               initialQuery={filePickerInitialQuery}
               onOpenFile={onOpenFile}
+              extraActions={boardEnabled ? BOARD_PALETTE_ACTIONS : undefined}
               onRunAction={(id) => {
                 if (id === "reload") actions.current.onReload();
+                else if (id === "board-create-card") onBoardCommand("new-card");
+                else if (id === "board-go-to") onOpenBoard();
+                else if (id === "board-switch") onBoardCommand("switch-board");
               }}
               onClose={() => setFilePickerOpen(false)}
             />

@@ -1348,6 +1348,30 @@ export const KEYBINDINGS: KeybindingRow[] = [
     when: "Board focused",
     fixed: true,
   },
+  {
+    command: "Board: New Card (key)",
+    keys: "N",
+    when: "Board focused, not typing",
+    fixed: true,
+  },
+  {
+    command: "Board: Search",
+    keys: "/",
+    when: "Board focused, not typing",
+    fixed: true,
+  },
+  {
+    command: "Board: Open Card",
+    keys: "E",
+    when: "Board focused, not typing",
+    fixed: true,
+  },
+  {
+    command: "Board: Delete Card or Selection",
+    keys: "Delete / ⌫",
+    when: "Board focused, not typing, no drawer",
+    fixed: true,
+  },
   { command: "Editor: Find", keys: `${MOD}F`, when: "editorFocus" },
   { command: "Editor: Replace", keys: `${MOD}${ALT}F`, when: "editorFocus" },
 ];

@@ -1092,3 +1092,290 @@ describe("windowing", () => {
     expect(selectedCount()).toBe("501 selected");
   });
 });
+
+describe("keyboard shortcuts", () => {
+  const key = (
+    target: Element,
+    k: string,
+    init: KeyboardEventInit = {},
+  ): KeyboardEvent => {
+    const event = new KeyboardEvent("keydown", {
+      key: k,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    act(() => {
+      target.dispatchEvent(event);
+    });
+    return event;
+  };
+  const kanbanCard = (id: string) => q(`[data-kanban-card="${id}"]`);
+  const searchBox = () => q('input[aria-label="Search cards"]') as HTMLInputElement;
+  const modal = () => document.querySelector('[role="dialog"]');
+  const undoButton = () =>
+    [...toast().querySelectorAll("button")].find((b) => b.textContent === "Undo")!;
+
+  it("N opens the New card modal when no field has focus", async () => {
+    await renderBoard();
+    const event = key(kanbanCard("c1"), "n");
+    expect(event.defaultPrevented).toBe(true);
+    expect(modal()?.textContent).toContain("New card");
+  });
+
+  it("N works with nothing focused (body)", async () => {
+    await renderBoard();
+    key(document.body, "N");
+    expect(modal()).not.toBeNull();
+  });
+
+  it("N types in the search box instead of opening the modal", async () => {
+    await renderBoard();
+    searchBox().focus();
+    const event = key(searchBox(), "n");
+    expect(event.defaultPrevented).toBe(false);
+    expect(modal()).toBeNull();
+  });
+
+  it("ignores N with a modifier, and does nothing when focus is outside the board", async () => {
+    await renderBoard();
+    key(kanbanCard("c1"), "n", { altKey: true });
+    key(kanbanCard("c1"), "n", { ctrlKey: !IS_MAC, metaKey: false, shiftKey: true });
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    key(outside, "n");
+    outside.remove();
+    expect(modal()).toBeNull();
+  });
+
+  it("/ focuses search and doesn't type a slash", async () => {
+    await renderBoard();
+    const event = key(kanbanCard("c1"), "/");
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(searchBox());
+    expect(searchBox().value).toBe("");
+  });
+
+  it("/ types normally inside the search box", async () => {
+    await renderBoard();
+    searchBox().focus();
+    expect(key(searchBox(), "/").defaultPrevented).toBe(false);
+  });
+
+  it("E opens the focused card, and does nothing with no focused card", async () => {
+    await renderBoard();
+    key(document.body, "e");
+    expect(q("[data-card-drawer]")).toBeNull();
+    key(kanbanCard("c2"), "e");
+    await flush();
+    expect(q("[data-card-drawer]")?.textContent).toContain("Card #2");
+  });
+
+  it("E on a control inside the card leaves the card closed", async () => {
+    await renderBoard();
+    key(kanbanCard("c1").querySelector('button[aria-label^="Card actions"]')!, "e");
+    expect(q("[data-card-drawer]")).toBeNull();
+  });
+
+  it("Delete holds a delete of the focused card, with undo", async () => {
+    await renderBoard();
+    const event = key(kanbanCard("c1"), "Delete");
+    await flush();
+    expect(event.defaultPrevented).toBe(true);
+    expect(toast().textContent).toContain("Deleted #1");
+    expect(boardCard("c1")).toBeNull();
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    await click(undoButton());
+    expect(commands("board_card_restore")).toHaveLength(1);
+    expect(boardCard("c1")).not.toBeNull();
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+  });
+
+  it("Backspace deletes the focused card too, but never while typing", async () => {
+    await renderBoard();
+    searchBox().focus();
+    expect(key(searchBox(), "Backspace").defaultPrevented).toBe(false);
+    expect(q("[data-board-undo-toast]")).toBeNull();
+    act(() => searchBox().blur());
+    key(kanbanCard("c2"), "Backspace");
+    await flush();
+    expect(toast().textContent).toContain("Deleted #2");
+  });
+
+  it("Delete with nothing focused or selected does nothing", async () => {
+    await renderBoard();
+    key(document.body, "Delete");
+    await flush();
+    expect(q("[data-board-undo-toast]")).toBeNull();
+  });
+
+  it("Delete with a selection deletes every selected card, not just the focused one", async () => {
+    await renderBoard();
+    await click(boardCard("c1"), MOD);
+    await click(boardCard("c2"), MOD);
+    key(kanbanCard("c3"), "Delete");
+    await flush();
+    expect(toast().textContent).toContain("Deleted 2 cards");
+    expect(boardCard("c1")).toBeNull();
+    expect(boardCard("c2")).toBeNull();
+    expect(boardCard("c3")).not.toBeNull();
+    expect(commands("board_cards_archive")).toEqual([
+      ["board_cards_archive", { cardIds: ["c1", "c2"] }],
+    ]);
+    await click(undoButton());
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+  });
+
+  it("keys type normally in an inline table edit", async () => {
+    await renderBoard();
+    await pick("Layout", "Table");
+    await click(q('button[aria-label="Edit title of #1"]'));
+    const input = q('input[aria-label="Title of #1"]') as HTMLInputElement;
+    for (const k of ["n", "e", "/", "Delete", "Backspace"]) {
+      expect(key(input, k).defaultPrevented, k).toBe(false);
+    }
+    expect(modal()).toBeNull();
+    expect(q("[data-card-drawer]")).toBeNull();
+    expect(q("[data-board-undo-toast]")).toBeNull();
+  });
+
+  it("table and list rows take E and Delete like cards", async () => {
+    await renderBoard();
+    await pick("Layout", "Table");
+    key(tableRow("c1"), "e");
+    await flush();
+    expect(q("[data-card-drawer]")?.textContent).toContain("Card #1");
+  });
+
+  it("does nothing while the New card modal is open", async () => {
+    await renderBoard();
+    key(kanbanCard("c1"), "n");
+    const title = document.querySelector('[aria-label="Title"]')!;
+    key(title, "n");
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    key(document.body, "Delete");
+    expect(q("[data-board-undo-toast]")).toBeNull();
+  });
+
+  it("does nothing while a menu is open", async () => {
+    await renderBoard();
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Layout"]')!
+        .click(),
+    );
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    key(document.body, "n");
+    expect(modal()).toBeNull();
+  });
+
+  it("does nothing behind an open drawer unless focus is on the board", async () => {
+    await renderBoard();
+    await click(boardCard("c1"));
+    expect(q("[data-card-drawer]")).not.toBeNull();
+    // Focus in the drawer or nowhere: blocked.
+    key(q("[data-card-drawer]"), "n");
+    key(q("[data-card-drawer]"), "Delete");
+    key(document.body, "n");
+    key(document.body, "Delete");
+    await flush();
+    expect(modal()).toBeNull();
+    expect(q("[data-board-undo-toast]")).toBeNull();
+    expect(boardCard("c1")).not.toBeNull();
+    // Focus on a board card: the key acts on the board.
+    key(kanbanCard("c2"), "e");
+    await flush();
+    expect(q("[data-card-drawer]")?.textContent).toContain("Card #2");
+    key(kanbanCard("c3"), "Delete");
+    await flush();
+    expect(toast().textContent).toContain("Deleted #3");
+  });
+
+  it("does nothing while a keyboard drag is lifted", async () => {
+    await renderBoard();
+    const lifted = document.createElement("div");
+    lifted.setAttribute("data-dragging", "");
+    container.append(lifted);
+    key(kanbanCard("c1"), "Delete");
+    key(kanbanCard("c1"), "n");
+    await flush();
+    expect(q("[data-board-undo-toast]")).toBeNull();
+    expect(modal()).toBeNull();
+    lifted.remove();
+  });
+
+  it("ignores a board that is hidden in an inert tab", async () => {
+    await renderBoard();
+    container.setAttribute("inert", "");
+    key(document.body, "n");
+    expect(modal()).toBeNull();
+    container.removeAttribute("inert");
+  });
+
+  it("leaves Escape layering alone", async () => {
+    await renderBoard();
+    await click(boardCard("c1"), MOD);
+    key(kanbanCard("c1"), "Escape");
+    expect(selectedCount()).toBeNull();
+  });
+});
+
+describe("palette commands", () => {
+  const renderWith = async (command: ComponentProps<typeof BoardView>["command"]) => {
+    const onCommandHandled = vi.fn();
+    await act(async () => {
+      root.render(
+        createElement(BoardView, {
+          onClose: vi.fn(),
+          linkTargets: [],
+          onOpenLinkedWork: vi.fn(() => Promise.resolve()),
+          lookupLinkTargets: vi.fn(async () => []),
+          projects: [],
+          command,
+          onCommandHandled,
+        }),
+      );
+    });
+    await flush();
+    return onCommandHandled;
+  };
+
+  it("Create card opens the board and the New card modal, once", async () => {
+    const handled = await renderWith({ id: "new-card", nonce: 1 });
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      "New card",
+    );
+    expect(handled).toHaveBeenCalledWith(1);
+    expect(handled).toHaveBeenCalledTimes(1);
+  });
+
+  it("Switch board lists the boards", async () => {
+    const handled = await renderWith({ id: "switch-board", nonce: 2 });
+    const options = [...document.querySelectorAll('[role="option"]')].map((o) =>
+      o.textContent?.trim(),
+    );
+    expect(options.join("|")).toContain("Agents");
+    expect(options.join("|")).toContain("Releases");
+    expect(handled).toHaveBeenCalledWith(2);
+  });
+
+  it("does not act again for the same command when the board reloads", async () => {
+    const handled = await renderWith({ id: "new-card", nonce: 3 });
+    act(() => {
+      (document.querySelector('[role="dialog"] button[aria-label="Close"]') as
+        | HTMLElement
+        | null)?.click();
+    });
+    press(document.body, "Escape");
+    emitBoardChanged();
+    await flush();
+    expect(handled).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a command when there are no boards", async () => {
+    handlers.board_list = () => [];
+    const handled = await renderWith({ id: "new-card", nonce: 4 });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(handled).toHaveBeenCalledWith(4);
+  });
+});

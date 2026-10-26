@@ -102,6 +102,11 @@ import {
   toggleSelect,
   type Selection,
 } from "../model/selection";
+import {
+  focusedCardId,
+  isEditableTarget,
+  shortcutFor,
+} from "../model/shortcuts";
 import { createCardFromTicket, newCardColumn } from "../model/ticketCards";
 import {
   archivedLabel,
@@ -215,7 +220,13 @@ type Props = {
   lookupLinkTargets: (links: LinkRef[]) => Promise<BoardLinkTarget[]>;
   /** The workspace's projects, for the filter. */
   projects: readonly { path: string; name: string }[];
+  /** A palette command for the board; `nonce` tells repeats apart. */
+  command?: BoardCommand | null;
+  /** Called once the board has acted on (or dropped) `command`. */
+  onCommandHandled?: (nonce: number) => void;
 };
+
+export type BoardCommand = { id: "new-card" | "switch-board"; nonce: number };
 
 export function BoardView({
   tabbed = false,
@@ -227,6 +238,8 @@ export function BoardView({
   onOpenLinkedWork,
   lookupLinkTargets,
   projects,
+  command,
+  onCommandHandled,
 }: Props) {
   return (
     <div
@@ -261,6 +274,8 @@ export function BoardView({
         onOpenLinkedWork={onOpenLinkedWork}
         lookupLinkTargets={lookupLinkTargets}
         projects={projects}
+        command={command}
+        onCommandHandled={onCommandHandled}
       />
     </div>
   );
@@ -271,9 +286,16 @@ function BoardContent({
   onOpenLinkedWork,
   lookupLinkTargets,
   projects,
+  command,
+  onCommandHandled,
 }: Pick<
   Props,
-  "linkTargets" | "onOpenLinkedWork" | "lookupLinkTargets" | "projects"
+  | "linkTargets"
+  | "onOpenLinkedWork"
+  | "lookupLinkTargets"
+  | "projects"
+  | "command"
+  | "onCommandHandled"
 >) {
   const [boards, setBoards] = useState<Board[] | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -309,6 +331,7 @@ function BoardContent({
   const [pageCardId, setPageCardId] = useState<string | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [newCardOpen, setNewCardOpen] = useState(false);
+  const [switchSignal, setSwitchSignal] = useState(0);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
   const [cardIndex, setCardIndex] = useState<ReadonlyMap<string, CardIndexRow>>(
     () => new Map(),
@@ -1282,6 +1305,88 @@ function BoardContent({
     </>
   );
 
+  // Keyboard shortcuts (N, /, E, Delete). The handler reads the latest state
+  // through a ref so the window listener is added once.
+  const shortcutRef = useRef<(event: KeyboardEvent) => void>(() => {});
+  shortcutRef.current = (event) => {
+    const root = rootRef.current;
+    const shortcut = shortcutFor(event);
+    if (!root || !shortcut || !detail) return;
+    const target = event.target;
+    // A hidden board (an inert tab) never reacts.
+    if (root.closest("[inert]")) return;
+    if (isEditableTarget(target) || isEditableTarget(document.activeElement))
+      return;
+    const inBoard = target instanceof Node && root.contains(target);
+    const onPage =
+      target === document.body || target === document.documentElement;
+    if (!inBoard && !onPage) return;
+    if (
+      newCardOpen ||
+      ticketCardOpen ||
+      archiveOpen ||
+      naming ||
+      addingColumn ||
+      composerColumn ||
+      dragInProgress() ||
+      document.querySelector(
+        '[role="dialog"], [role="menu"], [role="listbox"], [data-dialog-popover]',
+      )
+    )
+      return;
+    // Behind an open drawer only the board itself keeps the keys.
+    const drawerOpen =
+      !!openCard && detail.cards.some((card) => card.id === openCard.id);
+    if (
+      drawerOpen &&
+      (!inBoard ||
+        (target instanceof Element && target.closest("[data-card-drawer]")))
+    )
+      return;
+    const cardId = focusedCardId(target);
+    const card = cardId ? detail.cards.find((c) => c.id === cardId) : undefined;
+    if (shortcut === "new") {
+      event.preventDefault();
+      setNewCardOpen(true);
+    } else if (shortcut === "search") {
+      const search = root.querySelector<HTMLInputElement>(
+        'input[aria-label="Search cards"]',
+      );
+      if (!search) return;
+      event.preventDefault();
+      search.focus();
+    } else if (shortcut === "open") {
+      if (!card) return;
+      event.preventDefault();
+      showCard({ id: card.id });
+    } else if (selection.ids.length) {
+      event.preventDefault();
+      bulkRemove(true);
+    } else if (card) {
+      event.preventDefault();
+      removeCard(card);
+    }
+  };
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => shortcutRef.current(event);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // A palette command: act once the board it needs has loaded.
+  const handledCommand = useRef<number | null>(null);
+  useEffect(() => {
+    if (!command || handledCommand.current === command.nonce) return;
+    if (boards && boards.length && command.id === "new-card" && !detail) return;
+    if (!boards) return;
+    handledCommand.current = command.nonce;
+    if (boards.length) {
+      if (command.id === "new-card") setNewCardOpen(true);
+      else setSwitchSignal((n) => n + 1);
+    }
+    onCommandHandled?.(command.nonce);
+  }, [command, boards, detail, onCommandHandled]);
+
   if (!boards) return toast;
 
   if (!boards.length) {
@@ -1620,6 +1725,7 @@ function BoardContent({
                 label: board.name,
               }))}
               onChange={(id) => setOpenId(id)}
+              openSignal={switchSignal}
               searchPlaceholder="Search boards…"
               emptyLabel="No matching boards"
               variant="transparent"
