@@ -3409,6 +3409,30 @@ describe("BoardView filter builder, sort and saved views", () => {
     });
   });
 
+  it("duplicate_copies_unsaved_edits_and_leaves_the_original_stored", async () => {
+    savedViews = [stored("v1", "Mine", {})];
+    await renderBoard();
+    await click(tab("v1"));
+    await pick("Sort", "Due date");
+    expect(dot()).not.toBeNull();
+    await viewMenu("Mine", "Duplicate");
+    // The copy is made from the edited sort, and nothing was written to v1.
+    const [, created] = commands("board_view_create").at(-1)!;
+    expect(created).toMatchObject({ name: "Mine copy" });
+    expect(
+      JSON.parse((created as { specJson: string }).specJson).sort,
+    ).toEqual({ key: "due", dir: "asc" });
+    expect(commands("board_view_update")).toHaveLength(0);
+    expect(
+      JSON.parse(savedViews.find((view) => view.id === "v1")!.specJson).sort,
+    ).toEqual({ key: "manual", dir: "asc" });
+    // The copy is shown, sorted, and clean.
+    expect(container.querySelector("[data-sorted-by]")?.textContent).toBe(
+      "Sorted by Due date",
+    );
+    expect(dot()).toBeNull();
+  });
+
   it("unsaved_changes_show_a_dot_with_save_and_revert", async () => {
     savedViews = [stored("v1", "Mine", { rows: [row("priority", ["3"])] })];
     await renderBoard();

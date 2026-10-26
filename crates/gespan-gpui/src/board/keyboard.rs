@@ -88,6 +88,13 @@ impl BoardView {
             || self.views.naming.is_some()
     }
 
+    /// True while the card drawer is open and focus is inside it: N, E and
+    /// Delete then belong to the drawer, not to the board behind it. Focus on
+    /// the board itself or one of its cards keeps the keys.
+    pub(super) fn drawer_holds_keys(&self, window: &Window, cx: &App) -> bool {
+        self.card_detail.is_some() && self.drawer_focus.contains_focused(window, cx)
+    }
+
     /// The card that has keyboard focus, if any.
     fn focused_card(&self, window: &Window, cx: &App) -> Option<String> {
         self.card_focus
@@ -102,7 +109,7 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.shortcuts_blocked() {
+        if self.shortcuts_blocked() || self.drawer_holds_keys(window, cx) {
             return false;
         }
         let Some(id) = self.focused_card(window, cx) else {
@@ -119,7 +126,7 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.shortcuts_blocked() {
+        if self.shortcuts_blocked() || self.drawer_holds_keys(window, cx) {
             return false;
         }
         if self.selected_count() > 0 {

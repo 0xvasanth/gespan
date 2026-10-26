@@ -1279,12 +1279,17 @@ function BoardContent({
   const duplicateView = (id: string) => {
     const source = views.find((view) => view.id === id);
     if (!source || !openId) return;
+    // The showing view's unsaved edits go into the copy; the original keeps
+    // its stored version. The copy is shown, so nothing is left dirty.
+    const editing = id === activeView;
     adoptNewView(openId, "Couldn't duplicate the view", () =>
       createView(
         openId,
         `${source.name} copy`,
-        source.specJson,
-        source.layoutJson,
+        editing
+          ? JSON.stringify(currentSpec({ query, rows, sort }))
+          : source.specJson,
+        editing ? layout : source.layoutJson,
       ),
     );
   };
@@ -1372,6 +1377,13 @@ function BoardContent({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // The switcher signal is one-shot: the header's select reads it in its own
+  // effect (which runs first), then it is cleared. A signal that arrives while
+  // the select is unmounted (a rename) is dropped, never kept for later.
+  useEffect(() => {
+    if (switchSignal > 0) setSwitchSignal(0);
+  }, [switchSignal]);
 
   // A palette command: act once the board it needs has loaded.
   const handledCommand = useRef<number | null>(null);

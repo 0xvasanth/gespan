@@ -229,6 +229,7 @@ impl BoardView {
             div()
                 .id("board-drawer")
                 .debug_selector(|| "board-drawer".into())
+                .track_focus(&self.drawer_focus)
                 .role(Role::Dialog)
                 .aria_label(format!("Task #{}", card.number))
                 .h_full()

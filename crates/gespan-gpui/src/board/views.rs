@@ -361,8 +361,16 @@ impl BoardView {
             return;
         };
         let name = format!("{} copy", source.name);
+        // The showing view's unsaved edits go into the copy; the original
+        // keeps its stored version (the copy is shown, so it is not left
+        // dirty).
+        let (spec, layout) = if self.views.active.as_deref() == Some(id) {
+            (self.spec_json(cx), self.views.layout.clone())
+        } else {
+            (source.spec_json.clone(), source.layout_json.clone())
+        };
         if let Some(view) = self.view_write(cx, |service| {
-            service.view_create(&board_id, &name, &source.spec_json, &source.layout_json)
+            service.view_create(&board_id, &name, &spec, &layout)
         }) {
             self.adopt(view, cx);
         }

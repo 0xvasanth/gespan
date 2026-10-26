@@ -204,6 +204,9 @@ pub(crate) struct BoardView {
     /// The header's Filter and New task buttons are tab stops.
     filter_focus: FocusHandle,
     new_task_focus: FocusHandle,
+    /// The open drawer's own focus: a click inside it lands here, not on the
+    /// board, so the board's plain keys can tell the two apart.
+    drawer_focus: FocusHandle,
     column_anchors: HashMap<String, AnchorSlot>,
     card_anchors: HashMap<String, AnchorSlot>,
     dragged_card: Option<String>,
@@ -338,6 +341,7 @@ impl BoardView {
             open_in_anchor: AnchorSlot::default(),
             filter_focus: cx.focus_handle(),
             new_task_focus: cx.focus_handle(),
+            drawer_focus: cx.focus_handle(),
             column_anchors: HashMap::new(),
             card_anchors: HashMap::new(),
             dragged_card: None,
@@ -361,7 +365,6 @@ impl BoardView {
         }
     }
 
-    /// The view came on screen: start polling and show the latest data.
     #[cfg(test)]
     pub(crate) fn new_card_open(&self) -> bool {
         self.new_card.is_some()
@@ -372,6 +375,7 @@ impl BoardView {
         self.switcher.is_some()
     }
 
+    /// The view came on screen: start polling and show the latest data.
     pub(crate) fn shown(&mut self, cx: &mut Context<Self>) {
         self.visible = true;
         self.reload(cx);
@@ -1329,7 +1333,7 @@ impl gpui::Render for BoardView {
                     this.open_new_card(window, cx)
                 }))
                 .on_action(cx.listener(|this, _: &keyboard::NewCardKey, window, cx| {
-                    if this.shortcuts_blocked() {
+                    if this.shortcuts_blocked() || this.drawer_holds_keys(window, cx) {
                         cx.propagate();
                     } else {
                         this.open_new_card(window, cx);

@@ -6331,3 +6331,67 @@ fn keys_type_normally_in_an_inline_table_edit(cx: &mut TestAppContext) {
     // "A" + "ne/x", Backspace took the x; the forward Delete had nothing to remove.
     assert_eq!(card_of(&f, &a).title, "Ane/");
 }
+
+#[gpui::test]
+fn duplicate_copies_unsaved_edits_and_leaves_the_original_stored(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Alpha", "Beta"]);
+    let board = Service::open(&f.db).unwrap().default_board().unwrap();
+    let spec = serde_json::to_string(&Default::default() as &gespan_core::board::extras::ViewSpec)
+        .unwrap();
+    Service::open(&f.db)
+        .unwrap()
+        .view_create(&board.id, "Mine", &spec, views::DEFAULT_LAYOUT)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-view-tab-0");
+    sort_by(visual, "board-sort-title");
+    click(visual, "board-view-menu-0");
+    click(visual, "board-view-duplicate");
+    let stored = stored_views(&f);
+    assert_eq!(stored.len(), 2);
+    let sort_of = |view: &gespan_core::board::extras::View| {
+        serde_json::from_str::<gespan_core::board::extras::ViewSpec>(&view.spec_json)
+            .unwrap()
+            .sort
+            .key
+    };
+    assert_eq!(
+        sort_of(&stored[0]),
+        gespan_core::board::extras::SortKey::Manual
+    );
+    assert_eq!(
+        sort_of(&stored[1]),
+        gespan_core::board::extras::SortKey::Title
+    );
+    // The copy is shown, and clean.
+    drawer(&f, visual, |view, cx| {
+        assert_eq!(view.views.active.as_deref(), Some(stored[1].id.as_str()));
+        assert!(view.sorted());
+        assert!(!view.view_dirty(cx));
+    });
+}
+
+#[gpui::test]
+fn n_and_delete_do_nothing_when_focus_is_inside_the_open_drawer(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let a = card_id(&f, visual, "A");
+    cmd_click(visual, 2);
+    click(visual, "board-card-1");
+    drawer(&f, visual, |view, _| assert!(view.card_detail.is_some()));
+    // Click a drawer button: neither key reaches the board behind it.
+    click(visual, "board-drawer-complete");
+    let before = toast(&f, visual);
+    visual.simulate_keystrokes("n delete");
+    visual.run_until_parked();
+    assert!(!modal_open(&f, visual), "N opens nothing behind the drawer");
+    assert_eq!(toast(&f, visual), before, "Delete deletes nothing");
+    assert!(archived_ids(&f, visual).is_empty());
+    assert!(card_exists(&f, &a));
+    // Back on the board itself the keys work again.
+    focus_board(&f, visual);
+    visual.simulate_keystrokes("n");
+    visual.run_until_parked();
+    assert!(modal_open(&f, visual));
+}

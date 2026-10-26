@@ -1359,6 +1359,41 @@ describe("palette commands", () => {
     expect(handled).toHaveBeenCalledWith(2);
   });
 
+  it("a switch signal fired while renaming does not open the switcher later", async () => {
+    await renderWith(undefined);
+    const props = (command: ComponentProps<typeof BoardView>["command"]) =>
+      createElement(BoardView, {
+        onClose: vi.fn(),
+        linkTargets: [],
+        onOpenLinkedWork: vi.fn(() => Promise.resolve()),
+        lookupLinkTargets: vi.fn(async () => []),
+        projects: [],
+        command,
+        onCommandHandled: vi.fn(),
+      });
+    act(() =>
+      (
+        document.querySelector(
+          'button[aria-label="Board actions"]',
+        ) as HTMLButtonElement
+      ).click(),
+    );
+    const rename = [
+      ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ].find((el) => el.textContent?.trim() === "Rename board")!;
+    expect(rename).toBeDefined();
+    await act(async () => rename.click());
+    const input = document.querySelector('input[aria-label="Board name"]')!;
+    expect(input).not.toBeNull();
+    await act(async () => root.render(props({ id: "switch-board", nonce: 9 })));
+    await flush();
+    press(input, "Escape");
+    await flush();
+    expect(document.querySelector('input[aria-label="Board name"]')).toBeNull();
+    expect(document.querySelector('[role="listbox"]')).toBeNull();
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(0);
+  });
+
   it("does not act again for the same command when the board reloads", async () => {
     const handled = await renderWith({ id: "new-card", nonce: 3 });
     act(() => {

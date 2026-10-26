@@ -52,7 +52,7 @@ const COMMANDS: &[(Command, &str, &str)] = &[
         "",
     ),
     (Command::NewCardFromTicket, "New card from ticket…", ""),
-    (Command::CreateCard, "Create card", "N"),
+    (Command::CreateCard, "Create card", ""),
     (Command::GoToBoard, "Go to board", ""),
     (Command::SwitchBoard, "Switch board…", ""),
     (Command::OpenLogs, "Open logs folder", ""),
