@@ -1,0 +1,34 @@
+src/features/board/ui/kanban/Swimlanes.tsx
+  s_938a6e0c93b076::t_9fe08709fd3207 4,7,9,19-28,31-47,51,53,56-71,79-83,86-98,100-106,116,119-121,131-132,136-141,151-295,299,303,309-315,320-321,327-328,333-335,341-343,350,353-382,384-400,402-406,408,412-522,526,531-532,534,537-538,540,542-576,579,584,586,591,598-602,605-632,636-639,642-643,649-653,655,664,666,672-673,675-676,691,694-696,699-711,717,719
+src/features/board/ui/kanban/SwimlanesScale.test.ts
+  s_938a6e0c93b076::t_1178928234fb75 1-649
+  s_938a6e0c93b076::t_d45c4fa5ea1f59 650-656
+src/features/board/model/cardFocus.test.ts
+  s_938a6e0c93b076::t_13ffbfa8e7790a 2,54-135
+src/features/board/model/cardFocus.ts
+  s_938a6e0c93b076::t_8346debc2b33e2 48-89
+src/features/board/model/swimlanes.ts
+  s_938a6e0c93b076::t_694181b410ec34 143-240
+src/features/board/model/windowing.ts
+  s_938a6e0c93b076::t_4fd3a4ffc30542 203-205,210,214,218,222,239-240,242,244,252-260,268-269,290,330-332,336,339,355,358,389,391-392
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_afee4dd7ad7139 153,1024,1026-1047,2649,2652-2654
+src/features/board/ui/kanban/Swimlanes.test.ts
+  s_938a6e0c93b076::t_6bc7b6c58178a8 150,154,158,164,182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd0d110c9a5658b6eb4e5f0eaf94b5d33acfc74d",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
