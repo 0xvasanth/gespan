@@ -280,7 +280,7 @@ pub fn validate_value(kind: &str, options: &[String], value: &Value) -> Result<V
     match kind {
         "text" => Ok(Value::String(text_of(value, "Text must be a string")?)),
         "number" => match value.as_f64() {
-            Some(n) if value.is_number() && n.is_finite() => Ok(value.clone()),
+            Some(n) if value.is_number() && n.is_finite() => Ok(normal_number(value)),
             _ => Err("Number must be a number".into()),
         },
         "date" => match value.as_i64() {
@@ -328,6 +328,40 @@ pub fn validate_value(kind: &str, options: &[String], value: &Value) -> Result<V
         }
         _ => Err(format!("Unknown field kind: {kind}")),
     }
+}
+
+/// Largest integer an f64 holds exactly (2^53).
+const EXACT_INT: f64 = 9_007_199_254_740_992.0;
+
+/// A whole-number float as an integer (5.0 is stored as 5), so one number
+/// has one stored form. Anything else is returned as it is.
+fn normal_number(value: &Value) -> Value {
+    match value.as_f64() {
+        Some(n) if value.is_f64() && n.fract() == 0.0 && n.abs() <= EXACT_INT => {
+            Value::from(n as i64)
+        }
+        _ => value.clone(),
+    }
+}
+
+/// A value copied to a field on another board (by name and kind): it is
+/// validated against the target field's options. Multi-select options the
+/// target lacks are stripped first; `None` drops the value.
+pub(crate) fn carry_value(kind: &str, options_json: Option<&str>, raw: &str) -> Option<Value> {
+    let options = parse_options(options_json);
+    let mut value = serde_json::from_str::<Value>(raw).ok()?;
+    if kind == "multi-select" {
+        if let Value::Array(items) = &mut value {
+            items.retain(|item| {
+                item.as_str()
+                    .is_some_and(|o| options.iter().any(|k| k == o))
+            });
+            if items.is_empty() {
+                return None;
+            }
+        }
+    }
+    validate_value(kind, &options, &value).ok()
 }
 
 fn get_field(tx: &Transaction<'_>, field_id: &str) -> Result<Field, String> {
@@ -456,6 +490,30 @@ pub fn update_field(
                 (!left.is_empty()).then_some(Value::Array(left))
             }
             value => keeps(value).then(|| value.clone()),
+        })?;
+        // Saved-view filter values (JSON-encoded) naming a removed option go;
+        // a row left with no value goes too (the engine would ignore it).
+        let key = format!("field:{field_id}");
+        rewrite_views(&tx, &field.board_id, |spec, _| {
+            let Some(rows) = spec_rows(spec) else {
+                return;
+            };
+            rows.retain_mut(|row| {
+                if !row_is(row, &key) {
+                    return true;
+                }
+                let Some(values) = row.get_mut("values") else {
+                    return true;
+                };
+                let had = values.as_array().is_some_and(|v| !v.is_empty());
+                map_strings(values, |raw| {
+                    match serde_json::from_str::<Value>(raw.trim()) {
+                        Ok(value @ Value::String(_)) if !keeps(&value) => None,
+                        _ => Some(raw.to_string()),
+                    }
+                });
+                !(had && values.as_array().is_some_and(Vec::is_empty))
+            });
         })?;
     }
     tx.commit().map_err(db)?;
@@ -644,6 +702,8 @@ pub fn field_distinct_values(
     for raw in raws {
         match serde_json::from_str::<Value>(&raw) {
             Ok(Value::Array(items)) => items.into_iter().for_each(&mut add),
+            // A 5.0 stored before numbers were normalised counts as 5.
+            Ok(value) if value.is_number() => add(normal_number(&value)),
             Ok(value) => add(value),
             // A value that isn't JSON can't be offered as a filter choice.
             Err(_) => {}

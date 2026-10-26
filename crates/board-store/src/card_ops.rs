@@ -1,6 +1,7 @@
 //! Operations that touch several tables at once: converting a subtask to a
 //! card, duplicating a card, and moving a card to another board. Each runs in
 //! one write transaction.
+use crate::fields::carry_value;
 use crate::ops::{
     column_card_ids, db, get_card, get_column, is_archived, log_activity, log_edit, new_id,
     write_card_positions, write_tx, NewActivity, LIVE, MAX_TITLE,
@@ -313,10 +314,11 @@ pub fn move_card_to_board(
         }
     }
 
-    // Field values: keep those whose field (name, kind) exists on the target.
-    let target_fields: HashMap<(String, String), String> = {
+    // Field values: keep those whose field (name, kind) exists on the target
+    // and that are valid for it (multi-select loses options it lacks).
+    let target_fields: HashMap<(String, String), (String, Option<String>)> = {
         let mut statement = tx
-            .prepare("SELECT id, name, kind FROM board_fields WHERE board_id = ?1 ORDER BY position, rowid")
+            .prepare("SELECT id, name, kind, options_json FROM board_fields WHERE board_id = ?1 ORDER BY position, rowid")
             .map_err(db)?;
         let rows = statement
             .query_map([board_id], |r| {
@@ -325,7 +327,7 @@ pub fn move_card_to_board(
                         r.get::<_, String>(1)?.to_lowercase(),
                         r.get::<_, String>(2)?,
                     ),
-                    r.get::<_, String>(0)?,
+                    (r.get::<_, String>(0)?, r.get::<_, Option<String>>(3)?),
                 ))
             })
             .map_err(db)?
@@ -361,11 +363,15 @@ pub fn move_card_to_board(
     )
     .map_err(db)?;
     for (_, name, kind, value_json) in values {
-        if let Some(field_id) = target_fields.get(&(name.to_lowercase(), kind)) {
+        let key = (name.to_lowercase(), kind);
+        let Some((field_id, options)) = target_fields.get(&key) else {
+            continue;
+        };
+        if let Some(value) = carry_value(&key.1, options.as_deref(), &value_json) {
             tx.execute(
                 "INSERT OR IGNORE INTO board_card_field_values (card_id, field_id, value_json)
                  VALUES (?1, ?2, ?3)",
-                params![card_id, field_id, value_json],
+                params![card_id, field_id, value.to_string()],
             )
             .map_err(db)?;
         }

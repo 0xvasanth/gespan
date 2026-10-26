@@ -599,6 +599,7 @@ fn delete_field_removes_values_view_rows_and_table_columns() {
         .to_string(),
         &json!({
             "layout": "table",
+            "zoom": {"level": 2, "keep": [size_key]},
             "columns": ["title", size_key, points_key],
             "widths": {"title": 200, size_key.clone(): 90, points_key.clone(): 80},
             "display": {"face": {"fields": [size.id, points.id]}, "swimlane": size_key},
@@ -628,6 +629,11 @@ fn delete_field_removes_values_view_rows_and_table_columns() {
     );
     let layout = json_of(&saved.layout_json);
     assert_eq!(layout["layout"], "table");
+    assert_eq!(
+        layout["zoom"],
+        json!({"level": 2, "keep": [size_key]}),
+        "a layout key the store doesn't know survives untouched"
+    );
     assert_eq!(layout["columns"], json!(["title", points_key]));
     assert_eq!(
         layout["widths"],
@@ -806,4 +812,190 @@ fn field_and_label_positions_stay_contiguous() {
         3
     );
     assert_eq!(move_field(&conn, "gone", 0).unwrap_err(), "Field not found");
+}
+
+#[test]
+fn moving_a_card_drops_values_the_target_field_refuses() {
+    let conn = fresh();
+    let (source, cards) = board_with_cards(&conn, &["mover"]);
+    let card = &cards[0];
+    let (target, _) = board_with_cards(&conn, &[]);
+    let size = create_field(&conn, &source.id, "Size", "select", Some(r#"["S","XL"]"#)).unwrap();
+    let tags = create_field(
+        &conn,
+        &source.id,
+        "Tags",
+        "multi-select",
+        Some(r#"["ui","api","db"]"#),
+    )
+    .unwrap();
+    let gone = create_field(&conn, &source.id, "Gone", "multi-select", Some(r#"["x"]"#)).unwrap();
+    let points = create_field(&conn, &source.id, "Points", "number", None).unwrap();
+    set_field_value(&conn, &card.id, &size.id, Some(r#""XL""#)).unwrap();
+    set_field_value(&conn, &card.id, &tags.id, Some(r#"["ui","api","db"]"#)).unwrap();
+    set_field_value(&conn, &card.id, &gone.id, Some(r#"["x"]"#)).unwrap();
+    set_field_value(&conn, &card.id, &points.id, Some("8")).unwrap();
+    // Same names and kinds on the target, with fewer options.
+    let target_size =
+        create_field(&conn, &target.id, "Size", "select", Some(r#"["S","M"]"#)).unwrap();
+    let target_tags = create_field(
+        &conn,
+        &target.id,
+        "tags",
+        "multi-select",
+        Some(r#"["db","ui"]"#),
+    )
+    .unwrap();
+    let target_gone =
+        create_field(&conn, &target.id, "Gone", "multi-select", Some(r#"["y"]"#)).unwrap();
+    let target_points = create_field(&conn, &target.id, "Points", "number", None).unwrap();
+
+    move_card_to_board(&conn, &card.id, &target.id).unwrap();
+
+    assert_eq!(
+        value_of(&conn, card, &target_size),
+        None,
+        "XL isn't a target option"
+    );
+    // Unknown options are stripped, and the rest follow the target's order.
+    assert_eq!(
+        json_of(&value_of(&conn, card, &target_tags).unwrap()),
+        json!(["db", "ui"])
+    );
+    assert_eq!(
+        value_of(&conn, card, &target_gone),
+        None,
+        "nothing left to keep"
+    );
+    assert_eq!(value_of(&conn, card, &target_points).as_deref(), Some("8"));
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM board_card_field_values"),
+        2
+    );
+}
+
+#[test]
+fn removing_an_option_strips_it_from_saved_view_filter_values() {
+    let conn = fresh();
+    let (board, cards) = board_with_cards(&conn, &["a", "b"]);
+    let size = create_field(&conn, &board.id, "Size", "select", Some(r#"["S","M","L"]"#)).unwrap();
+    let tags = create_field(
+        &conn,
+        &board.id,
+        "Tags",
+        "multi-select",
+        Some(r#"["ui","api"]"#),
+    )
+    .unwrap();
+    set_field_value(&conn, &cards[0].id, &size.id, Some(r#""S""#)).unwrap();
+    let size_key = format!("field:{}", size.id);
+    let tags_key = format!("field:{}", tags.id);
+    let saved = create_view(
+        &conn,
+        &board.id,
+        "Sized",
+        &json!({"rows": [
+            {"field": size_key, "op": "is", "values": [" \"M\" ", "\"S\"", "not json"]},
+            {"field": size_key, "op": "is_not", "values": ["\"M\""]},
+            {"field": tags_key, "op": "is", "values": ["\"api\""]},
+            {"field": "labels", "op": "is", "values": ["\"M\""]},
+        ]})
+        .to_string(),
+        "{}",
+    )
+    .unwrap();
+
+    update_field(&conn, &size.id, None, Some(r#"["S","L"]"#)).unwrap();
+
+    let rows = json_of(&view(&conn, &saved.id).spec_json)["rows"].clone();
+    assert_eq!(
+        rows,
+        json!([
+            // M goes; S and a value that isn't JSON stay as they were.
+            {"field": size_key, "op": "is", "values": ["\"S\"", "not json"]},
+            // The row that named only M is gone (it would be ignored anyway).
+            {"field": tags_key, "op": "is", "values": ["\"api\""]},
+            {"field": "labels", "op": "is", "values": ["\"M\""]},
+        ])
+    );
+    // The rewritten row still filters.
+    assert_eq!(
+        run(&conn, &board, json!({"rows": [rows[0]]})),
+        ids(&[&cards[0]])
+    );
+    // Renaming only (no options) leaves views alone.
+    let before = view(&conn, &saved.id).spec_json;
+    update_field(&conn, &size.id, Some("Bigness"), None).unwrap();
+    assert_eq!(view(&conn, &saved.id).spec_json, before);
+}
+
+#[test]
+fn whole_number_values_are_stored_as_integers() {
+    assert_eq!(
+        validate_value("number", &[], &json!(5.0)).unwrap(),
+        json!(5)
+    );
+    assert_eq!(
+        validate_value("number", &[], &json!(-0.0)).unwrap(),
+        json!(0)
+    );
+    assert_eq!(
+        validate_value("number", &[], &json!(2.5)).unwrap(),
+        json!(2.5)
+    );
+    // Beyond 2^53 a float isn't an exact integer, so it stays a float.
+    assert_eq!(
+        validate_value("number", &[], &json!(1e300)).unwrap(),
+        json!(1e300)
+    );
+
+    let conn = fresh();
+    let (board, cards) = board_with_cards(&conn, &["a", "b", "c"]);
+    let points = create_field(&conn, &board.id, "Points", "number", None).unwrap();
+    set_field_value(&conn, &cards[0].id, &points.id, Some("5.0")).unwrap();
+    set_field_value(&conn, &cards[1].id, &points.id, Some("5")).unwrap();
+    assert_eq!(value_of(&conn, &cards[0], &points).as_deref(), Some("5"));
+    // A 5.0 written before normalising still counts with 5.
+    conn.execute(
+        "INSERT INTO board_card_field_values (card_id, field_id, value_json) VALUES (?1, ?2, '5.0')",
+        [&cards[2].id, &points.id],
+    )
+    .unwrap();
+    assert_eq!(
+        field_distinct_values(&conn, &board.id, &points.id, 10).unwrap(),
+        ["5"]
+    );
+}
+
+#[test]
+fn unreadable_stored_options_refuse_a_value_write() {
+    let conn = fresh();
+    let (board, cards) = board_with_cards(&conn, &["a"]);
+    let size = create_field(&conn, &board.id, "Size", "select", Some(r#"["S","M"]"#)).unwrap();
+    let tags = create_field(&conn, &board.id, "Tags", "multi-select", Some(r#"["ui"]"#)).unwrap();
+    set_field_value(&conn, &cards[0].id, &size.id, Some(r#""S""#)).unwrap();
+    for (field, raw) in [(&size, "not json"), (&tags, r#"{"ui":true}"#)] {
+        conn.execute(
+            "UPDATE board_fields SET options_json = ?1 WHERE id = ?2",
+            [raw, &field.id],
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        set_field_value(&conn, &cards[0].id, &size.id, Some(r#""M""#)).unwrap_err(),
+        "Pick one of the field's options"
+    );
+    assert_eq!(
+        set_field_value(&conn, &cards[0].id, &tags.id, Some(r#"["ui"]"#)).unwrap_err(),
+        "Pick one of the field's options"
+    );
+    assert_eq!(
+        value_of(&conn, &cards[0], &size).as_deref(),
+        Some(r#""S""#),
+        "the refused write changed nothing"
+    );
+    assert_eq!(value_of(&conn, &cards[0], &tags), None);
+    // Clearing a value is still allowed.
+    set_field_value(&conn, &cards[0].id, &size.id, None).unwrap();
+    assert_eq!(value_of(&conn, &cards[0], &size), None);
 }
