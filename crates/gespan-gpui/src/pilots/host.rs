@@ -371,7 +371,7 @@ impl Pilots {
             "models.list"=>Ok(json!(Kind::ALL.into_iter().map(|kind|json!({"harness":kind.id(),"name":kind.label(),"models":self.chats.values().find(|v|{let v=v.read(cx);let profile=source.as_ref().filter(|s|s.read(cx).summary.provider==kind.id()).map(|s|s.read(cx).settings.account.clone()).unwrap_or_else(||crate::accounts::get(cx).map(|center|center.read(cx).selected(kind,&project)).unwrap_or_default());v.summary.provider==kind.id()&&v.settings.account.id==profile.id}).map(|v|v.read(cx).settings_models()).unwrap_or_default()})).collect::<Vec<_>>())),
             "sessions.start"=>{
                 let prompt=match text(&input,"prompt",65536){Ok(t)=>t,Err(e)=>{self.finish_call(call,Err(e),cx);return;}};
-                let provider=input.get("harness").and_then(Value::as_str).map(str::to_owned).or_else(||source.as_ref().map(|v|v.read(cx).summary.provider.clone())).unwrap_or_else(||"codex".into());
+                let provider=input.get("harness").and_then(Value::as_str).map(str::to_owned).or_else(||source.as_ref().map(|v|v.read(cx).summary.provider.clone())).unwrap_or_else(||crate::installed_providers::pick(self.prefs.default_provider.as_deref().and_then(Kind::parse),cx).id().into());
                 if Kind::parse(&provider).is_none(){self.finish_call(call,Err("Unknown provider".into()),cx);return;}
                 let same_provider=source.as_ref().is_some_and(|v| v.read(cx).summary.provider==provider);
                 let mut settings=source.map(|v|v.read(cx).settings.clone()).unwrap_or_default();settings.pilot=None;settings.environment.clear();settings.internal_message=false;settings.turns.clear();settings.attachments.clear();settings.usage_limit=None;

@@ -795,6 +795,7 @@ impl Shell {
         let metadata: Vec<_> = summaries.iter().map(|s| (s.id, s.cwd.clone())).collect();
         let workspace = Workspace::restore(saved.as_deref(), &metadata, &cwd);
         gespan_core::cli::initialize(&workspace.preferences.binary_paths);
+        crate::installed_providers::probe(cx);
         let latest_state = Arc::new(Mutex::new(serde_json::to_string(&workspace).unwrap()));
         let quit_state = latest_state.clone();
         let quit_store = store.clone();
@@ -4050,7 +4051,7 @@ impl Shell {
         }) {
             self.activate_session(id, window, cx);
         } else {
-            self.create_session(self.default_kind(), true, cx);
+            self.create_session(self.default_kind(cx), true, cx);
         }
     }
     fn open_project(&mut self, cx: &mut Context<Self>) {
@@ -4087,7 +4088,7 @@ impl Shell {
         self.create_session_target(kind, only_if_empty, None, cx);
     }
     fn create_in_folder(&mut self, folder: String, cx: &mut Context<Self>) {
-        self.create_session_target(self.default_kind(), false, Some(folder), cx);
+        self.create_session_target(self.default_kind(cx), false, Some(folder), cx);
     }
     fn create_session_target(
         &mut self,
@@ -7621,7 +7622,9 @@ impl Shell {
                                     .group_hover("new-tab", |s| s.text_color(content(1.))),
                             )
                             .on_click(
-                                cx.listener(|this, _, _, cx| this.create(this.default_kind(), cx)),
+                                cx.listener(|this, _, _, cx| {
+                                    this.create(this.default_kind(cx), cx)
+                                }),
                             ),
                     )
                     .child(titlebar_drag_area().flex_1().min_w_0()),
@@ -7987,7 +7990,7 @@ impl Render for Shell {
                 if this.dock_focused(window, cx).is_some() {
                     this.new_terminal(window, cx);
                 } else {
-                    this.create(this.default_kind(), cx);
+                    this.create(this.default_kind(cx), cx);
                 }
             }))
             .on_action(

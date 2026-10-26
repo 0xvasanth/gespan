@@ -38,6 +38,7 @@ mod image_lightbox;
 mod image_memory;
 mod inbox;
 mod input;
+mod installed_providers;
 #[cfg(test)]
 mod log_capture;
 mod markdown;

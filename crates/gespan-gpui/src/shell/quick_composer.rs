@@ -20,7 +20,7 @@ impl Shell {
             return;
         }
         let cwd = self.workspace.project.clone();
-        let kind = self.default_kind();
+        let kind = self.default_kind(cx);
         let p = &self.workspace.preferences;
         let initial = crate::quick_composer::Launch {
             cwd: cwd.clone(),

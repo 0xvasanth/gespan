@@ -313,14 +313,17 @@ impl Shell {
         })
         .detach();
     }
-    pub(super) fn default_kind(&self) -> Kind {
+    /// The project's provider, else the global default, kept only when its
+    /// CLI is installed; otherwise the first installed provider.
+    pub(super) fn default_kind(&self, cx: &App) -> Kind {
         let p = &self.workspace.preferences;
-        p.project_providers
+        let preferred = p
+            .project_providers
             .get(&self.workspace.project)
             .and_then(|p| p.provider.as_deref())
             .or(p.default_provider.as_deref())
-            .and_then(Kind::parse)
-            .unwrap_or(Kind::Codex)
+            .and_then(Kind::parse);
+        crate::installed_providers::pick(preferred, cx)
     }
     /// Any busy session counts, including ones in background tabs or panes.
     pub(super) fn sync_keep_awake(&mut self) {
@@ -831,6 +834,71 @@ mod tests {
                     shell.settings.is_some(),
                     "reset restores the native default shortcut"
                 )
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn new_session_default_skips_an_uninstalled_provider(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        cx.update(|cx| {
+            cx.set_global(crate::installed_providers::InstalledProviders::probed([
+                Kind::Kiro,
+                Kind::Hermes,
+            ]))
+        });
+        window
+            .update(cx, |shell, _, cx| {
+                let project = shell.workspace.project.clone();
+                let p = &mut shell.workspace.preferences;
+                p.default_provider = None;
+                assert_eq!(
+                    shell.default_kind(cx),
+                    Kind::Hermes,
+                    "no preference: the first installed provider, not Codex"
+                );
+                shell.workspace.preferences.default_provider = Some("codex".into());
+                assert_eq!(shell.default_kind(cx), Kind::Hermes);
+                shell.workspace.preferences.default_provider = Some("kiro".into());
+                assert_eq!(
+                    shell.default_kind(cx),
+                    Kind::Kiro,
+                    "installed preference kept"
+                );
+                // A project provider that is missing falls through to an
+                // installed one, not to the global default blindly.
+                shell
+                    .workspace
+                    .preferences
+                    .project_providers
+                    .entry(project)
+                    .or_default()
+                    .provider = Some("claude".into());
+                assert_eq!(shell.default_kind(cx), Kind::Hermes);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn cold_start_keeps_the_preference_until_providers_are_probed(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.preferences.default_provider = Some("claude".into());
+                assert_eq!(shell.default_kind(cx), Kind::Claude, "nothing probed yet");
+                shell.workspace.preferences.default_provider = None;
+                assert_eq!(shell.default_kind(cx), Kind::Codex);
+                cx.set_global(crate::installed_providers::InstalledProviders::default());
+                shell.workspace.preferences.default_provider = Some("grok".into());
+                assert_eq!(shell.default_kind(cx), Kind::Grok, "unprobed set keeps it");
+                cx.set_global(crate::installed_providers::InstalledProviders::probed([
+                    Kind::Kiro,
+                ]));
+                assert_eq!(
+                    shell.default_kind(cx),
+                    Kind::Kiro,
+                    "probed: Grok is missing"
+                );
             })
             .unwrap();
     }

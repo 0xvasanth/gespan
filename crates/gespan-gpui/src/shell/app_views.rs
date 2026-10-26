@@ -500,7 +500,7 @@ impl Shell {
             .clone()
             .filter(|path| !path.is_empty())
             .unwrap_or_else(|| self.workspace.project.clone());
-        let kind = self.default_kind();
+        let kind = self.default_kind(cx);
         let store = self.store.clone();
         let settings = gespan_core::agent::Settings {
             model: self
@@ -574,7 +574,7 @@ impl Shell {
         } else {
             item.project_path.clone()
         };
-        let kind = self.default_kind();
+        let kind = self.default_kind(cx);
         let settings = gespan_core::agent::Settings {
             model: self
                 .workspace

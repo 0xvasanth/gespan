@@ -150,6 +150,9 @@ pub(crate) struct Pilots {
     persisted_messages: HashSet<String>,
     failed_reports: HashSet<String>,
     inflight: HashMap<String, Message>,
+    /// Each loaded chat's last seen (provider, model): a switch retries its
+    /// failed queued messages.
+    chat_choices: HashMap<String, (String, Option<String>)>,
     card_refresh: HashMap<String, u64>,
     session_filters: filters::Filters,
     session_filter_anchor: AnchorSlot,
@@ -396,6 +399,7 @@ impl Pilots {
             persisted_messages,
             failed_reports: HashSet::new(),
             inflight: HashMap::new(),
+            chat_choices: HashMap::new(),
             card_refresh: HashMap::new(),
             session_filters,
             session_filter_anchor: AnchorSlot::default(),
@@ -693,6 +697,7 @@ impl Pilots {
         };
         let store = self.store.clone();
         let prefs = self.prefs.clone();
+        let known = crate::installed_providers::snapshot(cx);
         let id = id.to_string();
         let work = cx.background_executor().spawn(async move {
             let db = locked(&store)?;
@@ -718,11 +723,10 @@ impl Pilots {
             let home = std::env::var("HOME")
                 .or_else(|_| std::env::var("USERPROFILE"))
                 .unwrap_or_else(|_| ".".into());
-            let provider = prefs
-                .default_provider
-                .as_deref()
-                .and_then(Kind::parse)
-                .unwrap_or(Kind::Codex);
+            let provider = crate::installed_providers::pick_resolving(
+                &known,
+                prefs.default_provider.as_deref().and_then(Kind::parse),
+            );
             let mut summary = db.create(provider.id(), &home)?;
             summary.title = pilot.label();
             db.title(summary.id, &summary.title)?;
@@ -1013,18 +1017,53 @@ impl Pilots {
             return;
         };
         let busy = view.read(cx).busy;
-        let Some(message) = self
-            .roster
-            .get(id)
-            .and_then(|m| m.outbox.iter().find(|message| !busy || !message.internal))
-            .cloned()
-            .filter(|m| m.error.is_none() && self.persisted_messages.contains(&m.id))
-        else {
+        let Some(message) = self.next_outbox_message(id, busy) else {
             return;
         };
         if view.update(cx, |v, cx| v.pilot_dispatch(&message, cx)) && !busy {
             self.inflight.insert(id.into(), message);
         }
+    }
+    /// A failed message stays at the head of the outbox. When the user moves
+    /// the chat to another provider or model, the queue is retried there; the
+    /// caller dispatches.
+    /// Ignores the values a chat loads with, and a model a running turn reports.
+    fn retry_after_provider_switch(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(view) = self.chats.get(id) else {
+            return;
+        };
+        let view = view.read(cx);
+        if !view.pilot_history_ready() {
+            self.chat_choices.remove(id);
+            return;
+        }
+        let busy = view.busy;
+        let choice = (view.summary.provider.clone(), view.pilot_model());
+        let Some(previous) = self.chat_choices.insert(id.into(), choice.clone()) else {
+            return;
+        };
+        if previous == choice || (busy && previous.0 == choice.0) {
+            return;
+        }
+        let mut retried = false;
+        if let Some(pilot) = self.roster.get_mut(id) {
+            for message in &mut pilot.outbox {
+                retried |= message.error.take().is_some();
+            }
+        }
+        if retried {
+            self.save(cx);
+            self.configure_chat(id, cx);
+        }
+    }
+    /// The outbox message `dispatch` sends next: the first one the chat can
+    /// take now. A failed head holds the queue until it is retried.
+    fn next_outbox_message(&self, id: &str, busy: bool) -> Option<Message> {
+        self.roster
+            .get(id)
+            .and_then(|m| m.outbox.iter().find(|message| !busy || !message.internal))
+            .cloned()
+            .filter(|m| m.error.is_none() && self.persisted_messages.contains(&m.id))
     }
     fn chat_changed(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(view) = self.chats.get(id) else {
@@ -1077,6 +1116,7 @@ impl Pilots {
             }
             self.pump_reviews(cx);
         }
+        self.retry_after_provider_switch(id, cx);
         self.dispatch(id, cx);
         self.changed(cx);
     }

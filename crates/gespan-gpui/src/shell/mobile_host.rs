@@ -329,11 +329,13 @@ impl Shell {
     fn mobile_defaults(&self, cwd: &str, cx: &App) -> (Kind, Option<String>, AccessMode) {
         let prefs = &self.workspace.preferences;
         let project = prefs.project_providers.get(cwd);
-        let kind = project
-            .and_then(|p| p.provider.as_deref())
-            .or(prefs.default_provider.as_deref())
-            .and_then(Kind::parse)
-            .unwrap_or(Kind::Codex);
+        let kind = crate::installed_providers::pick(
+            project
+                .and_then(|p| p.provider.as_deref())
+                .or(prefs.default_provider.as_deref())
+                .and_then(Kind::parse),
+            cx,
+        );
         let model = project
             .and_then(|p| p.models.get(kind.id()))
             .or(prefs.default_models.get(kind.id()))

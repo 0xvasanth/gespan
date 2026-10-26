@@ -417,6 +417,7 @@ impl SettingsView {
         self.discovery_task = Some(cx.spawn(async move |this, cx| {
             let data = work.await;
             let _ = this.update(cx, |this, cx| {
+                crate::installed_providers::record(&data.binaries, cx);
                 this.skill_documents.clear();
                 this.discovery = data;
                 this.discovery_loading = false;

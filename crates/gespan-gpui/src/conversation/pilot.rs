@@ -256,6 +256,11 @@ impl Conversation {
     pub(crate) fn pilot_model(&self) -> Option<String> {
         self.model.clone()
     }
+    /// Whether this chat's stored settings and history have loaded, so its
+    /// provider and model are the user's, not placeholders.
+    pub(crate) fn pilot_history_ready(&self) -> bool {
+        self.history_ready()
+    }
     pub(crate) fn branch_name(&self) -> Option<&str> {
         self.branch.as_deref()
     }
