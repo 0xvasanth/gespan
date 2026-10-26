@@ -66,11 +66,11 @@ use crate::{
     workspace::{DockSide, TitleTab, VisitHistory, Workspace, project_name},
 };
 use gpui::{
-    AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context, CursorStyle, DispatchPhase, Entity,
-    FocusHandle, Focusable, FontWeight, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PathPromptOptions, Pixels, Point, Role, ScrollHandle, SharedString,
-    StyleRefinement, Subscription, Window, WindowControlArea, actions, canvas, div, prelude::*, px,
-    rgb, rgba,
+    Animation, AnimationExt, AnyElement, App, Bounds, BoxShadow, ClipboardItem, Context,
+    CursorStyle, DispatchPhase, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, Point,
+    Role, ScrollHandle, SharedString, StyleRefinement, Subscription, Window, WindowControlArea,
+    actions, canvas, div, prelude::*, px, rgb, rgba,
 };
 use monocode_core::{provider::Kind, store::Session};
 use session_groups::local_reminder_label;
@@ -378,6 +378,8 @@ const TOGGLE_SIDEBAR_LABEL: &str = if cfg!(target_os = "macos") {
 } else {
     "Toggle Sidebar (Ctrl+B)"
 };
+/// The sidebar toggle stepping aside for Settings.
+const SIDEBAR_TOGGLE_MOTION: std::time::Duration = std::time::Duration::from_millis(200);
 const BACK_LABEL: &str = if cfg!(target_os = "macos") {
     "Back (⌘[)"
 } else {
@@ -586,6 +588,9 @@ pub(crate) struct Shell {
     sidebar_list: sidebar_list::SidebarList,
     sidebar_slide: Option<PaneSlide>,
     sidebar_fraction: f32,
+    /// Bumped each time Settings open or close, to replay the sidebar
+    /// toggle's motion; zero draws it settled.
+    sidebar_toggle_turns: usize,
     /// The collapsed inset sidebar peeking out over the workspace.
     sidebar_peek: Option<sidebar_peek::SidebarPeek>,
     peek_animating: bool,
@@ -946,6 +951,7 @@ impl Shell {
             classic_worktree_picker: None,
             sidebar_list: sidebar_list::SidebarList::new(cx),
             sidebar_slide: None,
+            sidebar_toggle_turns: 0,
             sidebar_fraction: if workspace.sidebar_visible { 1. } else { 0. },
             sidebar_peek: None,
             peek_animating: false,
@@ -4010,6 +4016,14 @@ impl Shell {
         self.close_title_tabs(&tabs, preferred, window, cx);
     }
     fn visit(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        // Settings sit over the history: Back leaves them, and Forward
+        // leaves them on its way to the next visit.
+        if self.settings.is_some() {
+            self.close_settings(window, cx);
+            if step < 0 {
+                return;
+            }
+        }
         if let Some(id) = self.history.step(step) {
             self.open(id, window, cx);
         }
@@ -4397,28 +4411,15 @@ impl Shell {
                     .w(px(self.traffic_lights()))
                     .flex_shrink_0(),
             )
-            .child(
-                icon_button("toggle-sidebar", TOGGLE_SIDEBAR_LABEL, "sidebar")
-                    .debug_selector(|| "toggle-sidebar".into())
-                    .child(self.peek_toggle_bounds.probe())
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    // Hovering the toggle peeks a collapsed sidebar out.
-                    .on_hover(cx.listener(|this, hovered, _, cx| {
-                        if !this.workspace.classic_layout {
-                            this.hover_peek_toggle(*hovered, cx)
-                        }
-                    }))
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.toggle_primary_sidebar(window, cx)),
-                    ),
-            )
+            .child(self.sidebar_toggle(cx))
             .child(titlebar_drag_area().flex_1())
             .child(
                 icon_button_enabled(
                     "visit-back",
                     BACK_LABEL,
                     "chevron-left",
-                    (self.workspace.classic_layout && self.mono_active(cx))
+                    self.settings.is_some()
+                        || (self.workspace.classic_layout && self.mono_active(cx))
                         || !self.history.back.is_empty(),
                 )
                 .debug_selector(|| "visit-back".into())
@@ -4442,6 +4443,62 @@ impl Shell {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _, window, cx| this.visit(1, window, cx))),
             )
+    }
+    /// Settings fill the sidebar's place, so its toggle steps aside: it
+    /// fades as its icon shrinks to 75%, keeping its slot so nothing beside
+    /// it moves.
+    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let hidden = self.settings.is_some();
+        let glyph = |gone: f32| {
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .opacity(1. - gone)
+                .child(
+                    icon("sidebar", 14. * (1. - 0.25 * gone))
+                        .group_hover("chrome-button", |s| s.text_color(content(1.))),
+                )
+        };
+        let face = if self.sidebar_toggle_turns == 0 || cx.reduce_motion() {
+            glyph(if hidden { 1. } else { 0. }).into_any_element()
+        } else {
+            div()
+                .size_full()
+                .with_animation(
+                    ("sidebar-toggle", self.sidebar_toggle_turns),
+                    Animation::new(SIDEBAR_TOGGLE_MOTION)
+                        .with_easing(|t| crate::reveal::bezier(t, 0.32, 0.72, 0., 1.)),
+                    move |slot, t| slot.child(glyph(if hidden { t } else { 1. - t })),
+                )
+                .into_any_element()
+        };
+        let toggle = div()
+            .id("toggle-sidebar")
+            .debug_selector(|| "toggle-sidebar".into())
+            .group("chrome-button")
+            .flex_shrink_0()
+            .size(px(24.))
+            .rounded_md()
+            .child(face)
+            .child(self.peek_toggle_bounds.probe());
+        if hidden {
+            return toggle;
+        }
+        toggle
+            .role(Role::Button)
+            .aria_label(TOGGLE_SIDEBAR_LABEL)
+            .cursor_pointer()
+            .hover(|s| s.bg(content(0.1)))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            // Hovering the toggle peeks a collapsed sidebar out.
+            .on_hover(cx.listener(|this, hovered, _, cx| {
+                if !this.workspace.classic_layout {
+                    this.hover_peek_toggle(*hovered, cx)
+                }
+            }))
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_primary_sidebar(window, cx)))
     }
     /// Part of the card: the project tools beside the workspace, behind a
     /// hairline. Its contents keep their full width while it slides.
