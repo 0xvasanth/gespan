@@ -1,0 +1,49 @@
+crates/gespan-gpui/src/board/link_status.rs
+  s_938a6e0c93b076::t_0e6aeefe4ffc06 1-492
+  s_938a6e0c93b076::t_fab6c84dfeb584 493-671
+crates/gespan-gpui/src/board/tests/link_run.rs
+  s_938a6e0c93b076::t_689c6c8ef324f0 1-704,706
+  s_938a6e0c93b076::t_7d92fde7926aa8 705,707-729
+crates/gespan-gpui/src/board/agent_fields.rs
+  s_938a6e0c93b076::t_d9ddd9cb90a09b 1-214
+  s_938a6e0c93b076::t_1627d5105f2ba1 215-217
+crates/gespan-gpui/src/board/run_with.rs
+  s_938a6e0c93b076::t_39c7db7dd0d668 1-576
+  s_938a6e0c93b076::t_389fe4876d20ee 577-599
+crates/gespan-gpui/src/board.rs
+  s_938a6e0c93b076::t_9a13aba7322ea9 4,12,17,41-43,52,78-79,82,155-187,353-354,371-388,459,514-517,538-540,656-669,685-689,716-720,754,756-770,1209-1211,1594-1595,1670-1671
+crates/gespan-gpui/src/board/card.rs
+  s_938a6e0c93b076::t_41a66c7bcce2db 5-6,12-15,181,227-228,343-527
+crates/gespan-gpui/src/board/detail/view.rs
+  s_938a6e0c93b076::t_dfbc55bb04d8b2 123-144
+crates/gespan-gpui/src/board/keyboard.rs
+  s_938a6e0c93b076::t_2d639794e3f59b 78-79
+crates/gespan-gpui/src/board/table.rs
+  s_938a6e0c93b076::t_09b4fc3dcda7db 28-31,42-44,384-392
+crates/gespan-gpui/src/board/tests.rs
+  s_938a6e0c93b076::t_623c0247c49060 798-805,8457-8458
+crates/gespan-gpui/src/board/turns.rs
+  s_938a6e0c93b076::t_a647df427d443a 17-23,31-39,74-78,82-150,176-182,184-199,252,254,257,259-265
+crates/gespan-gpui/src/board/views.rs
+  s_938a6e0c93b076::t_29ec0ecdc17ba0 137-147
+crates/gespan-gpui/src/shell.rs
+  s_938a6e0c93b076::t_3c083a14bb47e4 1286-1289
+crates/gespan-gpui/src/shell/app_views.rs
+  s_938a6e0c93b076::t_40223681bbfccd 287,327-423
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "13b5a389b14d9928f76d97396b36359be65f91a7",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
