@@ -247,11 +247,17 @@ impl Roadmap {
         let (flow, run) = (self.flow.clone(), self.run.clone());
         cx.spawn(async move |this, cx| {
             // Read here, not in `reload`, which may run inside a Shell update.
+            // A change that just reported success may still be writing.
             let store = owner
-                .read_with(cx, |shell, _| shell.pilot_flows_store())
+                .update(cx, |shell, cx| {
+                    shell
+                        .pilot_flows_store()
+                        .map(|store| (store, shell.flow_writes_saved(cx)))
+                })
                 .unwrap_or_else(|_| Err(NOT_READY.into()));
             let result = match store {
-                Ok(store) => {
+                Ok((store, saved)) => {
+                    saved.await;
                     cx.background_executor()
                         .spawn(async move {
                             let store = store
