@@ -48,15 +48,11 @@ impl ScopeSource {
         }
     }
 
-    /// The ticket the session is linked to right now.
+    /// The ticket the session is linked to right now: one session's row,
+    /// not the whole session list, since this runs on every scope poll.
     pub(super) fn ticket(&self) -> Result<Option<TicketRef>, String> {
-        let summary = locked(&self.store)?
-            .sessions()?
-            .into_iter()
-            .find(|summary| summary.id == self.session)
-            .ok_or("Session no longer exists")?;
-        Ok(summary
-            .work_item
+        let item = locked(&self.store)?.work_item(self.session)?;
+        Ok(item
             .as_ref()
             .and_then(gespan_core::session_groups::WorkItem::ticket)
             .cloned())
@@ -278,6 +274,59 @@ mod tests {
         drop(a);
         changed(Some(-9_001));
         assert!(!flags().lock().unwrap().contains_key(&-9_001));
+    }
+
+    #[test]
+    fn the_scope_reads_the_sessions_own_ticket_link_as_it_is_now() {
+        use gespan_core::session_groups::WorkItem;
+        let dir = tempfile::tempdir().unwrap();
+        let store = gespan_core::store::Store::open(&dir.path().join("gespan.db")).unwrap();
+        let session = store.create("codex", "/work").unwrap().id;
+        let other = store.create("codex", "/work").unwrap().id;
+        let ticket = |key: &str| TicketRef {
+            tracker: gespan_core::tickets::Tracker::Linear,
+            key: key.into(),
+            url: None,
+            title: None,
+            status: None,
+            status_group: None,
+            fetched_at: None,
+        };
+        let link = |store: &Database, id: i64, key: Option<&str>| {
+            let item = key.map(|key| WorkItem::Ticket(Box::new(ticket(key))));
+            locked(store)
+                .unwrap()
+                .set_work_item(id, item.as_ref())
+                .unwrap();
+        };
+        let store: Database = Arc::new(Mutex::new(store));
+        let source = ScopeSource::new(store.clone(), session, false);
+        assert_eq!(source.ticket(), Ok(None));
+        // Another session's link is never this session's.
+        link(&store, other, Some("ENG-9"));
+        assert_eq!(source.ticket(), Ok(None));
+        link(&store, session, Some("ENG-1"));
+        assert_eq!(source.ticket().unwrap().unwrap().key, "ENG-1");
+        assert_eq!(source.read().ticket.unwrap().key, "ENG-1");
+        // A relink or unlink mid-turn shows on the next read.
+        link(&store, session, Some("ENG-2"));
+        assert_eq!(source.ticket().unwrap().unwrap().key, "ENG-2");
+        link(&store, session, None);
+        assert_eq!(source.ticket(), Ok(None));
+        // A GitHub link is not a ticket.
+        let pr = gespan_core::session_groups::parse_github_work_item(
+            "https://github.com/acme/app/pull/9",
+        )
+        .unwrap();
+        locked(&store)
+            .unwrap()
+            .set_work_item(session, Some(&WorkItem::Github(pr)))
+            .unwrap();
+        assert_eq!(source.ticket(), Ok(None));
+        // A deleted session is an error, and the scope then has no ticket.
+        locked(&store).unwrap().delete(session).unwrap();
+        assert!(source.ticket().is_err());
+        assert!(source.read().ticket.is_none());
     }
 
     #[test]
