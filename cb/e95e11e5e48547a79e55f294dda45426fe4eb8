@@ -1,0 +1,66 @@
+crates/gespan-gpui/src/board/settings.rs
+  s_938a6e0c93b076::t_06cafc01a7fc23 1-444,448-449
+  s_938a6e0c93b076::t_58da710a77967f 445-447
+  s_938a6e0c93b076::t_8d6f8c0aab6e8d 450-452
+  s_1d65b8c15a6719::t_3e39fa2be63b39 453-464
+crates/gespan-gpui/src/board/card.rs
+  s_938a6e0c93b076::t_fd07866e5db9fb 250
+crates/gespan-gpui/src/board/column.rs
+  s_938a6e0c93b076::t_834c1257f64da2 58,149-159,179-190,196-200
+crates/gespan-gpui/src/board/detail.rs
+  s_938a6e0c93b076::t_7909385904ed54 555
+crates/gespan-gpui/src/board/detail/view.rs
+  s_938a6e0c93b076::t_e93820a378af01 15,325
+crates/gespan-gpui/src/board/header.rs
+  s_938a6e0c93b076::t_9a33282a698c50 160-161,171-172,174-193,455-456
+crates/gespan-gpui/src/board/list.rs
+  s_938a6e0c93b076::t_22c211e77591dd 241
+crates/gespan-gpui/src/board/new_card.rs
+  s_938a6e0c93b076::t_c2977061a56306 17,371,548
+crates/gespan-gpui/src/board/quick.rs
+  s_938a6e0c93b076::t_c18ecf4d993390 11,24-25,28-29,417
+crates/gespan-gpui/src/board/selection.rs
+  s_938a6e0c93b076::t_80c3bb12171026 350
+crates/gespan-gpui/src/board/table.rs
+  s_938a6e0c93b076::t_9613e207ccc9f5 328
+crates/gespan-gpui/src/board/undo.rs
+  s_938a6e0c93b076::t_020e5057492bd9 309-325
+crates/gespan-gpui/src/board.rs
+  s_1d65b8c15a6719::t_5d6b5123dbabd9 16,37,238-244,369-373,430,455-459,541,579,581-591,1104,1482-1483,1491-1492,1494-1496,1498-1532
+crates/gespan-gpui/src/board/settings/columns.rs
+  s_1d65b8c15a6719::t_2aca896c08053e 1-269
+crates/gespan-gpui/src/board/settings/general.rs
+  s_1d65b8c15a6719::t_1f13408c938aad 1-143
+crates/gespan-gpui/src/board/settings/labels.rs
+  s_1d65b8c15a6719::t_47d8f57985d369 1-208
+crates/gespan-gpui/src/board/settings/priority.rs
+  s_1d65b8c15a6719::t_d5d4d9ec13e27b 1-113
+crates/gespan-gpui/src/board/switcher.rs
+  s_1d65b8c15a6719::t_18bc39314bf904 106-107,296-300
+crates/gespan-gpui/src/board/tests.rs
+  s_1d65b8c15a6719::t_334ff81aa267b8 6398-6904
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cbe95e11e5e48547a79e55f294dda45426fe4eb8",
+  "prompts": {},
+  "sessions": {
+    "s_1d65b8c15a6719": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a76389d837afe2b7e",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
