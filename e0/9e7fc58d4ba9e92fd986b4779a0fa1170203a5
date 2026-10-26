@@ -1,0 +1,25 @@
+crates/gespan-gpui/src/hold_confirm.rs
+  s_b06ab57b57164e::t_340ed0b597d27b 1-345
+crates/gespan-gpui/src/main.rs
+  s_b06ab57b57164e::t_cb753cefed92d0 37
+src/features/hold/model/holdToConfirm.test.ts
+  s_b06ab57b57164e::t_4ebc49cc956a27 1-116
+src/features/hold/model/holdToConfirm.ts
+  s_b06ab57b57164e::t_24a4ac8f993e41 1-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e09e7fc58d4ba9e92fd986b4779a0fa1170203a5",
+  "prompts": {},
+  "sessions": {
+    "s_b06ab57b57164e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bbb2945e-6204-480d-8aee-b490f9bc914d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
