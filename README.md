@@ -94,8 +94,6 @@ Thanks to everyone who contributes to Gespan!
 
 [![Gespan contributors](https://contrib.rocks/image?repo=0xvasanth/gespan)](https://github.com/0xvasanth/gespan/graphs/contributors)
 
-Contributor image by [contrib.rocks](https://contrib.rocks).
-
 ## License
 
 [MIT](LICENSE). Provider names and logos are trademarks of their owners. See [NOTICE](NOTICE).
