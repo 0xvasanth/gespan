@@ -1,0 +1,32 @@
+src/features/board/ui/kanban/announcements.ts
+  s_938a6e0c93b076::t_cce1d76959f117 79-83,152-161
+src/features/board/ui/kanban/KanbanBoard.tsx
+  s_938a6e0c93b076::t_cce1d76959f117 144-147,153
+src/features/board/ui/kanban/announcements.test.ts
+  s_938a6e0c93b076::t_41a910709138a9 195-244,246-247
+  s_938a6e0c93b076::t_416c257195efff 245
+src/features/board/ui/BoardView.test.ts
+  s_938a6e0c93b076::t_a4d98b5a1adcd3 3231-3234,3237-3238
+  s_938a6e0c93b076::t_70cadc412c155c 158-160,209,3110,3212-3230,3235-3236,3239-3240
+  s_938a6e0c93b076::t_7878c32d707514 3241
+src/features/board/ui/ViewTabs.tsx
+  s_938a6e0c93b076::t_70cadc412c155c 100-104
+src/features/board/ui/BoardFilter.tsx
+  s_938a6e0c93b076::t_4cade2998a0ba4 115,283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28d40b7d700bbbc33f0fbc959f677b6cd49797c9",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
