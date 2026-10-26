@@ -315,6 +315,37 @@ fn held_process_is_parked_not_killed() {
 }
 
 #[test]
+fn a_held_agent_keeps_its_background_work_with_the_warm_pool_off() {
+    let (tmp, mut request) = agent(Kind::Codex, "tool");
+    request.provider_id = Some("thread1".into());
+    let discard = request.clone();
+    // The warm pool is off by default; Hold pins the session's agent.
+    const SESSION: i64 = 917_301;
+    parked::pin_idle_agents([SESSION]);
+    let (result, _) = process::owned_by(SESSION, || {
+        run_held(
+            request,
+            Arc::new(AtomicBool::new(false)),
+            running_tool,
+            |_| {},
+        )
+    });
+    assert_eq!(result, Err("Held".into()));
+    let pid: i32 = std::fs::read_to_string(tmp.path().join("child.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let alive = unsafe { libc::kill(pid, 0) } == 0;
+    parked::discard_session(&discard);
+    parked::unpin_idle_agents();
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+    }
+    assert!(alive, "the held agent and what it started keep running");
+}
+
+#[test]
 fn hold_before_the_turn_starts_waits_for_the_prompt_to_be_delivered() {
     let (tmp, request) = agent(Kind::Codex, "slowstart");
     let (tx, rx) = mpsc::channel();

@@ -202,17 +202,53 @@ function queueSteerOperation<T>(
 }
 
 function cancelIdlePark(sessionId: string): void {
+  heldIdle.delete(sessionId);
+  resumedIdle.delete(sessionId);
   const idle = idleParkTimers.get(sessionId);
   if (idle) clearTimeout(idle.timer);
   idleParkTimers.delete(sessionId);
 }
 
+/** Hold: sessions whose children stay warm until Resume, however long. */
+let holdKeep: ((sessionId: string) => boolean) | null = null;
+const heldIdle = new Map<string, HarnessId>();
+/** Released by Resume: parked on their idle timer, never early by the limit. */
+const resumedIdle = new Set<string>();
+
+/**
+ * Hold keeps held sessions' idle children, and the background work running
+ * in them, out of idle parking; `null` (Resume) gives them the usual idle
+ * period from now.
+ */
+export function holdIdlePark(keep: ((sessionId: string) => boolean) | null): void {
+  holdKeep = keep;
+  if (keep) {
+    for (const [sessionId, { harness }] of [...idleParkTimers]) {
+      if (!keep(sessionId)) continue;
+      cancelIdlePark(sessionId);
+      heldIdle.set(sessionId, harness);
+    }
+    return;
+  }
+  const released = [...heldIdle];
+  heldIdle.clear();
+  for (const [sessionId, harness] of released) {
+    scheduleIdlePark(harness, sessionId);
+    resumedIdle.add(sessionId);
+  }
+}
+
 function scheduleIdlePark(harness: HarnessId, sessionId: string): void {
   cancelIdlePark(sessionId);
+  if (holdKeep?.(sessionId)) {
+    heldIdle.set(sessionId, harness);
+    return;
+  }
   idleParkTimers.set(sessionId, {
     harness,
     timer: setTimeout(() => {
       idleParkTimers.delete(sessionId);
+      resumedIdle.delete(sessionId);
       void stopHarnessSession(harness, sessionId);
     }, HARNESS_IDLE_PARK_MS),
   });
@@ -232,10 +268,14 @@ export function enforceHarnessIdleLimit(): void {
   clearTimeout(idleLimitCheck);
   idleLimitCheck = undefined;
   const limit = Math.max(0, idleParkPolicy.limit());
-  let excess = idleParkTimers.size - limit;
+  // Children released by Resume don't take warm-pool slots, as on Native.
+  let excess =
+    [...idleParkTimers.keys()].filter((id) => !resumedIdle.has(id)).length -
+    limit;
   for (const [sessionId, { harness }] of [...idleParkTimers]) {
     if (excess <= 0) return;
     if (sessionOperationTails.has(sessionId)) continue;
+    if (resumedIdle.has(sessionId)) continue;
     if (limit > 0 && idleParkPolicy.keep(sessionId)) continue;
     excess -= 1;
     void stopHarnessSession(harness, sessionId);
@@ -246,6 +286,9 @@ export function enforceHarnessIdleLimit(): void {
 export function resetHarnessIdlePark(): void {
   for (const { timer } of idleParkTimers.values()) clearTimeout(timer);
   idleParkTimers.clear();
+  heldIdle.clear();
+  resumedIdle.clear();
+  holdKeep = null;
   clearTimeout(idleLimitCheck);
   idleLimitCheck = undefined;
   idleParkPolicy = {

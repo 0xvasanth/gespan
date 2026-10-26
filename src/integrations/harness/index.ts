@@ -190,6 +190,7 @@ export {
   rewindHarnessLastTurn,
   cancelHarnessTurn,
   holdHarnessTurn,
+  holdIdlePark,
   respondHarnessApproval,
   respondHarnessQuestion,
   keepHarnessQuestionOpen,

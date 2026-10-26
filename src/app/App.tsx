@@ -333,6 +333,7 @@ import {
   transferHarnessSessionAccount,
   cancelHarnessTurn,
   holdHarnessTurn,
+  holdIdlePark,
   canCompactHarnessContext,
   canRewindHarnessLastTurn,
   canSteerHarness,
@@ -1199,6 +1200,8 @@ function Workspace({
         })),
     holdTurn: (id) => {
       const session = sessionsRef.current.find((s) => s.id === id);
+      // Before the interrupt settles: its child must not be idle-parked.
+      holdIdlePark(keepHeldIdle);
       if (session) void holdHarnessTurn(session.harness, id);
     },
     stop: (id) => onStopRef.current(id),
@@ -1224,6 +1227,13 @@ function Workspace({
     },
   });
   const holdRef = useRef(holdApi.hold);
+  // Held sessions' children, and their background work, stay warm until
+  // Resume; then they get the usual idle period.
+  const keepHeldIdle = (id: string) => holdRef.current.isSessionHeld(id);
+  const holding = holdApi.phase !== null;
+  useEffect(() => {
+    holdIdlePark(holding ? keepHeldIdle : null);
+  }, [holding]);
   // The status-bar button and held ⌘⇧H share one hold-to-confirm press.
   const [holdPress] = useState(
     () =>

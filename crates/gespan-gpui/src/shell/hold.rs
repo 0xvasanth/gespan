@@ -191,6 +191,9 @@ impl Shell {
             state.track(view.read(cx).summary.id, *pilot_chat);
             self.watch_hold(view, cx);
         }
+        // Their agents, and any background work in them, outlive the
+        // warm pool's idle limit until Resume.
+        gespan_core::provider::pin_idle_agents(state.sessions.iter().map(|s| s.session));
         // With nothing to wait for, Gespan is on hold at once.
         state.refresh_phase();
         cx.set_global(Hold(Some(state)));
@@ -326,6 +329,7 @@ impl Shell {
         }
         // Lift the hold first: resumed turns and schedulers may start work again.
         cx.set_global(Hold(None));
+        gespan_core::provider::unpin_idle_agents();
         self.hold.subscriptions.clear();
         self.hold.reasons = state
             .sessions
@@ -1327,6 +1331,39 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         assert_eq!(phase(cx), Some(Phase::OnHold));
+    }
+
+    #[gpui::test]
+    fn hold_keeps_the_agents_of_held_sessions_until_resume(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let ids = sessions(&store, 2);
+        let window = shell(store, cx);
+        busy_and_idle(window, &ids, cx);
+        window
+            .update(cx, |shell, _, cx| shell.hold_all(cx))
+            .unwrap();
+        assert!(
+            ids.iter()
+                .all(|&id| gespan_core::provider::idle_agent_pinned(id))
+        );
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&ids[0]]
+                    .update(cx, |view, cx| view.hold_point(HoldPoint::AwaitingInput, cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(phase(cx), Some(Phase::OnHold));
+        assert!(gespan_core::provider::idle_agent_pinned(ids[0]));
+        window
+            .update(cx, |shell, _, cx| shell.resume_all(cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(phase(cx), None);
+        assert!(
+            ids.iter()
+                .all(|&id| !gespan_core::provider::idle_agent_pinned(id))
+        );
     }
 
     #[gpui::test]
