@@ -185,6 +185,16 @@ These runtime checks are pending; none has been run by hand yet:
   card moves when Board is on, and nothing breaks either way.
 - Link a card to a session, send a prompt, and watch the card move to In
   Progress, then Review.
+- Filter builder: add Where and "and" rows (status, priority, labels, projects, due, created, updated, linked, a custom field) with is and is not; chips show, and Clear all empties them. Delete a label or custom field a saved view uses: the view still opens, never errors and does not go empty. In Native, `linked: running` matches nothing (C5).
+- Due filters: a card due today, tomorrow, in 8 days, yesterday and with no date land in Today, Next 7 days, Later, Overdue and None; a done card is never overdue. Check once around midnight or a DST change.
+- Sort: pick each key and both directions; the header reads "Sorted by {key}". Cards with no value sort last either way. In the board layout, dragging inside a column does nothing while sorted, and dragging to another column appends.
+- Saved views: "All cards" is first and has no Delete. Save a view, then Rename, Duplicate (with unsaved edits) and Delete. Change a saved view and the tab shows "•" with Save and Revert. Change the view in the other app: it re-applies, unless this app has unsaved edits.
+- List layout: group by status, priority, label, project and due; collapse a group, switch mode and back, and compare the other app (keys are `mode:value`). Check the "No status", "No label", "No project" and "No due date" groups.
+- Table layout: pick columns, resize one (it stops at 60 px), reopen the view. Edit title, status, priority, due and labels inline. Type in a title cell, change the card in the other app, and the draft stays; Enter on an untouched cell does not overwrite the remote rename; Escape drops the draft.
+- Large board: with several hundred cards, scrolling list and table stays smooth and only visible rows exist in the DOM or element tree.
+- Bulk select: ⌘-click (Ctrl-click) cards and Shift-click a range in board, list and table; change the sort, then Shift-click again and the range follows the new order. Selecting, then filtering, drops hidden cards. The bar shows "N selected" with Status…, Priority…, Labels…, Archive, Delete and Clear. Bulk Delete shows the Undo toast and Undo restores every card. Esc closes the drawer, then menus, then the selection.
+- Shortcuts: with no field focused, N opens New card, `/` focuses search, E opens the focused card and Delete or Backspace holds a delete of the card or the selection. Typing the same keys in search, the composer, a table cell and a comment box types normally, and none acts inside the open drawer.
+- Command palette: Create card opens the board and the New card modal; Go to board opens it; Switch board… lists the boards and opens the one picked.
 
 ## Local checks
 

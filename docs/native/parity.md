@@ -62,6 +62,16 @@ Shared by both apps:
 - Subtask reorder and Convert to card; comment authors shown as You or Agent.
 - A More menu with Open, Status…, Priority…, Labels…, Move to board…, Copy link, Copy `#N title`, Duplicate, Archive and Delete. It opens from the drawer's "…", from a card's right-click, and from "More…" in the card's "…" menu.
 - A New card modal on ⌘N (Ctrl+N) with Create more and ⌘↵ to submit.
+- One query engine (`crates/board-store/src/views.rs`) behind search, filters and sort. Due buckets use each date's own local day, so they stay right across midnight and DST; `failed` follows a card across boards.
+- Filter builder: "Where" and "and" rows with is / is not, value chips and Clear all. Rows cover custom fields too; text, number and date fields list only the values cards hold. A deleted label, project or field is dropped from the row and never errors or empties the results.
+- Sort by manual, priority, due, start, title, created or updated, ascending or descending; the header reads "Sorted by {key}". While a sort is on, dragging inside a column is off, and moving a card to another column appends it.
+- Saved-view tabs: "All cards" comes first and cannot be deleted. Rename, Duplicate (copies unsaved edits) and Delete. A "•" on the tab marks unsaved changes, with Save and Revert. A view changed in the other app re-applies unless this app has local edits.
+- List layout grouped by status, priority, label, project or due, with collapsible groups and "No status", "No label", "No project" and "No due date" groups. Collapse keys are `mode:value` and are shared across apps.
+- Table layout: a column picker, resizable columns (60 px minimum), and inline edits of title, status, priority, due and labels. A draft title survives refreshes, and pressing Enter without typing does not overwrite a rename from the other app.
+- List and table render only the visible rows. The board layout is not virtualised until C6.
+- Bulk select: ⌘-click (Ctrl-click) toggles a card and Shift-click selects a range in on-screen order. The selection holds only visible cards. A floating bar offers Status…, Priority…, Labels…, Archive, Delete and Clear; a bulk delete is a held delete with Undo. Esc clears the selection last, after the drawer and menus.
+- Shortcuts N (new card), `/` (search), E (open the focused card) and Delete / Backspace (held delete of the focused card or the selection) work only when not typing and not inside the open drawer.
+- Command palette: Create card, Go to board and Switch board….
 
 Known differences:
 
@@ -73,6 +83,7 @@ Known differences:
 | Collapsed column strip | Stacks the letters one per line (first 18 characters) | Rotates the text (vertical writing mode) |
 | "Pick a date…" on a card face | Opens the drawer's date picker | Shows a date field in the menu |
 | Copy link | Copies `gespan://board/{board}/card/{card}`; the app does not open these links yet | Same; not opened yet |
+| `linked: running` filter | Matches nothing until live running state is wired in (C5) | Derived from link targets |
 
 ## Platform and distribution
 
