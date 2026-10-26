@@ -1,0 +1,22 @@
+crates/gespan-gpui/src/conversation/dictation.rs
+  s_cd9dae9372df6a::t_f1f1849ba931f3 847-861,864-869,872-887
+  s_cd9dae9372df6a::t_2afe2b96961af1 862-863,870-871
+crates/gespan-gpui/src/conversation.rs
+  s_cd9dae9372df6a::t_f47fd23a398706 2884
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "309d92f4f72fdddcf86b43eb8dc5883db982dd91",
+  "prompts": {},
+  "sessions": {
+    "s_cd9dae9372df6a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cd94d198-1fda-4cd0-9377-c6e2fc4ba424",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
