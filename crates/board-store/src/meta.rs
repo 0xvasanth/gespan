@@ -425,6 +425,47 @@ pub fn column_card_count(conn: &Connection, column_id: &str) -> Result<(usize, u
     Ok(((total - archived) as usize, archived as usize))
 }
 
+/// Every column's `(live, archived)` card counts on a board, keyed by column
+/// id, in one statement: each value equals [`column_card_count`] for that
+/// column. A board with no columns gives an empty map.
+pub fn column_card_counts(
+    conn: &Connection,
+    board_id: &str,
+) -> Result<HashMap<String, (usize, usize)>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT b.id, col.id,
+                    COUNT(c.id) - COUNT(m.archived_at), COUNT(m.archived_at)
+             FROM boards b
+             LEFT JOIN board_columns col ON col.board_id = b.id
+             LEFT JOIN board_cards c ON c.column_id = col.id
+             LEFT JOIN board_card_meta m ON m.card_id = c.id
+             WHERE b.id = ?1
+             GROUP BY b.id, col.id",
+        )
+        .map_err(db)?;
+    let rows = statement
+        .query_map([board_id], |r| {
+            Ok((
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(db)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db)?;
+    if rows.is_empty() {
+        return Err("Board not found".into());
+    }
+    Ok(rows
+        .into_iter()
+        .filter_map(|(column, live, archived)| {
+            column.map(|id| (id, (live.max(0) as usize, archived.max(0) as usize)))
+        })
+        .collect())
+}
+
 /// A board's archived cards, most recently archived first.
 pub fn archived_cards(conn: &Connection, board_id: &str) -> Result<Vec<Card>, String> {
     let mut statement = conn

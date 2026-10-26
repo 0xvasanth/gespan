@@ -16,6 +16,8 @@ pub mod migrate;
 mod ops;
 mod relations;
 mod schema;
+#[doc(hidden)]
+pub mod seed;
 mod settings;
 mod subtasks;
 mod templates;
@@ -46,8 +48,8 @@ pub use links::{
 };
 pub use meta::{
     archive_card, archive_cards, archived_cards, card_extras, card_meta, column_card_count,
-    restore_card, set_due, set_estimate, set_priority, set_priority_many, set_projects, set_start,
-    unarchive_card, CardExtras, CardMeta, PRIORITIES,
+    column_card_counts, restore_card, set_due, set_estimate, set_priority, set_priority_many,
+    set_projects, set_start, unarchive_card, CardExtras, CardMeta, PRIORITIES,
 };
 pub use ops::{
     cards_for_link, create_board, create_card, create_column, delete_archived_card, delete_board,

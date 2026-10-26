@@ -148,6 +148,16 @@ impl Service {
         store::column_card_count(&self.conn, column_id)
     }
 
+    /// Every column's `(live, archived)` card counts on the board, by column
+    /// id, in one read.
+    pub fn column_card_counts(
+        &mut self,
+        board_id: &str,
+    ) -> Result<HashMap<String, (usize, usize)>, String> {
+        validate_id(board_id, "board")?;
+        store::column_card_counts(&self.conn, board_id)
+    }
+
     pub fn set_priority(&mut self, card_id: &str, priority: u8) -> Result<(), String> {
         validate_id(card_id, "card")?;
         store::set_priority(&self.conn, card_id, priority).map(drop)
@@ -649,6 +659,30 @@ mod tests {
         service.activity(board, Some(card), 1).unwrap()[0]
             .detail
             .clone()
+    }
+
+    #[test]
+    fn service_seed_and_column_counts() {
+        use gespan_board_store::seed::SeedSpec;
+        let (_dir, mut service, _) = service();
+        let board = service.create("Scale").unwrap();
+        let report = service.seed(&board.id, &SeedSpec::default()).unwrap();
+        assert_eq!(report.card_ids.len(), 1000);
+        assert_eq!(service.get(&board.id).unwrap().cards.len(), 1000);
+        service.archive(&report.card_ids[0]).unwrap();
+        let counts = service.column_card_counts(&board.id).unwrap();
+        assert_eq!(counts.len(), 4);
+        for column in &report.column_ids {
+            assert_eq!(
+                counts[column],
+                service.column_card_count(column).unwrap(),
+                "{column}"
+            );
+        }
+        assert_eq!(counts[&report.column_ids[0]], (249, 1));
+        assert_eq!(service.latest_run_events(&board.id).unwrap().len(), 1000);
+        assert!(service.column_card_counts("bad id").is_err());
+        assert!(service.seed("missing", &SeedSpec::default()).is_err());
     }
 
     #[test]

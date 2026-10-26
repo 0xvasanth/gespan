@@ -400,6 +400,8 @@ pub fn run() {
             board::board_cards_move,
             board::board_column_set_display,
             board::board_column_card_count,
+            board::board_column_card_counts,
+            board::board_latest_run_events,
             board::board_card_set_priority,
             board::board_query,
             board::board_card_index,

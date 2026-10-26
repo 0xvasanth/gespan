@@ -15,6 +15,8 @@ import {
   deleteTemplate,
   fieldDistinctValues,
   getBlockedCards,
+  getColumnCardCounts,
+  getLatestRunEvents,
   getBoardSettings,
   getRunningCards,
   getRunPrompt,
@@ -680,6 +682,27 @@ describe("C5 settings, template, label, field and agent wrappers", () => {
     await expect(getSessionStatusSetting("s1")).resolves.toBeNull();
     invoke.mockResolvedValueOnce(false);
     await expect(getSessionStatusSetting("s1")).resolves.toBe(false);
+  });
+
+  it("getLatestRunEvents and getColumnCardCounts call their commands", async () => {
+    invoke.mockResolvedValueOnce({ c1: "failed", c2: "started" });
+    await expect(getLatestRunEvents("b1")).resolves.toEqual({
+      c1: "failed",
+      c2: "started",
+    });
+    expect(invoke).toHaveBeenLastCalledWith("board_latest_run_events", {
+      boardId: "b1",
+    });
+    invoke.mockResolvedValueOnce({ col1: [248, 2], col2: [0, 0] });
+    await expect(getColumnCardCounts("b1")).resolves.toEqual({
+      col1: [248, 2],
+      col2: [0, 0],
+    });
+    expect(invoke).toHaveBeenLastCalledWith("board_column_card_counts", {
+      boardId: "b1",
+    });
+    invoke.mockRejectedValueOnce("Board not found");
+    await expect(getColumnCardCounts("gone")).rejects.toBe("Board not found");
   });
 
   it("leaves settings the patch does not name out of the payload", async () => {

@@ -15,4 +15,6 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+# `trace` lets the scale tests count SQL statements per read. Dev only.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks", "trace"] }
 tempfile = "3"

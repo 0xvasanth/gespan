@@ -858,6 +858,24 @@ export function getBlockedCards(
   return invoke<Record<string, number[]>>("board_blocked", { boardId });
 }
 
+/** Card id to the kind of its newest run event, board-wide in one read. */
+export function getLatestRunEvents(
+  boardId: string,
+): Promise<Record<string, LinkedWorkEvent>> {
+  return invoke<Record<string, LinkedWorkEvent>>("board_latest_run_events", {
+    boardId,
+  });
+}
+
+/** Every column's `[live, archived]` card counts on the board, by column id. */
+export function getColumnCardCounts(
+  boardId: string,
+): Promise<Record<string, [number, number]>> {
+  return invoke<Record<string, [number, number]>>("board_column_card_counts", {
+    boardId,
+  });
+}
+
 /** Every link on every card of the board. */
 export function listBoardLinks(boardId: string): Promise<CardLinkRow[]> {
   return invoke<CardLinkRow[]>("board_links", { boardId });

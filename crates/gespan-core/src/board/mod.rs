@@ -211,6 +211,17 @@ impl Service {
         record_card(&self.conn, card_id, kind, detail).map(drop)
     }
 
+    /// Adds a deterministic set of cards (with labels, fields, links, activity
+    /// and subtasks) to a board, for scale tests. See `gespan_board_store::seed`.
+    #[doc(hidden)]
+    pub fn seed(
+        &mut self,
+        board_id: &str,
+        spec: &gespan_board_store::seed::SeedSpec,
+    ) -> Result<gespan_board_store::seed::SeedReport, String> {
+        gespan_board_store::seed::seed_board(&self.conn, board_id, spec)
+    }
+
     /// SQLite's counter of commits made by other connections; a change means
     /// another app or window wrote to the database.
     pub fn data_version(&mut self) -> Result<i64, String> {

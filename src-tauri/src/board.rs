@@ -8,15 +8,16 @@ use gespan_board_store::get_card;
 use gespan_board_store::{
     add_comment, add_link, add_relation, add_subtask, archive_card, archive_cards, archived_cards,
     card_extras, card_links, card_meta, card_relations, cards_for_link, column_card_count,
-    convert_subtask, create_board, create_card, create_column, create_label, delete_archived_card,
-    delete_board, delete_card, delete_column, delete_subtask, duplicate_card, edit_comment,
-    field_values, get_board, link_card, list_activity, list_boards, list_comments, list_fields,
-    list_labels, list_subtasks, move_card, move_card_to_board, move_cards, move_column,
-    move_subtask, record_card, remove_link, remove_relation, rename_board, restore_card,
-    set_card_labels, set_column_display, set_due, set_estimate, set_field_value, set_priority,
-    set_projects, set_start, toggle_subtask, unarchive_card, update_card, update_column,
-    validate_id, Activity, Board, BoardDetail, Card, CardExtras, CardIndexRow, CardLink, CardMeta,
-    Column, Comment, Field, FieldValue, Label, Relation, Subtask, View, ViewSpec,
+    column_card_counts, convert_subtask, create_board, create_card, create_column, create_label,
+    delete_archived_card, delete_board, delete_card, delete_column, delete_subtask, duplicate_card,
+    edit_comment, field_values, get_board, latest_run_events, link_card, list_activity,
+    list_boards, list_comments, list_fields, list_labels, list_subtasks, move_card,
+    move_card_to_board, move_cards, move_column, move_subtask, record_card, remove_link,
+    remove_relation, rename_board, restore_card, set_card_labels, set_column_display, set_due,
+    set_estimate, set_field_value, set_priority, set_projects, set_start, toggle_subtask,
+    unarchive_card, update_card, update_column, validate_id, Activity, Board, BoardDetail, Card,
+    CardExtras, CardIndexRow, CardLink, CardMeta, Column, Comment, Field, FieldValue, Label,
+    Relation, Subtask, View, ViewSpec,
 };
 use gespan_board_store::{answer_card, CardTool};
 use gespan_board_store::{
@@ -494,6 +495,31 @@ pub fn board_column_card_count(
     let conn = store.lock_conn()?;
     let (live, archived) = column_card_count(&conn, &column_id)?;
     Ok(ColumnCount { live, archived })
+}
+
+/// Every column's `[live, archived]` card counts on the board, by column id,
+/// in one read.
+#[tauri::command(async)]
+pub fn board_column_card_counts(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<HashMap<String, (usize, usize)>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    column_card_counts(&conn, &board_id)
+}
+
+/// Card id to the kind of its newest run event (`started`, `needs_input`,
+/// `completed` or `failed`), board-wide in one read; the rule the
+/// `linked: failed` filter uses.
+#[tauri::command(async)]
+pub fn board_latest_run_events(
+    store: State<'_, SessionStore>,
+    board_id: String,
+) -> Result<HashMap<String, String>, String> {
+    validate_id(&board_id, "board")?;
+    let conn = store.lock_conn()?;
+    latest_run_events(&conn, &board_id)
 }
 
 #[tauri::command(async)]
