@@ -1,0 +1,38 @@
+src/features/files/ui/FilePicker.tsx
+  s_938a6e0c93b076::t_d245cf52241815 40-42,53-54,65,68-71,112
+src/app/App.tsx
+  s_938a6e0c93b076::t_3f495f58571ce1 150,1354,12484-12486,12488-12494,14914-14915,15006,15009-15011
+  s_938a6e0c93b076::t_90d92503f79afa 915-920,12487
+src/features/files/ui/FilePicker.test.ts
+  s_938a6e0c93b076::t_9be43f0d8b0e7b 232-279
+src/features/board/ui/BoardLayouts.test.ts
+  s_938a6e0c93b076::t_4c4cac0a9fac62 1095-1141,1144-1198,1200-1381
+  s_938a6e0c93b076::t_0d82af16238d5a 1142-1143,1199
+src/features/board/model/shortcuts.test.ts
+  s_938a6e0c93b076::t_4c4cac0a9fac62 1-81
+src/features/board/model/shortcuts.ts
+  s_938a6e0c93b076::t_9f797467595864 1-78
+src/shared/ui/SearchableSelect.tsx
+  s_938a6e0c93b076::t_9f797467595864 34,48-49,105-108
+  s_938a6e0c93b076::t_08b4d4eb412a5c 109
+src/features/board/ui/BoardView.tsx
+  s_938a6e0c93b076::t_fa10774ca84582 105-109,223-226,229-230,241-242,277-278,289-290,293-298,334,1308-1389,1728
+src/features/settings/model/settings.ts
+  s_938a6e0c93b076::t_d245cf52241815 1351-1374
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "315f62ac8abc04349b3cdb7b8138cdfcfe717c7d",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
