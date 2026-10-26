@@ -1622,3 +1622,146 @@ fn subtask_positions_stay_contiguous_after_delete() {
     }
     assert!(list_subtasks(&conn, card).unwrap().is_empty());
 }
+
+type LinkRow = (String, String, Option<String>);
+
+fn link_rows(conn: &Connection, card: &str) -> Vec<LinkRow> {
+    card_links(conn, card)
+        .unwrap()
+        .into_iter()
+        .map(|l| (l.kind, l.reference, l.role))
+        .collect()
+}
+
+fn primary_columns(conn: &Connection, card: &str) -> (Option<String>, Option<String>) {
+    let card = get_card(conn, card).unwrap();
+    (card.link_kind, card.link_id)
+}
+
+fn primary_row(kind: &str, reference: &str) -> LinkRow {
+    (kind.into(), reference.into(), Some("primary".into()))
+}
+
+#[test]
+fn removing_an_extra_link_that_is_also_the_primary_keeps_the_primary() {
+    let conn = fresh();
+    let (board, _, cards) = board_with_cards(&conn, &["a"]);
+    let card = &cards[0].id;
+    add_link(&conn, card, "session", "s-1", None).unwrap();
+    link_card(&conn, card, Some("session"), Some("s-1")).unwrap();
+    let before = activity_count(&conn, &board.id, card);
+
+    remove_link(&conn, card, "session", "s-1").unwrap();
+    // The extra link is gone; the primary link stays, now as its own row.
+    assert_eq!(
+        primary_columns(&conn, card),
+        (Some("session".into()), Some("s-1".into()))
+    );
+    assert_eq!(link_rows(&conn, card), [primary_row("session", "s-1")]);
+    assert_eq!(cards_for_link(&conn, "session", "s-1").unwrap().len(), 1);
+    let board_rows: Vec<LinkRow> = board_links(&conn, &board.id)
+        .unwrap()
+        .into_iter()
+        .map(|l| (l.kind, l.reference, l.role))
+        .collect();
+    assert_eq!(board_rows, [primary_row("session", "s-1")]);
+    assert_eq!(activity_count(&conn, &board.id, card), before + 1);
+
+    // Removing it again now removes the primary link.
+    remove_link(&conn, card, "session", "s-1").unwrap();
+    assert_eq!(primary_columns(&conn, card), (None, None));
+    assert!(link_rows(&conn, card).is_empty());
+}
+
+#[test]
+fn primary_then_extra_of_the_same_link_matches_extra_then_primary_once_removed() {
+    let conn = fresh();
+    let (_, _, cards) = board_with_cards(&conn, &["primary first", "extra first"]);
+    let (first, second) = (&cards[0].id, &cards[1].id);
+
+    // Primary first: adding the same link as an extra changes nothing, since
+    // the card already has that link.
+    link_card(&conn, first, Some("pr"), Some("r#1")).unwrap();
+    add_link(&conn, first, "pr", "r#1", None).unwrap();
+    assert_eq!(link_rows(&conn, first), [primary_row("pr", "r#1")]);
+
+    // Extra first: the extra row is kept as it is (documented difference: it
+    // was added on its own, so unlinking the primary must not take it).
+    add_link(&conn, second, "pr", "r#1", None).unwrap();
+    link_card(&conn, second, Some("pr"), Some("r#1")).unwrap();
+    assert_eq!(
+        link_rows(&conn, second),
+        [("pr".into(), "r#1".into(), None)]
+    );
+    // Removing the extra leaves exactly the primary-first state.
+    remove_link(&conn, second, "pr", "r#1").unwrap();
+    assert_eq!(link_rows(&conn, second), link_rows(&conn, first));
+    assert_eq!(
+        primary_columns(&conn, second),
+        primary_columns(&conn, first)
+    );
+
+    // Unlinking the primary leaves the extra-first card's extra link only
+    // while it still has one.
+    let third = create_card(&conn, &get_card(&conn, first).unwrap().column_id, "c", "")
+        .unwrap()
+        .id;
+    add_link(&conn, &third, "pr", "r#1", None).unwrap();
+    link_card(&conn, &third, Some("pr"), Some("r#1")).unwrap();
+    link_card(&conn, &third, None, None).unwrap();
+    assert_eq!(
+        link_rows(&conn, &third),
+        [("pr".into(), "r#1".into(), None)]
+    );
+    link_card(&conn, first, None, None).unwrap();
+    assert!(link_rows(&conn, first).is_empty());
+}
+
+#[test]
+fn removing_a_primary_link_clears_the_primary() {
+    let conn = fresh();
+    let (_, _, cards) = board_with_cards(&conn, &["row", "legacy only", "other"]);
+    let card = &cards[0].id;
+    link_card(&conn, card, Some("pilot"), Some("p-1")).unwrap();
+    add_link(&conn, card, "pr", "r#1", None).unwrap();
+    remove_link(&conn, card, "pilot", "p-1").unwrap();
+    assert_eq!(primary_columns(&conn, card), (None, None));
+    assert_eq!(link_rows(&conn, card), [("pr".into(), "r#1".into(), None)]);
+
+    // An older build wrote only the card's columns, with no row.
+    let legacy = &cards[1].id;
+    conn.execute(
+        "UPDATE board_cards SET link_kind = 'session', link_id = 's-9' WHERE id = ?1",
+        [legacy],
+    )
+    .unwrap();
+    remove_link(&conn, legacy, "session", "s-9").unwrap();
+    assert_eq!(primary_columns(&conn, legacy), (None, None));
+
+    // Removing an extra link that is not the primary leaves the primary.
+    let other = &cards[2].id;
+    link_card(&conn, other, Some("session"), Some("s-1")).unwrap();
+    add_link(&conn, other, "pr", "r#2", None).unwrap();
+    remove_link(&conn, other, "pr", "r#2").unwrap();
+    assert_eq!(
+        primary_columns(&conn, other),
+        (Some("session".into()), Some("s-1".into()))
+    );
+    assert_eq!(link_rows(&conn, other), [primary_row("session", "s-1")]);
+
+    // A ticket row whose key an older build also wrote into the columns is
+    // deleted, never turned into the primary row.
+    conn.execute(
+        "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
+         VALUES (?1, 'jira', 'ABC-1', 'ticket', 1)",
+        [legacy],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE board_cards SET link_kind = 'jira', link_id = 'ABC-1' WHERE id = ?1",
+        [legacy],
+    )
+    .unwrap();
+    remove_link(&conn, legacy, "jira", "ABC-1").unwrap();
+    assert!(link_rows(&conn, legacy).is_empty());
+}

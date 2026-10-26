@@ -385,6 +385,12 @@ fn local_day_chrono_counts_days_in_a_zone_that_skips_midnight() {
             .join(zone)
             .exists()
         {
+            // On CI the zone must be there, so the check can't pass by
+            // skipping; a local machine without it only says so.
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "no zoneinfo for {zone} on CI: install tzdata"
+            );
             eprintln!("no zoneinfo for {zone}; skipped");
             continue;
         }

@@ -1673,9 +1673,13 @@ mod tests {
         keys
     }
 
-    // One smoke test per command group. Each runs the store calls its
-    // commands make, in the order a user would, and checks what the front
-    // end reads back. The behaviour of each call is tested in board-store.
+    // One smoke test per command group (boards, columns, cards, links and
+    // activity). These commands take an `AppHandle` and `State`, so the tests
+    // run the same store functions the commands call and pin the camelCase
+    // keys the front end reads, plus the `validate_id` errors. Commands with
+    // more logic of their own are covered through their `_inner` helpers
+    // (`settings_update_inner`, `column_update_display_inner`, ...). The
+    // behaviour of each store call is tested in board-store.
 
     #[test]
     fn board_commands_smoke() {

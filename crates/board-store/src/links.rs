@@ -3,7 +3,7 @@
 //! `primary`; `board_cards.link_kind`/`link_id` mirror it for older readers.
 use crate::now_millis;
 use crate::ops::{db, get_card, log_activity, touch, write_tx, NewActivity, LINK_KINDS};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 const MAX_REF: usize = 10_000;
@@ -91,8 +91,12 @@ pub fn add_link(
     Ok(card.board_id)
 }
 
-/// Removes a link, clearing the legacy link columns when it was the primary
-/// link. Returns the owning board id.
+/// Removes a link. The card's primary link (the legacy `link_kind`/`link_id`
+/// columns) is cleared only when the removed row had role `primary`, or when
+/// there was no row and only those columns matched. Removing an extra link
+/// that is also the primary (added first, then set as primary through
+/// `link_card`) leaves the primary in place, now as its `primary` row, the
+/// same state as setting the primary first. Returns the owning board id.
 pub fn remove_link(
     conn: &Connection,
     card_id: &str,
@@ -101,27 +105,45 @@ pub fn remove_link(
 ) -> Result<String, String> {
     let tx = write_tx(conn)?;
     let card = get_card(&tx, card_id)?;
-    let removed = tx
-        .execute(
-            "DELETE FROM board_card_links WHERE card_id = ?1 AND kind = ?2 AND ref = ?3",
+    // `None`: no row; `Some(role)`: the row's role.
+    let row: Option<Option<String>> = tx
+        .query_row(
+            "SELECT role FROM board_card_links WHERE card_id = ?1 AND kind = ?2 AND ref = ?3",
             params![card_id, kind, reference],
+            |r| r.get(0),
         )
+        .optional()
         .map_err(db)?;
-    let legacy =
+    let is_primary =
         card.link_kind.as_deref() == Some(kind) && card.link_id.as_deref() == Some(reference);
-    if legacy {
-        tx.execute(
-            "UPDATE board_cards SET link_kind = NULL, link_id = NULL, updated_at = ?1 WHERE id = ?2",
-            params![now_millis(), card_id],
-        )
-        .map_err(db)?;
+    match &row {
+        None if !is_primary => return Ok(card.board_id),
+        // A ticket row is never turned into the primary link.
+        Some(role)
+            if is_primary
+                && role.as_deref() != Some(PRIMARY_ROLE)
+                && role.as_deref() != Some(TICKET_ROLE) =>
+        {
+            tx.execute(
+                "UPDATE board_card_links SET role = ?4
+                 WHERE card_id = ?1 AND kind = ?2 AND ref = ?3",
+                params![card_id, kind, reference, PRIMARY_ROLE],
+            )
+            .map_err(db)?;
+        }
+        Some(role) => {
+            tx.execute(
+                "DELETE FROM board_card_links WHERE card_id = ?1 AND kind = ?2 AND ref = ?3",
+                params![card_id, kind, reference],
+            )
+            .map_err(db)?;
+            if is_primary && role.as_deref() == Some(PRIMARY_ROLE) {
+                clear_primary_columns(&tx, card_id)?;
+            }
+        }
+        None => clear_primary_columns(&tx, card_id)?,
     }
-    if removed == 0 && !legacy {
-        return Ok(card.board_id);
-    }
-    if !legacy {
-        touch(&tx, card_id)?;
-    }
+    touch(&tx, card_id)?;
     log_link(
         &tx,
         &card.board_id,
@@ -131,6 +153,15 @@ pub fn remove_link(
     )?;
     tx.commit().map_err(db)?;
     Ok(card.board_id)
+}
+
+fn clear_primary_columns(tx: &rusqlite::Transaction<'_>, card_id: &str) -> Result<(), String> {
+    tx.execute(
+        "UPDATE board_cards SET link_kind = NULL, link_id = NULL WHERE id = ?1",
+        [card_id],
+    )
+    .map(drop)
+    .map_err(db)
 }
 
 pub fn card_links(conn: &Connection, card_id: &str) -> Result<Vec<CardLink>, String> {
