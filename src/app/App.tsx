@@ -543,8 +543,9 @@ import {
 import {
   runCardTool,
   runTicketTool,
+  needsTicketContext,
+  refreshTicketSnapshot,
   ticketContextFor,
-  ticketContextReceipt,
   ticketMayChangeStatus,
   withTicketContextReceipt,
 } from "../features/sessions/model/ticketContext";
@@ -740,9 +741,11 @@ import {
 import { startRun } from "../features/board/model/runWith";
 import {
   addCardLink,
+  boardWriteBack,
   getCardTicket,
   getRunPrompt,
 } from "../features/board/model/board";
+import { createPrEvents } from "../features/board/model/prEvents";
 import {
   checksState,
   extraKey,
@@ -1861,10 +1864,17 @@ function Workspace({
     canForward: false,
   });
   const turnGen = useRef(new Map<string, number>());
-  // Moves board cards linked to a session (or its Pilot) as its turns run.
-  // Runs whether or not the Board is shown; failures only reach the console.
+  // Moves board cards linked to a session (or its Pilot) as its turns run,
+  // and comments a completed turn's reply on write-back boards. Runs whether
+  // or not the Board is shown; failures only reach the console.
   const linkedTurns = useRef<LinkedTurns | null>(null);
-  linkedTurns.current ??= createLinkedTurns(onLinkedWork);
+  linkedTurns.current ??= createLinkedTurns(
+    onLinkedWork,
+    undefined,
+    boardWriteBack,
+  );
+  // PR links report pr_opened / pr_merged when a board status read sees it.
+  const prEvents = useRef(createPrEvents(onLinkedWork)).current;
   const editedResends = useRef(createEditedResendCoordinator()).current;
   const lastPersisted = useRef(new Map<string, string>());
   const lastBoundProvider = useRef(new Map<string, string>());
@@ -2425,6 +2435,20 @@ function Workspace({
     approvalSessionIdsRef.current = nextApprovalSessionIds;
   }
   const approvalSessionIds = approvalSessionIdsRef.current;
+  // A running session that starts waiting on the user reports needs_input.
+  const needsInputKey = useMemo(
+    () =>
+      sessions
+        .filter((session) => sessionNeedsInput(session))
+        .map((session) => session.id)
+        .join("\n"),
+    [sessions],
+  );
+  useEffect(() => {
+    linkedTurns.current!.needsInput(
+      needsInputKey ? needsInputKey.split("\n") : [],
+    );
+  }, [needsInputKey]);
 
   const activeSessionId = inboxViewOpen
     ? inboxAskPortal?.sessionId
@@ -8558,8 +8582,7 @@ function Workspace({
             !rawCommand &&
             intent !== "orchestrate" &&
             !current.inboxAsk &&
-            ticketSession.ticketContextReceipt !==
-              ticketContextReceipt(sessionId, introTicket.key)
+            needsTicketContext(ticketSession, intent === "plan")
           ) {
             ticketContext = ticketContextFor(ticketSession, {
               mayChangeStatus: await ticketMayChangeStatus(sessionId).catch(
@@ -8796,7 +8819,17 @@ function Workspace({
             turnGen.current.get(sessionId) !== gen
               ? { status: "cancelled", text: controlText }
               : controlOutcome;
-          linkedTurns.current!.settled(sessionId, gen, outcome.status);
+          linkedTurns.current!.settled(
+            sessionId,
+            gen,
+            outcome.status,
+            outcome.status === "completed"
+              ? lastAssistantTextInTurn(
+                  sessionsRef.current.find((s) => s.id === sessionId) ??
+                    current,
+                )
+              : undefined,
+          );
           options?.onSettled?.(outcome);
         });
       return true;
@@ -11385,8 +11418,6 @@ function Workspace({
   stopSessionRef.current = onStop;
   const removeSessionRef = useRef(onRemoveHistorySession);
   removeSessionRef.current = onRemoveHistorySession;
-  const setLinkedWorkItemRef = useRef(onSetHistorySessionLinkedWorkItem);
-  setLinkedWorkItemRef.current = onSetHistorySessionLinkedWorkItem;
 
   useEffect(() => {
     const listening = listen<{
@@ -11397,13 +11428,20 @@ function Workspace({
       action: string;
       input: Record<string, unknown>;
     }>("gespan-control-request", ({ payload }) => {
+      // The store already saved the moved snapshot on the link: only the
+      // chip's copy changes (no second link write, open panels stay open).
       const refreshTicketChip = (sessionId: string, ticket: TicketRef) => {
-        const now = sessionTicket(
-          sessionsRef.current.find((session) => session.id === sessionId)
-            ?.linkedWorkItem,
+        const next = refreshTicketSnapshot(
+          sessionsRef.current,
+          sessionId,
+          ticket,
         );
-        if (now?.tracker === ticket.tracker && now.key === ticket.key)
-          setLinkedWorkItemRef.current(sessionId, { kind: "ticket", ticket });
+        if (next === sessionsRef.current) return;
+        setSessions(next);
+        setHistory((rows) => refreshTicketSnapshot(rows, sessionId, ticket));
+        setStoredLinkedSessions((rows) =>
+          refreshTicketSnapshot(rows, sessionId, ticket),
+        );
       };
       const handle = async () => {
         if (payload.namespace === "control") {
@@ -14224,9 +14262,16 @@ function Workspace({
           };
         }),
       );
+      prEvents.observe(
+        links.flatMap((link) =>
+          link.kind === "pr"
+            ? [{ reference: link.reference, state: out[extraKey(link)]?.state }]
+            : [],
+        ),
+      );
       return out;
     },
-    [projectCwd],
+    [prEvents, projectCwd],
   );
   // "Run with…": a session with the store's prompt for the card, linked to
   // it, carrying the card's cached ticket (so a disconnected tracker still

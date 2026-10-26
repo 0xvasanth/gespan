@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   sessionTicket,
+  type LinkedWorkItem,
   type Session,
   type TicketRef,
   type TurnIntent,
@@ -64,13 +65,36 @@ export function ticketIntroduction(
   ].join("\n");
 }
 
-/** The receipt that says this session was introduced to this ticket. */
-export function ticketContextReceipt(sessionId: string, key: string): string {
-  return `ticket-context:${sessionId}:${key}`;
+/**
+ * The receipt that says this session was introduced to this ticket, by
+ * tracker and key. A read-only (plan) introduction has its own receipt: it
+ * says the agent may not write, so it never stands in for the write-capable
+ * introduction a later build turn needs.
+ */
+export function ticketContextReceipt(
+  sessionId: string,
+  ticket: Pick<TicketRef, "tracker" | "key">,
+  readOnly = false,
+): string {
+  return `ticket-context:${sessionId}:${ticket.tracker}:${ticket.key}${readOnly ? ":read-only" : ""}`;
 }
 
 /**
- * The introduction to send with this turn, once per session and ticket key:
+ * Whether this turn should carry the ticket introduction: the session has a
+ * ticket and was not yet introduced to it (by tracker and key) in a way that
+ * covers this turn. A write-capable introduction covers every later turn; a
+ * read-only one covers only read-only turns.
+ */
+export function needsTicketContext(session: Session, readOnly: boolean): boolean {
+  const ticket = sessionTicket(session.linkedWorkItem);
+  if (!ticket) return false;
+  const receipt = session.ticketContextReceipt;
+  if (receipt === ticketContextReceipt(session.id, ticket)) return false;
+  return !(readOnly && receipt === ticketContextReceipt(session.id, ticket, true));
+}
+
+/**
+ * The introduction to send with this turn (see `needsTicketContext`):
  * undefined when the session has no ticket or was already introduced to it.
  */
 export function ticketContextFor(
@@ -78,10 +102,30 @@ export function ticketContextFor(
   options: { mayChangeStatus: boolean; readOnly: boolean; cli: string },
 ): { text: string; receipt: string } | undefined {
   const ticket = sessionTicket(session.linkedWorkItem);
-  if (!ticket) return undefined;
-  const receipt = ticketContextReceipt(session.id, ticket.key);
-  if (session.ticketContextReceipt === receipt) return undefined;
-  return { text: ticketIntroduction(ticket, options), receipt };
+  if (!ticket || !needsTicketContext(session, options.readOnly)) return undefined;
+  return {
+    text: ticketIntroduction(ticket, options),
+    receipt: ticketContextReceipt(session.id, ticket, options.readOnly),
+  };
+}
+
+/**
+ * The sessions (or session summaries) with `ticket`'s moved snapshot on
+ * `sessionId`, when that session is still linked to the same ticket (tracker
+ * and key); otherwise the same list. Only the snapshot changes: the store
+ * already saved it, so this is for the chip, not another link write.
+ */
+export function refreshTicketSnapshot<
+  T extends { id: string; linkedWorkItem?: LinkedWorkItem },
+>(sessions: T[], sessionId: string, ticket: TicketRef): T[] {
+  const index = sessions.findIndex((session) => session.id === sessionId);
+  if (index < 0) return sessions;
+  const now = sessionTicket(sessions[index].linkedWorkItem);
+  if (!now || now.tracker !== ticket.tracker || now.key !== ticket.key)
+    return sessions;
+  const next = [...sessions];
+  next[index] = { ...sessions[index], linkedWorkItem: { kind: "ticket", ticket } };
+  return next;
 }
 
 /** Records on the session record that the introduction was sent. */

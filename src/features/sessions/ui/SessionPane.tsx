@@ -891,6 +891,7 @@ const LocalSessionPane = memo(function LocalSessionPane({
                 visible={visible}
                 onChange={(item) => onSetLinkedWorkItem(session.id, item)}
                 current={() => latestLinkedWorkItem.current}
+                sessionKey={session.id}
               />
             </div>
           ) : null}
