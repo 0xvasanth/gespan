@@ -23,20 +23,25 @@ import {
   createCard,
   createColumn,
   createLabel,
+  createView,
   deleteArchivedCard,
   deleteBoard,
   deleteColumn,
+  deleteView,
   duplicateCard,
   getBoard,
   getCardExtras,
   getCardTickets,
   listArchivedCards,
+  listFields,
   listLabels,
   listBoards,
+  listViews,
   moveCard,
   moveColumn,
   moveCards,
   moveCardToBoard,
+  queryBoard,
   renameBoard,
   restoreCard,
   setCardDue,
@@ -45,22 +50,35 @@ import {
   setColumnDisplay,
   subscribeBoard,
   updateColumn,
+  updateView,
   type Board,
   type BoardCard,
   type BoardColumn,
   type BoardDetail,
+  type BoardField,
   type BoardLabel,
+  type BoardView as SavedView,
   type CardExtras,
   type ColumnRole,
+  type FilterRow,
+  type SortSpec,
+  type ViewSpec,
 } from "../model/board";
+import { fullIndex } from "../model/boardFilter";
 import {
-  EMPTY_FILTER,
-  filterCount,
-  fullIndex,
-  matchesCard,
-  pruneFilter,
-  type BoardFilter,
-} from "../model/boardFilter";
+  DEFAULT_LAYOUT,
+  EMPTY_SPEC,
+  activeRows,
+  currentSpec,
+  liveRows,
+  orderedViews,
+  parseSpec,
+  runningCardIds,
+  sameJson,
+  sameSpec,
+  sortLabel,
+  type FilterSources,
+} from "../model/views";
 import { sortedCardIds, type SortKey } from "../model/columnActions";
 import { createCardFromTicket, newCardColumn } from "../model/ticketCards";
 import {
@@ -78,7 +96,8 @@ import {
 import { ArchiveView } from "./ArchiveView";
 import { BoardCardItem } from "./BoardCardItem";
 import { BoardColumnHeader } from "./BoardColumnHeader";
-import { BoardFilterMenu } from "./BoardFilter";
+import { BoardFilterMenu, BoardSortMenu, FilterChips } from "./BoardFilter";
+import { ViewTabs } from "./ViewTabs";
 import { MenuButton, MenuItem, NameInput } from "./boardControls";
 import {
   errorText,
@@ -233,7 +252,20 @@ function BoardContent({
   const [extras, setExtras] = useState<Record<string, CardExtras>>({});
   const [labels, setLabels] = useState<BoardLabel[]>([]);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<BoardFilter>(EMPTY_FILTER);
+  const [rows, setRows] = useState<FilterRow[]>([]);
+  const [sort, setSort] = useState<SortSpec>(EMPTY_SPEC.sort);
+  const [layout, setLayout] = useState(DEFAULT_LAYOUT);
+  const [fields, setFields] = useState<BoardField[]>([]);
+  // Saved views, which one shows (null is "All cards"), and what it looked
+  // like when applied or last saved: "unsaved changes" compares against it.
+  const [views, setViews] = useState<SavedView[]>([]);
+  const [activeView, setActiveView] = useState<string | null>(null);
+  const [baseline, setBaseline] = useState({
+    spec: EMPTY_SPEC,
+    layout: DEFAULT_LAYOUT,
+  });
+  // Ids the engine matched, in display order; null shows every card.
+  const [matched, setMatched] = useState<string[] | null>(null);
   const [ticketCardOpen, setTicketCardOpen] = useState(false);
   const [composerColumn, setComposerColumn] = useState<string | null>(null);
   const [openCard, setOpenCard] = useState<{
@@ -259,6 +291,49 @@ function BoardContent({
     boardsRef.current = boards;
   });
   const request = useRef(0);
+  // What the board shows now, for callbacks that outlive a render.
+  const live = useRef({ query, rows, sort, layout, activeView, baseline });
+  useLayoutEffect(() => {
+    live.current = { query, rows, sort, layout, activeView, baseline };
+  });
+  const applySpec = useCallback((spec: ViewSpec, nextLayout: string) => {
+    setQuery(spec.query);
+    setRows(spec.rows);
+    setSort(spec.sort);
+    setLayout(nextLayout);
+  }, []);
+
+  /**
+   * Takes the saved views a reload read. A showing view that changed in the
+   * other app is re-applied if untouched here; one with local edits keeps
+   * them (and its dot). A showing view that is gone leaves what is on screen
+   * in place under "All cards".
+   */
+  const syncViews = useCallback(
+    (list: SavedView[]) => {
+      const now = live.current;
+      const dirty =
+        !sameSpec(currentSpec(now), now.baseline.spec) ||
+        !sameJson(now.layout, now.baseline.layout);
+      setViews(list);
+      if (!now.activeView) return;
+      const found = list.find((view) => view.id === now.activeView);
+      if (!found) {
+        setActiveView(null);
+        setBaseline({ spec: EMPTY_SPEC, layout: DEFAULT_LAYOUT });
+        return;
+      }
+      const spec = parseSpec(found.specJson);
+      if (
+        !sameSpec(spec, now.baseline.spec) ||
+        !sameJson(found.layoutJson, now.baseline.layout)
+      ) {
+        setBaseline({ spec, layout: found.layoutJson });
+        if (!dirty) applySpec(spec, found.layoutJson);
+      }
+    },
+    [applySpec],
+  );
 
   const fail = useCallback(
     (what: string) => (cause: unknown) =>
@@ -342,19 +417,24 @@ function BoardContent({
     if (!id) return;
     const ticket = ++request.current;
     try {
-      const [next, linked, cardExtras, boardLabels] = await Promise.all([
-        getBoard(id),
-        // A failed ticket read leaves the cards without chips, not the board unloaded.
-        getCardTickets(id).catch(() => null),
-        // Likewise for the card details and labels: the cards show without them.
-        getCardExtras(id).catch(() => null),
-        listLabels(id).catch(() => null),
-      ]);
+      const [next, linked, cardExtras, boardLabels, boardFields, boardViews] =
+        await Promise.all([
+          getBoard(id),
+          // A failed ticket read leaves the cards without chips, not the board unloaded.
+          getCardTickets(id).catch(() => null),
+          // Likewise for the card details and labels: the cards show without them.
+          getCardExtras(id).catch(() => null),
+          listLabels(id).catch(() => null),
+          listFields(id).catch(() => null),
+          listViews(id).catch(() => null),
+        ]);
       if (ticket !== request.current || openIdRef.current !== id) return;
       setDetail(next);
       if (linked) setTickets(linked);
       if (cardExtras) setExtras(cardExtras);
       if (boardLabels) setLabels(boardLabels);
+      if (boardFields) setFields(boardFields);
+      if (boardViews) syncViews(boardViews);
       setBoards(
         (list) =>
           list &&
@@ -378,7 +458,7 @@ function BoardContent({
       }
       fail("Couldn't load the board")(cause);
     }
-  }, [fail]);
+  }, [fail, syncViews]);
 
   useEffect(() => {
     void loadBoards();
@@ -398,12 +478,17 @@ function BoardContent({
     // Labels belong to a board: its filter and details don't carry over.
     setExtras({});
     setLabels([]);
-    setFilter(EMPTY_FILTER);
-    setQuery("");
+    setFields([]);
+    // So are its views, search, filter and sort.
+    setViews([]);
+    setActiveView(null);
+    setBaseline({ spec: EMPTY_SPEC, layout: DEFAULT_LAYOUT });
+    applySpec(EMPTY_SPEC, DEFAULT_LAYOUT);
+    setMatched(null);
     if (!openId) return;
     void refresh();
     return subscribeBoard(openId, () => void refresh());
-  }, [openId, refresh, undo]);
+  }, [openId, refresh, undo, applySpec]);
 
   const targetsByValue = useMemo(
     () =>
@@ -459,32 +544,93 @@ function BoardContent({
     return states;
   }, [lookedUp, targetsByValue]);
 
-  // A label or project that is gone leaves the filter, so it can't hide
-  // every card behind a choice nobody can see or undo.
-  const activeFilter = useMemo(
-    () => pruneFilter(filter, labels, projects),
-    [filter, labels, projects],
+  const sources: FilterSources = useMemo(
+    () => ({ columns: detail?.columns ?? [], labels, projects, fields }),
+    [detail?.columns, labels, projects, fields],
   );
-  const narrowing = query.trim() !== "" || filterCount(activeFilter) > 0;
-  const matches = useCallback(
-    (card: BoardCard) =>
-      matchesCard(card, extras[card.id], query, activeFilter),
-    [extras, query, activeFilter],
+  // A label, column, project or field that is gone leaves the filter, so it
+  // can't hide every card behind a choice nobody can see or undo. A row left
+  // with nothing filters nothing.
+  const effectiveRows = useMemo(
+    () => liveRows(activeRows(rows), sources),
+    [rows, sources],
   );
-  // The board shows only matching cards. Its drop indexes count those, so
-  // `onCardMove` maps them back to places among all the column's cards.
-  const shownDetail = useMemo(
+  const sorted = sort.key !== "manual";
+  const narrowing = query.trim() !== "" || effectiveRows.length > 0;
+
+  const runningIds = useMemo(
     () =>
-      detail && narrowing
-        ? { ...detail, cards: detail.cards.filter(matches) }
-        : detail,
-    [detail, narrowing, matches],
+      runningCardIds(
+        detail?.cards ?? [],
+        (kind, id) =>
+          kind !== "flow-run" &&
+          linkStates.get(linkValue(kind, id))?.status === "running",
+      ),
+    [detail, linkStates],
   );
+
+  // Matching, filtering and ordering all come from the board query. A newer
+  // request, a board switch or a new board read wins over a late answer.
+  const spec: ViewSpec = { query: query.trim(), rows: effectiveRows, sort };
+  const specKey = JSON.stringify([spec, runningIds]);
+  const specRef = useRef({ spec, runningIds });
+  useLayoutEffect(() => {
+    specRef.current = { spec, runningIds };
+  });
+  const queryTicket = useRef(0);
+  useEffect(() => {
+    const ticket = ++queryTicket.current;
+    if (!openId || detail?.board.id !== openId) return;
+    const { spec: asked, runningIds: running } = specRef.current;
+    if (!asked.query && !asked.rows.length && asked.sort.key === "manual") {
+      setMatched(null);
+      return;
+    }
+    queryBoard(openId, asked, running)
+      .then((ids) => {
+        if (ticket === queryTicket.current) setMatched(ids);
+      })
+      .catch((cause) => {
+        if (ticket !== queryTicket.current) return;
+        setMatched(null);
+        fail("Couldn't search the board")(cause);
+      });
+    // `detail` re-runs it on every board change; `specKey` on every edit.
+  }, [openId, detail, specKey, fail]);
+
+  const matchedSet = useMemo(() => matched && new Set(matched), [matched]);
+  const rank = useMemo(
+    () => new Map((matched ?? []).map((id, index) => [id, index])),
+    [matched],
+  );
+  const matches = useCallback(
+    (card: BoardCard) => !narrowing || !matchedSet || matchedSet.has(card.id),
+    [narrowing, matchedSet],
+  );
+  // The board shows only matching cards, in the sort's order. Its drop
+  // indexes count those, so `onCardMove` maps them back to places among all
+  // the column's cards.
+  const shownDetail = useMemo(() => {
+    if (!detail || !matched || !matchedSet) return detail;
+    const cards: BoardCard[] = [];
+    for (const card of detail.cards) {
+      const ranked = rank.get(card.id);
+      if (ranked === undefined && narrowing) continue;
+      cards.push(
+        sorted
+          ? { ...card, position: ranked ?? matched.length + card.position }
+          : card,
+      );
+    }
+    return { ...detail, cards };
+  }, [detail, matched, matchedSet, rank, narrowing, sorted]);
   const matchesRef = useRef(matches);
   const narrowingRef = useRef(narrowing);
+  const sortedRef = useRef(sorted);
   useLayoutEffect(() => {
     matchesRef.current = matches;
     narrowingRef.current = narrowing;
+    sortedRef.current = sorted;
   });
 
   const onCardMove = useCallback(
@@ -492,7 +638,22 @@ function BoardContent({
       const before = detailRef.current;
       if (!before) return;
       let to = shown;
-      if (narrowingRef.current) {
+      if (sortedRef.current) {
+        // Cards sit where the sort puts them: a drop inside a column moves
+        // nothing, and one into another column goes to the end of it.
+        if (
+          before.cards.find((card) => card.id === cardId)?.columnId ===
+          shown.columnId
+        ) {
+          return;
+        }
+        to = {
+          columnId: shown.columnId,
+          index: columnCards(before, shown.columnId).filter(
+            (card) => card.id !== cardId,
+          ).length,
+        };
+      } else if (narrowingRef.current) {
         const others = columnCards(before, shown.columnId).filter(
           (card) => card.id !== cardId,
         );
@@ -786,6 +947,107 @@ function BoardContent({
       )
       .catch(fail(`Couldn't archive the cards of ${column.name}`));
   };
+
+  const dirty =
+    activeView !== null &&
+    (!sameSpec(currentSpec({ query, rows, sort }), baseline.spec) ||
+      !sameJson(layout, baseline.layout));
+
+  /** Shows a saved view, or "All cards" for null. Unsaved changes are dropped. */
+  const showView = (view: SavedView | null) => {
+    const next = view ? parseSpec(view.specJson) : EMPTY_SPEC;
+    const nextLayout = view?.layoutJson ?? DEFAULT_LAYOUT;
+    setActiveView(view?.id ?? null);
+    setBaseline({ spec: next, layout: nextLayout });
+    applySpec(next, nextLayout);
+  };
+
+  /**
+   * Runs a view write, then reads the board again. A read already in flight
+   * may predate the write, so it is dropped. Null when the write failed.
+   */
+  const viewWrite = async <T,>(
+    what: string,
+    run: () => Promise<T>,
+  ): Promise<T | null> => {
+    request.current += 1;
+    try {
+      return await run();
+    } catch (cause) {
+      fail(what)(cause);
+      return null;
+    } finally {
+      void refresh();
+    }
+  };
+
+  /** Creates a view and shows it, even before the reload lists it. */
+  const adoptNewView = (
+    boardId: string,
+    what: string,
+    create: () => Promise<SavedView>,
+  ) =>
+    void viewWrite(what, create).then((view) => {
+      if (!view || openIdRef.current !== boardId) return;
+      setViews((list) => [
+        ...list.filter((other) => other.id !== view.id),
+        view,
+      ]);
+      showView(view);
+    });
+
+  const saveViewAs = (name: string) => {
+    if (!openId) return;
+    adoptNewView(openId, "Couldn't save the view", () =>
+      createView(
+        openId,
+        name,
+        JSON.stringify(currentSpec({ query, rows, sort })),
+        layout,
+      ),
+    );
+  };
+
+  const saveViewChanges = () => {
+    const id = activeView;
+    if (!id) return;
+    const saved = currentSpec({ query, rows, sort });
+    const savedLayout = layout;
+    void viewWrite("Couldn't save the view", () =>
+      updateView(id, {
+        specJson: JSON.stringify(saved),
+        layoutJson: savedLayout,
+      }),
+    ).then((done) => {
+      if (done !== null) setBaseline({ spec: saved, layout: savedLayout });
+    });
+  };
+
+  const revertView = () =>
+    showView(views.find((view) => view.id === activeView) ?? null);
+
+  const renameView = (id: string, name: string) =>
+    void viewWrite("Couldn't rename the view", () => updateView(id, { name }));
+
+  const duplicateView = (id: string) => {
+    const source = views.find((view) => view.id === id);
+    if (!source || !openId) return;
+    adoptNewView(openId, "Couldn't duplicate the view", () =>
+      createView(
+        openId,
+        `${source.name} copy`,
+        source.specJson,
+        source.layoutJson,
+      ),
+    );
+  };
+
+  const removeView = (id: string) =>
+    void viewWrite("Couldn't delete the view", () => deleteView(id)).then(
+      (done) => {
+        if (done !== null && live.current.activeView === id) showView(null);
+      },
+    );
 
   const toast = (
     <>
@@ -1137,11 +1399,17 @@ function BoardContent({
               />
             </label>
             <BoardFilterMenu
-              filter={activeFilter}
-              labels={labels}
-              projects={projects}
-              onChange={setFilter}
+              rows={rows}
+              count={effectiveRows.length}
+              sources={sources}
+              onChange={setRows}
             />
+            <BoardSortMenu sort={sort} onChange={setSort} />
+            {sorted ? (
+              <span data-sorted-by="" className="text-[12px] text-content/55">
+                Sorted by {sortLabel(sort.key)}
+              </span>
+            ) : null}
           </>
         ) : null}
         <div className="flex-1" />
@@ -1187,6 +1455,30 @@ function BoardContent({
           </button>
         )}
       </div>
+      {detail ? (
+        <ViewTabs
+          views={orderedViews(views)}
+          activeId={activeView}
+          dirty={dirty}
+          onSelect={(id) =>
+            showView(id ? (views.find((view) => view.id === id) ?? null) : null)
+          }
+          onSaveAs={saveViewAs}
+          onSaveChanges={saveViewChanges}
+          onRevert={revertView}
+          onRename={renameView}
+          onDuplicate={duplicateView}
+          onDelete={removeView}
+        />
+      ) : null}
+      <FilterChips
+        rows={rows}
+        sources={sources}
+        onRemove={(index) =>
+          setRows((list) => list.filter((_, at) => at !== index))
+        }
+        onClear={() => setRows([])}
+      />
       <div className="flex min-h-0 flex-1">
         <div className={`min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}>
           {shownDetail ? (
@@ -1199,6 +1491,7 @@ function BoardContent({
               onColumnMove={onColumnMove}
               onCardOpen={(card) => showCard({ id: card.id })}
               onColumnExpand={(column) => setCollapsed(column, false)}
+              sorted={sorted}
               trailing={trailing}
             />
           ) : null}

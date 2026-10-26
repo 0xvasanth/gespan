@@ -17,6 +17,7 @@ import type {
   BoardColumn,
   BoardDetail,
   ColumnRole,
+  ViewSpec,
 } from "../model/board";
 import type { BoardLinkTarget } from "./boardFormat";
 import type { KanbanBoardProps } from "./kanban/KanbanBoard";
@@ -134,6 +135,96 @@ function fixture(): BoardDetail {
 
 type Handler = (args: Record<string, unknown>) => unknown;
 let handlers: Record<string, Handler>;
+// Custom-field values the stand-in engine reads: card id -> field id -> JSON.
+let fieldValues: Record<string, Record<string, string>>;
+// The board's saved views, as `board_views` lists them.
+let savedViews: BoardViewRow[];
+
+type BoardViewRow = {
+  id: string;
+  boardId: string;
+  name: string;
+  position: number;
+  specJson: string;
+  layoutJson: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/**
+ * Stands in for the Rust `board_query`: it matches the title and description
+ * (or `#N`), the rows the tests use, and the sort, over what the fake board
+ * serves. Only the shape matters here; the real rules are tested in Rust.
+ */
+function fakeEngine(args: Record<string, unknown>): string[] {
+  const spec = args.spec as ViewSpec;
+  const running = (args.running as string[]) ?? [];
+  const board = handlers.board_get({}) as BoardDetail;
+  const extras = (handlers.board_card_extras({}) ?? {}) as Record<
+    string,
+    Partial<CardExtras> | undefined
+  >;
+  const order = new Map(board.columns.map((col) => [col.id, col.position]));
+  const manual = [...board.cards].sort(
+    (a, b) =>
+      (order.get(a.columnId) ?? 0) - (order.get(b.columnId) ?? 0) ||
+      a.position - b.position,
+  );
+  const q = spec.query.trim().toLowerCase();
+  const matchesRow = (c: BoardCard, row: ViewSpec["rows"][number]) => {
+    const e = extras[c.id];
+    const held: string[] =
+      row.field === "status"
+        ? [c.columnId]
+        : row.field === "priority"
+          ? [String(e?.priority ?? 0)]
+          : row.field === "labels"
+            ? (e?.labels ?? [])
+            : row.field === "projects"
+              ? (e?.projects ?? [])
+              : row.field === "linked"
+                ? [running.includes(c.id) ? "running" : "none"]
+                : row.field.startsWith("field:")
+                  ? [fieldValues[c.id]?.[row.field.slice(6)] ?? ""]
+                  : [];
+    const hit = held.some((value) => row.values.includes(value));
+    return row.op === "is" ? hit : !hit;
+  };
+  const kept = manual.filter(
+    (c) =>
+      (!q ||
+        (q.startsWith("#")
+          ? String(c.number) === q.slice(1)
+          : `${c.title}\n${c.body}`.toLowerCase().includes(q))) &&
+      spec.rows.every((row) => matchesRow(c, row)),
+  );
+  const { key, dir } = spec.sort;
+  if (key === "manual") return kept.map((c) => c.id);
+  const value = (c: BoardCard): number | string | null => {
+    const e = extras[c.id];
+    return key === "priority"
+      ? (e?.priority ?? 0)
+      : key === "due"
+        ? (e?.dueAt ?? null)
+        : key === "title"
+          ? c.title.toLowerCase()
+          : key === "created"
+            ? c.createdAt
+            : key === "updated"
+              ? c.updatedAt
+              : null;
+  };
+  return kept
+    .map((c, index) => ({ c, index, v: value(c) }))
+    .sort((a, b) => {
+      if (a.v === null || b.v === null) {
+        return a.v === b.v ? a.index - b.index : a.v === null ? 1 : -1;
+      }
+      if (a.v === b.v) return a.index - b.index;
+      return (a.v < b.v ? -1 : 1) * (dir === "desc" ? -1 : 1);
+    })
+    .map(({ c }) => c.id);
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -149,7 +240,11 @@ beforeEach(() => {
   });
   kanban.props = null;
   events.listeners.clear();
+  fieldValues = {};
+  savedViews = [];
   handlers = {
+    board_query: fakeEngine,
+    board_views: () => savedViews,
     board_list: () => [BOARD],
     board_get: () => fixture(),
     board_activity: () => [],
@@ -258,6 +353,69 @@ function press(target: HTMLElement, key: string, init: KeyboardEventInit = {}) {
     );
   });
 }
+
+async function search(value: string) {
+  const input = container.querySelector<HTMLInputElement>(
+    'input[aria-label="Search cards"]',
+  )!;
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )!.set!;
+  act(() => {
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await flush();
+}
+
+async function pick(menuLabel: string, itemText: string) {
+  const trigger = container.querySelector<HTMLButtonElement>(
+    `button[aria-label="${menuLabel}"]`,
+  )!;
+  if (trigger.getAttribute("aria-expanded") !== "true") {
+    act(() => trigger.click());
+  }
+  const item = [
+    ...document.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
+  ].find((el) => el.textContent?.trim() === itemText)!;
+  expect(item, itemText).toBeDefined();
+  act(() => item.click());
+  await flush();
+}
+
+
+/** Filters through the builder: adds a row on `field` if there is none, then picks `value`. */
+async function filterBy(field: string, value: string) {
+  const trigger = container.querySelector<HTMLButtonElement>(
+    'button[aria-label="Filter"]',
+  )!;
+  if (trigger.getAttribute("aria-expanded") !== "true") {
+    act(() => trigger.click());
+  }
+  const toggle = () =>
+    document.querySelector<HTMLButtonElement>(
+      `button[aria-label="Pick ${field} values"]`,
+    );
+  if (!toggle()) {
+    const add = [
+      ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ].find((el) => el.textContent?.trim() === field);
+    expect(add, `Add filter: ${field}`).toBeDefined();
+    act(() => add!.click());
+    await flush();
+  }
+  if (toggle()!.getAttribute("aria-expanded") !== "true") {
+    act(() => toggle()!.click());
+  }
+  const item = [
+    ...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'),
+  ].find((el) => el.textContent?.trim() === value);
+  expect(item, value).toBeDefined();
+  act(() => item!.click());
+  await flush();
+}
+
 
 describe("BoardView", () => {
   it("shows the empty state with no boards", async () => {
@@ -1012,35 +1170,6 @@ describe("BoardView card face, search and filters", () => {
   const countOf = (id: string) =>
     columnEl(id).querySelector("[data-column-count]")?.textContent;
 
-  function search(value: string) {
-    const input = container.querySelector<HTMLInputElement>(
-      'input[aria-label="Search cards"]',
-    )!;
-    const setter = Object.getOwnPropertyDescriptor(
-      HTMLInputElement.prototype,
-      "value",
-    )!.set!;
-    act(() => {
-      setter.call(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  }
-
-  async function pick(menuLabel: string, itemText: string) {
-    const trigger = container.querySelector<HTMLButtonElement>(
-      `button[aria-label="${menuLabel}"]`,
-    )!;
-    if (trigger.getAttribute("aria-expanded") !== "true") {
-      act(() => trigger.click());
-    }
-    const item = [
-      ...document.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
-    ].find((el) => el.textContent?.trim() === itemText)!;
-    expect(item, itemText).toBeDefined();
-    act(() => item.click());
-    await flush();
-  }
-
   it("card_face_shows_priority_due_labels_and_subtask_progress", async () => {
     handlers.board_card_extras = () => ({
       c1: extras({
@@ -1083,26 +1212,26 @@ describe("BoardView card face, search and filters", () => {
     five();
     await renderBoard();
     expect(countOf("backlog")).toBe("5");
-    search("alpha");
+    await search("alpha");
     expect(countOf("backlog")).toBe("3/5");
     expect(countOf("done")).toBe("0/0");
     expect(cardIdsIn("backlog")).toEqual(["c1", "c3", "c5"]);
-    search("#2");
+    await search("#2");
     expect(cardIdsIn("backlog")).toEqual(["c2"]);
-    search("");
+    await search("");
     expect(countOf("backlog")).toBe("5");
 
-    await pick("Filter", "Low");
+    await filterBy("Priority", "Low");
     expect(countOf("backlog")).toBe("2/5");
     expect(cardIdsIn("backlog")).toEqual(["c2", "c4"]);
     expect(container.querySelector("[data-filter-count]")?.textContent).toBe(
       "1",
     );
     // Search and filter narrow together.
-    search("beta two");
+    await search("beta two");
     expect(cardIdsIn("backlog")).toEqual(["c2"]);
-    search("");
-    await pick("Filter", "Clear");
+    await search("");
+    await pick("Filter", "Clear all");
     expect(countOf("backlog")).toBe("5");
     expect(container.querySelector("[data-filter-count]")).toBeNull();
   });
@@ -1111,7 +1240,7 @@ describe("BoardView card face, search and filters", () => {
     five();
     handlers.board_card_move = () => undefined;
     await renderBoard();
-    search("alpha"); // shows #1, #3, #5; hides #2 and #4
+    await search("alpha"); // shows #1, #3, #5; hides #2 and #4
     expect(cardIdsIn("backlog")).toEqual(["c1", "c3", "c5"]);
 
     // #5 dropped after visible #3 (visible index 2 once #5 is lifted).
@@ -1174,7 +1303,7 @@ describe("BoardView card face, search and filters", () => {
     });
     handlers.board_card_move = () => undefined;
     await renderBoard();
-    search("alpha");
+    await search("alpha");
     act(() => kanban.props!.onCardMove("c1", { columnId: "done", index: 1 }));
     await flush();
     // Visible: d1 only, so index 1 is after d1, ahead of hidden d2.
@@ -1187,8 +1316,8 @@ describe("BoardView card face, search and filters", () => {
   it("filter options are checkboxes that report whether they are on", async () => {
     five();
     await renderBoard();
-    await pick("Filter", "Low");
-    await pick("Filter", "Bug");
+    await filterBy("Priority", "Low");
+    await filterBy("Labels", "Bug");
     const items = [
       ...document.querySelectorAll<HTMLElement>(
         '[role="menu"] [role^="menuitem"]',
@@ -1202,15 +1331,15 @@ describe("BoardView card face, search and filters", () => {
     expect(option("Low").getAttribute("aria-checked")).toBe("true");
     expect(option("Bug").getAttribute("aria-checked")).toBe("true");
     expect(option("High").getAttribute("aria-checked")).toBe("false");
-    // Clear is an action, not a toggle.
-    expect(option("Clear").getAttribute("role")).toBe("menuitem");
+    // Clear all is an action, not a toggle.
+    expect(option("Clear all").getAttribute("role")).toBe("menuitem");
   });
 
   it("keyboard_drop_while_filtered_lands_between_the_right_cards", async () => {
     five();
     handlers.board_card_move = () => undefined;
     await renderBoard();
-    search("alpha"); // shows #1, #3, #5; hides #2 and #4
+    await search("alpha"); // shows #1, #3, #5; hides #2 and #4
     // happy-dom has no layout: columns 300px apart, cards stacked.
     const rect = (x: number, y: number, w: number, h: number) =>
       ({
@@ -1286,7 +1415,7 @@ describe("BoardView card face, search and filters", () => {
   it("a_deleted_label_in_the_filter_is_dropped", async () => {
     five();
     await renderBoard();
-    await pick("Filter", "Bug");
+    await filterBy("Labels", "Bug");
     expect(cardIdsIn("backlog")).toEqual(["c1"]);
 
     // Another window deletes the label: the filter lets go instead of hiding every card.
@@ -1310,9 +1439,9 @@ describe("BoardView card face, search and filters", () => {
         { path: "/work/web", name: "web" },
       ],
     });
-    await pick("Filter", "api");
+    await filterBy("Projects", "api");
     expect(cardIdsIn("backlog")).toEqual(["c1"]);
-    await pick("Filter", "web");
+    await filterBy("Projects", "web");
     expect(cardIdsIn("backlog")).toEqual(["c1", "c3"]);
   });
 
@@ -1429,7 +1558,7 @@ describe("BoardView card face, search and filters", () => {
     five();
     handlers.board_cards_move = () => undefined;
     await renderBoard();
-    search("alpha");
+    await search("alpha");
     expect(cardIdsIn("backlog")).toEqual(["c1", "c3", "c5"]);
     await runColumnAction("backlog", "Sort by priority");
     // c1 is High, c2 and c4 Low (keeping their order), c3 and c5 None.
@@ -1480,7 +1609,7 @@ describe("BoardView card face, search and filters", () => {
     });
     handlers.board_cards_move = () => undefined;
     await renderBoard();
-    search("alpha");
+    await search("alpha");
     await runColumnAction("backlog", "Mark all as done");
     expect(commands("board_cards_move")).toEqual([
       [
@@ -2741,5 +2870,825 @@ describe("BoardView New card shortcut", () => {
     press(modalTitle(), "Escape");
     expect(dialog()).toBeNull();
     expect(document.activeElement).toBe(searchBox());
+  });
+});
+
+describe("BoardView filter builder, sort and saved views", () => {
+  const DAY = 86_400_000;
+  const extras = (over: Partial<CardExtras> = {}): CardExtras => ({
+    priority: 0,
+    dueAt: null,
+    projects: [],
+    labels: [],
+    subtasksDone: 0,
+    subtasksTotal: 0,
+    comments: 0,
+    ...over,
+  });
+  const label = (id: string, name: string): BoardLabel => ({
+    id,
+    boardId: "b1",
+    name,
+    color: "e5484d",
+    position: 0,
+  });
+
+  /**
+   * #1 Fix login (High, Bug, due in 3 days), #2 Write docs (Low, due
+   * tomorrow, a description), #4 Deploy (Medium, due in 2 days) in Backlog;
+   * #3 Ship board (undated) in In Progress; Review and Done are empty.
+   */
+  function seed(over: Partial<Record<string, Partial<BoardCard>>> = {}) {
+    const at = (id: string, base: BoardCard) => ({ ...base, ...over[id] });
+    handlers.board_get = () => ({
+      board: BOARD,
+      columns: fixture().columns,
+      cards: [
+        at("c1", card("c1", "backlog", 0, 1, "Fix login")),
+        at("c2", {
+          ...card("c2", "backlog", 1, 2, "Write docs"),
+          body: "Retry after the timeout",
+        }),
+        at("c4", card("c4", "backlog", 2, 4, "Deploy")),
+        at("c3", card("c3", "progress", 0, 3, "Ship board")),
+      ],
+    });
+    const now = Date.now();
+    handlers.board_card_extras = () => ({
+      c1: extras({ priority: 3, labels: ["l1"], dueAt: now + 3 * DAY }),
+      c2: extras({ priority: 1, dueAt: now + DAY }),
+      c4: extras({ priority: 2, dueAt: now + 2 * DAY }),
+    });
+    handlers.board_labels = () => [label("l1", "Bug")];
+  }
+
+  /** Writes to the saved views, as the store does. */
+  function viewStore() {
+    let next = 0;
+    handlers.board_view_create = (args) => {
+      const view: BoardViewRow = {
+        id: `v${++next}`,
+        boardId: "b1",
+        name: String(args.name),
+        position: savedViews.length,
+        specJson: String(args.specJson),
+        layoutJson: String(args.layoutJson),
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      savedViews = [...savedViews, view];
+      return view;
+    };
+    handlers.board_view_update = (args) => {
+      savedViews = savedViews.map((view) =>
+        view.id === args.viewId
+          ? {
+              ...view,
+              name: (args.name as string | null) ?? view.name,
+              specJson: (args.specJson as string | null) ?? view.specJson,
+              layoutJson: (args.layoutJson as string | null) ?? view.layoutJson,
+            }
+          : view,
+      );
+    };
+    handlers.board_view_delete = (args) => {
+      savedViews = savedViews.filter((view) => view.id !== args.viewId);
+    };
+  }
+
+  const stored = (
+    id: string,
+    name: string,
+    spec: Partial<ViewSpec>,
+    layoutJson = '{"layout":"board"}',
+  ): BoardViewRow => ({
+    id,
+    boardId: "b1",
+    name,
+    position: savedViews.length,
+    specJson: JSON.stringify({
+      query: "",
+      rows: [],
+      sort: { key: "manual", dir: "asc" },
+      ...spec,
+    }),
+    layoutJson,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  const row = (
+    field: string,
+    values: string[],
+    op: "is" | "is_not" = "is",
+  ) => ({ field, op, values });
+
+  const searchInput = () =>
+    container.querySelector<HTMLInputElement>('input[aria-label="Search cards"]')!;
+  const chips = () =>
+    [...container.querySelectorAll("[data-filter-chip]")].map((el) =>
+      el.textContent?.trim(),
+    );
+  const badge = () =>
+    container.querySelector("[data-filter-count]")?.textContent ?? null;
+  const tab = (id: string) =>
+    container.querySelector<HTMLElement>(`[data-view-tab="${id}"]`)!;
+  const dot = () => container.querySelector("[data-view-dot]");
+  const tabsBar = () => container.querySelector("[data-view-tabs]")!;
+  const tabButton = (text: string) =>
+    [...tabsBar().querySelectorAll("button")].find(
+      (el) => el.textContent?.trim() === text,
+    )!;
+  const lastQuery = () =>
+    commands("board_query").at(-1)![1] as {
+      spec: ViewSpec;
+      running: string[];
+    };
+
+  async function click(el: Element) {
+    act(() => (el as HTMLElement).click());
+    await flush();
+  }
+
+  /** Opens the Filter menu unless it is open already. */
+  async function openFilter() {
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Filter"]',
+    )!;
+    if (trigger.getAttribute("aria-expanded") !== "true") await click(trigger);
+  }
+
+  async function saveAs(name: string) {
+    await click(tabButton("Save view"));
+    const input = tabsBar().querySelector<HTMLInputElement>(
+      'input[aria-label="View name"]',
+    )!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(input, name);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    press(input, "Enter");
+    await flush();
+  }
+
+  async function viewMenu(name: string, item: string) {
+    await click(
+      container.querySelector(`button[aria-label="View options for ${name}"]`)!,
+    );
+    const entry = [
+      ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ].find((el) => el.textContent?.trim() === item)!;
+    expect(entry, item).toBeDefined();
+    await click(entry);
+  }
+
+  beforeEach(() => {
+    seed();
+    viewStore();
+  });
+
+  it("search_finds_text_in_the_description", async () => {
+    await renderBoard();
+    await search("timeout");
+    expect(cardIdsIn("backlog")).toEqual(["c2"]);
+    // Case-insensitive, and the title still matches.
+    await search("TIMEOUT");
+    expect(cardIdsIn("backlog")).toEqual(["c2"]);
+    await search("login");
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    await search("#4");
+    expect(cardIdsIn("backlog")).toEqual(["c4"]);
+    // Matching goes through the engine, and no time zone goes with it.
+    const [, args] = commands("board_query").at(-1)!;
+    expect(Object.keys(args as object).sort()).toEqual([
+      "boardId",
+      "running",
+      "spec",
+    ]);
+    expect(lastQuery().spec.query).toBe("#4");
+  });
+
+  it("filter_builder_adds_where_and_rows_and_shows_chips", async () => {
+    await renderBoard();
+    await filterBy("Priority", "High");
+    expect(chips()).toEqual(["Priority is High"]);
+    await filterBy("Labels", "Bug");
+    expect(chips()).toEqual(["Priority is High", "Labels is Bug"]);
+    expect(badge()).toBe("2");
+    expect(
+      [...document.querySelectorAll("[data-filter-lead]")].map(
+        (el) => el.textContent,
+      ),
+    ).toEqual(["Where", "and"]);
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    expect(cardIdsIn("progress")).toEqual([]);
+    expect(lastQuery().spec.rows).toEqual([
+      row("priority", ["3"]),
+      row("labels", ["l1"]),
+    ]);
+    // Values within a row OR together.
+    await filterBy("Priority", "Low");
+    expect(chips()[0]).toBe("Priority is High, Low");
+    // (High or Low) and Bug: still only #1.
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    expect(lastQuery().spec.rows[0]).toEqual(row("priority", ["3", "1"]));
+  });
+
+  it("is_not_flips_a_row_and_a_chip_removes_its_row", async () => {
+    await renderBoard();
+    await filterBy("Priority", "High");
+    await click(document.querySelector('button[aria-label="Match or exclude"]')!);
+    expect(chips()).toEqual(["Priority is not High"]);
+    expect(cardIdsIn("backlog")).toEqual(["c2", "c4"]);
+    expect(cardIdsIn("progress")).toEqual(["c3"]);
+    await click(
+      container.querySelector('[data-filter-chip="0"] button[aria-label="Remove filter"]')!,
+    );
+    expect(chips()).toEqual([]);
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
+  });
+
+  it("clear_all_removes_every_row", async () => {
+    await renderBoard();
+    await filterBy("Priority", "High");
+    await filterBy("Labels", "Bug");
+    await search("fix");
+    await click(
+      container.querySelector('[data-filter-chips] button[aria-label="Clear all"]')!,
+    );
+    expect(chips()).toEqual([]);
+    expect(badge()).toBeNull();
+    // The search is not a row: it stays.
+    expect(searchInput().value).toBe("fix");
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    expect(lastQuery().spec.rows).toEqual([]);
+    await search("");
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
+
+    // The builder's own Clear all does the same.
+    await filterBy("Priority", "Low");
+    await pick("Filter", "Clear all");
+    expect(chips()).toEqual([]);
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
+  });
+
+  it("a_row_with_no_values_is_not_a_filter", async () => {
+    savedViews = [stored("v1", "Mine", { rows: [row("priority", ["3"])] })];
+    await renderBoard();
+    await click(tab("v1"));
+    const before = commands("board_query").length;
+    // Add a Labels row and pick nothing.
+    await openFilter();
+    await click(
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (el) => el.textContent?.trim() === "Labels",
+      )!,
+    );
+    expect(chips()).toEqual(["Priority is High", "Labels is …"]);
+    // Not in the badge, not narrowing, not asked of the engine, not unsaved.
+    expect(badge()).toBe("1");
+    expect(lastQuery().spec.rows).toEqual([row("priority", ["3"])]);
+    expect(commands("board_query")).toHaveLength(before);
+    expect(dot()).toBeNull();
+    // Alone, an empty row leaves the board as it was.
+    await pick("Filter", "Clear all");
+    await click(tab("all"));
+    await openFilter();
+    await click(
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (el) => el.textContent?.trim() === "Labels",
+      )!,
+    );
+    expect(badge()).toBeNull();
+    expect(countOf("backlog")).toBe("3");
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
+  });
+
+  const countOf = (id: string) =>
+    columnEl(id).querySelector("[data-column-count]")?.textContent;
+
+  it("sort_by_due_orders_columns_and_disables_in_column_drag", async () => {
+    handlers.board_card_move = () => undefined;
+    await renderBoard();
+    expect(kanban.props!.sorted).toBe(false);
+    await pick("Sort", "Due date");
+    expect(container.querySelector("[data-sorted-by]")?.textContent).toBe(
+      "Sorted by Due date",
+    );
+    expect(lastQuery().spec.sort).toEqual({ key: "due", dir: "asc" });
+    // Soonest first inside each column; counts are still plain totals.
+    expect(cardIdsIn("backlog")).toEqual(["c2", "c4", "c1"]);
+    expect(countOf("backlog")).toBe("3");
+    expect(kanban.props!.sorted).toBe(true);
+
+    // Descending reverses the dated cards; an undated one is last either way.
+    await pick("Sort", "Descending");
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c4", "c2"]);
+
+    // A drop inside a column changes nothing.
+    act(() =>
+      kanban.props!.onCardMove("c1", { columnId: "backlog", index: 2 }),
+    );
+    await flush();
+    expect(commands("board_card_move")).toHaveLength(0);
+
+    // Back to Manual: the column order returns and dragging inside works.
+    await pick("Sort", "Manual");
+    expect(container.querySelector("[data-sorted-by]")).toBeNull();
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
+    expect(kanban.props!.sorted).toBe(false);
+    act(() =>
+      kanban.props!.onCardMove("c1", { columnId: "backlog", index: 2 }),
+    );
+    await flush();
+    expect(commands("board_card_move")).toHaveLength(1);
+  });
+
+  it("keyboard_drop_inside_a_sorted_column_moves_nothing", async () => {
+    handlers.board_card_move = () => undefined;
+    await renderBoard();
+    const rect = (x: number, y: number, w: number, h: number) =>
+      ({
+        x,
+        y,
+        left: x,
+        top: y,
+        width: w,
+        height: h,
+        right: x + w,
+        bottom: y + h,
+        toJSON() {},
+      }) as DOMRect;
+    const spy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        const section = this.closest("[data-kanban-column]");
+        if (!section) return rect(0, 0, 10, 10);
+        const x =
+          [...container.querySelectorAll("[data-kanban-column]")].indexOf(
+            section,
+          ) * 300;
+        if (this === section) return rect(x, 0, 280, 500);
+        if (this.hasAttribute("data-kanban-card")) {
+          const above = [...this.parentElement!.children].indexOf(this);
+          return rect(x + 6, 50 + above * 70, 268, 60);
+        }
+        if (
+          this.querySelector("[data-kanban-card]") ||
+          this.matches(".overflow-y-auto")
+        ) {
+          return rect(x, 40, 280, 420);
+        }
+        return rect(x, 0, 280, 36);
+      });
+    const tick = () =>
+      act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    const key = (target: EventTarget, code: string) =>
+      act(() => {
+        target.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            code,
+            key: code === "Space" ? " " : code,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+    /** Picks the card up, nudges it up one place and drops it. */
+    const dropOneUp = async (id: string) => {
+      const el = container.querySelector<HTMLElement>(
+        `[data-kanban-card='${id}']`,
+      )!;
+      act(() => el.focus());
+      key(el, "Space");
+      await tick();
+      key(el, "ArrowUp");
+      await tick();
+      key(document, "Space");
+      await tick();
+      await flush();
+    };
+    try {
+      // Control: manual order, the same gesture is a move.
+      await dropOneUp("c4");
+      expect(commands("board_card_move")).toHaveLength(1);
+
+      // Sorted by due, the same gesture inside the column is ignored.
+      await pick("Sort", "Due date");
+      expect(cardIdsIn("backlog")).toEqual(["c2", "c4", "c1"]);
+      await dropOneUp("c1");
+      expect(commands("board_card_move")).toHaveLength(1);
+      expect(cardIdsIn("backlog")).toEqual(["c2", "c4", "c1"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("cross_column_drop_still_works_while_sorted", async () => {
+    handlers.board_card_move = () => undefined;
+    await renderBoard();
+    await pick("Sort", "Due date");
+    // Dropped at the top of In Progress, it is appended: the sort decides
+    // where it shows.
+    act(() =>
+      kanban.props!.onCardMove("c1", { columnId: "progress", index: 0 }),
+    );
+    await flush();
+    expect(commands("board_card_move").at(-1)![1]).toMatchObject({
+      cardId: "c1",
+      columnId: "progress",
+      index: 1,
+      actor: "user",
+    });
+    // An empty column takes it at 0.
+    act(() => kanban.props!.onCardMove("c2", { columnId: "done", index: 0 }));
+    await flush();
+    expect(commands("board_card_move").at(-1)![1]).toMatchObject({
+      cardId: "c2",
+      columnId: "done",
+      index: 0,
+    });
+  });
+
+  it("save_view_creates_a_tab_and_switching_restores_spec_and_layout", async () => {
+    await renderBoard();
+    // All cards comes first and is selected.
+    const tabs = () =>
+      [...container.querySelectorAll<HTMLElement>('[role="tab"]')];
+    expect(tabs().map((el) => el.textContent)).toEqual(["All cards"]);
+    expect(tabs()[0].getAttribute("aria-selected")).toBe("true");
+
+    await filterBy("Priority", "High");
+    await pick("Sort", "Due date");
+    await search(" login ");
+    await saveAs("Urgent");
+
+    const [, created] = commands("board_view_create")[0];
+    expect(created).toMatchObject({
+      boardId: "b1",
+      name: "Urgent",
+      layoutJson: '{"layout":"board"}',
+    });
+    expect(JSON.parse((created as { specJson: string }).specJson)).toEqual({
+      query: "login",
+      rows: [row("priority", ["3"])],
+      sort: { key: "due", dir: "asc" },
+    });
+    expect(tabs().map((el) => el.textContent)).toEqual(["All cards", "Urgent"]);
+    expect(tabs()[1].getAttribute("aria-selected")).toBe("true");
+    expect(dot()).toBeNull();
+
+    // Switching away clears everything; switching back restores it all.
+    await click(tab("all"));
+    expect(chips()).toEqual([]);
+    expect(searchInput().value).toBe("");
+    expect(container.querySelector("[data-sorted-by]")).toBeNull();
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
+
+    await click(tab("v1"));
+    expect(chips()).toEqual(["Priority is High"]);
+    expect(searchInput().value).toBe("login");
+    expect(container.querySelector("[data-sorted-by]")?.textContent).toBe(
+      "Sorted by Due date",
+    );
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    expect(dot()).toBeNull();
+  });
+
+  it("keeps_layout_keys_it_does_not_know_when_saving_a_view", async () => {
+    const layout = '{"layout":"board","columns":{"title":120},"future":[1,2]}';
+    savedViews = [stored("v1", "Mine", {}, layout)];
+    await renderBoard();
+    await click(tab("v1"));
+    await filterBy("Priority", "High");
+    await click(tabButton("Save"));
+    const [, update] = commands("board_view_update").at(-1)!;
+    expect(JSON.parse((update as { layoutJson: string }).layoutJson)).toEqual(
+      JSON.parse(layout),
+    );
+    // A duplicate carries the layout as it is too.
+    await viewMenu("Mine", "Duplicate");
+    expect(commands("board_view_create").at(-1)![1]).toMatchObject({
+      name: "Mine copy",
+      layoutJson: layout,
+    });
+  });
+
+  it("unsaved_changes_show_a_dot_with_save_and_revert", async () => {
+    savedViews = [stored("v1", "Mine", { rows: [row("priority", ["3"])] })];
+    await renderBoard();
+    await click(tab("v1"));
+    expect(dot()).toBeNull();
+    expect(
+      [...tabsBar().querySelectorAll("button")].some(
+        (el) => el.textContent?.trim() === "Revert",
+      ),
+    ).toBe(false);
+
+    await search("docs");
+    expect(dot()?.textContent).toBe("•");
+    expect(dot()?.getAttribute("aria-label")).toBe("Unsaved changes");
+    // Undoing the edit by hand clears the dot.
+    await search("");
+    expect(dot()).toBeNull();
+
+    // Revert drops the changes.
+    await filterBy("Priority", "Low");
+    expect(dot()).not.toBeNull();
+    await click(tabButton("Revert"));
+    expect(dot()).toBeNull();
+    expect(chips()).toEqual(["Priority is High"]);
+
+    // Save writes them over the view.
+    await pick("Sort", "Title");
+    expect(dot()).not.toBeNull();
+    await click(tabButton("Save"));
+    expect(dot()).toBeNull();
+    expect(commands("board_view_update").at(-1)![1]).toMatchObject({
+      viewId: "v1",
+      name: null,
+    });
+    expect(
+      JSON.parse(
+        (commands("board_view_update").at(-1)![1] as { specJson: string })
+          .specJson,
+      ).sort,
+    ).toEqual({ key: "title", dir: "asc" });
+    expect(
+      [...tabsBar().querySelectorAll("button")].some(
+        (el) => el.textContent?.trim() === "Revert",
+      ),
+    ).toBe(false);
+  });
+
+  it("all_cards_tab_cannot_be_deleted", async () => {
+    savedViews = [stored("v1", "Mine", {}), stored("v2", "Other", {})];
+    await renderBoard();
+    const tabs = [...container.querySelectorAll('[role="tab"]')].map(
+      (el) => el.textContent,
+    );
+    expect(tabs).toEqual(["All cards", "Mine", "Other"]);
+    // Every saved view has a menu; All cards has none.
+    expect(
+      container.querySelectorAll('button[aria-label^="View options for"]'),
+    ).toHaveLength(2);
+    expect(
+      container.querySelector('button[aria-label="View options for All cards"]'),
+    ).toBeNull();
+    // Deleting the showing view falls back to All cards.
+    await click(tab("v1"));
+    await viewMenu("Mine", "Delete");
+    expect(commands("board_view_delete")[0][1]).toEqual({ viewId: "v1" });
+    expect(
+      [...container.querySelectorAll('[role="tab"]')].map((el) => el.textContent),
+    ).toEqual(["All cards", "Other"]);
+    expect(tab("all").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("renames_a_view_from_its_menu", async () => {
+    savedViews = [stored("v1", "Mine", {})];
+    await renderBoard();
+    await viewMenu("Mine", "Rename");
+    const input = tabsBar().querySelector<HTMLInputElement>(
+      'input[aria-label="View name"]',
+    )!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(input, "Renamed");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    press(input, "Enter");
+    await flush();
+    expect(commands("board_view_update").at(-1)![1]).toMatchObject({
+      viewId: "v1",
+      name: "Renamed",
+      specJson: null,
+      layoutJson: null,
+    });
+    expect(tab("v1").textContent).toBe("Renamed");
+  });
+
+  it("a_view_with_a_deleted_label_still_loads", async () => {
+    savedViews = [
+      stored("v1", "Gone", { rows: [row("labels", ["deleted"])] }),
+      stored("v2", "Mixed", { rows: [row("labels", ["deleted", "l1"])] }),
+    ];
+    await renderBoard();
+    // Only missing values: the row is ignored, never zero results.
+    await click(tab("v1"));
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
+    expect(chips()).toEqual(["Labels is …"]);
+    expect(badge()).toBeNull();
+    expect(commands("board_query")).toHaveLength(0);
+    expect(dot()).toBeNull();
+    // Some values left: those still filter.
+    await click(tab("v2"));
+    expect(chips()).toEqual(["Labels is Bug"]);
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    expect(lastQuery().spec.rows).toEqual([row("labels", ["l1"])]);
+    expect(dot()).toBeNull();
+  });
+
+  it("filters_by_a_select_custom_field_and_encodes_the_value_as_json", async () => {
+    handlers.board_fields = () => [
+      {
+        id: "f1",
+        boardId: "b1",
+        name: "Area",
+        kind: "select",
+        optionsJson: '["Backend","Web"]',
+        position: 0,
+      },
+      {
+        id: "f2",
+        boardId: "b1",
+        name: "Blocked",
+        kind: "checkbox",
+        optionsJson: null,
+        position: 1,
+      },
+    ];
+    fieldValues = {
+      c1: { f1: '"Backend"', f2: "true" },
+      c2: { f1: '"Web"', f2: "false" },
+      c3: { f1: '"Backend"' },
+    };
+    await renderBoard();
+    await click(container.querySelector('button[aria-label="Filter"]')!);
+    // One entry per field, named after it.
+    const entries = [
+      ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ].map((el) => el.textContent?.trim());
+    expect(entries).toContain("Area");
+    expect(entries).toContain("Blocked");
+
+    await filterBy("Area", "Backend");
+    expect(chips()).toEqual(["Area is Backend"]);
+    expect(lastQuery().spec.rows).toEqual([row("field:f1", ['"Backend"'])]);
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    expect(cardIdsIn("progress")).toEqual(["c3"]);
+
+    // A checkbox offers Yes and No, sent as true and false.
+    await filterBy("Blocked", "Yes");
+    expect(chips()).toEqual(["Area is Backend", "Blocked is Yes"]);
+    expect(lastQuery().spec.rows.at(-1)).toEqual(row("field:f2", ["true"]));
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    expect(cardIdsIn("progress")).toEqual([]);
+  });
+
+  it("a_custom_field_row_for_a_deleted_field_says_so_and_filters_nothing", async () => {
+    handlers.board_fields = () => [
+      {
+        id: "f3",
+        boardId: "b1",
+        name: "Notes",
+        kind: "text",
+        optionsJson: null,
+        position: 0,
+      },
+    ];
+    savedViews = [
+      stored("v1", "Old", { rows: [row("field:f9", ['"x"'])] }),
+      stored("v2", "Text", { rows: [row("field:f3", ['"alpha"'])] }),
+    ];
+    fieldValues = { c1: { f3: '"alpha"' } };
+    await renderBoard();
+    await click(tab("v1"));
+    expect(chips()).toEqual(["Deleted field is …"]);
+    expect(badge()).toBeNull();
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
+    expect(dot()).toBeNull();
+    // A free-form field lists only what the row already holds.
+    await click(tab("v2"));
+    expect(chips()).toEqual(["Notes is alpha"]);
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    await click(container.querySelector('button[aria-label="Filter"]')!);
+    await click(
+      document.querySelector('button[aria-label="Pick Notes values"]')!,
+    );
+    expect(
+      [...document.querySelectorAll('[role="menuitemcheckbox"]')].map(
+        (el) => el.textContent?.trim(),
+      ),
+    ).toEqual(["alpha"]);
+  });
+
+  it("re_applies_an_untouched_view_changed_in_the_other_app", async () => {
+    savedViews = [stored("v1", "Mine", { rows: [row("priority", ["3"])] })];
+    await renderBoard();
+    await click(tab("v1"));
+    expect(chips()).toEqual(["Priority is High"]);
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+
+    savedViews = [stored("v1", "Mine", { rows: [row("priority", ["1"])] })];
+    await act(async () => emitBoardChanged("b1"));
+    await flush();
+    expect(chips()).toEqual(["Priority is Low"]);
+    expect(cardIdsIn("backlog")).toEqual(["c2"]);
+    expect(dot()).toBeNull();
+  });
+
+  it("keeps_local_edits_and_the_dot_when_the_view_changes_elsewhere", async () => {
+    savedViews = [stored("v1", "Mine", { rows: [row("priority", ["3"])] })];
+    await renderBoard();
+    await click(tab("v1"));
+    await search("fix");
+    expect(dot()).not.toBeNull();
+
+    savedViews = [stored("v1", "Mine", { rows: [row("priority", ["1"])] })];
+    await act(async () => emitBoardChanged("b1"));
+    await flush();
+    // Still what the user made, and still unsaved against the new version.
+    expect(searchInput().value).toBe("fix");
+    expect(chips()).toEqual(["Priority is High"]);
+    expect(dot()).not.toBeNull();
+    // Revert shows the new version.
+    await click(tabButton("Revert"));
+    expect(chips()).toEqual(["Priority is Low"]);
+    expect(searchInput().value).toBe("");
+    expect(dot()).toBeNull();
+  });
+
+  it("a_view_deleted_elsewhere_leaves_the_screen_under_all_cards", async () => {
+    savedViews = [stored("v1", "Mine", { rows: [row("priority", ["3"])] })];
+    await renderBoard();
+    await click(tab("v1"));
+    savedViews = [];
+    await act(async () => emitBoardChanged("b1"));
+    await flush();
+    expect(tab("all").getAttribute("aria-selected")).toBe("true");
+    expect(chips()).toEqual(["Priority is High"]);
+    expect(cardIdsIn("backlog")).toEqual(["c1"]);
+    expect(container.querySelector('[data-view-tab="v1"]')).toBeNull();
+  });
+
+  it("requeries_on_board_changes", async () => {
+    await renderBoard();
+    await search("docs");
+    expect(cardIdsIn("backlog")).toEqual(["c2"]);
+    const before = commands("board_query").length;
+    seed({ c4: { title: "Docs again" } });
+    await act(async () => emitBoardChanged("b1"));
+    await flush();
+    expect(commands("board_query").length).toBeGreaterThan(before);
+    expect(cardIdsIn("backlog")).toEqual(["c2", "c4"]);
+  });
+
+  it("ignores_an_answer_that_arrives_after_a_newer_request", async () => {
+    let late!: (ids: string[]) => void;
+    handlers.board_query = (args) => {
+      const { query } = args.spec as ViewSpec;
+      return query === "d"
+        ? new Promise<string[]>((resolve) => {
+            late = resolve;
+          })
+        : fakeEngine(args);
+    };
+    await renderBoard();
+    await search("d"); // never answers until later
+    await search("deploy"); // answers at once
+    expect(cardIdsIn("backlog")).toEqual(["c4"]);
+    // The older, wider answer lands now and must not win.
+    await act(async () => late(["c1", "c2", "c4", "c3"]));
+    await flush();
+    expect(cardIdsIn("backlog")).toEqual(["c4"]);
+    expect(cardIdsIn("progress")).toEqual([]);
+  });
+
+  it("a_failed_query_shows_every_card_and_says_why", async () => {
+    handlers.board_query = () => {
+      throw new Error("database is locked");
+    };
+    await renderBoard();
+    await search("docs");
+    expect(cardIdsIn("backlog")).toEqual(["c1", "c2", "c4"]);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "database is locked",
+    );
+  });
+
+  it("passes_the_cards_with_running_linked_work_to_the_query", async () => {
+    seed({
+      c3: { linkKind: "session", linkId: "s1" },
+      c4: { linkKind: "session", linkId: "s2" },
+      c2: { linkKind: "flow-run", linkId: "r1" },
+    });
+    const target = (id: string, status: BoardLinkTarget["status"]) => ({
+      kind: "session" as const,
+      id,
+      label: id,
+      status,
+    });
+    await renderBoard({
+      linkTargets: [target("s1", "running"), target("s2", "completed")],
+    });
+    await filterBy("Linked work", "Running");
+    expect(lastQuery().running).toEqual(["c3"]);
+    expect(cardIdsIn("backlog")).toEqual([]);
+    expect(cardIdsIn("progress")).toEqual(["c3"]);
   });
 });

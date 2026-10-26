@@ -67,6 +67,12 @@ export type KanbanBoardProps = {
   onColumnExpand?: (column: BoardColumn) => void;
   /** Rendered after the last column inside the scroller (the add-column button). */
   trailing?: ReactNode;
+  /**
+   * The cards follow a sort, so a drop inside the column they came from
+   * changes nothing. A drop into another column is still reported; the
+   * caller appends it.
+   */
+  sorted?: boolean;
 };
 
 // Cards collide with cards and column bodies; columns only with columns.
@@ -117,6 +123,7 @@ export function KanbanBoard({
   onCardOpen,
   onColumnExpand,
   trailing,
+  sorted = false,
 }: KanbanBoardProps) {
   const reducedMotion = useReducedMotion();
   const [session, setSession] = useState(() => createSession(detail));
@@ -208,6 +215,15 @@ export function KanbanBoard({
 
   function handleDragEnd({ over }: DragEndEvent) {
     const { session: next, commit } = sessionEnd(session, toDropRef(over));
+    if (sorted && commit?.kind === "card") {
+      const from = session.drag?.snapshot.cards.find(
+        (card) => card.id === commit.cardId,
+      )?.columnId;
+      if (from === commit.to.columnId) {
+        update(sessionCancel(session));
+        return;
+      }
+    }
     update(next);
     if (commit?.kind === "card") onCardMove(commit.cardId, commit.to);
     else if (commit?.kind === "column") {
