@@ -8,7 +8,7 @@ use super::{
 };
 use crate::popover::{Menu, MenuAction, MenuEvent, MenuItem};
 use chrono::NaiveDate;
-use gespan_core::board::extras::{Label, PRIORITIES};
+use gespan_core::board::extras::{Label, PRIORITIES, PriorityScheme};
 use gpui::{Context, Window, prelude::*};
 
 /// Which quick-edit menu a card face opens.
@@ -21,11 +21,12 @@ pub(crate) enum Face {
     Labels,
 }
 
-/// Urgent first, then down to "No priority".
-pub(crate) fn priority_items() -> Vec<MenuItem> {
+/// Urgent first, then down to the lowest level. Hidden levels are left out.
+pub(crate) fn priority_items(scheme: &PriorityScheme) -> Vec<MenuItem> {
     (0..PRIORITIES.len())
         .rev()
-        .map(|p| MenuAction::new(format!("priority-{p}"), PRIORITIES[p]).into())
+        .filter(|&p| !scheme.hidden.contains(&(p as u8)))
+        .map(|p| MenuAction::new(format!("priority-{p}"), scheme.names[p].clone()).into())
         .collect()
 }
 
@@ -413,7 +414,7 @@ impl BoardView {
         }
         let items = match face {
             Face::Status => self.status_items(&card_id),
-            Face::Priority => priority_items(),
+            Face::Priority => priority_items(&self.priority),
             Face::Due => due_items(),
             Face::Labels => label_items(&self.labels, &self.card_labels(&card_id)),
         };

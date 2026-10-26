@@ -157,7 +157,8 @@ impl BoardView {
         self.active_rows() > 0 || !self.last_query.is_empty()
     }
 
-    /// A column's count: `shown/total` while searching or filtering, else the total.
+    /// A column's count: `total/limit` with a WIP limit; while searching or
+    /// filtering, `shown/total` (the limit still compares against the total).
     pub(crate) fn count_label(&self, column_id: &str) -> String {
         let Some(detail) = &self.detail else {
             return "0".into();
@@ -167,10 +168,29 @@ impl BoardView {
             .iter()
             .filter(|card| card.column_id == column_id)
             .count();
-        if !self.narrowing() {
-            return total.to_string();
+        if self.narrowing() {
+            return format!("{}/{total}", self.column_cards(detail, column_id).len());
         }
-        format!("{}/{total}", self.column_cards(detail, column_id).len())
+        match self.column(column_id).and_then(|column| column.wip_limit) {
+            Some(limit) => format!("{total}/{limit}"),
+            None => total.to_string(),
+        }
+    }
+
+    /// Whether the column holds more cards than its WIP limit (the total, not
+    /// the cards a filter leaves showing).
+    pub(crate) fn over_wip(&self, column: &gespan_core::board::Column) -> bool {
+        let Some(limit) = column.wip_limit else {
+            return false;
+        };
+        self.detail.as_ref().is_some_and(|detail| {
+            detail
+                .cards
+                .iter()
+                .filter(|card| card.column_id == column.id)
+                .count() as i64
+                > limit
+        })
     }
 
     /// Open or close the filter. The board takes focus so Escape closes it.
@@ -432,7 +452,8 @@ impl BoardView {
             }),
             "priority" => (0..PRIORITIES.len())
                 .rev()
-                .map(|priority| (priority.to_string(), PRIORITIES[priority].to_string()))
+                .filter(|&priority| !self.priority.hidden.contains(&(priority as u8)))
+                .map(|priority| (priority.to_string(), self.priority_name(priority as u8)))
                 .collect(),
             "labels" => self
                 .labels

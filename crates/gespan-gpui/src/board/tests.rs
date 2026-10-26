@@ -6395,3 +6395,510 @@ fn n_and_delete_do_nothing_when_focus_is_inside_the_open_drawer(cx: &mut TestApp
     visual.run_until_parked();
     assert!(modal_open(&f, visual));
 }
+
+// ---- settings page: general, columns, labels and priority ----
+
+fn open_settings(visual: &mut VisualTestContext, section: &str) {
+    click(visual, "board-switcher");
+    click(visual, "board-settings-open");
+    if section != "general" {
+        click(visual, selector(format!("settings-nav-{section}")));
+    }
+}
+
+fn press_enter(visual: &mut VisualTestContext) {
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+}
+
+fn settings_of(f: &Fixture) -> gespan_core::board::extras::BoardSettings {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    service.settings(&board.id).unwrap()
+}
+
+fn board_columns(f: &Fixture) -> Vec<gespan_core::board::Column> {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    service.get(&board.id).unwrap().columns
+}
+
+#[gpui::test]
+fn settings_page_renames_board_and_sets_icon_and_colour(cx: &mut TestAppContext) {
+    use gespan_core::board::extras::SettingsPatch;
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "general");
+    assert!(shown(visual, "board-settings"));
+    click(visual, "settings-name");
+    retype(visual, "settings-edit", "  Roadmap ");
+    press_enter(visual);
+    assert_eq!(open_name(&f, visual), "Roadmap");
+    click(visual, "settings-icon-rocket");
+    click(visual, "settings-color-e5534b");
+    let settings = settings_of(&f);
+    assert_eq!(settings.icon.as_deref(), Some("rocket"));
+    assert_eq!(settings.color.as_deref(), Some("e5534b"));
+    // A blank name changes nothing.
+    click(visual, "settings-name");
+    retype(visual, "settings-edit", "");
+    press_enter(visual);
+    assert_eq!(open_name(&f, visual), "Roadmap");
+    // Picking the chosen icon again clears it.
+    click(visual, "settings-icon-rocket");
+    assert_eq!(settings_of(&f).icon, None);
+    assert_eq!(settings_of(&f).color.as_deref(), Some("e5534b"));
+    // The other app turned "Run with…" off a moment ago: a toggle here is a
+    // patch, so that stays off.
+    let board = open_id(&f, visual);
+    Service::open(&f.db)
+        .unwrap()
+        .update_settings(
+            &board,
+            &SettingsPatch {
+                run_with: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    click(visual, "settings-toggle-write-back");
+    let settings = settings_of(&f);
+    assert!(!settings.write_back);
+    assert!(!settings.run_with, "the toggle patch left run_with alone");
+    assert_eq!(settings.color.as_deref(), Some("e5534b"));
+    // Escape leaves the page.
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert_gone(visual, "board-settings");
+    assert!(shown(visual, "board-columns"));
+}
+
+#[gpui::test]
+fn default_view_opens_on_board_load(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let board = open_id(&f, cx);
+    let mut service = Service::open(&f.db).unwrap();
+    let spec = serde_json::to_string(&ViewSpec::default()).unwrap();
+    let view = service
+        .view_create(&board, "Mine", &spec, views::DEFAULT_LAYOUT)
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    // Picked on the settings page.
+    f.window
+        .update(visual, |view, _, cx| view.reload(cx))
+        .unwrap();
+    open_settings(visual, "general");
+    click(visual, "settings-default-view-0");
+    assert_eq!(
+        settings_of(&f).default_view_id.as_deref(),
+        Some(view.id.as_str())
+    );
+    // A fresh window over the same database opens on it.
+    let window = reopen(&f, visual);
+    let active = window
+        .read_with(visual, |v, _| v.views.active.clone())
+        .unwrap();
+    assert_eq!(active.as_deref(), Some(view.id.as_str()));
+    // A default pointing at a view deleted since shows "All cards", no error.
+    service.view_delete(&view.id).unwrap();
+    let window = reopen(&f, visual);
+    window
+        .read_with(visual, |v, _| {
+            assert_eq!(v.views.active, None);
+            assert!(v.load_error.is_none() && v.error.is_none());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn column_manager_adds_recolours_sets_role_and_reorders(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "columns");
+    click(visual, "settings-col-add");
+    retype(visual, "settings-edit", "QA");
+    press_enter(visual);
+    assert_eq!(board_columns(&f)[4].name, "QA");
+    click(visual, "settings-col-4-color-4da3f5");
+    click(visual, "settings-col-4-role-cancelled");
+    click(visual, "settings-col-4-up");
+    click(visual, "settings-col-3-up");
+    let columns = board_columns(&f);
+    let names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["Backlog", "In Progress", "QA", "Review", "Done"]);
+    assert_eq!(columns[2].color.as_deref(), Some("4da3f5"));
+    assert_eq!(columns[2].role.as_deref(), Some("cancelled"));
+    // Picking the colour again clears it; "No role" clears the role.
+    click(visual, "settings-col-2-color-4da3f5");
+    click(visual, "settings-col-2-role-none");
+    let columns = board_columns(&f);
+    assert_eq!(
+        (columns[2].color.clone(), columns[2].role.clone()),
+        (None, None)
+    );
+    // The first column can't move up, the last can't move down.
+    click(visual, "settings-col-0-up");
+    click(visual, "settings-col-4-down");
+    assert_eq!(board_columns(&f)[0].name, "Backlog");
+    assert_eq!(board_columns(&f)[4].name, "Done");
+    // A WIP limit: a number sets it, junk is refused and stays to correct,
+    // blank clears it.
+    click(visual, "settings-col-0-wip");
+    retype(visual, "settings-edit", "4");
+    press_enter(visual);
+    assert_eq!(board_columns(&f)[0].wip_limit, Some(4));
+    click(visual, "settings-col-0-wip");
+    retype(visual, "settings-edit", "lots");
+    press_enter(visual);
+    assert!(shown(visual, "settings-error"));
+    assert_eq!(board_columns(&f)[0].wip_limit, Some(4));
+    retype(visual, "settings-edit", "");
+    press_enter(visual);
+    assert_eq!(board_columns(&f)[0].wip_limit, None);
+    assert_gone(visual, "settings-error");
+}
+
+#[gpui::test]
+fn delete_column_with_cards_offers_move_cards_to(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["One", "Two"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "columns");
+    click(visual, "settings-col-0-delete");
+    assert!(shown(visual, "settings-move-cards"));
+    assert_eq!(
+        board_columns(&f).len(),
+        4,
+        "nothing is deleted before a target is picked"
+    );
+    click(visual, "settings-col-0-move-1");
+    let names: Vec<String> = board_columns(&f).iter().map(|c| c.name.clone()).collect();
+    assert_eq!(names, ["In Progress", "Review", "Done"]);
+    assert_eq!(titles_in(&f, visual, "In Progress"), ["One", "Two"]);
+    // An empty column goes at once, with no question.
+    click(visual, "settings-col-2-delete");
+    assert_gone(visual, "settings-move-cards");
+    assert_eq!(board_columns(&f).len(), 2);
+}
+
+#[gpui::test]
+fn deleting_a_column_with_archived_cards_moves_the_live_ones_and_then_refuses(
+    cx: &mut TestAppContext,
+) {
+    let f = seeded(cx, &["Live", "Old"]);
+    let old = card_id(&f, cx, "Old");
+    Service::open(&f.db).unwrap().archive(&old).unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "columns");
+    click(visual, "settings-col-0-delete");
+    click(visual, "settings-col-0-move-1");
+    assert_eq!(
+        board_columns(&f).len(),
+        4,
+        "the archived card keeps the column"
+    );
+    assert_eq!(titles_in(&f, visual, "In Progress"), ["Live"]);
+    assert!(shown(visual, "settings-error"));
+}
+
+fn set_limit(f: &Fixture, cx: &mut TestAppContext, column: usize, limit: Option<i64>) {
+    let id = detail(f, cx).columns[column].id.clone();
+    Service::open(&f.db)
+        .unwrap()
+        .set_column_display(&id, None, limit, false)
+        .unwrap();
+    reload(f, cx);
+}
+
+fn count_of(f: &Fixture, cx: &mut impl gpui::AppContext, column: usize) -> (String, bool) {
+    let id = detail(f, cx).columns[column].id.clone();
+    f.window
+        .read_with(cx, |view, _| {
+            let column = view.column(&id).unwrap().clone();
+            (view.count_label(&id), view.over_wip(&column))
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn wip_count_shows_3_of_4_and_highlights_over_limit(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C"]);
+    set_limit(&f, cx, 0, Some(4));
+    assert_eq!(count_of(&f, cx, 0), ("3/4".to_string(), false));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    assert_gone(visual, "board-column-over-0");
+    // Exactly at the limit is not over it.
+    let backlog = detail(&f, visual).columns[0].id.clone();
+    let mut service = Service::open(&f.db).unwrap();
+    service.card_create(&backlog, "D", "").unwrap();
+    reload(&f, visual);
+    assert_eq!(count_of(&f, visual, 0), ("4/4".to_string(), false));
+    assert_gone(visual, "board-column-over-0");
+    service.card_create(&backlog, "E", "").unwrap();
+    reload(&f, visual);
+    assert_eq!(count_of(&f, visual, 0), ("5/4".to_string(), true));
+    assert!(shown(visual, "board-column-over-0"));
+    // A column with no limit shows the plain total and never highlights.
+    assert_eq!(count_of(&f, visual, 1), ("0".to_string(), false));
+    // The colour stripe shows only for a coloured column.
+    assert_gone(visual, "board-column-stripe-0");
+    let id = detail(&f, visual).columns[0].id.clone();
+    service
+        .set_column_display(&id, Some("3fb950"), Some(4), false)
+        .unwrap();
+    reload(&f, visual);
+    assert!(shown(visual, "board-column-stripe-0"));
+    assert_gone(visual, "board-column-stripe-1");
+}
+
+#[gpui::test]
+fn wip_count_uses_total_while_filtered(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["A", "B", "C", "D", "E"]);
+    set_priorities(&f, cx, &[("A", 1), ("B", 1)]);
+    set_limit(&f, cx, 0, Some(4));
+    f.window
+        .update(cx, |view, _, cx| filter_by_priority(view, 1, cx))
+        .unwrap();
+    // Two shown of five in all: the limit of four is judged on the five.
+    assert_eq!(count_of(&f, cx, 0), ("2/5".to_string(), true));
+    set_limit(&f, cx, 0, Some(5));
+    assert_eq!(count_of(&f, cx, 0), ("2/5".to_string(), false));
+    // Three cards in all, one shown: under the limit of four.
+    let mut service = Service::open(&f.db).unwrap();
+    for title in ["C", "D", "E"] {
+        let id = card_id(&f, cx, title);
+        service.card_delete(&id).unwrap();
+    }
+    set_limit(&f, cx, 0, Some(4));
+    f.window
+        .update(cx, |view, _, cx| {
+            view.spec.rows.clear();
+            filter_by_priority(view, 1, cx);
+            view.spec.rows[0].values = vec!["1".into()];
+            view.requery(cx);
+        })
+        .unwrap();
+    assert_eq!(count_of(&f, cx, 0), ("2/2".to_string(), false));
+}
+
+#[gpui::test]
+fn drop_over_wip_limit_warns_and_still_saves(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Mover", "Resident"]);
+    let resident = card_id(&f, cx, "Resident");
+    Service::open(&f.db)
+        .unwrap()
+        .card_move(&resident, &detail(&f, cx).columns[2].id, 0, "user")
+        .unwrap();
+    set_limit(&f, cx, 2, Some(1));
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let from = center(visual, "board-card-1");
+    let to = center(visual, "board-column-body-2");
+    drag(visual, from, to);
+    assert_eq!(
+        column_of(&f, visual, "Mover"),
+        "Review",
+        "the move still saves"
+    );
+    let toast = f
+        .window
+        .read_with(visual, |view, _| {
+            view.undo.toast.as_ref().map(|toast| toast.label.clone())
+        })
+        .unwrap();
+    assert_eq!(toast.as_deref(), Some("Over the WIP limit (2/1)"));
+    // A drop that stays within the limit shows the ordinary toast.
+    let backlog_card = card_id(&f, visual, "Mover");
+    let in_progress = detail(&f, visual).columns[1].id.clone();
+    f.window
+        .update(visual, |view, _, cx| {
+            view.move_with_undo(&backlog_card, &in_progress, 0, cx);
+        })
+        .unwrap();
+    let toast = f
+        .window
+        .read_with(visual, |view, _| {
+            view.undo.toast.as_ref().map(|toast| toast.label.clone())
+        })
+        .unwrap();
+    assert!(!toast.unwrap().starts_with("Over the WIP limit"));
+}
+
+fn labels_of(f: &Fixture) -> Vec<(String, String)> {
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    service
+        .labels(&board.id)
+        .unwrap()
+        .into_iter()
+        .map(|label| (label.name, label.color))
+        .collect()
+}
+
+#[gpui::test]
+fn label_manager_creates_renames_recolours_reorders_merges_deletes(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Tagged", "Other"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "labels");
+    for name in ["Bug", "Bugs", "Docs"] {
+        click(visual, "settings-label-add");
+        retype(visual, "settings-edit", name);
+        press_enter(visual);
+    }
+    let labels = labels_of(&f);
+    let names: Vec<&str> = labels.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["Bug", "Bugs", "Docs"]);
+    // New labels take the palette in order.
+    assert_eq!(labels[0].1, "8a867e");
+    assert_eq!(labels[1].1, "e5534b");
+    // A duplicate name, ignoring case, is refused and shown.
+    click(visual, "settings-label-add");
+    retype(visual, "settings-edit", "BUG");
+    press_enter(visual);
+    assert!(shown(visual, "settings-error"));
+    assert_eq!(labels_of(&f).len(), 3);
+    visual.simulate_keystrokes("escape");
+    // Rename and recolour.
+    click(visual, "settings-label-2-name");
+    retype(visual, "settings-edit", "Documentation");
+    press_enter(visual);
+    click(visual, "settings-label-2-color-3fb950");
+    assert_eq!(labels_of(&f)[2], ("Documentation".into(), "3fb950".into()));
+    // Reorder: Documentation first.
+    click(visual, "settings-label-2-up");
+    click(visual, "settings-label-1-up");
+    let names: Vec<String> = labels_of(&f).into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["Documentation", "Bug", "Bugs"]);
+    // Cards carrying "Bugs" and "Bug"; merging Bugs into Bug keeps both tagged.
+    let mut service = Service::open(&f.db).unwrap();
+    let board = service.default_board().unwrap();
+    let all = service.labels(&board.id).unwrap();
+    let id_of = |name: &str| all.iter().find(|l| l.name == name).unwrap().id.clone();
+    let (tagged, other) = (card_id(&f, visual, "Tagged"), card_id(&f, visual, "Other"));
+    service.set_labels(&tagged, &[id_of("Bugs")]).unwrap();
+    service
+        .set_labels(&other, &[id_of("Bug"), id_of("Documentation")])
+        .unwrap();
+    reload(&f, visual);
+    click(visual, "settings-label-2-merge");
+    click(visual, "settings-label-2-merge-into-1");
+    let names: Vec<String> = labels_of(&f).into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["Documentation", "Bug"]);
+    assert_eq!(extras_of(&f, &tagged).labels, [id_of("Bug")]);
+    // Delete asks first, then removes the label from its cards and logs it.
+    click(visual, "settings-label-0-delete");
+    assert_eq!(labels_of(&f).len(), 2, "the first press only asks");
+    click(visual, "settings-label-0-delete-confirm");
+    let names: Vec<String> = labels_of(&f).into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["Bug"]);
+    assert_eq!(extras_of(&f, &other).labels, [id_of("Bug")]);
+    assert!(activity_details(&f, &other).contains(&"label removed: Documentation".to_string()));
+}
+
+#[gpui::test]
+fn priority_renames_show_on_cards_and_pickers(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Ranked"]);
+    let ranked = card_id(&f, cx, "Ranked");
+    Service::open(&f.db)
+        .unwrap()
+        .set_priority(&ranked, 4)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "priority");
+    click(visual, "settings-priority-4-name");
+    retype(visual, "settings-edit", "Blocker");
+    press_enter(visual);
+    // Over 20 characters is refused and stays open to correct.
+    click(visual, "settings-priority-1-name");
+    retype(visual, "settings-edit", "this name is far too long");
+    press_enter(visual);
+    assert!(shown(visual, "settings-error"));
+    retype(visual, "settings-edit", "Minor");
+    press_enter(visual);
+    assert_gone(visual, "settings-error");
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(view.priority_name(4), "Blocker");
+            assert_eq!(view.priority_name(1), "Minor");
+            assert_eq!(
+                view.priority_name(2),
+                "Medium",
+                "unrenamed levels keep their name"
+            );
+            let labels: Vec<String> = super::quick::priority_items(&view.priority)
+                .into_iter()
+                .filter_map(|item| match item {
+                    crate::popover::MenuItem::Action(action) => Some(action.label.to_string()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(labels, ["Blocker", "High", "Medium", "Minor", "None"]);
+            assert!(view.board_settings.priority_json.is_some());
+        })
+        .unwrap();
+    // Back on the board, the card's priority control names the level and the
+    // picker offers the new names.
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert_gone(visual, "board-settings");
+    click(visual, "board-card-priority-1");
+    assert!(shown(visual, "menu-action-priority-4"));
+    // The filter's choices use the names too.
+    f.window
+        .read_with(visual, |view, _| {
+            let choices = view.field_choices("priority", &[]);
+            assert_eq!(choices[0], ("4".to_string(), "Blocker".to_string()));
+        })
+        .unwrap();
+    // Reset puts the defaults back.
+    visual.simulate_keystrokes("escape");
+    open_settings(visual, "priority");
+    click(visual, "settings-priority-reset");
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(view.priority_name(4), "Urgent")
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn hidden_priority_leaves_pickers_but_cards_keep_showing_it(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["High one", "Plain"]);
+    let high = card_id(&f, cx, "High one");
+    Service::open(&f.db)
+        .unwrap()
+        .set_priority(&high, 3)
+        .unwrap();
+    reload(&f, cx);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    open_settings(visual, "priority");
+    // Level 0 can't be hidden.
+    assert_gone(visual, "settings-priority-0-hide");
+    click(visual, "settings-priority-3-hide");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    // The card still shows its priority, and the drawer still names it.
+    assert!(shown(visual, "board-card-priority-1"));
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(view.priority_name(3), "High");
+            assert!(view.priority.hidden.contains(&3));
+            let choices = view.field_choices("priority", &[]);
+            assert!(choices.iter().all(|(value, _)| value != "3"));
+        })
+        .unwrap();
+    // The picker leaves the hidden level out, and the others stay.
+    click(visual, "board-card-priority-1");
+    assert_gone(visual, "menu-action-priority-3");
+    assert!(shown(visual, "menu-action-priority-4"));
+    assert!(shown(visual, "menu-action-priority-0"));
+    visual.simulate_keystrokes("escape");
+    // The card still has level 3 stored.
+    assert_eq!(extras_of(&f, &high).priority, 3);
+    // Showing it again brings it back to the picker.
+    open_settings(visual, "priority");
+    click(visual, "settings-priority-3-hide");
+    visual.simulate_keystrokes("escape");
+    click(visual, "board-card-priority-1");
+    assert!(shown(visual, "menu-action-priority-3"));
+}

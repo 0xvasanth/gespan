@@ -103,6 +103,8 @@ impl BoardView {
 
     fn reset_for_board(&mut self, cx: &mut Context<Self>) {
         self.reset_view(cx);
+        self.settings = None;
+        self.default_view_applied = None;
         self.filter_open = false;
         self.sort_open = false;
         self.card_menu = None;
@@ -291,6 +293,11 @@ impl BoardView {
             Mode::New(input) => rows.push(name_field("board-new-name", input)),
             Mode::Rename(input) => rows.push(name_field("board-rename-name", input)),
             Mode::List => {
+                rows.push(
+                    menu_row("board-settings-open".into(), "Board settings")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)))
+                        .into_any_element(),
+                );
                 rows.push(
                     menu_row("board-new".into(), "New board")
                         .on_click(cx.listener(|this, _, window, cx| {

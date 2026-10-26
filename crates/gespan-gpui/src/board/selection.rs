@@ -347,7 +347,7 @@ impl BoardView {
                     .collect();
                 (items, "Status")
             }
-            MenuKind::BulkPriority => (priority_items(), "Priority"),
+            MenuKind::BulkPriority => (priority_items(&self.priority), "Priority"),
             _ => {
                 // Ticked when every selected card has the label.
                 let ids = self.selected_ids();

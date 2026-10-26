@@ -12,7 +12,7 @@ use crate::{
     popover::{Anchor, menu_popover},
     theme::*,
 };
-use gespan_core::board::{Card, extras::PRIORITIES};
+use gespan_core::board::Card;
 use gpui::{
     AnyElement, Context, Focusable, FontWeight, MouseButton, Role, SharedString, div, prelude::*,
     px,
@@ -322,7 +322,7 @@ impl BoardView {
                 .items_center()
                 .gap(px(6.))
                 .child(priority_glyph(extras.priority))
-                .child(PRIORITIES[extras.priority as usize])
+                .child(self.priority_name(extras.priority))
                 .into_any_element()
         };
         let due = extras.due_at.and_then(|at| due_label(at, now)).map_or_else(

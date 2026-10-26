@@ -325,9 +325,7 @@ impl BoardView {
             "priority" => editable(cell, Face::Priority)
                 .gap(px(6.))
                 .child(priority_glyph(extras.priority))
-                .child(text(
-                    gespan_core::board::extras::PRIORITIES[extras.priority as usize].to_string(),
-                ))
+                .child(text(self.priority_name(extras.priority)))
                 .into_any_element(),
             "due" => editable(cell, Face::Due)
                 .child(text(

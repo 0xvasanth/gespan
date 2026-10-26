@@ -238,7 +238,7 @@ impl BoardView {
         let mut heads: Vec<(String, String)> = match by {
             "priority" => (0..PRIORITIES.len())
                 .rev()
-                .map(|p| (format!("p{p}"), PRIORITIES[p].to_string()))
+                .map(|p| (format!("p{p}"), self.priority_name(p as u8)))
                 .collect(),
             "label" => self
                 .labels

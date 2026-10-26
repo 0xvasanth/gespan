@@ -552,7 +552,7 @@ impl BoardView {
                         .collect()
                 })
                 .unwrap_or_default(),
-            Choice::Priority => quick::priority_items(),
+            Choice::Priority => quick::priority_items(&self.priority),
             Choice::Due => quick::due_items(),
             Choice::Start => quick::date_items("start"),
             Choice::FieldDate(_) => quick::date_items("field"),

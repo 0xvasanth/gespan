@@ -13,6 +13,7 @@ mod markdown_toolbar;
 mod new_card;
 mod quick;
 mod selection;
+mod settings;
 pub(crate) mod style;
 mod switcher;
 mod table;
@@ -33,7 +34,7 @@ use crate::{
 use gespan_core::{
     board::{
         BoardDetail, Service,
-        extras::{CardExtras, Label, ViewSpec},
+        extras::{BoardSettings, CardExtras, Label, PriorityScheme, ViewSpec},
     },
     tickets::{TicketRef, Tracker},
 };
@@ -234,6 +235,13 @@ pub(crate) struct BoardView {
     /// Whether the Archive view is open, and the archived cards it read.
     archive_open: bool,
     archived: Vec<gespan_core::board::Card>,
+    /// The settings page, when open, and the open board's settings.
+    settings: Option<settings::Page>,
+    pub(crate) board_settings: BoardSettings,
+    pub(crate) priority: PriorityScheme,
+    /// The board whose default view was applied; it applies once per board.
+    default_view_applied: Option<String>,
+    pending_default_view: Option<String>,
     /// Runs between a reload's reads and the end of the load, so a test can
     /// commit from another connection exactly there.
     #[cfg(test)]
@@ -358,6 +366,11 @@ impl BoardView {
             undo: undo::UndoController::default(),
             archive_open: false,
             archived: Vec::new(),
+            settings: None,
+            board_settings: BoardSettings::default(),
+            priority: PriorityScheme::default(),
+            default_view_applied: None,
+            pending_default_view: None,
             #[cfg(test)]
             after_load_reads: None,
             _poll: poll,
@@ -414,6 +427,7 @@ impl BoardView {
         self.views.naming = None;
         self.open_in_open = false;
         self.switcher = None;
+        self.settings = None;
         cx.notify();
     }
 
@@ -437,6 +451,11 @@ impl BoardView {
         if self.load_error.is_none() && std::mem::take(&mut self.views.reapply) {
             let active = self.views.active.clone();
             self.select_view(active, cx);
+        }
+        if self.load_error.is_none()
+            && let Some(view) = self.pending_default_view.take()
+        {
+            self.select_view(Some(view), cx);
         }
         self.sync_card_detail(cx);
         if self.load_error.is_none() && self.card_detail.is_some() {
@@ -519,6 +538,7 @@ impl BoardView {
         let card_tickets = service.board_tickets(&board.id)?;
         let views = service.views(&board.id)?;
         let fields = service.list_fields(&board.id)?;
+        let board_settings = service.settings(&board.id)?;
         let index: HashMap<_, _> = service
             .card_index(&board.id)?
             .into_iter()
@@ -556,7 +576,19 @@ impl BoardView {
             self.table_edit = None;
         }
         self.fields = fields;
+        self.priority = gespan_core::board::extras::priority_scheme(&board_settings);
         self.sync_views(views, cx);
+        // A board opens on its default view once. A view deleted since, or
+        // never saved, leaves "All cards".
+        let board_id = self.open_board_id.clone();
+        if self.default_view_applied != board_id {
+            self.default_view_applied = board_id;
+            self.pending_default_view = board_settings
+                .default_view_id
+                .clone()
+                .filter(|id| self.views.saved.iter().any(|view| &view.id == id));
+        }
+        self.board_settings = board_settings;
         // A label or column deleted elsewhere is dropped by the query itself,
         // so a saved filter never hides every card unseen.
         self.refresh_query(cx)
@@ -1069,6 +1101,7 @@ impl BoardView {
             || self.views.naming.take().is_some()
             || std::mem::take(&mut self.open_in_open)
             || self.switcher.take().is_some()
+            || self.settings_escape(cx)
             || self.renaming.take().is_some()
             || self.pop.take().is_some()
             || self.table_edit.take().is_some()
@@ -1446,6 +1479,8 @@ impl gpui::Render for BoardView {
         let selection_bar = self.render_selection_bar(cx);
         let layout = self.layout_kind();
         let full_page = self.card_detail.as_ref().is_some_and(|d| d.full_page());
+        let settings_page = self.render_settings(cx);
+        let on_settings = settings_page.is_some();
         let board = div()
             .flex_1()
             .min_w_0()
@@ -1453,40 +1488,48 @@ impl gpui::Render for BoardView {
             .flex()
             .flex_col()
             .child(self.render_header(cx))
-            .child(self.render_views(cx))
-            .children(chips)
+            .when(!on_settings, |d| d.child(self.render_views(cx)))
+            .when(!on_settings, |d| d.children(chips))
             .children(error)
-            .when(full_page, |d| d.children(card_detail.take()))
-            .when(!full_page && layout == list::Layout::List, |d| {
-                d.child(self.render_list(cx))
+            .children(settings_page)
+            .when(!on_settings && full_page, |d| {
+                d.children(card_detail.take())
             })
-            .when(!full_page && layout == list::Layout::Table, |d| {
-                d.child(self.render_table(cx))
-            })
-            .when(!full_page && layout == list::Layout::Board, |d| {
-                d.child(
-                    div()
-                        .id("board-columns")
-                        .debug_selector(|| "board-columns".into())
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_x_scroll()
-                        .px_4()
-                        .py_3()
-                        .flex()
-                        .items_start()
-                        .gap_2()
-                        .children(columns)
-                        .child(
-                            icon_button("board-add-column", "Add column", "plus")
-                                .debug_selector(|| "board-add-column".into())
-                                .flex_shrink_0()
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.add_column(window, cx)),
-                                ),
-                        ),
-                )
-            });
+            .when(
+                !on_settings && !full_page && layout == list::Layout::List,
+                |d| d.child(self.render_list(cx)),
+            )
+            .when(
+                !on_settings && !full_page && layout == list::Layout::Table,
+                |d| d.child(self.render_table(cx)),
+            )
+            .when(
+                !on_settings && !full_page && layout == list::Layout::Board,
+                |d| {
+                    d.child(
+                        div()
+                            .id("board-columns")
+                            .debug_selector(|| "board-columns".into())
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_x_scroll()
+                            .px_4()
+                            .py_3()
+                            .flex()
+                            .items_start()
+                            .gap_2()
+                            .children(columns)
+                            .child(
+                                icon_button("board-add-column", "Add column", "plus")
+                                    .debug_selector(|| "board-add-column".into())
+                                    .flex_shrink_0()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.add_column(window, cx)
+                                    })),
+                            ),
+                    )
+                },
+            );
         root.child(board)
             .children(archive)
             .children(card_detail)

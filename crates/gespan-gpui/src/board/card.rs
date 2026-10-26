@@ -247,6 +247,7 @@ impl BoardView {
                             .id(("board-card-priority", number as u64))
                             .debug_selector(move || format!("board-card-priority-{number}"))
                             .aria_label("Change priority")
+                            .aria_description(self.priority_name(extras.priority))
                             .px(px(2.))
                             .rounded(px(4.))
                             .hover(|s| s.bg(content(0.08)))

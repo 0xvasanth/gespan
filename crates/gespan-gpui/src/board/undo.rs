@@ -306,7 +306,23 @@ impl BoardView {
         let Some(((_, from_column, from_index), number)) = self.place_of(card_id) else {
             return false;
         };
-        let label = moved_label(&[number], &self.column_name(column_id));
+        let mut label = moved_label(&[number], &self.column_name(column_id));
+        // A move past a WIP limit still saves; the toast says so.
+        if from_column != column_id
+            && let Some(limit) = self.column(column_id).and_then(|column| column.wip_limit)
+        {
+            let after = self.detail.as_ref().map_or(0, |detail| {
+                detail
+                    .cards
+                    .iter()
+                    .filter(|card| card.column_id == column_id)
+                    .count()
+            }) as i64
+                + 1;
+            if after > limit {
+                label = format!("Over the WIP limit ({after}/{limit})");
+            }
+        }
         self.commit_pending(cx);
         let moved = self.write(cx, |service| {
             service.card_move(card_id, column_id, index, "user")
