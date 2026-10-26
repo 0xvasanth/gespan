@@ -424,6 +424,32 @@ fn created_within_24h_and_7d() {
 }
 
 #[test]
+fn linked_failed_clears_when_needs_input_follows_the_failure() {
+    let conn = fresh();
+    let (board, _, cards) = board_with_cards(&conn, &["waiting", "still failed"]);
+    for card in &cards {
+        add_link(
+            &conn,
+            &card.id,
+            "session",
+            &format!("s-{}", card.number),
+            None,
+        )
+        .unwrap();
+    }
+    record_card(&conn, &cards[0].id, "failed", None).unwrap();
+    record_card(&conn, &cards[0].id, "needs_input", None).unwrap();
+    record_card(&conn, &cards[1].id, "needs_input", None).unwrap();
+    record_card(&conn, &cards[1].id, "failed", None).unwrap();
+    let failed = run(
+        &conn,
+        &board,
+        &spec("", vec![row("linked", Op::Is, &["failed"])]),
+    );
+    assert_eq!(failed, ids(&[&cards[1]]));
+}
+
+#[test]
 fn linked_running_comes_from_the_caller_and_failed_from_activity() {
     let conn = fresh();
     let (board, _, cards) = board_with_cards(&conn, &["run", "fail", "recovered", "unlinked"]);

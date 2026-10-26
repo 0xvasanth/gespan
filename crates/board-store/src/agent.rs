@@ -4,10 +4,10 @@
 //! Every scope here (which cards a session may touch) is read from the
 //! database at call time from the session key the app supplies, never from
 //! agent input.
-use crate::comments::{add_comment, is_comment_author, list_comments};
-use crate::links::{board_links, ticket};
+use crate::comments::{add_comment, list_comments};
+use crate::links::board_links;
 use crate::ops::{cards_for_link, db, get_card, write_tx};
-use crate::settings::board_settings;
+use crate::settings::{board_settings, check_session_key};
 use crate::subtasks::{get_subtask, list_subtasks, toggle_subtask_in};
 use crate::Card;
 use rusqlite::{params, Connection};
@@ -18,7 +18,6 @@ use std::collections::HashSet;
 const MAX_WRITE_BACK: usize = 4_000;
 const MAX_PROMPT: usize = 20_000;
 const PROMPT_COMMENTS: usize = 10;
-const MAX_SESSION_KEY: usize = 500;
 
 pub const READ_ONLY: &str = "This session is read-only";
 pub const NOT_LINKED: &str = "This subtask isn't on a card linked to this session";
@@ -34,13 +33,6 @@ fn cap(text: &str, max: usize) -> String {
     cut
 }
 
-fn check_session_key(session_key: &str) -> Result<(), String> {
-    if session_key.trim().is_empty() || session_key.len() > MAX_SESSION_KEY {
-        return Err("Invalid session key".into());
-    }
-    Ok(())
-}
-
 /// Writes the turn's final reply as one comment, by `agent:<session_key>`, on
 /// every live card linked to the session whose board has write-back on. The
 /// reply is trimmed and cut to 4,000 characters; an empty reply writes
@@ -51,10 +43,8 @@ pub fn write_back(
     session_key: &str,
     summary: &str,
 ) -> Result<Vec<String>, String> {
+    check_session_key(session_key)?;
     let author = format!("agent:{session_key}");
-    if !is_comment_author(&author) {
-        return Err("Invalid session key".into());
-    }
     let body = cap(summary.trim(), MAX_WRITE_BACK);
     if body.is_empty() {
         return Ok(Vec::new());
@@ -102,20 +92,29 @@ pub fn running_card_ids(
         .collect())
 }
 
-/// The card's title as agents may see it: `None` when the card has a ticket
-/// whose snapshot title is the same text (ignoring case and surrounding
-/// space), since the title is then ticket content.
+/// The card's title as agents may see it: `None` when any of the card's
+/// ticket links has a snapshot title that is the same text (ignoring case and
+/// surrounding space), since the title is then ticket content.
 fn agent_title(conn: &Connection, card: &Card) -> Result<Option<String>, String> {
     let title = card.title.trim();
-    let ticket_title = ticket(conn, &card.id)?.and_then(|json| {
-        serde_json::from_str::<Value>(&json)
-            .ok()?
-            .get("title")?
-            .as_str()
-            .map(str::to_string)
+    let wanted = title.to_lowercase();
+    let mut statement = conn
+        .prepare(
+            "SELECT ref FROM board_card_links
+             WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')",
+        )
+        .map_err(db)?;
+    let tickets = statement
+        .query_map([&card.id], |r| r.get::<_, String>(0))
+        .map_err(db)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db)?;
+    let copied = tickets.iter().any(|json| {
+        serde_json::from_str::<Value>(json)
+            .ok()
+            .and_then(|value| value.get("title")?.as_str().map(str::to_string))
+            .is_some_and(|ticket| ticket.trim().to_lowercase() == wanted)
     });
-    let copied =
-        ticket_title.is_some_and(|ticket| ticket.trim().to_lowercase() == title.to_lowercase());
     Ok((!copied && !title.is_empty()).then(|| title.to_string()))
 }
 
@@ -257,7 +256,8 @@ pub fn answer_card(
             if !board_settings(&tx, &card.board_id)?.write_back {
                 return Err(WRITE_BACK_OFF.into());
             }
-            let board_id = toggle_subtask_in(&tx, &subtask, *done, "agent")?;
+            let actor = format!("agent:{session_key}");
+            let board_id = toggle_subtask_in(&tx, &subtask, *done, &actor)?;
             tx.commit().map_err(db)?;
             Ok(json!({
                 "boardId": board_id,

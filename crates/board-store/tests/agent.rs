@@ -498,15 +498,74 @@ fn write_back_truncates_to_4000_chars_and_skips_empty() {
     assert_eq!(comments[0].body, exact);
     assert_eq!(comments[1].body.chars().count(), 4000);
     assert_eq!(comments[1].body, format!("{}…", "a".repeat(3999)));
-    // A session key that can't be an author id is refused, writing nothing.
-    assert!(write_back(&conn, "bad key", "hello").is_err());
+    // A session key that can't be an author is refused, writing nothing.
+    for bad in ["", "  ", "bad\nkey"] {
+        assert!(write_back(&conn, bad, "hello").is_err(), "{bad:?}");
+    }
+    assert_eq!(list_comments(&conn, &card.id).unwrap().len(), 2);
+}
+
+#[test]
+fn write_back_accepts_a_remote_session_key() {
+    let conn = fresh();
+    let (_, card) = linked_card(&conn, "A", 1, "remote:env:sess");
+    let commented = write_back(&conn, "remote:env:sess", "Done remotely").unwrap();
+    assert_eq!(commented, vec![card.id.clone()]);
+    let comments = list_comments(&conn, &card.id).unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].author, "agent:remote:env:sess");
+    assert_eq!(comments[0].body, "Done remotely");
+}
+
+#[test]
+fn subtasks_for_a_session_with_no_linked_cards_is_empty() {
+    let conn = fresh();
+    let (_, card) = linked_card(&conn, "A", 1, "s-1");
+    add_subtask(&conn, &card.id, "Not reachable").unwrap();
+    assert_eq!(
+        answer_card(&conn, "s-none", &CardTool::Subtasks, false).unwrap(),
+        json!({ "cards": [] })
+    );
+}
+
+#[test]
+fn agent_title_checks_every_ticket_link_not_only_the_newest() {
+    let conn = fresh();
+    let (_, card) = linked_card(&conn, "A", 0, "s-1");
+    update_card(&conn, &card.id, "Old ticket title", "").unwrap();
+    set_ticket(
+        &conn,
+        &card.id,
+        Some(r#"{"tracker":"jira","key":"ABC-1","title":"old ticket title"}"#),
+    )
+    .unwrap();
+    // A second ticket row (written by another build) that is newer.
+    conn.execute(
+        "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
+         VALUES (?1, 'linear', ?2, 'ticket', 9999999999999)",
+        [
+            card.id.as_str(),
+            r#"{"tracker":"linear","key":"ENG-1","title":"Something else"}"#,
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        run_prompt(&conn, &card.id).unwrap(),
+        format!("Work on board card #{}", card.number)
+    );
 }
 
 #[test]
 fn agent_author_must_be_agent_or_agent_colon_id() {
     let conn = fresh();
     let (_, card) = linked_card(&conn, "A", 0, "s-1");
-    for good in ["user", "agent", "agent:s-1", "agent:2f6c_9A-x"] {
+    for good in [
+        "user",
+        "agent",
+        "agent:s-1",
+        "agent:2f6c_9A-x",
+        "agent:remote:env:sess",
+    ] {
         let comment = add_comment(&conn, &card.id, "hi", good).unwrap();
         assert_eq!(comment.author, good);
     }
@@ -517,9 +576,9 @@ fn agent_author_must_be_agent_or_agent_colon_id() {
         "system",
         "agentx",
         "agent:",
-        "agent:a b",
-        "agent:../x",
-        "agent:a:b",
+        "agent: ",
+        "agent:a\nb",
+        "agent:a\u{7}b",
         "user:s-1",
         too_long.as_str(),
     ] {
@@ -529,7 +588,7 @@ fn agent_author_must_be_agent_or_agent_colon_id() {
             "{bad}: {error}"
         );
     }
-    assert_eq!(list_comments(&conn, &card.id).unwrap().len(), 4);
+    assert_eq!(list_comments(&conn, &card.id).unwrap().len(), 5);
 }
 
 fn tool(value: Value) -> CardTool {
@@ -608,7 +667,7 @@ fn subtask_tool_refuses_read_only_unlinked_cards_and_write_back_off() {
     assert_eq!(answer["subtask"]["done"], json!(true));
     assert!(list_subtasks(&conn, &mine.id).unwrap()[0].done);
     let row = &list_activity(&conn, &mine.board_id, Some(&mine.id), 1).unwrap()[0];
-    assert_eq!(row.actor, "agent");
+    assert_eq!(row.actor, "agent:s-1");
     assert_eq!(row.detail.as_deref(), Some("subtask done: Write tests"));
     // The scope is read at call time: once unlinked, the card is out of reach.
     remove_link(&conn, &mine.id, "session", "s-1").unwrap();

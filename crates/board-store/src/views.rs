@@ -101,7 +101,7 @@ struct Entry {
     body: String,
     role: Option<String>,
     has_links: bool,
-    /// Kind of the newest started/completed/failed activity row for the
+    /// Kind of the newest started/needs_input/completed/failed activity row for the
     /// card, on any board (a card moved here keeps its history).
     last_run: Option<String>,
 }
@@ -249,7 +249,7 @@ fn load(conn: &Connection, board_id: &str, with_runs: bool) -> Result<Vec<Entry>
                  PARTITION BY card_id ORDER BY created_at DESC, rowid DESC) AS newest
                FROM board_activity
                WHERE card_id IN (SELECT id FROM board_cards WHERE board_id = ?1)
-                 AND kind IN ('started', 'completed', 'failed'))
+                 AND kind IN ('started', 'needs_input', 'completed', 'failed'))
              WHERE newest = 1",
             board_id,
             |card, kind| runs.push((card, kind)),

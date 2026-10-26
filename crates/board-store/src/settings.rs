@@ -381,8 +381,14 @@ pub fn set_board_settings(
     update_board_settings(conn, board_id, &SettingsPatch::full(settings)).map(drop)
 }
 
-fn check_session_key(session_key: &str) -> Result<(), String> {
-    if session_key.trim().is_empty() || session_key.len() > MAX_SESSION_KEY {
+/// A session key as both apps persist it (a local id, or
+/// `remote:{env}:{session}`): not blank, at most 500 bytes, no control
+/// characters.
+pub(crate) fn check_session_key(session_key: &str) -> Result<(), String> {
+    if session_key.trim().is_empty()
+        || session_key.len() > MAX_SESSION_KEY
+        || session_key.chars().any(char::is_control)
+    {
         return Err("Invalid session key".into());
     }
     Ok(())

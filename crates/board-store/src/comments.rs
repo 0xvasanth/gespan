@@ -9,18 +9,18 @@ const MAX_COMMENT: usize = 20_000;
 /// [`is_comment_author`]. Readers label every `agent*` author "Agent".
 pub const COMMENT_AUTHORS: [&str; 2] = ["user", "agent"];
 const AGENT_PREFIX: &str = "agent:";
-const MAX_AUTHOR_ID: usize = 500;
 
 /// Whether `author` may write a comment: one of [`COMMENT_AUTHORS`], or
-/// `agent:<id>` where `<id>` is a valid id (letters, digits, `-`, `_`) of at
-/// most 500 bytes.
+/// `agent:<session_key>` where the key is one a session can have (not blank,
+/// at most 500 bytes, no control characters; colons allowed, as in
+/// `remote:{env}:{session}`).
 pub fn is_comment_author(author: &str) -> bool {
     if COMMENT_AUTHORS.contains(&author) {
         return true;
     }
     author
         .strip_prefix(AGENT_PREFIX)
-        .is_some_and(|id| id.len() <= MAX_AUTHOR_ID && crate::validate_id(id, "agent").is_ok())
+        .is_some_and(|key| crate::settings::check_session_key(key).is_ok())
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
