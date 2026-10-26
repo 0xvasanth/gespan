@@ -9,6 +9,7 @@ import {
   type DragStartEvent,
   type KeyboardCoordinateGetter,
   KeyboardSensor,
+  type KeyboardSensorProps,
   MeasuringStrategy,
   type Modifier,
   PointerSensor,
@@ -111,6 +112,25 @@ const lockColumnsToRow: Modifier = ({ active, transform }) =>
     : transform;
 
 const MEASURING = { droppable: { strategy: MeasuringStrategy.Always } };
+
+/**
+ * dnd-kit's keyboard sensor, reporting the instance running the current lift
+ * so the board can cancel it directly (dnd-kit has no public cancel). A key
+ * event would go through every window listener first, and a popover, modal
+ * or sheet that takes Escape would close instead.
+ */
+type Cancellable = { handleCancel(event: Event): void };
+
+function trackedKeyboardSensor(live: { current: Cancellable | null }) {
+  return class TrackedKeyboardSensor extends KeyboardSensor {
+    constructor(props: KeyboardSensorProps) {
+      super(props);
+      // `handleCancel` is private in dnd-kit's types, but it is the sensor's
+      // own cancel: it detaches its listeners and calls onCancel.
+      live.current = this as unknown as Cancellable;
+    }
+  };
+}
 
 /** The mounted card element for `id` inside `root`, if any. */
 function cardElement(root: HTMLElement | null, id: string): HTMLElement | null {
@@ -293,9 +313,14 @@ export function KanbanBoard({
     [],
   );
 
+  // The keyboard sensor running the current lift; cleared when it ends.
+  const liveKeyboardSensor = useRef<Cancellable | null>(null);
+  const [BoardKeyboardSensor] = useState(() =>
+    trackedKeyboardSensor(liveKeyboardSensor),
+  );
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, {
+    useSensor(BoardKeyboardSensor, {
       coordinateGetter,
       keyboardCodes: KEYBOARD_CODES,
     }),
@@ -308,13 +333,68 @@ export function KanbanBoard({
   );
   const drag = session.drag;
   const draggedId = drag?.kind === "card" ? drag.id : null;
+  // The card focus moves to when the focused one is filtered away.
+  const [refocus, setRefocus] = useState<string | null>(null);
   const pinned = useMemo(
     () =>
-      [...new Set([draggedId, focusedCardId, openCardId])].filter(
+      [...new Set([draggedId, focusedCardId, openCardId, refocus])].filter(
         (id): id is string => !!id,
       ),
-    [draggedId, focusedCardId, openCardId],
+    [draggedId, focusedCardId, openCardId, refocus],
   );
+
+  // The ids each column shows, as of this render and the one before.
+  const shownIds = useMemo(
+    () =>
+      new Map(
+        columns.map((column) => [
+          column.id,
+          column.collapsed
+            ? []
+            : (cardsByColumn.get(column.id) ?? []).map((card) => card.id),
+        ]),
+      ),
+    [columns, cardsByColumn],
+  );
+  const lastShownIds = useRef(shownIds);
+  useLayoutEffect(() => {
+    const before = lastShownIds.current;
+    lastShownIds.current = shownIds;
+    if (!focusedCardId || before === shownIds) return;
+    if ([...shownIds.values()].some((ids) => ids.includes(focusedCardId))) {
+      return;
+    }
+    // Only when focus really went with the card (to the page), never away
+    // from wherever the user has put it since.
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
+    for (const [columnId, ids] of before) {
+      const at = ids.indexOf(focusedCardId);
+      if (at < 0) continue;
+      const now = new Set(shownIds.get(columnId) ?? []);
+      // The nearest card still shown, the one that took its place first.
+      for (let d = 1; d < ids.length; d++) {
+        for (const id of [ids[at + d], ids[at - d]]) {
+          if (id && now.has(id)) {
+            setRefocus(id);
+            return;
+          }
+        }
+      }
+      const first = shownIds.get(columnId)?.[0];
+      if (first) setRefocus(first);
+      return;
+    }
+  }, [shownIds, focusedCardId]);
+  useLayoutEffect(() => {
+    if (!refocus) return;
+    for (const [columnId, ids] of shownIds) {
+      const index = ids.indexOf(refocus);
+      if (index >= 0) scrollers.current.get(columnId)?.(index);
+    }
+    cardElement(boardRef.current, refocus)?.focus();
+    setRefocus(null);
+  }, [refocus, shownIds]);
 
   /** ↑/↓/←/→ on a card: scroll the next card into view, then focus it. */
   const focusFrom = useCallback(
@@ -356,14 +436,8 @@ export function KanbanBoard({
           keyboardLift
       )
         return;
-      document.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Escape",
-          code: "Escape",
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
+      // Straight to the sensor: no key event for other surfaces to take.
+      liveKeyboardSensor.current?.handleCancel(new Event("cancel"));
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () =>
@@ -379,6 +453,7 @@ export function KanbanBoard({
     if (!next.drag) {
       keyboardOver.current = null;
       keyboardDrag.current = false;
+      liveKeyboardSensor.current = null;
     }
     snapshotRef.current = next.lastSnapshot;
     setSession(next);

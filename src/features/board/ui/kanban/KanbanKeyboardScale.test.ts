@@ -187,6 +187,19 @@ function applyMovesInStore() {
   };
 }
 
+async function search(value: string) {
+  const input = searchBox();
+  act(() => {
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await flush();
+  await flush();
+}
+
 const storeOrder = (columnId: string) =>
   backend.cards
     .filter((c) => c.columnId === columnId)
@@ -395,11 +408,10 @@ describe("keyboard focus, drags and announcements at scale", () => {
     expect(document.activeElement).toBe(searchBox());
     // A control inside a card keeps its arrows too.
     const inner = cardEl("k1")!.querySelector<HTMLElement>("button");
-    if (inner) {
-      act(() => inner.focus());
-      key(inner, "ArrowDown");
-      expect(document.activeElement).toBe(inner);
-    }
+    expect(inner, "a control inside the card").not.toBeNull();
+    act(() => inner!.focus());
+    key(inner!, "ArrowDown");
+    expect(document.activeElement).toBe(inner);
     // Lifted: dnd-kit owns the arrows, focus never moves to k4.
     await lift("k3");
     key(cardEl("k3")!, "ArrowDown");
@@ -522,5 +534,101 @@ describe("keyboard focus, drags and announcements at scale", () => {
     act(() => tableRow("k2")!.blur());
     scrollEl(table, 700 * ROW_HEIGHT + 1);
     expect(tableRow("k2")).toBeNull();
+  });
+
+  it("a_click_during_a_lift_cancels_it_and_leaves_an_open_popover_open", async () => {
+    backend.seedThousand(1);
+    await renderBoard();
+    const sort = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Sort"]',
+    )!;
+    act(() => sort.click());
+    const menu = () => document.querySelector('[role="menu"][aria-label="Sort"]');
+    expect(menu()).not.toBeNull();
+    await lift("k3");
+    key(document, "ArrowDown");
+    await flush();
+    // A click into the menu: the lift ends, the menu stays.
+    act(() => {
+      menu()!.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
+      );
+    });
+    await flush();
+    expect(cardEl("k3")!.hasAttribute("data-dragging")).toBe(false);
+    expect(liveRegion()).toBe(
+      "Moving card #4 was cancelled. It is back in Backlog, position 4 of 1000.",
+    );
+    expect(menu()).not.toBeNull();
+    expect(sort.getAttribute("aria-expanded")).toBe("true");
+    key(document, " ");
+    await flush();
+    expect(commands("board_card_move")).toHaveLength(0);
+  });
+
+  it("focus_survives_window_deactivation_while_scrolled_away", async () => {
+    backend.seedThousand(1);
+    await renderBoard();
+    act(() => cardEl("k5")!.focus());
+    // Another app takes focus: the card blurs with nowhere to go.
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    act(() => cardEl("k5")!.blur());
+    scrollColumn("backlog", 500 * STEP);
+    expect(rendered("backlog")).toContain("k500");
+    expect(rendered("backlog")).toContain("k5");
+    // Back in the app: the window gives the card its focus again.
+    hasFocus.mockReturnValue(true);
+    act(() => cardEl("k5")!.focus());
+    expect(focusedCard()).toBe("k5");
+    key(cardEl("k5")!, "ArrowDown");
+    expect(focusedCard()).toBe("k6");
+  });
+
+  it("focus_survives_a_board_changed_reload_while_scrolled_away", async () => {
+    backend.seedThousand(1);
+    await renderBoard();
+    act(() => cardEl("k5")!.focus());
+    scrollColumn("backlog", 500 * STEP);
+    // The other app writes: a new title on another card.
+    backend.cards = backend.cards.map((c) =>
+      c.id === "k501" ? { ...c, title: "Renamed elsewhere" } : c,
+    );
+    await reload();
+    expect(rendered("backlog")).toContain("k5");
+    expect(rendered("backlog")).toContain("k500");
+    expect(focusedCard()).toBe("k5");
+    expect(cardEl("k501")!.textContent).toContain("Renamed elsewhere");
+    key(cardEl("k5")!, "ArrowDown");
+    expect(focusedCard()).toBe("k6");
+  });
+
+  it("a_focused_card_hidden_by_a_filter_moves_focus_to_the_nearest_visible_card", async () => {
+    backend.seedThousand(1);
+    await renderBoard();
+    await search("card");
+    const hide = async (id: string) => {
+      backend.cards = backend.cards.map((c) =>
+        c.id === id ? { ...c, title: "Hidden by the search" } : c,
+      );
+      await reload();
+    };
+    // Deep in the column: the card that took its place gets focus.
+    scrollColumn("backlog", 500 * STEP);
+    act(() => cardEl("k500")!.focus());
+    await hide("k500");
+    expect(cardEl("k500")).toBeNull();
+    expect(focusedCard()).toBe("k501");
+    expect(cardEl("k501")!.getAttribute("aria-description")).toBe(
+      "501 of 999 in Backlog",
+    );
+    // The last card: the one before it.
+    scrollColumn("backlog", 1000 * STEP);
+    act(() => cardEl("k999")!.focus());
+    await hide("k999");
+    expect(focusedCard()).toBe("k998");
+    // Focus somewhere else is left alone.
+    act(() => searchBox().focus());
+    await hide("k998");
+    expect(document.activeElement).toBe(searchBox());
   });
 });

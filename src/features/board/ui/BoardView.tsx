@@ -2542,7 +2542,13 @@ function BoardContent({
             // The card or row holding keyboard focus, in any layout: each
             // keeps it mounted when it is scrolled out of its window (R81).
             onFocus={(event) => setFocusedId(focusedRowOf(event.target))}
-            onBlur={(event) => setFocusedId(focusedRowOf(event.relatedTarget))}
+            onBlur={(event) => {
+              // The window losing focus (another app, a system dialog) blurs
+              // the card with nowhere to go; it gets focus back on return, so
+              // keep it pinned rather than let it scroll out and unmount.
+              if (!event.relatedTarget && !document.hasFocus()) return;
+              setFocusedId(focusedRowOf(event.relatedTarget));
+            }}
           >
             {detail && layoutState.layout === "list" ? (
               <BoardList
