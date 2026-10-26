@@ -1,7 +1,7 @@
 //! Priority: rename the five levels and hide some from pickers.
 use super::{Edit, button, card_row, target};
 use crate::board::BoardView;
-use gespan_core::board::extras::{PriorityScheme, SettingsPatch};
+use gespan_core::board::extras::{PriorityScheme, SettingsPatch, priority_scheme};
 use gpui::{AnyElement, Context, div, prelude::*, px};
 
 impl BoardView {
@@ -14,15 +14,37 @@ impl BoardView {
             .unwrap_or_default()
     }
 
-    fn patch_scheme(&mut self, scheme: &PriorityScheme, cx: &mut Context<Self>) -> bool {
-        let json = serde_json::to_string(scheme).ok();
-        self.patch_settings(
-            SettingsPatch {
-                priority_json: Some(json),
-                ..Default::default()
-            },
-            cx,
-        )
+    /// Change the scheme as stored right now (not the copy on screen, which
+    /// reads as the defaults while settings are unreadable). Nothing is
+    /// written while the settings could not be read. True when the edit is
+    /// done (written, or dropped for that reason).
+    fn edit_scheme(
+        &mut self,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut PriorityScheme) -> bool + 'static,
+    ) -> bool {
+        if !self.settings_loaded {
+            return true;
+        }
+        let Some(board_id) = self.open_board_id.clone() else {
+            return true;
+        };
+        self.settings_write(cx, move |service| {
+            let mut scheme = priority_scheme(&service.settings(&board_id)?);
+            if !change(&mut scheme) {
+                return Ok(());
+            }
+            let json = serde_json::to_string(&scheme).map_err(|error| error.to_string())?;
+            service
+                .update_settings(
+                    &board_id,
+                    &SettingsPatch {
+                        priority_json: Some(Some(json)),
+                        ..Default::default()
+                    },
+                )
+                .map(drop)
+        })
     }
 
     pub(super) fn commit_priority_name(
@@ -34,23 +56,26 @@ impl BoardView {
         if text.is_empty() {
             return true;
         }
-        let mut scheme = self.priority.clone();
-        let Some(slot) = scheme.names.get_mut(level as usize) else {
-            return true;
-        };
-        *slot = text.to_string();
-        self.patch_scheme(&scheme, cx)
+        let text = text.to_string();
+        self.edit_scheme(cx, move |scheme| {
+            let Some(slot) = scheme.names.get_mut(level as usize) else {
+                return false;
+            };
+            *slot = text;
+            true
+        })
     }
 
     fn toggle_priority_hidden(&mut self, level: u8, cx: &mut Context<Self>) {
-        let mut scheme = self.priority.clone();
-        if scheme.hidden.contains(&level) {
-            scheme.hidden.retain(|hidden| *hidden != level);
-        } else {
-            scheme.hidden.push(level);
-            scheme.hidden.sort_unstable();
-        }
-        self.patch_scheme(&scheme, cx);
+        self.edit_scheme(cx, move |scheme| {
+            if scheme.hidden.contains(&level) {
+                scheme.hidden.retain(|hidden| *hidden != level);
+            } else {
+                scheme.hidden.push(level);
+                scheme.hidden.sort_unstable();
+            }
+            true
+        });
     }
 
     pub(super) fn render_priority(&self, cx: &mut Context<Self>) -> AnyElement {

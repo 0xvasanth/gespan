@@ -268,7 +268,8 @@ impl BoardView {
     }
 
     pub(super) fn patch_settings(&mut self, patch: SettingsPatch, cx: &mut Context<Self>) -> bool {
-        let Some(board_id) = self.open_board_id.clone() else {
+        // A patch built from settings that could not be read must not land.
+        let Some(board_id) = self.open_board_id.clone().filter(|_| self.settings_loaded) else {
             return false;
         };
         self.settings_write(cx, |service| {
@@ -398,6 +399,24 @@ impl BoardView {
             Section::Templates => self.render_templates(cx),
             Section::Automation => self.render_automation(cx),
         };
+        let unreadable = (!self.settings_loaded).then(|| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .id("settings-unreadable")
+                        .debug_selector(|| "settings-unreadable".into())
+                        .text_size(px(12.))
+                        .text_color(diff_foreground(false))
+                        .child("Couldn't load settings"),
+                )
+                .child(
+                    button("settings-retry".into(), "Retry", false)
+                        .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
+                )
+        });
         let error = page.error.clone().map(|error| {
             div()
                 .id("settings-error")
@@ -458,6 +477,7 @@ impl BoardView {
                                 .flex()
                                 .flex_col()
                                 .gap_3()
+                                .children(unreadable)
                                 .children(error)
                                 .child(body),
                         ),

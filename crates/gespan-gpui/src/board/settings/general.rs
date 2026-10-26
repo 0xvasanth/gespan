@@ -8,6 +8,8 @@ use gpui::{AnyElement, Context, div, prelude::*, px};
 impl BoardView {
     pub(super) fn render_general(&self, cx: &mut Context<Self>) -> AnyElement {
         let settings = self.board_settings.clone();
+        // Unknown settings show nothing as chosen.
+        let loaded = self.settings_loaded;
         let name = self
             .detail
             .as_ref()
@@ -16,7 +18,7 @@ impl BoardView {
         let icons: Vec<AnyElement> = BOARD_ICONS
             .iter()
             .map(|&icon_name| {
-                let on = settings.icon.as_deref() == Some(icon_name);
+                let on = loaded && settings.icon.as_deref() == Some(icon_name);
                 let patch_value = (!on).then(|| icon_name.to_string());
                 button(format!("settings-icon-{icon_name}"), icon_name, on)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -33,7 +35,7 @@ impl BoardView {
             .collect();
         let colors: Vec<AnyElement> = palette_hexes()
             .map(|hex| {
-                let on = settings.color.as_deref() == Some(hex.as_str());
+                let on = loaded && settings.color.as_deref() == Some(hex.as_str());
                 let patch_value = (!on).then(|| hex.clone());
                 swatch(format!("settings-color-{hex}"), &hex, on)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -52,7 +54,7 @@ impl BoardView {
             button(
                 "settings-default-view-none".into(),
                 "All cards",
-                settings.default_view_id.is_none(),
+                loaded && settings.default_view_id.is_none(),
             )
             .on_click(cx.listener(|this, _, _, cx| {
                 this.patch_settings(
@@ -67,7 +69,7 @@ impl BoardView {
         ];
         for (index, view) in self.views.saved.iter().enumerate() {
             let id = view.id.clone();
-            let on = settings.default_view_id.as_deref() == Some(view.id.as_str());
+            let on = loaded && settings.default_view_id.as_deref() == Some(view.id.as_str());
             views.push(
                 button(format!("settings-default-view-{index}"), &view.name, on)
                     .on_click(cx.listener(move |this, _, _, cx| {

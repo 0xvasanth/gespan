@@ -7969,6 +7969,12 @@ fn save_as_template_then_create_copies_labels_fields_views(cx: &mut TestAppConte
     // Blank name: an inline message, nothing saved.
     click(visual, "settings-template-save");
     assert!(shown(visual, "settings-error"));
+    f.window
+        .read_with(visual, |view, _| {
+            let message = view.settings.as_ref().and_then(|page| page.error.clone());
+            assert_eq!(message.as_deref(), Some("Name the template first"));
+        })
+        .unwrap();
     click(visual, "settings-template-name");
     press_enter(visual);
     assert!(shown(visual, "settings-error"));

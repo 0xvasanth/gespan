@@ -8,8 +8,6 @@ use gespan_core::board::{
 use gpui::{AnyElement, Context, Role, div, prelude::*, px};
 use serde_json::{Map, Value, json};
 
-const UNREADABLE: &str = "Couldn't load settings";
-
 /// The events a rule can be set for: the stored key and the label shown.
 const EVENTS: [(&str, &str); 6] = [
     ("started", "Started"),
@@ -62,6 +60,16 @@ impl BoardView {
         });
     }
 
+    /// The three switches as shown (run with, write-back, ticket status
+    /// changes), or None while the settings are unknown.
+    pub(crate) fn agent_switches(&self) -> Option<[bool; 3]> {
+        self.settings_loaded.then_some([
+            self.board_settings.run_with,
+            self.board_settings.write_back,
+            self.board_settings.ticket_status_changes,
+        ])
+    }
+
     /// The rule the picker shows for an event. A column deleted since reads
     /// as Stay (and is not rewritten until a rule is picked).
     pub(crate) fn displayed_rule(&self, key: &str) -> RuleTarget {
@@ -81,10 +89,11 @@ impl BoardView {
 
     pub(super) fn render_automation(&self, cx: &mut Context<Self>) -> AnyElement {
         let loaded = self.settings_loaded;
-        let settings = self.board_settings.clone();
-        let toggle = |id: &str, label: &str, on: bool, make: fn(bool) -> SettingsPatch| {
+        let state = self.agent_switches();
+        let toggle = |id: &str, label: &str, index: usize, make: fn(bool) -> SettingsPatch| {
             // Unknown until the settings are read: neither on nor off.
-            let shown_on = loaded && on;
+            let on = state.is_some_and(|switches| switches[index]);
+            let shown_on = on;
             let element = button(id.to_string(), label, shown_on).role(Role::Switch);
             if loaded {
                 element
@@ -97,28 +106,22 @@ impl BoardView {
             }
         };
         let toggles = vec![
-            toggle(
-                "settings-toggle-run-with",
-                "Run with…",
-                settings.run_with,
-                |v| SettingsPatch {
+            toggle("settings-toggle-run-with", "Run with…", 0, |v| {
+                SettingsPatch {
                     run_with: Some(v),
                     ..Default::default()
-                },
-            ),
-            toggle(
-                "settings-toggle-write-back",
-                "Agent write-back",
-                settings.write_back,
-                |v| SettingsPatch {
+                }
+            }),
+            toggle("settings-toggle-write-back", "Agent write-back", 1, |v| {
+                SettingsPatch {
                     write_back: Some(v),
                     ..Default::default()
-                },
-            ),
+                }
+            }),
             toggle(
                 "settings-toggle-ticket-status",
                 "Agent may change ticket status",
-                settings.ticket_status_changes,
+                2,
                 |v| SettingsPatch {
                     ticket_status_changes: Some(v),
                     ..Default::default()
@@ -189,16 +192,6 @@ impl BoardView {
             .flex()
             .flex_col()
             .gap_3()
-            .when(!loaded, |d| {
-                d.child(
-                    div()
-                        .id("settings-unreadable")
-                        .debug_selector(|| "settings-unreadable".into())
-                        .text_size(px(12.))
-                        .text_color(crate::theme::diff_foreground(false))
-                        .child(UNREADABLE),
-                )
-            })
             .child(heading("AGENTS"))
             .child(div().flex().flex_wrap().gap(px(6.)).children(toggles))
             .child(heading("WHEN A LINKED SESSION OR PR REPORTS"))

@@ -80,6 +80,12 @@ impl BoardView {
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut DisplayOptions) + 'static,
     ) {
+        // The defaults on screen are not the stored ones while settings are
+        // unreadable: neither a view override nor the board default is built
+        // from them.
+        if !self.settings_loaded {
+            return;
+        }
         if self.editing_view_display() {
             let mut display = self.effective_display();
             change(&mut display);

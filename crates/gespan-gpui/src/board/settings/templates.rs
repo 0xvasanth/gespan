@@ -5,7 +5,7 @@ use crate::board::BoardView;
 use gespan_core::board::Service;
 use gpui::{AnyElement, Context, div, prelude::*, px};
 
-const NAME_MISSING: &str = "Enter a template name";
+const NAME_MISSING: &str = "Name the template first";
 const BUILT_IN_DELETE: &str = "Built-in templates can't be deleted";
 
 impl BoardView {
@@ -40,14 +40,7 @@ impl BoardView {
         ok
     }
 
-    fn delete_template(&mut self, id: &str, built_in: bool, cx: &mut Context<Self>) {
-        if built_in {
-            if let Some(page) = &mut self.settings {
-                page.error = Some(BUILT_IN_DELETE.into());
-            }
-            cx.notify();
-            return;
-        }
+    fn delete_template(&mut self, id: &str, cx: &mut Context<Self>) {
         self.settings_write(cx, |service| service.delete_template(id));
         self.refresh_templates();
         cx.notify();
@@ -96,9 +89,9 @@ impl BoardView {
                     .child(
                         button(format!("settings-template-delete-{index}"), "Delete", false)
                             .aria_label(format!("Delete template {}", template.name))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.delete_template(&id, false, cx)
-                            })),
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.delete_template(&id, cx)),
+                            ),
                     )
                     .into_any_element(),
             );
