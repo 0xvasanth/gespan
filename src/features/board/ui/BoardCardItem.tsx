@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Popover, type PopoverAnchor } from "../../../shared/ui/Popover";
 import {
   Bot,
@@ -230,6 +230,8 @@ export function BoardCardItem({
   onLink,
   onDelete,
   moreItems,
+  selected = false,
+  onSelectClick,
 }: {
   card: BoardCard;
   /** In a column with the `done` role: the title is dimmed. */
@@ -255,6 +257,13 @@ export function BoardCardItem({
    * from "More…" in the card's "…" menu.
    */
   moreItems?: (close: () => void) => ReactNode;
+  /** In the bulk selection: the card is outlined. */
+  selected?: boolean;
+  /**
+   * Sees a click first; true means it was a selection click (⌘/Ctrl or
+   * Shift), so the card doesn't open.
+   */
+  onSelectClick?: (event: MouseEvent<HTMLElement>) => boolean;
 }) {
   const target = link?.target;
   const actions = useRef<HTMLDivElement>(null);
@@ -263,7 +272,11 @@ export function BoardCardItem({
   return (
     <div
       data-board-card={card.id}
-      onClick={onOpen}
+      data-selected={selected ? "" : undefined}
+      onClick={(event) => {
+        if (onSelectClick?.(event)) return;
+        onOpen();
+      }}
       onContextMenu={
         moreItems
           ? (event) => {
@@ -273,7 +286,9 @@ export function BoardCardItem({
             }
           : undefined
       }
-      className="group/card relative cursor-pointer rounded-lg border border-stroke bg-background-base px-3 py-2.5 hover:border-selection-strong"
+      className={`group/card relative cursor-pointer rounded-lg border bg-background-base px-3 py-2.5 hover:border-selection-strong ${
+        selected ? "border-accent ring-1 ring-accent/60" : "border-stroke"
+      }`}
     >
       <div
         className={`line-clamp-2 break-words pr-10 text-[13px] leading-snug ${

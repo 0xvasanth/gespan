@@ -22,6 +22,7 @@ export function ArchiveView({
   boardId,
   columnNames,
   pendingDelete,
+  pendingDeletes = [],
   onClose,
   onError,
 }: {
@@ -29,6 +30,8 @@ export function ArchiveView({
   columnNames: ReadonlyMap<string, string>;
   /** The card the undo toast is holding a delete for. */
   pendingDelete: string | null;
+  /** Cards of a held bulk delete, hidden like `pendingDelete`. */
+  pendingDeletes?: readonly string[];
   onClose: () => void;
   onError: (message: string) => void;
 }) {
@@ -74,7 +77,9 @@ export function ArchiveView({
       );
   };
 
-  const shown = (cards ?? []).filter((card) => card.id !== pendingDelete);
+  const shown = (cards ?? []).filter(
+    (card) => card.id !== pendingDelete && !pendingDeletes.includes(card.id),
+  );
 
   return (
     <aside

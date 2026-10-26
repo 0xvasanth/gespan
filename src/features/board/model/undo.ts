@@ -19,6 +19,8 @@ export type UndoAction =
   | { kind: "moveMany"; items: Place[] }
   | { kind: "archive"; items: Place[] }
   | { kind: "delete"; cardId: string; columnId: string; index: number }
+  /** A held delete of several cards (a bulk delete). */
+  | { kind: "deleteMany"; items: Place[] }
   | { kind: "sort"; columnId: string; order: string[] };
 
 /** The toast: an action that can be undone, or a message (`action` null). */
@@ -55,6 +57,8 @@ export type Undo = {
   current: () => UndoToast | null;
   /** The card whose delete is being held, if any. */
   pendingDelete: () => string | null;
+  /** Every card whose delete is being held: one, several, or none. */
+  pendingDeletes: () => string[];
   subscribe: (listener: () => void) => () => void;
 };
 
@@ -79,9 +83,17 @@ export function createUndo({
     timer = null;
   };
 
-  /** Closes the toast; returns the held delete's card, if it held one. */
-  const close = (): string | null => {
-    const held = toast?.action?.kind === "delete" ? toast.action.cardId : null;
+  /** The cards a toast's delete holds. */
+  const heldBy = (shown: UndoToast | null): string[] => {
+    const action = shown?.action;
+    if (action?.kind === "delete") return [action.cardId];
+    if (action?.kind === "deleteMany") return action.items.map(([id]) => id);
+    return [];
+  };
+
+  /** Closes the toast; returns the cards of the delete it held, if any. */
+  const close = (): string[] => {
+    const held = heldBy(toast);
     clearTimer();
     toast = null;
     return held;
@@ -91,7 +103,7 @@ export function createUndo({
     const hadToast = toast !== null;
     const held = close();
     if (hadToast) emit();
-    if (held) await onCommitDelete(held);
+    for (const id of held) await onCommitDelete(id);
   };
 
   const dispose = () => {
@@ -114,7 +126,7 @@ export function createUndo({
     push: (label, action) => {
       if (disposed) return;
       const held = close();
-      if (held) void onCommitDelete(held);
+      for (const id of held) void onCommitDelete(id);
       show(label, action);
     },
     notify: (message) => {
@@ -139,6 +151,7 @@ export function createUndo({
     current: () => toast,
     pendingDelete: () =>
       toast?.action?.kind === "delete" ? toast.action.cardId : null,
+    pendingDeletes: () => heldBy(toast),
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -161,6 +174,12 @@ export function archivedLabel(numbers: readonly number[]): string {
 
 export function deletedLabel(number: number): string {
   return `Deleted #${number}`;
+}
+
+export function deletedManyLabel(numbers: readonly number[]): string {
+  return numbers.length === 1
+    ? deletedLabel(numbers[0]!)
+    : `Deleted ${numbers.length} cards`;
 }
 
 export function sortedLabel(column: string): string {
@@ -230,6 +249,8 @@ export async function runUndo(action: UndoAction, api: UndoApi) {
       return putBack(action.items, api.restoreCard);
     case "delete":
       return api.restoreCard(action.cardId, action.columnId, action.index);
+    case "deleteMany":
+      return putBack(action.items, api.restoreCard);
     case "sort": {
       // Cards that left the column since are skipped; a deleted one is reported.
       const { live, archivedIds } = await api.snapshot();

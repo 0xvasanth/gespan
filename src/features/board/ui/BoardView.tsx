@@ -31,6 +31,7 @@ import {
   duplicateCard,
   getBoard,
   getCardExtras,
+  getCardIndex,
   getCardTickets,
   listArchivedCards,
   listFields,
@@ -47,8 +48,11 @@ import {
   setCardDue,
   setCardLabels,
   setCardPriority,
+  setCardsLabel,
+  setCardsPriority,
   setColumnDisplay,
   subscribeBoard,
+  updateCard,
   updateColumn,
   updateView,
   type Board,
@@ -59,6 +63,7 @@ import {
   type BoardLabel,
   type BoardView as SavedView,
   type CardExtras,
+  type CardIndexRow,
   type ColumnRole,
   type FilterRow,
   type SortSpec,
@@ -80,11 +85,28 @@ import {
   type FilterSources,
 } from "../model/views";
 import { sortedCardIds, type SortKey } from "../model/columnActions";
+import {
+  GROUP_BYS,
+  LAYOUTS,
+  TABLE_COLUMNS,
+  parseLayout,
+  patchLayout,
+  tableColumns,
+  type LayoutState,
+} from "../model/layout";
+import {
+  EMPTY_SELECTION,
+  pruneSelection,
+  rangeSelect,
+  toggleSelect,
+  type Selection,
+} from "../model/selection";
 import { createCardFromTicket, newCardColumn } from "../model/ticketCards";
 import {
   archivedLabel,
   createUndo,
   deletedLabel,
+  deletedManyLabel,
   movedLabel,
   runUndo,
   sortedLabel,
@@ -95,10 +117,18 @@ import {
 } from "../model/undo";
 import { ArchiveView } from "./ArchiveView";
 import { BoardCardItem } from "./BoardCardItem";
+import { BoardList } from "./BoardList";
+import { BoardTable } from "./BoardTable";
+import { SelectionBar } from "./SelectionBar";
 import { BoardColumnHeader } from "./BoardColumnHeader";
 import { BoardFilterMenu, BoardSortMenu, FilterChips } from "./BoardFilter";
 import { ViewTabs } from "./ViewTabs";
-import { MenuButton, MenuItem, NameInput } from "./boardControls";
+import {
+  MenuButton,
+  MenuItem,
+  MenuLabel,
+  NameInput,
+} from "./boardControls";
 import {
   errorText,
   linkValue,
@@ -135,6 +165,8 @@ function placeOf(
   );
   return { place: [card.id, card.columnId, index], number: card.number };
 }
+
+const dragInProgress = () => !!document.querySelector("[data-dragging]");
 
 const OPEN_BOARD_KEY = "gespan:open-board";
 
@@ -276,6 +308,10 @@ function BoardContent({
   const [pageCardId, setPageCardId] = useState<string | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [newCardOpen, setNewCardOpen] = useState(false);
+  const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
+  const [cardIndex, setCardIndex] = useState<ReadonlyMap<string, CardIndexRow>>(
+    () => new Map(),
+  );
   const rootRef = useRef<HTMLDivElement>(null);
   const showCard = (next: { id: string; focus?: "title" | "link" }) => {
     setOpenCard(next);
@@ -376,6 +412,12 @@ function BoardContent({
         void deleteArchivedCard(action.cardId).catch(
           fail("Couldn't delete the card"),
         );
+      } else if (action.kind === "deleteMany") {
+        for (const [cardId] of action.items) {
+          void deleteArchivedCard(cardId).catch(
+            fail("Couldn't delete the card"),
+          );
+        }
       }
     },
     [fail, undo],
@@ -485,6 +527,8 @@ function BoardContent({
     setBaseline({ spec: EMPTY_SPEC, layout: DEFAULT_LAYOUT });
     applySpec(EMPTY_SPEC, DEFAULT_LAYOUT);
     setMatched(null);
+    setSelection(EMPTY_SELECTION);
+    setCardIndex(new Map());
     if (!openId) return;
     void refresh();
     return subscribeBoard(openId, () => void refresh());
@@ -632,6 +676,78 @@ function BoardContent({
     narrowingRef.current = narrowing;
     sortedRef.current = sorted;
   });
+
+  const layoutState = useMemo(() => parseLayout(layout), [layout]);
+  const editLayout = useCallback(
+    (patch: (current: LayoutState) => Partial<LayoutState>) =>
+      setLayout((json) => patchLayout(json, patch(parseLayout(json)))),
+    [],
+  );
+
+  // The cards on screen, in the order the board query put them: what a Shift
+  // range and the bulk actions follow in every layout.
+  const visibleCards = useMemo(() => {
+    if (!detail) return [];
+    const byId = new Map(detail.cards.map((card) => [card.id, card]));
+    const order = new Map(detail.columns.map((col) => [col.id, col.position]));
+    const manual = [...detail.cards].sort(
+      (a, b) =>
+        (order.get(a.columnId) ?? 0) - (order.get(b.columnId) ?? 0) ||
+        a.position - b.position,
+    );
+    if (!matched) return manual;
+    const ranked = matched.flatMap((id) => byId.get(id) ?? []);
+    if (narrowing) return ranked;
+    // A card the last query predates still shows, after the ranked ones.
+    const seen = new Set(ranked.map((card) => card.id));
+    return [...ranked, ...manual.filter((card) => !seen.has(card.id))];
+  }, [detail, matched, narrowing]);
+  const selectedSet = useMemo(() => new Set(selection.ids), [selection.ids]);
+  const visibleCardsRef = useRef(visibleCards);
+  useLayoutEffect(() => {
+    visibleCardsRef.current = visibleCards;
+  });
+
+  // A selection holds only cards on screen: a filter, search or view change
+  // that hides some drops them, so "N selected" and bulk actions match it.
+  useEffect(() => {
+    if (!detail) return;
+    const shown = new Set(visibleCards.map((card) => card.id));
+    const exists = new Set(detail.cards.map((card) => card.id));
+    setSelection((current) => pruneSelection(current, shown, exists));
+  }, [detail, visibleCards]);
+
+  const isTable = layoutState.layout === "table";
+  useEffect(() => {
+    if (!isTable || !openId || detail?.board.id !== openId) return;
+    let stale = false;
+    getCardIndex(openId)
+      .then((rows) => {
+        if (!stale) setCardIndex(new Map(rows.map((row) => [row.cardId, row])));
+      })
+      // The columns that need it stay empty; the rest of the table shows.
+      .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, [isTable, openId, detail]);
+
+  /** ⌘/Ctrl-click toggles a card, Shift-click selects a range; true when it was one. */
+  const selectClick = (
+    event: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean },
+    card: BoardCard,
+  ): boolean => {
+    if (IS_MAC ? event.metaKey : event.ctrlKey) {
+      setSelection((current) => toggleSelect(current, card.id));
+      return true;
+    }
+    if (event.shiftKey) {
+      const order = visibleCardsRef.current.map((other) => other.id);
+      setSelection((current) => rangeSelect(current, card.id, order));
+      return true;
+    }
+    return false;
+  };
 
   const onCardMove = useCallback(
     (cardId: string, shown: DropTarget) => {
@@ -948,6 +1064,77 @@ function BoardContent({
       .catch(fail(`Couldn't archive the cards of ${column.name}`));
   };
 
+  /** The selected cards in the order shown. */
+  const selectedCards = () => {
+    const chosen = new Set(selection.ids);
+    return visibleCardsRef.current.filter((card) => chosen.has(card.id));
+  };
+
+  const bulkStatus = (column: BoardColumn) => {
+    const moving = selectedCards().filter((card) => card.columnId !== column.id);
+    if (!moving.length) return;
+    const ids = moving.map((card) => card.id);
+    const { items, numbers } = placesOf(ids);
+    const staying = wholeColumn(column.id).filter(
+      (card) => !ids.includes(card.id),
+    ).length;
+    void undo.commitPending();
+    moveCards(ids, column.id, staying, "user")
+      .then(() =>
+        pushUndo(column.boardId, movedLabel(numbers, column.name), {
+          kind: "moveMany",
+          items,
+        }),
+      )
+      .catch(fail(`Couldn't move the cards to ${column.name}`));
+  };
+
+  const bulkPriority = (priority: number) => {
+    const ids = selectedCards().map((card) => card.id);
+    if (ids.length) {
+      void setCardsPriority(ids, priority).catch(
+        fail("Couldn't set the priority"),
+      );
+    }
+  };
+
+  const bulkLabel = (labelId: string, on: boolean) => {
+    const ids = selectedCards().map((card) => card.id);
+    if (ids.length) {
+      void setCardsLabel(ids, labelId, on).catch(fail("Couldn't set the label"));
+    }
+  };
+
+  /** Takes the selected cards off the board now, then holds or archives them. */
+  const bulkRemove = (hold: boolean) => {
+    const before = detailRef.current;
+    const ids = selectedCards().map((card) => card.id);
+    if (!before || !ids.length) return;
+    const { items, numbers } = placesOf(ids);
+    if (!items.length) return;
+    void undo.commitPending();
+    setSelection(EMPTY_SELECTION);
+    setOpenCard((open) => (open && ids.includes(open.id) ? null : open));
+    setDetail({
+      ...before,
+      cards: before.cards.filter((card) => !ids.includes(card.id)),
+    });
+    archiveCards(ids)
+      .then(() =>
+        pushUndo(
+          before.board.id,
+          hold ? deletedManyLabel(numbers) : archivedLabel(numbers),
+          hold ? { kind: "deleteMany", items } : { kind: "archive", items },
+        ),
+      )
+      .catch((cause) => {
+        fail(hold ? "Couldn't delete the cards" : "Couldn't archive the cards")(
+          cause,
+        );
+        void refresh();
+      });
+  };
+
   const dirty =
     activeView !== null &&
     (!sameSpec(currentSpec({ query, rows, sort }), baseline.spec) ||
@@ -1198,12 +1385,46 @@ function BoardContent({
       onLink={() => showCard({ id: card.id, focus: "link" })}
       onDelete={() => removeCard(card)}
       moreItems={moreItemsFor(card)}
+      selected={selectedSet.has(card.id)}
+      onSelectClick={(event) => selectClick(event, card)}
     />
   );
 
+  /** A click on a list or table row: selects (⌘/Ctrl, Shift) or opens the card. */
+  const rowClick = (
+    event: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean },
+    card: BoardCard,
+  ) => {
+    if (!selectClick(event, card)) showCard({ id: card.id });
+  };
+
+  const addLabelTo = (card: BoardCard, name: string) =>
+    void createLabel(card.boardId, name, nextLabelColor(labels.length))
+      .then((created) =>
+        setCardLabels(card.id, [
+          ...(extras[card.id]?.labels ?? []),
+          created.id,
+        ]),
+      )
+      .catch(fail(`Couldn't create a label for card #${card.number}`));
+
+  const labelCounts = new Map<string, number>();
+  for (const id of selection.ids) {
+    for (const label of extras[id]?.labels ?? []) {
+      labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+    }
+  }
+
   const doneColumn = detail?.columns.find((column) => column.role === "done");
-  const held = undoToast?.action?.kind === "delete" ? undoToast.action : null;
-  const heldColumn = held?.columnId ?? null;
+  // Cards a held delete hides, by column (a bulk delete holds several).
+  const heldAction = undoToast?.action;
+  const heldPlaces: Place[] =
+    heldAction?.kind === "delete"
+      ? [[heldAction.cardId, heldAction.columnId, heldAction.index]]
+      : heldAction?.kind === "deleteMany"
+        ? heldAction.items
+        : [];
+  const heldIds = heldPlaces.map(([cardId]) => cardId);
 
   const renderColumnHeader = (column: BoardColumn, shown: number) => (
     <BoardColumnHeader
@@ -1233,7 +1454,7 @@ function BoardContent({
           fail("Couldn't set the column's role"),
         )
       }
-      heldCards={heldColumn === column.id ? 1 : 0}
+      heldCards={heldPlaces.filter(([, id]) => id === column.id).length}
       onDelete={() =>
         // A delete held in this column is carried out first.
         void undo
@@ -1302,6 +1523,22 @@ function BoardContent({
       ref={rootRef}
       tabIndex={-1}
       className="flex min-h-0 flex-1 flex-col outline-none"
+      onKeyDown={(event) => {
+        // Escape's last layer: the drawer, menus and inline edits take it
+        // first (they mark it handled); what is left clears the selection.
+        if (
+          event.key !== "Escape" ||
+          event.defaultPrevented ||
+          event.nativeEvent.isComposing ||
+          !selection.ids.length ||
+          // A drag in progress is cancelled by its own Escape.
+          dragInProgress()
+        ) {
+          return;
+        }
+        event.preventDefault();
+        setSelection(EMPTY_SELECTION);
+      }}
       onKeyDownCapture={(event) => {
         // Cmd+N (Ctrl+N elsewhere) with focus anywhere in the board, the
         // search box and menu buttons included (capture, so a control that
@@ -1405,6 +1642,93 @@ function BoardContent({
               onChange={setRows}
             />
             <BoardSortMenu sort={sort} onChange={setSort} />
+            <MenuButton
+              label="Layout"
+              width={160}
+              className={BUTTON}
+              trigger={`Layout: ${LAYOUTS.find(([kind]) => kind === layoutState.layout)?.[1]}`}
+            >
+              {(close) =>
+                LAYOUTS.map(([kind, name]) => (
+                  <MenuItem
+                    key={kind}
+                    checked={kind === layoutState.layout}
+                    onSelect={() => {
+                      close();
+                      editLayout(() => ({ layout: kind }));
+                    }}
+                  >
+                    {name}
+                  </MenuItem>
+                ))
+              }
+            </MenuButton>
+            {layoutState.layout === "list" ? (
+              <MenuButton
+                label="Group by"
+                width={180}
+                className={BUTTON}
+                trigger={`Group by ${GROUP_BYS.find(([by]) => by === layoutState.groupBy)?.[1]}`}
+              >
+                {(close) =>
+                  GROUP_BYS.map(([by, name]) => (
+                    <MenuItem
+                      key={by}
+                      checked={by === layoutState.groupBy}
+                      onSelect={() => {
+                        close();
+                        editLayout(() => ({ groupBy: by }));
+                      }}
+                    >
+                      {name}
+                    </MenuItem>
+                  ))
+                }
+              </MenuButton>
+            ) : null}
+            {layoutState.layout === "table" ? (
+              <MenuButton
+                label="Columns"
+                width={200}
+                className={BUTTON}
+                trigger="Columns"
+              >
+                {() => (
+                  <>
+                    <MenuLabel>Show columns</MenuLabel>
+                    {[
+                      ...TABLE_COLUMNS.slice(1).map(([id, name]) => [id, name]),
+                      ...fields.map((field) => [`field:${field.id}`, field.name]),
+                    ].map(([id, name]) => {
+                      const shown = tableColumns(layoutState, fields).some(
+                        (column) => column.id === id,
+                      );
+                      return (
+                        <MenuItem
+                          key={id}
+                          kind="checkbox"
+                          checked={shown}
+                          onSelect={() =>
+                            editLayout((current) => {
+                              const ids = tableColumns(current, fields).map(
+                                (column) => column.id,
+                              );
+                              return {
+                                columns: shown
+                                  ? ids.filter((other) => other !== id)
+                                  : [...ids, id!],
+                              };
+                            })
+                          }
+                        >
+                          {name}
+                        </MenuItem>
+                      );
+                    })}
+                  </>
+                )}
+              </MenuButton>
+            ) : null}
             {sorted ? (
               <span data-sorted-by="" className="text-[12px] text-content/55">
                 Sorted by {sortLabel(sort.key)}
@@ -1480,8 +1804,75 @@ function BoardContent({
         onClear={() => setRows([])}
       />
       <div className="flex min-h-0 flex-1">
-        <div className={`min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}>
-          {shownDetail ? (
+        <div
+          className={`relative min-h-0 min-w-0 flex-1 ${fullPage ? "hidden" : ""}`}
+        >
+          {detail && layoutState.layout === "list" ? (
+            <BoardList
+              cards={visibleCards}
+              columns={detail.columns}
+              extras={extras}
+              labels={labels}
+              projects={projects}
+              groupBy={layoutState.groupBy}
+              collapsed={layoutState.collapsed}
+              selected={selectedSet}
+              onToggleGroup={(key) =>
+                editLayout((current) => ({
+                  collapsed: current.collapsed.includes(key)
+                    ? current.collapsed.filter((other) => other !== key)
+                    : [...current.collapsed, key],
+                }))
+              }
+              onRowClick={rowClick}
+            />
+          ) : detail && layoutState.layout === "table" ? (
+            <BoardTable
+              cards={visibleCards}
+              existing={new Set(detail.cards.map((card) => card.id))}
+              columns={tableColumns(layoutState, fields)}
+              boardColumns={detail.columns}
+              extras={extras}
+              index={cardIndex}
+              labels={labels}
+              fields={fields}
+              projects={projects}
+              selected={selectedSet}
+              onRowClick={rowClick}
+              onResize={(id, width) =>
+                editLayout((current) => ({
+                  widths: { ...current.widths, [id]: width },
+                }))
+              }
+              onCommitTitle={(card, title) => {
+                const body =
+                  detailRef.current?.cards.find((other) => other.id === card.id)
+                    ?.body ?? card.body;
+                void updateCard(card.id, title, body).catch(
+                  fail(`Couldn't rename card #${card.number}`),
+                );
+              }}
+              onSetStatus={(card, columnId) =>
+                moveFromDrawer(card, columnId, wholeColumn(columnId).length)
+              }
+              onSetPriority={(card, priority) =>
+                void setCardPriority(card.id, priority).catch(
+                  fail(`Couldn't set the priority of card #${card.number}`),
+                )
+              }
+              onSetDue={(card, dueAt) =>
+                void setCardDue(card.id, dueAt).catch(
+                  fail(`Couldn't set the due date of card #${card.number}`),
+                )
+              }
+              onSetLabels={(card, ids) =>
+                void setCardLabels(card.id, ids).catch(
+                  fail(`Couldn't set the labels of card #${card.number}`),
+                )
+              }
+              onCreateLabel={addLabelTo}
+            />
+          ) : shownDetail ? (
             <KanbanBoard
               detail={shownDetail}
               renderCard={renderCard}
@@ -1493,6 +1884,23 @@ function BoardContent({
               onColumnExpand={(column) => setCollapsed(column, false)}
               sorted={sorted}
               trailing={trailing}
+            />
+          ) : null}
+          {detail && selection.ids.length ? (
+            <SelectionBar
+              count={selection.ids.length}
+              columns={detail.columns}
+              labels={labels}
+              labelCounts={labelCounts}
+              onStatus={(columnId) => {
+                const column = columnsById.get(columnId);
+                if (column) bulkStatus(column);
+              }}
+              onPriority={bulkPriority}
+              onLabel={bulkLabel}
+              onArchive={() => bulkRemove(false)}
+              onDelete={() => bulkRemove(true)}
+              onClear={() => setSelection(EMPTY_SELECTION)}
             />
           ) : null}
         </div>
@@ -1542,7 +1950,8 @@ function BoardContent({
             columnNames={
               new Map(detail.columns.map((column) => [column.id, column.name]))
             }
-            pendingDelete={held?.cardId ?? null}
+            pendingDelete={null}
+            pendingDeletes={heldIds}
             onClose={() => setArchiveOpen(false)}
             onError={setError}
           />

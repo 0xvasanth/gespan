@@ -3,6 +3,7 @@ import {
   archivedLabel,
   createUndo,
   deletedLabel,
+  deletedManyLabel,
   movedLabel,
   runUndo,
   sortedLabel,
@@ -331,5 +332,97 @@ describe("runUndo", () => {
       ),
     ).rejects.toThrow("Card not found");
     expect(deleted.calls).toEqual([["moveCards", ["b"], "backlog", 0]]);
+  });
+});
+
+describe("held bulk delete", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const many = {
+    kind: "deleteMany",
+    items: [
+      ["c1", "backlog", 0],
+      ["c2", "backlog", 1],
+    ],
+  } as const;
+
+  it("names one card by number and more by count", () => {
+    expect(deletedManyLabel([3])).toBe("Deleted #3");
+    expect(deletedManyLabel([3, 4])).toBe("Deleted 2 cards");
+  });
+
+  it("deletes every held card when the toast expires, and lists them while held", async () => {
+    const onCommitDelete = vi.fn();
+    const undo = createUndo({ onCommitDelete });
+    undo.push("Deleted 2 cards", many);
+    expect(undo.pendingDeletes()).toEqual(["c1", "c2"]);
+    expect(onCommitDelete).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS);
+    expect(onCommitDelete.mock.calls).toEqual([["c1"], ["c2"]]);
+    expect(undo.pendingDeletes()).toEqual([]);
+  });
+
+  it("commits the first when a second bulk delete is held", () => {
+    const onCommitDelete = vi.fn();
+    const undo = createUndo({ onCommitDelete });
+    undo.push("Deleted 2 cards", many);
+    undo.push("Deleted 2 cards", {
+      kind: "deleteMany",
+      items: [
+        ["c5", "backlog", 0],
+        ["c6", "backlog", 1],
+      ],
+    });
+    expect(onCommitDelete.mock.calls).toEqual([["c1"], ["c2"]]);
+    expect(undo.pendingDeletes()).toEqual(["c5", "c6"]);
+  });
+
+  it("commits a held bulk delete when a single delete replaces it, and the reverse", () => {
+    const onCommitDelete = vi.fn();
+    const undo = createUndo({ onCommitDelete });
+    undo.push("Deleted 2 cards", many);
+    undo.push("Deleted #9", {
+      kind: "delete",
+      cardId: "c9",
+      columnId: "backlog",
+      index: 0,
+    });
+    expect(onCommitDelete.mock.calls).toEqual([["c1"], ["c2"]]);
+    undo.push("Deleted 2 cards", many);
+    expect(onCommitDelete.mock.calls.at(-1)).toEqual(["c9"]);
+  });
+
+  it("commitPending (a board switch) deletes them now", async () => {
+    const onCommitDelete = vi.fn();
+    const undo = createUndo({ onCommitDelete });
+    undo.push("Deleted 2 cards", many);
+    await undo.commitPending();
+    expect(onCommitDelete.mock.calls).toEqual([["c1"], ["c2"]]);
+  });
+
+  it("undo hands back the inverse and deletes nothing", () => {
+    const onCommitDelete = vi.fn();
+    const undo = createUndo({ onCommitDelete });
+    undo.push("Deleted 2 cards", many);
+    expect(undo.undo()).toEqual(many);
+    vi.advanceTimersByTime(UNDO_WINDOW_MS * 2);
+    expect(onCommitDelete).not.toHaveBeenCalled();
+  });
+
+  it("restores every card at its old place", async () => {
+    const calls: unknown[] = [];
+    await runUndo(many, {
+      moveCard: async () => undefined,
+      moveCards: async () => undefined,
+      restoreCard: async (...args) => {
+        calls.push(args);
+      },
+      snapshot: async () => ({ live: [], archivedIds: [] }),
+    });
+    expect(calls).toEqual([
+      ["c1", "backlog", 0],
+      ["c2", "backlog", 1],
+    ]);
   });
 });
