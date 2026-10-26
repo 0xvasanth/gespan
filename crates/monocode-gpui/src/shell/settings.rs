@@ -265,7 +265,6 @@ impl Shell {
             overlay_was_open = open;
         }));
         self.settings = Some(view.clone());
-        self.sidebar_toggle_turns += 1;
         // Settings has its own complete rail, even when the project rail was hidden.
         self.sidebar_slide = None;
         self.sidebar_fraction = 1.;
@@ -289,9 +288,7 @@ impl Shell {
         }
     }
     pub(super) fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.settings.take().is_some() {
-            self.sidebar_toggle_turns += 1;
-        }
+        self.settings = None;
         self.settings_events = None;
         self.settings_overlay_watch = None;
         // A code nobody can see should not stay usable.
