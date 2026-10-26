@@ -3,6 +3,55 @@ use gpui::{
     prelude::*, px, size,
 };
 
+pub(super) const CONTROLS_WIDTH: f32 = 106.;
+
+pub(super) fn controls(
+    window: &Window,
+    on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> AnyElement {
+    let maximized = window.is_maximized();
+    div()
+        .absolute()
+        .top_0()
+        .right_0()
+        .w(px(CONTROLS_WIDTH))
+        .h(px(crate::theme::TITLE_BAR_HEIGHT))
+        .px(px(8.))
+        .flex()
+        .items_center()
+        .occlude()
+        .child(
+            crate::theme::icon_button("window-minimize", "Minimize window", "minus")
+                .debug_selector(|| "window-minimize".into())
+                .w(px(30.))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(|_, window, _| window.minimize_window()),
+        )
+        .child(
+            crate::theme::icon_button(
+                "window-maximize",
+                if maximized {
+                    "Restore window"
+                } else {
+                    "Maximize window"
+                },
+                if maximized { "copy" } else { "square" },
+            )
+            .debug_selector(|| "window-maximize".into())
+            .w(px(30.))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(|_, window, _| window.zoom_window()),
+        )
+        .child(
+            crate::theme::icon_button("window-close", "Close window", "close")
+                .debug_selector(|| "window-close".into())
+                .w(px(30.))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(on_close),
+        )
+        .into_any_element()
+}
+
 // Keep the resize border narrow around controls, with larger corner targets.
 fn resize_regions(viewport: Size<Pixels>) -> [(ResizeEdge, CursorStyle, Bounds<Pixels>); 8] {
     use CursorStyle::*;
@@ -98,6 +147,60 @@ pub(super) fn resize_handles(window: &Window) -> Vec<AnyElement> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn controls_fit_the_reserved_space_and_close_receives_clicks(cx: &mut gpui::TestAppContext) {
+        struct Preview {
+            close_requests: usize,
+        }
+        impl gpui::Render for Preview {
+            fn render(
+                &mut self,
+                window: &mut Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                div().size_full().child(
+                    super::super::titlebar_drag_area()
+                        .w_full()
+                        .h(px(crate::theme::TITLE_BAR_HEIGHT))
+                        .child(controls(
+                            window,
+                            cx.listener(|this, _, _, cx| {
+                                this.close_requests += 1;
+                                cx.notify();
+                            }),
+                        )),
+                )
+            }
+        }
+        let window = cx.update(|cx| {
+            cx.open_window(gpui::WindowOptions::default(), |_, cx| {
+                cx.new(|_| Preview { close_requests: 0 })
+            })
+            .unwrap()
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.refresh().unwrap();
+        visual.run_until_parked();
+        let width = window
+            .update(visual, |_, window, _| window.viewport_size().width)
+            .unwrap();
+        let mut right = width - px(CONTROLS_WIDTH);
+        for id in ["window-minimize", "window-maximize", "window-close"] {
+            let bounds = visual.debug_bounds(id).unwrap();
+            assert!(bounds.left() >= right);
+            assert!(bounds.right() <= width);
+            right = bounds.right();
+        }
+        let close = visual.debug_bounds("window-close").unwrap();
+        visual.simulate_click(close.center(), Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |preview, _, _| {
+                assert_eq!(preview.close_requests, 1)
+            })
+            .unwrap();
+    }
 
     #[test]
     fn resize_regions_cover_edges_and_corners_without_covering_content() {

@@ -258,6 +258,20 @@ pub(crate) fn bind_keys(cx: &mut App) {
     ]);
 }
 
+pub(crate) fn client_controls_width(window: &Window) -> f32 {
+    #[cfg(target_os = "linux")]
+    if !window.is_fullscreen()
+        && matches!(
+            window.window_decorations(),
+            gpui::Decorations::Client { .. }
+        )
+    {
+        return window_chrome::CONTROLS_WIDTH;
+    }
+    let _ = window;
+    0.
+}
+
 /// macOS must receive button clicks as app content. Only blank titlebar
 /// regions initiate native dragging or the system double-click action.
 /// Client-decorated Linux windows also need explicit native drag requests.
@@ -574,6 +588,8 @@ pub(crate) struct Shell {
     /// useTrafficLightsVisible: fullscreen hides the native buttons, so the
     /// title bar takes their room back.
     fullscreen: bool,
+    #[cfg(target_os = "linux")]
+    client_decorations: bool,
     tabs_frame: Entity<Chrome>,
     store: Database,
     remote: Arc<monocode_core::remote::Connections>,
@@ -928,6 +944,8 @@ impl Shell {
             peek_close: None,
             peek_toggle_bounds: AnchorSlot::default(),
             fullscreen: false,
+            #[cfg(target_os = "linux")]
+            client_decorations: false,
             tabs_frame,
             store,
             remote,
@@ -4523,7 +4541,23 @@ impl Shell {
         true
     }
 
+    fn titlebar_controls_space(&self, bar: AnyElement, window: &Window) -> AnyElement {
+        let room = client_controls_width(window);
+        if room == 0. {
+            return bar;
+        }
+        div()
+            .w_full()
+            .h(px(TITLE_BAR_HEIGHT))
+            .pr(px(room))
+            .child(bar)
+            .into_any_element()
+    }
     fn titlebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let bar = self.titlebar_content(window, cx);
+        self.titlebar_controls_space(bar, window)
+    }
+    fn titlebar_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // Same hierarchy as TitleBar.tsx's inset layout: window navigation and
         // session tabs share the outer shell, above the rounded workspace card.
         if let Some(settings) = self.settings.clone() {
@@ -7122,7 +7156,8 @@ impl Shell {
         } else {
             self.navigation_width()
         };
-        (window.viewport_size().width.as_f32() - lead - trailing).max(0.)
+        (window.viewport_size().width.as_f32() - lead - trailing - client_controls_width(window))
+            .max(0.)
     }
     fn tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let viewport = self.tabs_width(window, cx);
@@ -7752,6 +7787,17 @@ impl Render for Shell {
         }
         // Native fullscreen transitions resize the window, which redraws it.
         self.fullscreen = window.is_fullscreen();
+        #[cfg(target_os = "linux")]
+        {
+            let client = matches!(
+                window.window_decorations(),
+                gpui::Decorations::Client { .. }
+            );
+            if self.client_decorations != client {
+                self.client_decorations = client;
+                self.invalidate_chrome(cx);
+            }
+        }
         if cx.reduce_motion()
             && (self.sidebar_slide.is_some()
                 || self.right_slide.is_some()
@@ -8376,7 +8422,14 @@ impl Render for Shell {
             )
             .map(|root| {
                 #[cfg(target_os = "linux")]
-                let root = root.children(window_chrome::resize_handles(window));
+                let root = root
+                    .when(self.client_decorations && !self.fullscreen, |root| {
+                        root.child(window_chrome::controls(
+                            window,
+                            cx.listener(|this, _, window, cx| this.request_quit(window, cx)),
+                        ))
+                    })
+                    .children(window_chrome::resize_handles(window));
                 root
             })
     }
