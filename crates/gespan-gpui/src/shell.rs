@@ -3598,10 +3598,12 @@ impl Shell {
         let cwd = self.workspace.project.clone();
         let worktree = target.and_then(|id| {
             let path = self.session_working_copy(id, cx);
-            (path != cwd).then(|| crate::worktree_switcher::WorktreeFocus {
-                path: path.into(),
-                branch: self.worktree_focus.get(&cwd).and_then(|f| f.branch.clone()),
-            })
+            (gespan_core::files::path_key(path) != gespan_core::files::path_key(&cwd)).then(
+                || crate::worktree_switcher::WorktreeFocus {
+                    path: path.into(),
+                    branch: self.worktree_focus.get(&cwd).and_then(|f| f.branch.clone()),
+                },
+            )
         });
         let worktree_cwd = worktree.as_ref().map(|f| f.path.clone());
         let work = cx.background_executor().spawn(async move {
@@ -4554,6 +4556,10 @@ impl Shell {
         let store = self.store.clone();
         let cwd = self.workspace.project.clone();
         let focus = self.worktree_focus.get(&cwd).cloned();
+        // The project folder as a selected checkout is not a separate worktree.
+        let copy = focus.clone().filter(|f| {
+            gespan_core::files::path_key(&f.path) != gespan_core::files::path_key(&cwd)
+        });
         let blank_key = format!("{cwd}\0{}", focus.as_ref().map_or("", |f| f.path.as_str()));
         if only_if_empty && !self.pending_project_blanks.insert(blank_key.clone()) {
             return;
@@ -4575,7 +4581,7 @@ impl Shell {
         let controls = self.workspace.preferences.last_model_settings.clone();
         let work = cx.background_executor().spawn({
             let cwd = cwd.clone();
-            let worktree_cwd = focus.as_ref().map(|f| f.path.clone());
+            let worktree_cwd = copy.as_ref().map(|f| f.path.clone());
             async move {
                 let store = locked(&store)?;
                 let summary = store.create(kind.id(), &cwd)?;
@@ -4642,7 +4648,7 @@ impl Shell {
                         if let Some(view) = this.sessions.get(&id) {
                             view.update(cx, |view, cx| view.seed_new_settings(settings, cx));
                         }
-                        this.seed_worktree(id, focus.as_ref(), cx);
+                        this.seed_worktree(id, copy.as_ref(), cx);
                         // A pending blank belongs to the copy that requested it;
                         // navigation to another copy must never redirect that request.
                         if this.workspace.project != cwd
