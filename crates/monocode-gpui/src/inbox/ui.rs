@@ -317,10 +317,16 @@ enum CommentStyle {
 }
 
 impl Inbox {
+    fn project_label(&self, path: &str) -> String {
+        self.appearances.get(path).map_or_else(
+            || project_name(std::path::Path::new(path)),
+            |appearance| appearance.label(path),
+        )
+    }
     fn project_mark(&self, path: &str, side: f32) -> AnyElement {
         crate::project_settings::project_icon(
             &self.appearances.get(path).cloned().unwrap_or_default(),
-            &project_name(std::path::Path::new(path)),
+            path,
             side,
         )
     }
@@ -503,7 +509,7 @@ impl Inbox {
                 } else if !item.repo.is_empty() {
                     item.repo.clone()
                 } else {
-                    project_name(std::path::Path::new(&item.project_path))
+                    self.project_label(&item.project_path)
                 };
                 let attention = attention_label(&item.attention_reason);
                 div()
@@ -919,7 +925,7 @@ impl Inbox {
                                 d.child(
                                     icon_action(
                                         "inbox-choose-project",
-                                        &project_name(&self.start_project),
+                                        &self.project_label(&self.start_project.to_string_lossy()),
                                         "folder",
                                     )
                                     .relative()
@@ -2150,7 +2156,7 @@ impl Inbox {
                 rows.push(
                     menu_row(
                         format!("inbox-project-filter-{ix}"),
-                        project_name(project),
+                        self.project_label(&key),
                         !f.hidden_projects.contains(&key),
                     )
                     .child(self.project_mark(&key, 12.))
@@ -2500,7 +2506,7 @@ impl Inbox {
             let path = project.clone();
             menu_row(
                 format!("inbox-start-project-{ix}"),
-                project_name(project),
+                self.project_label(&project.to_string_lossy()),
                 *project == self.start_project,
             )
             .child(self.project_mark(&project.to_string_lossy(), 14.))
@@ -2903,6 +2909,87 @@ mod tests {
         window.update(cx, |_, _, cx| cx.notify()).unwrap();
         cx.refresh().unwrap();
         cx.run_until_parked();
+    }
+    #[gpui::test]
+    fn the_inbox_opens_scoped_to_its_project_and_labels_projects_by_appearance(
+        cx: &mut TestAppContext,
+    ) {
+        let window = fixture(cx);
+        window
+            .update(cx, |fixture, _, cx| {
+                fixture.inbox.update(cx, |inbox, _| {
+                    let home = PathBuf::from("/work/home");
+                    let other = PathBuf::from("/work/other");
+                    assert_eq!(
+                        super::super::other_projects(&[home.clone(), other.clone()], &home),
+                        vec!["/work/other".to_string()]
+                    );
+                    assert_eq!(inbox.project_label("/work/other"), "other");
+                    inbox.appearances.insert(
+                        "/work/other".into(),
+                        monocode_core::project_appearance::ProjectAppearance {
+                            name: "Other app".into(),
+                            ..Default::default()
+                        },
+                    );
+                    assert_eq!(inbox.project_label("/work/other"), "Other app");
+                });
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn switching_projects_drops_the_previous_projects_selection_and_detail(
+        cx: &mut TestAppContext,
+    ) {
+        let window = fixture(cx);
+        window
+            .update(cx, |fixture, _, cx| {
+                fixture.inbox.update(cx, |inbox, cx| {
+                    let (a, b) = (PathBuf::from("/work/a"), PathBuf::from("/work/b"));
+                    let item = |number, project: &PathBuf| Item {
+                        provider: "github".into(),
+                        kind: "pr".into(),
+                        state: "open".into(),
+                        repo: format!("acme/app-{number}"),
+                        number,
+                        project_path: project.to_string_lossy().into_owned(),
+                        ..Default::default()
+                    };
+                    // Keep the list fetch queued instead of reaching real providers.
+                    inbox.loading = true;
+                    inbox.snapshot.items = vec![item(1, &a), item(2, &b)];
+                    inbox.set_context(vec![a.clone(), b.clone()], a.clone(), cx);
+                    inbox.selected = Some(item(1, &a).key());
+                    inbox.details = Some(Details {
+                        body: "From project A".into(),
+                        ..Default::default()
+                    });
+                    inbox.detail_loading = true;
+                    let request = inbox.detail_generation;
+                    let scope = inbox.fetch_scope();
+
+                    inbox.set_context(vec![a.clone(), b.clone()], b.clone(), cx);
+
+                    assert_eq!(inbox.selected, None);
+                    assert!(inbox.details.is_none() && inbox.thread.is_none());
+                    assert!(inbox.document.is_none() && inbox.comments.is_empty());
+                    assert!(!inbox.detail_loading);
+                    assert_ne!(
+                        inbox.detail_generation, request,
+                        "project A's detail request must be discarded"
+                    );
+                    assert_ne!(inbox.fetch_scope(), scope, "a fetch made for A is stale");
+                    assert_eq!(
+                        inbox
+                            .visible_items(cx)
+                            .iter()
+                            .map(Item::key)
+                            .collect::<Vec<_>>(),
+                        vec![item(2, &b).key()]
+                    );
+                });
+            })
+            .unwrap();
     }
     #[gpui::test]
     fn long_discussion_materializes_only_viewport_comments_and_reply_focus_reaches_composer(
