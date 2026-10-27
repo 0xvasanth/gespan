@@ -185,20 +185,19 @@ impl BoardView {
     }
 
     /// Forget selected cards that left the board (archived, deleted, moved to
-    /// another board) or that the search or filter now hides, so the bar and
-    /// every bulk action cover only what is on screen.
+    /// another board), that the search or filter now hides, or that sit in a
+    /// collapsed column or list group, so the bar and every bulk action cover
+    /// only what is on screen (the display order).
     pub(super) fn prune_selection(&mut self) {
         let Some(detail) = &self.detail else {
             return;
         };
+        if self.selection.ids.is_empty() && self.selection.anchor.is_none() {
+            return;
+        }
         let live: HashSet<&str> = detail.cards.iter().map(|card| card.id.as_str()).collect();
-        let shown: HashSet<&str> = detail
-            .cards
-            .iter()
-            .filter(|card| self.card_matches(card))
-            .map(|card| card.id.as_str())
-            .collect();
-        self.selection.ids.retain(|id| shown.contains(id.as_str()));
+        let shown: HashSet<String> = self.display_order().into_iter().collect();
+        self.selection.ids.retain(|id| shown.contains(id));
         if let Some(anchor) = &self.selection.anchor
             && !live.contains(anchor.as_str())
         {

@@ -164,6 +164,9 @@ impl BoardView {
     /// only the changed run of ids is spliced, and the card that was at the
     /// top of the view stays there while it still exists.
     pub(crate) fn sync_column_lists(&mut self) {
+        // Every change to the cards or the query comes through here: the
+        // lane list rebuilds on its next render.
+        self.lane_inputs_version += 1;
         let display = self.effective_display();
         if self.list_display.as_ref() == Some(&display) {
             self.learn_item_height(&display);
@@ -282,26 +285,38 @@ impl BoardView {
     /// card's own, or, for the card whose drawer is open, the drawer's, so it
     /// stays mounted while focus is inside the drawer. GPUI's list keeps only
     /// one focused row mounted off screen, so a card that really has focus
-    /// always wins over the drawer's card.
+    /// always wins over the drawer's card, the drawer's own card included.
     fn item_focus(&self, card_id: &str) -> Option<gpui::FocusHandle> {
-        if self.drawer_pinned.as_deref() == Some(card_id) {
+        if self.drawer_pinned.as_deref() == Some(card_id)
+            && self.focused_card_id.as_deref() != Some(card_id)
+        {
             return Some(self.drawer_focus.clone());
         }
         self.card_focus.get(card_id).cloned()
     }
 
     /// Keep the card whose drawer is open mounted, and let a card whose
-    /// drawer closed go like any other.
+    /// drawer closed go like any other. Runs again once focus is known: when
+    /// the drawer's own card gains or loses keyboard focus, its row is
+    /// re-spliced with the handle that really holds focus.
     pub(crate) fn pin_drawer_card(&mut self) {
         let open = self
             .card_detail
             .as_ref()
             .map(|detail| detail.card_id.clone());
-        if open == self.drawer_pinned {
+        let focused = open.is_some() && self.focused_card_id == open;
+        if open == self.drawer_pinned && focused == self.drawer_card_focused {
             return;
         }
+        self.drawer_card_focused = focused;
         let old = std::mem::replace(&mut self.drawer_pinned, open.clone());
-        for card_id in old.into_iter().chain(open) {
+        let mut touched: Vec<String> = old.into_iter().collect();
+        if let Some(open) = open
+            && !touched.contains(&open)
+        {
+            touched.push(open);
+        }
+        for card_id in touched {
             let found = self.column_ids.iter().find_map(|(column, ids)| {
                 ids.iter()
                     .position(|id| *id == card_id)
@@ -310,7 +325,10 @@ impl BoardView {
             if let Some((column, ix)) = found
                 && let Some(state) = self.column_lists.get(&column)
             {
+                // Re-splicing the top row would reset its offset: keep it.
+                let top = state.logical_scroll_top();
                 state.splice_focusable(ix..ix + 1, [self.item_focus(&card_id)]);
+                state.scroll_to(top);
             }
         }
     }

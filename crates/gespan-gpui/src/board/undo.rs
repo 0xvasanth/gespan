@@ -41,9 +41,23 @@ pub(crate) enum Undo {
 impl Undo {
     /// The cards a held delete will delete.
     fn pending_deletes(&self) -> Vec<&str> {
+        self.pending_delete_places()
+            .into_iter()
+            .map(|(card, _)| card)
+            .collect()
+    }
+
+    /// The cards a held delete will delete, each with the column it was
+    /// archived from.
+    fn pending_delete_places(&self) -> Vec<(&str, &str)> {
         match self {
-            Undo::Delete { card_id, .. } => vec![card_id],
-            Undo::DeleteMany(places) => places.iter().map(|(id, ..)| id.as_str()).collect(),
+            Undo::Delete {
+                card_id, column_id, ..
+            } => vec![(card_id, column_id)],
+            Undo::DeleteMany(places) => places
+                .iter()
+                .map(|(id, column, _)| (id.as_str(), column.as_str()))
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -228,22 +242,29 @@ impl BoardView {
             return;
         };
         self.undo.generation += 1;
-        let held: Vec<String> = toast
+        let held: Vec<(String, String)> = toast
             .undo
             .as_ref()
             .map(|undo| {
-                undo.pending_deletes()
+                undo.pending_delete_places()
                     .into_iter()
-                    .map(String::from)
+                    .map(|(card, column)| (card.to_string(), column.to_string()))
                     .collect()
             })
             .unwrap_or_default();
-        for card_id in &held {
+        for (card_id, column_id) in &held {
             match self
                 .service()
                 .and_then(|service| delete_if_archived(service, card_id))
             {
-                Ok(()) => {}
+                // The card no longer counts as archived in its column, so a
+                // column delete right after this is not refused on a stale
+                // count before the next reload.
+                Ok(()) => {
+                    if let Some(counts) = self.column_counts.get_mut(column_id) {
+                        counts.1 = counts.1.saturating_sub(1);
+                    }
+                }
                 Err(error) => self.error = Some(error),
             }
         }

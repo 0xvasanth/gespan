@@ -106,6 +106,8 @@ impl BoardView {
     pub(crate) fn set_projects(&mut self, projects: Vec<(String, String)>, cx: &mut Context<Self>) {
         if self.projects != projects {
             self.projects = projects;
+            // Project lanes are built from the projects.
+            self.lane_inputs_version += 1;
             cx.notify();
         }
     }

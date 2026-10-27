@@ -847,3 +847,71 @@ fn poll_tick_cx(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(2));
     cx.run_until_parked();
 }
+
+#[gpui::test]
+fn a_lift_of_the_drawers_own_focused_card_survives_moving_50_down(cx: &mut TestAppContext) {
+    let f = seeded_board(cx, true);
+    let column = column_at(&f, cx, 0);
+    let ids = list_ids(&f, cx, &column);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    activate(visual);
+    // The drawer is open on the very card that has keyboard focus.
+    open_drawer(&f, visual, &ids[3]);
+    focus_card(&f, visual, &ids[3]);
+    visual.refresh().unwrap();
+    assert_eq!(focused_card(&f, visual), Some(ids[3].clone()));
+    press(visual, "space");
+    press_n(visual, "down", 50);
+    f.window
+        .read_with(visual, |view, _| {
+            assert_eq!(
+                view.kb_drag.as_ref().map(|drag| drag.card_id.clone()),
+                Some(ids[3].clone()),
+                "still lifted after the card scrolled out of the window"
+            );
+        })
+        .unwrap();
+    assert_eq!(focused_card(&f, visual), Some(ids[3].clone()));
+    press(visual, "space");
+    assert_eq!(stored_order(&f, &column)[53], ids[3]);
+    assert_eq!(
+        announcement(&f, visual).as_deref(),
+        Some("Dropped card #4 in Backlog, position 54 of 1000.")
+    );
+}
+
+#[gpui::test]
+fn the_drawers_own_focused_card_keeps_focus_scrolled_away_and_back(cx: &mut TestAppContext) {
+    let f = seeded_board(cx, true);
+    let column = column_at(&f, cx, 0);
+    let ids = list_ids(&f, cx, &column);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    activate(visual);
+    open_drawer(&f, visual, &ids[3]);
+    focus_card(&f, visual, &ids[3]);
+    visual.refresh().unwrap();
+    let body = center(visual, "board-column-body-0");
+    wheel(visual, body, -6000.);
+    assert!(list_top(&f, visual, &column).item_ix > 40);
+    assert!(
+        visual.debug_bounds("board-card-4").is_some(),
+        "the focused drawer card stays mounted off screen"
+    );
+    assert_eq!(focused_card(&f, visual), Some(ids[3].clone()));
+    wheel(visual, body, 12000.);
+    assert_eq!(focused_card(&f, visual), Some(ids[3].clone()));
+    press(visual, "down");
+    assert_eq!(focused_card(&f, visual), Some(ids[4].clone()));
+    // Focus moves into the drawer: the drawer's handle keeps the row now.
+    f.window
+        .update(visual, |view, window, cx| {
+            window.focus(&view.drawer_focus, cx);
+        })
+        .unwrap();
+    visual.refresh().unwrap();
+    wheel(visual, body, -6000.);
+    assert!(
+        visual.debug_bounds("board-card-4").is_some(),
+        "the drawer's card is still mounted while focus is in the drawer"
+    );
+}

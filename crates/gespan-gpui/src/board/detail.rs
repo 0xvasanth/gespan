@@ -331,12 +331,46 @@ impl BoardView {
         if self.card_detail.is_none() {
             return false;
         }
-        // A save that fails keeps the drawer, and its text, open with the error.
+        // A save that fails keeps the drawer, and its text, open with the
+        // error. A card that no longer exists has nothing to keep it open for:
+        // the drawer closes, and any unsaved text shows in the error.
         if self.save_card_details(cx) {
             self.card_detail = None;
+        } else if self.card_detail.is_some()
+            && (self.detail_card().is_none() || self.error.as_deref() == Some("Card not found"))
+        {
+            self.drop_orphaned_detail(cx);
         }
         cx.notify();
         true
+    }
+
+    /// The drawer's card is gone (deleted, archived or moved to another board
+    /// elsewhere): close the drawer, full page included, so the board, Escape,
+    /// a board switch and settings all work again. Text typed but not saved
+    /// shows in the error, with a Copy button, so the user can keep it.
+    fn drop_orphaned_detail(&mut self, cx: &mut Context<Self>) {
+        let Some(detail) = self.card_detail.take() else {
+            return;
+        };
+        let title = detail.title.read(cx).content.trim().to_string();
+        let body = detail.body.read(cx).content.to_string();
+        let mut unsaved = Vec::new();
+        if !title.is_empty() && title != detail.loaded_title {
+            unsaved.push(format!("Title: {title}"));
+        }
+        if body != detail.loaded_body && !body.trim().is_empty() {
+            unsaved.push(format!("Description: {body}"));
+        }
+        if unsaved.is_empty() {
+            self.orphaned_text = None;
+        } else {
+            let text = unsaved.join("\n");
+            let error = format!("This card was removed elsewhere. Your unsaved text:\n{text}");
+            self.error = Some(error.clone());
+            self.orphaned_text = Some((error, text));
+        }
+        cx.notify();
     }
 
     /// Escape inside the drawer closes its innermost open thing first.
@@ -536,6 +570,10 @@ impl BoardView {
     /// touched since the panel last loaded them.
     pub(super) fn sync_card_detail(&mut self, cx: &mut Context<Self>) {
         let Some(card) = self.detail_card() else {
+            // The board loaded and the drawer's card is not on it any more.
+            if self.card_detail.is_some() && self.load_error.is_none() && self.detail.is_some() {
+                self.drop_orphaned_detail(cx);
+            }
             return;
         };
         let Some(detail) = &mut self.card_detail else {

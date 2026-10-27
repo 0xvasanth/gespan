@@ -205,6 +205,8 @@ impl BoardView {
                 None => spec.collapsed.push(key),
             }
         });
+        // Cards in a group that just collapsed leave the selection (C4-i).
+        self.prune_selection();
     }
 
     /// The cards the search and filter show, as indices into the board's

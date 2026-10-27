@@ -379,7 +379,8 @@ impl BoardView {
     /// the top of the view stays there (else its lane's last row: band-level
     /// anchoring). A focused card a reload or filter hid hands focus on.
     pub(crate) fn sync_lane_list(&mut self, cx: &mut Context<Self>) {
-        if self.detail.is_none() || self.lane_mode().is_none() {
+        let Some(mode) = self.lane_mode().filter(|_| self.detail.is_some()) else {
+            self.lane_synced = None;
             if self.lane_list.take().is_some() {
                 self.lane_rows_cache.clear();
                 self.lanes_cache.clear();
@@ -390,7 +391,19 @@ impl BoardView {
                 self.lane_reveal_pending = None;
             }
             return;
+        };
+        // Lanes and cells are rebuilt only when what they are built from may
+        // have changed (or the lane mode did), not on every render.
+        let key = (self.lane_inputs_version, mode);
+        if self.lane_list.is_some() && self.lane_synced.as_ref() == Some(&key) {
+            if let Some(card_id) = self.lane_reveal_pending.take() {
+                self.reveal_lane_card(&card_id);
+            }
+            return;
         }
+        self.lane_synced = Some(key);
+        #[cfg(test)]
+        self.lane_rebuilds.set(self.lane_rebuilds.get() + 1);
         let lanes = self.lanes();
         let cells = self.lane_cell_id_map(&lanes);
         let rows = self.rows_for(&lanes, &cells);

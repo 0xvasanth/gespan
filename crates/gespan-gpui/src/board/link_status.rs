@@ -565,7 +565,11 @@ impl super::BoardView {
         );
         if live != self.turns_seen {
             self.rebuild_chips(cx);
-            if let Err(error) = self.refresh_query(cx) {
+            if self.dragging || self.kb_drag.is_some() {
+                // A re-query now could move cards under a lifted or dragged
+                // one: the reload after the drop runs the query instead.
+                self.pending_reload = true;
+            } else if let Err(error) = self.refresh_query(cx) {
                 self.error = Some(error);
             }
             cx.notify();

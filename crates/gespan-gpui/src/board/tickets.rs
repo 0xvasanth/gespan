@@ -108,17 +108,20 @@ impl BoardView {
         cx.notify();
     }
 
-    /// "New card from ticket…": a card in the first To do step (else the first
-    /// step), titled with the key until the ticket's title arrives. Returns
+    /// "New card from ticket…": a card on the open board, in its first To do
+    /// step (else its first step), titled with the key until the ticket's title arrives. Returns
     /// the new card's id.
     pub(crate) fn create_card_from_ticket(
         &mut self,
         ticket: TicketRef,
         cx: &mut Context<Self>,
     ) -> Option<String> {
+        // The card goes on the board the user is looking at, so the reload
+        // below loads its ticket and the read that follows finds it.
+        let board_id = self.open_board_id.clone();
         let created = self
             .service()
-            .and_then(|service| make_card(service, &ticket));
+            .and_then(|service| make_card(service, board_id.as_deref(), &ticket));
         let id = match created {
             Ok(id) => Some(id),
             Err(error) => {
@@ -239,9 +242,16 @@ impl BoardView {
     }
 }
 
-fn make_card(service: &mut Service, ticket: &TicketRef) -> Result<String, String> {
-    let board = service.default_board()?;
-    let detail = service.get(&board.id)?;
+fn make_card(
+    service: &mut Service,
+    board_id: Option<&str>,
+    ticket: &TicketRef,
+) -> Result<String, String> {
+    let board_id = match board_id {
+        Some(id) => id.to_string(),
+        None => service.default_board()?.id,
+    };
+    let detail = service.get(&board_id)?;
     let column = detail
         .columns
         .iter()

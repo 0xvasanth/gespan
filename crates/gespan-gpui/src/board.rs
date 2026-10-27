@@ -299,6 +299,9 @@ pub(crate) struct BoardView {
     refocus: Option<(String, String)>,
     /// The card whose drawer the column lists keep mounted.
     drawer_pinned: Option<String>,
+    /// Whether the drawer card's row is spliced with the card's own focus
+    /// handle (it has keyboard focus) rather than the drawer's.
+    drawer_card_focused: bool,
     /// A column item a reveal scrolled to on estimated heights: (column,
     /// item, frames left to check it is fully in view).
     settling: Option<(String, usize, u8)>,
@@ -346,6 +349,9 @@ pub(crate) struct BoardView {
     column_drop: Option<usize>,
     /// The last write's error, or a message about a rejected edit.
     error: Option<String>,
+    /// The error shown when the drawer's card went away elsewhere with text
+    /// still unsaved, and that text, which the error's Copy button copies.
+    pub(crate) orphaned_text: Option<(String, String)>,
     /// Why the last reload failed; cleared by the next one that succeeds.
     load_error: Option<String>,
     /// The undo toast and any delete it is holding.
@@ -377,6 +383,15 @@ pub(crate) struct BoardView {
     lane_rows_cache: Vec<swimlanes::LaneRow>,
     lanes_cache: Vec<swimlanes::Lane>,
     pub(crate) lane_cell_ids: swimlanes::LaneCells,
+    /// Bumped whenever what the lanes are built from may have changed (the
+    /// cards, the query, the board's fields and settings, the projects), so
+    /// the lane list rebuilds only then, not on every render.
+    pub(crate) lane_inputs_version: u64,
+    /// The inputs version and lane mode the lane list was last built for.
+    lane_synced: Option<(u64, String)>,
+    /// How many times the lane list rebuilt its lanes and cells.
+    #[cfg(test)]
+    pub(crate) lane_rebuilds: std::cell::Cell<usize>,
     /// The focus handle each lane row keeps itself mounted by.
     lane_row_handles: Vec<Option<FocusHandle>>,
     /// Each lane header's focus, where focus goes when a filter hides every
@@ -536,6 +551,7 @@ impl BoardView {
             focused_card_id: None,
             refocus: None,
             drawer_pinned: None,
+            drawer_card_focused: false,
             drag_announcement: None,
             settling: None,
             card_menu: None,
@@ -558,6 +574,7 @@ impl BoardView {
             column_drop: None,
             error: None,
             load_error: None,
+            orphaned_text: None,
             undo: undo::UndoController::default(),
             archive_open: false,
             archived: Vec::new(),
@@ -573,6 +590,10 @@ impl BoardView {
             lane_rows_cache: Vec::new(),
             lanes_cache: Vec::new(),
             lane_cell_ids: HashMap::new(),
+            lane_inputs_version: 0,
+            lane_synced: None,
+            #[cfg(test)]
+            lane_rebuilds: std::cell::Cell::new(0),
             lane_row_handles: Vec::new(),
             lane_header_focus: HashMap::new(),
             lane_settling: None,
@@ -1836,6 +1857,8 @@ impl gpui::Render for BoardView {
         self.sync_lane_list(cx);
         self.follow_lane_header_refocus(window, cx);
         self.follow_card_focus(window, cx);
+        // Focus may have moved onto (or off) the drawer's own card.
+        self.pin_drawer_card();
         self.sync_lane_handles();
         let root =
             div()
@@ -1911,14 +1934,42 @@ impl gpui::Render for BoardView {
             .clone()
             .or_else(|| self.load_error.clone())
             .map(|error| {
+                // Text typed into a drawer whose card went away elsewhere.
+                let unsaved = self
+                    .orphaned_text
+                    .as_ref()
+                    .filter(|(shown, _)| *shown == error)
+                    .map(|(_, text)| text.clone());
                 div()
                     .id("board-error")
                     .debug_selector(|| "board-error".into())
                     .px_4()
                     .py_1()
+                    .flex()
+                    .items_start()
+                    .gap_2()
                     .text_size(px(12.))
                     .text_color(diff_foreground(false))
-                    .child(error)
+                    .child(div().flex_1().min_w_0().child(error))
+                    .children(unsaved.map(|text| {
+                        div()
+                            .id("board-error-copy")
+                            .debug_selector(|| "board-error-copy".into())
+                            .role(Role::Button)
+                            .aria_label("Copy unsaved text")
+                            .flex_shrink_0()
+                            .px_2()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .text_color(content(0.8))
+                            .hover(|s| s.bg(content(0.06)))
+                            .child("Copy")
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    text.clone(),
+                                ));
+                            })
+                    }))
             });
         let Some(detail) = self.detail.as_ref() else {
             return root.child(
