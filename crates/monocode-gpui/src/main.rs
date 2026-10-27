@@ -85,12 +85,13 @@ mod traffic_lights;
 mod transcript;
 mod usage_footer;
 mod visuals;
+mod window_state;
 mod workspace;
 mod worktree_switcher;
 
 use gpui::{
-    App, Bounds, KeyBinding, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
-    WindowOptions, actions, point, prelude::*, px, size,
+    App, KeyBinding, TitlebarOptions, WindowBackgroundAppearance, WindowOptions, actions, point,
+    prelude::*, px, size,
 };
 use monocode_core::{store::Store, transcript::Transcript};
 use std::{
@@ -437,10 +438,10 @@ fn main() {
                 }
             })
             .detach();
-            let bounds = Bounds::centered(None, size(px(1180.), px(800.)), cx);
+            let bounds = workspace.window.bounds(cx);
             cx.open_window(
                 WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_bounds: Some(bounds),
                     window_min_size: Some(size(px(820.), px(520.))),
                     window_decorations: workspace
                         .preferences
@@ -505,7 +506,7 @@ fn main() {
 mod native_tests {
     use super::*;
     use crate::{input, transcript::TranscriptView};
-    use gpui::{Context, Entity, Render, StyleRefinement, Window, div};
+    use gpui::{Bounds, Context, Entity, Render, StyleRefinement, Window, WindowBounds, div};
     use gpui::{EntityInputHandler, ListOffset, TestAppContext, point};
     use monocode_core::transcript::Row;
     struct Surface {
