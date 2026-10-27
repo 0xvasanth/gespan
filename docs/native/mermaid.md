@@ -43,3 +43,10 @@ diagrams retain their source and copy action. A cache of up to 32 diagrams and
 Uncached diagrams show a loading placeholder, never a flash of source code.
 The source panel displays at
 most 32 KiB and 512 lines; Copy always includes the complete original source.
+
+Before parsing, a conservative estimate limits grouped edges and class
+assignments to 256 expansions. This includes chains and grouped endpoints;
+complex inputs can fall back to source even when their final graph would be
+smaller. Style command lines are limited to 2048 bytes and emitted style values
+to 128 bytes of a restricted CSS value alphabet. Mermaid SVG parsing disables
+all image resolution, including filesystem paths and nested data images.

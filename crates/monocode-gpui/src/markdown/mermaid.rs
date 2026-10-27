@@ -6,6 +6,8 @@ use std::{collections::VecDeque, time::Duration};
 #[path = "mermaid_curves.rs"]
 mod curves;
 use curves::flowchart_curves;
+#[path = "mermaid_input.rs"]
+mod input;
 
 const SOURCE_HEIGHT: f32 = 320.;
 const LOADING_HEIGHT: f32 = 128.;
@@ -86,11 +88,34 @@ struct Preview {
     key: Option<PreviewKey>,
     result: Option<PreviewResult>,
     source: bool,
+    copied: bool,
+    copy_reset: Option<Task<()>>,
     task: Option<Task<()>>,
     _release: Option<Subscription>,
 }
 
 impl Preview {
+    fn copy(&mut self, code: &str, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            code.strip_suffix("\r\n")
+                .or_else(|| code.strip_suffix('\n'))
+                .unwrap_or(code)
+                .to_owned(),
+        ));
+        self.copied = true;
+        cx.notify();
+        self.copy_reset = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(1500))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.copied = false;
+                this.copy_reset = None;
+                cx.notify();
+            });
+        }));
+    }
+
     fn clear_image(&mut self, cx: &mut App) {
         if let Some(Ok(image)) = self.result.take() {
             let retained = cx.try_global::<DiagramCache>().is_some_and(|cache| {
@@ -111,6 +136,8 @@ impl Preview {
             return;
         }
         self.task = None;
+        self.copied = false;
+        self.copy_reset = None;
         self.clear_image(cx);
         let key = (source.clone(), dark);
         self.key = Some(key.clone());
@@ -144,7 +171,9 @@ fn diagram_svg(source: &str, dark: bool) -> Result<(String, f32, f32), String> {
     if source.len() > MAX_SOURCE_BYTES || source.lines().count() > MAX_SOURCE_LINES {
         return Err("Diagram is too large to preview. You can still copy its source.".into());
     }
+    input::expansion_budget(source)?;
     let parsed = parse_mermaid_strict(source).map_err(|error| error.to_string())?;
+    input::validate_styles(&parsed.graph)?;
     if parsed.graph.nodes.len() + parsed.graph.edges.len() > MAX_GRAPH_ITEMS {
         return Err("Diagram has too many nodes or connections to preview.".into());
     }
@@ -177,7 +206,7 @@ fn rasterize(
     let (svg, width, height) = diagram_svg(source, dark)?;
     let scale = (MAX_IMAGE_SIDE / width.max(height)).min(2.);
     let svg = renderer
-        .parse_svg(svg.as_bytes())
+        .parse_svg_without_images(svg.as_bytes())
         .map_err(|error| error.to_string())?;
     renderer
         .render_parsed(
@@ -216,6 +245,7 @@ impl RenderOnce for Diagram {
             state.prepare(self.fence.code.clone(), !is_light(), cx)
         });
         let preview = state.read(cx);
+        let is_copied = preview.copied;
         let has_diagram = matches!(preview.result, Some(Ok(_)));
         let show_source = preview.source || matches!(preview.result, Some(Err(_)));
         let ratio = preview
@@ -268,25 +298,33 @@ impl RenderOnce for Diagram {
                 .into_any_element()
         };
         let copied = self.fence.code.clone();
+        let copy_state = state.clone();
         div()
             .id(self.id)
             .w_full()
             .min_w_0()
-            .rounded_lg()
+            .rounded(px(10.))
             .overflow_hidden()
             .border_1()
             .border_color(content(0.1))
-            .bg(content(0.03))
+            .bg(content(0.06))
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_3()
-                    .px_3()
-                    .h(px(36.))
+                    .gap_2()
+                    .px(px(10.))
+                    .min_h(px(36.))
                     .text_size(px(12.))
-                    .text_color(content(0.6))
-                    .child(div().flex_1().child("Mermaid"))
+                    .text_color(content(0.65))
+                    .child(crate::activity::file_icon("code.mermaid", 16.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(self.fence.label.clone()),
+                    )
                     .when(has_diagram, |d| {
                         d.child(
                             div()
@@ -311,14 +349,16 @@ impl RenderOnce for Diagram {
                         )
                     })
                     .child(
-                        icon_button("mermaid-copy", "Copy Mermaid source", "copy")
-                            .debug_selector(|| "mermaid-copy".into())
-                            .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                    copied.to_string(),
-                                ));
-                                cx.stop_propagation();
-                            }),
+                        icon_button(
+                            "mermaid-copy",
+                            if is_copied { "Copied" } else { "Copy code" },
+                            if is_copied { "check" } else { "copy" },
+                        )
+                        .debug_selector(|| "mermaid-copy".into())
+                        .on_click(move |_, _, cx| {
+                            copy_state.update(cx, |state, cx| state.copy(&copied, cx));
+                            cx.stop_propagation();
+                        }),
                     ),
             )
             .child(
@@ -372,6 +412,30 @@ mod tests {
         visible: bool,
         width: f32,
         code: &'static str,
+    }
+
+    #[gpui::test]
+    fn copying_shows_check_then_resets_and_repeated_copy_restarts_feedback(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let preview = cx.new(|_| Preview::default());
+        preview.update(cx, |state, cx| state.copy("graph LR; A-->B\r\n", cx));
+        assert!(preview.read_with(cx, |state, _| state.copied));
+        assert_eq!(
+            cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+                .as_deref(),
+            Some("graph LR; A-->B")
+        );
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(1000));
+        preview.update(cx, |state, cx| state.copy("graph LR; A-->C\n", cx));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(1000));
+        cx.run_until_parked();
+        assert!(preview.read_with(cx, |state, _| state.copied));
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        assert!(!preview.read_with(cx, |state, _| state.copied));
     }
     impl gpui::Render for Fixture {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -536,6 +600,174 @@ mod tests {
         assert!(display.lines.len() <= MAX_SOURCE_LINES);
         assert!(original.code.starts_with(display.code.as_ref()));
         assert_eq!(original.code.len(), MAX_SOURCE_BYTES * 3);
+    }
+
+    #[test]
+    fn grouped_endpoint_expansion_is_rejected_before_parsing() {
+        let group = |prefix: &str, count: usize| {
+            (0..count)
+                .map(|ix| format!("{prefix}{ix}"))
+                .collect::<Vec<_>>()
+                .join(" & ")
+        };
+        let bomb = format!("graph TD\n{} --> {}", group("A", 1000), group("B", 1000));
+        assert!(bomb.len() < 15 * 1024);
+        assert!(
+            diagram_svg(&bomb, false)
+                .unwrap_err()
+                .contains("parser expansion budget")
+        );
+        for arrow in ["-.->", "==>", "<-->", "-- label -->", "-- \"label\" -->"] {
+            let source = format!(
+                "graph TD\n{} {arrow} {}",
+                group("A", 1000),
+                group("B", 1000)
+            );
+            assert!(
+                diagram_svg(&source, false)
+                    .unwrap_err()
+                    .contains("parser expansion budget")
+            );
+        }
+        let block = bomb.replacen("graph TD", "block-beta", 1);
+        assert!(
+            diagram_svg(&block, false)
+                .unwrap_err()
+                .contains("parser expansion budget")
+        );
+        let classes = format!(
+            "graph TD\n class {} {}",
+            group("A", 1000).replace(" & ", ","),
+            group("C", 1000).replace(" & ", ",")
+        );
+        assert!(
+            diagram_svg(&classes, false)
+                .unwrap_err()
+                .contains("parser expansion budget")
+        );
+        let styles = format!("graph TD\n style A fill:{}", "a".repeat(2049));
+        assert!(
+            diagram_svg(&styles, false)
+                .unwrap_err()
+                .contains("style command")
+        );
+        let chain = format!(
+            "graph TD\n{} -->|label| {} --> {}",
+            group("A", 100),
+            group("B", 100),
+            group("C", 100)
+        );
+        assert!(
+            diagram_svg(&chain, false)
+                .unwrap_err()
+                .contains("parser expansion budget")
+        );
+        // Small Cartesian groups, chains, and linear fanout remain usable.
+        for source in [
+            "graph TD; A & B --> C & D".to_owned(),
+            format!(
+                "graph TD; {} --> {} --> {}",
+                group("A", 8),
+                group("B", 8),
+                group("C", 8)
+            ),
+            format!("graph TD; {} --> Z", group("A", 16)),
+        ] {
+            assert!(diagram_svg(&source, false).is_ok(), "{source}");
+        }
+    }
+
+    #[test]
+    fn source_styles_cannot_inject_svg_attributes_or_elements() {
+        let payload = "red\"/><image href=\"/tmp/harmless-mermaid-test.png\" width=\"2\" height=\"2\"/><rect fill=\"red";
+        for directive in [
+            format!("style A fill:{payload}"),
+            format!("style A stroke:{payload}"),
+            format!("style A color:{payload}"),
+            format!("style A stroke-dasharray:{payload}"),
+            format!("classDef unsafe fill:{payload}"),
+            format!("linkStyle default stroke:{payload}"),
+            "style A fill:url(file:///tmp/harmless-mermaid-test.png)".into(),
+            "style A stroke-width:NaN".into(),
+        ] {
+            let source = format!("graph TD\n A --> B\n{directive}");
+            assert!(
+                diagram_svg(&source, false)
+                    .unwrap_err()
+                    .contains("unsafe style"),
+                "{directive}"
+            );
+        }
+        let svg = diagram_svg("graph TD\n A[\"A & B\"] --> B\n style A fill:#aabbcc,stroke:red,stroke-width:2,color:blue", false).unwrap().0;
+        assert!(svg.contains("#aabbcc"));
+        assert!(svg.contains("A &amp; B"));
+    }
+
+    #[test]
+    fn mermaid_svg_policy_does_not_resolve_a_harmless_local_image() {
+        use base64::Engine as _;
+        let root = std::env::temp_dir().join(format!(
+            "mermaid-image-policy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("harmless.png");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]))
+            .save(&path)
+            .unwrap();
+        let path = path
+            .to_string_lossy()
+            .replace('&', "&amp;")
+            .replace('"', "&quot;");
+        let injected = format!(
+            "graph TD\n A-->B\n style A fill:red\"/><image href=\"{path}\" width=\"2\" height=\"2\"/><rect fill=\"red"
+        );
+        assert!(diagram_svg(&injected, false).is_err());
+        let file_svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="2" height="2"><image xlink:href="{path}" width="2" height="2"/></svg>"#
+        );
+        // usvg already blocks external files inside a nested SVG. Include a
+        // visible vector control to prove our stricter policy rejects the
+        // entire data image rather than merely inheriting that protection.
+        let embedded_svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/><image href="{path}" width="2" height="2"/></svg>"#
+        );
+        let encoded = base64::engine::general_purpose::STANDARD.encode(embedded_svg.as_bytes());
+        let nested_svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><image href="data:image/svg+xml;base64,{encoded}" width="2" height="2"/></svg>"#
+        );
+        let renderer = gpui::SvgRenderer::new(Arc::new(()));
+        for svg in [file_svg, nested_svg] {
+            let size =
+                gpui::SvgSize::ExactSize(gpui::size(gpui::DevicePixels(2), gpui::DevicePixels(2)));
+            let normal = renderer
+                .render_parsed(&renderer.parse_svg(svg.as_bytes()).unwrap(), size)
+                .unwrap();
+            assert!(
+                normal
+                    .as_bytes(0)
+                    .unwrap()
+                    .chunks_exact(4)
+                    .any(|pixel| pixel[3] != 0),
+                "control must load the harmless image"
+            );
+            let blocked = renderer
+                .render_parsed(
+                    &renderer.parse_svg_without_images(svg.as_bytes()).unwrap(),
+                    size,
+                )
+                .unwrap();
+            assert!(
+                blocked.as_bytes(0).unwrap().iter().all(|&byte| byte == 0),
+                "Mermaid policy must not load direct or nested images"
+            );
+        }
+        std::fs::remove_file(root.join("harmless.png")).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 
     #[test]
