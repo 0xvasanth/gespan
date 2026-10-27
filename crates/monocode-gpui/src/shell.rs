@@ -3872,6 +3872,14 @@ impl Shell {
         self.update_usage_provider(cx);
         self.sync_right_panel(cx);
         self.invalidate_chrome(cx);
+        self.save_state(cx);
+    }
+    fn save_window_state(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.workspace.window.update(window.inner_window_bounds()) {
+            self.save_state(cx);
+        }
+    }
+    fn save_state(&mut self, cx: &mut Context<Self>) {
         let state = serde_json::to_string(&self.workspace).unwrap();
         *self.latest_state.lock().unwrap_or_else(|e| e.into_inner()) = state.clone();
         let revision = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -8033,6 +8041,7 @@ impl Render for Shell {
             window.on_window_should_close(cx, move |window, cx| {
                 shell
                     .update(cx, |shell, cx| {
+                        shell.save_window_state(window, cx);
                         #[cfg(all(target_os = "macos", not(test)))]
                         if shell.workspace.preferences.close_to_tray
                             && shell.workspace.preferences.mono_menu_bar_icon
@@ -8063,7 +8072,10 @@ impl Render for Shell {
                     }
                 }));
             self.observations
-                .push(cx.observe_window_bounds(window, |this, _, cx| this.close_preview(cx)));
+                .push(cx.observe_window_bounds(window, |this, window, cx| {
+                    this.save_window_state(window, cx);
+                    this.close_preview(cx);
+                }));
         }
         self.viewport_width = window.viewport_size().width.as_f32();
         self.viewport_height = window.viewport_size().height.as_f32();
@@ -8601,6 +8613,23 @@ mod tests {
     use super::*;
     use gpui::{EntityInputHandler, TestAppContext, WindowHandle};
     use monocode_core::store::Store;
+    #[gpui::test]
+    fn window_state_is_saved_on_resize_and_restored_with_the_workspace(cx: &mut TestAppContext) {
+        let (window, _, _) = window(cx);
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let dimensions = gpui::size(px(1440.), px(900.));
+        cx.simulate_window_resize(window.into(), dimensions);
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                let saved = locked(&shell.store).unwrap().ui_state().unwrap().unwrap();
+                assert_eq!(*shell.latest_state.lock().unwrap(), saved);
+                let restored = Workspace::restore(Some(&saved), &[], "/work/monocode");
+                assert_eq!(restored.window.bounds(cx).get_bounds().size, dimensions);
+            })
+            .unwrap();
+    }
     #[gpui::test]
     fn hovering_archive_preserves_history_and_does_not_select_the_row(cx: &mut TestAppContext) {
         let (window, a, b) = window(cx);
