@@ -106,10 +106,22 @@ pub trait LinearTransport: Send + Sync {
 /// How requests authenticate. Linear wants a personal API key raw and an
 /// OAuth access token as `Bearer`. A token issued with `actor=app` makes our
 /// writes come from the app rather than from the person.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum LinearAuth {
     ApiKey(String),
     OAuth(String),
+}
+
+/// Names the kind of credential, never the credential itself, so a log line
+/// or panic message that formats one doesn't leak it.
+impl std::fmt::Debug for LinearAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = match self {
+            Self::ApiKey(_) => "ApiKey",
+            Self::OAuth(_) => "OAuth",
+        };
+        f.debug_tuple(kind).field(&"<redacted>").finish()
+    }
 }
 
 struct HttpTransport {
@@ -1186,6 +1198,27 @@ pub(super) mod tests {
     use super::*;
     use std::collections::VecDeque;
     use std::sync::Mutex;
+
+    #[test]
+    fn linear_auth_debug_never_shows_the_credential() {
+        let key = "lin_api_SECRETabc123";
+        let token = "lin_oauth_SECRETxyz789";
+        for (auth, kind) in [
+            (LinearAuth::ApiKey(key.into()), "ApiKey"),
+            (LinearAuth::OAuth(token.into()), "OAuth"),
+        ] {
+            for shown in [format!("{auth:?}"), format!("{auth:#?}")] {
+                assert!(!shown.contains("SECRET"), "{shown}");
+                assert!(shown.contains(kind), "{shown}");
+                assert!(shown.contains("<redacted>"), "{shown}");
+            }
+        }
+        // Equality still compares the credential.
+        assert_ne!(
+            LinearAuth::ApiKey(key.into()),
+            LinearAuth::ApiKey("other".into())
+        );
+    }
 
     /// Replays queued replies in order and records every request it was sent.
     #[derive(Default)]

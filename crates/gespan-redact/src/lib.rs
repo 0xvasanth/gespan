@@ -32,7 +32,7 @@ pub const REDACTED: &str = "<redacted>";
 const MAX_PASSES: usize = 4;
 
 /// What the redactor knows about this machine.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct Config {
     /// The user's home directory.
     pub home: Option<PathBuf>,
@@ -44,13 +44,42 @@ pub struct Config {
     pub secrets: Vec<String>,
 }
 
+/// Shows how many secrets there are, never the secrets.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("home", &self.home)
+            .field("projects", &self.projects)
+            .field(
+                "secrets",
+                &format_args!("<{} redacted>", self.secrets.len()),
+            )
+            .finish()
+    }
+}
+
 /// Scrubs text and JSON. Build it once and reuse it.
-#[derive(Debug)]
 pub struct Redactor {
     /// Project roots longest first, then home, so a project under home wins.
     paths: Vec<PathRule>,
     /// Known secret values in every encoding, longest match first.
     secrets: Option<AhoCorasick>,
+}
+
+/// The secrets automaton holds every secret's bytes, so it is left out.
+impl std::fmt::Debug for Redactor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Redactor")
+            .field("paths", &self.paths)
+            .field(
+                "secrets",
+                &format_args!(
+                    "<{} redacted>",
+                    self.secrets.as_ref().map_or(0, |s| s.patterns_len())
+                ),
+            )
+            .finish()
+    }
 }
 
 impl Redactor {
@@ -159,6 +188,30 @@ fn percent_encoded(text: &str, lower: bool, plus: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_and_redactor_debug_never_show_the_secrets() {
+        let config = Config {
+            secrets: vec!["hunter2hunter2".into(), "p@ss w0rd/xyz".into()],
+            ..Config::default()
+        };
+        let redactor = Redactor::new(config.clone());
+        for shown in [
+            format!("{config:?}"),
+            format!("{config:#?}"),
+            format!("{redactor:?}"),
+            format!("{redactor:#?}"),
+        ] {
+            for secret in ["hunter2", "p@ss", "w0rd", "hunter2hunter2"] {
+                assert!(!shown.contains(secret), "{secret} in {shown}");
+            }
+            assert!(shown.contains("redacted"), "{shown}");
+        }
+        // The redactor still knows them.
+        assert!(!redactor
+            .redact_text("key=hunter2hunter2")
+            .contains("hunter2"));
+    }
 
     fn redactor(home: &str, projects: &[&str]) -> Redactor {
         Redactor::new(Config {
