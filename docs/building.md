@@ -73,7 +73,7 @@ The Windows build emits an NSIS installer under `target/release/bundle/nsis/`.
 
 ## Beta releases and updates
 
-Prerelease tags such as `v0.9.1-beta.1` publish to `beta/latest.json`, and beta builds use that feed even when a stable updater endpoint is configured. Beta releases leave the stable feed and macOS download links unchanged.
+Prerelease tags such as `v0.9.1-beta.1` publish a separate beta feed, and beta builds use that feed even when a stable updater endpoint is configured. Beta releases leave the stable feed and macOS download links unchanged.
 
 To trial AppImage updates, install a beta AppImage in a writable directory, publish a newer beta, and verify the update downloads, installs, and relaunches successfully before publishing a stable version.
 
@@ -81,7 +81,7 @@ To trial AppImage updates, install a beta AppImage in a writable directory, publ
 
 - Stable releases attach `latest.json` to the GitHub Release. Builds default to `https://github.com/0xvasanth/gespan/releases/latest/download/latest.json`; set the `TAURI_UPDATER_ENDPOINT` secret to override it. The feed always points at the GitHub Release assets.
 - R2 is optional for stable releases. When all R2 secrets (`R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) are set, packages and the feed are also mirrored to R2; otherwise that step is skipped.
-- Beta releases require all of the R2 secrets and fail early if any is missing, because GitHub's `/releases/latest` skips prereleases and `beta/latest.json` is served from R2 only.
+- Beta releases publish their feed as the only file on the fixed `beta-latest` GitHub release (`https://github.com/0xvasanth/gespan/releases/download/beta-latest/latest.json`), because GitHub's `/releases/latest` skips prereleases. With every R2 secret set, the beta feed is served from R2 as `beta/latest.json` instead. A beta with only some R2 secrets fails early.
 - `TAURI_UPDATER_PUBKEY` is always required, along with `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Generate the key pair with `bunx tauri signer generate`.
 
 The [release workflow](../.github/workflows/release.yml) packages the platform builds and publishes the updater feed. [scripts/release-channel.cjs](../scripts/release-channel.cjs) selects the stable or beta feed.
@@ -101,7 +101,9 @@ The release workflow runs only when started by hand, so pushing a tag never publ
 | `APPLE_API_KEY`, `APPLE_API_KEY_P8`, `APPLE_API_ISSUER` | Notarizing the macOS app |
 | `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `TAURI_UPDATER_PUBKEY` | Signing and verifying updater packages (always required) |
 | `TAURI_UPDATER_ENDPOINT` | Optional. Overrides the default GitHub Releases feed for stable builds |
-| `R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Optional for stable, required for beta (see above) |
+| `R2_PUBLIC_BASE_URL`, `R2_ACCOUNT_ID`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Optional. All or none (see above) |
+
+Until the Apple secrets exist, a prerelease can run with **allow_unsigned** ticked in the Run workflow form. The macOS app is then ad-hoc signed and not notarized, so macOS blocks its first launch until it is opened from Finder with Control-click → Open (or after `xattr -dr com.apple.quarantine /Applications/Gespan.app`). Stable releases always require the Apple secrets. Windows installers are not code-signed yet, so SmartScreen warns on first run. The same option exists on **Native preview release**.
 
 Read [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines and checks. The experimental remote host has its own [build and packaging instructions](remote-access.md#release-packaging).
 

@@ -141,3 +141,70 @@ if (name === 'xcrun' && args[0] === 'notarytool') console.log(JSON.stringify({ s
     );
   },
 );
+
+test(
+  "Mac beta packaging without a Developer ID needs the opt-in and skips notarization",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "native unsigned-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const bin = join(directory, "tools");
+    const release = join(directory, "target/release");
+    await mkdir(bin);
+    await mkdir(release, { recursive: true });
+    const binary = join(release, "gespan-gpui");
+    await writeFile(binary, "#!/bin/sh\nprintf 'Gespan Native 0.0.1-beta\\n'\n");
+    await chmod(binary, 0o755);
+    const calls = join(directory, "calls.log");
+    const fakeTool = `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const name = path.basename(process.argv[1]);
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(calls)}, [name, ...args].join(' ') + '\\n');
+if (name === 'uname') console.log('Darwin');
+if (name === 'lipo') console.log('arm64');
+if (name === 'ditto') fs.cpSync(args[0], args[1], { recursive: true });
+if (name === 'tar') fs.writeFileSync(args[1], 'archive');
+if (name === 'hdiutil') fs.writeFileSync(args.at(-1), 'dmg');
+`;
+    for (const name of ["uname", "lipo", "codesign", "spctl", "ditto", "tar", "hdiutil", "xcrun"]) {
+      await writeFile(join(bin, name), fakeTool);
+      await chmod(join(bin, name), 0o755);
+    }
+    const overrides = {
+      PATH: `${bin}${delimiter}${process.env.PATH}`,
+      APPLE_SIGNING_IDENTITY: "",
+      GESPAN_ALLOW_UNSIGNED: "",
+    };
+    const original = Object.fromEntries(
+      Object.keys(overrides).map((key) => [key, process.env[key]]),
+    );
+    t.after(() => {
+      for (const [key, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+    Object.assign(process.env, overrides);
+    const pack = (out) =>
+      packageNative({ kind: "macos", binary, out: join(directory, out), version: "0.0.1-beta", arch: "aarch64" });
+    // A missing identity must not quietly publish an unsigned build.
+    await assert.rejects(() => pack("refused"), /allow_unsigned/);
+
+    process.env.GESPAN_ALLOW_UNSIGNED = "1";
+    await writeFile(calls, "");
+    const artifacts = await pack("output");
+    assert.equal(artifacts.length, 2);
+    assert.ok(artifacts.some((a) => a.target === "darwin-aarch64-app"));
+    assert.ok(artifacts.some((a) => !a.target && a.filename.endsWith(".dmg")));
+    const log = await readFile(calls, "utf8");
+    assert.match(log, /^codesign --verify --deep --strict /m, "the ad-hoc signature is still verified");
+    for (const step of [/^xcrun notarytool/m, /^xcrun stapler/m, /^spctl /m, /^codesign --sign .*\.dmg$/m]) {
+      assert.doesNotMatch(log, step);
+    }
+    const plist = await readFile(join(release, "Gespan Native.app/Contents/Info.plist"), "utf8");
+    assert.ok(plist.includes("<key>CFBundleShortVersionString</key><string>0.0.1</string>"));
+    assert.ok(plist.includes("<key>GespanNativeVersion</key><string>0.0.1-beta</string>"));
+  },
+);

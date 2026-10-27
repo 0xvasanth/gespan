@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed } = require("./release-channel.cjs");
+const { releaseChannel, updaterEndpoint, updaterPubkey, r2Status, GITHUB_STABLE_FEED, GITHUB_BETA_FEED, GITHUB_NATIVE_FEED, nativeUpdaterEndpoint, nativeAssetBase, nativeR2Status, requireNativeTagRef, nativeExpectedFiles, nativePublishPlan, verifyRecoveredFeed } = require("./release-channel.cjs");
 
 test("stable tags, including hyphens in build metadata, use the stable feed", () => {
   for (const tag of ["v0.9.1", "v0.9.1+build-beta"]) {
@@ -64,11 +64,18 @@ test("beta builds override a configured production endpoint", () => {
   }), "https://cdn.example.com/beta/latest.json");
 });
 
-test("beta builds require an isolated R2 endpoint and HTTPS", () => {
-  assert.throws(() => updaterEndpoint({
+test("beta builds without R2 use the GitHub beta feed, never the production endpoint", () => {
+  assert.equal(GITHUB_BETA_FEED, "https://github.com/0xvasanth/gespan/releases/download/beta-latest/latest.json");
+  assert.equal(updaterEndpoint({
     GITHUB_REF_NAME: "v0.9.1-beta.1",
     TAURI_UPDATER_ENDPOINT: "https://updates.example.com/stable.json",
-  }), /R2_PUBLIC_BASE_URL is required/);
+  }), GITHUB_BETA_FEED);
+  // Kept apart from the stable and native feeds.
+  assert.notEqual(GITHUB_BETA_FEED, GITHUB_STABLE_FEED);
+  assert.notEqual(GITHUB_BETA_FEED, GITHUB_NATIVE_FEED);
+});
+
+test("an R2 beta endpoint must use HTTPS", () => {
   assert.throws(() => updaterEndpoint({
     GITHUB_REF_NAME: "v0.9.1-beta.1",
     R2_PUBLIC_BASE_URL: "http://cdn.example.com",
@@ -106,14 +113,14 @@ test("stable releases treat R2 as optional, enabled only when fully configured",
   assert.equal(r2Status({ GITHUB_REF_NAME: "v0.9.1" }).enabled, false);
 });
 
-test("beta releases fail fast naming every missing R2 secret", () => {
+test("beta releases use R2 fully or not at all, naming every missing secret", () => {
   assert.equal(r2Status({ GITHUB_REF_NAME: "v0.9.1-beta.1", ...fullR2 }).enabled, true);
   const { R2_BUCKET_NAME, R2_SECRET_ACCESS_KEY, ...rest } = fullR2;
   assert.throws(
     () => r2Status({ GITHUB_REF_NAME: "v0.9.1-beta.1", ...rest }),
-    /Beta releases require all R2 secrets; missing: R2_BUCKET_NAME, R2_SECRET_ACCESS_KEY/,
+    /Beta releases need all R2 secrets or none; missing: R2_BUCKET_NAME, R2_SECRET_ACCESS_KEY/,
   );
-  assert.throws(() => r2Status({ GITHUB_REF_NAME: "v0.9.1-beta.1" }), /R2_PUBLIC_BASE_URL/);
+  assert.deepEqual(r2Status({ GITHUB_REF_NAME: "v0.9.1-beta.1" }), { enabled: false, missing: R2_NAMES });
 });
 
 test("the r2 CLI exports R2_ENABLED and fails for an incomplete beta", () => {
@@ -126,7 +133,9 @@ test("the r2 CLI exports R2_ENABLED and fails for an incomplete beta", () => {
     });
     run({ GITHUB_REF_NAME: "v0.9.1" });
     assert.equal(fs.readFileSync(envFile, "utf8"), "R2_ENABLED=false\n");
-    assert.throws(() => run({ GITHUB_REF_NAME: "v0.9.1-beta.1" }), /Command failed/);
+    run({ GITHUB_REF_NAME: "v0.9.1-beta.1" });
+    assert.equal(fs.readFileSync(envFile, "utf8"), "R2_ENABLED=false\nR2_ENABLED=false\n");
+    assert.throws(() => run({ GITHUB_REF_NAME: "v0.9.1-beta.1", R2_ACCOUNT_ID: "acct" }), /Command failed/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

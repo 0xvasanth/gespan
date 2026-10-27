@@ -6,6 +6,11 @@ on:
   # -> Use workflow from -> Tags -> native-vX.Y.Z-preview.N): the tag name is the
   # version, and the guard job rejects any other ref.
   workflow_dispatch:
+    inputs:
+      allow_unsigned:
+        description: "Publish ad-hoc signed, unnotarized macOS packages when the Apple signing secrets are missing"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -99,6 +104,10 @@ jobs:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
           set -euo pipefail
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_API_KEY_P8" ]; then
+            echo "No Apple distribution credentials: packaging needs allow_unsigned."
+            exit 0
+          fi
           python3 - <<'PY'
           import base64, os, pathlib
           root = pathlib.Path(os.environ['RUNNER_TEMP'])
@@ -131,6 +140,7 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          GESPAN_ALLOW_UNSIGNED: ${{ inputs.allow_unsigned && '1' || '' }}
         run: |
           set -euo pipefail
           BINARY="crates/gespan-gpui/target/${{ matrix.target }}/release/gespan-gpui"
@@ -236,8 +246,10 @@ jobs:
       - name: Decide whether the versioned release still needs its packages
         run: |
           set -euo pipefail
-          RELEASE_JSON="$(gh release view "$GITHUB_REF_NAME" --json isDraft,assets 2>/dev/null || true)" \
-            NATIVE_RELEASE_JSON="$RELEASE_JSON" \
+          # Assigned on its own line: a prefix assignment is not visible to
+          # expansions on the same command, so the plan never saw the release.
+          RELEASE_JSON="$(gh release view "$GITHUB_REF_NAME" --json isDraft,assets 2>/dev/null || true)"
+          NATIVE_RELEASE_JSON="$RELEASE_JSON" \
             node scripts/release-channel.cjs native-publish-plan native-dist "$RUNNER_TEMP/native-packages.txt"
       - name: Recovery - reuse the published, already signed feed
         if: env.NATIVE_UPLOAD_PACKAGES == 'false'
