@@ -1,0 +1,24 @@
+crates/tracker-client/src/tools.rs
+  s_938a6e0c93b076::t_7cdb9b9b53a1f0 221-253,255-259,268-271,273-294
+  s_938a6e0c93b076::t_191e81b329815c 17-18,20,27-42,50-70
+  s_938a6e0c93b076::t_f8e7adeae04d57 254,260-267,272
+  s_938a6e0c93b076::t_b88f72a3d65f9f 71
+src-tauri/src/tickets.rs
+  s_938a6e0c93b076::t_7e7744f4f3bc3b 498-557
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8dbb5ede9013592a7d555ca0360797a02e7672ea",
+  "prompts": {},
+  "sessions": {
+    "s_938a6e0c93b076": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72a68b1d-cb2c-4f12-871e-594131c1b284",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
