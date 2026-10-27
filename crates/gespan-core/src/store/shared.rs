@@ -257,7 +257,7 @@ impl Store {
         sql(conn.execute_batch("PRAGMA foreign_keys=ON;"))?;
         if !exists && !read_only {
             sql(conn.execute_batch("PRAGMA journal_mode=WAL;"))?;
-            let tx = sql(conn.unchecked_transaction())?;
+            let tx = sql(super::write_transaction(&conn))?;
             sql(tx.execute_batch(include_str!("shared_schema.sql")))?;
             sql(tx.commit())?;
         }
@@ -819,7 +819,7 @@ impl Store {
             return Ok(());
         }
         self.shared_writable()?;
-        let tx = sql(self.conn.unchecked_transaction())?;
+        let tx = sql(super::write_transaction(&self.conn))?;
         let mut blocks = self.shared_blocks(id)?;
         if self
             .shared
@@ -1159,7 +1159,7 @@ impl Store {
         message_id: Option<&str>,
     ) -> Result<(), String> {
         self.shared_writable()?;
-        let tx = sql(self.conn.unchecked_transaction())?;
+        let tx = sql(super::write_transaction(&self.conn))?;
         let current = self.shared_blocks(id)?;
         if self
             .shared
@@ -1298,7 +1298,7 @@ impl Store {
             .collect()
     }
     pub(super) fn shared_pins(&self, ids: &[i64], pinned: bool) -> Result<(), String> {
-        let tx = sql(self.conn.unchecked_transaction())?;
+        let tx = sql(super::write_transaction(&self.conn))?;
         for id in ids {
             self.shared_patch(*id, &[("pinned", json!(pinned))])?;
         }
@@ -1408,7 +1408,7 @@ impl Store {
     }
     pub(super) fn shared_set_reminders(&self, ids: &[i64], due: u64) -> Result<(), String> {
         self.shared_writable()?;
-        let tx = sql(self.conn.unchecked_transaction())?;
+        let tx = sql(super::write_transaction(&self.conn))?;
         for id in ids {
             sql(self.conn.execute(
                 "INSERT INTO session_reminders(session_id,due_at,fired_at) VALUES(?1,?2,NULL)
@@ -1454,7 +1454,7 @@ impl Store {
         now: u64,
     ) -> Result<Vec<Reminder>, String> {
         self.shared_writable()?;
-        let tx = sql(self.conn.unchecked_transaction())?;
+        let tx = sql(super::write_transaction(&self.conn))?;
         let mut fired = Vec::new();
         for reminder in due {
             let changed=sql(self.conn.execute("UPDATE session_reminders SET fired_at=?2 WHERE session_id=?1 AND fired_at IS NULL AND due_at=?3",
@@ -1469,7 +1469,7 @@ impl Store {
     pub(super) fn shared_delete(&self, id: i64) -> Result<(), String> {
         self.shared_writable()?;
         let original = self.persisted_session_id(id)?;
-        let tx = sql(self.conn.unchecked_transaction())?;
+        let tx = sql(super::write_transaction(&self.conn))?;
         for (table, column) in [
             ("session_reminders", "session_id"),
             ("pilot_blocks", "session_id"),
@@ -1504,7 +1504,7 @@ impl Store {
         path: &str,
         main: &str,
     ) -> Result<Vec<(Session, Settings)>, String> {
-        let tx = sql(self.conn.unchecked_transaction())?;
+        let tx = sql(super::write_transaction(&self.conn))?;
         let mut out = Vec::new();
         for mut session in self.shared_sessions()? {
             let mut settings = self.shared_agent(session.id)?.unwrap_or_default();
@@ -1654,7 +1654,7 @@ impl Store {
         if previous.revision > state.revision {
             return Ok(());
         }
-        let tx = sql(self.conn.unchecked_transaction())?;
+        let tx = sql(super::write_transaction(&self.conn))?;
         let fields = self.shared_field("queued_messages_json", "'[]'");
         let raw: String = sql(self.conn.query_row(
             &format!("SELECT {fields} FROM sessions WHERE id=?1"),

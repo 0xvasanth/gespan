@@ -25,6 +25,15 @@ use rusqlite::{params, Connection};
 pub use side_threads::DesktopSideThread;
 use std::path::Path;
 
+/// Starts a transaction that holds the write lock from its first statement.
+/// A deferred transaction that reads before it writes fails at once with
+/// "database is locked" when another connection (such as the desktop app)
+/// commits in between; SQLite cannot upgrade its stale read snapshot, so the
+/// busy timeout never applies. Taking the lock up front waits instead.
+pub(crate) fn write_transaction(conn: &Connection) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+    rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Session {
     pub id: i64,
@@ -768,7 +777,7 @@ impl Store {
             return self.shared_write_rows(session, start, rows, message_id);
         }
 
-        let tx = self.conn.transaction().map_err(|e| e.to_string())?;
+        let tx = write_transaction(&self.conn).map_err(|e| e.to_string())?;
         {
             let mut stmt = tx
                 .prepare(
@@ -967,7 +976,7 @@ impl Store {
             return self.shared_set_reminders(ids, due_at);
         }
 
-        let tx = self.conn.transaction().map_err(|e| e.to_string())?;
+        let tx = write_transaction(&self.conn).map_err(|e| e.to_string())?;
         for id in ids {
             tx.execute(
                 "INSERT INTO native_reminders(session_id,due_at,fired_at) VALUES(?1,?2,NULL)
@@ -1023,7 +1032,7 @@ impl Store {
         if self.shared.is_some() {
             return self.shared_fire_reminders(&due, now);
         }
-        let tx = self.conn.transaction().map_err(|e| e.to_string())?;
+        let tx = write_transaction(&self.conn).map_err(|e| e.to_string())?;
         for reminder in &due {
             tx.execute(
                 "UPDATE native_reminders SET fired_at=?2 WHERE session_id=?1",
@@ -1043,7 +1052,7 @@ impl Store {
             return self.shared_delete(id);
         }
 
-        let tx = self.conn.transaction().map_err(|e| e.to_string())?;
+        let tx = write_transaction(&self.conn).map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM native_rows WHERE session_id=?1", [id])
             .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM native_reminders WHERE session_id=?1", [id])
@@ -1111,10 +1120,7 @@ impl Store {
             session.provider_id = None;
             changed.push((session, settings));
         }
-        let tx = self
-            .conn
-            .unchecked_transaction()
-            .map_err(|e| e.to_string())?;
+        let tx = write_transaction(&self.conn).map_err(|e| e.to_string())?;
         for (session, settings) in &changed {
             tx.execute(
                 "UPDATE native_sessions SET cwd=?2,provider_id=NULL WHERE id=?1",
@@ -1220,6 +1226,37 @@ mod tests {
                 .unwrap()
                 .worktree_removed
         );
+    }
+
+    #[test]
+    fn a_write_after_a_read_waits_for_another_connections_commit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("race.db");
+        let open = || {
+            let conn = Connection::open(&path).unwrap();
+            conn.busy_timeout(std::time::Duration::from_millis(50))
+                .unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn
+        };
+        let ours = open();
+        ours.execute_batch("CREATE TABLE rows(v INTEGER)").unwrap();
+        let theirs = open();
+        let tx = write_transaction(&ours).unwrap();
+        let _: i64 = tx
+            .query_row("SELECT count(*) FROM rows", [], |r| r.get(0))
+            .unwrap();
+        // The other app's write must wait for ours rather than slip in
+        // between our read and our write.
+        assert!(theirs.execute("INSERT INTO rows VALUES(2)", []).is_err());
+        tx.execute("INSERT INTO rows VALUES(1)", [])
+            .expect("our write must not fail with a stale snapshot");
+        tx.commit().unwrap();
+        theirs.execute("INSERT INTO rows VALUES(2)", []).unwrap();
+        let count: i64 = ours
+            .query_row("SELECT count(*) FROM rows", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
     }
 
     #[test]
