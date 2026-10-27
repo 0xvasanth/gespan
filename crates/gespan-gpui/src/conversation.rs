@@ -1453,6 +1453,9 @@ impl Conversation {
                                     cx,
                                 );
                             }
+                            if this.settings.pilot.is_some() {
+                                this.pilot_turn_ended();
+                            }
                             if this.status != "Ready" && !this.follow_ups.state.messages.is_empty()
                             {
                                 this.follow_ups.state.paused = true;
@@ -2732,6 +2735,10 @@ impl Conversation {
             self.follow_ups.state.paused = true;
             self.follow_ups.requested = None;
             self.save_follow_ups(cx);
+        }
+        // A provider switch stops the turn so the queue goes to the new one.
+        if self.settings.pilot.is_some() && self.settings.pending_provider_switch.is_none() {
+            self.pilot_pause_queue();
         }
         self.follow_ups.ready = false;
         self.clear_background();

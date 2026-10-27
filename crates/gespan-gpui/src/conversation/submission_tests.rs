@@ -388,3 +388,177 @@ fn a_retry_after_a_failed_worktree_is_named_after_the_retry(cx: &mut TestAppCont
         })
         .unwrap();
 }
+
+fn pilot_message(id: &str, internal: bool) -> gespan_core::pilot::Message {
+    gespan_core::pilot::Message {
+        id: id.into(),
+        text: format!("{id} text"),
+        sent_at: Some(1),
+        internal,
+        error: None,
+        attachments: Vec::new(),
+        report: Vec::new(),
+    }
+}
+
+/// A Codex Pilot chat mid-turn, ready to take a steer, with `outbox` queued.
+fn busy_pilot(
+    view: &mut Conversation,
+    outbox: Vec<gespan_core::pilot::Message>,
+    cx: &mut Context<Conversation>,
+) -> std::sync::mpsc::Receiver<Control> {
+    let (send, receive) = std::sync::mpsc::channel();
+    view.summary.provider = "codex".into();
+    view.configure_pilot(
+        gespan_core::pilot::Pilot {
+            outbox,
+            ..Default::default()
+        },
+        "/tmp".into(),
+        Default::default(),
+        cx,
+    );
+    view.busy = true;
+    view.controls = Some(send);
+    view.follow_ups.ready = true;
+    receive
+}
+
+#[gpui::test]
+fn pilot_follow_ups_wait_for_the_turn_when_the_setting_is_queue(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    cx.update(|cx| {
+        cx.set_global(crate::settings::Preferences {
+            follow_up: "queue".into(),
+            ..Default::default()
+        })
+    });
+    window
+        .update(cx, |view, _, cx| {
+            let message = pilot_message("next", false);
+            let controls = busy_pilot(view, vec![message.clone()], cx);
+            assert!(
+                !view.pilot_dispatch(&message, cx),
+                "Queue keeps the message for the next turn, as in a session"
+            );
+            assert!(controls.try_recv().is_err(), "nothing was steered");
+            assert!(view.pilot_ui.sending.is_none());
+
+            // Background work alone may never end (a dev server), so the
+            // message joins the turn, as a session's does.
+            view.background
+                .tasks
+                .push(gespan_core::provider::BackgroundTask {
+                    id: "dev".into(),
+                    description: "Dev server".into(),
+                    agent: false,
+                    command: Some("npm run dev".into()),
+                    started_at: 0,
+                    tool_id: None,
+                    latest: None,
+                    steps: 0,
+                });
+            assert!(view.pilot_dispatch(&message, cx));
+            assert!(matches!(
+                controls.try_recv().unwrap().decision,
+                Decision::Steer(_)
+            ));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn stopping_a_pilot_turn_pauses_its_queue_at_the_first_waiting_message(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    window
+        .update(cx, |view, _, cx| {
+            let _controls = busy_pilot(
+                view,
+                vec![
+                    pilot_message("report", true),
+                    pilot_message("first", false),
+                    pilot_message("second", false),
+                ],
+                cx,
+            );
+            view.stop(cx);
+            let failures = view.pilot_take_failures();
+            assert_eq!(
+                failures
+                    .iter()
+                    .map(|(id, _)| id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["first"],
+                "the first message the user queued holds the rest"
+            );
+            assert!(failures[0].1.contains("stopped"), "{}", failures[0].1);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_provider_switch_stop_does_not_pause_the_pilot_queue(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    window
+        .update(cx, |view, _, cx| {
+            let _controls = busy_pilot(view, vec![pilot_message("first", false)], cx);
+            view.settings.pending_provider_switch = Some(Default::default());
+            view.stop(cx);
+            assert!(
+                view.pilot_take_failures().is_empty(),
+                "the switch stops the turn so this message can go to the new provider"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_pilot_steer_the_turn_never_accepted_fails_instead_of_resending(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    window
+        .update(cx, |view, _, cx| {
+            let message = pilot_message("late", false);
+            let _controls = busy_pilot(view, vec![message.clone()], cx);
+            assert!(view.pilot_dispatch(&message, cx));
+            assert_eq!(view.pilot_ui.sending.as_deref(), Some("late"));
+            view.pilot_turn_ended();
+            assert_eq!(
+                view.pilot_take_failures(),
+                vec![(
+                    "late".into(),
+                    "The turn ended before this message was accepted".into()
+                )]
+            );
+            assert!(view.pilot_ui.sending.is_none());
+            // An accepted steer leaves nothing to fail.
+            let next = pilot_message("accepted", false);
+            view.busy = true;
+            assert!(view.pilot_dispatch(&next, cx));
+            view.pilot_message_delivered(next.id.clone(), cx);
+            view.pilot_turn_ended();
+            assert!(view.pilot_take_failures().is_empty());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn the_pilot_send_button_stops_a_running_turn_when_nothing_is_typed(cx: &mut TestAppContext) {
+    let window = conversation(cx);
+    window
+        .update(cx, |view, _, cx| {
+            let _controls = busy_pilot(view, Vec::new(), cx);
+            view.input
+                .update(cx, |input, cx| input.set_text("steer this".into(), cx));
+            assert!(!view.pilot_stoppable(cx), "typed text is sent, not a stop");
+            view.input
+                .update(cx, |input, cx| input.set_text(String::new(), cx));
+            assert!(view.pilot_stoppable(cx));
+            view.pilot_send_or_stop(cx);
+            assert!(view.stopping && !view.busy);
+            assert!(
+                !view.pilot_stoppable(cx),
+                "a stopping turn offers no second stop"
+            );
+        })
+        .unwrap();
+}
