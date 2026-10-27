@@ -708,3 +708,55 @@ fn an_ordinary_session_with_a_ticket_and_cards_gets_both_tools() {
     assert_eq!(record["scope"]["result"]["cards"], true);
     assert_eq!(record["replies"][1]["ok"], true, "{record}");
 }
+
+/// R26: the provider can end its turn the moment the reply reaches it, and
+/// the final update carries only the change recorded by then. So the move
+/// must already be recorded when the reply goes out, and the session's
+/// ticket then shows the new status.
+#[test]
+fn ticket_move_is_recorded_before_the_reply_is_sent() {
+    use gespan_core::ticket_bridge::{Answered, Effect};
+    let moved = TicketRef {
+        status: Some("Done".into()),
+        ..linked().unwrap()
+    };
+    let changes = TicketChanges::default();
+    let mut at_reply = None;
+    settle_ticket_call(
+        &changes,
+        Ok(Answered {
+            value: serde_json::json!({"status": "Done"}),
+            effect: Effect::Moved(moved.clone()),
+        }),
+        |reply| {
+            assert_eq!(reply, Ok(serde_json::json!({"status": "Done"})));
+            // The turn ends here: its final update takes the change now.
+            at_reply = Some(take_ticket_change(&changes));
+        },
+    );
+    assert_eq!(
+        at_reply,
+        Some(Some(TicketChange::Moved(moved))),
+        "the move is recorded before the reply"
+    );
+    // A comment is recorded first too, as a refresh.
+    let mut at_reply = None;
+    settle_ticket_call(
+        &changes,
+        Ok(Answered {
+            value: serde_json::json!({}),
+            effect: Effect::Commented,
+        }),
+        |_| at_reply = Some(take_ticket_change(&changes)),
+    );
+    assert_eq!(at_reply, Some(Some(TicketChange::Refresh)));
+    // A failure records nothing and still answers with the error.
+    let mut replied = None;
+    settle_ticket_call(
+        &changes,
+        Err("Connect Linear in Settings".into()),
+        |reply| replied = Some(reply),
+    );
+    assert_eq!(replied, Some(Err("Connect Linear in Settings".to_string())));
+    assert_eq!(take_ticket_change(&changes), None);
+}

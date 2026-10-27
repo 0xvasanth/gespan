@@ -1167,6 +1167,28 @@ fn record_ticket_change(changes: &TicketChanges, effect: gespan_core::ticket_bri
     }
 }
 
+/// Settles one answered ticket call. The change is recorded before the
+/// reply goes out: the reply can let the provider end its turn at once, and
+/// the turn's final update carries only what is recorded by then, so a move
+/// recorded after the reply could leave the session's ticket on its old
+/// status.
+fn settle_ticket_call(
+    changes: &TicketChanges,
+    answer: Result<gespan_core::ticket_bridge::Answered, String>,
+    reply: impl FnOnce(Result<serde_json::Value, String>),
+) {
+    match answer {
+        Ok(answered) => {
+            record_ticket_change(changes, answered.effect);
+            reply(Ok(answered.value));
+        }
+        Err(error) => {
+            tracing::warn!(%error, "ticket tool call failed");
+            reply(Err(error));
+        }
+    }
+}
+
 /// How often a turn re-reads its scope when only another connection's write
 /// (not a reported change) suggests it may have moved.
 const SCOPE_POLL: Duration = Duration::from_secs(1);
@@ -1270,16 +1292,10 @@ impl TicketTools {
                     let tickets = self.tickets.clone();
                     let changes = self.changes.clone();
                     std::thread::spawn(move || {
-                        match gespan_core::ticket_bridge::answer(&tickets, &ticket, &tool) {
-                            Ok(answered) => {
-                                let _ = call.reply.send(Ok(answered.value));
-                                record_ticket_change(&changes, answered.effect);
-                            }
-                            Err(error) => {
-                                tracing::warn!(%error, "ticket tool call failed");
-                                let _ = call.reply.send(Err(error));
-                            }
-                        }
+                        let answer = gespan_core::ticket_bridge::answer(&tickets, &ticket, &tool);
+                        settle_ticket_call(&changes, answer, |reply| {
+                            let _ = call.reply.send(reply);
+                        });
                     });
                 }
                 BridgeTool::Card(tool) => {

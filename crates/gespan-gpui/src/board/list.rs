@@ -147,8 +147,20 @@ fn due_bucket(due_at: Option<i64>, done: bool, today: NaiveDate) -> (&'static st
 }
 
 impl BoardView {
+    /// The view's layout state, parsed from `views.layout` once per change
+    /// of it rather than on every read (each frame reads it several times).
     pub(super) fn layout_spec(&self) -> LayoutSpec {
-        serde_json::from_str(&self.views.layout).unwrap_or_default()
+        let mut cache = self.layout_cache.borrow_mut();
+        match &*cache {
+            Some((json, spec)) if *json == self.views.layout => spec.clone(),
+            _ => {
+                #[cfg(test)]
+                self.layout_parses.set(self.layout_parses.get() + 1);
+                let spec: LayoutSpec = serde_json::from_str(&self.views.layout).unwrap_or_default();
+                *cache = Some((self.views.layout.clone(), spec.clone()));
+                spec
+            }
+        }
     }
 
     pub(crate) fn layout_kind(&self) -> Layout {

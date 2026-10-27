@@ -118,6 +118,7 @@ impl BoardView {
         let result = self.run_query(cx);
         // A selection holds only cards on screen: ones the query now hides drop.
         self.prune_selection();
+        self.sync_column_lists();
         result
     }
 
@@ -137,12 +138,15 @@ impl BoardView {
         // The cards whose linked session or Pilot has an open turn, or waits
         // on the user (ruling C5-m), for the `linked: running` filter.
         let links = super::turns::running_links(cx);
+        let reads = self.reads.clone();
         let ids = self.service().and_then(|service| {
             let running = if links.is_empty() {
                 HashSet::new()
             } else {
+                reads.note("running_cards");
                 service.running_cards(&board_id, &links)?
             };
+            reads.note("query");
             service.query(&board_id, &spec, &running)
         })?;
         self.rank = ids
@@ -160,6 +164,7 @@ impl BoardView {
             self.matched = None;
             self.rank.clear();
             self.error = Some(error);
+            self.sync_column_lists();
         }
         cx.notify();
     }

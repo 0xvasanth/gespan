@@ -344,6 +344,7 @@ impl BoardView {
                     .cursor_pointer()
                     .hover(|s| s.bg(content(0.06)))
                     .when(self.open_in_open, |d| d.bg(content(0.05)))
+                    .focusable()
                     .tab_index(0)
                     .focus_visible(|s| s.border_1().border_color(accent_color()))
                     .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
@@ -382,6 +383,7 @@ impl BoardView {
                     .cursor_pointer()
                     .hover(|s| s.bg(content(0.06)))
                     .when(self.archive_open, |d| d.bg(content(0.05)))
+                    .focusable()
                     .tab_index(0)
                     .focus_visible(|s| s.border_1().border_color(accent_color()))
                     .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {

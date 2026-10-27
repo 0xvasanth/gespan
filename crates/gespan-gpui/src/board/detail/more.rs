@@ -16,9 +16,13 @@ pub(crate) fn card_link(board_id: &str, card_id: &str) -> String {
     format!("gespan://board/{board_id}/card/{card_id}")
 }
 
-/// What "Copy reference" puts on the clipboard: `#N Title`.
+/// What "Copy reference" puts on the clipboard: `#N Title`, or just `#N`
+/// for a card with no title.
 pub(crate) fn card_reference(number: i64, title: &str) -> String {
-    format!("#{number} {title}")
+    match title.trim() {
+        "" => format!("#{number}"),
+        _ => format!("#{number} {title}"),
+    }
 }
 
 const COPY_LABEL_TITLE: usize = 40;

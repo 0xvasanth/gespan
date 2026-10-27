@@ -73,12 +73,14 @@ impl BoardView {
 
     /// The cards in the order the open layout shows them: the board's columns
     /// left to right, the list's groups top to bottom, or the table's rows.
-    /// A card in several list groups counts once, at its first place.
+    /// A card in several list groups counts once, at its first place. With
+    /// swimlanes the board reads lane by lane, then column by column.
     pub(crate) fn display_order(&self) -> Vec<String> {
         let Some(detail) = &self.detail else {
             return Vec::new();
         };
         match self.layout_kind() {
+            Layout::Board if self.lane_mode().is_some() => self.lane_order(),
             Layout::Board => detail
                 .columns
                 .iter()

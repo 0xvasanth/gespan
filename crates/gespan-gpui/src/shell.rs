@@ -592,6 +592,8 @@ pub(crate) struct Shell {
     /// The newest ticket request per session: (sequence, tracker, key). An older
     /// reply is dropped, so a relink or a manual refresh is never swallowed.
     ticket_requests: HashMap<i64, (u64, gespan_core::tickets::Tracker, String)>,
+    /// The board store the session menu reads the ticket status setting from.
+    board_service: crate::board::turns::CachedService,
     ticket_sequence: u64,
     /// New-session composers holding only the ticket key until its title arrives.
     ticket_drafts: HashMap<i64, String>,
@@ -952,6 +954,7 @@ impl Shell {
             connected_trackers: None,
             stale_tickets: HashSet::new(),
             ticket_requests: HashMap::new(),
+            board_service: Default::default(),
             ticket_sequence: 0,
             ticket_drafts: HashMap::new(),
             action_dialog: None,

@@ -45,17 +45,23 @@ use gespan_core::{
     tickets::{TicketRef, Tracker},
 };
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, Role,
-    SharedString, Subscription, Task, Window, div, prelude::*, px,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent,
+    ListState, Pixels, Role, SharedString, Subscription, Task, Window, div, prelude::*, px,
 };
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
 
 const POLL: Duration = Duration::from_secs(2);
+/// The board store's error for a card id with no row.
+const CARD_NOT_FOUND: &str = "Card not found";
+/// How far past each edge of a board column's view cards are laid out.
+pub(crate) const CARD_LIST_OVERDRAW: Pixels = px(240.);
 pub(crate) const ROLES: [(&str, &str); 4] = [
     ("todo", "To do"),
     ("doing", "Doing"),
@@ -89,6 +95,9 @@ pub(crate) enum LinkLabel {
 pub(crate) struct Composer {
     pub column_id: String,
     pub input: Entity<Input>,
+    /// The field's focus handle: the column's list keeps the composer row
+    /// mounted while it has focus, however far the cards push it down.
+    pub focus: FocusHandle,
 }
 
 enum Menu {
@@ -134,6 +143,25 @@ enum Renaming {
     Column(String),
 }
 
+/// The names of the Service reads a load or poll made, in order, so tests
+/// can check a reload's reads don't grow with the board. Records nothing
+/// outside tests.
+#[derive(Clone, Default)]
+pub(crate) struct ReadLog(#[cfg(test)] Rc<RefCell<Vec<&'static str>>>);
+
+impl ReadLog {
+    fn note(&self, _read: &'static str) {
+        #[cfg(test)]
+        self.0.borrow_mut().push(_read);
+    }
+
+    /// The reads since the last `take`.
+    #[cfg(test)]
+    pub(crate) fn take(&self) -> Vec<&'static str> {
+        std::mem::take(&mut *self.0.borrow_mut())
+    }
+}
+
 pub(crate) struct BoardView {
     store: Database,
     db_path: PathBuf,
@@ -151,6 +179,9 @@ pub(crate) struct BoardView {
     pub(crate) detail: Option<BoardDetail>,
     pub(crate) dragging: bool,
     pub(crate) pending_reload: bool,
+    /// Set by a load that had to open another board because the open one
+    /// was deleted elsewhere; the reload then resets the board's UI.
+    fell_back: bool,
     pub(crate) last_data_version: i64,
     /// Every non-ticket link of the board's live cards.
     link_rows: Vec<CardLink>,
@@ -261,9 +292,54 @@ pub(crate) struct BoardView {
     pub(crate) drop_target: Option<(String, usize)>,
     /// One focus handle per card, so cards are tab stops.
     pub(crate) card_focus: HashMap<String, FocusHandle>,
+    /// The card that had keyboard focus at the last render.
+    focused_card_id: Option<String>,
+    /// A focused card a reload or filter hid, and the card in its column that
+    /// takes focus instead on the next render.
+    refocus: Option<(String, String)>,
+    /// The card whose drawer the column lists keep mounted.
+    drawer_pinned: Option<String>,
+    /// A column item a reveal scrolled to on estimated heights: (column,
+    /// item, frames left to check it is fully in view).
+    settling: Option<(String, usize, u8)>,
+    /// What the last board-layout keyboard drag step said, for the status
+    /// element screen readers read.
+    drag_announcement: Option<String>,
     card_menu: Option<CardMenu>,
     /// One tab stop per collapsed column's strip.
     pub(crate) collapsed_focus: HashMap<String, FocusHandle>,
+    /// One windowed list per column: only the cards in (or near) view mount.
+    /// Item `i` is the column's `i`th visible card; the last item is the
+    /// composer (or "Add card").
+    pub(crate) column_lists: HashMap<String, ListState>,
+    /// The visible card ids each column's list was last synced with.
+    column_ids: HashMap<String, Vec<String>>,
+    /// Each card's place in `detail.cards`, for the list items.
+    card_slots: HashMap<String, usize>,
+    /// The last painted height of each column item (card id, or a column's
+    /// footer key), so a short column is exactly as tall as its cards.
+    item_heights: Rc<RefCell<HashMap<String, Pixels>>>,
+    /// Moves whenever `item_heights`, the column ids or the estimates
+    /// change, so each column's summed height is redone only then.
+    heights_version: Rc<std::cell::Cell<u64>>,
+    /// Each column's body height as (version, estimate, height) when summed.
+    body_heights: RefCell<HashMap<String, (u64, Pixels, Pixels)>>,
+    /// The mean row height the shown cards' faces lay out, under a display:
+    /// the first guess for unpainted cards before any has been measured.
+    face_estimate: Option<(DisplayOptions, Pixels)>,
+    /// The display options the lists were measured with.
+    list_display: Option<DisplayOptions>,
+    /// The mean painted card row height seen under each display, the first
+    /// guess for unpainted cards when that display is back.
+    learned_heights: Vec<(DisplayOptions, Pixels)>,
+    /// Cards rendered since the start of the last board render.
+    #[cfg(test)]
+    pub(crate) rendered_cards: std::cell::Cell<usize>,
+    /// The last parsed `views.layout`, with the JSON it was parsed from.
+    layout_cache: RefCell<Option<(String, list::LayoutSpec)>>,
+    /// How many times the view's `layout_json` was parsed.
+    #[cfg(test)]
+    pub(crate) layout_parses: std::cell::Cell<usize>,
     /// `(live, archived)` card counts per column, read with each reload.
     column_counts: HashMap<String, (usize, usize)>,
     /// The slot a dragged column would land in.
@@ -293,6 +369,26 @@ pub(crate) struct BoardView {
     filter_free: Entity<Input>,
     /// The swimlane cell (lane key, column id) a drag would drop into.
     pub(crate) lane_drop: Option<(String, String)>,
+    /// Swimlanes as one windowed list of rows (a lane's header, then bands
+    /// of `LANE_BAND` cards per cell); `None` on a board without lanes.
+    pub(crate) lane_list: Option<ListState>,
+    /// The rows, lanes and cells (shown card ids per `(lane, column)`) the
+    /// lane list was last synced with, computed once per render.
+    lane_rows_cache: Vec<swimlanes::LaneRow>,
+    lanes_cache: Vec<swimlanes::Lane>,
+    pub(crate) lane_cell_ids: swimlanes::LaneCells,
+    /// The focus handle each lane row keeps itself mounted by.
+    lane_row_handles: Vec<Option<FocusHandle>>,
+    /// Each lane header's focus, where focus goes when a filter hides every
+    /// card of the focused card's cell.
+    pub(crate) lane_header_focus: HashMap<String, FocusHandle>,
+    /// A lane card a reveal scrolled to, and frames left to check it.
+    lane_settling: Option<(String, u8)>,
+    /// A focused card a reload or filter hid, and the lane whose header
+    /// takes focus instead on the next render.
+    lane_header_refocus: Option<(String, String)>,
+    /// A card a keyboard lane drop moved, revealed once the lanes hold it.
+    lane_reveal_pending: Option<String>,
     /// The board whose default view was applied; it applies once per board.
     default_view_applied: Option<String>,
     pending_default_view: Option<String>,
@@ -300,6 +396,8 @@ pub(crate) struct BoardView {
     /// commit from another connection exactly there.
     #[cfg(test)]
     pub(crate) after_load_reads: Option<Box<dyn FnMut()>>,
+    /// The Service reads loads and polls made, for tests that count them.
+    pub(crate) reads: ReadLog,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -363,10 +461,11 @@ impl BoardView {
             boards: Vec::new(),
             switcher: None,
             switcher_anchor: AnchorSlot::default(),
-            switcher_focus: cx.focus_handle(),
+            switcher_focus: cx.focus_handle().tab_stop(true),
             detail: None,
             dragging: false,
             pending_reload: false,
+            fell_back: false,
             last_data_version: 0,
             link_rows: Vec::new(),
             chips: HashMap::new(),
@@ -420,12 +519,12 @@ impl BoardView {
             filter_row: None,
             sort_open: false,
             sort_anchor: AnchorSlot::default(),
-            sort_focus: cx.focus_handle(),
+            sort_focus: cx.focus_handle().tab_stop(true),
             open_in_page,
             open_in_open: false,
             open_in_anchor: AnchorSlot::default(),
-            filter_focus: cx.focus_handle(),
-            new_task_focus: cx.focus_handle(),
+            filter_focus: cx.focus_handle().tab_stop(true),
+            new_task_focus: cx.focus_handle().tab_stop(true),
             drawer_focus: cx.focus_handle(),
             column_anchors: HashMap::new(),
             card_anchors: HashMap::new(),
@@ -434,8 +533,27 @@ impl BoardView {
             kb_blur: None,
             drop_target: None,
             card_focus: HashMap::new(),
+            focused_card_id: None,
+            refocus: None,
+            drawer_pinned: None,
+            drag_announcement: None,
+            settling: None,
             card_menu: None,
             collapsed_focus: HashMap::new(),
+            column_lists: HashMap::new(),
+            column_ids: HashMap::new(),
+            card_slots: HashMap::new(),
+            item_heights: Rc::default(),
+            heights_version: Rc::default(),
+            body_heights: RefCell::default(),
+            face_estimate: None,
+            list_display: None,
+            learned_heights: Vec::new(),
+            #[cfg(test)]
+            rendered_cards: std::cell::Cell::new(0),
+            layout_cache: RefCell::default(),
+            #[cfg(test)]
+            layout_parses: std::cell::Cell::new(0),
             column_counts: HashMap::new(),
             column_drop: None,
             error: None,
@@ -451,10 +569,20 @@ impl BoardView {
             field_seen: HashMap::new(),
             filter_free,
             lane_drop: None,
+            lane_list: None,
+            lane_rows_cache: Vec::new(),
+            lanes_cache: Vec::new(),
+            lane_cell_ids: HashMap::new(),
+            lane_row_handles: Vec::new(),
+            lane_header_focus: HashMap::new(),
+            lane_settling: None,
+            lane_header_refocus: None,
+            lane_reveal_pending: None,
             default_view_applied: None,
             pending_default_view: None,
             #[cfg(test)]
             after_load_reads: None,
+            reads: ReadLog::default(),
             _poll: poll,
             _subscriptions: vec![activation, searching, free_submit, live_turns],
         }
@@ -499,6 +627,7 @@ impl BoardView {
         self.forget_finished_drag(cx);
         self.visible = false;
         self.cancel_keyboard_drag(cx);
+        self.drag_announcement = None;
         self.composer = None;
         self.new_card = None;
         self.menu = None;
@@ -538,6 +667,9 @@ impl BoardView {
         }
         self.pending_reload = false;
         self.load_error = self.load(cx).err();
+        if std::mem::take(&mut self.fell_back) {
+            self.reset_after_fallback(cx);
+        }
         if std::mem::take(&mut self.status_due) && self.load_error.is_none() {
             self.refresh_link_status(cx);
         }
@@ -557,6 +689,28 @@ impl BoardView {
         cx.notify();
     }
 
+    /// The open board was deleted elsewhere and `load` opened another: what
+    /// belonged to the old board goes, as on a board switch. The undo toast
+    /// goes too (a held delete went with the board), and so do the drawer,
+    /// the composer, menus, the selection, the filter and the search.
+    fn reset_after_fallback(&mut self, cx: &mut Context<Self>) {
+        self.commit_pending(cx);
+        self.card_detail = None;
+        self.switcher = None;
+        self.pop = None;
+        self.table_edit = None;
+        self.clear_selection();
+        self.reset_view(cx);
+        self.settings = None;
+        self.filter_open = false;
+        self.sort_open = false;
+        self.card_menu = None;
+        self.menu = None;
+        self.composer = None;
+        self.new_card = None;
+        self.renaming = None;
+    }
+
     fn poll(&mut self, cx: &mut Context<Self>) {
         if !self.visible {
             return;
@@ -567,25 +721,46 @@ impl BoardView {
         }
         let lifted = self.kb_drag.as_ref().map(|drag| drag.card_id.clone());
         if let (Some(card_id), Some(board_id)) = (lifted, self.open_board_id.clone()) {
-            // Reloads wait for a lift, but a lifted card deleted elsewhere ends it.
-            let gone = self
-                .service()
-                .and_then(|service| service.get(&board_id))
-                .is_ok_and(|detail| !detail.cards.iter().any(|card| card.id == card_id));
-            if gone {
+            // Reloads wait for a lift, but a lifted card deleted, archived or
+            // moved to another board elsewhere ends it. Only that card is
+            // read, not the whole board.
+            if self.lifted_card_gone(&card_id, &board_id) {
                 self.cancel_keyboard_drag(cx);
                 self.reload(cx);
                 return;
             }
         }
+        let reads = self.reads.clone();
         let Ok(service) = self.service() else {
             return;
         };
+        reads.note("data_version");
         if service
             .data_version()
             .is_ok_and(|version| version != self.last_data_version)
         {
             self.reload(cx);
+        }
+    }
+
+    /// Whether the lifted card left the board elsewhere: deleted, archived
+    /// or moved to another board. A read that fails for another reason
+    /// keeps the lift.
+    fn lifted_card_gone(&mut self, card_id: &str, board_id: &str) -> bool {
+        let reads = self.reads.clone();
+        let Ok(service) = self.service() else {
+            return false;
+        };
+        reads.note("card");
+        match service.card(card_id) {
+            Ok(card) if card.board_id != board_id => true,
+            Ok(_) => {
+                reads.note("card_meta");
+                service
+                    .card_meta(card_id)
+                    .is_ok_and(|meta| meta.archived_at.is_some())
+            }
+            Err(error) => error == CARD_NOT_FOUND,
         }
     }
 
@@ -607,32 +782,45 @@ impl BoardView {
         };
         let wanted = self.selected_board_id.clone().or(remembered);
         let archive_open = self.archive_open;
+        let reads = self.reads.clone();
         let service = self.service()?;
         // Read the version first: a commit landing during the reads below
         // then shows up as a newer version on the next poll and reloads again.
+        reads.note("data_version");
         let version = service.data_version()?;
+        reads.note("list");
         let boards = service.list()?;
         let board = match wanted.and_then(|id| boards.iter().find(|b| b.id == id).cloned()) {
             Some(board) => board,
-            None => service.default_board()?,
+            None => {
+                reads.note("default_board");
+                service.default_board()?
+            }
         };
         let boards = if boards.iter().any(|b| b.id == board.id) {
             boards
         } else {
+            reads.note("list");
             service.list()?
         };
+        reads.note("get");
         let detail = service.get(&board.id)?;
-        let mut column_counts = HashMap::new();
-        for column in &detail.columns {
-            column_counts.insert(column.id.clone(), service.column_card_count(&column.id)?);
-        }
+        // Every column's counts in one read, however many columns there are.
+        reads.note("column_card_counts");
+        let column_counts = service.column_card_counts(&board.id)?;
+        reads.note("extras");
         let extras = service.extras(&board.id)?;
+        reads.note("labels");
         let labels = service.labels(&board.id)?;
+        reads.note("board_tickets");
         let card_tickets = service.board_tickets(&board.id)?;
+        reads.note("views");
         let views = service.views(&board.id)?;
+        reads.note("list_fields");
         let fields = service.list_fields(&board.id)?;
         // A settings row that can't be read is not fatal to the board, but the
         // automation section must not write over what it could not see.
+        reads.note("settings");
         let settings_read = service.settings(&board.id);
         let settings_loaded = settings_read.is_ok();
         let board_settings = settings_read.unwrap_or_default();
@@ -641,25 +829,31 @@ impl BoardView {
             .iter()
             .filter(|field| matches!(field.kind.as_str(), "text" | "number" | "date" | "url"))
         {
+            reads.note("field_distinct_values");
             field_seen.insert(
                 field.id.clone(),
                 service.field_distinct_values(&board.id, &field.id, 50)?,
             );
         }
+        reads.note("card_index");
         let index: HashMap<_, _> = service
             .card_index(&board.id)?
             .into_iter()
             .map(|row| (row.card_id.clone(), row))
             .collect();
         let archived = if archive_open {
+            reads.note("archived");
             service.archived(&board.id)?
         } else {
             Vec::new()
         };
+        reads.note("board_links");
         let link_rows = service.board_links(&board.id)?;
+        reads.note("blocked");
         let blocked = service.blocked(&board.id)?;
         // Only the "failed" chip state needs this; a read that fails leaves
         // the chips without it rather than failing the whole board.
+        reads.note("latest_run_events");
         let last_events = service
             .latest_run_events(&board.id)
             .unwrap_or_else(|error| {
@@ -671,6 +865,13 @@ impl BoardView {
             hook();
         }
         self.last_data_version = version;
+        // The open board went away elsewhere and another one opens instead.
+        // A board the user picked (or a fresh start) is not a fallback.
+        self.fell_back = self
+            .open_board_id
+            .as_ref()
+            .is_some_and(|open| *open != board.id)
+            && self.selected_board_id.as_ref() != Some(&board.id);
         self.selected_board_id = Some(board.id.clone());
         self.open_board_id = Some(board.id);
         self.boards = boards;
@@ -728,25 +929,32 @@ impl BoardView {
         let Some(detail) = &self.detail else {
             return;
         };
+        let columns: HashSet<&str> = detail.columns.iter().map(|c| c.id.as_str()).collect();
+        let cards: HashSet<&str> = detail.cards.iter().map(|c| c.id.as_str()).collect();
         self.column_anchors
-            .retain(|id, _| detail.columns.iter().any(|column| &column.id == id));
+            .retain(|id, _| columns.contains(id.as_str()));
         self.card_anchors
-            .retain(|id, _| detail.cards.iter().any(|card| &card.id == id));
-        self.card_focus
-            .retain(|id, _| detail.cards.iter().any(|card| &card.id == id));
+            .retain(|id, _| cards.contains(id.as_str()));
+        self.card_focus.retain(|id, _| cards.contains(id.as_str()));
         self.collapsed_focus
-            .retain(|id, _| detail.columns.iter().any(|column| &column.id == id));
+            .retain(|id, _| columns.contains(id.as_str()));
+        // Painted heights of cards and columns no longer on the board.
+        self.item_heights.borrow_mut().retain(|key, _| {
+            cards.contains(key.as_str())
+                || column::footer_column(key).is_some_and(|id| columns.contains(id))
+        });
+        self.heights_version.set(self.heights_version.get() + 1);
         for column in &detail.columns {
             self.column_anchors.entry(column.id.clone()).or_default();
             self.collapsed_focus
                 .entry(column.id.clone())
-                .or_insert_with(|| cx.focus_handle());
+                .or_insert_with(|| cx.focus_handle().tab_stop(true));
         }
         for card in &detail.cards {
             self.card_anchors.entry(card.id.clone()).or_default();
             self.card_focus
                 .entry(card.id.clone())
-                .or_insert_with(|| cx.focus_handle());
+                .or_insert_with(|| cx.focus_handle().tab_stop(true));
         }
     }
 
@@ -754,6 +962,12 @@ impl BoardView {
     pub(crate) fn link_label(&self, card_id: &str) -> Option<LinkLabel> {
         let card = self.card(card_id)?;
         let (kind, id) = (card.link_kind.as_deref()?, card.link_id.as_deref()?);
+        Some(self.link_target(kind, id))
+    }
+
+    /// The session or Pilot a link names: its title, or missing when the
+    /// work is gone (or the link is of another kind).
+    pub(crate) fn link_target(&self, kind: &str, id: &str) -> LinkLabel {
         let found = match kind {
             "session" => self
                 .link_sessions
@@ -766,7 +980,7 @@ impl BoardView {
                 .map(|(_, name)| name.clone()),
             _ => None,
         };
-        Some(found.map_or(LinkLabel::Missing, LinkLabel::Found))
+        found.map_or(LinkLabel::Missing, LinkLabel::Found)
     }
 
     /// Why a column can't be deleted, or `None` when it can. Archived cards
@@ -837,8 +1051,22 @@ impl BoardView {
         self.composer_submit = Some(cx.subscribe(&input, |this, _, _: &input::Submitted, cx| {
             this.commit_composer(cx)
         }));
-        window.focus(&input.focus_handle(cx), cx);
-        self.composer = Some(Composer { column_id, input });
+        let focus = input.focus_handle(cx);
+        window.focus(&focus, cx);
+        // The composer is the column's last row: hand the list its focus
+        // handle and bring it into view.
+        if let (Some(count), Some(state)) = (
+            self.column_ids.get(&column_id).map(Vec::len),
+            self.column_lists.get(&column_id),
+        ) {
+            state.splice_focusable(count..count + 1, [Some(focus.clone())]);
+            self.reveal_item(&column_id, count);
+        }
+        self.composer = Some(Composer {
+            column_id,
+            input,
+            focus,
+        });
         self.menu = None;
         cx.notify();
     }
@@ -1007,12 +1235,19 @@ impl BoardView {
             }
             return;
         }
-        // Cards not painted yet have no bounds; slots still count them, so
-        // map the slot among measured cards back to the visible list.
+        // Only the cards the column's window painted have bounds; slots still
+        // count every card, so map the slot among painted cards back to the
+        // visible list. A focused card kept mounted off screen paints outside
+        // the column's view and is left out.
+        let viewport = self
+            .column_lists
+            .get(column_id)
+            .map(|state| state.viewport_bounds());
         let measured: Vec<(usize, gpui::Bounds<gpui::Pixels>)> = cards
             .iter()
             .enumerate()
             .filter_map(|(index, card)| Some((index, self.card_anchors.get(&card.id)?.get()?)))
+            .filter(|(_, bounds)| viewport.is_none_or(|view| view.intersects(bounds)))
             .collect();
         let tops: Vec<_> = measured.iter().map(|(_, b)| b.top()).collect();
         let heights: Vec<_> = measured.iter().map(|(_, b)| b.size.height).collect();
@@ -1136,6 +1371,9 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The menu anchors to the card: a focused card scrolled out of its
+        // column's window comes back into view first.
+        self.reveal_card(&card_id);
         let Some(detail) = &self.detail else {
             return;
         };
@@ -1160,7 +1398,11 @@ impl BoardView {
                 crate::popover::MenuAction::new(id, format!("Move to {}", column.name)).into(),
             );
         }
-        items.push(crate::popover::MenuItem::Separator);
+        // With no Move rows (a one-column board) the separator after Open
+        // already divides it from More….
+        if !targets.is_empty() {
+            items.push(crate::popover::MenuItem::Separator);
+        }
         items.push(crate::popover::MenuAction::new("more", "More…").into());
         self.menu = None;
         let menu = cx.new(|cx| crate::popover::Menu::new("Card actions", items, window, cx));
@@ -1297,7 +1539,7 @@ impl BoardView {
             (column_id.clone(), column_id.clone(), column_id.clone());
         let (collapse_id, priority_id, due_id) =
             (column_id.clone(), column_id.clone(), column_id.clone());
-        let (done_id, archive_id) = (column_id.clone(), column_id);
+        let (done_id, archive_id, move_id) = (column_id.clone(), column_id.clone(), column_id);
         let divider = || {
             div()
                 .my(px(4.))
@@ -1373,7 +1615,100 @@ impl BoardView {
                 )
                 .into_any_element(),
         );
+        items.extend(self.move_then_delete_items(&move_id, cx));
         items
+    }
+
+    /// A column that holds only live cards offers "Move cards to…" each other
+    /// column, then deletes itself. Archived cards still block the delete
+    /// (C5-l), so nothing is offered then.
+    fn move_then_delete_items(&self, column_id: &str, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(detail) = &self.detail else {
+            return Vec::new();
+        };
+        let live = detail
+            .cards
+            .iter()
+            .filter(|card| card.column_id == column_id)
+            .count();
+        let held = self.undo.pending_delete_count_in(column_id);
+        let archived = self.column_counts.get(column_id).map_or(0, |c| c.1);
+        if live == 0 || archived > held {
+            return Vec::new();
+        }
+        let mut items = vec![
+            div()
+                .id("board-column-move-cards")
+                .debug_selector(|| "board-column-move-cards".into())
+                .px(px(8.))
+                .pt(px(6.))
+                .pb(px(2.))
+                .text_size(px(12.))
+                .text_color(content(0.5))
+                .child("Move cards to…")
+                .into_any_element(),
+        ];
+        for (index, column) in detail.columns.iter().enumerate() {
+            if column.id == column_id {
+                continue;
+            }
+            let (from, to) = (column_id.to_string(), column.id.clone());
+            items.push(
+                menu_row(
+                    format!("board-column-move-delete-{index}").into(),
+                    column.name.clone(),
+                )
+                .pl(px(16.))
+                .aria_label(format!(
+                    "Move the cards to {}, then delete the column",
+                    column.name
+                ))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.header_delete_moving_cards(&from, &to, cx)
+                }))
+                .into_any_element(),
+            );
+        }
+        items
+    }
+
+    /// Move a column's live cards to the end of `target`, in their order,
+    /// then delete the column. A column with archived cards is refused
+    /// first, so nothing moves for a delete that can't happen.
+    fn header_delete_moving_cards(
+        &mut self,
+        column_id: &str,
+        target: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.menu = None;
+        let archived = self.column_counts.get(column_id).map_or(0, |c| c.1);
+        let held = self.undo.pending_delete_count_in(column_id);
+        if archived > held {
+            let left = archived - held;
+            let plural = if left == 1 { "card" } else { "cards" };
+            self.error = Some(format!(
+                "Couldn't delete the column: it has {left} archived {plural}. Delete them from the Archive first"
+            ));
+            cx.notify();
+            return;
+        }
+        if held > 0 {
+            self.commit_pending(cx);
+        }
+        let ids: Vec<String> = self.detail.as_ref().map_or_else(Vec::new, |detail| {
+            let mut cards: Vec<_> = detail
+                .cards
+                .iter()
+                .filter(|card| card.column_id == column_id)
+                .collect();
+            cards.sort_by_key(|card| card.position);
+            cards.into_iter().map(|card| card.id.clone()).collect()
+        });
+        self.write(cx, |service| {
+            service.move_many(&ids, target, usize::MAX, "user")?;
+            service.column_delete(column_id)
+        });
     }
 }
 
@@ -1465,9 +1800,43 @@ impl gpui::Render for BoardTooltip {
 use gpui::AnyElement;
 
 impl gpui::Render for BoardView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.forget_finished_drag(cx);
         self.display = self.effective_display();
+        #[cfg(test)]
+        self.rendered_cards.set(0);
+        // Reads the bounds the last frame painted, before they are cleared.
+        self.settle_reveal(window, cx);
+        self.settle_lane_reveal(window, cx);
+        // Bounds are only good for the frame that painted them: a card
+        // scrolled out of a column's window keeps none.
+        for anchor in self.card_anchors.values() {
+            anchor.set(None);
+        }
+        if self.list_display.as_ref() != Some(&self.display) {
+            // A density or card-face change: every card height is stale.
+            if let Some(old) = self.list_display.clone() {
+                self.learn_item_height(&old);
+                self.remeasure_column_lists();
+                self.remeasure_lane_list();
+                self.item_heights.borrow_mut().clear();
+                self.heights_version.set(self.heights_version.get() + 1);
+            }
+            self.list_display = Some(self.display.clone());
+        }
+        if self.detail.as_ref().is_some_and(|detail| {
+            detail
+                .columns
+                .iter()
+                .any(|column| !self.column_lists.contains_key(&column.id))
+        }) {
+            self.sync_column_lists();
+        }
+        self.pin_drawer_card();
+        self.sync_lane_list(cx);
+        self.follow_lane_header_refocus(window, cx);
+        self.follow_card_focus(window, cx);
+        self.sync_lane_handles();
         let root =
             div()
                 .id("board-view")
@@ -1640,6 +2009,7 @@ impl gpui::Render for BoardView {
                             .flex()
                             .items_start()
                             .gap_2()
+                            .child(self.render_drag_announce())
                             .children(columns)
                             .child(
                                 icon_button("board-add-column", "Add column", "plus")
@@ -1653,6 +2023,7 @@ impl gpui::Render for BoardView {
                 },
             );
         root.child(board)
+            .child(self.lift_press_watch(cx))
             .children(archive)
             .children(card_detail)
             .children(filter)

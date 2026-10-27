@@ -8,7 +8,7 @@ use super::{
 };
 use crate::popover::{Menu, MenuAction, MenuEvent, MenuItem};
 use chrono::NaiveDate;
-use gespan_core::board::extras::{Label, PRIORITIES, PriorityScheme};
+use gespan_core::board::extras::{ColumnDisplayPatch, Label, PRIORITIES, PriorityScheme};
 use gpui::{Context, Window, prelude::*};
 
 /// Which quick-edit menu a card face opens.
@@ -86,10 +86,30 @@ pub(crate) fn parse_date(prefix: &str, id: &str, today: NaiveDate) -> Option<Due
 /// Most minutes the store accepts.
 const MAX_ESTIMATE: i64 = 6_000_000;
 
-/// An estimate typed as `90`, `90m`, `1h`, `1h 30m` or `1.5h`, in minutes.
+/// The one hint for an estimate that isn't a time, the same in both apps.
+pub(crate) const ESTIMATE_HELP: &str = "Use minutes or hours, like 90, 90m, 1h 30m or 1.5h";
+
+/// A number before an `h` or `m`: `1`, `1.5` or `.5`, never `1.`, `1..5`
+/// or `1.2.3`.
+fn unit_number(text: &str) -> Option<f64> {
+    let (whole, fraction) = match text.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (text, None),
+    };
+    let digits = |part: &str| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit());
+    let ok = match fraction {
+        None => digits(whole),
+        Some(fraction) => (whole.is_empty() || digits(whole)) && digits(fraction),
+    };
+    ok.then(|| text.parse().ok()).flatten()
+}
+
+/// An estimate typed as `90`, `90m`, `1h`, `1h 30m`, `1.5h` or `.5h`, in
+/// minutes rounded to the minute. Hex, exponents, signs, a bare decimal and
+/// a unit with no number are refused with `ESTIMATE_HELP` (the shared rule).
 pub(crate) fn parse_estimate(text: &str) -> Result<i64, String> {
     let text = text.trim().to_lowercase();
-    let bad = || format!("“{}” is not a time like 90m or 1h 30m", text);
+    let bad = || ESTIMATE_HELP.to_string();
     if text.is_empty() {
         return Err(bad());
     }
@@ -101,7 +121,7 @@ pub(crate) fn parse_estimate(text: &str) -> Result<i64, String> {
             match c {
                 '0'..='9' | '.' => number.push(c),
                 'h' | 'm' => {
-                    let value: f64 = number.parse().map_err(|_| bad())?;
+                    let value = unit_number(&number).ok_or_else(bad)?;
                     number.clear();
                     let slot = if c == 'h' { &mut seen.0 } else { &mut seen.1 };
                     if std::mem::replace(slot, true) {
@@ -152,6 +172,12 @@ pub(crate) fn encode_field(kind: &str, text: &str) -> Result<Option<String>, Str
             serde_json::Value::String(text.to_string()).to_string(),
         )),
         "number" => {
+            // Plain decimals only: an optional minus, then `42`, `2.5` or
+            // `.5`. Rust's parsers would also take `+3`, `1e3` and `inf`.
+            let unsigned = text.strip_prefix('-').unwrap_or(text);
+            if unit_number(unsigned).is_none() {
+                return Err(format!("“{text}” is not a number"));
+            }
             let number = match text.parse::<i64>() {
                 Ok(whole) => serde_json::Number::from(whole),
                 Err(_) => text
@@ -387,7 +413,8 @@ impl BoardView {
         }
     }
 
-    /// Collapse or expand a column, keeping its colour and WIP limit.
+    /// Collapse or expand a column. Only `collapsed` is written, so a colour
+    /// or WIP limit the other app set since the last load stays.
     pub(crate) fn set_collapsed(
         &mut self,
         column_id: String,
@@ -395,9 +422,9 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         self.menu = None;
-        let Some(column) = self.column(&column_id).cloned() else {
+        if self.column(&column_id).is_none() {
             return;
-        };
+        }
         if collapsed
             && self
                 .composer
@@ -406,13 +433,12 @@ impl BoardView {
         {
             self.composer = None;
         }
+        let patch = ColumnDisplayPatch {
+            collapsed: Some(collapsed),
+            ..Default::default()
+        };
         self.write(cx, |service| {
-            service.set_column_display(
-                &column_id,
-                column.color.as_deref(),
-                column.wip_limit,
-                collapsed,
-            )
+            service.update_column_display(&column_id, &patch).map(drop)
         });
     }
 
@@ -443,6 +469,10 @@ impl BoardView {
     ) {
         if self.dragging {
             return;
+        }
+        if anchor.is_none() {
+            // The menu anchors to the card face: bring the card into view.
+            self.reveal_card(&card_id);
         }
         let items = match face {
             Face::Status => self.status_items(&card_id),

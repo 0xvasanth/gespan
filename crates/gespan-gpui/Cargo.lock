@@ -2239,6 +2239,7 @@ dependencies = [
  "base64 0.23.1",
  "block2 0.6.2",
  "chrono",
+ "gespan-board-store",
  "gespan-core",
  "gespan-keep-awake",
  "gespan-redact",

@@ -29,6 +29,13 @@ pub(crate) enum BoardJob {
     /// A completed turn's reply, as one agent comment on each card linked to
     /// the session whose board has write-back on (the store checks that).
     WriteBack { session_key: String, reply: String },
+    /// The session started waiting on the user: `needs_input` on its cards.
+    /// `first_in_run` marks the first wait this app run has seen, which may
+    /// be a wait restored at start that the cards already recorded.
+    NeedsInput {
+        session_key: String,
+        first_in_run: bool,
+    },
 }
 
 pub(crate) struct BoardTurns {
@@ -39,6 +46,8 @@ pub(crate) struct BoardTurns {
     pilots: Option<WeakEntity<Pilots>>,
     /// Session keys waiting on the user (an approval or a question).
     waiting: BTreeSet<String>,
+    /// Session keys that have waited at least once this app run.
+    waited: BTreeSet<String>,
     /// The newest settled turns as (sequence, session key), oldest first, so
     /// a board refreshes link status only for sessions linked to its cards.
     settles: VecDeque<(u64, String)>,
@@ -84,6 +93,20 @@ pub(crate) fn install(db_path: PathBuf, pilots: Option<WeakEntity<Pilots>>, cx: 
                                 tracing::warn!(%error, "writing the turn back to its cards failed");
                             }
                         }
+                        BoardJob::NeedsInput {
+                            session_key,
+                            first_in_run,
+                        } => {
+                            if first_in_run && cards_already_wait(service, &session_key) {
+                                continue;
+                            }
+                            let event = LinkedWorkEvent::NeedsInput;
+                            if let Err(error) =
+                                on_linked_work(service, "session", &session_key, event)
+                            {
+                                tracing::warn!(%error, "moving board cards failed");
+                            }
+                        }
                     }
                 }
             }
@@ -94,6 +117,7 @@ pub(crate) fn install(db_path: PathBuf, pilots: Option<WeakEntity<Pilots>>, cx: 
         queue,
         pilots,
         waiting: BTreeSet::new(),
+        waited: BTreeSet::new(),
         settles: VecDeque::new(),
         settle_seq: 0,
         pr_events: BTreeSet::new(),
@@ -144,17 +168,41 @@ pub(crate) fn set_waiting(store: &Database, session: i64, waiting: bool, cx: &mu
     let board = cx.global_mut::<BoardTurns>();
     if waiting {
         board.waiting.insert(key.clone());
+        let first_in_run = board.waited.insert(key.clone());
         dispatch(
-            vec![BoardJob::Event((
-                "session",
-                key,
-                LinkedWorkEvent::NeedsInput,
-            ))],
+            vec![BoardJob::NeedsInput {
+                session_key: key,
+                first_in_run,
+            }],
             cx,
         );
     } else {
         board.waiting.remove(&key);
     }
+}
+
+/// Whether every card linked to the session already has `needs_input` as its
+/// newest run event: a wait restored at app start that the cards recorded in
+/// an earlier run. The event applies to all of the session's cards at once,
+/// so one card that ran since (or a read that fails) writes it for all.
+fn cards_already_wait(service: &mut Service, session_key: &str) -> bool {
+    let Ok(cards) = service.cards_for_link("session", session_key) else {
+        return false;
+    };
+    let boards: BTreeSet<String> = cards.iter().map(|card| card.board_id.clone()).collect();
+    let mut latest = std::collections::HashMap::new();
+    for board in boards {
+        match service.latest_run_events(&board) {
+            Ok(events) => latest.extend(events),
+            Err(_) => return false,
+        }
+    }
+    !cards.is_empty()
+        && cards.iter().all(|card| {
+            latest
+                .get(&card.id)
+                .is_some_and(|kind| kind == "needs_input")
+        })
 }
 
 /// A link-status refresh saw a linked PR open or merged: the cards linked to
@@ -255,14 +303,57 @@ pub(crate) fn turn_began(store: Database, session: i64, turn: u64, cx: &mut App)
     });
 }
 
+/// One board store kept for reads made while building a view or menu, so a
+/// build opens none. It reopens when the database path changes, and after a
+/// failed read so a broken connection is never kept.
+#[derive(Default)]
+pub(crate) struct CachedService {
+    slot: std::cell::RefCell<Option<(PathBuf, Service)>>,
+    opens: std::cell::Cell<usize>,
+}
+
+impl CachedService {
+    pub(crate) fn read<T>(
+        &self,
+        path: &std::path::Path,
+        read: impl FnOnce(&mut Service) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut slot = self.slot.borrow_mut();
+        if slot.as_ref().is_none_or(|(open, _)| open != path) {
+            *slot = None;
+            self.opens.set(self.opens.get() + 1);
+            *slot = Some((path.to_path_buf(), Service::open(path)?));
+        }
+        let Some((_, service)) = slot.as_mut() else {
+            unreachable!("opened above")
+        };
+        let result = read(service);
+        if result.is_err() {
+            *slot = None;
+        }
+        result
+    }
+
+    /// How many times a board store was opened.
+    #[cfg(test)]
+    pub(crate) fn opens(&self) -> usize {
+        self.opens.get()
+    }
+}
+
 /// The session's own "Agent may change ticket status" choice: `Some(on)`,
 /// or `None` to follow its boards. An error when the board store can't be
 /// opened or the setting can't be read, so the menu never shows a failed
-/// read as following the boards.
-pub(crate) fn status_setting(store: &Database, session: i64) -> Result<Option<bool>, String> {
+/// read as following the boards. Reads through `boards`, the caller's kept
+/// board store.
+pub(crate) fn status_setting(
+    store: &Database,
+    session: i64,
+    boards: &CachedService,
+) -> Result<Option<bool>, String> {
     let key = session_key(store, session).ok_or("Session no longer exists")?;
     let path = locked(store)?.database_path().to_path_buf();
-    Service::open(&path)?.session_status_setting(&key)
+    boards.read(&path, |service| service.session_status_setting(&key))
 }
 
 /// Saves the session's choice (`None`: follow the boards) and tells its
