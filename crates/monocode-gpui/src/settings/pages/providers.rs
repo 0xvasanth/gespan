@@ -267,13 +267,7 @@ impl SettingsView {
                         if models.len() == 1 { "model" } else { "models" }
                     )
                 })
-                .unwrap_or_else(|| {
-                    format!(
-                        "Install {} and sign in with {}.",
-                        kind.label(),
-                        kind.login_hint()
-                    )
-                });
+                .unwrap_or_else(|| kind.unavailable_hint());
             clis.push(self.row(None, index == 0, label, Some(description.into()), controls));
         }
         if self.discovery_loading {
