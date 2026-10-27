@@ -1,0 +1,21 @@
+host/server.ts
+  s_4d58c2980ba6b7::t_aa38922fbd4425 17,354-357,359,361,363-366
+host/server.test.ts
+  s_4d58c2980ba6b7::t_aa38922fbd4425 189-223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5fd90f2b189025c8cc3052e38f9b07ac285beb80",
+  "prompts": {},
+  "sessions": {
+    "s_4d58c2980ba6b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "779852d9-f6ed-4c1f-af54-ee84b77f844b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
