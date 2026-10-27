@@ -5,6 +5,24 @@ use gpui::{
 
 pub(super) const CONTROLS_WIDTH: f32 = 106.;
 
+// Windows uses the Tauri app's `WindowControls` glyphs.
+#[cfg(target_os = "windows")]
+const MINIMIZE_ICON: &str = "minus-sign";
+#[cfg(target_os = "windows")]
+const MAXIMIZE_ICON: &str = "window-maximize";
+#[cfg(target_os = "windows")]
+const RESTORE_ICON: &str = "window-restore";
+#[cfg(target_os = "windows")]
+const CLOSE_ICON: &str = "cancel-01";
+#[cfg(not(target_os = "windows"))]
+const MINIMIZE_ICON: &str = "minus";
+#[cfg(not(target_os = "windows"))]
+const MAXIMIZE_ICON: &str = "square";
+#[cfg(not(target_os = "windows"))]
+const RESTORE_ICON: &str = "copy";
+#[cfg(not(target_os = "windows"))]
+const CLOSE_ICON: &str = "close";
+
 pub(super) fn controls(
     window: &Window,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
@@ -21,7 +39,7 @@ pub(super) fn controls(
         .items_center()
         .occlude()
         .child(caption_button(
-            crate::theme::icon_button("window-minimize", "Minimize window", "minus-sign")
+            crate::theme::icon_button("window-minimize", "Minimize window", MINIMIZE_ICON)
                 .debug_selector(|| "window-minimize".into()),
             WindowControlArea::Min,
             |_, window, _| window.minimize_window(),
@@ -35,9 +53,9 @@ pub(super) fn controls(
                     "Maximize window"
                 },
                 if maximized {
-                    "window-restore"
+                    RESTORE_ICON
                 } else {
-                    "window-maximize"
+                    MAXIMIZE_ICON
                 },
             )
             .debug_selector(|| "window-maximize".into()),
@@ -45,7 +63,7 @@ pub(super) fn controls(
             |_, window, _| window.zoom_window(),
         ))
         .child(caption_button(
-            crate::theme::icon_button("window-close", "Close window", "cancel-01")
+            crate::theme::icon_button("window-close", "Close window", CLOSE_ICON)
                 .debug_selector(|| "window-close".into()),
             WindowControlArea::Close,
             on_close,

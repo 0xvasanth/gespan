@@ -52,14 +52,17 @@ fn card_corner_mask(begin: bool) -> impl IntoElement {
                 #[cfg(target_os = "macos")]
                 let outside = inset_chrome_wash();
                 // Without the mask an opaque fill covers whatever the card
-                // painted past its curve. Over glass the root's translucent
-                // fill is already there, and a second one darkens the corners.
-                #[cfg(not(target_os = "macos"))]
+                // painted past its curve. Over Windows' glass the root's
+                // translucent fill is already there, and a second one darkens
+                // the corners.
+                #[cfg(target_os = "windows")]
                 let outside = if shell_fill().a < 1. {
                     inset_chrome_wash()
                 } else {
                     shell_fill().blend(inset_chrome_wash())
                 };
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                let outside = shell_fill().blend(inset_chrome_wash());
                 let vertices = [
                     (
                         bounds.origin,
@@ -372,9 +375,10 @@ impl Shell {
         let tab_bar = if spans_window || (original && self.app_search.is_some()) {
             None
         } else if original && self.app_view_open() {
-            Some(self.classic_app_surface_header(window, cx))
+            Some(self.titlebar_controls_space(self.classic_app_surface_header(cx), window))
         } else if original && self.mono_active(cx) {
-            Some(self.classic_mono_header(window, cx))
+            let bar = self.classic_mono_header(cx);
+            Some(self.titlebar_controls_space(bar, window))
         } else {
             Some(self.titlebar(window, cx))
         };
@@ -480,11 +484,13 @@ impl Shell {
                 d.child(
                     // The right panel toggle holds the window's corner too, above
                     // the strip or an open panel's tab row. Its padding keeps
-                    // clear of client-drawn window controls.
+                    // clear of Windows' controls; Linux's sit beside it.
                     div()
                         .absolute()
                         .top_0()
-                        .right_0()
+                        .right(px(
+                            super::client_controls_width(window) - self.window_controls
+                        ))
                         .h(px(TITLE_BAR_HEIGHT))
                         .children(corner),
                 )
@@ -510,7 +516,7 @@ impl Shell {
         }
         if self.mono_active(cx) {
             return if self.corner_tabs_shown() {
-                let minimum = if self.workspace.right_panel_width >= 312. + controls {
+                let minimum = if self.right_panel_width() >= 312. + controls {
                     312.
                 } else {
                     252.

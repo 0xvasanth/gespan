@@ -283,6 +283,17 @@ pub(crate) fn client_controls_width(window: &Window) -> f32 {
     0.
 }
 
+/// Client-drawn window controls that hold the corner's right end, inside the
+/// bar: Windows only. Client-decorated Linux shifts the whole bar left of its
+/// controls instead (`titlebar_controls_space`).
+pub(crate) fn corner_controls_width(window: &Window) -> f32 {
+    if cfg!(target_os = "windows") {
+        client_controls_width(window)
+    } else {
+        0.
+    }
+}
+
 /// macOS must receive button clicks as app content. Only blank titlebar
 /// regions initiate native dragging or the system double-click action.
 /// Client-decorated Linux windows also need explicit native drag requests.
@@ -606,7 +617,7 @@ pub(crate) struct Shell {
     /// useTrafficLightsVisible: fullscreen hides the native buttons, so the
     /// title bar takes their room back.
     fullscreen: bool,
-    /// `client_controls_width` as of this render, for the corner's layout.
+    /// `corner_controls_width` as of this render, for the corner's layout.
     window_controls: f32,
     /// The narrowest right panel whose header holds the corner's tools
     /// beside client-drawn window controls.
@@ -1681,7 +1692,7 @@ impl Shell {
         {
             self.focus_active(window, cx);
         }
-        let full = self.workspace.right_panel_width;
+        let full = self.right_panel_width();
         let to = if open { full } else { 0. };
         self.workspace.right_panel_open = open;
         let previous = self.right_slide.take();
@@ -2791,7 +2802,7 @@ impl Shell {
             main -= self.workspace.sidebar_width;
         }
         if self.right_panel_shown(cx) {
-            main -= self.workspace.right_panel_width;
+            main -= self.right_panel_width();
         }
         if self.mono_active(cx) {
             return main;
@@ -3803,7 +3814,7 @@ impl Shell {
             ResizeTarget::RightPanel => {
                 let (min, max) = (self.right_panel_min, crate::right_panel::WIDTH_MAX);
                 let max = max.min((self.viewport_width * 0.5).floor()).max(min);
-                (self.workspace.right_panel_width, min, max, 1.)
+                (self.right_panel_width(), min, max, 1.)
             }
             ResizeTarget::Dock(project) => {
                 let dock = self.workspace.docks.get(project)?;
@@ -4652,7 +4663,7 @@ impl Shell {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    this.right_resize = Some((event.position.x, this.workspace.right_panel_width));
+                    this.right_resize = Some((event.position.x, this.right_panel_width()));
                     cx.stop_propagation();
                     cx.notify();
                 }),
@@ -4713,13 +4724,36 @@ impl Shell {
         true
     }
 
+    /// Client-decorated Linux: the bar ends left of the window controls.
+    /// The panel's width as drawn: the user's width, widened while Windows'
+    /// controls need room beside the corner's tools. The stored width stays
+    /// as the user set it, so closing a Mono gives it back.
+    pub(super) fn right_panel_width(&self) -> f32 {
+        self.workspace.right_panel_width.max(self.right_panel_min)
+    }
+    fn titlebar_controls_space(&self, bar: AnyElement, window: &Window) -> AnyElement {
+        let room = client_controls_width(window) - corner_controls_width(window);
+        if room == 0. {
+            return bar;
+        }
+        div()
+            .w_full()
+            .h(px(TITLE_BAR_HEIGHT))
+            .pr(px(room))
+            .child(bar)
+            .into_any_element()
+    }
     fn titlebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let bar = self.titlebar_content(window, cx);
+        self.titlebar_controls_space(bar, window)
+    }
+    fn titlebar_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // Same hierarchy as TitleBar.tsx's inset layout: window navigation and
         // session tabs share the outer shell, above the rounded workspace card.
-        // Client-drawn window controls sit in the settings header's padding,
-        // so its bottom rule still runs beneath them. Session bars leave them
-        // to the corner (`toggle_room`, `corner_room`).
-        let controls = px(client_controls_width(window));
+        // Windows' controls sit in the settings header's padding, so its
+        // bottom rule still runs beneath them. Session bars leave them to the
+        // corner (`toggle_room`, `corner_room`).
+        let controls = px(self.window_controls);
         if let Some(settings) = self.settings.clone() {
             let classic = self.workspace.boxy_layout();
             let lead = if classic {
@@ -4805,7 +4839,7 @@ impl Shell {
             self.monos.clone().map(|m| {
                 m.update(cx, |m, cx| {
                     m.overview_controls(
-                        self.workspace.right_panel_width >= 312. + self.window_controls,
+                        self.right_panel_width() >= 312. + self.window_controls,
                         window,
                         cx,
                     )
@@ -5016,7 +5050,7 @@ impl Shell {
             + CORNER_BUTTONS_WIDTH
             + 12.
             + self.window_controls;
-        natural.min((self.workspace.right_panel_width - controls).max(48.))
+        natural.min((self.right_panel_width() - controls).max(48.))
     }
     fn project_tabs_width(&self, cx: &App) -> f32 {
         let padding = if self.workspace.boxy_layout() {
@@ -5024,7 +5058,7 @@ impl Shell {
         } else {
             12.
         };
-        (self.workspace.right_panel_width
+        (self.right_panel_width()
             - self.diff_stat_room(cx)
             - CORNER_BUTTONS_WIDTH
             - padding
@@ -5049,7 +5083,7 @@ impl Shell {
         if self.mono_active(cx) || self.git.read(cx).available() {
             if self.workspace.right_panel_open && !self.app_view_open() {
                 if self.mono_active(cx) {
-                    let minimum = if self.workspace.right_panel_width >= 312. + controls {
+                    let minimum = if self.right_panel_width() >= 312. + controls {
                         312.
                     } else {
                         252.
@@ -7363,7 +7397,11 @@ impl Shell {
         } else {
             self.navigation_width()
         };
-        (window.viewport_size().width.as_f32() - lead - trailing).max(0.)
+        (window.viewport_size().width.as_f32()
+            - lead
+            - trailing
+            - (client_controls_width(window) - self.window_controls))
+            .max(0.)
     }
     fn tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let viewport = self.tabs_width(window, cx);
@@ -7999,7 +8037,7 @@ impl Render for Shell {
         }
         // Native fullscreen transitions resize the window, which redraws it.
         self.fullscreen = window.is_fullscreen();
-        self.window_controls = client_controls_width(window);
+        self.window_controls = corner_controls_width(window);
         // The corner's tools share the panel's header with client-drawn
         // window controls, so the panel keeps room for both. A Mono's icon
         // tabs need 252px (`corner_room`).
@@ -8009,9 +8047,6 @@ impl Render for Shell {
             crate::right_panel::WIDTH_MIN
         };
         self.right_panel_min = tools + self.window_controls;
-        if self.workspace.right_panel_width < self.right_panel_min {
-            self.workspace.right_panel_width = self.right_panel_min;
-        }
         #[cfg(target_os = "linux")]
         {
             let client = matches!(
@@ -8134,7 +8169,7 @@ impl Render for Shell {
         self.viewport_height = window.viewport_size().height.as_f32();
         self.refit_sidebar_to_room(window, cx);
         self.ensure_right_panel(window, cx);
-        let full = self.workspace.right_panel_width;
+        let full = self.right_panel_width();
         let right_width = match &self.right_slide {
             Some(slide) => {
                 let (width, done) = slide.at(std::time::Instant::now());

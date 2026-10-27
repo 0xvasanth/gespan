@@ -14,7 +14,7 @@ impl Shell {
         !self.classic_surface_open(cx)
     }
 
-    pub(super) fn classic_app_surface_header(&self, window: &Window, cx: &App) -> AnyElement {
+    pub(super) fn classic_app_surface_header(&self, cx: &App) -> AnyElement {
         let view = self
             .active_app_view
             .expect("an application destination is open");
@@ -35,7 +35,7 @@ impl Shell {
             .flex()
             .items_center()
             .pl(px(inset))
-            .pr(px(12. + client_controls_width(window)))
+            .pr(px(12. + self.window_controls))
             .gap_2()
             .child(
                 icon(
@@ -61,11 +61,7 @@ impl Shell {
             .into_any_element()
     }
 
-    pub(super) fn classic_mono_header(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    pub(super) fn classic_mono_header(&self, cx: &mut Context<Self>) -> AnyElement {
         let monos = self.monos.as_ref().expect("a Mono is open").clone();
         let open = self.workspace.right_panel_open;
         let compact = !self.workspace.project_rail_open;
@@ -83,7 +79,7 @@ impl Shell {
             .flex()
             .items_center()
             .when(compact, |d| d.pl(px(self.strip_lead(cx))))
-            .pr(px(client_controls_width(window)))
+            .pr(px(self.window_controls))
             .child(titlebar_drag_area().flex_1().min_w_0().child(title))
             .child(
                 div()
