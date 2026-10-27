@@ -595,7 +595,7 @@ pub(super) fn gauge(
                 if head {
                     let part = (filled - index as f32).clamp(0., 1.);
                     if within > gap / 2. + (step - gap) * part.max(0.15) {
-                        return Some(track).filter(|_| r <= outer);
+                        return (r <= outer).then_some(track);
                     }
                     return Some(tint);
                 }
@@ -652,7 +652,7 @@ pub(super) fn donut(
             let digits: Vec<char> = s.chars().collect();
             let mut out = String::new();
             for (i, c) in digits.iter().enumerate() {
-                if i > 0 && (digits.len() - i) % 3 == 0 && c.is_ascii_digit() {
+                if i > 0 && (digits.len() - i).is_multiple_of(3) && c.is_ascii_digit() {
                     out.push(',');
                 }
                 out.push(*c);
