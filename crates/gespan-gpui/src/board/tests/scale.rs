@@ -713,3 +713,560 @@ fn a_keyboard_lift_over_a_collapsed_column_keeps_its_scroll(cx: &mut TestAppCont
     visual.run_until_parked();
     assert_eq!(list_top(&f, visual, &second).item_ix, 100);
 }
+
+// ---- C6-8: load, handles and link lookups at scale ----
+
+/// The reads one `load` makes, by name.
+fn load_reads(f: &Fixture, cx: &mut TestAppContext) -> Vec<&'static str> {
+    f.window
+        .update(cx, |view, _, cx| {
+            view.reads.take();
+            view.load(cx).unwrap();
+            view.reads.take()
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn load_reads_column_counts_in_one_call(cx: &mut TestAppContext) {
+    // Ten cards on four columns.
+    let small = with_board(cx);
+    let board = open_id(&small, cx);
+    Service::open(&small.db)
+        .unwrap()
+        .seed(
+            &board,
+            &gespan_board_store::seed::SeedSpec {
+                cards: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    reload_view(&small, cx);
+    let few = load_reads(&small, cx);
+    let counted = |reads: &[&str], name: &str| reads.iter().filter(|r| **r == name).count();
+    assert_eq!(counted(&few, "column_card_counts"), 1, "{few:?}");
+    assert_eq!(counted(&few, "column_card_count"), 0, "{few:?}");
+
+    // A thousand cards on four columns, then on twelve: the same reads.
+    let f = seeded_board(cx, false);
+    let many = load_reads(&f, cx);
+    assert_eq!(many, few, "the reads don't grow with the cards");
+    let board = open_id(&f, cx);
+    let mut service = Service::open(&f.db).unwrap();
+    for n in 0..8 {
+        service
+            .column_create(&board, &format!("Extra {n}"), None)
+            .unwrap();
+    }
+    let wide = load_reads(&f, cx);
+    assert_eq!(wide, few, "the reads don't grow with the columns");
+
+    // The one read still gives every column its live and archived counts.
+    let first = column_at(&f, cx, 0);
+    let archived = list_ids(&f, cx, &first)[0].clone();
+    service.archive(&archived).unwrap();
+    reload_view(&f, cx);
+    f.window
+        .read_with(cx, |view, _| {
+            let detail = view.detail.as_ref().unwrap();
+            assert_eq!(view.column_counts.len(), 12);
+            for column in &detail.columns {
+                let live = detail
+                    .cards
+                    .iter()
+                    .filter(|card| card.column_id == column.id)
+                    .count();
+                let archived = usize::from(column.id == first);
+                assert_eq!(
+                    view.column_counts[&column.id],
+                    (live, archived),
+                    "{}",
+                    column.name
+                );
+            }
+            assert_eq!(
+                view.delete_blocked(&first).as_deref(),
+                Some("Move or delete its 250 cards first")
+            );
+            let empty = &detail.columns[11].id;
+            assert_eq!(view.delete_blocked(empty), None);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn sync_handles_on_1000_cards_is_linear(cx: &mut TestAppContext) {
+    let f = with_board(cx);
+    let board = open_id(&f, cx);
+    Service::open(&f.db)
+        .unwrap()
+        .seed(
+            &board,
+            &gespan_board_store::seed::SeedSpec {
+                cards: 2000,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    reload_view(&f, cx);
+    let (elapsed, kept) = f
+        .window
+        .update(cx, |view, _, cx| {
+            let full = view.detail.clone().unwrap();
+            assert_eq!(full.cards.len(), 2000);
+            assert_eq!(view.card_focus.len(), 2000);
+            let mut half = full.clone();
+            half.cards.truncate(1000);
+            let kept: HashSet<String> = half.cards.iter().map(|card| card.id.clone()).collect();
+            // Warm up once, then put the 2,000 handles back and time it.
+            view.detail = Some(half.clone());
+            view.sync_handles(cx);
+            view.detail = Some(full);
+            view.sync_handles(cx);
+            assert_eq!(view.card_anchors.len(), 2000);
+            view.detail = Some(half);
+            let start = Instant::now();
+            view.sync_handles(cx);
+            (start.elapsed(), kept)
+        })
+        .unwrap();
+    f.window
+        .read_with(cx, |view, _| {
+            let focus: HashSet<String> = view.card_focus.keys().cloned().collect();
+            let anchors: HashSet<String> = view.card_anchors.keys().cloned().collect();
+            assert_eq!(focus, kept);
+            assert_eq!(anchors, kept);
+            assert_eq!(view.column_anchors.len(), 4);
+            assert_eq!(view.collapsed_focus.len(), 4);
+        })
+        .unwrap();
+    assert!(
+        elapsed <= Duration::from_millis(20),
+        "sync_handles took {elapsed:?}"
+    );
+}
+
+/// `lookup_requests` as it was before C6-8, scanning every link for each
+/// one: the reference the grouped version must match.
+fn lookup_requests_reference(
+    links: &[gespan_core::board::extras::CardLink],
+    sessions: &HashMap<String, link_status::SessionInfo>,
+    card_projects: &HashMap<String, Vec<String>>,
+    fallback: Option<&str>,
+) -> Vec<link_status::LookupRequest> {
+    let mut requests: Vec<link_status::LookupRequest> = Vec::new();
+    for link in links
+        .iter()
+        .filter(|link| matches!(link.kind.as_str(), "pr" | "worktree"))
+    {
+        let mut cwds: Vec<String> = Vec::new();
+        if link.kind == "pr" {
+            let card = links.iter().filter(|other| other.card_id == link.card_id);
+            for other in card.clone().filter(|other| other.kind == "worktree") {
+                cwds.push(other.reference.clone());
+            }
+            for other in card.filter(|other| other.kind == "session") {
+                if let Some(session) = sessions.get(&other.reference) {
+                    cwds.push(session.cwd.clone());
+                }
+            }
+            cwds.extend(
+                card_projects
+                    .get(&link.card_id)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            if cwds.is_empty() {
+                cwds.extend(fallback.map(str::to_string));
+            }
+        }
+        match requests
+            .iter_mut()
+            .find(|request| request.kind == link.kind && request.reference == link.reference)
+        {
+            Some(request) => request.cwds.extend(cwds),
+            None => requests.push(link_status::LookupRequest {
+                kind: link.kind.clone(),
+                reference: link.reference.clone(),
+                cwds,
+            }),
+        }
+    }
+    for request in &mut requests {
+        let mut seen = std::collections::BTreeSet::new();
+        request
+            .cwds
+            .retain(|cwd| !cwd.is_empty() && seen.insert(cwd.clone()));
+    }
+    requests
+}
+
+fn link(card: &str, kind: &str, reference: &str) -> gespan_core::board::extras::CardLink {
+    gespan_core::board::extras::CardLink {
+        card_id: card.into(),
+        kind: kind.into(),
+        reference: reference.into(),
+        role: None,
+        created_at: 0,
+    }
+}
+
+/// A board's links, its sessions by key and its cards' projects.
+type LinkFixture = (
+    Vec<gespan_core::board::extras::CardLink>,
+    HashMap<String, link_status::SessionInfo>,
+    HashMap<String, Vec<String>>,
+);
+
+/// `count` links over `count / 4` cards: PRs shared between cards, worktrees,
+/// sessions (half of which exist), Pilots and an empty worktree path, with
+/// a card's links not next to each other.
+fn link_fixture(count: usize) -> LinkFixture {
+    let cards = (count / 4).max(1);
+    let links: Vec<_> = (0..count)
+        .map(|i| {
+            let card = format!("card-{}", (i * 7) % cards);
+            match i % 5 {
+                0 | 3 => link(
+                    &card,
+                    "pr",
+                    &format!("https://github.com/acme/app/pull/{}", i % 97 + 1),
+                ),
+                1 => link(&card, "worktree", &format!("/work/wt-{}", i % 61)),
+                2 => link(&card, "session", &format!("s-{}", i % 50)),
+                _ if i % 20 == 4 => link(&card, "worktree", ""),
+                _ => link(&card, "pilot", &format!("pilot-{}", i % 3)),
+            }
+        })
+        .collect();
+    let sessions = (0..50)
+        .filter(|n| n % 2 == 0)
+        .map(|n| {
+            (
+                format!("s-{n}"),
+                link_status::SessionInfo {
+                    title: format!("Session {n}"),
+                    cwd: format!("/work/s-{n}"),
+                },
+            )
+        })
+        .collect();
+    let projects = (0..cards)
+        .filter(|n| n % 3 == 0)
+        .map(|n| {
+            (
+                format!("card-{n}"),
+                vec!["/proj/shared".to_string(), format!("/proj/{}", n % 4)],
+            )
+        })
+        .collect();
+    (links, sessions, projects)
+}
+
+#[test]
+fn lookup_requests_on_300_links_groups_by_card() {
+    // A small board, by hand: card a's PR works in its worktree, its
+    // session's folder and its project; card b shares the PR and adds its
+    // own; card c has a PR and nothing to work in but the fallback.
+    let links = vec![
+        link("a", "pr", "https://github.com/acme/app/pull/1"),
+        link("b", "worktree", "/work/b"),
+        link("a", "session", "s-1"),
+        link("a", "worktree", "/work/a"),
+        link("b", "pr", "https://github.com/acme/app/pull/1"),
+        link("c", "pr", "https://github.com/acme/app/pull/2"),
+        link("a", "session", "gone"),
+        link("b", "session", "s-1"),
+    ];
+    let sessions = HashMap::from([(
+        "s-1".to_string(),
+        link_status::SessionInfo {
+            title: "One".into(),
+            cwd: "/work/s-1".into(),
+        },
+    )]);
+    let projects = HashMap::from([("a".to_string(), vec!["/proj/a".to_string()])]);
+    let requests = link_status::lookup_requests(&links, &sessions, &projects, Some("/fallback"));
+    let request = |kind: &str, reference: &str, cwds: &[&str]| link_status::LookupRequest {
+        kind: kind.into(),
+        reference: reference.into(),
+        cwds: cwds.iter().map(|cwd| cwd.to_string()).collect(),
+    };
+    assert_eq!(
+        requests,
+        vec![
+            request(
+                "pr",
+                "https://github.com/acme/app/pull/1",
+                &["/work/a", "/work/s-1", "/proj/a", "/work/b"],
+            ),
+            request("worktree", "/work/b", &[]),
+            request("worktree", "/work/a", &[]),
+            request("pr", "https://github.com/acme/app/pull/2", &["/fallback"]),
+        ]
+    );
+
+    // 300 links: exactly what the old scan found, in the same order.
+    let (links, sessions, projects) = link_fixture(300);
+    let expected = lookup_requests_reference(&links, &sessions, &projects, Some("/fallback"));
+    let got = link_status::lookup_requests(&links, &sessions, &projects, Some("/fallback"));
+    assert!(expected.len() > 50, "{} requests", expected.len());
+    assert_eq!(got, expected);
+    let none = link_status::lookup_requests(&links, &sessions, &projects, None);
+    assert_eq!(
+        none,
+        lookup_requests_reference(&links, &sessions, &projects, None)
+    );
+
+    // 3,000 links group in linear time (after a warm-up run).
+    let (links, sessions, projects) = link_fixture(3000);
+    let _ = link_status::lookup_requests(&links, &sessions, &projects, Some("/fallback"));
+    let start = Instant::now();
+    let got = link_status::lookup_requests(&links, &sessions, &projects, Some("/fallback"));
+    let elapsed = start.elapsed();
+    assert_eq!(
+        got,
+        lookup_requests_reference(&links, &sessions, &projects, Some("/fallback"))
+    );
+    assert!(
+        elapsed <= Duration::from_millis(20),
+        "lookup_requests took {elapsed:?}"
+    );
+}
+
+#[gpui::test]
+fn layout_spec_is_parsed_once_per_change(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["One", "Two"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    let parses = |visual: &mut VisualTestContext| {
+        f.window
+            .read_with(visual, |view, _| view.layout_parses.get())
+            .unwrap()
+    };
+    let layout = |visual: &mut VisualTestContext| {
+        f.window
+            .read_with(visual, |view, _| {
+                (0..10).map(|_| view.layout_kind()).last().unwrap()
+            })
+            .unwrap()
+    };
+    // Frames and calls with nothing changed parse nothing again.
+    let before = parses(visual);
+    for _ in 0..3 {
+        f.window.update(visual, |_, _, cx| cx.notify()).unwrap();
+        visual.refresh().unwrap();
+    }
+    assert_eq!(layout(visual), list::Layout::Board);
+    assert_eq!(parses(visual) - before, 0, "nothing changed");
+    // A layout change parses once, however often it is read after.
+    f.window
+        .update(visual, |view, _, cx| {
+            view.set_layout(list::Layout::List, cx)
+        })
+        .unwrap();
+    for _ in 0..3 {
+        visual.refresh().unwrap();
+    }
+    assert_eq!(layout(visual), list::Layout::List);
+    assert_eq!(parses(visual) - before, 1, "one parse for one change");
+    // So does a change written straight into the view's layout.
+    f.window
+        .update(visual, |view, _, cx| {
+            view.views.layout = r#"{"layout":"table"}"#.into();
+            cx.notify();
+        })
+        .unwrap();
+    visual.refresh().unwrap();
+    assert_eq!(layout(visual), list::Layout::Table);
+    assert_eq!(parses(visual) - before, 2);
+    // And a group-by edit is read back at once.
+    f.window
+        .update(visual, |view, _, cx| view.set_group_by("priority", cx))
+        .unwrap();
+    let group = f
+        .window
+        .read_with(visual, |view, _| view.layout_spec().group_by)
+        .unwrap();
+    assert_eq!(group.as_deref(), Some("priority"));
+    assert_eq!(parses(visual) - before, 3);
+}
+
+/// Lift the card titled `title` with Space.
+fn lift(f: &Fixture, visual: &mut VisualTestContext, title: &str) -> String {
+    visual.refresh().unwrap();
+    let card = card_id(f, visual, title);
+    focus_card(f, visual, &card);
+    visual.simulate_keystrokes("space");
+    visual.run_until_parked();
+    let lifted = f
+        .window
+        .read_with(visual, |view, _| {
+            view.kb_drag.as_ref().map(|d| d.card_id.clone())
+        })
+        .unwrap();
+    assert_eq!(lifted.as_ref(), Some(&card));
+    card
+}
+
+fn poll_reads(f: &Fixture, visual: &mut VisualTestContext) -> Vec<&'static str> {
+    f.window
+        .update(visual, |view, _, cx| {
+            view.reads.take();
+            view.poll(cx);
+            view.reads.take()
+        })
+        .unwrap()
+}
+
+fn still_lifted(f: &Fixture, visual: &mut VisualTestContext) -> bool {
+    f.window
+        .read_with(visual, |view, _| view.kb_drag.is_some())
+        .unwrap()
+}
+
+#[gpui::test]
+fn a_lifted_card_poll_reads_one_card(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Lifted", "Other"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let card = lift(&f, visual, "Lifted");
+    // Nothing changed: the poll reads the lifted card, never the board.
+    assert_eq!(
+        poll_reads(&f, visual),
+        ["card", "card_meta", "data_version"]
+    );
+    assert!(still_lifted(&f, visual));
+    // An edit elsewhere keeps the lift; the reload waits for the drop.
+    let mut service = Service::open(&f.db).unwrap();
+    service.card_update(&card, "Lifted, renamed", "").unwrap();
+    assert_eq!(
+        poll_reads(&f, visual),
+        ["card", "card_meta", "data_version"]
+    );
+    assert!(still_lifted(&f, visual));
+    f.window
+        .read_with(visual, |view, _| assert!(view.pending_reload))
+        .unwrap();
+    // Archived elsewhere: the lift ends and the board reloads without it.
+    service.archive(&card).unwrap();
+    let reads = poll_reads(&f, visual);
+    assert_eq!(&reads[..2], ["card", "card_meta"]);
+    assert!(!reads[2..].contains(&"card"), "{reads:?}");
+    assert!(!still_lifted(&f, visual));
+    assert!(detail(&f, visual).cards.iter().all(|c| c.id != card));
+}
+
+#[gpui::test]
+fn a_lifted_card_deleted_or_moved_away_elsewhere_ends_the_lift(cx: &mut TestAppContext) {
+    let f = seeded(cx, &["Deleted", "Moved", "Stays"]);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    let deleted = lift(&f, visual, "Deleted");
+    let mut service = Service::open(&f.db).unwrap();
+    service.card_delete(&deleted).unwrap();
+    let reads = poll_reads(&f, visual);
+    assert_eq!(reads[0], "card");
+    assert!(
+        !reads.contains(&"card_meta"),
+        "a missing card has no meta to read"
+    );
+    assert!(!still_lifted(&f, visual));
+    assert!(detail(&f, visual).cards.iter().all(|c| c.id != deleted));
+
+    let moved = lift(&f, visual, "Moved");
+    let other = service.create("Elsewhere").unwrap();
+    service.move_card_to_board(&moved, &other.id).unwrap();
+    let reads = poll_reads(&f, visual);
+    assert_eq!(reads[0], "card");
+    assert!(!still_lifted(&f, visual));
+    let titles: Vec<String> = detail(&f, visual)
+        .cards
+        .iter()
+        .map(|c| c.title.clone())
+        .collect();
+    assert_eq!(titles, ["Stays"]);
+}
+
+/// A card row's painted height (card and the gap above it) in column 0.
+fn painted_row(visual: &mut VisualTestContext, number: i64) -> Pixels {
+    card_bounds(visual, number).size.height + px(6.)
+}
+
+/// On a fresh board nothing was measured yet: a jump far down the column
+/// scrolls on the first guess, and must land the card in view.
+fn far_reveal_lands(cx: &mut TestAppContext, display: Option<&str>) {
+    let f = with_board(cx);
+    if let Some(json) = display {
+        patch_display(&f, json);
+    }
+    let board = open_id(&f, cx);
+    let mut service = Service::open(&f.db).unwrap();
+    for column in &detail(&f, cx).columns[1..] {
+        service.column_delete(&column.id).unwrap();
+    }
+    service.seed(&board, &Default::default()).unwrap();
+    reload_view(&f, cx);
+    let column = column_at(&f, cx, 0);
+    let ids = list_ids(&f, cx, &column);
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    visual.refresh().unwrap();
+    // The guess is close to what the seeded cards paint at.
+    let estimate = f
+        .window
+        .read_with(visual, |view, _| view.item_estimate(&view.display))
+        .unwrap();
+    let rows: Vec<Pixels> = (1..=10).map(|n| painted_row(visual, n)).collect();
+    let mean = rows.iter().fold(px(0.), |sum, row| sum + *row) / rows.len() as f32;
+    assert!(
+        (estimate - mean).abs() <= px(6.),
+        "estimate {estimate:?}, painted mean {mean:?}"
+    );
+    // One jump, one frame: no settling.
+    let target = 500;
+    f.window
+        .update(visual, |view, _, cx| {
+            view.column_lists[&column].scroll_to_reveal_item(target);
+            cx.notify();
+        })
+        .unwrap();
+    visual.refresh().unwrap();
+    let number = number_of(&f, visual, &ids[target]);
+    let viewport = f
+        .window
+        .read_with(visual, |view, _| {
+            view.column_lists[&column].viewport_bounds()
+        })
+        .unwrap();
+    let card = visual
+        .debug_bounds(selector(format!("board-card-{number}")))
+        .unwrap_or_else(|| panic!("card {number} is not painted after the jump"));
+    // One uniform guess can't know which of the cards above it carry an
+    // extra chip row, so allow one row's worth (24px) out of view; the
+    // reveal's settling frames scroll the rest in. A guess as far off as the
+    // old fixed one leaves the card hundreds of pixels away, unpainted.
+    let slack = px(24.);
+    assert!(
+        card.top() >= viewport.top() - slack && card.bottom() <= viewport.bottom() + slack,
+        "card {number} at {card:?} is outside {viewport:?}"
+    );
+}
+
+#[gpui::test]
+fn a_far_reveal_on_a_fresh_comfortable_board_lands_on_target(cx: &mut TestAppContext) {
+    far_reveal_lands(cx, None);
+}
+
+#[gpui::test]
+fn a_far_reveal_on_a_fresh_compact_board_lands_on_target(cx: &mut TestAppContext) {
+    far_reveal_lands(cx, Some(r#"{"density":"compact"}"#));
+}
+
+#[gpui::test]
+fn a_far_reveal_on_a_fresh_bare_face_board_lands_on_target(cx: &mut TestAppContext) {
+    far_reveal_lands(
+        cx,
+        Some(
+            r#"{"face":{"labels":false,"subtasks":false,"linkStatus":false,"priority":false,"due":false,"comments":false,"number":true}}"#,
+        ),
+    );
+}

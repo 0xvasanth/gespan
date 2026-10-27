@@ -138,12 +138,15 @@ impl BoardView {
         // The cards whose linked session or Pilot has an open turn, or waits
         // on the user (ruling C5-m), for the `linked: running` filter.
         let links = super::turns::running_links(cx);
+        let reads = self.reads.clone();
         let ids = self.service().and_then(|service| {
             let running = if links.is_empty() {
                 HashSet::new()
             } else {
+                reads.note("running_cards");
                 service.running_cards(&board_id, &links)?
             };
+            reads.note("query");
             service.query(&board_id, &spec, &running)
         })?;
         self.rank = ids

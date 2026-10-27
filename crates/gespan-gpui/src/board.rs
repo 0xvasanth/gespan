@@ -58,6 +58,8 @@ use std::{
 };
 
 const POLL: Duration = Duration::from_secs(2);
+/// The board store's error for a card id with no row.
+const CARD_NOT_FOUND: &str = "Card not found";
 /// How far past each edge of a board column's view cards are laid out.
 pub(crate) const CARD_LIST_OVERDRAW: Pixels = px(240.);
 pub(crate) const ROLES: [(&str, &str); 4] = [
@@ -139,6 +141,25 @@ pub(crate) struct DraggedColumn {
 
 enum Renaming {
     Column(String),
+}
+
+/// The names of the Service reads a load or poll made, in order, so tests
+/// can check a reload's reads don't grow with the board. Records nothing
+/// outside tests.
+#[derive(Clone, Default)]
+pub(crate) struct ReadLog(#[cfg(test)] Rc<RefCell<Vec<&'static str>>>);
+
+impl ReadLog {
+    fn note(&self, _read: &'static str) {
+        #[cfg(test)]
+        self.0.borrow_mut().push(_read);
+    }
+
+    /// The reads since the last `take`.
+    #[cfg(test)]
+    pub(crate) fn take(&self) -> Vec<&'static str> {
+        std::mem::take(&mut *self.0.borrow_mut())
+    }
 }
 
 pub(crate) struct BoardView {
@@ -295,6 +316,14 @@ pub(crate) struct BoardView {
     /// The last painted height of each column item (card id, or a column's
     /// footer key), so a short column is exactly as tall as its cards.
     item_heights: Rc<RefCell<HashMap<String, Pixels>>>,
+    /// Moves whenever `item_heights`, the column ids or the estimates
+    /// change, so each column's summed height is redone only then.
+    heights_version: Rc<std::cell::Cell<u64>>,
+    /// Each column's body height as (version, estimate, height) when summed.
+    body_heights: RefCell<HashMap<String, (u64, Pixels, Pixels)>>,
+    /// The mean row height the shown cards' faces lay out, under a display:
+    /// the first guess for unpainted cards before any has been measured.
+    face_estimate: Option<(DisplayOptions, Pixels)>,
     /// The display options the lists were measured with.
     list_display: Option<DisplayOptions>,
     /// The mean painted card row height seen under each display, the first
@@ -303,6 +332,11 @@ pub(crate) struct BoardView {
     /// Cards rendered since the start of the last board render.
     #[cfg(test)]
     pub(crate) rendered_cards: std::cell::Cell<usize>,
+    /// The last parsed `views.layout`, with the JSON it was parsed from.
+    layout_cache: RefCell<Option<(String, list::LayoutSpec)>>,
+    /// How many times the view's `layout_json` was parsed.
+    #[cfg(test)]
+    pub(crate) layout_parses: std::cell::Cell<usize>,
     /// `(live, archived)` card counts per column, read with each reload.
     column_counts: HashMap<String, (usize, usize)>,
     /// The slot a dragged column would land in.
@@ -359,6 +393,8 @@ pub(crate) struct BoardView {
     /// commit from another connection exactly there.
     #[cfg(test)]
     pub(crate) after_load_reads: Option<Box<dyn FnMut()>>,
+    /// The Service reads loads and polls made, for tests that count them.
+    pub(crate) reads: ReadLog,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -504,10 +540,16 @@ impl BoardView {
             column_ids: HashMap::new(),
             card_slots: HashMap::new(),
             item_heights: Rc::default(),
+            heights_version: Rc::default(),
+            body_heights: RefCell::default(),
+            face_estimate: None,
             list_display: None,
             learned_heights: Vec::new(),
             #[cfg(test)]
             rendered_cards: std::cell::Cell::new(0),
+            layout_cache: RefCell::default(),
+            #[cfg(test)]
+            layout_parses: std::cell::Cell::new(0),
             column_counts: HashMap::new(),
             column_drop: None,
             error: None,
@@ -536,6 +578,7 @@ impl BoardView {
             pending_default_view: None,
             #[cfg(test)]
             after_load_reads: None,
+            reads: ReadLog::default(),
             _poll: poll,
             _subscriptions: vec![activation, searching, free_submit, live_turns],
         }
@@ -649,25 +692,46 @@ impl BoardView {
         }
         let lifted = self.kb_drag.as_ref().map(|drag| drag.card_id.clone());
         if let (Some(card_id), Some(board_id)) = (lifted, self.open_board_id.clone()) {
-            // Reloads wait for a lift, but a lifted card deleted elsewhere ends it.
-            let gone = self
-                .service()
-                .and_then(|service| service.get(&board_id))
-                .is_ok_and(|detail| !detail.cards.iter().any(|card| card.id == card_id));
-            if gone {
+            // Reloads wait for a lift, but a lifted card deleted, archived or
+            // moved to another board elsewhere ends it. Only that card is
+            // read, not the whole board.
+            if self.lifted_card_gone(&card_id, &board_id) {
                 self.cancel_keyboard_drag(cx);
                 self.reload(cx);
                 return;
             }
         }
+        let reads = self.reads.clone();
         let Ok(service) = self.service() else {
             return;
         };
+        reads.note("data_version");
         if service
             .data_version()
             .is_ok_and(|version| version != self.last_data_version)
         {
             self.reload(cx);
+        }
+    }
+
+    /// Whether the lifted card left the board elsewhere: deleted, archived
+    /// or moved to another board. A read that fails for another reason
+    /// keeps the lift.
+    fn lifted_card_gone(&mut self, card_id: &str, board_id: &str) -> bool {
+        let reads = self.reads.clone();
+        let Ok(service) = self.service() else {
+            return false;
+        };
+        reads.note("card");
+        match service.card(card_id) {
+            Ok(card) if card.board_id != board_id => true,
+            Ok(_) => {
+                reads.note("card_meta");
+                service
+                    .card_meta(card_id)
+                    .is_ok_and(|meta| meta.archived_at.is_some())
+            }
+            Err(error) => error == CARD_NOT_FOUND,
         }
     }
 
@@ -689,32 +753,45 @@ impl BoardView {
         };
         let wanted = self.selected_board_id.clone().or(remembered);
         let archive_open = self.archive_open;
+        let reads = self.reads.clone();
         let service = self.service()?;
         // Read the version first: a commit landing during the reads below
         // then shows up as a newer version on the next poll and reloads again.
+        reads.note("data_version");
         let version = service.data_version()?;
+        reads.note("list");
         let boards = service.list()?;
         let board = match wanted.and_then(|id| boards.iter().find(|b| b.id == id).cloned()) {
             Some(board) => board,
-            None => service.default_board()?,
+            None => {
+                reads.note("default_board");
+                service.default_board()?
+            }
         };
         let boards = if boards.iter().any(|b| b.id == board.id) {
             boards
         } else {
+            reads.note("list");
             service.list()?
         };
+        reads.note("get");
         let detail = service.get(&board.id)?;
-        let mut column_counts = HashMap::new();
-        for column in &detail.columns {
-            column_counts.insert(column.id.clone(), service.column_card_count(&column.id)?);
-        }
+        // Every column's counts in one read, however many columns there are.
+        reads.note("column_card_counts");
+        let column_counts = service.column_card_counts(&board.id)?;
+        reads.note("extras");
         let extras = service.extras(&board.id)?;
+        reads.note("labels");
         let labels = service.labels(&board.id)?;
+        reads.note("board_tickets");
         let card_tickets = service.board_tickets(&board.id)?;
+        reads.note("views");
         let views = service.views(&board.id)?;
+        reads.note("list_fields");
         let fields = service.list_fields(&board.id)?;
         // A settings row that can't be read is not fatal to the board, but the
         // automation section must not write over what it could not see.
+        reads.note("settings");
         let settings_read = service.settings(&board.id);
         let settings_loaded = settings_read.is_ok();
         let board_settings = settings_read.unwrap_or_default();
@@ -723,25 +800,31 @@ impl BoardView {
             .iter()
             .filter(|field| matches!(field.kind.as_str(), "text" | "number" | "date" | "url"))
         {
+            reads.note("field_distinct_values");
             field_seen.insert(
                 field.id.clone(),
                 service.field_distinct_values(&board.id, &field.id, 50)?,
             );
         }
+        reads.note("card_index");
         let index: HashMap<_, _> = service
             .card_index(&board.id)?
             .into_iter()
             .map(|row| (row.card_id.clone(), row))
             .collect();
         let archived = if archive_open {
+            reads.note("archived");
             service.archived(&board.id)?
         } else {
             Vec::new()
         };
+        reads.note("board_links");
         let link_rows = service.board_links(&board.id)?;
+        reads.note("blocked");
         let blocked = service.blocked(&board.id)?;
         // Only the "failed" chip state needs this; a read that fails leaves
         // the chips without it rather than failing the whole board.
+        reads.note("latest_run_events");
         let last_events = service
             .latest_run_events(&board.id)
             .unwrap_or_else(|error| {
@@ -810,14 +893,21 @@ impl BoardView {
         let Some(detail) = &self.detail else {
             return;
         };
+        let columns: HashSet<&str> = detail.columns.iter().map(|c| c.id.as_str()).collect();
+        let cards: HashSet<&str> = detail.cards.iter().map(|c| c.id.as_str()).collect();
         self.column_anchors
-            .retain(|id, _| detail.columns.iter().any(|column| &column.id == id));
+            .retain(|id, _| columns.contains(id.as_str()));
         self.card_anchors
-            .retain(|id, _| detail.cards.iter().any(|card| &card.id == id));
-        self.card_focus
-            .retain(|id, _| detail.cards.iter().any(|card| &card.id == id));
+            .retain(|id, _| cards.contains(id.as_str()));
+        self.card_focus.retain(|id, _| cards.contains(id.as_str()));
         self.collapsed_focus
-            .retain(|id, _| detail.columns.iter().any(|column| &column.id == id));
+            .retain(|id, _| columns.contains(id.as_str()));
+        // Painted heights of cards and columns no longer on the board.
+        self.item_heights.borrow_mut().retain(|key, _| {
+            cards.contains(key.as_str())
+                || column::footer_column(key).is_some_and(|id| columns.contains(id))
+        });
+        self.heights_version.set(self.heights_version.get() + 1);
         for column in &detail.columns {
             self.column_anchors.entry(column.id.clone()).or_default();
             self.collapsed_focus
@@ -1591,6 +1681,7 @@ impl gpui::Render for BoardView {
                 self.remeasure_column_lists();
                 self.remeasure_lane_list();
                 self.item_heights.borrow_mut().clear();
+                self.heights_version.set(self.heights_version.get() + 1);
             }
             self.list_display = Some(self.display.clone());
         }

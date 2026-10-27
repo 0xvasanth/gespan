@@ -5,7 +5,7 @@
 //! cards settles. Never on a timer.
 use gespan_core::board::{auto_move::LinkedWorkEvent, extras::CardLink};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     path::Path,
 };
 
@@ -392,53 +392,74 @@ pub(crate) fn lookup(
 }
 
 /// The lookups the board's links need: one per PR and worktree link (a link
-/// on two cards is looked up once, with both cards' folders).
+/// on two cards is looked up once, with both cards' folders). The links are
+/// grouped by card once, so this is linear in the links.
 pub(crate) fn lookup_requests(
     links: &[CardLink],
     sessions: &HashMap<String, SessionInfo>,
     card_projects: &HashMap<String, Vec<String>>,
     fallback: Option<&str>,
 ) -> Vec<LookupRequest> {
+    // Each card's worktree paths and session folders, in the links' order.
+    let mut folders: HashMap<&str, (Vec<&str>, Vec<&str>)> = HashMap::new();
+    for link in links {
+        match link.kind.as_str() {
+            "worktree" => folders
+                .entry(link.card_id.as_str())
+                .or_default()
+                .0
+                .push(link.reference.as_str()),
+            "session" => {
+                if let Some(session) = sessions.get(&link.reference) {
+                    folders
+                        .entry(link.card_id.as_str())
+                        .or_default()
+                        .1
+                        .push(session.cwd.as_str());
+                }
+            }
+            _ => {}
+        }
+    }
     let mut requests: Vec<LookupRequest> = Vec::new();
+    let mut at: HashMap<(&str, &str), usize> = HashMap::new();
     for link in links
         .iter()
         .filter(|link| matches!(link.kind.as_str(), "pr" | "worktree"))
     {
         let mut cwds: Vec<String> = Vec::new();
         if link.kind == "pr" {
-            let card = links.iter().filter(|other| other.card_id == link.card_id);
-            for other in card.clone().filter(|other| other.kind == "worktree") {
-                cwds.push(other.reference.clone());
-            }
-            for other in card.filter(|other| other.kind == "session") {
-                if let Some(session) = sessions.get(&other.reference) {
-                    cwds.push(session.cwd.clone());
-                }
+            if let Some((worktrees, session_cwds)) = folders.get(link.card_id.as_str()) {
+                cwds.extend(worktrees.iter().map(|cwd| cwd.to_string()));
+                cwds.extend(session_cwds.iter().map(|cwd| cwd.to_string()));
             }
             cwds.extend(
                 card_projects
                     .get(&link.card_id)
-                    .cloned()
-                    .unwrap_or_default(),
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
             );
             if cwds.is_empty() {
                 cwds.extend(fallback.map(str::to_string));
             }
         }
-        match requests
-            .iter_mut()
-            .find(|request| request.kind == link.kind && request.reference == link.reference)
-        {
-            Some(request) => request.cwds.extend(cwds),
-            None => requests.push(LookupRequest {
-                kind: link.kind.clone(),
-                reference: link.reference.clone(),
-                cwds,
-            }),
+        match at.entry((link.kind.as_str(), link.reference.as_str())) {
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                requests[*entry.get()].cwds.extend(cwds)
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(requests.len());
+                requests.push(LookupRequest {
+                    kind: link.kind.clone(),
+                    reference: link.reference.clone(),
+                    cwds,
+                });
+            }
         }
     }
     for request in &mut requests {
-        let mut seen = BTreeSet::new();
+        let mut seen = HashSet::new();
         request
             .cwds
             .retain(|cwd| !cwd.is_empty() && seen.insert(cwd.clone()));
@@ -461,11 +482,13 @@ impl super::BoardView {
         if !keys.is_empty() {
             let store = crate::runtime::locked(&self.store)?;
             let all = store.sessions()?;
+            // Every session by id once, not a scan of them all per link.
+            let by_id: HashMap<_, _> = all.iter().map(|session| (session.id, session)).collect();
             for key in keys {
                 let Some(native) = store.resolve_existing_session_id(key) else {
                     continue;
                 };
-                let Some(session) = all.iter().find(|session| session.id == native) else {
+                let Some(session) = by_id.get(&native) else {
                     continue;
                 };
                 let settings = store.agent_settings(native).ok().flatten();

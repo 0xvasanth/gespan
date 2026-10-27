@@ -9,7 +9,11 @@ use gpui::{
     AnyElement, Context, FontWeight, Hsla, ListAlignment, ListOffset, ListState, MouseButton,
     Pixels, Role, canvas, div, list, prelude::*, px, rgb,
 };
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
 
 pub(in crate::board) const COLUMN_WIDTH: f32 = 280.;
 /// The space above each card in a column, and around the composer.
@@ -19,7 +23,8 @@ pub(super) const SETTLE_FRAMES: u8 = 6;
 /// The composer's "Add card" row, until it has been measured.
 const FOOTER_ESTIMATE: f32 = 40.;
 
-/// A first guess at a card's height until it has been painted.
+/// A first guess at a card's height until it has been painted, for a board
+/// with no cards to guess from.
 fn card_estimate(display: &DisplayOptions) -> Pixels {
     match display.density {
         Density::Comfortable => px(76.),
@@ -27,19 +32,56 @@ fn card_estimate(display: &DisplayOptions) -> Pixels {
     }
 }
 
+/// The card face's rows, as `render_card` lays them out: the title's line,
+/// the meta row and each chip row are 18px, the label row 20px.
+const FACE_LINE: f32 = 18.;
+const LABEL_ROW: f32 = 20.;
+/// About how many characters of a 13px title fit on one line of a card.
+const TITLE_LINE_CHARS: usize = 30;
+
+/// A first guess at one card's row (card and the gap above it), from the
+/// rows its face will show under `display`.
+fn card_row_estimate(rows: f32, labels: bool, title: &str, display: &DisplayOptions) -> Pixels {
+    let (padding, gap) = match display.density {
+        Density::Comfortable => (10., 6.),
+        Density::Compact => (5., 2.),
+    };
+    let title_lines = if title.chars().count() > TITLE_LINE_CHARS {
+        2.
+    } else {
+        1.
+    };
+    // The title and the meta row are always there.
+    let lines = title_lines * FACE_LINE + FACE_LINE + rows * FACE_LINE;
+    let label_row = if labels { LABEL_ROW + gap } else { 0. };
+    let gaps = (1. + rows) * gap;
+    px(2. + 2. * padding + lines + label_row + gaps + ITEM_GAP)
+}
+
 /// The `item_heights` key of a column's composer row.
 fn footer_key(column_id: &str) -> String {
     format!("footer:{column_id}")
 }
 
+/// The column a `footer_key` names.
+pub(super) fn footer_column(key: &str) -> Option<&str> {
+    key.strip_prefix("footer:")
+}
+
 /// Records the painted height of a column item, and asks for another frame
-/// when it changed so the column's own height catches up.
-fn height_probe(heights: Rc<RefCell<HashMap<String, Pixels>>>, key: String) -> impl IntoElement {
+/// when it changed so the column's own height catches up. A change also
+/// moves `version`, so the column heights summed from these are redone.
+fn height_probe(
+    heights: Rc<RefCell<HashMap<String, Pixels>>>,
+    version: Rc<Cell<u64>>,
+    key: String,
+) -> impl IntoElement {
     canvas(
         move |bounds, window, _| {
             let height = bounds.size.height;
             let old = heights.borrow_mut().insert(key, height);
             if old != Some(height) {
+                version.set(version.get() + 1);
                 window.refresh();
             }
         },
@@ -128,8 +170,16 @@ impl BoardView {
         }
         let mut lists = std::mem::take(&mut self.column_lists);
         let mut old_ids = std::mem::take(&mut self.column_ids);
-        let Some(detail) = &self.detail else {
+        if self.detail.is_none() {
             self.card_slots.clear();
+            return;
+        }
+        // The first guess for unpainted cards, from what their faces show.
+        self.face_estimate = self
+            .mean_face_estimate(&display)
+            .map(|height| (display.clone(), height));
+        self.heights_version.set(self.heights_version.get() + 1);
+        let Some(detail) = &self.detail else {
             return;
         };
         let slots = detail
@@ -327,12 +377,72 @@ impl BoardView {
     }
 
     /// A first guess at a card row's height (card and gap) under `display`:
-    /// the mean painted height last seen under it, else the fixed estimate.
+    /// the mean painted height last seen under it, else the mean of what the
+    /// shown cards' faces will lay out, else the fixed estimate.
     pub(super) fn item_estimate(&self, display: &DisplayOptions) -> Pixels {
-        self.learned_heights
+        if let Some((_, height)) = self
+            .learned_heights
             .iter()
             .find(|(seen, _)| seen == display)
-            .map_or(card_estimate(display) + px(ITEM_GAP), |(_, height)| *height)
+        {
+            return *height;
+        }
+        match &self.face_estimate {
+            Some((seen, height)) if seen == display => *height,
+            _ => card_estimate(display) + px(ITEM_GAP),
+        }
+    }
+
+    /// The mean of the shown cards' row estimates under `display`, or `None`
+    /// when no card shows. One pass over the cards, with map lookups only.
+    pub(super) fn mean_face_estimate(&self, display: &DisplayOptions) -> Option<Pixels> {
+        let detail = self.detail.as_ref()?;
+        let face = &display.face;
+        let fields: Vec<&String> = face
+            .fields
+            .iter()
+            .filter(|id| self.fields.iter().any(|field| &field.id == *id))
+            .collect();
+        let agent: Vec<&String> = face
+            .agent_fields
+            .iter()
+            .filter(|field| field.as_str() != "cost")
+            .collect();
+        let (mut sum, mut count) = (px(0.), 0usize);
+        for card in detail.cards.iter().filter(|card| self.card_matches(card)) {
+            let extras = self.extras.get(&card.id);
+            let labels = face.labels && extras.is_some_and(|extras| !extras.labels.is_empty());
+            let mut rows = 0usize;
+            if face.subtasks && extras.is_some_and(|extras| extras.subtasks_total > 0) {
+                rows += 1;
+            }
+            if let Some(row) = self.index.get(&card.id) {
+                rows += fields
+                    .iter()
+                    .filter(|id| row.fields.contains_key(**id))
+                    .count();
+            }
+            if let Some(values) = self.agent.get(&card.id) {
+                rows += agent
+                    .iter()
+                    .filter(|field| values.get(field).is_some())
+                    .count();
+            }
+            if face.link_status
+                && self
+                    .chips
+                    .get(&card.id)
+                    .is_some_and(|chips| !chips.is_empty())
+            {
+                rows += 1;
+            }
+            if self.card_tickets.contains_key(&card.id) {
+                rows += 1;
+            }
+            sum += card_row_estimate(rows as f32, labels, &card.title, display);
+            count += 1;
+        }
+        (count > 0).then(|| sum / count as f32)
     }
 
     /// Remember the mean painted card row height under `display`, which the
@@ -491,19 +601,34 @@ impl BoardView {
     /// The column body's natural height: every card's painted height (or a
     /// guess until it paints) and the composer row. A taller column shrinks
     /// to the board and scrolls.
+    ///
+    /// Summed again only when a painted height, the column's ids or the
+    /// estimate changed since the last frame (`heights_version`), not on
+    /// every frame.
     fn column_body_height(&self, column_id: &str) -> Pixels {
-        let heights = self.item_heights.borrow();
         let estimate = self.item_estimate(&self.display);
+        let version = self.heights_version.get();
+        if let Some(&(seen, seen_estimate, height)) = self.body_heights.borrow().get(column_id)
+            && seen == version
+            && seen_estimate == estimate
+        {
+            return height;
+        }
+        let heights = self.item_heights.borrow();
         let cards = self.column_ids.get(column_id).map_or(px(0.), |ids| {
             ids.iter().fold(px(0.), |sum, id| {
                 sum + heights.get(id).copied().unwrap_or(estimate)
             })
         });
-        cards
+        let height = cards
             + heights
                 .get(&footer_key(column_id))
                 .copied()
-                .unwrap_or(px(FOOTER_ESTIMATE))
+                .unwrap_or(px(FOOTER_ESTIMATE));
+        self.body_heights
+            .borrow_mut()
+            .insert(column_id.to_string(), (version, estimate, height));
+        height
     }
 
     /// Item `ix` of a column's list: a card with the drop line above it when
@@ -553,7 +678,11 @@ impl BoardView {
                 .gap(px(ITEM_GAP))
                 .when(card_target == Some(ix), |d| d.child(drop_line()))
                 .child(self.render_card(card, done, cx))
-                .child(height_probe(self.item_heights.clone(), card.id.clone()))
+                .child(height_probe(
+                    self.item_heights.clone(),
+                    self.heights_version.clone(),
+                    card.id.clone(),
+                ))
                 .into_any_element();
         }
         let composer = self
@@ -613,6 +742,7 @@ impl BoardView {
             })
             .child(height_probe(
                 self.item_heights.clone(),
+                self.heights_version.clone(),
                 footer_key(column_id),
             ))
             .into_any_element()
