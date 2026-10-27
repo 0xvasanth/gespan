@@ -14,7 +14,7 @@ import {
 } from "../src/features/connections/model/protocol";
 import { HostEngine } from "./engine";
 import { writeAttachmentChunk, readAttachmentChunk } from "./attachments";
-import type { LinkedWorkItem } from "../src/features/sessions/model/session";
+import type { GithubLinkedWorkItem, LinkedWorkItem } from "../src/features/sessions/model/session";
 import { parseGithubWorkItemUrl } from "../src/features/sessions/model/sessionWorkItem";
 import { SyncTransfers } from "./sync-transfer";
 import { browseHostDirectories } from "./browse";
@@ -351,16 +351,19 @@ export function createHostServer(
             }
             if (params.linkedWorkItem !== undefined) {
               const item = params.linkedWorkItem;
-              const parsed = item && typeof item === "object" && !Array.isArray(item)
-                ? parseGithubWorkItemUrl(String((item as LinkedWorkItem).url ?? ""))
+              // Remote sessions link GitHub items only; a tracker ticket has no
+              // URL to check here, so it is refused like any other mismatch.
+              const github = item && typeof item === "object" && !Array.isArray(item)
+                ? item as Partial<GithubLinkedWorkItem>
                 : null;
+              const parsed = github ? parseGithubWorkItemUrl(String(github.url ?? "")) : null;
               if (item !== null && (
-                typeof item !== "object" || Array.isArray(item) ||
+                !github ||
                 !parsed ||
-                parsed.kind !== (item as LinkedWorkItem).kind ||
-                parsed.repo !== (item as LinkedWorkItem).repo ||
-                parsed.number !== (item as LinkedWorkItem).number ||
-                parsed.url !== (item as LinkedWorkItem).url
+                parsed.kind !== github.kind ||
+                parsed.repo !== github.repo ||
+                parsed.number !== github.number ||
+                parsed.url !== github.url
               )) throw new Error("Invalid linked work item");
               patch.linkedWorkItem = item as LinkedWorkItem | null;
             }

@@ -92,6 +92,16 @@ impl Conversation {
         .detach();
         cx.notify();
     }
+    /// Whether a message sent mid-turn joins it rather than waiting for the
+    /// next turn: the Follow-ups setting, shared by sessions and Pilot chats.
+    /// Once the agent has answered and only background work is left, which
+    /// may never end (a dev server), queuing would park the message behind
+    /// it, so it is handed to the agent now.
+    pub(super) fn wants_steer(&self, cx: &gpui::App) -> bool {
+        cx.try_global::<crate::settings::Preferences>()
+            .is_none_or(|prefs| prefs.follow_up == "steer")
+            || !self.background.tasks.is_empty()
+    }
     pub(super) fn enqueue_follow_up(
         &mut self,
         prompt: String,
@@ -100,13 +110,7 @@ impl Conversation {
     ) {
         let attachments = std::mem::take(&mut self.attachments);
         let mut message = self.message(prompt, attachments, mode, cx);
-        // Once the agent has answered and only background work is left, which
-        // may never end (a dev server), queuing would park the message behind
-        // it, so hand it to the agent now.
-        message.steer = (cx
-            .try_global::<crate::settings::Preferences>()
-            .is_none_or(|prefs| prefs.follow_up == "steer")
-            || !self.background.tasks.is_empty())
+        message.steer = self.wants_steer(cx)
             && Kind::from_id(&self.summary.provider).can_steer()
             && message.can_steer()
             // Held messages wait for Resume instead of joining a settling turn.

@@ -50,6 +50,8 @@ impl Write for SharedBuf {
 struct MicState {
     open: Arc<AtomicUsize>,
     starts: Arc<AtomicUsize>,
+    /// Chunks handed to the sink so far.
+    delivered: Arc<AtomicUsize>,
 }
 
 struct FakeSource {
@@ -93,12 +95,14 @@ impl AudioSource for FakeSource {
         let stop = self.stop.clone();
         let chunks = self.chunks.clone();
         let gap = self.gap;
+        let delivered = self.state.delivered.clone();
         self.thread = Some(thread::spawn(move || {
             for chunk in chunks {
                 if stop.load(Ordering::SeqCst) {
                     return;
                 }
                 sink(&chunk);
+                delivered.fetch_add(1, Ordering::SeqCst);
                 thread::sleep(gap);
             }
         }));
@@ -651,13 +655,22 @@ fn level_is_finite_and_throttled() {
 
 #[test]
 fn stop_during_a_partial_waits_and_decodes_the_full_buffer() {
-    let (source, _) = FakeSource::new(vec![chunk(1600), chunk(1600)], Duration::from_millis(120));
+    let (source, mic) = FakeSource::new(vec![chunk(1600), chunk(1600)], Duration::from_millis(120));
     let h = spawn(source, None, Duration::from_millis(300), limits(10_000, 20));
     h.load();
     h.send(&start(&[]));
-    // The first partial decode (of 1600 samples) is now running for 300 ms,
-    // and the second chunk lands while it runs.
-    thread::sleep(Duration::from_millis(200));
+    // The first partial decode (of 1600 samples) runs for 300 ms, and the
+    // second chunk lands 120 ms into it. Stop once that chunk has landed,
+    // not after a fixed sleep: a slow runner could otherwise stop the source
+    // before it delivered the chunk the final must include.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while mic.delivered.load(Ordering::SeqCst) < 2 {
+        assert!(
+            Instant::now() < deadline,
+            "the source never delivered both chunks"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
     h.send(&Request::Stop);
     let fin = h.wait(|e| matches!(e, Event::Final { .. }));
     assert_eq!(

@@ -168,6 +168,7 @@ impl Conversation {
         }
         if self.busy {
             if self.pilot_ui.sending.is_some()
+                || !self.wants_steer(cx)
                 || !self.follow_ups.ready
                 || !Kind::from_id(&self.summary.provider).can_steer()
                 || self
@@ -353,6 +354,44 @@ impl Conversation {
             self.pilot_ui.sending = None;
         }
         self.pilot_ui.failed.push((id, error));
+    }
+    /// Stop pauses a Pilot's queue as it does a session's: the first message
+    /// the user queued fails, which holds the outbox until Retry or Discard.
+    /// The Pilot's own messages are not shown, so they never hold it.
+    pub(super) fn pilot_pause_queue(&mut self) {
+        let waiting = |m: &&Message| {
+            !self.pilot_ui.delivered.contains(&m.id)
+                && self.pilot_ui.sending.as_ref() != Some(&m.id)
+        };
+        if self
+            .pilot_ui
+            .pending
+            .iter()
+            .filter(waiting)
+            .any(|m| m.error.is_some())
+        {
+            return;
+        }
+        if let Some(head) = self
+            .pilot_ui
+            .pending
+            .iter()
+            .filter(waiting)
+            .find(|m| !m.internal)
+        {
+            let id = head.id.clone();
+            self.pilot_ui.failed.push((
+                id,
+                "Paused because you stopped the turn. Retry to send it.".into(),
+            ));
+        }
+    }
+    /// A steer the turn ended before accepting fails, as a session's does,
+    /// rather than being sent again as a new turn it may already be part of.
+    pub(super) fn pilot_turn_ended(&mut self) {
+        if let Some(id) = self.pilot_ui.sending.clone() {
+            self.pilot_message_failed(id, "The turn ended before this message was accepted".into());
+        }
     }
     pub(crate) fn pilot_take_failures(&mut self) -> Vec<(String, String)> {
         std::mem::take(&mut self.pilot_ui.failed)
@@ -809,13 +848,29 @@ impl Conversation {
             && self.no_agent_hint(cx).is_none()
             && (!self.input.read(cx).content.trim().is_empty() || !self.attachments.is_empty())
     }
+    /// Whether the send button stops the running turn instead: it is busy and
+    /// there is nothing to send, as in a session's composer.
+    pub(crate) fn pilot_stoppable(&self, cx: &gpui::App) -> bool {
+        self.responding()
+            && self.input.read(cx).content.trim().is_empty()
+            && self.attachments.is_empty()
+    }
+    /// The send button: Stop while a turn runs and nothing is typed.
+    pub(crate) fn pilot_send_or_stop(&mut self, cx: &mut Context<Self>) {
+        if self.pilot_stoppable(cx) {
+            self.stop(cx);
+        } else if self.pilot_send_ready(cx) {
+            self.send(cx);
+        }
+    }
     /// The form's box: the field and send, as `PilotComposer` lays them out
     /// when it has controls.
     fn pilot_composer_box(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let runner = self.composer_runner(cx);
         let focused = self.input.focus_handle(cx).contains_focused(window, cx);
-        let ready = self.pilot_send_ready(cx);
-        let no_agent = self.no_agent_hint(cx);
+        let stoppable = self.pilot_stoppable(cx);
+        let ready = self.pilot_send_ready(cx) || stoppable;
+        let no_agent = (!stoppable).then(|| self.no_agent_hint(cx)).flatten();
         div()
             .id("pilot-composer")
             .debug_selector(|| "pilot-composer".into())
@@ -859,7 +914,7 @@ impl Conversation {
                             .id("pilot-send")
                             .debug_selector(|| "pilot-send".into())
                             .role(Role::Button)
-                            .aria_label("Send")
+                            .aria_label(if stoppable { "Stop" } else { "Send" })
                             .flex_shrink_0()
                             .size(px(26.))
                             .rounded_md()
@@ -873,17 +928,16 @@ impl Conversation {
                             })
                             .bg(white(if ready { 1. } else { 0.3 }))
                             .when(ready, |d| d.hover(|s| s.bg(white(0.9))))
-                            .child(icon("pilot-arrow-up", 14.).text_color(black(if ready {
-                                1.
-                            } else {
-                                0.4
-                            })))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if ready {
-                                    this.send(cx)
+                            .map(|d| {
+                                let ink = black(if ready { 1. } else { 0.4 });
+                                if stoppable {
+                                    d.child(div().size(px(10.)).rounded(px(2.)).bg(ink))
+                                } else {
+                                    d.child(icon("pilot-arrow-up", 14.).text_color(ink))
                                 }
-                            })),
+                            })
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, _, cx| this.pilot_send_or_stop(cx))),
                     ),
             )
             .children(self.attachment_drop_overlay(8.))

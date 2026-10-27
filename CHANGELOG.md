@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.1-beta] - 2026-10-27
+
+The first Gespan beta. Version numbering restarts here, so installs of 0.16.0 or
+earlier do not update to it automatically; install it fresh.
+
+### Added
+
+- Gespan Native diagnostics log lines and crash reports record the commit the
+  app was built from (`build`), next to its version.
+
+### Fixed
+
+- Gespan Native no longer quits when a sub-agent report that contains a code
+  block is opened.
+- Agent turns in Gespan Native no longer fail with "database is locked" when
+  another app writes the same database at the same moment.
+- Gespan Native automations triggered by new GitHub issues run again. One
+  repository that failed to load, such as a fork with issues disabled, hid
+  every GitHub item, so no new issue was ever noticed.
+- A repository that recovers from a failed load no longer triggers automations
+  for its whole existing backlog.
+- Pilot chats in Gespan Native follow the **Follow-ups** setting like session
+  chats: with **Queue**, a message sent mid-turn waits for the next turn
+  instead of steering the running one.
+- Stopping a Pilot's turn pauses its queued messages instead of sending the
+  next one at once; **Retry** sends it. A message the turn ended before
+  accepting shows an error instead of being sent again.
+- The Pilot chat's send button becomes **Stop** while a turn runs and nothing is
+  typed.
+
 ### Changed
 
 - The project is now called **Gespan**. The app, its crates, the mobile module and every in-app string use the new name. Bundle identifiers are now `dev.gespan.desktop` and `dev.gespan.mobile`, the URL scheme is `gespan://`, and environment variables use the `GESPAN_` prefix.

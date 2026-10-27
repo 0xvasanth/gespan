@@ -219,10 +219,7 @@ impl Store {
         let start = i64::try_from(edit.start)
             .map_err(|_| "Conversation row index exceeds SQLite's integer range".to_owned())?;
         let updated_at = crate::time::now_ms().min(i64::MAX as u64) as i64;
-        let tx = self
-            .conn
-            .unchecked_transaction()
-            .map_err(|e| e.to_string())?;
+        let tx = super::write_transaction(&self.conn).map_err(|e| e.to_string())?;
         self.validate_edit_last_turn(id, edit)?;
         self.conn
             .execute(

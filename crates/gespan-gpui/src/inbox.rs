@@ -409,6 +409,17 @@ impl Inbox {
                     this.refresh(cx);
                     return;
                 }
+                // Log a failure when it starts or changes, not on every refresh.
+                for (provider, error) in &snapshot.errors {
+                    if this.snapshot.errors.get(provider) != Some(error) {
+                        tracing::warn!(%provider, %error, "inbox provider fetch failed");
+                    }
+                }
+                for (repo, error) in &snapshot.repo_errors {
+                    if this.snapshot.repo_errors.get(repo) != Some(error) {
+                        tracing::warn!(%repo, %error, "inbox repository fetch failed");
+                    }
+                }
                 let appeared = this.notifications.observe(&snapshot, scope);
                 // A temporary outage must not erase the last usable provider list.
                 for provider in snapshot.errors.keys() {

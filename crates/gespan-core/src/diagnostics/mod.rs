@@ -45,6 +45,8 @@ use tracing_subscriber::layer::SubscriberExt;
 pub struct Config {
     pub log_dir: PathBuf,
     pub version: String,
+    /// The commit the app was built from; empty when unknown.
+    pub build: String,
     pub channel: Channel,
 }
 
@@ -95,7 +97,7 @@ pub fn init(config: Config) -> Result<Guard, String> {
         .map_or(log::LevelFilter::Trace, |level| level.as_log());
     let subscriber = tracing_subscriber::registry()
         .with(env_filter)
-        .with(json_layer(writer, &config.version))
+        .with(json_layer(writer, &config.version).with_build(&config.build))
         .with(stderr);
     tracing::subscriber::set_global_default(subscriber)
         .map_err(|error| format!("Cannot start logging: {error}"))?;
@@ -103,7 +105,11 @@ pub fn init(config: Config) -> Result<Guard, String> {
         .with_max_level(log_level)
         .init();
     *WRITER.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
-    install_panic_hook(crash_dir(&config.log_dir), config.version.clone());
+    install_panic_hook(
+        crash_dir(&config.log_dir),
+        config.version.clone(),
+        config.build.clone(),
+    );
     if let Some(error) = filter_error {
         tracing::warn!(%error, "GESPAN_LOG is not a valid filter; using info");
     }

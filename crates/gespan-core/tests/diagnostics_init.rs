@@ -22,6 +22,7 @@ fn init_prunes_writes_both_apis_and_flushes() {
     let guard = diagnostics::init(Config {
         log_dir: logs.clone(),
         version: "3.2.1".into(),
+        build: "4f2a9c1e0b7d".into(),
         channel: Channel::Release,
     })
     .unwrap();
@@ -32,6 +33,7 @@ fn init_prunes_writes_both_apis_and_flushes() {
     assert!(diagnostics::init(Config {
         log_dir: logs.clone(),
         version: "3.2.1".into(),
+        build: String::new(),
         channel: Channel::Release,
     })
     .is_err());
@@ -63,6 +65,7 @@ fn init_prunes_writes_both_apis_and_flushes() {
     assert_eq!(e2e["fields"]["code"], 5);
     assert_eq!(e2e["app"], "native");
     assert_eq!(e2e["version"], "3.2.1");
+    assert_eq!(e2e["build"], "4f2a9c1e0b7d");
     let bridged = find("from log");
     assert_eq!(bridged["level"], "warn");
     assert_eq!(bridged["target"], "gespan_core::git");
@@ -71,6 +74,10 @@ fn init_prunes_writes_both_apis_and_flushes() {
         .all(|l| l["message"] != "below the default level"));
 
     let summary = diagnostics::summary();
+    assert!(
+        summary.starts_with("Gespan Native 3.2.1 build 4f2a9c1e0b7d (release)\n"),
+        "{summary}"
+    );
     assert!(
         summary.contains(&format!("Logs: ~{}logs\n", std::path::MAIN_SEPARATOR)),
         "{summary}"

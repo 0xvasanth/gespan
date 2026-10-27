@@ -761,7 +761,7 @@ impl Service {
         now: i64,
     ) -> Result<Vec<DueAutomationRun>, String> {
         let conn = self.lock_conn()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let tx = crate::store::write_transaction(conn).map_err(|error| error.to_string())?;
         let mut statement = tx
             .prepare(
                 "SELECT run_json FROM automation_runs WHERE created_at <= ?1
@@ -828,7 +828,7 @@ impl Service {
     pub fn run_now(&mut self, automation_id: &str, now: i64) -> Result<AutomationRun, String> {
         validate_id(automation_id, "automation")?;
         let conn = self.lock_conn()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let tx = crate::store::write_transaction(conn).map_err(|error| error.to_string())?;
         let mut automation =
             get(&tx, automation_id)?.ok_or_else(|| "Automation not found.".to_string())?;
         let run = new_run(automation_id, "manual", now, now, &automation.prompt);
@@ -854,7 +854,7 @@ impl Service {
             return Err("The following automation occurrence must advance the schedule.".into());
         }
         let conn = self.lock_conn()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let tx = crate::store::write_transaction(conn).map_err(|error| error.to_string())?;
         let current =
             get(&tx, automation_id)?.ok_or_else(|| "Automation not found.".to_string())?;
         if !has_time_trigger(&current) {
@@ -926,7 +926,7 @@ impl Service {
             now
         };
         let conn = self.lock_conn()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let tx = crate::store::write_transaction(conn).map_err(|error| error.to_string())?;
         let mut automation =
             get(&tx, automation_id)?.ok_or_else(|| "Automation not found.".to_string())?;
         if !automation.enabled || !has_event_trigger(&automation, &claim.event_kind, &claim.event) {
@@ -982,7 +982,7 @@ impl Service {
             return Err("Invalid automation run status.".into());
         }
         let conn = self.lock_conn()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let tx = crate::store::write_transaction(conn).map_err(|error| error.to_string())?;
         let raw = tx
             .query_row(
                 "SELECT run_json FROM automation_runs WHERE id = ?1",

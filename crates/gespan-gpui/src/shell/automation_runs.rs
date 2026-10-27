@@ -108,6 +108,7 @@ impl Shell {
                         }
                     }
                     Err(error) => {
+                        tracing::warn!(%error, "automations failed to open");
                         this.error = Some(format!("Could not open automations: {error}"));
                         cx.notify();
                     }
@@ -168,6 +169,7 @@ impl Shell {
                         }
                     }
                     Err(error) => {
+                        tracing::warn!(%error, "automation schedule poll failed");
                         this.error = Some(format!("Could not evaluate automations: {error}"));
                         cx.notify();
                     }
@@ -278,6 +280,7 @@ impl Shell {
                             .detach();
                     }
                     Err(error) => {
+                        tracing::warn!(%error, "automation inbox poll failed");
                         this.error = Some(format!("Could not evaluate Inbox automations: {error}"));
                         cx.notify();
                     }
@@ -498,6 +501,12 @@ impl Shell {
                         this.persist(cx);
                     }
                     Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            automation = %due.run.automation_id,
+                            run = %due.run.id,
+                            "automation run failed to launch"
+                        );
                         this.update_automation_run(
                             due.run.id.clone(),
                             "failed",
@@ -576,6 +585,7 @@ impl Shell {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 if let Err(error) = result {
+                    tracing::warn!(%error, "automation run result was not saved");
                     this.error = Some(format!("Could not save automation result: {error}"));
                 }
                 if let Some(view) = &this.automations {

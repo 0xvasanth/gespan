@@ -167,7 +167,7 @@ impl Store {
         provider_id: &str,
     ) -> Result<(), String> {
         self.shared_writable()?;
-        let tx = sql(self.conn.unchecked_transaction())?;
+        let tx = sql(crate::store::write_transaction(&self.conn))?;
         self.validate_edit_last_turn(id, edit)?;
         let blocks = edit
             .blocks

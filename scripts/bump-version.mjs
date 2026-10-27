@@ -4,8 +4,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const version = process.argv[2];
-if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
-  console.error("usage: bun run set-version 0.1.1");
+// X.Y.Z with an optional prerelease such as -beta or -beta.2.
+if (
+  !version ||
+  !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)
+) {
+  console.error("usage: bun run set-version 0.1.1 (or 0.0.1-beta)");
   process.exit(1);
 }
 
@@ -37,9 +41,29 @@ replaceFirst(
   `$1${version}$2`,
 );
 replaceFirst(
-  join(root, "Cargo.lock"),
-  /(name = "gespan"\nversion = ")[^"]+(")/,
+  join(root, "crates/gespan-gpui/Cargo.toml"),
+  /(\[workspace\.package\]\nversion = ")[^"]+(")/,
   `$1${version}$2`,
 );
+// Every package that takes the workspace version, in both lockfiles, so
+// `--locked` builds keep working.
+const lockfiles = {
+  "Cargo.lock": ["gespan", "gespan-models", "gespan-speech"],
+  "crates/gespan-gpui/Cargo.lock": [
+    "gespan-core",
+    "gespan-gpui",
+    "gespan-models",
+    "gespan-speech",
+  ],
+};
+for (const [lockfile, names] of Object.entries(lockfiles)) {
+  for (const name of names) {
+    replaceFirst(
+      join(root, lockfile),
+      new RegExp(`(name = "${name}"\\nversion = ")[^"]+(")`),
+      `$1${version}$2`,
+    );
+  }
+}
 
 console.log(`version ${version}`);

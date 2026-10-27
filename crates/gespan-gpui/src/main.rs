@@ -175,6 +175,7 @@ fn diagnostics_config(use_gespan: bool) -> gespan_core::diagnostics::Config {
     Config {
         log_dir: log_dir(channel),
         version: notifications::updater::version().into(),
+        build: env!("GESPAN_BUILD_COMMIT").into(),
         channel,
     }
 }
