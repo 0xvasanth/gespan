@@ -13,18 +13,29 @@ import {
   CommitInput,
   SETTINGS_BUTTON,
   SettingsSection,
+  SettingsUnavailable,
 } from "./settingsControls";
 
 /** The five priority names, and which levels pickers and filters offer. */
 export function PrioritySection({
   scheme,
   stored,
+  ready = true,
   onPatch,
   onError,
+  onRetry = () => {},
 }: {
   scheme: PriorityScheme;
   /** Whether the board holds its own scheme (so Reset has something to clear). */
   stored: boolean;
+  /**
+   * Whether the board's settings were read. Until they are, the scheme shown
+   * is the default and a write built on it would replace the stored one, so
+   * the section is disabled. The settings page always passes it.
+   */
+  ready?: boolean;
+  /** Reads the board's settings again. */
+  onRetry?: () => void;
   onPatch: (patch: Partial<BoardSettings>, what: string) => Promise<boolean>;
   onError: (message: string) => void;
 }) {
@@ -49,6 +60,7 @@ export function PrioritySection({
     what: string,
     level?: number,
   ) => {
+    if (!ready) return;
     pending.current += 1;
     queue.current = queue.current
       .then(() => onPatch(patch, what))
@@ -71,6 +83,7 @@ export function PrioritySection({
       });
   };
   const save = (next: PriorityScheme, level?: number) => {
+    if (!ready) return;
     latest.current = next;
     write(
       { priorityJson: serializePriorityScheme(next) },
@@ -83,6 +96,7 @@ export function PrioritySection({
       title="Priority"
       hint="A hidden level leaves the pickers and filters; a card that already has it still shows it."
     >
+      {ready ? null : <SettingsUnavailable onRetry={onRetry} />}
       <ul className="flex flex-col gap-1.5">
         {scheme.names.map((_, level) => (
           <li
@@ -95,6 +109,7 @@ export function PrioritySection({
               label="Priority name"
               value={scheme.names[level]}
               className="w-44"
+              disabled={!ready}
               onCommit={(text) => {
                 if (!validPriorityName(text)) {
                   onError(
@@ -112,7 +127,7 @@ export function PrioritySection({
                 type="checkbox"
                 aria-label={`Show ${priorityName(scheme, level)} in pickers`}
                 checked={!scheme.hidden.includes(level)}
-                disabled={level === 0}
+                disabled={!ready || level === 0}
                 onChange={(event) =>
                   save(withHidden(latest.current, level, !event.target.checked))
                 }
@@ -126,8 +141,9 @@ export function PrioritySection({
         <button
           type="button"
           className={SETTINGS_BUTTON}
-          disabled={!stored}
+          disabled={!ready || !stored}
           onClick={() => {
+            if (!ready) return;
             latest.current = DEFAULT_PRIORITY_SCHEME;
             write({ priorityJson: null }, "reset the priorities");
           }}

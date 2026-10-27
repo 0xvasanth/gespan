@@ -2352,6 +2352,8 @@ describe("BoardView undo toasts, held deletes and the Archive view", () => {
     const db = backend();
     await renderBoard();
     await deleteFromMenu(1);
+    // Quitting: the page goes away (leaving the Board view alone commits it).
+    act(() => window.dispatchEvent(new Event("pagehide")));
     act(() => root.unmount());
     root = createRoot(container);
     await advance(10_000);
@@ -2359,6 +2361,85 @@ describe("BoardView undo toasts, held deletes and the Archive view", () => {
     expect(commands("board_card_delete")).toHaveLength(0);
     expect(db.exists("c1")).toBe(true);
     expect(db.archivedIds()).toEqual(["c1"]);
+  });
+
+  it("leaving_the_board_view_within_the_undo_window_deletes_the_held_card", async () => {
+    const db = backend();
+    await renderBoard();
+    await deleteFromMenu(1);
+    expect(toastText()).toBe("Deleted #1");
+    expect(db.archivedIds()).toEqual(["c1"]);
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    // Away to another view well inside the 8 seconds.
+    await advance(2_000);
+    act(() => root.unmount());
+    root = createRoot(container);
+    await flush();
+    expect(commands("board_card_delete_archived")).toEqual([
+      ["board_card_delete_archived", { cardId: "c1" }],
+    ]);
+    expect(db.exists("c1")).toBe(false);
+    // The dropped timer doesn't delete it a second time.
+    await advance(10_000);
+    expect(commands("board_card_delete_archived")).toHaveLength(1);
+  });
+
+  it("leaving_the_board_view_after_an_undoable_move_deletes_nothing", async () => {
+    const db = backend();
+    await renderBoard();
+    await drop("c1", "done", 0);
+    expect(toastText()).not.toBeNull();
+    act(() => root.unmount());
+    root = createRoot(container);
+    await advance(10_000);
+    expect(commands("board_card_delete_archived")).toHaveLength(0);
+    expect(db.exists("c1")).toBe(true);
+  });
+
+  it("a_burst_of_board_changed_events_reads_the_board_at_most_twice", async () => {
+    const db = backend();
+    await renderBoard();
+    // The drawer's activity reloads on the same events.
+    act(() =>
+      container.querySelector<HTMLElement>("[data-board-card='c2']")!.click(),
+    );
+    await flush();
+    await flush();
+    expect(document.querySelector("[data-card-drawer]")).not.toBeNull();
+    const gets = commands("board_get").length;
+    const activity = commands("board_activity").length;
+    // The first read answers late, with the board as it was when asked.
+    const get = handlers.board_get;
+    const activityRead = handlers.board_activity;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    handlers.board_get = async (a) => {
+      const snapshot = get(a);
+      await gate;
+      return snapshot;
+    };
+    handlers.board_activity = async (a) => {
+      const rows = activityRead(a);
+      await gate;
+      return rows;
+    };
+    act(() => emitBoardChanged("b1"));
+    // Meanwhile the other app archives card #1, then 49 more changes land
+    // (a bulk undo restoring cards one by one).
+    db.archiveElsewhere("c1");
+    act(() => {
+      for (let i = 0; i < 49; i += 1) emitBoardChanged("b1");
+    });
+    await flush();
+    await act(async () => release());
+    for (let i = 0; i < 4; i += 1) await flush();
+    expect(commands("board_get").length - gets).toBeGreaterThan(0);
+    expect(commands("board_get").length - gets).toBeLessThanOrEqual(2);
+    expect(commands("board_activity").length - activity).toBeLessThanOrEqual(2);
+    // The trailing read started after the last event: the board is current.
+    expect(cardIdsIn("backlog")).toEqual(["c2"]);
   });
 
   it("an archive that finishes after unmount shows no toast and deletes nothing", async () => {

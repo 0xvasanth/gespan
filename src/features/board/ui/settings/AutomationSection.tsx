@@ -11,7 +11,7 @@ import {
   shownRule,
   withRule,
 } from "../../model/boardSettings";
-import { FIELD, SETTINGS_BUTTON, SettingsSection } from "./settingsControls";
+import { FIELD, SettingsSection, SettingsUnavailable } from "./settingsControls";
 
 type Toggle = "runWith" | "writeBack" | "ticketStatusChanges";
 type Values = {
@@ -116,17 +116,7 @@ export function AutomationSection({
   const ready = shown !== null;
   return (
     <SettingsSection title="Automation">
-      {ready ? null : (
-        <div
-          role="note"
-          className="flex items-center gap-2 text-[12px] text-red-300/90"
-        >
-          Couldn't load settings
-          <button type="button" className={SETTINGS_BUTTON} onClick={onRetry}>
-            Retry
-          </button>
-        </div>
-      )}
+      {ready ? null : <SettingsUnavailable onRetry={onRetry} />}
       <div className="flex flex-col gap-2">
         {TOGGLES.map(([key, label, hint]) => (
           <label key={key} className="flex items-start gap-2 text-[12px] text-content/85">

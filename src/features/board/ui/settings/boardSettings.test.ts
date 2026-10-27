@@ -1121,3 +1121,133 @@ describe("settings accessibility and rapid edits", () => {
     expect(radios().map((el) => el.tabIndex)[0]).toBe(0);
   });
 });
+
+describe("unread settings are never overwritten with defaults (F1)", () => {
+  const STORED_SCHEME = JSON.stringify({
+    names: ["None", "Minor", "Normal", "Major", "Blocker"],
+    hidden: [3],
+  });
+  const STORED_DISPLAY = JSON.stringify({ density: "compact" });
+  const priorityRow = (level: number) =>
+    section("Priority").querySelector<HTMLElement>(
+      `[data-settings-priority="${level}"]`,
+    )!;
+  const displayMenu = () => {
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Display"]',
+    )!;
+    if (trigger.getAttribute("aria-expanded") !== "true") {
+      act(() => trigger.click());
+    }
+    // Only the menu can say it while the settings page is closed.
+    return document.body;
+  };
+  const closeDisplayMenu = () => {
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Display"]',
+    )!;
+    if (trigger.getAttribute("aria-expanded") === "true") {
+      act(() => trigger.click());
+    }
+  };
+  const menuBox = (name: string) =>
+    document.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)!;
+
+  it("when getBoardSettings fails, Priority, Display and the toolbar's board default write nothing", async () => {
+    let readable = false;
+    settings = {
+      ...DEFAULTS,
+      priorityJson: STORED_SCHEME,
+      displayJson: STORED_DISPLAY,
+    };
+    handlers.board_settings = () => {
+      if (!readable) throw "store is locked";
+      return settings;
+    };
+    await renderBoard();
+
+    // The toolbar's Display menu on "All cards" edits the board default:
+    // disabled, with the same message and Retry.
+    const menu = displayMenu();
+    expect(menu.textContent).toContain("Couldn't load settings");
+    expect(menuBox("Show Card number").disabled).toBe(true);
+    await click(menuBox("Show Card number"));
+    await click(menuBox("Show Priority"));
+    await choose(
+      document.querySelector<HTMLSelectElement>('select[aria-label="Swimlanes"]')!,
+      "priority",
+    );
+    expect(commands("board_settings_update")).toEqual([]);
+    closeDisplayMenu();
+    await flush();
+
+    await openSettings();
+    // Priority: the message, every control disabled, and no write.
+    const priority = section("Priority");
+    expect(priority.textContent).toContain("Couldn't load settings");
+    const name = byLabel<HTMLInputElement>(priorityRow(4), "Priority name");
+    expect(name.disabled).toBe(true);
+    await type(name, "Critical");
+    const show = byLabel<HTMLInputElement>(priorityRow(2), "Show Medium in pickers");
+    expect(show.disabled).toBe(true);
+    await click(show);
+    const reset = buttonNamed(priority, "Reset to defaults");
+    expect(reset.disabled).toBe(true);
+    await click(reset);
+
+    // Display: the same.
+    const display = section("Display");
+    expect(display.textContent).toContain("Couldn't load settings");
+    const number = byLabel<HTMLInputElement>(display, "Show Card number");
+    expect(number.disabled).toBe(true);
+    await click(number);
+    await click(buttonNamed(display, "Compact"));
+    await choose(byLabel<HTMLSelectElement>(display, "Swimlanes"), "label");
+
+    expect(commands("board_settings_update")).toEqual([]);
+
+    // Retry reads them; edits then build on what is stored.
+    readable = true;
+    await click(buttonNamed(section("Priority"), "Retry"));
+    expect(section("Priority").textContent).not.toContain("Couldn't load settings");
+    expect(section("Display").textContent).not.toContain("Couldn't load settings");
+    const renamed = byLabel<HTMLInputElement>(priorityRow(4), "Priority name");
+    expect(renamed.disabled).toBe(false);
+    expect(renamed.value).toBe("Blocker");
+    await type(renamed, "Critical");
+    expect(commands("board_settings_update")).toHaveLength(1);
+    expect(
+      JSON.parse(
+        (lastArgs("board_settings_update") as { patch: { priorityJson: string } })
+          .patch.priorityJson,
+      ),
+    ).toEqual({
+      names: ["None", "Minor", "Normal", "Major", "Critical"],
+      hidden: [3],
+    });
+    await click(byLabel<HTMLInputElement>(section("Display"), "Show Card number"));
+    const displayJson = JSON.parse(
+      (lastArgs("board_settings_update") as { patch: { displayJson: string } })
+        .patch.displayJson,
+    );
+    // The stored density survives the edit.
+    expect(displayJson.density).toBe("compact");
+    expect(displayJson.face.number).toBe(false);
+  });
+
+  it("with unread settings a saved view's display override stays editable", async () => {
+    handlers.board_settings = () => {
+      throw "store is locked";
+    };
+    savedViews = [view("v1", "Mine")];
+    await renderBoard();
+    await click(container.querySelector<HTMLElement>('[data-view-tab="v1"]')!);
+    const menu = displayMenu();
+    expect(menu.textContent).not.toContain("Couldn't load settings");
+    expect(menuBox("Show Card number").disabled).toBe(false);
+    await click(menuBox("Show Card number"));
+    // A view override is view state, not a settings write.
+    expect(commands("board_settings_update")).toEqual([]);
+    expect(container.querySelector("[data-view-dot]")).not.toBeNull();
+  });
+});

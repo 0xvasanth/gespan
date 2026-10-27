@@ -39,6 +39,25 @@ export function SettingsSection({
 }
 
 /**
+ * Says the board's settings couldn't be read, with a Retry. A section that
+ * writes settings shows it and stays disabled until they load: building a
+ * write from defaults would replace what is stored.
+ */
+export function SettingsUnavailable({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      role="note"
+      className="flex items-center gap-2 text-[12px] text-red-300/90"
+    >
+      Couldn't load settings
+      <button type="button" className={SETTINGS_BUTTON} onClick={onRetry}>
+        Retry
+      </button>
+    </div>
+  );
+}
+
+/**
  * A text field that saves on Enter or blur and drops its edit on Escape.
  * `onCommit` returns false for text it refused: the draft stays, so the
  * same text asked again says so again.
@@ -50,6 +69,7 @@ export function CommitInput({
   placeholder,
   className = "",
   inputMode,
+  disabled = false,
 }: {
   value: string;
   label: string;
@@ -57,6 +77,7 @@ export function CommitInput({
   placeholder?: string;
   className?: string;
   inputMode?: "numeric";
+  disabled?: boolean;
 }) {
   const [draft, setDraft] = useState(value);
   // What was last handed to `onCommit` and not refused: Enter then blur is one save.
@@ -67,7 +88,7 @@ export function CommitInput({
   }, [value]);
 
   const commit = async () => {
-    if (draft === sent.current) return;
+    if (disabled || draft === sent.current) return;
     const previous = sent.current;
     sent.current = draft;
     const accepted = await onCommit(draft);
@@ -80,6 +101,7 @@ export function CommitInput({
       value={draft}
       placeholder={placeholder}
       inputMode={inputMode}
+      disabled={disabled}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={() => void commit()}
       onKeyDown={(event) => {

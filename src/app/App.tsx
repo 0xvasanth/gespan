@@ -766,6 +766,10 @@ import {
   prState,
   type LinkExtra,
 } from "../features/board/model/linkStatus";
+import {
+  lookupLinkStatuses,
+  type LinkStatusCache,
+} from "../features/board/model/linkStatusLookup";
 import { fetchGithubPrChecks } from "../features/inbox/model/githubPrChecks";
 import { onLinkedWork } from "../features/board/model/autoMove";
 import {
@@ -14270,6 +14274,12 @@ function Workspace({
     },
     [],
   );
+  // Last result per link, per project: a lookup soon after another (a settle
+  // right after the board opened) answers from it instead of asking again.
+  const linkStatusCache = useMemo<LinkStatusCache>(
+    () => new Map(),
+    [projectCwd],
+  );
   // PR checks and diff stats for the board's PR and worktree links. Read when
   // the board opens and when a linked turn settles; never on a timer. Remote
   // workspaces refuse `gh` checks, so those read as unknown, not as an error.
@@ -14277,22 +14287,23 @@ function Workspace({
     async (
       links: { kind: "pr" | "worktree"; reference: string }[],
     ): Promise<Record<string, LinkExtra>> => {
-      const out: Record<string, LinkExtra> = {};
       const local = !remoteProjectFor(projectCwd);
-      // The current branch's PR, asked once however many PR links there are.
-      const branchPr =
-        local && links.some((link) => link.kind === "pr")
-          ? gitPrStatus(projectCwd).catch(() => null)
-          : Promise.resolve(null);
-      await Promise.all(
-        links.map(async (link) => {
-          const key = extraKey(link);
+      // The current branch's PR, asked once however many PR links are read,
+      // and only when one is.
+      let branchPr: Promise<Awaited<ReturnType<typeof gitPrStatus>> | null> | null =
+        null;
+      const currentBranchPr = () =>
+        (branchPr ??= gitPrStatus(projectCwd).catch(() => null));
+      // At most four links are read at once: each is a few `gh` or `git` runs.
+      const out = await lookupLinkStatuses(links, {
+        cache: linkStatusCache,
+        read: async (link): Promise<LinkExtra> => {
           if (link.kind === "worktree") {
             const [branches, stats] = await Promise.allSettled([
               gitBranches(link.reference),
               gitDiffStats(link.reference),
             ]);
-            out[key] = {
+            return {
               state: "idle",
               ...(branches.status === "fulfilled" && branches.value.current
                 ? { branch: branches.value.current }
@@ -14306,15 +14317,11 @@ function Workspace({
                   }
                 : {}),
             };
-            return;
           }
           const pr = parsePrUrl(link.reference);
-          if (!pr || !local) {
-            out[key] = { state: "unknown" };
-            return;
-          }
+          if (!pr || !local) return { state: "unknown" };
           const [status, checks] = await Promise.allSettled([
-            branchPr,
+            currentBranchPr(),
             fetchGithubPrChecks(projectCwd, pr.repo, pr.number),
           ]);
           const sameBranchPr =
@@ -14322,15 +14329,15 @@ function Workspace({
             status.value?.url === link.reference
               ? status.value
               : null;
-          out[key] = {
+          return {
             state: prState(sameBranchPr?.state),
             ...(checks.status === "fulfilled" &&
             checksState(checks.value.checks)
               ? { checks: checksState(checks.value.checks) }
               : {}),
           };
-        }),
-      );
+        },
+      });
       prEvents.observe(
         links.flatMap((link) =>
           link.kind === "pr"
@@ -14340,7 +14347,7 @@ function Workspace({
       );
       return out;
     },
-    [prEvents, projectCwd],
+    [linkStatusCache, prEvents, projectCwd],
   );
   // "Run with…": a session with the store's prompt for the card, linked to
   // it, carrying the card's cached ticket (so a disconnected tracker still

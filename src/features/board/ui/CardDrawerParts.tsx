@@ -21,6 +21,7 @@ import {
   type BoardLabel,
   type BoardSubtask,
 } from "../model/board";
+import { coalesce } from "../model/coalesce";
 import { MenuButton, MenuItem, MenuSeparator, NameInput } from "./boardControls";
 import { actorLabel, errorText, relativeTime } from "./boardFormat";
 
@@ -86,20 +87,23 @@ export function useLive<T>(
     failRef.current = fail;
   });
   const live = useRef(true);
-  const reload = useCallback(() => {
-    loadRef
-      .current()
-      .then((next) => {
-        if (live.current) setValue(next);
-      })
-      .catch((cause) => {
-        if (live.current) failRef.current(cause);
-      });
-  }, []);
+  // One read in flight, plus one trailing read for a burst of changes.
+  const [reload] = useState(() =>
+    coalesce(() =>
+      loadRef
+        .current()
+        .then((next) => {
+          if (live.current) setValue(next);
+        })
+        .catch((cause) => {
+          if (live.current) failRef.current(cause);
+        }),
+    ),
+  );
   useEffect(() => {
     live.current = true;
-    reload();
-    const stop = subscribeBoard(boardId, reload);
+    void reload();
+    const stop = subscribeBoard(boardId, () => void reload());
     return () => {
       live.current = false;
       stop();

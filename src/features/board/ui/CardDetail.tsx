@@ -33,6 +33,7 @@ import {
   type BoardLabel,
   type CardExtras,
 } from "../model/board";
+import { coalesce } from "../model/coalesce";
 import { LinkChip } from "./BoardCardItem";
 import { MarkdownToolbar } from "./MarkdownToolbar";
 import {
@@ -239,8 +240,10 @@ export function CardDetail({
             `Couldn't load activity for card #${card.number}: ${errorText(error)}`,
           );
         });
-    void load();
-    const stop = subscribeBoard(card.boardId, () => void load());
+    // One read in flight, plus one trailing read for a burst of changes.
+    const reload = coalesce(load);
+    void reload();
+    const stop = subscribeBoard(card.boardId, () => void reload());
     return () => {
       live = false;
       stop();

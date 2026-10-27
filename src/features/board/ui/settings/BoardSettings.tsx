@@ -124,11 +124,18 @@ export function BoardSettings({
         <PrioritySection
           scheme={scheme}
           stored={!!settings?.priorityJson}
+          ready={settings !== null}
           onPatch={patch}
           onError={onError}
+          onRetry={onReloadSettings}
         />
         <FieldsSection boardId={board.id} fields={fields} onError={onError} />
-        <DisplaySection settings={settings} fields={fields} onPatch={patch} />
+        <DisplaySection
+          settings={settings}
+          fields={fields}
+          onPatch={patch}
+          onRetry={onReloadSettings}
+        />
         <AutomationSection
           settings={settings}
           columns={columns}

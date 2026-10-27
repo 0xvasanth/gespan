@@ -121,6 +121,7 @@ import {
   shortcutFor,
 } from "../model/shortcuts";
 import { createCardFromTicket, newCardColumn } from "../model/ticketCards";
+import { coalesce } from "../model/coalesce";
 import {
   archivedLabel,
   createUndo,
@@ -154,6 +155,7 @@ import {
 import { buildLanes, laneCells, laneOrder, laneValue } from "../model/swimlanes";
 import { fieldText } from "../model/cardProps";
 import { DisplayEditor } from "./settings/DisplayEditor";
+import { SettingsUnavailable } from "./settings/settingsControls";
 import { Swimlanes } from "./kanban/Swimlanes";
 import { NewBoardDialog } from "./NewBoardDialog";
 import { RunWithDialog } from "./RunWithDialog";
@@ -561,15 +563,26 @@ function BoardContent({
     }),
   );
   const undoToast = useSyncExternalStore(undo.subscribe, undo.current);
-  // Closing the window drops the timer: a held card stays archived.
-  // A write that finishes after unmount shows no toast, so its card stays
-  // archived. Set in the effect body so StrictMode's remount works.
+  // Leaving the Board view carries out a held delete now, as a board switch
+  // does: otherwise the "deleted" card would stay archived. Closing the
+  // window drops the timer instead, so a held card stays archived. A write
+  // that finishes after unmount shows no toast, so its card stays archived.
+  // Set in the effect body so StrictMode's remount works.
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
     const detach = undo.attach();
+    let quitting = false;
+    const quit = () => {
+      quitting = true;
+    };
+    window.addEventListener("pagehide", quit);
+    window.addEventListener("beforeunload", quit);
     return () => {
       mounted.current = false;
+      window.removeEventListener("pagehide", quit);
+      window.removeEventListener("beforeunload", quit);
+      if (!quitting) void undo.commitPending();
       detach();
     };
   }, [undo]);
@@ -745,8 +758,11 @@ function BoardContent({
     setSelection(EMPTY_SELECTION);
     setCardIndex(new Map());
     if (!openId) return;
-    void refresh();
-    return subscribeBoard(openId, () => void refresh());
+    // A burst of changes (a bulk undo writes once per card) is one read in
+    // flight plus one trailing read, not one read per change.
+    const reload = coalesce(refresh);
+    void reload();
+    return subscribeBoard(openId, () => void reload());
   }, [openId, refresh, undo, applySpec]);
 
   const targetsByValue = useMemo(
@@ -2217,10 +2233,13 @@ function BoardContent({
    * with Save changes); on "All cards" they change the board default.
    */
   const changeDisplay = (next: DisplayOptions) => {
-    displayBase.current = next;
     if (activeView) {
+      displayBase.current = next;
       setLayout((json) => withLayoutDisplay(json, next));
-    } else if (openId) {
+    } else if (openId && settingsRef.current) {
+      // Only with the board's settings read: a write built on the defaults
+      // would replace the stored display.
+      displayBase.current = next;
       displayPending.current += 1;
       displayQueue.current = displayQueue.current
         .then(() =>
@@ -2536,14 +2555,19 @@ function BoardContent({
                 trigger="Display"
               >
                 {() => (
-                  <div className="p-2">
+                  <div className="flex flex-col gap-2 p-2">
+                    {/* The board default can't be edited until the settings load. */}
+                    {!activeView && !settings ? (
+                      <SettingsUnavailable onRetry={() => void refresh()} />
+                    ) : null}
                     <DisplayEditor
                       display={display}
                       fields={fields}
                       onChange={changeDisplay}
                       base={() => displayBase.current}
+                      disabled={!activeView && !settings}
                     />
-                    <div className="pt-2 text-[11px] text-content/45">
+                    <div className="text-[11px] text-content/45">
                       {activeView
                         ? "Saved with this view."
                         : "Changes the board default."}
