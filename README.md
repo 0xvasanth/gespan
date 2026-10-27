@@ -1,30 +1,37 @@
-<div align="center">
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Gespan logo" width="120" />
+</p>
 
-<img src="docs/assets/logo.png" alt="Gespan logo" width="120" />
+<h1 align="center">Gespan</h1>
 
-# Gespan
+<h3 align="center">One desktop app to drive all of your coding agents.</h3>
 
-### One desktop app to drive all of your coding agents.
+<p align="center">
+  Run Claude Code, Codex, Cursor, OpenCode and eight more coding agents side by side,<br/>
+  using the subscriptions you already pay for. No new accounts and no token resale.
+</p>
 
-Run Claude Code, Codex, Cursor, OpenCode and eight more coding agents side by side,<br/>
-using the subscriptions you already pay for. No new accounts and no token resale.
+<p align="center">
+  <a href="https://github.com/0xvasanth/gespan/actions/workflows/ci.yml"><img src="https://github.com/0xvasanth/gespan/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/0xvasanth/gespan/releases"><img src="https://img.shields.io/github/v/release/0xvasanth/gespan?include_prereleases&sort=semver&label=release&color=7c3aed" alt="Latest release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-a78bfa.svg" alt="License: MIT" /></a>
+  <a href="#install"><img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-4c1d95.svg" alt="Platforms" /></a>
+  <a href="https://tauri.app"><img src="https://img.shields.io/badge/built%20with-Tauri%20%2B%20Rust-24c8db.svg" alt="Built with Tauri" /></a>
+  <a href="https://github.com/0xvasanth/gespan/stargazers"><img src="https://img.shields.io/github/stars/0xvasanth/gespan?style=flat&color=c4b5fd" alt="GitHub stars" /></a>
+</p>
 
-<br/>
+<p align="center">
+  <sub>Gespan began as a fork of <a href="https://github.com/hardbeat920/monocode">MonoCode</a> and has grown quickly from there. <a href="#acknowledgements">Read the acknowledgements.</a></sub>
+</p>
 
-[![CI](https://github.com/0xvasanth/gespan/actions/workflows/ci.yml/badge.svg)](https://github.com/0xvasanth/gespan/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/0xvasanth/gespan?include_prereleases&sort=semver&label=release&color=7c3aed)](https://github.com/0xvasanth/gespan/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-a78bfa.svg)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-4c1d95.svg)](#install)
-[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%20%2B%20Rust-24c8db.svg)](https://tauri.app)
-[![GitHub stars](https://img.shields.io/github/stars/0xvasanth/gespan?style=flat&color=c4b5fd)](https://github.com/0xvasanth/gespan/stargazers)
-
-<sub>Gespan began as a fork of [MonoCode](https://github.com/hardbeat920/monocode) and has grown quickly from there. [Read the acknowledgements.](#acknowledgements)</sub>
-
-<br/>
-
-[**Install**](#install) · [**Features**](#features) · [**Providers**](#supported-agents) · [**Docs**](#documentation) · [**Build from source**](#build-from-source) · [**Contribute**](#contributing)
-
-</div>
+<p align="center">
+  <a href="#install"><strong>Install</strong></a> ·
+  <a href="#features"><strong>Features</strong></a> ·
+  <a href="#supported-agents"><strong>Providers</strong></a> ·
+  <a href="#documentation"><strong>Docs</strong></a> ·
+  <a href="#build-from-source"><strong>Build from source</strong></a> ·
+  <a href="#contributing"><strong>Contribute</strong></a>
+</p>
 
 ---
 
@@ -317,7 +324,6 @@ Gespan is released under the [MIT License](LICENSE).
 
 Provider names and logos are trademarks of their respective owners. See [NOTICE](NOTICE).
 
-<div align="center">
-<br/>
-<sub>If Gespan saves you a few terminal windows, consider giving it a ⭐</sub>
-</div>
+<p align="center">
+  <sub>If Gespan saves you a few terminal windows, consider giving it a ⭐</sub>
+</p>
