@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { dmgMegabytes, packageNative, runStapler } from "./package-native.mjs";
+import { dmgMegabytes, linuxTree, packageNative, runStapler } from "./package-native.mjs";
 
 test("the DMG staging image is sized from its contents with headroom", () => {
   const MiB = 2 ** 20;
@@ -56,6 +56,23 @@ test("Native packages from its own resources, not the Tauri app's", async () => 
     "com.apple.security.device.audio-input",
   ])
     assert.ok(entitlements.includes(`<key>${key}</key>`), key);
+});
+
+test("Linux desktop identity resolves the bundled application icon on Wayland", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "native-linux-icon-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const binary = join(directory, "gespan-gpui");
+  await writeFile(binary, "native executable fixture");
+  const tree = join(directory, "tree");
+  const { app } = await linuxTree(tree, binary, "deb");
+  const { app_id } = JSON.parse(await readFile(join(app, "native-install.json"), "utf8"));
+  const desktop = await readFile(join(tree, "usr/share/applications", `${app_id}.desktop`), "utf8");
+  assert.ok(desktop.includes(`StartupWMClass=${app_id}\n`));
+  const icon = /^Icon=(.+)$/m.exec(desktop)?.[1];
+  assert.ok(icon);
+  const bundled = await readFile(join(tree, "usr/share/icons/hicolor/256x256/apps", `${icon}.png`));
+  assert.deepEqual(bundled, await readFile(new URL("../public/gespan.png", import.meta.url)));
+  await access(join(tree, "usr/bin/gespan-native"));
 });
 
 test(
