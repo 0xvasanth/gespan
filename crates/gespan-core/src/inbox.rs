@@ -17,7 +17,7 @@ use crate::{
 use chrono::{Datelike, Local, TimeZone};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -516,6 +516,75 @@ pub struct Snapshot {
     pub connections: BTreeMap<String, Status>,
     pub linear_teams: Vec<OptionRow>,
     pub jira_projects: Vec<OptionRow>,
+    /// Repository scopes (see `repo_scope`) fetched in full by this poll.
+    pub fetched: BTreeSet<String>,
+    /// Repository scopes that failed while others of their provider loaded.
+    pub repo_errors: BTreeMap<String, String>,
+    /// `Item::key` to its repository scope, for repository-backed items.
+    pub item_scopes: HashMap<String, String>,
+}
+
+/// One project's repository and work-item kind: the unit a forge fetch
+/// succeeds or fails as.
+fn repo_scope(provider: &str, project: &Path, repo: &str, kind: &str) -> String {
+    format!(
+        "{provider}:{}:{}:{kind}",
+        crate::files::path_key(&project.to_string_lossy()),
+        repo.to_lowercase()
+    )
+}
+
+#[derive(Debug, Default)]
+struct RepoFetch {
+    items: Vec<Item>,
+    fetched: BTreeSet<String>,
+    errors: BTreeMap<String, String>,
+    item_scopes: HashMap<String, String>,
+}
+
+/// Fetches issues and PRs for each project's repositories. One failing
+/// repository, such as a fork with issues disabled, must not hide the rest;
+/// like Tauri's collectInboxResults, the provider fails only when no fetch
+/// succeeded.
+fn collect_repo_items(
+    provider: &str,
+    projects: &[PathBuf],
+    repos_for: impl Fn(&Path) -> Result<Vec<String>, String>,
+    mut fetch: impl FnMut(&Path, &str, &str) -> Result<Vec<Item>, String>,
+) -> Result<RepoFetch, String> {
+    let mut out = RepoFetch::default();
+    let mut visited = HashSet::new();
+    for project in projects {
+        let Ok(repos) = repos_for(project) else {
+            continue;
+        };
+        for repo in repos {
+            if !visited.insert(repo.to_lowercase()) {
+                continue;
+            }
+            for kind in ["issue", "pr"] {
+                let scope = repo_scope(provider, project, &repo, kind);
+                match fetch(project, &repo, kind) {
+                    Ok(rows) => {
+                        for mut item in rows {
+                            item.provider = provider.into();
+                            item.project_path = project.to_string_lossy().into_owned();
+                            out.item_scopes.insert(item.key(), scope.clone());
+                            out.items.push(item);
+                        }
+                        out.fetched.insert(scope);
+                    }
+                    Err(error) => {
+                        out.errors.insert(scope, error);
+                    }
+                }
+            }
+        }
+    }
+    match out.errors.values().next() {
+        Some(first) if out.fetched.is_empty() => Err(first.clone()),
+        _ => Ok(out),
+    }
 }
 
 /// The Tauri InboxNotificationTracker: provider baselines and revisions are
@@ -525,12 +594,16 @@ pub struct Snapshot {
 pub struct NotificationTracker {
     revisions: HashMap<String, i64>,
     primed: HashSet<String>,
+    /// Repository scopes with a successful baseline. A repository that
+    /// failed earlier has none, so its backlog is not new when it recovers.
+    primed_repos: HashSet<String>,
     scope: Option<String>,
 }
 impl NotificationTracker {
     pub fn observe(&mut self, snapshot: &Snapshot, scope: String) -> Vec<Item> {
         if self.scope.as_ref() != Some(&scope) {
             self.primed.clear();
+            self.primed_repos.clear();
         }
         self.scope = Some(scope);
         let mut appeared = vec![];
@@ -570,7 +643,11 @@ impl NotificationTracker {
             };
             let key = format!("{project}:{}:{id}", item.kind);
             let previous = self.revisions.get(&key).copied();
-            if self.primed.contains(&item.provider) && previous.is_none() {
+            let primed = match snapshot.item_scopes.get(&item.key()) {
+                Some(repo) => self.primed_repos.contains(repo),
+                None => self.primed.contains(&item.provider),
+            };
+            if primed && previous.is_none() {
                 appeared.push(item.clone());
             }
             self.revisions.insert(key, previous.unwrap_or(0).max(at));
@@ -580,6 +657,7 @@ impl NotificationTracker {
                 self.primed.insert(provider.into());
             }
         }
+        self.primed_repos.extend(snapshot.fetched.iter().cloned());
         appeared
     }
 }
@@ -731,7 +809,6 @@ impl Service {
                     )?);
                 }
                 let mut items = Vec::new();
-                let mut visited = HashSet::new();
                 if state.filters.assigned_to_me && provider != "github" {
                     for kind in ["issue", "pr"] {
                         let rows: Vec<Item> = if provider == "gitlab" {
@@ -754,8 +831,10 @@ impl Service {
                     }
                     return Ok(items);
                 }
-                for project in projects {
-                    let repos = match provider {
+                let fetch = collect_repo_items(
+                    provider,
+                    projects,
+                    |project| match provider {
                         "github" => github::git_github_repositories_for(project),
                         "gitlab" => gitlab::gitlab_repo(
                             self.data_dir.clone(),
@@ -767,51 +846,39 @@ impl Service {
                             project.to_string_lossy().into_owned(),
                         )
                         .map(|r| vec![r]),
-                    };
-                    let Ok(repos) = repos else {
-                        continue;
-                    };
-                    for repo in repos {
-                        if !visited.insert(repo.to_lowercase()) {
-                            continue;
-                        }
-                        for kind in ["issue", "pr"] {
-                            let rows: Vec<Item> = match provider {
-                                "github" => convert(github::git_github_work_items_for(
-                                    project,
-                                    &repo,
-                                    kind,
-                                    state.filters.assigned_to_me,
-                                    state.filters.fetch_state(),
-                                    "",
-                                    limit,
-                                )?)?,
-                                "gitlab" => convert(gitlab::gitlab_list_work_items(
-                                    self.data_dir.clone(),
-                                    project.to_string_lossy().into_owned(),
-                                    kind.into(),
-                                    false,
-                                    state.filters.fetch_state().into(),
-                                    Some(limit),
-                                )?)?,
-                                _ => convert(azure_devops::azure_devops_list_work_items(
-                                    self.data_dir.clone(),
-                                    project.to_string_lossy().into_owned(),
-                                    kind.into(),
-                                    false,
-                                    state.filters.fetch_state().into(),
-                                    Some(limit),
-                                )?)?,
-                            };
-                            items.extend(rows.into_iter().map(|mut item| {
-                                item.provider = provider.into();
-                                item.project_path = project.to_string_lossy().into_owned();
-                                item
-                            }));
-                        }
-                    }
-                }
-                Ok(items)
+                    },
+                    |project, repo, kind| match provider {
+                        "github" => convert(github::git_github_work_items_for(
+                            project,
+                            repo,
+                            kind,
+                            state.filters.assigned_to_me,
+                            state.filters.fetch_state(),
+                            "",
+                            limit,
+                        )?),
+                        "gitlab" => convert(gitlab::gitlab_list_work_items(
+                            self.data_dir.clone(),
+                            project.to_string_lossy().into_owned(),
+                            kind.into(),
+                            false,
+                            state.filters.fetch_state().into(),
+                            Some(limit),
+                        )?),
+                        _ => convert(azure_devops::azure_devops_list_work_items(
+                            self.data_dir.clone(),
+                            project.to_string_lossy().into_owned(),
+                            kind.into(),
+                            false,
+                            state.filters.fetch_state().into(),
+                            Some(limit),
+                        )?),
+                    },
+                )?;
+                snapshot.fetched.extend(fetch.fetched);
+                snapshot.repo_errors.extend(fetch.errors);
+                snapshot.item_scopes.extend(fetch.item_scopes);
+                Ok(fetch.items)
             })();
             match result {
                 Ok(items) => snapshot.items.extend(items),
@@ -1250,6 +1317,141 @@ mod notification_tests {
                 .len(),
             1
         );
+    }
+
+    fn repo_item(number: i64, repo: &str) -> Item {
+        Item {
+            repo: repo.into(),
+            url: format!("https://github.com/{repo}/issues/{number}"),
+            ..item(number, "github")
+        }
+    }
+    /// The project folder as `collect_repo_items` stamps it on items.
+    const PROJECT: &str = "/work/app";
+    fn scoped(items: Vec<Item>, fetched: &[&str]) -> Snapshot {
+        let project = PathBuf::from(PROJECT);
+        let mut snapshot = snapshot(vec![]);
+        for item in items {
+            let scope = repo_scope("github", &project, &item.repo, &item.kind);
+            snapshot.item_scopes.insert(item.key(), scope);
+            snapshot.items.push(item);
+        }
+        snapshot.fetched = fetched
+            .iter()
+            .map(|repo| repo_scope("github", &project, repo, "issue"))
+            .collect();
+        snapshot
+    }
+
+    #[test]
+    fn one_failing_repo_keeps_the_other_repos_items() {
+        // The user's n8n fork has issues disabled; it hid every GitHub item,
+        // so issue automations never saw a new issue.
+        let projects = [PathBuf::from(PROJECT)];
+        let fetch = collect_repo_items(
+            "github",
+            &projects,
+            |_| Ok(vec!["acme/fork".into(), "acme/app".into()]),
+            |_, repo, kind| match (repo, kind) {
+                ("acme/fork", "issue") => {
+                    Err("the 'acme/fork' repository has disabled issues".into())
+                }
+                ("acme/app", "issue") => Ok(vec![repo_item(7, "acme/app")]),
+                _ => Ok(vec![]),
+            },
+        )
+        .expect("one repo succeeding keeps the provider usable");
+        assert_eq!(
+            fetch.items.iter().map(|i| i.number).collect::<Vec<_>>(),
+            vec![7]
+        );
+        assert_eq!(fetch.items[0].project_path, PROJECT);
+        let fork = repo_scope("github", &projects[0], "acme/fork", "issue");
+        assert!(fetch.errors[&fork].contains("disabled issues"));
+        assert!(!fetch.fetched.contains(&fork));
+        assert!(fetch
+            .fetched
+            .contains(&repo_scope("github", &projects[0], "acme/app", "issue")));
+        assert_eq!(
+            fetch.item_scopes[&fetch.items[0].key()],
+            repo_scope("github", &projects[0], "acme/app", "issue")
+        );
+    }
+
+    #[test]
+    fn every_repo_failing_fails_the_provider() {
+        let projects = [PathBuf::from(PROJECT)];
+        let error = collect_repo_items(
+            "github",
+            &projects,
+            |_| Ok(vec!["acme/app".into()]),
+            |_, _, _| Err("gh: offline".into()),
+        )
+        .err();
+        assert_eq!(error.as_deref(), Some("gh: offline"));
+        // A project without a repository is skipped, not a failure.
+        let empty = collect_repo_items(
+            "github",
+            &projects,
+            |_| Err("not a git repository".into()),
+            |_, _, _| unreachable!("no repository to fetch"),
+        )
+        .expect("nothing to fetch is not an error");
+        assert!(empty.items.is_empty() && empty.errors.is_empty());
+    }
+
+    #[test]
+    fn a_repo_that_recovers_does_not_flood_its_backlog() {
+        let mut tracker = NotificationTracker::default();
+        // First poll: app is fetched, tools fails before its baseline.
+        assert!(tracker
+            .observe(
+                &scoped(vec![repo_item(1, "acme/app")], &["acme/app"]),
+                "s".into()
+            )
+            .is_empty());
+        // tools recovers with an old backlog while app gains one new issue.
+        let appeared = tracker.observe(
+            &scoped(
+                vec![
+                    repo_item(1, "acme/app"),
+                    repo_item(2, "acme/app"),
+                    repo_item(50, "acme/tools"),
+                    repo_item(51, "acme/tools"),
+                ],
+                &["acme/app", "acme/tools"],
+            ),
+            "s".into(),
+        );
+        assert_eq!(
+            appeared.iter().map(|i| i.number).collect::<Vec<_>>(),
+            vec![2],
+            "a backlog seen for the first time is a baseline, not new issues"
+        );
+        let appeared = tracker.observe(
+            &scoped(
+                vec![repo_item(50, "acme/tools"), repo_item(52, "acme/tools")],
+                &["acme/app", "acme/tools"],
+            ),
+            "s".into(),
+        );
+        assert_eq!(
+            appeared.iter().map(|i| i.number).collect::<Vec<_>>(),
+            vec![52]
+        );
+    }
+
+    #[test]
+    fn a_repo_with_no_issues_yet_reports_its_first_one() {
+        let mut tracker = NotificationTracker::default();
+        assert!(tracker
+            .observe(&scoped(vec![], &["acme/app"]), "s".into())
+            .is_empty());
+        let appeared = tracker.observe(
+            &scoped(vec![repo_item(1, "acme/app")], &["acme/app"]),
+            "s".into(),
+        );
+        assert_eq!(appeared.len(), 1);
     }
 
     #[test]
