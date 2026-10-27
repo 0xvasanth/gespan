@@ -1,14 +1,78 @@
-//! Viewport-owned Mermaid previews: no browser, subprocess, or permanent asset cache.
+//! Native Mermaid previews with a bounded cache shared across virtualized rows.
 use super::*;
 use gpui::{ClipboardItem, Context, IntoElement, RenderImage, RenderOnce, Subscription, Task};
 use mermaid_rs_renderer::{LayoutConfig, Theme, compute_layout, parse_mermaid_strict, render_svg};
-use std::time::Duration;
+use std::{collections::VecDeque, time::Duration};
+#[path = "mermaid_curves.rs"]
+mod curves;
+use curves::flowchart_curves;
 
-const PREVIEW_HEIGHT: f32 = 320.;
+const SOURCE_HEIGHT: f32 = 320.;
+const LOADING_HEIGHT: f32 = 128.;
+const MAX_PREVIEW_HEIGHT: f32 = 640.;
+const CACHE_BYTES: usize = 32 * 1024 * 1024;
+const CACHE_ITEMS: usize = 32;
 const MAX_SOURCE_BYTES: usize = 32 * 1024;
 const MAX_SOURCE_LINES: usize = 512;
 const MAX_GRAPH_ITEMS: usize = 256;
 const MAX_IMAGE_SIDE: f32 = 2048.;
+
+type PreviewResult = Result<Arc<RenderImage>, String>;
+type PreviewKey = (SharedString, bool);
+
+#[derive(Default)]
+struct DiagramCache {
+    entries: VecDeque<(PreviewKey, PreviewResult, usize)>,
+    generation: u64,
+}
+impl gpui::Global for DiagramCache {}
+
+pub(crate) fn generation(cx: &App) -> u64 {
+    cx.try_global::<DiagramCache>()
+        .map_or(0, |cache| cache.generation)
+}
+
+fn cached(key: &PreviewKey, cx: &mut App) -> Option<PreviewResult> {
+    let cache = cx.default_global::<DiagramCache>();
+    let ix = cache.entries.iter().position(|entry| &entry.0 == key)?;
+    let entry = cache.entries.remove(ix).unwrap();
+    let result = entry.1.clone();
+    cache.entries.push_back(entry);
+    Some(result)
+}
+
+fn remember(key: PreviewKey, result: PreviewResult, cx: &mut App) {
+    let bytes = key.0.len()
+        + result.as_ref().map_or(0, |image| {
+            let size = image.size(0);
+            size.width.0 as usize * size.height.0 as usize * 4
+        });
+    let cache = cx.default_global::<DiagramCache>();
+    cache.generation = cache.generation.wrapping_add(1);
+    if bytes > CACHE_BYTES {
+        return;
+    }
+    let mut evicted = Vec::new();
+    if let Some(ix) = cache.entries.iter().position(|entry| entry.0 == key)
+        && let Some((_, Ok(image), _)) = cache.entries.remove(ix)
+    {
+        evicted.push(image);
+    }
+    cache.entries.push_back((key, result, bytes));
+    while cache.entries.len() > CACHE_ITEMS
+        || cache.entries.iter().map(|entry| entry.2).sum::<usize>() > CACHE_BYTES
+    {
+        if let Some((_, Ok(image), _)) = cache.entries.pop_front() {
+            evicted.push(image);
+        }
+    }
+    for image in evicted {
+        cx.drop_image(image, None);
+        // Other panes may still be painting the same image; redraw them so
+        // they upload it again instead of referring to an evicted sprite.
+        cx.refresh_windows();
+    }
+}
 
 #[derive(IntoElement)]
 pub(super) struct Diagram {
@@ -19,8 +83,8 @@ pub(super) struct Diagram {
 
 #[derive(Default)]
 struct Preview {
-    key: Option<(SharedString, bool)>,
-    result: Option<Result<Arc<RenderImage>, String>>,
+    key: Option<PreviewKey>,
+    result: Option<PreviewResult>,
     source: bool,
     task: Option<Task<()>>,
     _release: Option<Subscription>,
@@ -29,7 +93,16 @@ struct Preview {
 impl Preview {
     fn clear_image(&mut self, cx: &mut App) {
         if let Some(Ok(image)) = self.result.take() {
-            cx.drop_image(image, None);
+            let retained = cx.try_global::<DiagramCache>().is_some_and(|cache| {
+                cache
+                    .entries
+                    .iter()
+                    .any(|entry| matches!(&entry.1, Ok(cached) if cached.id == image.id))
+            });
+            if !retained {
+                cx.drop_image(image, None);
+                cx.refresh_windows();
+            }
         }
     }
 
@@ -39,9 +112,14 @@ impl Preview {
         }
         self.task = None;
         self.clear_image(cx);
-        self.key = Some((source.clone(), dark));
+        let key = (source.clone(), dark);
+        self.key = Some(key.clone());
         if self._release.is_none() {
             self._release = Some(cx.on_release(|this, cx| this.clear_image(cx)));
+        }
+        if let Some(result) = cached(&key, cx) {
+            self.result = Some(result);
+            return;
         }
         let renderer = cx.svg_renderer();
         let executor = cx.background_executor().clone();
@@ -53,6 +131,7 @@ impl Preview {
                 .spawn(async move { rasterize(&source, dark, &renderer) })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                remember(key, result.clone(), cx);
                 this.result = Some(result);
                 this.task = None;
                 cx.notify();
@@ -69,7 +148,9 @@ fn diagram_svg(source: &str, dark: bool) -> Result<(String, f32, f32), String> {
     if parsed.graph.nodes.len() + parsed.graph.edges.len() > MAX_GRAPH_ITEMS {
         return Err("Diagram has too many nodes or connections to preview.".into());
     }
-    let theme = if dark { Theme::dark() } else { Theme::modern() };
+    let mut theme = if dark { Theme::dark() } else { Theme::modern() };
+    theme.background = "transparent".into();
+    theme.font_family = format!("{}, monospace", crate::fonts::mono());
     let config = LayoutConfig::default();
     let layout = compute_layout(&parsed.graph, &theme, &config);
     if let mermaid_rs_renderer::layout::DiagramData::Error(error) = &layout.diagram {
@@ -81,7 +162,11 @@ fn diagram_svg(source: &str, dark: bool) -> Result<(String, f32, f32), String> {
     if !width.is_finite() || !height.is_finite() || width <= 0. || height <= 0. {
         return Err("Diagram has invalid dimensions.".into());
     }
-    Ok((render_svg(&layout, &theme, &config), width, height))
+    let mut svg = render_svg(&layout, &theme, &config);
+    if layout.kind == mermaid_rs_renderer::ir::DiagramKind::Flowchart {
+        flowchart_curves(&mut svg, &layout);
+    }
+    Ok((svg, width, height))
 }
 
 fn rasterize(
@@ -132,7 +217,15 @@ impl RenderOnce for Diagram {
         });
         let preview = state.read(cx);
         let has_diagram = matches!(preview.result, Some(Ok(_)));
-        let show_source = preview.source || !has_diagram;
+        let show_source = preview.source || matches!(preview.result, Some(Err(_)));
+        let ratio = preview
+            .result
+            .as_ref()
+            .and_then(|result| result.as_ref().ok())
+            .map(|image| {
+                let size = image.size(0);
+                size.width.0 as f32 / size.height.0 as f32
+            });
         let mut status = match &preview.result {
             None => Some("Rendering diagram…".to_owned()),
             Some(Err(error)) => Some(format!("Unable to preview Mermaid: {error}")),
@@ -170,7 +263,9 @@ impl RenderOnce for Diagram {
                 .object_fit(gpui::ObjectFit::Contain)
                 .into_any_element()
         } else {
-            div().into_any_element()
+            div()
+                .debug_selector(|| "mermaid-loading".into())
+                .into_any_element()
         };
         let copied = self.fence.code.clone();
         div()
@@ -216,14 +311,8 @@ impl RenderOnce for Diagram {
                         )
                     })
                     .child(
-                        div()
-                            .id("mermaid-copy")
+                        icon_button("mermaid-copy", "Copy Mermaid source", "copy")
                             .debug_selector(|| "mermaid-copy".into())
-                            .role(Role::Button)
-                            .aria_label("Copy Mermaid source")
-                            .cursor_pointer()
-                            .hover(|s| s.text_color(content(1.)))
-                            .child("Copy")
                             .on_click(move |_, _, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     copied.to_string(),
@@ -232,12 +321,20 @@ impl RenderOnce for Diagram {
                             }),
                     ),
             )
-            // Keep measurements stable as async rendering completes, including
-            // in Inbox's retained document layout and the transcript list.
             .child(
                 div()
                     .w_full()
-                    .h(px(PREVIEW_HEIGHT))
+                    .debug_selector(|| "mermaid-panel".into())
+                    .when_some(ratio, |d, ratio| {
+                        d.aspect_ratio(ratio).max_h(px(MAX_PREVIEW_HEIGHT))
+                    })
+                    .when(ratio.is_none(), |d| {
+                        d.h(px(if show_source {
+                            SOURCE_HEIGHT
+                        } else {
+                            LOADING_HEIGHT
+                        }))
+                    })
                     .flex()
                     .flex_col()
                     .border_t_1()
@@ -271,13 +368,19 @@ impl RenderOnce for Diagram {
 mod tests {
     use super::*;
 
-    struct Fixture;
+    struct Fixture {
+        visible: bool,
+        width: f32,
+        code: &'static str,
+    }
     impl gpui::Render for Fixture {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div().w(px(640.)).child(Diagram {
-                id: "diagram-fixture".into(),
-                fence: Arc::new(Fence::new("mermaid", "graph TD; A-->B")),
-                selection: None,
+            div().w(px(self.width)).when(self.visible, |d| {
+                d.child(Diagram {
+                    id: "diagram-fixture".into(),
+                    fence: Arc::new(Fence::new("mermaid", self.code)),
+                    selection: None,
+                })
             })
         }
     }
@@ -287,12 +390,19 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |_, cx| cx.new(|_| Fixture))
-                .unwrap()
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|_| Fixture {
+                    visible: true,
+                    width: 640.,
+                    code: "graph LR; A-->B",
+                })
+            })
+            .unwrap()
         });
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        assert!(visual.debug_bounds("mermaid-source").is_some());
+        assert!(visual.debug_bounds("mermaid-source").is_none());
+        assert!(visual.debug_bounds("mermaid-loading").is_some());
         visual.executor().advance_clock(Duration::from_millis(200));
         visual.run_until_parked();
         let image = visual.debug_bounds("mermaid-image").unwrap();
@@ -312,12 +422,67 @@ mod tests {
             visual
                 .update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
                 .as_deref(),
-            Some("graph TD; A-->B")
+            Some("graph LR; A-->B")
         );
         let button = visual.debug_bounds("mermaid-toggle").unwrap();
         visual.simulate_click(button.center(), Default::default());
         visual.run_until_parked();
         assert_eq!(visual.debug_bounds("mermaid-image").unwrap(), image);
+        assert!(image.size.height < px(SOURCE_HEIGHT));
+        window
+            .update(visual, |this, _, cx| {
+                this.visible = false;
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        window
+            .update(visual, |this, _, cx| {
+                this.visible = true;
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert_eq!(visual.debug_bounds("mermaid-image").unwrap(), image);
+        assert!(visual.debug_bounds("mermaid-source").is_none());
+        assert!(visual.debug_bounds("mermaid-loading").is_none());
+        window
+            .update(visual, |this, _, cx| {
+                this.width = 400.;
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        let narrow = visual.debug_bounds("mermaid-image").unwrap();
+        assert!(
+            (image.size.width / image.size.height - narrow.size.width / narrow.size.height).abs()
+                < 0.02
+        );
+        assert!(narrow.size.height < image.size.height);
+        for code in [
+            "sequenceDiagram\n Alice->>Bob: Hello\n Bob-->>Alice: Hi",
+            "classDiagram\n Animal <|-- Duck\n Animal : +int age",
+            "stateDiagram-v2\n [*] --> Ready\n Ready --> [*]",
+            "erDiagram\n CUSTOMER ||--o{ ORDER : places",
+            "graph TD; A-->B-->C-->D-->E-->F-->G-->H",
+        ] {
+            window
+                .update(visual, |this, _, cx| {
+                    this.code = code;
+                    cx.notify();
+                })
+                .unwrap();
+            visual.run_until_parked();
+            assert!(visual.debug_bounds("mermaid-source").is_none());
+            visual.executor().advance_clock(Duration::from_millis(200));
+            visual.run_until_parked();
+            let image = visual.debug_bounds("mermaid-image").unwrap();
+            let panel = visual.debug_bounds("mermaid-panel").unwrap();
+            assert!(image.size.height <= px(MAX_PREVIEW_HEIGHT));
+            assert!(panel.contains(&image.origin));
+            assert!(image.bottom_right().x <= panel.bottom_right().x + px(0.1));
+            assert!(image.bottom_right().y <= panel.bottom_right().y + px(0.1));
+        }
     }
 
     #[test]
@@ -338,6 +503,18 @@ mod tests {
         assert_ne!(
             diagram_svg("graph TD; A-->B", false).unwrap().0,
             diagram_svg("graph TD; A-->B", true).unwrap().0
+        );
+        let svg = diagram_svg("graph TD; A-->B; C-->B; D-->B", true)
+            .unwrap()
+            .0;
+        assert!(svg.contains("class=\"edgePath\""));
+        assert!(
+            svg.contains(" C "),
+            "flowchart arrows should use smooth basis curves"
+        );
+        assert!(
+            !svg.contains("fill=\"#333333\""),
+            "background should blend into the panel"
         );
     }
 
@@ -450,5 +627,54 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(200));
         cx.run_until_parked();
         preview.read_with(cx, |this, _| assert!(matches!(this.result, Some(Err(_)))));
+    }
+
+    #[gpui::test]
+    fn cache_reuses_pixels_after_row_release_and_bounds_errors(cx: &mut gpui::TestAppContext) {
+        let preview = cx.new(|_| Preview::default());
+        preview.update(cx, |this, cx| {
+            this.prepare("graph LR; A-->B".into(), false, cx)
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+        let image = preview.read_with(cx, |this, _| {
+            this.result.as_ref().unwrap().as_ref().unwrap().clone()
+        });
+        drop(preview);
+        cx.run_until_parked();
+        let remounted = cx.new(|_| Preview::default());
+        remounted.update(cx, |this, cx| {
+            this.prepare("graph LR; A-->B".into(), false, cx);
+            assert!(this.task.is_none());
+            assert!(Arc::ptr_eq(
+                this.result.as_ref().unwrap().as_ref().unwrap(),
+                &image
+            ));
+        });
+        cx.update(|cx| {
+            for n in 0..CACHE_ITEMS * 3 {
+                remember(
+                    (format!("invalid-{n}").into(), false),
+                    Err("Invalid syntax".into()),
+                    cx,
+                );
+            }
+            assert_eq!(cx.global::<DiagramCache>().entries.len(), CACHE_ITEMS);
+            assert!(cached(&("graph LR; A-->B".into(), false), cx).is_none());
+            for n in 0..10 {
+                let pixels = image::RgbaImage::new(1024, 1024);
+                let image = Arc::new(RenderImage::new(vec![image::Frame::new(pixels)]));
+                remember((format!("image-{n}").into(), false), Ok(image), cx);
+            }
+            assert!(
+                cx.global::<DiagramCache>()
+                    .entries
+                    .iter()
+                    .map(|entry| entry.2)
+                    .sum::<usize>()
+                    <= CACHE_BYTES
+            );
+        });
     }
 }

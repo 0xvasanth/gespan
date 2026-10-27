@@ -1,6 +1,6 @@
 //! GPUI port of AgentMarkdown.tsx and its .agent-markdown CSS.
 mod cache;
-mod mermaid;
+pub(crate) mod mermaid;
 mod search;
 use crate::markdown_model::{Block, InlineRun, TableAlign};
 use crate::syntax::HighlightedDocument;

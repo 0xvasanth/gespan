@@ -26,8 +26,9 @@ sequenceDiagram
 
 Rendering waits briefly for streamed text to settle and runs off the UI thread.
 Incomplete or unsupported diagrams show their source and an error, and retry
-when the source changes. Preview and source share a fixed-height panel to keep
-document and transcript scrolling stable; the source scrolls within the panel.
+when the source changes. The panel follows the diagram's aspect ratio, up to
+640 points tall, and fits the complete diagram inside it. Source scrolls within
+the same panel. Flowchart connections use smooth curves with arrowheads.
 
 This renderer is a native implementation of Mermaid, so layout and syntax
 coverage can differ from Mermaid.js. Common flowchart, sequence, class, state,
@@ -37,6 +38,8 @@ the preview.
 
 Previews accept at most 32 KiB of source, 512 source lines, and 256 combined
 graph nodes and edges. Raster images are capped at 2048 pixels per side. Larger
-diagrams retain their source and copy action. Preview work and pixels are
-released when a diagram leaves the rendered view. The source panel displays at
+diagrams retain their source and copy action. A cache of up to 32 diagrams and
+32 MiB of image data preserves previews when scrolling them back into view.
+Uncached diagrams show a loading placeholder, never a flash of source code.
+The source panel displays at
 most 32 KiB and 512 lines; Copy always includes the complete original source.
