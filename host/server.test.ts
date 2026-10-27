@@ -186,6 +186,41 @@ describe("remote host API", () => {
     expect((await s.call("sessions.list", { projectId: s.project.id })).value.result).toEqual([]);
   });
 
+  it("links a remote session to a GitHub item and refuses other links", async () => {
+    const s = await setup();
+    const created = await s.call("commands.dispatch", {
+      type: "create",
+      commandId: "linked-session",
+      projectId: s.project.id,
+      harness: "codex",
+      model: "codex:test",
+      runtimeMode: "supervised",
+    });
+    const sessionId = created.value.result.sessionId;
+    const link = (linkedWorkItem: unknown) =>
+      s.call("sessions.update", { projectId: s.project.id, sessionId, linkedWorkItem });
+    const issue = {
+      kind: "issue",
+      repo: "acme/app",
+      number: 42,
+      url: "https://github.com/acme/app/issues/42",
+    };
+    expect((await link(issue)).status).toBe(200);
+    expect((await s.call("sessions.list", { projectId: s.project.id })).value.result[0]
+      .linkedWorkItem).toEqual(issue);
+    // The URL must agree with the fields it claims.
+    expect((await link({ ...issue, number: 7 })).status).not.toBe(200);
+    // Tracker tickets are not linked through a remote host.
+    expect((await link({
+      kind: "ticket",
+      ticket: { tracker: "linear", key: "ENG-1", url: null, title: null, status: null,
+        statusGroup: null, fetchedAt: null },
+    })).status).not.toBe(200);
+    expect((await link(null)).status).toBe(200);
+    expect((await s.call("sessions.list", { projectId: s.project.id })).value.result[0]
+      .linkedWorkItem).toBeUndefined();
+  });
+
   it("lists, creates, and selects registered remote worktrees through RPC", async () => {
     const s = await setup();
     const git = (...args: string[]) =>
