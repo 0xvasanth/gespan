@@ -648,6 +648,88 @@ fn delete_field_removes_values_view_rows_and_table_columns() {
 }
 
 #[test]
+fn delete_field_rewrites_the_boards_own_display_options() {
+    let conn = fresh();
+    let (board, _) = board_with_cards(&conn, &["a"]);
+    let size = create_field(&conn, &board.id, "Size", "select", Some(r#"["S","M"]"#)).unwrap();
+    let team = create_field(&conn, &board.id, "Team", "select", Some(r#"["A","B"]"#)).unwrap();
+    let points = create_field(&conn, &board.id, "Points", "number", None).unwrap();
+    let set_display = |display: Value| {
+        update_board_settings(
+            &conn,
+            &board.id,
+            &SettingsPatch {
+                display_json: Some(Some(display.to_string())),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+    };
+    let display = || {
+        json_of(
+            board_settings(&conn, &board.id)
+                .unwrap()
+                .display_json
+                .as_deref()
+                .unwrap(),
+        )
+    };
+    set_display(json!({
+        "face": {"fields": [size.id, points.id, team.id], "labels": false},
+        "density": "compact",
+        "swimlane": format!("field:{}", size.id),
+        "extra": {"kept": true},
+    }));
+
+    // Renaming an option or the field, or replacing the options, keeps the
+    // field, so the face entry and the swimlane on it stay.
+    rename_field_option(&conn, &size.id, "S", "Small").unwrap();
+    update_field(&conn, &size.id, Some("T-shirt"), Some(r#"["Small","L"]"#)).unwrap();
+    assert_eq!(
+        display()["face"]["fields"],
+        json!([size.id, points.id, team.id])
+    );
+    assert_eq!(display()["swimlane"], format!("field:{}", size.id));
+
+    // Deleting another field drops only its face entry.
+    delete_field(&conn, &points.id).unwrap();
+    assert_eq!(display()["face"]["fields"], json!([size.id, team.id]));
+    assert_eq!(display()["swimlane"], format!("field:{}", size.id));
+
+    // Deleting the swimlane field drops its entry and resets the lane; other
+    // keys are kept.
+    delete_field(&conn, &size.id).unwrap();
+    let after = display();
+    assert_eq!(after["face"]["fields"], json!([team.id]));
+    assert_eq!(after["face"]["labels"], json!(false));
+    assert_eq!(after["density"], "compact");
+    assert_eq!(after["swimlane"], "none");
+    assert_eq!(after["extra"], json!({"kept": true}));
+    let options = display_options(&board_settings(&conn, &board.id).unwrap());
+    assert_eq!(options.face.fields, std::slice::from_ref(&team.id));
+    assert_eq!(options.swimlane, "none");
+
+    // A board with no display options, or unreadable ones, is left alone.
+    let (other, _) = board_with_cards(&conn, &["b"]);
+    let gone = create_field(&conn, &other.id, "Gone", "text", None).unwrap();
+    delete_field(&conn, &gone.id).unwrap();
+    assert_eq!(board_settings(&conn, &other.id).unwrap().display_json, None);
+    conn.execute(
+        "UPDATE board_settings SET display_json = '{not json' WHERE board_id = ?1",
+        [&board.id],
+    )
+    .unwrap();
+    delete_field(&conn, &team.id).unwrap();
+    assert_eq!(
+        board_settings(&conn, &board.id)
+            .unwrap()
+            .display_json
+            .as_deref(),
+        Some("{not json")
+    );
+}
+
+#[test]
 fn multi_select_row_matches_any_contained_value() {
     let conn = fresh();
     let (board, cards) = board_with_cards(&conn, &["a", "b", "c", "d"]);

@@ -609,7 +609,8 @@ pub fn move_field(conn: &Connection, field_id: &str, index: usize) -> Result<Str
 
 /// Deletes a field with its values. Saved views lose its filter rows, table
 /// columns and widths, card-face entry, and a swimlane on it goes back to
-/// "none". Returns the owning board id.
+/// "none"; the board's own display options lose the card-face entry and
+/// swimlane the same way. Returns the owning board id.
 pub fn delete_field(conn: &Connection, field_id: &str) -> Result<String, String> {
     let tx = write_tx(conn)?;
     let field = get_field(&tx, field_id)?;
@@ -636,18 +637,46 @@ pub fn delete_field(conn: &Connection, field_id: &str) -> Result<String, String>
             widths.remove(&key);
         }
         if let Some(display) = layout.get_mut("display") {
-            if let Some(fields) = display.pointer_mut("/face/fields") {
-                map_strings(fields, |id| (id != field_id).then(|| id.to_string()));
-            }
-            if let Some(lane) = display.get_mut("swimlane") {
-                if lane.as_str() == Some(key.as_str()) {
-                    *lane = Value::String("none".into());
-                }
-            }
+            drop_field_from_display(display, field_id);
         }
     })?;
+    // The board's own display options lose it the same way.
+    let display_json: Option<String> = tx
+        .query_row(
+            "SELECT display_json FROM board_settings WHERE board_id = ?1",
+            [&field.board_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(db)?
+        .flatten();
+    if let Some(Ok(mut display)) = display_json.as_deref().map(serde_json::from_str::<Value>) {
+        let before = display.clone();
+        drop_field_from_display(&mut display, field_id);
+        if display != before {
+            tx.execute(
+                "UPDATE board_settings SET display_json = ?1 WHERE board_id = ?2",
+                params![display.to_string(), field.board_id],
+            )
+            .map_err(db)?;
+        }
+    }
     tx.commit().map_err(db)?;
     Ok(field.board_id)
+}
+
+/// Takes a deleted field out of parsed display options (a board's
+/// `display_json` or a view's `layout_json.display`): its card-face entry
+/// goes and a swimlane on it goes back to "none". Other keys are kept.
+fn drop_field_from_display(display: &mut Value, field_id: &str) {
+    if let Some(fields) = display.pointer_mut("/face/fields") {
+        map_strings(fields, |id| (id != field_id).then(|| id.to_string()));
+    }
+    if let Some(lane) = display.get_mut("swimlane") {
+        if lane.as_str() == Some(format!("field:{field_id}").as_str()) {
+            *lane = Value::String("none".into());
+        }
+    }
 }
 
 /// Orders values: numbers numerically, then by their JSON text.
