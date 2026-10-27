@@ -58,6 +58,12 @@ pub(crate) enum Block {
     Math {
         tex: String,
     },
+    /// `![caption](visual:id)` on its own line: a published visual placed
+    /// in the prose.
+    Visual {
+        id: String,
+        caption: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TopBlock {
@@ -483,9 +489,15 @@ fn blocks(events: &mut Events<'_>, until: Option<TagEnd>, depth: usize) -> Vec<B
         match event {
             Event::End(end) if until == Some(end) => break,
             Event::Start(tag) if depth < 32 => match tag {
-                Tag::Paragraph => out.push(Block::Paragraph {
-                    runs: inlines(events, TagEnd::Paragraph),
-                }),
+                Tag::Paragraph => {
+                    if let Some(visual) = placed_visual(events) {
+                        out.push(visual);
+                        continue;
+                    }
+                    out.push(Block::Paragraph {
+                        runs: inlines(events, TagEnd::Paragraph),
+                    })
+                }
                 Tag::Heading { level, .. } => {
                     let number = match level {
                         HeadingLevel::H1 => 1,
@@ -635,6 +647,39 @@ fn blocks(events: &mut Events<'_>, until: Option<TagEnd>, depth: usize) -> Vec<B
         }
     }
     out
+}
+/// A paragraph that is only a `visual:` image places that visual. Consumes
+/// the paragraph when it matches; leaves the events untouched otherwise.
+fn placed_visual(events: &mut Events<'_>) -> Option<Block> {
+    let id = match events.peek()? {
+        Event::Start(Tag::Image { dest_url, .. }) => dest_url
+            .strip_prefix("visual:")
+            .filter(|id| {
+                !id.is_empty()
+                    && id.len() <= 96
+                    && id
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
+            })?
+            .to_owned(),
+        _ => return None,
+    };
+    events.next();
+    let mut caption = String::new();
+    for event in events.by_ref() {
+        match event {
+            Event::End(TagEnd::Image) => break,
+            Event::Text(text) | Event::Code(text) => caption.push_str(&text),
+            _ => {}
+        }
+    }
+    // Anything after the image on the same line stays prose.
+    let rest = inlines(events, TagEnd::Paragraph);
+    let rest: String = rest.iter().map(|r| r.text.as_str()).collect();
+    if !rest.trim().is_empty() {
+        caption = format!("{caption} {}", rest.trim()).trim().to_owned();
+    }
+    Some(Block::Visual { id, caption })
 }
 fn inlines(events: &mut Events<'_>, end: TagEnd) -> Vec<InlineRun> {
     let mut out = Vec::new();

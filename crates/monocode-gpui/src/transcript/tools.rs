@@ -121,6 +121,7 @@ impl TranscriptView {
                 .into_any_element();
         }
         let shown = tool.presentation_in(self.file_link_base.as_deref());
+        let visual = tool.visual_step().is_some();
         let failed = matches!(tool.state, ToolState::Failed | ToolState::Cancelled);
         let is_search =
             matches!(shown.action.as_str(), "Find" | "Search") && !shown.target.is_empty();
@@ -227,7 +228,8 @@ impl TranscriptView {
             .py_1()
             .line_height(px(20.))
             // React's activity rows are always bare: no status glyph, only
-            // a failure stays marked.
+            // a failure stays marked. Monocode's own tools carry its logo.
+            .when(visual, |d| d.child(crate::activity::glyph("monocode", 14.)))
             .when(shown.action != "Run", |d| {
                 d.child(
                     div()
@@ -249,8 +251,9 @@ impl TranscriptView {
                         .flex()
                         .items_center()
                         .gap_1()
-                        // A chain's description is prose; only its chips are code.
-                        .when(!chain, |d| {
+                        // A chain's description is prose; only its chips are
+                        // code. A chart's title is prose too.
+                        .when(!chain && !visual, |d| {
                             d.font_family(crate::fonts::mono()).text_size(px(12.))
                         })
                         .text_color(if failed {

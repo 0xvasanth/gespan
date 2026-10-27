@@ -373,6 +373,13 @@ fn main() {
         db.title(s.id, "Native visuals · Controls, charts and 3D")
             .unwrap();
         db.write_rows(s.id, 0, &fixtures::visuals().rows).unwrap();
+        let s = db
+            .create("claude", &cwd)
+            .expect("create visual story fixture");
+        db.title(s.id, "Native visuals · Charts inside an answer")
+            .unwrap();
+        db.write_rows(s.id, 0, &fixtures::visual_story().rows)
+            .unwrap();
     }
     let mut sessions = db.sessions().expect("read native sessions");
     if sessions.is_empty() {

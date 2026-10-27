@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 mod presentation;
 pub mod tasks;
-pub use presentation::{CommandStep, ToolPresentation};
+pub use presentation::{visual_tool, CommandStep, ToolPresentation, VisualStep};
 
 /// The app's own step while a conversation carries over from another model.
 pub const HANDOFF: &str = "providerHandoff";
@@ -65,6 +65,10 @@ impl ToolCall {
             }
             self.output = format!("… earlier output omitted …\n{}", &self.output[at..]);
         }
+    }
+    /// One of Monocode's own visual tools, under any provider's naming.
+    pub fn visual_step(&self) -> Option<VisualStep> {
+        visual_tool(&self.name)
     }
     pub fn summary(&self) -> (String, String) {
         match self.panel() {

@@ -163,6 +163,10 @@ pub(crate) enum Part {
     },
     Rule,
     Math(String),
+    Visual {
+        id: String,
+        caption: String,
+    },
 }
 #[derive(Clone, PartialEq)]
 pub(crate) struct MarkdownRow {
@@ -272,6 +276,13 @@ fn flatten(
         }
         Block::Rule => add(Part::Rule, 24.),
         Block::Math { tex } => add(Part::Math(tex.clone()), 16.),
+        Block::Visual { id, caption } => add(
+            Part::Visual {
+                id: id.clone(),
+                caption: caption.clone(),
+            },
+            16.,
+        ),
     }
     if let Some(row) = out.get_mut(first)
         && marker.is_some()
@@ -760,6 +771,16 @@ pub(crate) fn body_selected(
         Part::Rule => body
             .py_2()
             .child(div().w_full().h(px(1.)).bg(content(0.1)))
+            .into_any_element(),
+        // Only the transcript can draw a session's visuals; elsewhere the
+        // caption stands in for it.
+        Part::Visual { caption, .. } => body
+            .text_color(content(0.5))
+            .child(if caption.is_empty() {
+                "Visual".to_owned()
+            } else {
+                caption.clone()
+            })
             .into_any_element(),
         Part::Math(tex) => {
             let styled = StyledText::new(tex.clone());
