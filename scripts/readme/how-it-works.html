@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gespan · How it works</title>
+<!--
+  The README "How it works" animation. Every frame is a pure function of the
+  time t, so the same page plays interactively and is captured frame by frame
+  by how_it_works.py (?capture&theme=dark|light).
+-->
+<style>
+  :root {
+    --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --bg: #0d1117; --win: #0f141b; --bar: #151b23; --panel: #161b22; --well: #11161d;
+    --raised: #1d242d; --line: #232a33; --line2: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --faint: #535c66;
+    --accent: #af97fa; --grad-a: #c0affc; --grad-b: #8f64f6; --glow: 159, 126, 248;
+    --halo: radial-gradient(70% 55% at 50% 0%, rgba(126, 71, 234, .16), transparent 70%); --ok: #3fb950;
+    --a0: #3987e5; --a1: #d95926; --a2: #199e70;
+    --shadow: 0 28px 70px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .07);
+    --card-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+    --lift-shadow: 0 14px 30px rgba(0, 0, 0, .55);
+  }
+  [data-theme="light"] {
+    --bg: #ffffff; --win: #f3f5f8; --bar: #eceff3; --panel: #ffffff; --well: #f6f8fa;
+    --raised: #ffffff; --line: #e2e6eb; --line2: #d0d7de;
+    --text: #1f2328; --muted: #59636e; --faint: #9aa4af;
+    --accent: #6e2ada; --grad-a: #8f64f6; --grad-b: #5b22b4; --glow: 110, 42, 218;
+    --halo: radial-gradient(70% 55% at 50% 0%, rgba(126, 71, 234, .07), transparent 70%); --ok: #1a7f37;
+    --a0: #2a78d6; --a1: #eb6834; --a2: #1baf7a;
+    --shadow: 0 22px 56px rgba(31, 35, 40, .13), 0 0 0 1px rgba(31, 35, 40, .09);
+    --card-shadow: 0 1px 2px rgba(31, 35, 40, .08);
+    --lift-shadow: 0 14px 28px rgba(31, 35, 40, .18);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); color: var(--text); font-family: var(--sans); }
+  body { -webkit-font-smoothing: antialiased; }
+  b { font-weight: 650; }
+
+  #stage { position: relative; width: 1040px; height: 660px; overflow: hidden; background: var(--halo), var(--bg); }
+  .logo { flex: none; }
+  h1 { position: absolute; top: 18px; left: 0; right: 0; display: flex; justify-content: center; align-items: center; gap: 12px;
+       font-size: 27px; font-weight: 700; letter-spacing: -.025em; }
+  .grad { background: linear-gradient(90deg, var(--grad-a), var(--grad-b));
+          -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+  #steps { position: absolute; top: 70px; left: 0; right: 0; display: flex; justify-content: center; gap: 6px; }
+  .step { position: relative; display: flex; align-items: center; gap: 7px; height: 28px;
+          padding: 0 13px 0 5px; border-radius: 999px; border: 1px solid transparent;
+          font-size: 12.5px; font-weight: 600; color: var(--muted); overflow: hidden; }
+  .step .n { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+             font-size: 10.5px; font-weight: 700; border: 1px solid var(--line2); color: var(--muted); }
+  .step .bar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--accent); }
+  .step.on { background: var(--panel); border-color: var(--line2); color: var(--text); }
+  .step.on .n, .step.done .n { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  .sep { align-self: center; width: 14px; height: 1px; background: var(--line2); }
+  #caption { position: absolute; top: 110px; left: 0; right: 0; text-align: center;
+             font-size: 13.5px; color: var(--muted); }
+  #caption b { color: var(--text); }
+
+  #win { position: absolute; left: 28px; top: 144px; width: 984px; height: 494px; border-radius: 14px;
+         background: var(--win); box-shadow: var(--shadow); overflow: hidden; }
+  .titlebar { position: absolute; inset: 0 0 auto 0; height: 34px; display: flex; align-items: center;
+              padding: 0 14px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  .dots i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 7px; }
+  .wtitle { position: absolute; left: 0; right: 0; display: flex; justify-content: center; align-items: center; gap: 6px; font-size: 12px;
+            font-weight: 600; color: var(--muted); }
+  .wtitle span { font-weight: 400; color: var(--faint); }
+  #running { position: relative; margin-left: auto; font-size: 11px; color: var(--muted);
+             display: flex; align-items: center; gap: 6px; }
+
+  .panel { position: absolute; background: var(--panel); border: 1px solid var(--line);
+           border-radius: 12px; overflow: hidden; }
+  .ph { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
+        font-size: 12.5px; font-weight: 650; }
+  .ph small { margin-left: auto; font-size: 10.5px; font-weight: 500; color: var(--muted); }
+  .count { min-width: 18px; height: 16px; padding: 0 5px; border-radius: 8px; display: grid;
+           place-items: center; font-size: 10px; font-weight: 600; background: var(--well);
+           border: 1px solid var(--line); color: var(--muted); }
+  .abs { position: absolute; }
+  .mono { font-family: var(--mono); }
+  .label { font-size: 9.5px; font-weight: 650; letter-spacing: .08em; color: var(--faint); }
+
+  /* Inbox */
+  .tk { position: absolute; left: 10px; width: 174px; height: 46px; padding: 7px 10px; border-radius: 9px;
+        background: var(--raised); border: 1px solid var(--line); box-shadow: var(--card-shadow); }
+  .tk1 { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); }
+  .tk1 b { font-family: var(--mono); font-weight: 600; color: var(--text); }
+  .tk1 .s { margin-left: auto; }
+  .src { width: 13px; height: 13px; border-radius: 4px; display: grid; place-items: center;
+         font-size: 8.5px; font-weight: 800; color: #fff; }
+  .tk2 { margin-top: 4px; font-size: 12px; white-space: nowrap; }
+
+  /* Automations */
+  .auto { position: absolute; left: 10px; width: 174px; border-radius: 9px; padding: 9px 10px;
+          background: var(--raised); border: 1px solid var(--line); box-shadow: var(--card-shadow); }
+  .auto .t { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; }
+  .auto .w { margin-top: 3px; font-size: 10.5px; color: var(--muted); }
+  .toggle { margin-left: auto; width: 24px; height: 14px; border-radius: 7px; background: var(--accent);
+            position: relative; flex: none; }
+  .toggle::after { content: ""; position: absolute; right: 2px; top: 2px; width: 10px; height: 10px;
+                   border-radius: 50%; background: #fff; }
+  .clock { margin-top: 9px; display: flex; align-items: baseline; justify-content: space-between; }
+  .clock .time { font-family: var(--mono); font-size: 19px; font-weight: 600; letter-spacing: -.02em; }
+  .clock .st { font-size: 10.5px; color: var(--muted); }
+
+  /* Board */
+  .col { position: absolute; top: 38px; width: 126px; height: 210px; border-radius: 9px;
+         background: var(--well); border: 1px solid var(--line); }
+  .colh { height: 28px; display: flex; align-items: center; justify-content: space-between;
+          padding: 0 9px; font-size: 11px; font-weight: 600; color: var(--muted); }
+  .card { position: absolute; width: 116px; height: 72px; padding: 7px 9px; border-radius: 9px;
+          background: var(--raised); border: 1px solid var(--line); box-shadow: var(--card-shadow);
+          transform-origin: 50% 50%; }
+  .card .c1 { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px;
+              color: var(--muted); }
+  .card .c2 { margin-top: 3px; font-size: 11.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .c3 { position: absolute; left: 9px; right: 9px; bottom: 8px; height: 16px; display: flex;
+              align-items: center; justify-content: space-between; gap: 6px; font-size: 10px;
+              color: var(--muted); white-space: nowrap; }
+  .card .c3 .pill { margin-left: 0; max-width: 72px; overflow: hidden; padding: 1px 6px; font-size: 9.5px; }
+  .av { width: 15px; height: 15px; border-radius: 5px; display: grid; place-items: center; flex: none;
+        font-size: 7.5px; font-weight: 800; color: #fff; }
+  .pill { margin-left: auto; display: flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 6px;
+          font-size: 9.5px; font-weight: 600; white-space: nowrap; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+
+  /* Sessions */
+  .row { position: absolute; left: 10px; right: 10px; height: 38px; display: flex; align-items: center;
+         gap: 9px; padding: 0 10px; border-radius: 9px; background: var(--well); border: 1px solid var(--line); }
+  .row .av { width: 20px; height: 20px; border-radius: 6px; font-size: 9px; }
+  .row .who { width: 112px; flex: none; }
+  .row .who div:first-child { font-size: 11.5px; font-weight: 650; }
+  .row .who div:last-child { font-family: var(--mono); font-size: 9.5px; color: var(--muted); margin-top: 1px; }
+  .row .log { flex: 1; position: relative; height: 26px; }
+  .row .log .txt { font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap;
+                   overflow: hidden; }
+  .row .track { position: absolute; left: 0; right: 0; bottom: 2px; height: 3px; border-radius: 2px;
+                background: var(--line); overflow: hidden; }
+  .row .track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; }
+  .row .pill { width: 86px; justify-content: center; padding: 3px 0; font-size: 10px; }
+
+  /* Pilot */
+  .ring { position: absolute; left: 63px; top: 40px; width: 70px; height: 70px; }
+  .avatar { position: absolute; left: 73px; top: 50px; width: 50px; height: 50px; border-radius: 50%;
+            background: linear-gradient(135deg, #9f7ef8, #5b22b4); display: grid; place-items: center;
+            color: #fff; font-size: 21px; box-shadow: 0 8px 20px rgba(var(--glow), .35); }
+  .pname { position: absolute; top: 118px; left: 0; right: 0; text-align: center; font-size: 13px; font-weight: 650; }
+  .pstat { position: absolute; top: 137px; left: 0; right: 0; display: flex; justify-content: center;
+           align-items: center; gap: 5px; font-size: 10.5px; color: var(--muted); }
+  .habit { position: absolute; left: 10px; width: 174px; height: 32px; display: flex; align-items: center;
+           gap: 7px; padding: 0 10px; border-radius: 8px; background: var(--well); border: 1px solid var(--line);
+           font-size: 11.5px; font-weight: 600; }
+  .habit small { margin-left: auto; font-size: 10px; font-weight: 500; color: var(--muted); }
+  .feed { position: absolute; left: 10px; width: 174px; height: 46px; padding: 7px 10px 7px 12px;
+          border-radius: 9px; background: var(--raised); border: 1px solid var(--line); box-shadow: var(--card-shadow);
+          overflow: hidden; }
+  .feed::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px;
+                  background: var(--c); }
+  .feed .f1 { display: flex; font-size: 11.5px; font-weight: 650; }
+  .feed .f1 small { margin-left: auto; font-size: 9.5px; font-weight: 500; color: var(--faint); }
+  .feed .f2 { margin-top: 3px; font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
+
+  /* Overlay: links, the Run with… menu and the pointer */
+  #links { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+  .menu { position: absolute; left: 342px; top: 108px; width: 134px; padding: 5px; border-radius: 10px;
+          background: var(--raised); border: 1px solid var(--line2); box-shadow: var(--lift-shadow);
+          transform-origin: 0 0; }
+  .menu .mh { padding: 3px 7px 5px; font-size: 10px; font-weight: 600; color: var(--faint); }
+  .menu .mi { display: flex; align-items: center; gap: 7px; height: 25px; padding: 0 7px; border-radius: 6px;
+              font-size: 11.5px; font-weight: 550; }
+  #pointer { position: absolute; left: 0; top: 0; width: 18px; height: 22px; }
+
+  /* Interactive page chrome (hidden while capturing) */
+  #ui { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 4px 0;
+        font-size: 13px; color: var(--muted); }
+  #ui button { font: inherit; padding: 5px 12px; border-radius: 7px; cursor: pointer; color: var(--text);
+               border: 1px solid var(--line2); background: var(--panel); }
+  #ui button.on { border-color: var(--accent); color: var(--accent); }
+  #ui input { flex: 1; min-width: 160px; accent-color: var(--accent); }
+  #page { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
+  #frame { width: 1040px; transform-origin: 0 0; }
+  body.capture #page { display: block; padding: 0; min-height: 0; }
+  body.capture #ui { display: none; }
+</style>
+</head>
+<body>
+<div id="page"><div id="frame">
+<div id="stage">
+  <h1><svg class="logo" width="34" height="34" viewBox="104 104 816 816" aria-hidden="true"><g stroke-width="5"><rect x="146.5" y="314.5" width="163" height="163" rx="21.5" fill="#ede9fe" stroke="#92909d"/><rect x="314.5" y="146.5" width="163" height="163" rx="21.5" fill="#c0affc" stroke="#776c9c"/><rect x="546.5" y="146.5" width="163" height="163" rx="21.5" fill="#af97fa" stroke="#6c5d9b"/><rect x="714.5" y="314.5" width="163" height="163" rx="21.5" fill="#9f7ef8" stroke="#624e99"/><rect x="714.5" y="546.5" width="163" height="163" rx="21.5" fill="#8f64f6" stroke="#583e98"/><rect x="546.5" y="714.5" width="163" height="163" rx="21.5" fill="#7e47ea" stroke="#4e2c91"/><rect x="314.5" y="714.5" width="163" height="163" rx="21.5" fill="#6e2ada" stroke="#441a87"/><rect x="146.5" y="546.5" width="163" height="163" rx="21.5" fill="#5b22b4" stroke="#38156f"/><rect x="430.5" y="430.5" width="163" height="163" rx="21.5" fill="#ede9fe" stroke="#92909d"/></g><g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round"><path d="M475.69 478.56 L506.38 506.38 L475.69 534.38" stroke-width="12.44"/><path d="M512.12 542.88 H548.25" stroke-width="13"/></g></svg><span>Your board drives the agents. <span class="grad">The agents drive the board.</span></span></h1>
+  <div id="steps"></div>
+  <div id="caption"></div>
+
+  <div id="win">
+    <div class="titlebar">
+      <div class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <div class="wtitle"><svg class="logo" width="15" height="15" viewBox="104 104 816 816" aria-hidden="true"><g stroke-width="5"><rect x="146.5" y="314.5" width="163" height="163" rx="21.5" fill="#ede9fe" stroke="#92909d"/><rect x="314.5" y="146.5" width="163" height="163" rx="21.5" fill="#c0affc" stroke="#776c9c"/><rect x="546.5" y="146.5" width="163" height="163" rx="21.5" fill="#af97fa" stroke="#6c5d9b"/><rect x="714.5" y="314.5" width="163" height="163" rx="21.5" fill="#9f7ef8" stroke="#624e99"/><rect x="714.5" y="546.5" width="163" height="163" rx="21.5" fill="#8f64f6" stroke="#583e98"/><rect x="546.5" y="714.5" width="163" height="163" rx="21.5" fill="#7e47ea" stroke="#4e2c91"/><rect x="314.5" y="714.5" width="163" height="163" rx="21.5" fill="#6e2ada" stroke="#441a87"/><rect x="146.5" y="546.5" width="163" height="163" rx="21.5" fill="#5b22b4" stroke="#38156f"/><rect x="430.5" y="430.5" width="163" height="163" rx="21.5" fill="#ede9fe" stroke="#92909d"/></g><g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round"><path d="M475.69 478.56 L506.38 506.38 L475.69 534.38" stroke-width="12.44"/><path d="M512.12 542.88 H548.25" stroke-width="13"/></g></svg>Gespan <span>— acme/web</span></div>
+      <div id="running"></div>
+    </div>
+
+    <div class="panel" id="p-inbox" style="left:12px;top:46px;width:196px;height:222px">
+      <div class="ph">Inbox <span class="count" id="inbox-count">0</span><small>3 sources</small></div>
+    </div>
+
+    <div class="panel" id="p-auto" style="left:12px;top:278px;width:196px;height:204px">
+      <div class="ph">Automations</div>
+      <div class="auto" id="auto-1" style="top:38px">
+        <div class="t"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6.3"/><path d="M8 4.6V8l2.3 1.5" stroke-linecap="round"/></svg>Deps audit<span class="toggle"></span></div>
+        <div class="w">Daily at 09:00 · Codex</div>
+        <div class="clock"><span class="time" id="clock">08:59:54</span><span class="st" id="clock-st"></span></div>
+      </div>
+      <div class="auto" style="top:136px">
+        <div class="t"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 4.5h10M3 8h10M3 11.5h6" stroke-linecap="round"/></svg>Release notes<span class="toggle"></span></div>
+        <div class="w">Fridays · Claude Code</div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-board" style="left:218px;top:46px;width:548px;height:258px">
+      <div class="ph">Board<small>acme/web · sprint 14</small></div>
+    </div>
+
+    <div class="panel" id="p-sessions" style="left:218px;top:314px;width:548px;height:168px">
+      <div class="ph">Sessions<small>any agent · each in its own worktree</small></div>
+    </div>
+
+    <div class="panel" id="p-pilot" style="left:776px;top:46px;width:196px;height:436px">
+      <div class="ph">Pilot<small>memory · habits</small></div>
+      <svg class="ring" id="ring" viewBox="0 0 70 70"><circle cx="35" cy="35" r="33" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="3 6" stroke-linecap="round" opacity=".7"/></svg>
+      <div class="avatar">✦</div>
+      <div class="pname">Delivery Pilot</div>
+      <div class="pstat"><span class="dot" id="pilot-dot" style="background:var(--ok)"></span>Active · 2 habits</div>
+      <div class="abs label" style="left:12px;top:162px">HABITS</div>
+      <div class="habit" id="habit-1" style="top:178px">Triage inbox<small id="habit-1-when">hourly</small></div>
+      <div class="habit" style="top:216px">Weekly digest<small>Mondays</small></div>
+      <div class="abs label" style="left:12px;top:262px">ACTIVITY</div>
+    </div>
+
+    <svg id="links"></svg>
+    <div class="menu" id="menu">
+      <div class="mh">Run with…</div>
+      <div class="mi" id="menu-0"><span class="av" style="background:var(--a0)">CC</span>Claude Code</div>
+      <div class="mi"><span class="av" style="background:var(--a1)">CX</span>Codex</div>
+      <div class="mi"><span class="av" style="background:var(--a2)">CU</span>Cursor CLI</div>
+    </div>
+    <svg id="pointer" viewBox="0 0 18 22"><path d="M2 1.5v16.2l4.3-3.9 2.9 6.4 2.6-1.2-2.9-6.2h5.9z" fill="#fff" stroke="#111" stroke-width="1.3" stroke-linejoin="round"/></svg>
+  </div>
+</div>
+<div id="ui">
+  <button id="play">Pause</button>
+  <input id="scrub" type="range" min="0" max="12" step="0.01" value="0" aria-label="Timeline">
+  <span id="chapters"></span>
+  <button id="theme">Light</button>
+</div>
+</div></div>
+
+<script>
+const T = 12;                 // seconds per loop
+const OUTRO = [11.35, 11.9];  // everything clears so the loop restarts cleanly
+const NS = "http://www.w3.org/2000/svg";
+
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const ease = x => (x = clamp(x), x < .5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const outro = t => 1 - ease(seg(t, ...OUTRO));
+const life = (t, born, d = .35) => t < born ? 0 : ease(seg(t, born, born + d)) * outro(t);
+const latest = (list, t, fallback) => { let v = fallback; for (const [k, x] of list) if (t >= k) v = x; return v; };
+const pulse = t => .55 + .45 * Math.sin(t * Math.PI * 2.2);
+const $ = id => document.getElementById(id);
+const el = (cls, html = "", parent) => {
+  const e = document.createElement("div");
+  e.className = cls; e.innerHTML = html; parent.appendChild(e); return e;
+};
+
+// ------------------------------------------------------------------ story
+
+const AGENTS = [
+  { name: "Claude Code", short: "CC", c: "var(--a0)" },
+  { name: "Codex", short: "CX", c: "var(--a1)" },
+  { name: "Cursor CLI", short: "CU", c: "var(--a2)" },
+];
+const ALL = ["inbox", "auto", "board", "sessions", "pilot"];
+// s/e: when the beat runs; lit: panels at full strength; focus: the panel that glows.
+const BEATS = [
+  { s: -1, e: 2.8, step: 0, lit: ["inbox", "board"], focus: "board",
+    cap: "<b>Board</b> · tickets from Linear, Jira and GitHub land as cards" },
+  { s: 2.8, e: 5.3, step: 1, lit: ["board", "sessions"], focus: "sessions",
+    cap: "<b>Sessions</b> · run a card with any agent, each in its own worktree" },
+  { s: 5.3, e: 7.7, step: 2, lit: ["auto", "board", "sessions"], focus: "auto",
+    cap: "<b>Automations</b> · work starts on a schedule, and session events move the cards" },
+  { s: 7.7, e: 10.5, step: 3, lit: ["pilot", "inbox", "board", "sessions"], focus: "pilot",
+    cap: "<b>Pilots</b> · a long-running agent picks up work and reports back" },
+  { s: 10.5, e: 11.85, step: 4, lit: ALL, focus: null,
+    cap: "Board · Sessions · Automations · Pilots, <b>one loop in one app</b>" },
+];
+BEATS.push({ ...BEATS[0], s: 11.85, e: 13 });  // wrap back to the first beat
+const STEPS = ["Board", "Sessions", "Automations", "Pilots"];
+
+const SOURCES = { Linear: "#5e6ad2", Jira: "#2684ff", GitHub: "#6e7681" };
+const TICKETS = [
+  { id: "LIN-142", src: "Linear", title: "Fix login bug", in: .25, out: 1.5 },
+  { id: "JIRA-88", src: "Jira", title: "Audit log export", in: .9, out: null },
+  { id: "GH #311", src: "GitHub", title: "Fix flaky test", in: 4.2, out: 8.1 },
+  { id: "LIN-150", src: "Linear", title: "Settings dark mode", in: 9.5, out: null },
+];
+
+const MOVE = .55;  // seconds for a card to change column
+const CARDS = [
+  { num: "#142", tag: "LIN-142", title: "Fix login bug", agent: 0, born: 2.0,
+    stops: [[2.0, 0, 0], [3.7, 1, 0], [7.0, 2, 0], [9.8, 3, 1]],
+    status: [[3.7, "run"], [7.0, "pr"], [9.8, "merged"]] },
+  { num: "#143", tag: "09:00 run", title: "Deps audit", agent: 1, born: 6.0,
+    stops: [[6.0, 0, 0], [6.5, 1, 1], [7.1, 1, 0], [8.6, 3, 0]],
+    status: [[6.5, "run"], [8.6, "done"]] },
+  { num: "#311", tag: "GH #311", title: "Fix flaky test", agent: 2, born: 8.5,
+    stops: [[8.5, 0, 0], [9.1, 1, 0]],
+    status: [[9.1, "run"]] },
+];
+
+const SESSIONS = [
+  { agent: 0, wt: "wt/fix-login", start: 3.6,
+    logs: [[3.6, "reading src/auth/redirect.ts"], [4.7, "edited 3 files · running tests"],
+           [5.8, "✓ 42 tests passed"], [6.8, "opened PR #57"], [9.6, "PR #57 merged"]],
+    status: [[3.6, "run"], [6.8, "pr"], [9.6, "merged"]] },
+  { agent: 1, wt: "wt/deps-audit", start: 6.4,
+    logs: [[6.4, "scanning the lockfile"], [7.4, "bumped 6 packages"], [8.4, "✓ audit clean · report written"]],
+    status: [[6.4, "run"], [8.4, "done"]] },
+  { agent: 2, wt: "wt/flaky-upload", start: 9.0,
+    logs: [[9.0, "reproducing the flake"], [10.0, "retrying with fake timers"]],
+    status: [[9.0, "run"]] },
+];
+
+const FEED = [
+  { at: 8.3, title: "Picked up GH #311", sub: "→ card #311 · Cursor CLI", c: "var(--accent)" },
+  { at: 8.9, title: "✓ Deps audit", sub: "report.html", c: "var(--a1)" },
+  { at: 10.0, title: "✓ #142 merged", sub: "report.md", c: "var(--a0)" },
+];
+
+const FIRE = 5.6;  // the 09:00 schedule fires
+
+// ---------------------------------------------------------------- geometry
+// All link coordinates are in window space (the title bar included).
+
+const colX = col => 10 + col * 134;
+const cardXY = (col, slot) => [colX(col) + 5, 68 + slot * 79];  // board-relative
+const cardBox = (col, slot) => {
+  const [x, y] = cardXY(col, slot);
+  return { l: 218 + x, t: 46 + y, r: 218 + x + 116, b: 46 + y + 72, cx: 218 + x + 58, cy: 46 + y + 36 };
+};
+const rowY = i => 314 + 36 + i * 42;  // window y of a session row's top
+const R = [1, 0], L = [-1, 0], D = [0, 1], U = [0, -1];
+
+function ticketPresence(k, t) {
+  const arrive = ease(seg(t, k.in, k.in + .35));
+  return k.out == null ? arrive : arrive * (1 - ease(seg(t, k.out, k.out + .4)));
+}
+function ticketSlot(k, t) {  // newest on top
+  return TICKETS.reduce((s, o) => s + (o.in > k.in ? ticketPresence(o, t) : 0), 0);
+}
+const ticketAnchor = (id, t) => {
+  const k = TICKETS.find(k => k.id === id);
+  return [204, 46 + 40 + ticketSlot(k, t) * 52 + 23];
+};
+
+// Links: a line draws itself between two panels and a light travels along it.
+const LINKS = [
+  { t: 1.5, d: .65, c: "var(--accent)", from: [ticketAnchor("LIN-142", 1.5), R], to: [[cardBox(0, 0).l, 150], R] },
+  { t: 3.35, d: .5, c: "var(--a0)", from: [[cardBox(0, 0).cx, cardBox(0, 0).b], D], to: [[240, rowY(0) + 2], D] },
+  { t: FIRE, d: .55, c: "var(--accent)", from: [[204, 364], R], to: [[cardBox(0, 0).l, 150], U] },
+  { t: 6.3, d: .5, c: "var(--a1)", from: [[cardBox(0, 0).cx, cardBox(0, 0).b], D], to: [[240, rowY(1) + 2], D] },
+  { t: 6.8, d: .45, c: "var(--a0)", from: [[420, rowY(0) + 2], U], to: [[cardBox(1, 0).cx, cardBox(1, 0).b], U] },
+  { t: 7.85, d: .6, c: "var(--accent)", from: [[782, 46 + 178 + 16], U], to: [ticketAnchor("GH #311", 7.85), L], k: .5 },
+  { t: 8.1, d: .5, c: "var(--accent)", from: [ticketAnchor("GH #311", 8.1), R], to: [[cardBox(0, 0).l, 150], R] },
+  { t: 8.4, d: .5, c: "var(--a1)", from: [[770, rowY(1) + 19], R], to: [[782, 46 + 286 + 23], R] },
+  { t: 8.7, d: .5, c: "var(--a2)", from: [[782, 46 + 178 + 16], L], to: [[770, rowY(2) + 19], L] },
+  { t: 9.6, d: .5, c: "var(--a0)", from: [[770, rowY(0) + 19], R], to: [[782, 46 + 286 + 23], R] },
+];
+
+function curve([p0, d0], [p1, d1], bend = .45) {
+  const k = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) * bend;
+  const c0 = [p0[0] + d0[0] * k, p0[1] + d0[1] * k];
+  const c1 = [p1[0] - d1[0] * k, p1[1] - d1[1] * k];
+  return `M${p0} C${c0} ${c1} ${p1}`;
+}
+
+// --------------------------------------------------------------------- DOM
+
+const panels = Object.fromEntries(ALL.map(k => [k, $("p-" + k)]));
+const stepEls = STEPS.map((name, i) => {
+  if (i) el("sep", "", $("steps"));
+  return el("step", `<span class="n">${i + 1}</span>${name}<i class="bar"></i>`, $("steps"));
+});
+
+for (const k of TICKETS) {
+  k.el = el("tk", `<div class="tk1"><span class="src" style="background:${SOURCES[k.src]}">${k.src[0]}</span>` +
+    `<b>${k.id}</b><span class="s">${k.src}</span></div><div class="tk2">${k.title}</div>`, panels.inbox);
+}
+
+const colCounts = ["Todo", "In progress", "Review", "Done"].map((name, i) => {
+  const col = el("col", `<div class="colh">${name}<span class="count">0</span></div>`, panels.board);
+  col.style.left = colX(i) + "px";
+  return col.querySelector(".count");
+});
+for (const c of CARDS) {
+  c.el = el("card", `<div class="c1"><span>${c.num}</span><span>${c.tag}</span></div>` +
+    `<div class="c2">${c.title}</div><div class="c3"></div>`, panels.board);
+  c.foot = c.el.querySelector(".c3");
+}
+
+SESSIONS.forEach((s, i) => {
+  const a = AGENTS[s.agent];
+  s.el = el("row", `<span class="av" style="background:${a.c}">${a.short}</span>` +
+    `<div class="who"><div>${a.name}</div><div class="wt">${s.wt}</div></div>` +
+    `<div class="log"><div class="txt"></div><div class="track"><i style="background:${a.c}"></i></div></div>` +
+    `<span class="pill"></span>`, panels.sessions);
+  s.el.style.top = (36 + i * 42) + "px";
+  s.wtEl = s.el.querySelector(".wt"); s.txt = s.el.querySelector(".txt");
+  s.bar = s.el.querySelector(".track i"); s.pill = s.el.querySelector(".pill");
+});
+
+for (const f of FEED) {
+  f.el = el("feed", `<div class="f1">${f.title}<small>now</small></div><div class="f2">${f.sub}</div>`, panels.pilot);
+  f.el.style.setProperty("--c", f.c);
+}
+
+const svg = $("links");
+for (const l of LINKS) {
+  l.path = document.createElementNS(NS, "path");
+  l.path.setAttribute("d", curve(l.from, l.to, l.k));
+  l.path.setAttribute("fill", "none");
+  l.path.setAttribute("stroke", l.c);
+  l.path.setAttribute("stroke-width", "1.6");
+  l.path.setAttribute("stroke-linecap", "round");
+  l.halo = document.createElementNS(NS, "circle");
+  l.dot = document.createElementNS(NS, "circle");
+  l.ping = document.createElementNS(NS, "circle");
+  for (const [c, r] of [[l.halo, 9], [l.dot, 4], [l.ping, 6]]) {
+    c.setAttribute("r", r);
+    c.setAttribute("fill", c === l.ping ? "none" : l.c);
+    if (c === l.ping) { c.setAttribute("stroke", l.c); c.setAttribute("stroke-width", "1.5"); }
+  }
+  svg.append(l.path, l.halo, l.dot, l.ping);
+  l.len = l.path.getTotalLength();
+  l.end = l.path.getPointAtLength(l.len);
+}
+
+// ------------------------------------------------------------------ render
+
+function pill(kind, colour, t) {
+  switch (kind) {
+    case "run": return [`<span class="dot" style="background:${colour};opacity:${pulse(t).toFixed(2)}"></span>Running`,
+                        `color-mix(in srgb, ${colour} 78%, var(--text))`, `color-mix(in srgb, ${colour} 14%, transparent)`];
+    case "pr": return ["⇡ PR #57", "var(--accent)", "rgba(var(--glow), .13)"];
+    case "merged": return ["✓ Merged", "var(--ok)", "color-mix(in srgb, var(--ok) 14%, transparent)"];
+    case "done": return ["✓ Done", "var(--ok)", "color-mix(in srgb, var(--ok) 14%, transparent)"];
+    default: return ["Idle", "var(--faint)", "transparent"];
+  }
+}
+function setPill(node, kind, colour, t) {
+  const [html, fg, bg] = pill(kind, colour, t);
+  if (node.innerHTML !== html) node.innerHTML = html;
+  node.style.color = fg; node.style.background = bg;
+}
+
+function beatAt(t) { return BEATS.filter(b => t >= b.s).pop(); }
+function weight(t, keyOf) {  // cross-fades a per-beat value over beat boundaries
+  let w = 0;
+  for (const b of BEATS) {
+    const on = ease(seg(t, b.s - .15, b.s + .15)) * (1 - ease(seg(t, b.e - .15, b.e + .15)));
+    w += on * keyOf(b);
+  }
+  return clamp(w);
+}
+
+function renderChrome(t) {
+  const beat = beatAt(t);
+  stepEls.forEach((s, i) => {
+    const on = beat.step === i, done = beat.step === 4;
+    s.classList.toggle("on", on);
+    s.classList.toggle("done", done);
+    s.querySelector(".bar").style.width = on ? (seg(t, Math.max(beat.s, 0), beat.e) * 100) + "%" : "0";
+  });
+  const cap = $("caption");
+  if (cap.innerHTML !== beat.cap) cap.innerHTML = beat.cap;
+  const fresh = ease(seg(t, beat.s, beat.s + .35));
+  cap.style.opacity = beat.s < 0 ? 1 : fresh;
+  cap.style.transform = `translateY(${(1 - (beat.s < 0 ? 1 : fresh)) * 5}px)`;
+
+  for (const [key, node] of Object.entries(panels)) {
+    const lit = weight(t, b => b.lit.includes(key) ? 1 : 0);
+    const focus = weight(t, b => b.focus === key ? 1 : 0);
+    node.style.opacity = (.4 + .6 * lit).toFixed(3);
+    node.style.borderColor = focus > .01 ? `rgba(var(--glow), ${(.25 + .5 * focus).toFixed(3)})` : "";
+    node.style.boxShadow = focus > .01 ? `0 0 0 ${(focus * 1).toFixed(2)}px rgba(var(--glow), ${(.5 * focus).toFixed(3)}), ` +
+      `0 0 26px rgba(var(--glow), ${(.16 * focus).toFixed(3)})` : "none";
+  }
+
+  const running = SESSIONS.filter(s => latest(s.status, t, null) === "run").length * (outro(t) > .5);
+  const html = running ? `<span class="dot" style="background:var(--ok);opacity:${pulse(t).toFixed(2)}"></span>${running} running`
+                       : `<span class="dot" style="background:var(--faint)"></span>idle`;
+  $("running").innerHTML = html;
+}
+
+function renderInbox(t) {
+  let waiting = 0;
+  for (const k of TICKETS) {
+    const p = ticketPresence(k, t);
+    const arrive = ease(seg(t, k.in, k.in + .35));
+    const leave = k.out == null ? 0 : ease(seg(t, k.out, k.out + .4));
+    k.el.style.top = (40 + ticketSlot(k, t) * 52) + "px";
+    k.el.style.opacity = (p * outro(t)).toFixed(3);
+    k.el.style.transform = `translate(${leave * 22}px, ${(1 - arrive) * -10}px)`;
+    if (t >= k.in && (k.out == null || t < k.out)) waiting++;
+  }
+  $("inbox-count").textContent = outro(t) > .5 ? waiting : 0;
+}
+
+function renderAutomations(t) {
+  const clock = $("clock"), st = $("clock-st"), box = $("auto-1");
+  const secs = Math.floor(t - FIRE + 60);
+  clock.textContent = t < FIRE ? `08:59:${String(Math.min(secs, 59)).padStart(2, "0")}`
+                               : `09:00:${String(Math.floor(t - FIRE)).padStart(2, "0")}`;
+  const show = ease(seg(t, 0, .3)) * outro(t);
+  clock.style.opacity = st.style.opacity = show.toFixed(3);
+  const fired = t >= FIRE;
+  st.innerHTML = !fired ? "next run" : t < 8.4 ? `<span style="color:var(--accent)">● running</span>` : "✓ ran today";
+  clock.style.color = fired && t < 8.4 ? "var(--accent)" : "";
+  const flash = t >= FIRE ? Math.exp(-(t - FIRE) * 2.2) : 0;
+  box.style.boxShadow = flash > .01 ? `0 0 0 ${1 + flash * 2}px rgba(var(--glow), ${(.7 * flash).toFixed(3)})` : "";
+}
+
+function cardPlace(c, t) {
+  let [, col, slot] = c.stops[0];
+  let [x, y] = cardXY(col, slot), lift = 0;
+  for (const [s, col2, slot2] of c.stops.slice(1)) {
+    if (t < s) break;
+    const raw = seg(t, s, s + MOVE), p = ease(raw);
+    const [nx, ny] = cardXY(col2, slot2);
+    x += (nx - x) * p;
+    y += (ny - y) * p;
+    lift = Math.max(lift, Math.sin(Math.PI * raw));
+    if (raw >= 1) { col = col2; slot = slot2; } else col = p > .5 ? col2 : col;
+  }
+  return { x, y: y - lift * 8, lift, col };
+}
+
+function renderBoard(t) {
+  const counts = [0, 0, 0, 0];
+  for (const c of CARDS) {
+    const a = life(t, c.born, .4);
+    const { x, y, lift, col } = cardPlace(c, t);
+    if (a > .5) counts[col]++;
+    const pop = ease(seg(t, c.born, c.born + .4));
+    c.el.style.left = x + "px";
+    c.el.style.top = y + "px";
+    c.el.style.opacity = a.toFixed(3);
+    c.el.style.transform = `scale(${(.92 + .08 * pop + .05 * lift).toFixed(4)}) rotate(${(lift * 2.2).toFixed(2)}deg)`;
+    c.el.style.boxShadow = lift > .01 ? "var(--lift-shadow)" : "";
+    c.el.style.borderColor = lift > .01 ? `rgba(var(--glow), ${(.8 * lift).toFixed(3)})` : "";
+    c.el.style.zIndex = lift > .01 ? 5 : 1;
+    const kind = latest(c.status, t, null), agent = AGENTS[c.agent];
+    const who = kind ? `<span class="av" style="background:${agent.c}">${agent.short}</span>`
+                     : `<span style="color:var(--faint)">Unassigned</span>`;
+    if (c.who !== who) { c.foot.innerHTML = who + `<span class="pill"></span>`; c.who = who; }
+    const p = c.foot.querySelector(".pill");
+    p.style.display = kind ? "" : "none";
+    if (kind) setPill(p, kind, agent.c, t);
+  }
+  colCounts.forEach((n, i) => n.textContent = counts[i]);
+}
+
+function renderSessions(t) {
+  for (const s of SESSIONS) {
+    const a = life(t, s.start);
+    const kind = a > .5 ? latest(s.status, t, null) : null;
+    s.el.style.opacity = (.45 + .55 * a).toFixed(3);
+    s.wtEl.style.opacity = a.toFixed(3);
+    const log = latest(s.logs, t, null);
+    if (log) {
+      const at = s.logs.find(l => l[1] === log)[0];
+      const chars = Math.round(log.length * seg(t, at, at + .45));
+      s.txt.textContent = "› " + log.slice(0, chars);
+    } else s.txt.textContent = "";
+    s.txt.style.opacity = a.toFixed(3);
+    const endAt = (s.status.find(([, k]) => k === "merged" || k === "done") || [Infinity])[0];
+    const span = clamp((Math.min(t, endAt) - s.start) / 6.5);
+    s.bar.style.width = (span * 100 * a) + "%";
+    setPill(s.pill, kind, AGENTS[s.agent].c, t);
+  }
+}
+
+function renderPilot(t) {
+  $("ring").style.transform = `rotate(${t * 30}deg)`;
+  const triage = seg(t, 7.75, 7.95) * (1 - seg(t, 8.5, 8.7));
+  const habit = $("habit-1");
+  habit.style.borderColor = triage > .01 ? `rgba(var(--glow), ${(.8 * triage).toFixed(3)})` : "";
+  habit.style.background = triage > .01 ? `rgba(var(--glow), ${(.1 * triage).toFixed(3)})` : "";
+  $("habit-1-when").innerHTML = triage > .5 ? `<span style="color:var(--accent)">running…</span>` : "hourly";
+  for (const f of FEED) {
+    const slot = FEED.reduce((s, o) => s + (o.at > f.at ? ease(seg(t, o.at, o.at + .35)) : 0), 0);
+    const a = life(t, f.at);
+    f.el.style.top = (278 + slot * 52) + "px";
+    f.el.style.opacity = a.toFixed(3);
+    f.el.style.transform = `translateY(${(1 - ease(seg(t, f.at, f.at + .35))) * -10}px)`;
+  }
+}
+
+function renderLinks(t) {
+  for (const l of LINKS) {
+    const p = seg(t, l.t, l.t + l.d), e = ease(p);
+    const fade = 1 - seg(t, l.t + l.d + .1, l.t + l.d + .55);
+    const live = t >= l.t && fade > 0;
+    l.path.style.display = l.halo.style.display = l.dot.style.display = l.ping.style.display = live ? "" : "none";
+    if (!live) continue;
+    l.path.setAttribute("stroke-dasharray", `${l.len} ${l.len}`);
+    l.path.setAttribute("stroke-dashoffset", (l.len * (1 - ease(seg(t, l.t, l.t + l.d * .8)))).toFixed(2));
+    l.path.setAttribute("opacity", (.75 * fade).toFixed(3));
+    const pt = l.path.getPointAtLength(l.len * e);
+    for (const c of [l.halo, l.dot]) { c.setAttribute("cx", pt.x); c.setAttribute("cy", pt.y); }
+    l.dot.setAttribute("opacity", fade.toFixed(3));
+    l.halo.setAttribute("opacity", (.22 * fade).toFixed(3));
+    const ping = seg(t, l.t + l.d, l.t + l.d + .45);
+    l.ping.setAttribute("cx", l.end.x); l.ping.setAttribute("cy", l.end.y);
+    l.ping.setAttribute("r", (4 + ping * 14).toFixed(2));
+    l.ping.setAttribute("opacity", ping > 0 && ping < 1 ? (.8 * (1 - ping)).toFixed(3) : 0);
+  }
+}
+
+// The pointer opens "Run with…" on card #142 and picks Claude Code.
+const POINTER = [[2.5, 470, 250], [2.95, 300, 152], [3.08, 300, 152], [3.28, 400, 146], [3.5, 400, 146], [3.9, 520, 230]];
+function renderPointer(t) {
+  const ptr = $("pointer"), menu = $("menu");
+  let x = POINTER[0][1], y = POINTER[0][2];
+  for (let i = 1; i < POINTER.length; i++) {
+    const [s, ax, ay] = POINTER[i - 1], [e, bx, by] = POINTER[i];
+    if (t >= s) { const p = ease(seg(t, s, e)); x = ax + (bx - ax) * p; y = ay + (by - ay) * p; }
+  }
+  const vis = seg(t, 2.5, 2.65) * (1 - seg(t, 3.7, 3.9));
+  const press = Math.max(Math.exp(-(((t - 2.98) / .05) ** 2)), Math.exp(-(((t - 3.33) / .05) ** 2)));
+  ptr.style.opacity = vis.toFixed(3);
+  ptr.style.transform = `translate(${x}px, ${y}px) scale(${1 - .15 * press})`;
+  const open = ease(seg(t, 3.0, 3.12)) * (1 - ease(seg(t, 3.45, 3.58)));
+  menu.style.opacity = open.toFixed(3);
+  menu.style.transform = `scale(${.94 + .06 * open})`;
+  const hot = seg(t, 3.2, 3.28);
+  $("menu-0").style.background = hot > 0 ? `rgba(var(--glow), ${(.16 * hot).toFixed(3)})` : "";
+}
+
+function render(t) {
+  t = ((t % T) + T) % T;
+  renderChrome(t);
+  renderInbox(t);
+  renderAutomations(t);
+  renderBoard(t);
+  renderSessions(t);
+  renderPilot(t);
+  renderLinks(t);
+  renderPointer(t);
+}
+window.render = render;
+window.LOOP_SECONDS = T;
+
+// ------------------------------------------------------------- page setup
+
+const params = new URLSearchParams(location.search);
+const prefersDark = matchMedia("(prefers-color-scheme: dark)").matches;
+let theme = params.get("theme") || (prefersDark ? "dark" : "light");
+const applyTheme = () => {
+  document.documentElement.dataset.theme = theme;
+  $("theme").textContent = theme === "dark" ? "Light" : "Dark";
+};
+applyTheme();
+
+if (params.has("capture")) {
+  document.body.classList.add("capture");
+  render(0);
+} else {
+  let t = 0, playing = true, last = performance.now();
+  const scrub = $("scrub");
+  const chapters = $("chapters");
+  STEPS.forEach((name, i) => {
+    const b = document.createElement("button");
+    b.textContent = name;
+    b.onclick = () => { t = Math.max(BEATS[i].s, 0); };
+    chapters.appendChild(b);
+  });
+  $("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; };
+  scrub.oninput = () => { t = +scrub.value; playing = false; $("play").textContent = "Play"; };
+  $("theme").onclick = () => { theme = theme === "dark" ? "light" : "dark"; applyTheme(); };
+  const fit = () => {
+    const s = Math.min(1, (innerWidth - 32) / 1040);
+    $("frame").style.transform = `scale(${s})`;
+    $("frame").style.height = (660 + 60) * s + "px";
+  };
+  addEventListener("resize", fit); fit();
+  const tick = now => {
+    if (playing) t = (t + (now - last) / 1000) % T;
+    last = now;
+    scrub.value = t;
+    render(t);
+    [...chapters.children].forEach((b, i) => b.classList.toggle("on", beatAt(t).step === i));
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>
